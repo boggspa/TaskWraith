@@ -630,6 +630,7 @@ import {
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
 import {
+  isConvertiblePristineSingleDraft,
   planPrimarySurfaceConversion,
   type SidebarPrimarySurface
 } from './lib/primarySurfaceToggle'
@@ -7247,6 +7248,24 @@ function App(): React.JSX.Element {
     await handleForkAgentThread('codex', threadId)
   }
 
+  // A pristine, never-started SINGLE draft that is safe to re-scope in place
+  // through the sanctioned rebindChatWorkspace seam (kind never changes —
+  // the reaper's "never reuse records across chat kinds" rule stays intact).
+  // Combines the record-level planner predicate with the runtime gates the
+  // record alone can't answer: live/queued runs and workflow bindings (a
+  // workflow-compose draft is intentionally empty but must keep its
+  // workspace). Started chats and ensembles never pass — their moves stay
+  // with the dedicated flows and the 'navigate' fresh-draft rule.
+  const isRebindablePristineSingleDraft = (
+    chat: ChatRecord | null | undefined
+  ): chat is ChatRecord => {
+    if (!chat) return false
+    if (!isConvertiblePristineSingleDraft(chat)) return false
+    if (isChatBusy(chat.appChatId) || runningChatIds.has(chat.appChatId)) return false
+    if (workflowDraft?.chatId === chat.appChatId) return false
+    return !workflowDefinitions.some((workflow) => workflow.template.chatId === chat.appChatId)
+  }
+
   const handleSelectExistingWorkspace = async (
     ws: WorkspaceRecord,
     options?: { intent?: WorkspaceSelectIntent }
@@ -7286,9 +7305,18 @@ function App(): React.JSX.Element {
     // deliberately skips this branch and opens a fresh draft instead, so a
     // stray click never relocates an in-progress chat onto another
     // workspace (see shouldRebindCurrentChatOnWorkspaceSelect).
+    //
+    // Pristine-single welcome drafts also rebind in place — for BOTH
+    // intents. There is no in-progress work for the 'navigate' fresh-draft
+    // rule to protect (that rule stays authoritative for started chats and
+    // ensembles), and falling through would abandon the draft's provider /
+    // model / permission selection and any typed-but-unsent composer text.
+    // Same sanctioned seam as the sidebar Chat ⇄ Code toggle; the rebind
+    // body below is kind-agnostic.
     if (
       currentChat &&
-      shouldRebindCurrentChatOnWorkspaceSelect({ intent, isCurrentEnsembleChat })
+      (shouldRebindCurrentChatOnWorkspaceSelect({ intent, isCurrentEnsembleChat }) ||
+        isRebindablePristineSingleDraft(currentChat))
     ) {
       const initiatingChat = currentChat
       const initiatingChatId = initiatingChat.appChatId
@@ -8628,46 +8656,57 @@ function App(): React.JSX.Element {
     // place to `scope: 'global'` + clear workspace fields, keeping
     // every participant + the ensemble config. Main owns the no-op decision so
     // a stale renderer can never invent a workspace binding.
-    if (isCurrentEnsembleChat) {
-      if (currentChat && isWelcomeChat) {
-        const initiatingChat = currentChat
-        const initiatingChatId = initiatingChat.appChatId
-        const rendererAlreadyGlobal =
-          initiatingChat.scope === 'global' &&
-          !initiatingChat.workspaceId &&
-          !initiatingChat.workspacePath &&
-          currentWorkspaceIdRef.current === null &&
-          currentWorkspacePathRef.current === null &&
-          currentWorkspace === null
-        let rebound: ChatRecord
-        let canonicalChanged = false
-        try {
-          const result = await window.api.rebindChatWorkspace({
-            chatId: initiatingChatId,
-            scope: 'global'
-          })
-          rebound = result.chat
-          canonicalChanged = result.changed
-        } catch (error) {
-          appendThreadRawLog(initiatingChatId, {
-            type: 'stderr',
-            content: `Workspace switch blocked: ${redactLog(String(error))}`
-          })
-          return
-        }
-        const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
-        updateChatById(initiatingChatId, () => chatWithLedger)
-        if (currentChatIdRef.current !== initiatingChatId) return
-        if (
-          !shouldApplyFocusedWorkspaceRebind({
-            canonicalChanged,
-            rendererAlreadyAtTarget: rendererAlreadyGlobal
-          })
-        )
-          return
-        await selectGlobalChat(chatWithLedger)
+    //
+    // Pristine-single welcome drafts get the same in-place rebind: picking
+    // "No Workspace" used to mint a fresh General draft, dropping the
+    // provider / model / permission selection and any typed-but-unsent
+    // composer text. The rebind body is kind-agnostic; started singles still
+    // fall through to a fresh General chat below.
+    const rebindableWelcomeChat =
+      currentChat &&
+      ((isCurrentEnsembleChat && isWelcomeChat) || isRebindablePristineSingleDraft(currentChat))
+        ? currentChat
+        : null
+    if (rebindableWelcomeChat) {
+      const initiatingChat = rebindableWelcomeChat
+      const initiatingChatId = initiatingChat.appChatId
+      const rendererAlreadyGlobal =
+        initiatingChat.scope === 'global' &&
+        !initiatingChat.workspaceId &&
+        !initiatingChat.workspacePath &&
+        currentWorkspaceIdRef.current === null &&
+        currentWorkspacePathRef.current === null &&
+        currentWorkspace === null
+      let rebound: ChatRecord
+      let canonicalChanged = false
+      try {
+        const result = await window.api.rebindChatWorkspace({
+          chatId: initiatingChatId,
+          scope: 'global'
+        })
+        rebound = result.chat
+        canonicalChanged = result.changed
+      } catch (error) {
+        appendThreadRawLog(initiatingChatId, {
+          type: 'stderr',
+          content: `Workspace switch blocked: ${redactLog(String(error))}`
+        })
         return
       }
+      const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+      updateChatById(initiatingChatId, () => chatWithLedger)
+      if (currentChatIdRef.current !== initiatingChatId) return
+      if (
+        !shouldApplyFocusedWorkspaceRebind({
+          canonicalChanged,
+          rendererAlreadyAtTarget: rendererAlreadyGlobal
+        })
+      )
+        return
+      await selectGlobalChat(chatWithLedger)
+      return
+    }
+    if (isCurrentEnsembleChat) {
       const newChat = await window.api.createEnsembleChat()
       setChats((prev) => mergeChatRecord(prev, newChat))
       chatByIdRef.current.set(newChat.appChatId, newChat)
