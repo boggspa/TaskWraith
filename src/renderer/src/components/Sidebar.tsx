@@ -395,7 +395,12 @@ const getLinkedChildRouteLabel = (chat: ChatRecord, parentChat: ChatRecord | nul
 }
 
 const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
-type SidebarActiveTab = 'threads' | 'projects'
+type SidebarActiveTab = 'chat' | 'threads' | 'projects'
+const SIDEBAR_ACTIVE_TABS: readonly SidebarActiveTab[] = ['chat', 'threads', 'projects']
+
+function getChatSidebarTab(chat: ChatRecord): Exclude<SidebarActiveTab, 'projects'> {
+  return chat.scope === 'global' ? 'chat' : 'threads'
+}
 /**
  * Collapsed-section memory for the top-level sidebar lists
  * (Pinned / Recents / Ensembles / Workspaces / Chats). Set semantics: an id
@@ -2711,14 +2716,20 @@ export function Sidebar({
   const [projectsSearchResultCount, setProjectsSearchResultCount] = useState(0)
   const [activeSidebarTab, setActiveSidebarTab] = useState<SidebarActiveTab>(() => {
     try {
-      return localStorage.getItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY) === 'projects'
-        ? 'projects'
-        : 'threads'
+      const storedTab = localStorage.getItem(SIDEBAR_ACTIVE_TAB_STORAGE_KEY)
+      if (storedTab === 'projects') return 'projects'
+
+      const selectedChat =
+        chats.find((chat) => chat.appChatId === activeChatId) || currentChat || null
+      if (selectedChat) return getChatSidebarTab(selectedChat)
+
+      return storedTab === 'chat' ? 'chat' : 'threads'
     } catch {
       return 'threads'
     }
   })
   const [sidebarSearchByTab, setSidebarSearchByTab] = useState<Record<SidebarActiveTab, string>>({
+    chat: '',
     threads: '',
     projects: ''
   })
@@ -2801,9 +2812,19 @@ export function Sidebar({
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )
   const projectSidebarChats = topLevelChats
+  const activeChatSurfaceTab: Exclude<SidebarActiveTab, 'projects'> =
+    activeSidebarTab === 'chat' ? 'chat' : 'threads'
+  const activeSurfaceChats = chats.filter(
+    (chat) => getChatSidebarTab(chat) === activeChatSurfaceTab
+  )
   const regularChats = topLevelChats.filter((chat) => chat.chatKind !== 'ensemble')
   const ensembleChats = ensembleModeEnabled
-    ? topLevelChats.filter((chat) => chat.chatKind === 'ensemble' && !chat.archived)
+    ? topLevelChats.filter(
+        (chat) =>
+          chat.chatKind === 'ensemble' &&
+          !chat.archived &&
+          getChatSidebarTab(chat) === activeChatSurfaceTab
+      )
     : []
   const chatsByWorkspace = getChatsByWorkspace(regularChats)
   const globalChats = regularChats.filter((chat) => !chat.archived && chat.scope === 'global')
@@ -2830,7 +2851,14 @@ export function Sidebar({
   const visibleGlobalChats = isSidebarSearchActive
     ? globalChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : globalChats
-  const totalChatCount = displayChats.filter((chat) => !chat.archived).length
+  const visibleChatCounts = displayChats.reduce(
+    (counts, chat) => {
+      if (!chat.archived) counts[getChatSidebarTab(chat)] += 1
+      return counts
+    },
+    { chat: 0, threads: 0 }
+  )
+  const totalChatCount = visibleChatCounts.chat + visibleChatCounts.threads
   const workspaceWorkflowIds = new Set(workspaces.map((workspace) => workspace.id))
   const workspaceById = new Map(workspaces.map((workspace) => [workspace.id, workspace]))
   const scopedWorkflows = workflows
@@ -2863,8 +2891,14 @@ export function Sidebar({
    * so they don't render twice.
    */
   const pinnedChats = useMemo(
-    () => topLevelChats.filter((chat) => chat.pinned === true && !chat.archived),
-    [topLevelChats]
+    () =>
+      topLevelChats.filter(
+        (chat) =>
+          chat.pinned === true &&
+          !chat.archived &&
+          getChatSidebarTab(chat) === activeChatSurfaceTab
+      ),
+    [activeChatSurfaceTab, topLevelChats]
   )
   // 1.0.7 — Recents now includes Ensemble chats (when ensemble mode is on),
   // mirroring the SB5 lift that put ensembles into Pinned. Pre-1.0.7 Recents
@@ -2876,20 +2910,31 @@ export function Sidebar({
   const recentSourceChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind !== 'ensemble' || !chat.archived)
     : regularChats
-  const recentChats = selectRecentChats(recentSourceChats, { limit: SIDEBAR_RECENTS_MAX })
+  const recentChats = selectRecentChats(
+    recentSourceChats.filter((chat) => getChatSidebarTab(chat) === activeChatSurfaceTab),
+    { limit: SIDEBAR_RECENTS_MAX }
+  )
   const visibleEnsembleChats = isSidebarSearchActive
     ? ensembleChats.filter((chat) => !chat.pinned && chatMatchesSearch(chat, sidebarSearchQuery))
     : ensembleChats.filter((chat) => !chat.pinned)
   const sharedChats = topLevelChats.filter(
-    (chat) => collaboratingChatIds.has(chat.appChatId) && !chat.archived
+    (chat) =>
+      collaboratingChatIds.has(chat.appChatId) &&
+      !chat.archived &&
+      getChatSidebarTab(chat) === activeChatSurfaceTab
   )
   const visibleSharedChats = isSidebarSearchActive
     ? sharedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : sharedChats
 
-  const visiblePinnedWorkspaces = isSidebarSearchActive
-    ? pinnedWorkspaces.filter((workspace) => workspaceMatchesSearch(workspace, sidebarSearchQuery))
-    : pinnedWorkspaces
+  const visiblePinnedWorkspaces =
+    activeChatSurfaceTab === 'chat'
+      ? []
+      : isSidebarSearchActive
+        ? pinnedWorkspaces.filter((workspace) =>
+            workspaceMatchesSearch(workspace, sidebarSearchQuery)
+          )
+        : pinnedWorkspaces
   const visiblePinnedChats = isSidebarSearchActive
     ? pinnedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : pinnedChats
@@ -2953,29 +2998,31 @@ export function Sidebar({
     }
   }, [selectedWorkflowId, visibleWorkflows])
 
-  // Search result-count badge. Counts DISTINCT matching items across
-  // every rendered bucket — previously it summed only workspace +
-  // global entries, so pinned chats and ensembles (which surface in
-  // their own sections) were never counted, undercounting the badge.
-  // Dedup via id sets because the same chat can dual-surface (e.g. a
-  // pinned workspace chat appears in both Pinned and its workspace
-  // group); counting each occurrence would over-report instead.
+  // Search result-count badge. Count distinct items on the active primary
+  // surface: General chats never inflate Code results, and workspace content
+  // never inflates Chat results. Projects owns its count in its child view.
+  // Dedup via id sets because the same chat can dual-surface in Pinned,
+  // Recents, Shared, and its canonical section.
   const sidebarSearchResultCount = (() => {
     const chatIds = new Set<string>()
     const workspaceIds = new Set<string>()
     const workflowIds = new Set<string>()
     const boardIds = new Set<string>()
-    for (const workflow of visibleWorkflows) workflowIds.add(workflow.id)
-    for (const board of visibleWorkspaceBoards) boardIds.add(board.id)
-    for (const entry of visibleWorkspaceEntries) {
-      workspaceIds.add(entry.workspace.id)
-      for (const chat of entry.visibleChats) chatIds.add(chat.appChatId)
+    if (activeChatSurfaceTab === 'chat') {
+      for (const chat of visibleGlobalChats) chatIds.add(chat.appChatId)
+    } else {
+      for (const workflow of visibleWorkflows) workflowIds.add(workflow.id)
+      for (const board of visibleWorkspaceBoards) boardIds.add(board.id)
+      for (const entry of visibleWorkspaceEntries) {
+        workspaceIds.add(entry.workspace.id)
+        for (const chat of entry.visibleChats) chatIds.add(chat.appChatId)
+      }
+      for (const workspace of visiblePinnedWorkspaces) workspaceIds.add(workspace.id)
     }
-    for (const chat of visibleGlobalChats) chatIds.add(chat.appChatId)
     for (const chat of visiblePinnedChats) chatIds.add(chat.appChatId)
     for (const chat of visibleRecentChats) chatIds.add(chat.appChatId)
     for (const chat of visibleEnsembleChats) chatIds.add(chat.appChatId)
-    for (const workspace of visiblePinnedWorkspaces) workspaceIds.add(workspace.id)
+    for (const chat of visibleSharedChats) chatIds.add(chat.appChatId)
     return chatIds.size + workspaceIds.size + workflowIds.size + boardIds.size
   })()
   const activeSidebarSearchResultCount =
@@ -3134,14 +3181,44 @@ export function Sidebar({
     return grouped
   }, [chats])
   const selectedChatId = activeChatId ?? currentChat?.appChatId ?? null
+  const selectedChat = chats.find((chat) => chat.appChatId === selectedChatId) || currentChat || null
+  const selectedChatSurfaceKey = selectedChat
+    ? `${selectedChat.appChatId}:${getChatSidebarTab(selectedChat)}`
+    : null
+  const activeSidebarTabRef = useRef(activeSidebarTab)
+  activeSidebarTabRef.current = activeSidebarTab
+  const previousSelectedChatSurfaceKeyRef = useRef(selectedChatSurfaceKey)
+  useEffect(() => {
+    const previousSurfaceKey = previousSelectedChatSurfaceKeyRef.current
+    previousSelectedChatSurfaceKeyRef.current = selectedChatSurfaceKey
+    if (!selectedChat || !selectedChatSurfaceKey || previousSurfaceKey === selectedChatSurfaceKey) {
+      return
+    }
+    // Projects is deliberately cross-scope: selecting one of its members must
+    // not eject the user from the organisational view.
+    if (activeSidebarTabRef.current === 'projects') return
+    setActiveSidebarTab(getChatSidebarTab(selectedChat))
+  }, [selectedChat, selectedChatSurfaceKey])
   const currentScopeTitle =
     currentWorkspace?.displayName || (currentChat?.scope === 'global' ? null : 'TaskWraith')
-  const runningCount = runningChatIdSet.size
-  // The masthead "+ New → New Chat" item exclusively creates a General
-  // (scope:'global') chat, regardless of the active workspace. The separate
-  // "New Workspace Chat" row creates a deterministic chat in the current
-  // workspace, falling back to the most recently opened workspace.
-  const primaryNewTitle = 'New general chat'
+  const runningCount =
+    activeSidebarTab === 'projects'
+      ? runningChatIdSet.size
+      : activeSurfaceChats.reduce(
+          (count, chat) => count + (runningChatIdSet.has(chat.appChatId) ? 1 : 0),
+          0
+        )
+  const activeSidebarChatCount =
+    activeSidebarTab === 'chat'
+      ? visibleChatCounts.chat
+      : activeSidebarTab === 'projects'
+        ? totalChatCount
+        : visibleChatCounts.threads
+  // The first create-menu item follows the active primary surface: Chat starts
+  // a General chat, while Code starts a workspace chat. Projects remains a
+  // cross-scope organisational view and keeps General chat as its first action.
+  const primaryNewTitle =
+    activeSidebarTab === 'threads' ? 'New workspace chat' : 'New general chat'
   const defaultWorkspaceForNewChat =
     currentWorkspace ||
     [...workspaces].sort((a, b) => (b.lastOpenedAt || 0) - (a.lastOpenedAt || 0))[0] ||
@@ -3151,6 +3228,7 @@ export function Sidebar({
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
+    if (activeSidebarTab !== 'projects') setActiveSidebarTab('chat')
     onNewGlobalChat()
   }
   const handleNewWorkspaceChat = () => {
@@ -3158,6 +3236,7 @@ export function Sidebar({
     setNewMenuOpen(false)
     setNewMenuSharedOpen(false)
     setNewMenuWorkflowTemplatesOpen(false)
+    if (activeSidebarTab !== 'projects') setActiveSidebarTab('threads')
     onNewChat(defaultWorkspaceForNewChat.id, defaultWorkspaceForNewChat.path)
   }
   const handleNewEnsemble = () => {
@@ -3204,6 +3283,9 @@ export function Sidebar({
     setNewMenuWorkflowTemplatesOpen(false)
     setSharedCreateMenuOpen(false)
     expandSidebarSection('shared')
+    if (activeSidebarTab !== 'projects') {
+      setActiveSidebarTab(variant === 'global' ? 'chat' : 'threads')
+    }
     onCreateSharedChat?.(variant)
   }
 
@@ -4026,26 +4108,41 @@ export function Sidebar({
                   type="button"
                   role="menuitem"
                   className="sidebar-new-menu-item"
-                  onClick={handlePrimaryNewChat}
+                  onClick={
+                    activeSidebarTab === 'threads'
+                      ? handleNewWorkspaceChat
+                      : handlePrimaryNewChat
+                  }
+                  disabled={activeSidebarTab === 'threads' && !defaultWorkspaceForNewChat}
                   title={primaryNewTitle}
                 >
-                  <ChatBubbleSymbolIcon />
-                  <span className="sidebar-new-menu-item-label">New Chat</span>
+                  {activeSidebarTab === 'threads' ? <FolderSymbolIcon /> : <ChatBubbleSymbolIcon />}
+                  <span className="sidebar-new-menu-item-label">
+                    {activeSidebarTab === 'threads' ? 'New Workspace Chat' : 'New Chat'}
+                  </span>
                 </button>
                 <button
                   type="button"
                   role="menuitem"
                   className="sidebar-new-menu-item"
-                  onClick={handleNewWorkspaceChat}
-                  disabled={!defaultWorkspaceForNewChat}
+                  onClick={
+                    activeSidebarTab === 'threads'
+                      ? handlePrimaryNewChat
+                      : handleNewWorkspaceChat
+                  }
+                  disabled={activeSidebarTab !== 'threads' && !defaultWorkspaceForNewChat}
                   title={
-                    defaultWorkspaceForNewChat
+                    activeSidebarTab === 'threads'
+                      ? 'New general chat'
+                      : defaultWorkspaceForNewChat
                       ? `New workspace chat in ${defaultWorkspaceForNewChat.displayName}`
                       : 'Add a workspace first to create a workspace chat'
                   }
                 >
-                  <FolderSymbolIcon />
-                  <span className="sidebar-new-menu-item-label">New Workspace Chat</span>
+                  {activeSidebarTab === 'threads' ? <ChatBubbleSymbolIcon /> : <FolderSymbolIcon />}
+                  <span className="sidebar-new-menu-item-label">
+                    {activeSidebarTab === 'threads' ? 'New General Chat' : 'New Workspace Chat'}
+                  </span>
                 </button>
                 {onCreateWorkflow && (
                   <button
@@ -4184,11 +4281,14 @@ export function Sidebar({
           </div>
         </div>
         <div className="sidebar-masthead-stats" aria-label="Sidebar summary">
+          {activeSidebarTab !== 'chat' && (
+            <span>
+              {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
+            </span>
+          )}
           <span>
-            {workspaces.length} workspace{workspaces.length === 1 ? '' : 's'}
-          </span>
-          <span>
-            {totalChatCount} thread{totalChatCount === 1 ? '' : 's'}
+            {activeSidebarChatCount} {activeSidebarTab === 'chat' ? 'chat' : 'thread'}
+            {activeSidebarChatCount === 1 ? '' : 's'}
           </span>
           {runningCount > 0 && <span className="sidebar-stat-live">{runningCount} running</span>}
         </div>
@@ -4198,7 +4298,7 @@ export function Sidebar({
           role="tablist"
           aria-label="Sidebar view"
         >
-          {(['threads', 'projects'] as const).map((tab) => (
+          {SIDEBAR_ACTIVE_TABS.map((tab) => (
             <button
               key={tab}
               type="button"
@@ -4213,7 +4313,13 @@ export function Sidebar({
               onKeyDown={(event) => {
                 if (event.key !== 'ArrowLeft' && event.key !== 'ArrowRight') return
                 event.preventDefault()
-                const nextTab = tab === 'threads' ? 'projects' : 'threads'
+                const direction = event.key === 'ArrowRight' ? 1 : -1
+                const currentIndex = SIDEBAR_ACTIVE_TABS.indexOf(tab)
+                const nextTab =
+                  SIDEBAR_ACTIVE_TABS[
+                    (currentIndex + direction + SIDEBAR_ACTIVE_TABS.length) %
+                      SIDEBAR_ACTIVE_TABS.length
+                  ]
                 setActiveSidebarTab(nextTab)
                 window.requestAnimationFrame(() => {
                   document.getElementById(`sidebar-${nextTab}-tab`)?.focus()
@@ -4221,7 +4327,7 @@ export function Sidebar({
               }}
               tabIndex={activeSidebarTab === tab ? 0 : -1}
             >
-              {tab === 'threads' ? 'Threads' : 'Projects'}
+              {tab === 'chat' ? 'Chat' : tab === 'threads' ? 'Code' : 'Projects'}
             </button>
           ))}
         </div>
@@ -4250,12 +4356,16 @@ export function Sidebar({
               placeholder={
                 activeSidebarTab === 'projects'
                   ? 'Search projects & members'
-                  : 'Search workspaces & threads'
+                  : activeSidebarTab === 'chat'
+                    ? 'Search chats'
+                    : 'Search workspaces & threads'
               }
               aria-label={
                 activeSidebarTab === 'projects'
                   ? 'Search projects and project members'
-                  : 'Search workspaces and chats'
+                  : activeSidebarTab === 'chat'
+                    ? 'Search chats'
+                    : 'Search workspaces and chats'
               }
               spellCheck={false}
             />
@@ -4273,7 +4383,9 @@ export function Sidebar({
                   aria-label={
                     activeSidebarTab === 'projects'
                       ? 'Clear project search'
-                      : 'Clear workspace and thread search'
+                      : activeSidebarTab === 'chat'
+                        ? 'Clear chat search'
+                        : 'Clear workspace and thread search'
                   }
                 >
                   <XSymbolIcon />
@@ -4304,14 +4416,14 @@ export function Sidebar({
             </div>
           ) : (
             <div
-              id="sidebar-threads-panel"
+              id={`sidebar-${activeSidebarTab}-panel`}
               role="tabpanel"
-              aria-labelledby="sidebar-threads-tab"
+              aria-labelledby={`sidebar-${activeSidebarTab}-tab`}
             >
           {wrapHierarchySection(
             'active-runs',
             <ActiveRunsSection
-              chats={chats}
+              chats={activeSurfaceChats}
               currentChat={currentChat}
               runningChatIds={runningChatIds}
               onSelectChat={onSelectChat}
@@ -4323,7 +4435,7 @@ export function Sidebar({
           {wrapHierarchySection(
             'local-servers',
             <LocalServersSection onAddLocalServerToWorkspaceBoard={onAddLocalServerToWorkspaceBoard} />,
-            localServers.length > 0
+            activeSidebarTab === 'threads' && localServers.length > 0
           )}
 
           {wrapHierarchySection(
@@ -4597,7 +4709,8 @@ export function Sidebar({
                 )}
               </div>
             )}
-            </div>
+            </div>,
+            activeSidebarTab === 'threads'
           )}
 
           {wrapHierarchySection(
@@ -4744,7 +4857,8 @@ export function Sidebar({
                   )}
                 </div>
               )}
-            </div>
+            </div>,
+            activeSidebarTab === 'threads'
           )}
 
           {wrapHierarchySection(
@@ -5314,14 +5428,14 @@ export function Sidebar({
                 })}
             </div>
               {isSidebarSearchActive &&
-                visibleWorkspaceEntries.length === 0 &&
-                visibleGlobalChats.length === 0 && (
+                visibleWorkspaceEntries.length === 0 && (
                   <div className="sidebar-empty-state">
                     <strong>No matches</strong>
                     <span>Try a workspace name, provider, branch, or thread title.</span>
                   </div>
                 )}
-            </div>
+            </div>,
+            activeSidebarTab === 'threads'
           )}
 
           {wrapHierarchySection(
@@ -5387,9 +5501,16 @@ export function Sidebar({
                       <span>Hit + above to start one.</span>
                     </div>
                   )}
+                  {visibleGlobalChats.length === 0 && isSidebarSearchActive && (
+                    <div className="sidebar-empty-state">
+                      <strong>No matches</strong>
+                      <span>Try a provider or chat title.</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
+            </div>,
+            activeSidebarTab === 'chat'
           )}
           {wrapHierarchySection(
             'shared',

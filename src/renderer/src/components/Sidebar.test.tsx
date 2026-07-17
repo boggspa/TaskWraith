@@ -25,6 +25,7 @@ const COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY = 'taskwraith-sidebar-collapsed-sec
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION_KEY =
   'taskwraith-sidebar-collapsed-sections-default-version'
 const COLLAPSED_SIDEBAR_SECTIONS_DEFAULT_VERSION = 'recents-open-v1'
+const SIDEBAR_ACTIVE_TAB_STORAGE_KEY = 'taskwraith-sidebar-active-tab'
 
 // Mirrors SIDEBAR_SECTION_IDS in Sidebar.tsx. The sidebar defaults every section
 // except Recents to collapsed for new users, so tests that assert on child rows
@@ -327,6 +328,127 @@ describe('Sidebar masthead', () => {
   })
 })
 
+describe('Sidebar primary views', () => {
+  const workspacePinned = makeChat({
+    appChatId: 'workspace-pinned',
+    title: 'Workspace pinned',
+    pinned: true,
+    updatedAt: 4
+  })
+  const workspaceRecent = makeChat({
+    appChatId: 'workspace-recent',
+    title: 'Workspace recent',
+    updatedAt: 3
+  })
+  const globalPinned = makeChat({
+    appChatId: 'global-pinned',
+    scope: 'global',
+    workspaceId: undefined,
+    workspacePath: undefined,
+    title: 'Global pinned',
+    pinned: true,
+    updatedAt: 2
+  })
+  const globalRecent = makeChat({
+    appChatId: 'global-recent',
+    scope: 'global',
+    workspaceId: undefined,
+    workspacePath: undefined,
+    title: 'Global recent',
+    updatedAt: 1
+  })
+  const mixedChats = [workspacePinned, workspaceRecent, globalPinned, globalRecent]
+
+  it('renders Chat, Code, and Projects in primary-mode order', () => {
+    stubSidebarStorage({})
+
+    const html = renderSidebar([workspaceRecent])
+    const chatTabIndex = html.indexOf('id="sidebar-chat-tab"')
+    const codeTabIndex = html.indexOf('id="sidebar-threads-tab"')
+    const projectsTabIndex = html.indexOf('id="sidebar-projects-tab"')
+
+    expect(chatTabIndex).toBeGreaterThanOrEqual(0)
+    expect(chatTabIndex).toBeLessThan(codeTabIndex)
+    expect(codeTabIndex).toBeLessThan(projectsTabIndex)
+    expect(html).toContain('>Chat</button>')
+    expect(html).toContain('>Code</button>')
+    expect(html).toContain('>Projects</button>')
+  })
+
+  it('keeps workspace pinned and recent chats in Code only', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
+        'pinned',
+        'recents',
+        'workspaces',
+        'chats'
+      )
+    })
+
+    const html = renderSidebar(mixedChats)
+
+    expect(html).toContain('id="sidebar-threads-panel"')
+    expect(html).toContain('Workspace pinned')
+    expect(html).toContain('Workspace recent')
+    expect(html).not.toContain('Global pinned')
+    expect(html).not.toContain('Global recent')
+    expect(html).not.toContain('sidebar-chats-section')
+  })
+
+  it('gives Chat its own global pinned and recent lists', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
+        'pinned',
+        'recents',
+        'workspaces',
+        'chats'
+      )
+    })
+
+    const html = renderSidebar(mixedChats, { activeChatId: 'global-recent' })
+
+    expect(html).toContain('id="sidebar-chat-panel"')
+    expect(html).toContain('Global pinned')
+    expect(html).toContain('Global recent')
+    expect(html).not.toContain('Workspace pinned')
+    expect(html).not.toContain('Workspace recent')
+    expect(html).not.toContain('sidebar-workspace-scroll')
+  })
+
+  it('fronts Chat for a selected General chat even when Code was persisted', () => {
+    stubSidebarStorage({ [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'threads' })
+
+    const html = renderSidebar(mixedChats, { activeChatId: 'global-recent' })
+
+    expect(html).toContain('id="sidebar-chat-panel"')
+    expect(html).toContain('id="sidebar-chat-tab"')
+    expect(html).toContain('aria-selected="true" aria-controls="sidebar-chat-panel"')
+  })
+
+  it('does not eject a General chat selection from persisted Projects', () => {
+    stubSidebarStorage({ [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'projects' })
+
+    const html = renderSidebar(mixedChats, { activeChatId: 'global-recent' })
+
+    expect(html).toContain('id="sidebar-projects-panel"')
+    expect(html).toContain('aria-selected="true" aria-controls="sidebar-projects-panel"')
+  })
+
+  it('uses surface-specific stats and search language', () => {
+    stubSidebarStorage({})
+
+    const codeHtml = renderSidebar(mixedChats)
+    const chatHtml = renderSidebar(mixedChats, { activeChatId: 'global-recent' })
+
+    expect(codeHtml).toContain('1 workspace')
+    expect(codeHtml).toContain('2 threads')
+    expect(codeHtml).toContain('placeholder="Search workspaces &amp; threads"')
+    expect(chatHtml).toContain('2 chats')
+    expect(chatHtml).not.toContain('1 workspace')
+    expect(chatHtml).toContain('placeholder="Search chats"')
+  })
+})
+
 describe('Sidebar active chat override', () => {
   it('marks activeChatId as selected before currentChat catches up', () => {
     stubSidebarStorage({
@@ -518,58 +640,61 @@ describe('Sidebar chat row markup', () => {
       )
     })
 
-    const html = renderSidebar(
-      [
-        makeChat({ appChatId: 'workspace-1', title: 'Workspace thread', updatedAt: 10 }),
-        makeChat({
-          appChatId: 'pinned-1',
-          title: 'Pinned thread',
-          pinned: true,
-          updatedAt: 9
-        }),
-        makeChat({
-          appChatId: 'ensemble-1',
-          chatKind: 'ensemble',
-          title: 'Ensemble thread',
-          provider: 'codex',
-          updatedAt: 8
-        }),
-        makeChat({
-          appChatId: 'global-1',
-          scope: 'global',
-          title: 'Global thread',
-          workspaceId: undefined,
-          workspacePath: undefined,
-          updatedAt: 7
-        }),
-        makeChat({
-          appChatId: 'shared-1',
-          title: 'Shared thread',
-          updatedAt: 6
-        }),
-        makeChat({
-          appChatId: 'child-1',
-          title: 'Child thread',
-          parentChatId: 'workspace-1',
-          updatedAt: 5
-        })
-      ],
-      {
-        collaboratingChatIds: new Set(['shared-1']),
-        initialExpandedSubThreadParentIds: ['workspace-1'],
-        onRenameChat: () => {},
-        onTogglePinChat: () => {}
-      }
-    )
+    const chats = [
+      makeChat({ appChatId: 'workspace-1', title: 'Workspace thread', updatedAt: 10 }),
+      makeChat({
+        appChatId: 'pinned-1',
+        title: 'Pinned thread',
+        pinned: true,
+        updatedAt: 9
+      }),
+      makeChat({
+        appChatId: 'ensemble-1',
+        chatKind: 'ensemble',
+        title: 'Ensemble thread',
+        provider: 'codex',
+        updatedAt: 8
+      }),
+      makeChat({
+        appChatId: 'global-1',
+        scope: 'global',
+        title: 'Global thread',
+        workspaceId: undefined,
+        workspacePath: undefined,
+        updatedAt: 7
+      }),
+      makeChat({
+        appChatId: 'shared-1',
+        title: 'Shared thread',
+        updatedAt: 6
+      }),
+      makeChat({
+        appChatId: 'child-1',
+        title: 'Child thread',
+        parentChatId: 'workspace-1',
+        updatedAt: 5
+      })
+    ]
+    const html = renderSidebar(chats, {
+      collaboratingChatIds: new Set(['shared-1']),
+      initialExpandedSubThreadParentIds: ['workspace-1'],
+      onRenameChat: () => {},
+      onTogglePinChat: () => {}
+    })
 
     expect(html).not.toMatch(/<button[^>]*class="[^"]*sidebar-chat-item/)
     expect(html).toMatch(/<div role="button"[^>]*class="[^"]*sidebar-chat-item/)
     expect(html).toContain('Workspace thread')
     expect(html).toContain('Pinned thread')
     expect(html).toContain('Ensemble thread')
-    expect(html).toContain('Global thread')
+    expect(html).not.toContain('Global thread')
     expect(html).toContain('Shared thread')
     expect(html).toContain('Child thread')
+
+    const chatHtml = renderSidebar(chats, { activeChatId: 'global-1' })
+    expect(chatHtml).toMatch(/<div role="button"[^>]*class="[^"]*sidebar-chat-item/)
+    expect(chatHtml).toContain('Global thread')
+    expect(chatHtml).not.toContain('Workspace thread')
   })
 })
 
