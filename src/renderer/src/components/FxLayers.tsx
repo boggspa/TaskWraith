@@ -434,6 +434,7 @@ export function SkyWeatherVisual({
       : false
   const moonShadow = moonShadowPath(scene.moonPhase, southernHemisphere)
   const moonFillId = `skyMoonFill-${moonIdPrefix}`
+  const moonMaskId = `skyMoonMask-${moonIdPrefix}`
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -626,16 +627,35 @@ export function SkyWeatherVisual({
                 <stop offset="0.85" stopColor="#c8d4e6" />
                 <stop offset="1" stopColor="#aebfd8" />
               </radialGradient>
+              {/* The shadow path REMOVES the dark side via a mask instead of
+               * painting it: an opaque dark disc silhouettes badly against a
+               * bright twilight gradient (a crescent night looked like a
+               * black blob at dusk). Only the lit crescent renders, plus the
+               * barely-there earthshine disc below. */}
+              {moonShadow && (
+                <mask id={moonMaskId}>
+                  <circle cx="48" cy="48" r="45.5" fill="#ffffff" />
+                  <path d={moonShadow} fill="#000000" />
+                </mask>
+              )}
             </defs>
-            <circle className="sky-moon-disc" cx="48" cy="48" r="44" fill={`url(#${moonFillId})`} />
-            <g className="sky-moon-maria">
-              <ellipse cx="36" cy="38" rx="11" ry="9" />
-              <ellipse cx="58" cy="30" rx="7" ry="6" />
-              <ellipse cx="55" cy="56" rx="12" ry="10" />
-              <ellipse cx="34" cy="62" rx="6" ry="5" />
-              <circle cx="66" cy="66" r="3.4" />
+            <circle
+              className="sky-moon-earthshine"
+              cx="48"
+              cy="48"
+              r="44"
+              fill={`url(#${moonFillId})`}
+            />
+            <g mask={moonShadow ? `url(#${moonMaskId})` : undefined}>
+              <circle className="sky-moon-disc" cx="48" cy="48" r="44" fill={`url(#${moonFillId})`} />
+              <g className="sky-moon-maria">
+                <ellipse cx="36" cy="38" rx="11" ry="9" />
+                <ellipse cx="58" cy="30" rx="7" ry="6" />
+                <ellipse cx="55" cy="56" rx="12" ry="10" />
+                <ellipse cx="34" cy="62" rx="6" ry="5" />
+                <circle cx="66" cy="66" r="3.4" />
+              </g>
             </g>
-            {moonShadow && <path className="sky-moon-shadow" d={moonShadow} />}
           </svg>
         </div>
       )}

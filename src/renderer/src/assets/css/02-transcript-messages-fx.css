@@ -785,8 +785,50 @@
   transform: translateZ(0);
   backface-visibility: hidden;
   will-change: transform, opacity;
-  mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0.9) 48%, rgba(0, 0, 0, 0.62) 78%, rgba(0, 0, 0, 0.18) 92%, transparent 100%);
-  -webkit-mask-image: linear-gradient(to bottom, rgba(0, 0, 0, 1), rgba(0, 0, 0, 0.9) 48%, rgba(0, 0, 0, 0.62) 78%, rgba(0, 0, 0, 0.18) 92%, transparent 100%);
+  /* Long eased dissolve (smoothstep-shaped stops) — the old 4-stop ramp read
+   * as a hard band where the bright dusk horizon met the fast tail. Composes
+   * with .sky-gradient's own internal alpha tail for a doubly-soft fade. */
+  mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1),
+    rgba(0, 0, 0, 0.97) 40%,
+    rgba(0, 0, 0, 0.9) 55%,
+    rgba(0, 0, 0, 0.78) 66%,
+    rgba(0, 0, 0, 0.62) 75%,
+    rgba(0, 0, 0, 0.45) 82%,
+    rgba(0, 0, 0, 0.3) 88%,
+    rgba(0, 0, 0, 0.17) 93%,
+    rgba(0, 0, 0, 0.07) 97%,
+    transparent 100%
+  );
+  -webkit-mask-image: linear-gradient(
+    to bottom,
+    rgba(0, 0, 0, 1),
+    rgba(0, 0, 0, 0.97) 40%,
+    rgba(0, 0, 0, 0.9) 55%,
+    rgba(0, 0, 0, 0.78) 66%,
+    rgba(0, 0, 0, 0.62) 75%,
+    rgba(0, 0, 0, 0.45) 82%,
+    rgba(0, 0, 0, 0.3) 88%,
+    rgba(0, 0, 0, 0.17) 93%,
+    rgba(0, 0, 0, 0.07) 97%,
+    transparent 100%
+  );
+}
+
+/* Static film grain — dithers the wide soft gradients so they don't band on
+ * 8-bit displays. One tiled SVG turbulence texture, painted once, no
+ * animation; sits above the sky layers inside the same mask. */
+.sky-visual-fx::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 6;
+  pointer-events: none;
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='0.8' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='160' height='160' filter='url(%23n)' opacity='0.5'/></svg>");
+  background-size: 160px 160px;
+  mix-blend-mode: overlay;
+  opacity: 0.05;
 }
 
 .sky-fog-filter {
@@ -930,6 +972,14 @@
   initial-value: 0.5;
 }
 
+/* Pastelization strength for light themes (100% = raw palette, dark themes).
+ * Registered so twilight-band changes blend instead of stepping. */
+@property --sky-ink {
+  syntax: '<percentage>';
+  inherits: true;
+  initial-value: 100%;
+}
+
 /* Colours/opacities blend over ~2.6 s (weather + twilight shifts); the sun
  * and moon creep between 30 s scene ticks on a near-continuous 28 s ramp.
  * The list ALSO lives in --sky-scene-transitions because the fx-gate rule in
@@ -954,6 +1004,7 @@
     --sky-moon-bright 2600ms linear,
     --sky-stars 2600ms linear,
     --sky-cloud-density 2600ms linear,
+    --sky-ink 2600ms linear,
     --sky-sun-x 28s linear,
     --sky-sun-y 28s linear,
     --sky-moon-x 28s linear,
@@ -977,6 +1028,7 @@
     --sky-moon-bright 2600ms linear,
     --sky-stars 2600ms linear,
     --sky-cloud-density 2600ms linear,
+    --sky-ink 2600ms linear,
     --sky-sun-x 28s linear,
     --sky-sun-y 28s linear,
     --sky-moon-x 28s linear,
@@ -984,18 +1036,29 @@
     opacity 220ms ease;
 }
 
-/* Base sky: the real gradient, zenith → horizon. */
+/* Base sky: the real gradient, zenith → horizon.
+ * Each stop passes through an ink/paper mix — dark themes run at
+ * --sky-ink: 100% toward transparent (identity), light themes lower the ink
+ * and supply a paper tint so the same palette renders as a readable pastel.
+ * The horizon peaks at 74% and dissolves inside the gradient itself, so the
+ * brightest dusk band melts into the app instead of hitting the mask edge. */
 .sky-gradient {
+  --sg-top: color-mix(in srgb, var(--sky-top) var(--sky-ink, 100%), var(--sky-paper, transparent));
+  --sg-upper: color-mix(in srgb, var(--sky-upper) var(--sky-ink, 100%), var(--sky-paper, transparent));
+  --sg-mid: color-mix(in srgb, var(--sky-mid) var(--sky-ink, 100%), var(--sky-paper, transparent));
+  --sg-horizon: color-mix(in srgb, var(--sky-horizon) var(--sky-ink, 100%), var(--sky-paper, transparent));
   position: absolute;
   inset: -6% -2% -4%;
   pointer-events: none;
   background: linear-gradient(
     180deg,
-    var(--sky-top),
-    var(--sky-upper) 34%,
-    var(--sky-mid) 64%,
-    var(--sky-horizon) 88%,
-    var(--sky-horizon) 100%
+    var(--sg-top),
+    var(--sg-upper) 30%,
+    var(--sg-mid) 56%,
+    var(--sg-horizon) 74%,
+    color-mix(in srgb, var(--sg-horizon) 72%, transparent) 84%,
+    color-mix(in srgb, var(--sg-horizon) 38%, transparent) 92%,
+    transparent 100%
   );
   opacity: 0.94;
 }
@@ -1174,8 +1237,10 @@
   fill: rgba(104, 122, 152, 0.2);
 }
 
-.sky-moon-shadow {
-  fill: rgba(7, 11, 24, 0.9);
+/* The dark side is nearly-invisible earthshine, never an opaque disc — the
+ * lit crescent is carved by the SVG mask in FxLayers. */
+.sky-moon-earthshine {
+  opacity: 0.12;
 }
 
 /* Occluded sun through weather decks — the disc dims and diffuses. */
@@ -1274,6 +1339,65 @@
     drop-shadow(0 0 9px rgba(250, 253, 255, 0.92))
     drop-shadow(0 0 30px rgba(181, 221, 255, 0.68))
     drop-shadow(0 0 74px rgba(97, 145, 255, 0.42));
+}
+
+/* ===== Light themes: real sky depth via normal compositing ================
+ * `screen` blending can only lighten, so over a near-white transcript the
+ * palette vanished into a flat wash. Light themes composite the layer
+ * normally and PASTELIZE the palette instead: .sky-gradient mixes each stop
+ * toward --sky-paper at --sky-ink strength, keeping full-chroma dusk ambers
+ * and day azures while staying light enough for dark transcript text. Ink
+ * deepens with daylight and backs off through the night bands (dark text vs
+ * dark sky truce). The --fx-sky-mode-filter-* seams tame the fx-mode
+ * saturation boosts that were tuned for screen-over-dark. Alabaster keeps
+ * its opaque-cream-slab contract (same opt-out as the theme reveal). */
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx {
+  --fx-sky-blend-mode: normal;
+  --fx-sky-filter: saturate(1.07) brightness(1.01);
+  --fx-sky-mode-filter-subtle: saturate(1.04) brightness(1.005);
+  --fx-sky-mode-filter-cinematic: saturate(1.09) brightness(1.01);
+  --fx-sky-mode-filter-epic: saturate(1.14) brightness(1.02);
+  /* Fixed paper (not var(--content-bg) — that's `transparent` under native
+   * glass, which would collapse the pastel into full-chroma over glass and
+   * break text legibility). */
+  --sky-paper: #f8fbfe;
+  --sky-ink: 72%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-day {
+  --sky-ink: 80%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-golden {
+  --sky-ink: 74%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-sunrise {
+  --sky-ink: 70%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-civil {
+  --sky-ink: 62%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-nautical {
+  --sky-ink: 52%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-astro {
+  --sky-ink: 46%;
+}
+
+:is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"])
+  .sky-visual-fx.sky-scene-night {
+  --sky-ink: 40%;
 }
 
 /* Clouds — the shapes stay, but every white is now the scene's lit tint and
