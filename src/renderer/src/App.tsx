@@ -629,6 +629,10 @@ import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
 } from './lib/workspaceSelection'
+import {
+  planPrimarySurfaceConversion,
+  type SidebarPrimarySurface
+} from './lib/primarySurfaceToggle'
 import { buildWelcomeCopy } from './lib/welcomeCopy'
 import {
   buildLaunchPreviewTargets,
@@ -7506,6 +7510,140 @@ function App(): React.JSX.Element {
     syncThinkingForChat(chatWithLedger)
     void refreshProviderMetadata(getChatProvider(chatWithLedger), ws.path)
     await refreshWorkspaceTrust(ws)
+  }
+
+  // Sidebar Chat ⇄ Code toggle. Flipping the primary surface while sitting on
+  // a pristine (never-started, run-free) SINGLE welcome draft re-scopes that
+  // draft in place to the surface just selected: Chat → a General welcome,
+  // Code → a workspace welcome bound to the last-opened workspace. Same
+  // record id, so the provider / model / reasoning / approval selection and
+  // any typed-but-unsent composer draft ride along untouched —
+  // rebindChatWorkspace only clears workspace-bound continuity (sessions,
+  // receipts, external path grants). Anything the planner rejects (started
+  // chats, ensembles — their curated panels move through the dedicated
+  // welcome/EW41 rebind flows — workflow drafts, boards, multiview, busy
+  // chats, no registered workspace) leaves the toggle as it always was: a
+  // sidebar list switch that never touches the focused chat.
+  const sidebarSurfaceConvertInFlightRef = useRef(false)
+  const handleSidebarPrimarySurfaceSelect = async (
+    surface: SidebarPrimarySurface
+  ): Promise<void> => {
+    if (sidebarSurfaceConvertInFlightRef.current) return
+    const chatId = currentChatIdRef.current
+    const initiatingChat = chatId
+      ? chatByIdRef.current.get(chatId) ||
+        (currentChat?.appChatId === chatId ? currentChat : null)
+      : null
+    const plan = planPrimarySurfaceConversion({
+      surface,
+      chat: initiatingChat,
+      isChatBusy: Boolean(chatId && (isChatBusy(chatId) || runningChatIds.has(chatId))),
+      isMultiview: multiview.isMultiview,
+      isWorkflowChat: Boolean(
+        chatId &&
+          (workflowDraft?.chatId === chatId ||
+            workflowDefinitions.some((workflow) => workflow.template.chatId === chatId))
+      ),
+      hasActiveWorkspaceBoard: Boolean(activeWorkspaceBoardId),
+      currentWorkspace,
+      workspaces
+    })
+    if (!chatId || !initiatingChat || plan.kind === 'none') return
+    sidebarSurfaceConvertInFlightRef.current = true
+    try {
+      if (plan.kind === 'to-workspace') {
+        const ws = plan.workspace
+        const rendererAlreadyBound =
+          initiatingChat.scope !== 'global' &&
+          initiatingChat.workspaceId === ws.id &&
+          initiatingChat.workspacePath === ws.path &&
+          currentWorkspaceIdRef.current === ws.id &&
+          currentWorkspacePathRef.current === ws.path &&
+          currentWorkspace?.id === ws.id &&
+          currentWorkspace?.path === ws.path
+        let rebound: ChatRecord
+        let canonicalChanged = false
+        try {
+          const result = await window.api.rebindChatWorkspace({
+            chatId,
+            scope: 'workspace',
+            workspaceId: ws.id,
+            workspacePath: ws.path
+          })
+          rebound = result.chat
+          canonicalChanged = result.changed
+        } catch (error) {
+          appendThreadRawLog(chatId, {
+            type: 'stderr',
+            content: `Workspace switch blocked: ${redactLog(String(error))}`
+          })
+          return
+        }
+        const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+        updateChatById(chatId, () => chatWithLedger)
+        if (currentChatIdRef.current !== chatId) return
+        if (
+          !shouldApplyFocusedWorkspaceRebind({
+            canonicalChanged,
+            rendererAlreadyAtTarget: rendererAlreadyBound
+          })
+        ) {
+          await refreshWorkspaceTrust(ws)
+          return
+        }
+        setCurrentWorkspace(ws)
+        currentWorkspaceIdRef.current = ws.id
+        currentWorkspacePathRef.current = ws.path
+        void refreshUsageSummary(ws.id, getChatProvider(chatWithLedger))
+        setDiff(null)
+        setRunDiff(null)
+        setRunCompleteNotice(null)
+        setRawLogs(rawLogsByChatIdRef.current.get(chatId) || [])
+        hydrateThreadRawLogsFromEvents(chatId)
+        setSessionTrust(false)
+        syncThinkingForChat(chatWithLedger)
+        void refreshProviderMetadata(getChatProvider(chatWithLedger), ws.path)
+        await refreshWorkspaceTrust(ws)
+        return
+      }
+      const rendererAlreadyGlobal =
+        initiatingChat.scope === 'global' &&
+        !initiatingChat.workspaceId &&
+        !initiatingChat.workspacePath &&
+        currentWorkspaceIdRef.current === null &&
+        currentWorkspacePathRef.current === null &&
+        currentWorkspace === null
+      let rebound: ChatRecord
+      let canonicalChanged = false
+      try {
+        const result = await window.api.rebindChatWorkspace({
+          chatId,
+          scope: 'global'
+        })
+        rebound = result.chat
+        canonicalChanged = result.changed
+      } catch (error) {
+        appendThreadRawLog(chatId, {
+          type: 'stderr',
+          content: `Workspace switch blocked: ${redactLog(String(error))}`
+        })
+        return
+      }
+      const chatWithLedger = withSessionActivityLedger(initiatingChat, rebound)
+      updateChatById(chatId, () => chatWithLedger)
+      if (currentChatIdRef.current !== chatId) return
+      if (
+        !shouldApplyFocusedWorkspaceRebind({
+          canonicalChanged,
+          rendererAlreadyAtTarget: rendererAlreadyGlobal
+        })
+      ) {
+        return
+      }
+      await selectGlobalChat(chatWithLedger)
+    } finally {
+      sidebarSurfaceConvertInFlightRef.current = false
+    }
   }
 
   const refreshUsageSummary = async (
@@ -27389,6 +27527,7 @@ function App(): React.JSX.Element {
     handleSideReasoningChange,
     handleSideRun,
     handleSideToggleFastMode,
+    handleSidebarPrimarySurfaceSelect,
     handleSidebarQuickUpdate,
     handleStartSharedChat,
     handleSteerToQueuedMessage,

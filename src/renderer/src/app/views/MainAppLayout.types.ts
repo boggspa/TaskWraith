@@ -96,6 +96,7 @@ type MainAppLayoutSidebarProps = {
   handleSelectWorkspace: SidebarProps['onSelectWorkspaceDialog']
   handleSetWorkflowUnattended: NonNullable<SidebarProps['onSetWorkflowUnattended']>
   handleSettingsChange: SettingsPanelUpdateHandler
+  handleSidebarPrimarySurfaceSelect: NonNullable<SidebarProps['onPrimarySurfaceSelect']>
   handleSidebarQuickUpdate: NonNullable<SidebarProps['onQuickUpdate']>
   handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
   handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>

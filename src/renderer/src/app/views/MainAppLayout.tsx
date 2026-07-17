@@ -283,6 +283,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSideChatChange,
   handleSideProviderChange,
   handleSideRun,
+  handleSidebarPrimarySurfaceSelect,
   handleSidebarQuickUpdate,
   handleStartSharedChat,
   handleBlackboardQueuedMessage,
@@ -1176,6 +1177,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onNewGlobalChat={handleNewDefaultGlobalChat}
                 onNewEnsemble={handleNewEnsemble}
                 ensembleModeEnabled={isEnsembleModeEnabled}
+                onPrimarySurfaceSelect={handleSidebarPrimarySurfaceSelect}
                 onSelectChat={handleSelectChat}
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
