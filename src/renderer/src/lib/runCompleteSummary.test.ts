@@ -299,6 +299,14 @@ const ESTIMATE_RATES: RendererProviderRates = {
       cachedInputUsdPerMillion: 0.125
     }
   ],
+  kimi: [
+    { modelId: 'kimi-k2.7-code', inputUsdPerMillion: 0.95, outputUsdPerMillion: 4 },
+    {
+      modelId: 'kimi-k2.7-code-highspeed',
+      inputUsdPerMillion: 1.9,
+      outputUsdPerMillion: 8
+    }
+  ],
   cursor: []
 }
 
@@ -333,6 +341,25 @@ describe('buildEnsembleRoundCostRow', () => {
     expect(row?.label).toBe('Cost')
     // Badged with leading ~ AND the est. API-equiv qualifier — never a bare $.
     expect(row?.value).toBe('~$2.25 est. API-equiv')
+  })
+
+  it('uses Kimi Fast mode\'s internal Highspeed rate without changing the display model', () => {
+    const row = buildEnsembleRoundCostRow(
+      [
+        run({
+          provider: 'kimi',
+          actualModel: 'kimi-k2.7-code',
+          stats: {
+            input_tokens: 1_000_000,
+            output_tokens: 500_000,
+            _taskwraith_cost_rate_model: 'kimi-k2.7-code-highspeed'
+          }
+        })
+      ],
+      { currency: 'USD', providerRates: ESTIMATE_RATES }
+    )
+
+    expect(row?.value).toBe('~$5.90 est. API-equiv')
   })
 
   it('shows real + estimate together when seats are mixed, keeping the estimate badged', () => {

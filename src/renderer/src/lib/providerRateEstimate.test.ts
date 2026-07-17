@@ -288,4 +288,26 @@ describe('estimateUsageRecordCostUsd', () => {
     })
     expect(usd).toBeCloseTo(25, 6)
   })
+
+  it('uses a distinct cost-rate model without changing the persisted display model', () => {
+    const rates: RendererProviderRates = {
+      kimi: [
+        { modelId: 'kimi-k2.7-code', inputUsdPerMillion: 0.95, outputUsdPerMillion: 4 },
+        {
+          modelId: 'kimi-k2.7-code-highspeed',
+          inputUsdPerMillion: 1.9,
+          outputUsdPerMillion: 8
+        }
+      ]
+    }
+    const usd = estimateUsageRecordCostUsd(rates, {
+      provider: 'kimi',
+      model: 'kimi-k2.7-code',
+      costRateModel: 'kimi-k2.7-code-highspeed',
+      inputTokens: 1_000_000,
+      outputTokens: 500_000
+    })
+
+    expect(usd).toBeCloseTo(5.9, 6)
+  })
 })

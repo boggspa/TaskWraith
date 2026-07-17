@@ -179,6 +179,20 @@ describe('BAKED_IN_RATES', () => {
       cachedInputUsdPerMillion: 0.19,
       outputUsdPerMillion: 4
     })
+    expect(
+      BAKED_IN_RATES.kimi.models.find(
+        (model) => model.modelId === 'kimi-k2.7-code-highspeed'
+      )
+    ).toMatchObject({
+      inputUsdPerMillion: 1.9,
+      cachedInputUsdPerMillion: 0.38,
+      outputUsdPerMillion: 8
+    })
+    expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k3')).toMatchObject({
+      inputUsdPerMillion: 3,
+      cachedInputUsdPerMillion: 0.3,
+      outputUsdPerMillion: 15
+    })
     expect(BAKED_IN_RATES.kimi.models.find((model) => model.modelId === 'kimi-k2.6')).toMatchObject(
       {
         inputUsdPerMillion: 0.95,

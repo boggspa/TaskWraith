@@ -215,6 +215,7 @@ type UsageCostRecord = Pick<
   | 'outputTokens'
   | 'cacheReadInputTokens'
   | 'cacheCreationInputTokens'
+  | 'costRateModel'
 > &
   Partial<Pick<UsageRecord, 'totalTokens'>>
 
@@ -251,7 +252,8 @@ export function estimateUsageRecordCostUsd(
   rates: RendererProviderRates,
   record: UsageCostRecord
 ): number {
-  const rate = resolveModelRate(rates, record.provider, record.model)
+  const rateModel = record.costRateModel || record.model
+  const rate = resolveModelRate(rates, record.provider, rateModel)
   if (!rate) return 0
   const outputTokens = toNonNeg(record.outputTokens)
   const cacheRead = toNonNeg(record.cacheReadInputTokens)
@@ -259,7 +261,7 @@ export function estimateUsageRecordCostUsd(
   const hasCacheBreakdown = cacheRead > 0 || cacheCreation > 0
   const inputTokens = toNonNeg(record.inputTokens)
 
-  return estimateRunCostUsd(rates, record.provider, record.model, inputTokens, outputTokens, {
+  return estimateRunCostUsd(rates, record.provider, rateModel, inputTokens, outputTokens, {
     cacheReadInputTokens: hasCacheBreakdown ? cacheRead : 0,
     cacheCreationInputTokens: hasCacheBreakdown ? cacheCreation : 0
   })

@@ -1754,7 +1754,11 @@ function extractRunCostUsd(
   const explicit = num('cost_usd', 'total_cost_usd', 'costUsd', 'totalCostUsd')
   if (explicit !== undefined && explicit > 0) return { usd: explicit, estimated: false }
   const usage = extractRemoteUsageCounts(stats)
-  const model = run.actualModel || run.requestedModel
+  const statsRateModel =
+    typeof stats._taskwraith_cost_rate_model === 'string'
+      ? stats._taskwraith_cost_rate_model.trim()
+      : ''
+  const model = statsRateModel || run.actualModel || run.requestedModel
   const estimated = estimateRemoteRunCostUsd(costDisplay, run.provider, model, usage)
   return estimated > 0 ? { usd: estimated, estimated: true } : { usd: 0, estimated: false }
 }

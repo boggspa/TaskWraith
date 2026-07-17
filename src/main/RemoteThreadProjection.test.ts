@@ -1452,6 +1452,47 @@ describe('RemoteThreadProjection', () => {
       expect(summary?.costText).toBe('~$1.75')
     })
 
+    it('uses Kimi Fast mode\'s cost-rate model without changing the displayed model', () => {
+      const summary = buildRunSummary(
+        [
+          {
+            runId: 'run-kimi-fast-cost',
+            provider: 'kimi',
+            actualModel: 'kimi-k2.7-code',
+            stats: {
+              input_tokens: 1_000_000,
+              output_tokens: 500_000,
+              _taskwraith_cost_rate_model: 'kimi-k2.7-code-highspeed'
+            }
+          } as unknown as ChatRun
+        ],
+        {
+          currency: 'USD',
+          providerRates: {
+            baseline: {
+              kimi: {
+                models: [
+                  {
+                    modelId: 'kimi-k2.7-code',
+                    inputUsdPerMillion: 0.95,
+                    outputUsdPerMillion: 4
+                  },
+                  {
+                    modelId: 'kimi-k2.7-code-highspeed',
+                    inputUsdPerMillion: 1.9,
+                    outputUsdPerMillion: 8
+                  }
+                ]
+              }
+            }
+          }
+        }
+      )
+
+      expect(summary?.model).toBe('kimi-k2.7-code')
+      expect(summary?.costText).toBe('~$5.90')
+    })
+
     it('does not double-count historical Codex cache-subset aliases on iOS', () => {
       const summary = buildRunSummary(
         [

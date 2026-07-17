@@ -81,7 +81,7 @@ export type EnsembleRoundSummaryCostOptions = {
  *
  * Two USD figures are accumulated separately across the round's runs:
  *   - `realUsd`: the sum of explicit `cost_usd` the provider actually
- *     reported (per-token API seats: Claude / Gemini / Kimi).
+ *     reported (provider/API paths that expose billing usage).
  *   - `estUsd`: a PROJECTED API-equivalent for runs that reported NO
  *     `cost_usd` (subscription / credit seats: Codex / Grok / Cursor),
  *     derived from summed tokens × the provider rate table.
@@ -122,7 +122,11 @@ export const buildEnsembleRoundCostRow = (
       usageInputIncludesCache(run.stats) ||
       cacheCounts.cacheReadInputTokens > 0 ||
       cacheCounts.cacheCreationInputTokens > 0
-    const model = run.actualModel || run.requestedModel
+    const statsRateModel =
+      typeof run.stats?._taskwraith_cost_rate_model === 'string'
+        ? run.stats._taskwraith_cost_rate_model.trim()
+        : ''
+    const model = statsRateModel || run.actualModel || run.requestedModel
     estUsd += estimateRunCostUsd(
       rates,
       run.provider,

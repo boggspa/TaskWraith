@@ -1044,6 +1044,7 @@ function formatParticipantTableSection(
   if (participants.length === 0) return []
   const turnCounts = new Map<string, number>()
   const tokenCounts = new Map<string, number>()
+  const estimatedTokenParticipants = new Set<string>()
   const runsByParticipant = new Map<string, ChatRun[]>()
   for (const run of roundRuns) {
     if (!run.ensembleParticipantId) continue
@@ -1053,6 +1054,9 @@ function formatParticipantTableSection(
       (tokenCounts.get(run.ensembleParticipantId) || 0) +
         extractUsageCountsFromCandidate(run.stats).totalTokens
     )
+    if (run.stats?._taskwraith_token_count_confidence === 'estimated') {
+      estimatedTokenParticipants.add(run.ensembleParticipantId)
+    }
     runsByParticipant.set(run.ensembleParticipantId, [
       ...(runsByParticipant.get(run.ensembleParticipantId) || []),
       run
@@ -1066,7 +1070,10 @@ function formatParticipantTableSection(
     )
     const turns = turnCounts.get(participant.participantId) || 0
     const tokens = tokenCounts.get(participant.participantId) || 0
-    const tokenCell = formatParticipantTokenCell(tokens)
+    const tokenCell = formatParticipantTokenCell(
+      tokens,
+      estimatedTokenParticipants.has(participant.participantId)
+    )
     const participantRuns = [...(runsByParticipant.get(participant.participantId) || [])].sort(
       (left, right) => Date.parse(left.startedAt) - Date.parse(right.startedAt)
     )
@@ -1116,7 +1123,10 @@ function formatParticipantTableSection(
     const statusCell = formatParticipantStatusIcon(participant.status)
     return `| [@${label}](ensemble-dm://${participant.participantId}) | ${providerCell} | ${modelCell} | ${reasoningCell} | ${permissionCell} | ${turns} | ${tokenCell} | ${statusCell} |`
   })
-  const totalTokenCell = formatParticipantTokenCell(totalTokens)
+  const totalTokenCell = formatParticipantTokenCell(
+    totalTokens,
+    estimatedTokenParticipants.size > 0
+  )
   const totalStatusCell = `**${participants.length}**`
   rows.push(
     `| **Round Total** | — | — | — | — | ${totalTurns} | ${totalTokenCell} | ${totalStatusCell} |`
@@ -1272,8 +1282,9 @@ function formatParticipantStatusIcon(status: EnsembleParticipantStatus): string 
   return '⚠️'
 }
 
-function formatParticipantTokenCell(totalTokens: number): string {
-  return totalTokens > 0 ? formatContextTokens(totalTokens) : '—'
+function formatParticipantTokenCell(totalTokens: number, estimated = false): string {
+  if (totalTokens <= 0) return '—'
+  return `${estimated ? '~' : ''}${formatContextTokens(totalTokens)}`
 }
 
 const CLOSEOUT_COMMIT_TABLE_LIMIT = 8

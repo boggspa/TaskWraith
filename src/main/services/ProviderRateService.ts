@@ -44,7 +44,7 @@ import type { ProviderId } from '../store/types'
 
 /** Snapshot date for the baked-in rate values. Bump alongside the
  * rate values themselves when the manual diligence cycle runs. */
-export const RATE_TABLE_VERSION = '2026-07-10'
+export const RATE_TABLE_VERSION = '2026-07-17'
 
 /**
  * Per-model rate entry. Rates are USD per 1,000,000 tokens (so
@@ -483,7 +483,27 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
         lastVerified: RATE_TABLE_VERSION,
         notes:
-          'Current Kimi Code CLI default; automatic context cache hit pricing recorded as cached input.'
+          'Current Kimi Code CLI default. PROJECTED API-equivalent for OAuth/subscription runs; automatic context cache hit pricing recorded as cached input.'
+      },
+      {
+        modelId: 'kimi-k2.7-code-highspeed',
+        inputUsdPerMillion: 1.9,
+        outputUsdPerMillion: 8.0,
+        cachedInputUsdPerMillion: 0.38,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k27-code',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Published Highspeed tier for the same K2.7 Coding model (Fast mode in TaskWraith). PROJECTED API-equivalent for OAuth/subscription runs.'
+      },
+      {
+        modelId: 'kimi-k3',
+        inputUsdPerMillion: 3.0,
+        outputUsdPerMillion: 15.0,
+        cachedInputUsdPerMillion: 0.3,
+        sourceUrl: 'https://platform.kimi.ai/docs/pricing/chat-k3',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Published K3 API pricing. PROJECTED API-equivalent for OAuth/subscription runs; the API page does not publish a separate long-context rate tier.'
       },
       {
         modelId: 'kimi-k2.6',
