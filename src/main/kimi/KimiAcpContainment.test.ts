@@ -5,6 +5,7 @@ import {
   buildKimiDenyWall,
   buildKimiIsolatedConfig,
   forceTelemetryOff,
+  forceThinkingEffort,
   forceThinkingMode,
   isPathWithinRoots,
   stripAllowPermissionRules
@@ -105,6 +106,18 @@ describe('buildKimiIsolatedConfig', () => {
   it('honours extra deny tools', () => {
     const out = buildKimiIsolatedConfig({ baseConfig: base, extraDenyTools: ['Bash'] })
     expect(out).toContain('pattern = "Bash"')
+  })
+
+  it('forces K3 thinking on at the selected effort', () => {
+    const out = buildKimiIsolatedConfig({
+      baseConfig: `${base}\n\n[thinking]\nenabled = false\neffort = "low"`,
+      thinkingEnabled: true,
+      thinkingEffort: 'high'
+    })
+    expect(out).toContain('[thinking]\nenabled = true\neffort = "high"')
+    expect(forceThinkingEffort('[thinking]\nenabled = true', 'max')).toContain(
+      '[thinking]\neffort = "max"\nenabled = true'
+    )
   })
 
   it('denies the server-side fs/exec escapers, not just egress (CI guard for the live probe)', () => {

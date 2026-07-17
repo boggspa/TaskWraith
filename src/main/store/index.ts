@@ -592,6 +592,7 @@ function normalizeWorkflowTemplate(value: unknown): WorkflowRunTemplate | null {
     codexServiceTier: input.codexServiceTier,
     claudeFastMode: input.claudeFastMode,
     kimiFastMode: input.kimiFastMode,
+    kimiReasoningEffort: input.kimiReasoningEffort,
     cursorFastMode: input.cursorFastMode,
     kimiThinkingEnabled: input.kimiThinkingEnabled,
     runtimeProfileId: input.runtimeProfileId,

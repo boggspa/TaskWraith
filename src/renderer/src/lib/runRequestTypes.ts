@@ -43,6 +43,7 @@ export interface QueuedRunRequest {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiFastMode?: boolean
+  kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null

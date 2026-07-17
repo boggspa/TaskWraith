@@ -155,6 +155,6 @@ describe('ParticipantPickerCluster', () => {
     )
 
     expect(html).toContain('data-fast-mode-active="true"')
-    expect(html).toContain('Kimi K2.7 Code')
+    expect(html).toContain('K2.7 Coding')
   })
 })

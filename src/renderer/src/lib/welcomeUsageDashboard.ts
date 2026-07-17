@@ -400,7 +400,7 @@ const formatPeakHour = (hour: number): string => {
  *   - Kimi: only the canonical `kimi-k2.7-code` (default), its thinking
  *     variants, `kimi-k3`, and legacy K2.6 rows survive; deprecated names
  *     (`kimi-latest`, `kimi-k2`, `kimi-k2.5`, `kimi-k2-thinking` aliases,
- *     etc.) collapse to nothing. Kimi Code now treats K2.7 Code as the
+ *     etc.) collapse to nothing. Kimi Code now treats K2.7 Coding as the
  *     implicit default model.
  *
  * Returns `false` when the (provider, model) pair shouldn't surface in

@@ -121,7 +121,7 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   permissionPresetId?: string
   /** Optional model override (provider-specific). */
   model?: string
-  /** Legacy Codex-style reasoning effort override. Also accepted for Grok 4.5. */
+  /** Shared reasoning effort override. Used by Codex, K3, and Grok 4.5. */
   reasoningEffort?: string | null
   /** Claude-specific reasoning effort override. */
   claudeReasoningEffort?: string | null
@@ -135,9 +135,9 @@ export interface BridgeComposerPromptAction extends BridgeActionMetadata {
   claudeFastMode?: boolean
   /** Codex service-tier override, e.g. `'fast'`. */
   codexServiceTier?: string | null
-  /** Kimi K2.7 Code HighSpeed tier toggle. */
+  /** K2.7 Coding Highspeed tier toggle. */
   kimiFastMode?: boolean
-  /** Kimi "thinking" toggle. Absent means ON (matches appendKimiThinkingArgs default). */
+  /** Legacy Kimi thinking flag. Kimi thinking is always on; false is ignored. */
   kimiThinkingEnabled?: boolean
   /** Optional context-turn count (0–20 per the plan's standard payload). */
   contextTurns?: number

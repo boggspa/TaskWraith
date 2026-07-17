@@ -197,17 +197,26 @@ describe('Grok provider model defaults', () => {
 })
 
 describe('provider model picker sentinels', () => {
-  it('keeps K2.7 Code as the Fast-capable default row with K3 selectable after it', () => {
+  it('keeps K2.7 Coding as the Fast-capable default row with K3 selectable after it', () => {
     expect(KIMI_DEFAULT_MODELS.map((model) => model.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
     expect(KIMI_DEFAULT_MODELS[0]).toMatchObject({
       id: 'kimi-k2.7-code',
+      label: 'K2.7 Coding',
       isDefault: true,
+      supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+      defaultReasoningEffort: 'on',
       additionalSpeedTiers: ['fast']
     })
-    // K3 is NOT the default and has no HighSpeed tier — Fast stays exclusive
-    // to K2.7 Code; K3's Max-effort thinking is applied server-side.
+    // K3 is NOT the default and has no Highspeed tier — Fast stays exclusive
+    // to K2.7 Coding; K3 exposes its always-on effort choices.
     const k3 = KIMI_DEFAULT_MODELS.find((model) => model.id === 'kimi-k3')
-    expect(k3?.label).toBe('Kimi K3')
+    expect(k3?.label).toBe('K3')
+    expect(k3?.defaultReasoningEffort).toBe('max')
+    expect(k3?.supportedReasoningEfforts?.map((option) => option.reasoningEffort)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
     expect(k3?.isDefault).toBeUndefined()
     expect(k3?.additionalSpeedTiers).toBeUndefined()
   })

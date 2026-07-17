@@ -876,7 +876,7 @@ Next action:
       '| [@Cursor](ensemble-dm://p3) | Cursor | Composer 2.5 Fast | — | Default Approval | 0 | — | 💤 |'
     )
     expect(closeout.content).toContain(
-      '| [@Kimi](ensemble-dm://p4) | Kimi | K2.7 Code | Thinking | Plan | 1 | 300 | ❌ |'
+      '| [@Kimi](ensemble-dm://p4) | Kimi | K2.7 Coding | Thinking | Plan | 1 | 300 | ❌ |'
     )
     expect(closeout.content).toContain('| **Round Total** | — | — | — | — | 4 | 2k | **4** |')
     expect(closeout.content).toContain('The round used about 2k tokens in total.')

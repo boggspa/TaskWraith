@@ -352,6 +352,39 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(normalizeClaude('claude-opus-4-8-1m').claudeFastMode).toBe(true)
   })
 
+  it('forces Kimi thinking on, validates K3 effort, and removes K3 Fast mode', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'kimi',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'do work',
+        model: 'kimi-k3',
+        reasoningEffort: 'high',
+        serviceTier: 'fast',
+        kimiThinking: false
+      },
+      makeDeps()
+    )
+    expect(result.reasoningEffort).toBe('high')
+    expect(result.serviceTier).toBe('standard')
+    expect(result.kimiThinking).toBe(true)
+
+    const invalid = normalizeAgentRunPayload(
+      {
+        provider: 'kimi',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'do work',
+        model: 'kimi-k3',
+        reasoningEffort: 'off'
+      },
+      makeDeps()
+    )
+    expect(invalid.reasoningEffort).toBe('max')
+    expect(invalid.kimiThinking).toBe(true)
+  })
+
   // Invariant 5 (coverage): the global-scope branch threads requireGlobalChat +
   // globalRunCwd (and skips the workspace canonicalizer). Combined with the tests
   // above, all 7 deps are asserted "called where expected":

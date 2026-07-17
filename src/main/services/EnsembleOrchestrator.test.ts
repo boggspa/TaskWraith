@@ -12089,6 +12089,37 @@ Next action:
     expect(harness.dispatched[0].serviceTier).toBe('standard')
   })
 
+  it('dispatches K3 effort with thinking on and rejects a stale Fast tier', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'kimi-k3',
+        provider: 'kimi',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review.',
+        order: 1,
+        model: 'kimi-k3',
+        permissionPresetId: 'read_only',
+        reasoningEffort: 'high',
+        thinkingEnabled: false,
+        fastModeEnabled: true
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Review deeply.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0]).toMatchObject({
+      provider: 'kimi',
+      reasoningEffort: 'high',
+      kimiThinking: true,
+      serviceTier: 'standard'
+    })
+  })
+
   // A2 (1.0.3) — `dmTargetParticipantId` scopes the round to a
   // single chip. The orchestrator's machinery still drives the run
   // (so per-participant status pills + activeRound state stay

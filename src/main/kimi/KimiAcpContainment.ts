@@ -170,6 +170,27 @@ export function forceThinkingMode(configBody: string, enabled: boolean): string 
   return lines.join('\n')
 }
 
+/** Force `[thinking] effort = "<value>"` while preserving the rest of the
+ * user's model catalogue. Callers pass only provider-validated effort tokens. */
+export function forceThinkingEffort(configBody: string, effort: string): string {
+  const value = effort.trim().toLowerCase()
+  if (!/^[a-z][a-z0-9_-]*$/.test(value)) return configBody
+  const lines = configBody.split(/\r?\n/)
+  const tableIdx = lines.findIndex((line) => line.trim() === '[thinking]')
+  if (tableIdx === -1) {
+    return `${configBody.replace(/\s*$/, '')}\n\n[thinking]\neffort = "${value}"\n`
+  }
+  for (let i = tableIdx + 1; i < lines.length; i++) {
+    if (/^\s*\[/.test(lines[i].trim())) break
+    if (/^\s*effort\s*=/.test(lines[i])) {
+      lines[i] = `effort = "${value}"`
+      return lines.join('\n')
+    }
+  }
+  lines.splice(tableIdx + 1, 0, `effort = "${value}"`)
+  return lines.join('\n')
+}
+
 export interface KimiIsolatedConfigOptions {
   /** The user's real config.toml body (the transform base). */
   baseConfig: string
@@ -177,6 +198,8 @@ export interface KimiIsolatedConfigOptions {
   extraDenyTools?: readonly string[]
   /** Per-run thinking preference; when omitted the base config's setting is kept. */
   thinkingEnabled?: boolean
+  /** K3 thinking effort. K2.7 Coding omits this because its thinking is binary-on. */
+  thinkingEffort?: string
 }
 
 /**
@@ -192,13 +215,16 @@ export function buildKimiIsolatedConfig(options: KimiIsolatedConfigOptions): str
     options.thinkingEnabled === undefined
       ? telemetryOff
       : forceThinkingMode(telemetryOff, options.thinkingEnabled)
+  const withThinkingEffort = options.thinkingEffort
+    ? forceThinkingEffort(withThinking, options.thinkingEffort)
+    : withThinking
   const denyTools = [...KIMI_ACP_DENY_TOOLS, ...(options.extraDenyTools ?? [])]
   const deny = buildKimiDenyWall(denyTools)
   return (
     `# TaskWraith-managed isolated Kimi Code profile (per-run KIMI_CODE_HOME).\n` +
     `# Generated from the user config with allow-rules stripped, telemetry off,\n` +
     `# and a static deny wall (${denyTools.join(', ')}). Do not edit by hand.\n` +
-    `${withThinking.replace(/\s*$/, '')}\n${deny}`
+    `${withThinkingEffort.replace(/\s*$/, '')}\n${deny}`
   )
 }
 

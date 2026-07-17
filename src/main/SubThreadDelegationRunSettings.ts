@@ -38,6 +38,7 @@ const CODEX_REASONING_EFFORTS = new Set([
   'ultracode'
 ])
 const CLAUDE_REASONING_EFFORTS = new Set(['low', 'medium', 'high', 'xhigh', 'max'])
+const KIMI_REASONING_EFFORTS = new Set(['low', 'high', 'max'])
 const GROK_REASONING_EFFORTS = new Set(['low', 'medium', 'high'])
 
 const CODEX_EFFORT_ALIASES: Readonly<Record<string, string>> = {
@@ -52,6 +53,7 @@ const CLAUDE_EFFORT_ALIASES: Readonly<Record<string, string>> = {
 function reasoningMetadataKey(provider: ProviderId): string | undefined {
   if (provider === 'codex') return 'codexReasoningEffort'
   if (provider === 'claude') return 'claudeReasoningEffort'
+  if (provider === 'kimi') return 'kimiReasoningEffort'
   if (provider === 'grok') return 'grokReasoningEffort'
   if (provider === 'cursor') return 'cursorReasoningEffort'
   return undefined
@@ -78,6 +80,8 @@ function normalizeReasoningEffort(
       ? CODEX_REASONING_EFFORTS
       : provider === 'claude'
         ? CLAUDE_REASONING_EFFORTS
+        : provider === 'kimi'
+          ? KIMI_REASONING_EFFORTS
         : provider === 'grok' || provider === 'cursor'
           ? GROK_REASONING_EFFORTS
           : null
@@ -167,9 +171,9 @@ function buildResolvedSettings(args: {
       runPayload.reasoningEffort = args.reasoningEffort
     }
   }
-  if (args.provider === 'kimi' && typeof args.kimiThinking === 'boolean') {
-    providerMetadataPatch.kimiThinkingEnabled = args.kimiThinking
-    runPayload.kimiThinking = args.kimiThinking
+  if (args.provider === 'kimi') {
+    providerMetadataPatch.kimiThinkingEnabled = true
+    runPayload.kimiThinking = true
   }
   return {
     ok: true,
@@ -217,13 +221,7 @@ export function resolveSubThreadDelegationRunSettings(
       request.provider,
       requestedModel
     )
-    const kimiThinkingValue =
-      latestRun?.providerMetadata?.kimiThinkingEnabled ??
-      request.recallChat.providerMetadata?.kimiThinkingEnabled
-    const kimiThinking =
-      request.provider === 'kimi' && typeof kimiThinkingValue === 'boolean'
-        ? kimiThinkingValue
-        : undefined
+    const kimiThinking = request.provider === 'kimi' ? true : undefined
     return buildResolvedSettings({
       provider: request.provider,
       requestedModel,
@@ -268,14 +266,18 @@ export function resolveSubThreadDelegationRunSettings(
         message: 'delegate_to_subthread: kimiThinking must be a boolean when provided.'
       }
     }
+    if (request.kimiThinking === false) {
+      return {
+        ok: false,
+        message: 'delegate_to_subthread: Kimi thinking is always on and cannot be disabled.'
+      }
+    }
   }
   return buildResolvedSettings({
     provider: request.provider,
     requestedModel,
     reasoningEffort: effort.value,
     kimiThinking:
-      request.provider === 'kimi' && typeof request.kimiThinking === 'boolean'
-        ? request.kimiThinking
-        : undefined
+      request.provider === 'kimi' ? true : undefined
   })
 }

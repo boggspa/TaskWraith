@@ -760,6 +760,7 @@ import {
   codexReasoningEffortsForModel,
   getStaticProviderModels,
   kimiAcpModelConfigValue,
+  kimiAcpThinkingConfigValue,
   mergeCodexLiveModelRows,
   normalizeCliProviderModel,
   normalizeCodexModel
@@ -11870,6 +11871,7 @@ async function dispatchDueScheduledLoopHeadless(
               codexServiceTier: task.codexServiceTier,
               claudeReasoningEffort: task.claudeReasoningEffort,
               claudeFastMode: task.claudeFastMode,
+              kimiReasoningEffort: task.kimiReasoningEffort,
               kimiThinkingEnabled: task.kimiThinkingEnabled,
               runtimeProfileId: task.runtimeProfileId,
               geminiAuthProfileId: task.geminiAuthProfileId
@@ -12207,6 +12209,7 @@ async function dispatchDueScheduledTaskHeadless(
       codexServiceTier: task.codexServiceTier,
       claudeReasoningEffort: task.claudeReasoningEffort,
       claudeFastMode: task.claudeFastMode,
+      kimiReasoningEffort: task.kimiReasoningEffort,
       kimiThinkingEnabled: task.kimiThinkingEnabled,
       runtimeProfileId: task.runtimeProfileId,
       geminiAuthProfileId: task.geminiAuthProfileId,
@@ -17709,6 +17712,7 @@ async function runKimiAcpProvider(
   }
 
   const model = normalizeCliProviderModel('kimi', payload.model)
+  const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
 
   // Build the isolated home BEFORE registering the run so a fail-closed
   // not-authenticated / build error surfaces as setup-required without a
@@ -17717,9 +17721,11 @@ async function runKimiAcpProvider(
     runId: route.appRunId || 'unknown',
     homeDir: kimiAcpSeatHomeDir(payload),
     sourceHome: join(os.homedir(), '.kimi-code'),
-    // Kimi Code dropped the --thinking flag; the per-run preference rides the
-    // isolated config instead (absent → keep the config default, which is on).
-    thinkingEnabled: payload.kimiThinking ?? undefined,
+    // Both current models advertise always_thinking. K3 additionally accepts
+    // Low/High/Max, applied to fresh sessions through the isolated config and
+    // re-asserted below when resuming a native session.
+    thinkingEnabled: true,
+    ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
     preserveSessionState: Boolean(payload.appChatId),
     fs: kimiHomeFsAdapter
   })
@@ -17872,7 +17878,7 @@ async function runKimiAcpProvider(
         },
         {
           configId: 'thinking',
-          value: payload.kimiThinking === false ? 'off' : 'on'
+          value: kimiThinkingConfig
         }
       ],
       cwd: payload.workspace || os.homedir(),
@@ -30259,7 +30265,8 @@ if (isGeminiMcpBridgeProcess) {
         const queueClaudeFastMode = provider === 'claude' ? action.claudeFastMode : undefined
         const queueCodexServiceTier = provider === 'codex' ? action.codexServiceTier : undefined
         const queueKimiFastMode = provider === 'kimi' ? action.kimiFastMode : undefined
-        const queueKimiThinkingEnabled = provider === 'kimi' ? action.kimiThinkingEnabled : undefined
+        const queueKimiReasoningEffort = provider === 'kimi' ? action.reasoningEffort : undefined
+        const queueKimiThinkingEnabled = provider === 'kimi' ? true : undefined
         const permissionPosture = buildRemoteComposerQueuePermissionPosture({
           provider,
           scope,
@@ -30313,6 +30320,9 @@ if (isGeminiMcpBridgeProcess) {
               ? { codexServiceTier: queueCodexServiceTier }
               : {}),
             ...(queueKimiFastMode !== undefined ? { kimiFastMode: queueKimiFastMode } : {}),
+            ...(queueKimiReasoningEffort !== undefined
+              ? { kimiReasoningEffort: queueKimiReasoningEffort }
+              : {}),
             ...(queueKimiThinkingEnabled !== undefined
               ? { kimiThinkingEnabled: queueKimiThinkingEnabled }
               : {}),
@@ -30355,9 +30365,10 @@ if (isGeminiMcpBridgeProcess) {
               ...(action.kimiFastMode !== undefined
                 ? { kimiFastMode: action.kimiFastMode }
                 : {}),
-              ...(action.kimiThinkingEnabled !== undefined
-                ? { kimiThinkingEnabled: action.kimiThinkingEnabled }
+              ...(queueKimiReasoningEffort !== undefined
+                ? { kimiReasoningEffort: queueKimiReasoningEffort }
                 : {}),
+              ...(provider === 'kimi' ? { kimiThinkingEnabled: true } : {}),
               ...(action.contextTurns !== undefined ? { contextTurns: action.contextTurns } : {}),
               ...(schedule.scheduledRunAt ? { scheduledRunAt: schedule.scheduledRunAt } : {}),
               ...(action.extraWorkspaceIds?.length
@@ -32441,9 +32452,9 @@ if (isGeminiMcpBridgeProcess) {
             typeof providerMetadata.kimiFastMode === 'boolean'
               ? providerMetadata.kimiFastMode
               : undefined
-          const metadataKimiThinkingEnabled =
-            typeof providerMetadata.kimiThinkingEnabled === 'boolean'
-              ? providerMetadata.kimiThinkingEnabled
+          const metadataKimiReasoningEffort =
+            typeof providerMetadata.kimiReasoningEffort === 'string'
+              ? providerMetadata.kimiReasoningEffort
               : undefined
           // Model inheritance: a phone send without an explicit model means
           // "whatever this chat was using" — falling to the provider
@@ -32460,6 +32471,8 @@ if (isGeminiMcpBridgeProcess) {
           const inheritedReasoningEffort =
             provider === 'codex'
               ? action.reasoningEffort || metadataReasoningEffort || undefined
+              : provider === 'kimi'
+                ? action.reasoningEffort || metadataKimiReasoningEffort || undefined
               : provider === 'grok' &&
                   isGrok45ReasoningModelId(inheritedReasoningCapabilityModel)
                 ? action.grokReasoningEffort ||
@@ -32494,9 +32507,7 @@ if (isGeminiMcpBridgeProcess) {
           const inheritedKimiFastMode =
             provider === 'kimi' ? (action.kimiFastMode ?? metadataKimiFastMode ?? false) : undefined
           const inheritedKimiThinkingEnabled =
-            provider === 'kimi'
-              ? (action.kimiThinkingEnabled ?? metadataKimiThinkingEnabled ?? true)
-              : undefined
+            provider === 'kimi' ? true : undefined
           // Persist the resolved Fast/thinking selection into providerMetadata
           // (the same keys the desktop's rememberChatComposerSelection writes and
           // RemoteTaskProjection reads) so a phone-originated toggle survives to
@@ -32513,6 +32524,9 @@ if (isGeminiMcpBridgeProcess) {
               : {}),
             ...(inheritedKimiFastMode !== undefined
               ? { kimiFastMode: inheritedKimiFastMode }
+              : {}),
+            ...(provider === 'kimi' && inheritedReasoningEffort
+              ? { kimiReasoningEffort: inheritedReasoningEffort }
               : {}),
             ...(inheritedKimiThinkingEnabled !== undefined
               ? { kimiThinkingEnabled: inheritedKimiThinkingEnabled }

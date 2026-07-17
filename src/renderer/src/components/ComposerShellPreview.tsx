@@ -112,7 +112,7 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'kimi':
       return {
         providerLabel: 'Kimi',
-        modelLabel: 'K2.7 Code Thinking',
+        modelLabel: 'K2.7 Coding Thinking',
         permissionLabel: 'Read workspace',
         placeholder: 'Type "/" to quickly access skills'
       }

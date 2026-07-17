@@ -151,6 +151,7 @@ import { contextPercent, resolveContextWindow } from '../../shared/contextWindow
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
+import { isKimiK3Model } from '../providers/StaticProviderModels'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
@@ -11163,6 +11164,7 @@ export class EnsembleOrchestrator {
       // pre-dates the setup-sheet picker rework.
       const sharedReasoning =
         participant.provider === 'codex' ||
+        participant.provider === 'kimi' ||
         (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort
@@ -11171,7 +11173,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
           : participant.provider === 'kimi'
-            ? participant.fastModeEnabled
+            ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
               ? 'fast'
               : 'standard'
             : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
@@ -11183,11 +11185,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
       const claudeFastMode =
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
-      const kimiThinking =
-        // Unset resolves to thinking ON — must match the renderer's
-        // getDefaultEnsembleParticipantConfig('kimi').thinkingEnabled so a
-        // seat whose chip displays "Thinking on" dispatches the same way.
-        participant.provider === 'kimi' ? (participant.thinkingEnabled ?? true) : undefined
+      const kimiThinking = participant.provider === 'kimi' ? true : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
 
       const payload: AgentRunPayload = {
@@ -11486,7 +11484,7 @@ export class EnsembleOrchestrator {
       // shared with the renderer-side composer overlay + DM router so
       // tagging behaves identically across the three surfaces. New in
       // 1.0.3: multi-word model-name aliases (`@GPT 5.5`,
-      // `@Sonnet 4.7`, `@Flash Lite`, `@Kimi K2.7 Code`) for the 1.0.4
+      // `@Sonnet 4.7`, `@Flash Lite`, `@Kimi K2.7 Coding`) for the 1.0.4
       // same-provider-multiple-models case.
       //
       // Skips self-mentions (agents talking about themselves) — the
@@ -12585,6 +12583,7 @@ export class EnsembleOrchestrator {
       // participant at provider-default reasoning regardless of its config.
       const sharedReasoning =
         participant.provider === 'codex' ||
+        participant.provider === 'kimi' ||
         (participant.provider === 'grok' && isGrok45ReasoningModelId(participant.model)) ||
         (participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model))
           ? participant.reasoningEffort
@@ -12593,7 +12592,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'codex'
           ? (participant.serviceTier ?? (participant.fastModeEnabled ? 'fast' : ''))
           : participant.provider === 'kimi'
-            ? participant.fastModeEnabled
+            ? participant.fastModeEnabled && !isKimiK3Model(participant.model)
               ? 'fast'
               : 'standard'
             : participant.provider === 'cursor' && isCursorGrok45ModelId(participant.model)
@@ -12605,11 +12604,7 @@ export class EnsembleOrchestrator {
         participant.provider === 'claude' ? participant.reasoningEffort : undefined
       const claudeFastMode =
         participant.provider === 'claude' ? Boolean(participant.fastModeEnabled) : undefined
-      const kimiThinking =
-        // Unset resolves to thinking ON — must match the renderer's
-        // getDefaultEnsembleParticipantConfig('kimi').thinkingEnabled so a
-        // seat whose chip displays "Thinking on" dispatches the same way.
-        participant.provider === 'kimi' ? (participant.thinkingEnabled ?? true) : undefined
+      const kimiThinking = participant.provider === 'kimi' ? true : undefined
       const ollamaRunControls = ensembleOllamaRunControls(participant)
       const payload: AgentRunPayload = {
         provider: participant.provider,
@@ -13696,7 +13691,7 @@ export class EnsembleOrchestrator {
             // Reasoning suffix companion to `ensembleModel`. The
             // renderer's `formatAssistantMessageLabel` appends this via
             // `reasoningDisplayLabel` so the header reads "5.5 Extra
-            // High" / "Opus 4.7 · Max" / "K2.7 Code Thinking" — matching
+            // High" / "Opus 4.7 · Max" / "K2.7 Coding Thinking" — matching
             // the composer chip the user picked. Only the field that
             // applies to this participant's provider is set; the others
             // stay undefined.
@@ -15477,7 +15472,7 @@ function resolveYieldTargetParticipant(
  * imports it stays working. The runtime call path (`runRound`'s
  * auto-promotion) now uses `findFirstMention` directly so it can
  * resolve multi-word model aliases (`@GPT 5.5`, `@Sonnet 4.7`,
- * `@Flash Lite`, `@Kimi K2.7 Code`) without losing the trailing words.
+ * `@Flash Lite`, `@Kimi K2.7 Coding`) without losing the trailing words.
  *
  * Pattern mirrors the renderer-side composer overlay tokeniser via
  * the shared `EnsembleMentionAlias` module so coverage stays aligned:

@@ -209,19 +209,26 @@ const CLAUDE_DEFAULT_MODELS = [
 const KIMI_DEFAULT_MODELS = [
   {
     id: 'kimi-k2.7-code',
-    label: 'Kimi K2.7 Code',
-    description: 'Kimi Code CLI standard and HighSpeed tiers',
+    label: 'K2.7 Coding',
+    description: 'Standard and Highspeed tiers with always-on thinking',
     isDefault: true,
+    supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+    defaultReasoningEffort: 'on',
     additionalSpeedTiers: ['fast']
   },
   {
-    // Managed `kimi-code/k3` alias: 256K context, always-on Max-effort
-    // thinking applied server-side. No HighSpeed tier — Fast stays a K2.7
-    // Code capability — and K2.7 Code remains the default. Mirrors the
-    // authoritative main-process row (KIMI_STATIC_MODELS).
+    // Managed `kimi-code/k3` alias: 256K context and always-on thinking with
+    // Low/High/Max effort choices. No Highspeed tier — Fast stays a K2.7
+    // Coding capability — and K2.7 Coding remains the default. Mirrors main.
     id: 'kimi-k3',
-    label: 'Kimi K3',
-    description: "Moonshot's flagship K3 - 256K context - always-on Max-effort thinking"
+    label: 'K3',
+    description: "Moonshot's flagship K3 - 256K context - Low, High, or Max thinking",
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'max'
   }
 ] satisfies CodexModelOption[]
 const KIMI_DEFAULT_MODEL = KIMI_DEFAULT_MODELS[0].id

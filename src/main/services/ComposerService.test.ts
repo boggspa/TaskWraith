@@ -436,7 +436,7 @@ describe('ComposerService', () => {
     expect(payload.provider).toBe('kimi')
     expect(payload.providerSessionId).toBe('kimi-thread-1')
     expect(payload.prompt).toContain('Conversation context')
-    expect(payload.kimiThinking).toBe(false)
+    expect(payload.kimiThinking).toBe(true)
     expect(payload.composer.applicationLog).toContain(
       'Kimi: appending compact conversation context'
     )
@@ -466,6 +466,31 @@ describe('ComposerService', () => {
     expect(payload.model).toBe('kimi-k2.7-code')
     expect(payload.kimiThinking).toBe(true)
     expect(payload.serviceTier).toBe('standard')
+  })
+
+  it('threads K3 effort while keeping thinking always on', () => {
+    const payload = compose(
+      { provider: 'kimi' },
+      {
+        selectedModelType: 'kimi-k3',
+        kimiReasoningEffort: 'high',
+        kimiFastMode: true,
+        kimiThinkingEnabled: false
+      }
+    )
+    expect(payload.model).toBe('kimi-k3')
+    expect(payload.reasoningEffort).toBe('high')
+    expect(payload.serviceTier).toBe('standard')
+    expect(payload.kimiThinking).toBe(true)
+  })
+
+  it('defaults K3 effort to Max and ignores unsupported Off', () => {
+    const payload = compose(
+      { provider: 'kimi' },
+      { selectedModelType: 'kimi-k3', kimiReasoningEffort: 'off' }
+    )
+    expect(payload.reasoningEffort).toBe('max')
+    expect(payload.kimiThinking).toBe(true)
   })
 
   it('maps the Kimi Fast selection to the HighSpeed service tier', () => {

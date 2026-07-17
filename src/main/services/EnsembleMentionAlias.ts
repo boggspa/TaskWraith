@@ -14,7 +14,7 @@
  * fine while the only mention forms were `@codex` / `@Planner` /
  * `@ensemble-codex` — short, single-token. Once the user asked for
  * model-name tagging (`@GPT 5.5`, `@Sonnet 4.7`, `@Flash Lite`,
- * `@Kimi K2.7 Code`), the resolver needed to support **multi-word
+ * `@Kimi K2.7 Coding`), the resolver needed to support **multi-word
  * mentions**, which is too much logic to duplicate three ways
  * without drifting.
  *
@@ -204,6 +204,13 @@ export function generateModelAliases(provider: ProviderId, model: string | undef
       if (suffix) {
         push(`${ver} ${suffix}`)
         push(`kimi ${ver} ${suffix}`)
+        if (suffixParts[0] === 'code') {
+          const codingSuffix = ['coding', ...suffixParts.slice(1)].join(' ')
+          push(`${ver} coding`)
+          push(`kimi ${ver} coding`)
+          push(`${ver} ${codingSuffix}`)
+          push(`kimi ${ver} ${codingSuffix}`)
+        }
         for (let i = 1; i < suffixParts.length; i++) {
           const prefix = suffixParts.slice(0, i).join(' ')
           push(`${ver} ${prefix}`)

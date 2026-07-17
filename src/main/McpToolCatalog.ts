@@ -2943,12 +2943,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
             description:
-              'Spawn-only reasoning tier for Codex, Claude, Grok, or Cursor. Known provider/model incompatibilities fail before approval.'
+              'Spawn-only reasoning tier for Codex, Claude, K3, Grok, or Cursor. Known provider/model incompatibilities fail before approval.'
           },
           kimiThinking: {
             type: 'boolean',
             description:
-              'Spawn-only Kimi thinking toggle; omit whenever recalling a seat.'
+              'Legacy spawn-only Kimi flag. Thinking is always on; only true is accepted. Omit whenever recalling a seat.'
           },
           returnResult: {
             type: 'boolean',

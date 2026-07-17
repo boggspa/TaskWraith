@@ -30,6 +30,7 @@ import { codexReasoningDisplayLabel, claudeReasoningDisplayLabel } from './compo
 import {
   CLAUDE_DEFAULT_MODELS,
   CODEX_DEFAULT_MODELS,
+  KIMI_DEFAULT_MODELS,
   type CodexModelOption
 } from './providerModelDefaults'
 import {
@@ -98,9 +99,17 @@ const CLAUDE_OPUS_REASONING = claudeReasoningOptions(
 )
 const CLAUDE_HAIKU_REASONING = claudeReasoningOptions(new Set())
 
-const KIMI_REASONING: CombinedModelPickerReasoningOption[] = [
-  { value: 'on', label: 'Thinking on' },
-  { value: 'off', label: 'Thinking off' }
+const KIMI_ALWAYS_ON_REASONING: CombinedModelPickerReasoningOption[] = [
+  {
+    value: 'on',
+    label: 'On',
+    disabledReason: 'Thinking is always on for K2.7 Coding.'
+  }
+]
+const KIMI_K3_REASONING: CombinedModelPickerReasoningOption[] = [
+  { value: 'low', label: 'Low' },
+  { value: 'high', label: 'High' },
+  { value: 'max', label: 'Max' }
 ]
 
 // Grok 4.5 exposes low/medium/high only; GrokCliArgs.normalizeGrokEffortFlag
@@ -144,11 +153,25 @@ const GEMINI_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const KIMI_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'kimi-k2.7-code', label: 'Kimi K2.7 Code' },
-  { id: 'kimi-k3', label: 'Kimi K3' }
+  {
+    id: 'kimi-k2.7-code',
+    label: 'K2.7 Coding',
+    supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+    defaultReasoningEffort: 'on',
+    additionalSpeedTiers: ['fast']
+  },
+  {
+    id: 'kimi-k3',
+    label: 'K3',
+    supportedReasoningEfforts: [
+      { reasoningEffort: 'low' },
+      { reasoningEffort: 'high' },
+      { reasoningEffort: 'max' }
+    ],
+    defaultReasoningEffort: 'max'
+  }
 ]
-// Fast (Standard/HighSpeed) stays exclusive to K2.7 Code — Kimi K3 has no
-// HighSpeed tier (its Max-effort thinking is applied server-side instead).
+// Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — K3 has no tier.
 const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
@@ -261,7 +284,9 @@ export function getEnsembleReasoningOptions(
         ? CLAUDE_OPUS_REASONING
         : CLAUDE_SONNET_REASONING
     case 'kimi':
-      return KIMI_REASONING
+      return String(modelId || '').toLowerCase() === 'kimi-k3'
+        ? KIMI_K3_REASONING
+        : KIMI_ALWAYS_ON_REASONING
     case 'grok':
       return isGrok45ReasoningModelId(modelId) ? GROK_REASONING : []
     case 'cursor':
@@ -340,6 +365,7 @@ export function getDefaultEnsembleParticipantConfig(
       return {
         model: 'kimi-k2.7-code',
         permissionPresetId: 'default',
+        reasoningEffort: 'on',
         fastModeEnabled: false,
         thinkingEnabled: true,
         serviceTier: 'standard'
@@ -470,6 +496,9 @@ function fallbackModelSelectionMetadata(
   if (provider === 'claude') {
     return CLAUDE_DEFAULT_MODELS.find((option) => option.id === model)
   }
+  if (provider === 'kimi') {
+    return KIMI_DEFAULT_MODELS.find((option) => option.id === model)
+  }
   return undefined
 }
 
@@ -551,6 +580,7 @@ export function normalizeProviderModelSelection(
     case 'kimi':
       return {
         ...cleared,
+        reasoningEffort: defaultReasoningEffortForModel(provider, model, modelMetadata),
         fastModeEnabled: false,
         thinkingEnabled: true,
         serviceTier: 'standard'
@@ -653,20 +683,26 @@ export function resolveEnsembleParticipantSettings(
   const defaults = getDefaultEnsembleParticipantConfig(participant.provider)
   const model = participant.model || defaults.model
   const permissionPresetId = participant.permissionPresetId || defaults.permissionPresetId
-  const reasoningOptions =
-    participant.provider === 'kimi' ? [] : getEnsembleReasoningOptions(participant.provider, model)
+  const reasoningOptions = getEnsembleReasoningOptions(participant.provider, model)
   const enabledReasoningOptions = reasoningOptions.filter((option) => !option.disabled)
   const reasoningValues = new Set(enabledReasoningOptions.map((option) => option.value))
+  const modelDefaultReasoning = defaultReasoningEffortForModel(participant.provider, model)
   const reasoningEffort =
     enabledReasoningOptions.length === 0
       ? ''
       : participant.reasoningEffort && reasoningValues.has(participant.reasoningEffort)
         ? participant.reasoningEffort
-        : defaults.reasoningEffort && reasoningValues.has(defaults.reasoningEffort)
-          ? defaults.reasoningEffort
+        : modelDefaultReasoning && reasoningValues.has(modelDefaultReasoning)
+          ? modelDefaultReasoning
           : (enabledReasoningOptions[0]?.value ?? '')
-  const fastModeEnabled = Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
-  const thinkingEnabled = Boolean(participant.thinkingEnabled ?? defaults.thinkingEnabled)
+  const fastModeEnabled =
+    participant.provider === 'kimi' && model === 'kimi-k3'
+      ? false
+      : Boolean(participant.fastModeEnabled ?? defaults.fastModeEnabled)
+  const thinkingEnabled =
+    participant.provider === 'kimi'
+      ? true
+      : Boolean(participant.thinkingEnabled ?? defaults.thinkingEnabled)
   // Codex serviceTier: respect explicit value, else infer 'fast' from
   // fastModeEnabled (mirrors the existing renderer + dispatch fallback).
   const serviceTier =
@@ -711,7 +747,7 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
     case 'kimi':
       return {
         modelOptions: KIMI_MODELS,
-        reasoningOptions: KIMI_REASONING,
+        reasoningOptions: KIMI_ALWAYS_ON_REASONING,
         defaultReasoning: 'on',
         fastModeCapableModelIds: KIMI_FAST_CAPABLE,
         defaultModelId: 'kimi-k2.7-code'

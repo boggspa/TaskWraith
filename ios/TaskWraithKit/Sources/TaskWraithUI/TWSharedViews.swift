@@ -1013,14 +1013,10 @@ struct ProviderModelPicker: View {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
     }
     private var reasoningLabel: String? {
-        // Kimi has no reasoning-effort ladder — its "Thinking" toggle IS the
-        // reasoning state and defaults on, so surface it on the collapsed chip
-        // (the ladder sidecar already does), matching Electron's
-        // reasoningDisplayLabel → "Thinking".
-        if isKimiProvider { return kimiThinkingEnabled ? "Thinking" : nil }
         guard let effort = reasoningEffort,
             !twReasoningOptions(in: currentCatalog, modelId: modelId).isEmpty
         else { return nil }
+        if isKimiProvider && effort.lowercased() == "on" { return "Thinking" }
         // Provider-idiomatic wording on the chip (Claude "Low" vs Codex "Light";
         // Codex "Extra High" vs Claude "Extra") — mirrors Electron's chip
         // reasoningSuffix. The in-popover ladder keeps its unified Off→Ultracode
@@ -1061,11 +1057,13 @@ struct ProviderModelPicker: View {
             }
             twNormalizeReasoningSelection(
                 catalog: catalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            if newProvider.lowercased() == "kimi" { kimiThinkingEnabled = true }
             normalizeFastModeSelection(catalog: catalog, modelId: modelId)
         }
         .onChange(of: modelId) { _, _ in
             twNormalizeReasoningSelection(
                 catalog: currentCatalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            if isKimiProvider { kimiThinkingEnabled = true }
             normalizeFastModeSelection(catalog: currentCatalog, modelId: modelId)
         }
         .onAppear {
@@ -1142,11 +1140,11 @@ struct ProviderModelPicker: View {
                 // on the effort so a tier change restarts the fresh state).
                 ChipReasoningSuffix(
                     label: reasoningLabel,
-                    effort: isKimiProvider ? (kimiThinkingEnabled ? "on" : nil) : reasoningEffort,
+                    effort: reasoningEffort,
                     accent: TWTheme.providerAccent(
                         provider, modelId: displayModelId, modelLabel: modelLabel)
                 )
-                .id(isKimiProvider ? "kimi-thinking" : (reasoningEffort ?? ""))
+                .id(reasoningEffort ?? "")
             }
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 8, weight: .semibold))
@@ -1269,22 +1267,11 @@ struct ProviderModelPicker: View {
 
     private var isKimiProvider: Bool { provider.lowercased() == "kimi" }
 
-    /// The ladder binds to `reasoningEffort` for string-providers, but Kimi has
-    /// no reasoning axis — it maps stop 0/1 (Off/Light) onto its thinking Bool.
     private var ladderEffortBinding: Binding<String?> {
-        if isKimiProvider {
-            return Binding<String?>(
-                get: { kimiThinkingEnabled ? "low" : "off" },
-                set: { newValue in
-                    kimiThinkingEnabled = twNormalizeLadderEffort(newValue ?? "off") != "off"
-                }
-            )
-        }
         return $reasoningEffort
     }
 
     private var enabledLadderIndices: Set<Int> {
-        if isKimiProvider { return [0, 1] }  // Off (thinking off) / Light (thinking on)
         var indices = Set<Int>()
         for option in twReasoningOptions(in: currentCatalog, modelId: modelId)
         where option.disabled != true {
@@ -1301,6 +1288,7 @@ struct ProviderModelPicker: View {
         // mislabel the sidecar header (matches the thumb's clamped position).
         let idx = ReasoningLadder.clampedIndex(
             for: ladderEffortBinding.wrappedValue, enabled: enabledLadderIndices)
+        if isKimiProvider && reasoningEffort?.lowercased() == "on" { return "On" }
         return twLadderStopLabel(idx, provider: provider)
     }
 
@@ -1494,6 +1482,8 @@ private let twFastToggleModelIds: Set<String> = [
     "claude-opus-4-6", "claude-opus-4-6-1m",
     // Cursor Grok 4.5
     "cursor-grok-4.5", "grok-4.5",
+    // Kimi K2.7 Coding Highspeed
+    "kimi-k2.7-code",
 ]
 
 func twModelUsesFastToggle(_ modelId: String?) -> Bool {
@@ -1523,6 +1513,7 @@ private func twNormalizeLadderEffort(_ effort: String) -> String {
 private func twLadderIndex(for effort: String?) -> Int? {
     guard let effort else { return nil }
     let normalized = twNormalizeLadderEffort(effort)
+    if normalized == "on" { return 1 }
     return twReasoningStops.first(where: { $0.effort == normalized })?.index
 }
 /// Display label for a ladder stop, resolving the top stop's provider-specific
@@ -5602,7 +5593,8 @@ public struct EditableRosterStrip: View {
                     permissionPresetId: entry.permissionPresetId,
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
-                    thinkingEnabled: entry.thinkingEnabled ?? false,
+                    thinkingEnabled:
+                        entry.provider.lowercased() == "kimi" ? true : (entry.thinkingEnabled ?? false),
                     stageRole: entry.stageRole,
                     isBossman: entry.isBossman ?? false,
                     isSecondInCommand: entry.isSecondInCommand ?? false
@@ -5814,7 +5806,9 @@ public struct EditableRosterStrip: View {
                             model: nil,
                             role: TWTheme.providerLabel(provider),
                             brief: "",
-                            enabled: true
+                            enabled: true,
+                            reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
+                            thinkingEnabled: provider.lowercased() == "kimi"
                         ))
                     commit()
                 } label: {
@@ -5908,7 +5902,7 @@ struct RosterChipEditor: View {
     }
     private var reasoningEfforts: [String] {
         twReasoningModelOption(in: participantCatalog, modelId: entry.model)?
-            .supportedReasoningEfforts?.map(\.reasoningEffort) ?? []
+            .supportedReasoningEfforts?.filter { $0.disabled != true }.map(\.reasoningEffort) ?? []
     }
     private var permissionBinding: Binding<String> {
         Binding(
@@ -5999,7 +5993,12 @@ struct RosterChipEditor: View {
                             Button(TWTheme.providerLabel(provider)) {
                                 entry.provider = provider
                                 entry.model = nil
-                                entry.reasoningEffort = nil
+                                let nextCatalog = catalogs.first {
+                                    $0.provider.lowercased() == provider.lowercased()
+                                }
+                                entry.reasoningEffort = twDefaultReasoningEffort(
+                                    for: twReasoningModelOption(in: nextCatalog, modelId: nil))
+                                if provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
                                 entry.fastModeEnabled = false
                             }
                         }
@@ -6016,6 +6015,11 @@ struct RosterChipEditor: View {
                     Menu {
                         Button("CLI Default") {
                             entry.model = nil
+                            entry.reasoningEffort = twDefaultReasoningEffort(
+                                for: twReasoningModelOption(in: participantCatalog, modelId: nil))
+                            if entry.provider.lowercased() == "kimi" {
+                                entry.thinkingEnabled = true
+                            }
                             entry.fastModeEnabled = false
                         }
                         ForEach(
@@ -6025,6 +6029,10 @@ struct RosterChipEditor: View {
                         ) { modelOption in
                             Button(modelOption.label ?? modelOption.id) {
                                 entry.model = modelOption.id
+                                entry.reasoningEffort = twDefaultReasoningEffort(for: modelOption)
+                                if entry.provider.lowercased() == "kimi" {
+                                    entry.thinkingEnabled = true
+                                }
                                 if !twModelUsesFastToggle(modelOption.id) {
                                     entry.fastModeEnabled = false
                                 }
@@ -6074,23 +6082,22 @@ struct RosterChipEditor: View {
                     )
                 }
                 .twGlassSheetRowBackground()
-                if entry.provider.lowercased() == "kimi" {
+                if !reasoningEfforts.isEmpty {
                     Section("Reasoning") {
-                        Toggle("Extended thinking", isOn: $entry.thinkingEnabled)
-                            .tint(TWTheme.providerAccent(entry.provider))
-                    }
-                    .twGlassSheetRowBackground()
-                } else if !reasoningEfforts.isEmpty {
-                    Section("Reasoning") {
-                        Picker("Effort", selection: reasoningBinding) {
-                            ForEach(reasoningEfforts, id: \.self) { effort in
-                                Text(twReasoningDisplayLabel(effort, provider: entry.provider))
-                                    .tag(effort)
+                        if reasoningEfforts == ["on"] {
+                            LabeledContent("Thinking", value: "On")
+                        } else {
+                            Picker("Effort", selection: reasoningBinding) {
+                                ForEach(reasoningEfforts, id: \.self) { effort in
+                                    Text(twReasoningDisplayLabel(effort, provider: entry.provider))
+                                        .tag(effort)
+                                }
                             }
+                            .pickerStyle(.menu)
                         }
-                        .pickerStyle(.menu)
                         if (entry.provider.lowercased() == "codex"
-                            || entry.provider.lowercased() == "claude")
+                            || entry.provider.lowercased() == "claude"
+                            || entry.provider.lowercased() == "kimi")
                             && selectedModelSupportsFastMode
                         {
                             Toggle("Fast mode", isOn: $entry.fastModeEnabled)

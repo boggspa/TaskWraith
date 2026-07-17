@@ -162,14 +162,14 @@ describe('notification registry', () => {
     const kimi = groups.find((g) => g.provider === 'kimi')
     expect(kimi?.models).toEqual([
       {
-        name: 'Kimi K3',
+        name: 'K3',
         blurb:
-          "Moonshot's new flagship — long-horizon agentic coding with 256K context and always-on Max-effort thinking."
+          "Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."
       },
       {
-        name: 'Kimi Code HighSpeed',
+        name: 'K2.7 Coding Highspeed',
         blurb:
-          'The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode.'
+          'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
       }
     ])
 

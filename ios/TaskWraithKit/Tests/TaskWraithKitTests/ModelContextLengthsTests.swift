@@ -159,7 +159,7 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "kimi" }?
             .models.first { $0.modelId == "kimi-k3" }
         #expect(row != nil)
-        #expect(row?.label == "Kimi K3")
+        #expect(row?.label == "K3")
         #expect(row?.contextWindow == 256_000)
         #expect(row?.formatted == "256k")
     }

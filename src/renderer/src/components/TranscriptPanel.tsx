@@ -362,7 +362,7 @@ export type TranscriptPanelProps = {
    */
   thinkingProviderClass?: string | null
   /**
-   * Short model name (e.g. "5.5", "Opus 4.7", "K2.7 Code", "2.5 Pro") for
+   * Short model name (e.g. "5.5", "Opus 4.7", "K2.7 Coding", "2.5 Pro") for
    * the in-flight ensemble participant. Rendered as a dim chip after
    * the "Codex Thinking…" label so the user knows *which configured
    * model* is producing the live output. Null for solo chats and

@@ -182,6 +182,9 @@ struct Composer: View {
         if provider == "codex" {
             return nonEmpty(card.codexReasoningEffort)
         }
+        if provider == "kimi" {
+            return nonEmpty(card.kimiReasoningEffort)
+        }
         return nil
     }
     // Fast toggle + Kimi thinking the loaded thread last used (provider-specific
@@ -191,13 +194,14 @@ struct Composer: View {
         case "cursor": return card.cursorFastMode ?? false
         case "claude": return card.claudeFastMode ?? false
         case "codex": return card.codexServiceTier == "fast"
+        case "kimi": return card.kimiFastMode ?? false
         default: return false
         }
     }
-    private var cardKimiThinking: Bool { card.kimiThinkingEnabled ?? true }
+    private var cardKimiThinking: Bool { true }
     /// Only carry the Kimi thinking flag for Kimi runs (nil for everyone else).
     private var effectiveKimiThinking: Bool? {
-        selectedProvider.lowercased() == "kimi" ? selectedKimiThinking : nil
+        selectedProvider.lowercased() == "kimi" ? true : nil
     }
     private var isEmpty: Bool {
         text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty

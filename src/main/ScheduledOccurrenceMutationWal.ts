@@ -174,6 +174,7 @@ const SCHEDULED_TASK_FIELDS = {
   claudeReasoningEffort: true,
   claudeFastMode: true,
   kimiFastMode: true,
+  kimiReasoningEffort: true,
   kimiThinkingEnabled: true,
   grokReasoningEffort: true,
   cursorReasoningEffort: true,
@@ -252,6 +253,7 @@ const WORKFLOW_TEMPLATE_FIELDS = {
   claudeReasoningEffort: true,
   claudeFastMode: true,
   kimiFastMode: true,
+  kimiReasoningEffort: true,
   kimiThinkingEnabled: true,
   grokReasoningEffort: true,
   cursorReasoningEffort: true,
@@ -838,6 +840,7 @@ function assertTaskAuthorityFields(task: Record<string, unknown>, label: string)
     'codexReasoningEffort',
     'codexServiceTier',
     'claudeReasoningEffort',
+    'kimiReasoningEffort',
     'grokReasoningEffort',
     'cursorReasoningEffort',
     'geminiAuthProfileId'

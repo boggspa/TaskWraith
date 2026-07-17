@@ -193,6 +193,7 @@ export interface ProviderReroutePlan {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiFastMode?: boolean
+  kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -4210,6 +4211,7 @@ export interface ScheduledTask {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiFastMode?: boolean
+  kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -4277,6 +4279,7 @@ export type WorkflowRunTemplate = Pick<
   | 'claudeReasoningEffort'
   | 'claudeFastMode'
   | 'kimiFastMode'
+  | 'kimiReasoningEffort'
   | 'kimiThinkingEnabled'
   | 'grokReasoningEffort'
   | 'cursorReasoningEffort'
@@ -5236,6 +5239,7 @@ export interface RunQueueRequestSnapshot {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiFastMode?: boolean
+  kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -5266,6 +5270,7 @@ export interface RunQueueRequestSnapshot {
     cursorFastMode?: boolean
     claudeFastMode?: boolean
     kimiFastMode?: boolean
+    kimiReasoningEffort?: string | null
     codexServiceTier?: string | null
     kimiThinkingEnabled?: boolean
     contextTurns?: number

@@ -76,9 +76,9 @@ describe('humaniseModelId', () => {
 
   describe('Kimi', () => {
     it('maps Kimi ids including the old/new thinking aliases', () => {
-      expect(humaniseModelId('kimi', 'kimi-k3')).toBe('Kimi K3')
-      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('Kimi K2.7 Code')
-      expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('Kimi K2.7 Code Thinking')
+      expect(humaniseModelId('kimi', 'kimi-k3')).toBe('K3')
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+      expect(humaniseModelId('kimi', 'kimi-k2.7-code-thinking')).toBe('K2.7 Coding Thinking')
       expect(humaniseModelId('kimi', 'kimi-k2.6')).toBe('Kimi K2.6')
       expect(humaniseModelId('kimi', 'kimi-k2.6-thinking')).toBe('Kimi K2.6 Thinking')
       // Pre-renamed alias still maps to the same display

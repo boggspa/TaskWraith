@@ -25,4 +25,13 @@ struct SharedTaskCardDecodeTests {
         #expect(c.isShared == nil)
         #expect(c.sharedMode == nil)
     }
+
+    @Test("Kimi composer controls decode from the Mac projection")
+    func kimiComposerControls() throws {
+        let c = try card(
+            #"{"id":"chat1","provider":"kimi","selectedModelType":"kimi-k3","kimiFastMode":false,"kimiReasoningEffort":"high","kimiThinkingEnabled":true}"#)
+        #expect(c.kimiFastMode == false)
+        #expect(c.kimiReasoningEffort == "high")
+        #expect(c.kimiThinkingEnabled == true)
+    }
 }

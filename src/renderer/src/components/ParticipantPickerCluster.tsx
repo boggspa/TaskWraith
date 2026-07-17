@@ -271,6 +271,7 @@ export function ParticipantPickerCluster({
           participant.provider === 'cursor' ? resolved.reasoningEffort : undefined
         }
         kimiThinkingEnabled={participant.provider === 'kimi' ? resolved.thinkingEnabled : undefined}
+        kimiReasoningEffort={participant.provider === 'kimi' ? resolved.reasoningEffort : undefined}
         fastModeCapableModelIds={defaults.fastModeCapableModelIds}
         fastModeEnabled={fastModeEnabled}
         onToggleFastMode={onToggleFastMode}

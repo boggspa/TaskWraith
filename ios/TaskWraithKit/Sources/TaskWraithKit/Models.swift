@@ -606,6 +606,8 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     public var cursorFastMode: Bool? = nil
     public var claudeFastMode: Bool? = nil
     public var codexServiceTier: String? = nil
+    public var kimiFastMode: Bool? = nil
+    public var kimiReasoningEffort: String? = nil
     public var kimiThinkingEnabled: Bool? = nil
     /// Slice B: a provider (and optional model/reasoning) switch queued by the
     /// Mac while a run is active (`readPendingProviderChange`). PRESENT only
@@ -1820,9 +1822,9 @@ public enum BridgeAction {
     /// (e.g. "ios-<uuid>") starts a new chat; an existing one continues it.
     /// The Mac enforces the allowlist (workspace, provider, approval mode)
     /// and the run appears live in the desktop transcript too.
-    /// Map the composer's single `fastModeEnabled` toggle + `kimiThinkingEnabled`
+    /// Map the composer's single `fastModeEnabled` toggle + legacy Kimi flag
     /// onto the provider-specific wire keys the Mac reads (cursorFastMode /
-    /// claudeFastMode / codexServiceTier='fast' / kimiThinkingEnabled). Grok is
+    /// claudeFastMode / codexServiceTier='fast' / kimiFastMode). Grok is
     /// permanently Fast (implicit Mac-side) so it sends nothing.
     private static func applyFastAndThinking(
         _ payload: inout [String: Any], provider: String,
@@ -1838,11 +1840,12 @@ public enum BridgeAction {
             case "cursor": payload["cursorFastMode"] = fastModeEnabled
             case "claude": payload["claudeFastMode"] = fastModeEnabled
             case "codex": payload["codexServiceTier"] = fastModeEnabled ? "fast" : ""
+            case "kimi": payload["kimiFastMode"] = fastModeEnabled
             default: break
             }
         }
-        if provider.lowercased() == "kimi", let kimiThinkingEnabled {
-            payload["kimiThinkingEnabled"] = kimiThinkingEnabled
+        if provider.lowercased() == "kimi" {
+            payload["kimiThinkingEnabled"] = true
         }
     }
 

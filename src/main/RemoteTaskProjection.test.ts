@@ -518,6 +518,27 @@ describe('RemoteTaskProjection', () => {
     expect(card.customModel).toBeUndefined()
   })
 
+  it('projects K3 effort and K2.7 Fast compatibility fields to remote composers', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        provider: 'kimi',
+        providerMetadata: {
+          selectedModelType: 'kimi-k3',
+          kimiFastMode: false,
+          kimiReasoningEffort: 'high',
+          kimiThinkingEnabled: true
+        }
+      })
+    )
+    expect(card).toMatchObject({
+      provider: 'kimi',
+      selectedModelType: 'kimi-k3',
+      kimiFastMode: false,
+      kimiReasoningEffort: 'high',
+      kimiThinkingEnabled: true
+    })
+  })
+
   it('projects a queued provider change (Slice B) for the remote "switching at turn end" pill', () => {
     const card = buildRemoteTaskCard(
       chat({

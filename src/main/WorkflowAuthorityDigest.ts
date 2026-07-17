@@ -66,6 +66,7 @@ export function workflowRunTemplateAuthority(
     claudeReasoningEffort: template.claudeReasoningEffort,
     claudeFastMode: template.claudeFastMode,
     kimiFastMode: template.kimiFastMode,
+    kimiReasoningEffort: template.kimiReasoningEffort,
     kimiThinkingEnabled: template.kimiThinkingEnabled,
     grokReasoningEffort: template.grokReasoningEffort,
     cursorReasoningEffort: template.cursorReasoningEffort,

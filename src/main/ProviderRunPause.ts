@@ -168,8 +168,9 @@ export function applyReroutePlanToPayload<T extends { provider: ProviderId }>(
       : {}),
     ...(resolution.provider === 'kimi'
       ? {
+          reasoningEffort: plan.kimiReasoningEffort ?? null,
           serviceTier: plan.kimiFastMode ? 'fast' : 'standard',
-          kimiThinking: plan.kimiThinkingEnabled ?? null
+          kimiThinking: true
         }
       : {})
   }
@@ -297,6 +298,11 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
         ? { claudeFastMode: input.claudeFastMode }
         : {}),
     ...(typeof input.kimiFastMode === 'boolean' ? { kimiFastMode: input.kimiFastMode } : {}),
+    ...(input.kimiReasoningEffort === null
+      ? { kimiReasoningEffort: null }
+      : sanitizeShortString(input.kimiReasoningEffort, 80)
+        ? { kimiReasoningEffort: sanitizeShortString(input.kimiReasoningEffort, 80) }
+        : {}),
     ...(input.grokReasoningEffort === null
       ? { grokReasoningEffort: null }
       : sanitizeShortString(input.grokReasoningEffort, 80)
@@ -312,9 +318,7 @@ function sanitizeReroutePlan(value: unknown): ProviderReroutePlan | null {
       : typeof input.cursorFastMode === 'boolean'
         ? { cursorFastMode: input.cursorFastMode }
         : {}),
-    ...(typeof input.kimiThinkingEnabled === 'boolean'
-      ? { kimiThinkingEnabled: input.kimiThinkingEnabled }
-      : {})
+    ...(input.provider === 'kimi' ? { kimiThinkingEnabled: true } : {})
   }
 }
 

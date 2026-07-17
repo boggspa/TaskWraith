@@ -50,11 +50,11 @@ struct FirstLaunchStateDecodeTests {
     @Test("decodes a \"New Additions\" notice's grouped provider/model content")
     func decodesNewAdditionsGroups() throws {
         let json = """
-        {"id":"new-additions-2026-07-16","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
+        {"id":"new-additions-2026-07-17","kind":"addition","title":"New Additions","body":"Summary fallback.","tone":"default","dismissible":true,
          "groups":[
           {"provider":"kimi","label":"Kimi","models":[
-            {"name":"Kimi K3","blurb":"Moonshot's new flagship — long-horizon agentic coding with 256K context and always-on Max-effort thinking."},
-            {"name":"Kimi Code HighSpeed","blurb":"The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode."}
+            {"name":"K3","blurb":"Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."},
+            {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
           ]},
           {"provider":"ollama","label":"Ollama","models":[
             {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source models for agentic coding.","accentProvider":"deep-reinforce"},
@@ -68,7 +68,7 @@ struct FirstLaunchStateDecodeTests {
         #expect(notice.groups?.count == 2)
         #expect(notice.groups?.first?.provider == "kimi")
         #expect(notice.groups?.first?.label == "Kimi")
-        #expect(notice.groups?.first?.models.map(\.name) == ["Kimi K3", "Kimi Code HighSpeed"])
+        #expect(notice.groups?.first?.models.map(\.name) == ["K3", "K2.7 Coding Highspeed"])
         #expect(notice.groups?.first?.models.first?.blurb.contains("256K") == true)
         #expect(notice.groups?.first?.models.last?.blurb.contains("5–6×") == true)
         #expect(notice.groups?.contains { $0.provider == "claude" } == false)

@@ -17,7 +17,11 @@ import {
 } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { normalizeActiveGoalObjective } from '../GoalState'
-import { claudeModelSupportsFastMode } from '../providers/StaticProviderModels'
+import {
+  claudeModelSupportsFastMode,
+  isKimiK3Model,
+  normalizeKimiReasoningEffort
+} from '../providers/StaticProviderModels'
 import type { ExternalPathGrantRunBindingContext } from '../ExternalPathGrantBinding'
 import {
   assertLiveProviderId,
@@ -204,8 +208,17 @@ export function normalizeAgentRunPayload(
     appRunId,
     appChatId,
     model: optionalString(payload.model),
-    reasoningEffort: optionalStringOrNull(payload.reasoningEffort),
-    serviceTier: optionalStringOrNull(payload.serviceTier),
+    reasoningEffort:
+      provider === 'kimi'
+        ? normalizeKimiReasoningEffort(
+            optionalString(payload.model),
+            optionalStringOrNull(payload.reasoningEffort)
+          )
+        : optionalStringOrNull(payload.reasoningEffort),
+    serviceTier:
+      provider === 'kimi' && isKimiK3Model(optionalString(payload.model))
+        ? 'standard'
+        : optionalStringOrNull(payload.serviceTier),
     claudeReasoningEffort: optionalStringOrNull(payload.claudeReasoningEffort),
     claudeFastMode:
       provider === 'claude' &&
@@ -213,7 +226,9 @@ export function normalizeAgentRunPayload(
       typeof payload.claudeFastMode === 'boolean'
         ? payload.claudeFastMode
         : undefined,
-    kimiThinking: typeof payload.kimiThinking === 'boolean' ? payload.kimiThinking : undefined,
+    // Current K2.7 Coding and K3 models both advertise always_thinking. Ignore
+    // stale persisted/off inputs at the universal dispatch boundary.
+    kimiThinking: provider === 'kimi' ? true : undefined,
     approvalMode: clampedPosture.approvalMode,
     workflowMode: clampedPosture.downgraded ? 'normal' : requestedWorkflowMode,
     imagePaths: stringArray(payload.imagePaths),

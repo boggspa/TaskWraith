@@ -70,6 +70,7 @@ function scheduledComposerInput(chat: ChatRecord, task: ScheduledTask): Composer
     claudeReasoningEffort: task.claudeReasoningEffort,
     claudeFastMode: task.claudeFastMode,
     kimiFastMode: task.kimiFastMode,
+    kimiReasoningEffort: task.kimiReasoningEffort,
     kimiThinkingEnabled: task.kimiThinkingEnabled,
     grokReasoningEffort: task.grokReasoningEffort,
     cursorReasoningEffort: task.cursorReasoningEffort,

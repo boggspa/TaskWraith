@@ -462,7 +462,7 @@ extension WelcomeDashboard {
                     inputTokens: 4_900_000, outputTokens: 46_600, percent: 27.1),
                 .init(id: "gem-pro", provider: "gemini", label: "Gemini Pro",
                     inputTokens: 2_200_000, outputTokens: 10_600, percent: 12.3),
-                .init(id: "kimi", provider: "kimi", label: "Kimi K2.7 Code",
+                .init(id: "kimi", provider: "kimi", label: "K2.7 Coding",
                     inputTokens: 572_000, outputTokens: 27_600, percent: 5.2),
                 .init(id: "comp-fast", provider: "cursor", label: "Composer 2.5 Fast",
                     inputTokens: 852_000, outputTokens: 57_800, percent: 4.9),

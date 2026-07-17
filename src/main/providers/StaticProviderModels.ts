@@ -514,21 +514,29 @@ const CLAUDE_STATIC_MODELS = [
   },
   { id: 'custom', label: 'Custom model ID' }
 ]
+export const KIMI_K3_REASONING_EFFORTS = ['low', 'high', 'max'] as const
+
 const KIMI_STATIC_MODELS = [
   {
     id: 'kimi-k2.7-code',
-    label: 'Kimi K2.7 Code',
-    description: 'Kimi Code CLI standard and HighSpeed tiers',
+    label: 'K2.7 Coding',
+    description: 'Standard and Highspeed tiers with always-on thinking',
     isDefault: true,
+    supportedReasoningEfforts: [{ reasoningEffort: 'on' }],
+    defaultReasoningEffort: 'on',
     additionalSpeedTiers: ['fast']
   },
   {
-    // Managed `kimi-code/k3` alias (2026-07-16): 256K context, always-on
-    // Max-effort thinking applied server-side (support_efforts=["max"]).
-    // No HighSpeed tier — Fast stays a K2.7 Code capability.
+    // Managed `kimi-code/k3` alias (2026-07-16): 256K context and always-on
+    // thinking with model-advertised Low/High/Max effort choices. No Highspeed
+    // tier — Fast stays a K2.7 Coding capability.
     id: 'kimi-k3',
-    label: 'Kimi K3',
-    description: "Moonshot's flagship K3 - 256K context - always-on Max-effort thinking"
+    label: 'K3',
+    description: "Moonshot's flagship K3 - 256K context - Low, High, or Max thinking",
+    supportedReasoningEfforts: KIMI_K3_REASONING_EFFORTS.map((reasoningEffort) => ({
+      reasoningEffort
+    })),
+    defaultReasoningEffort: 'max'
   }
 ]
 const OLLAMA_STATIC_MODELS = [
@@ -676,6 +684,41 @@ const KIMI_CLI_MODEL_ALIASES = new Map<string, string>([
   ['kimi-k2-0711', KIMI_DEFAULT_MODEL],
   ['kimi-k2-turbo', KIMI_DEFAULT_MODEL]
 ])
+
+export function isKimiK3Model(model?: string | null): boolean {
+  const normalized = String(model || '')
+    .trim()
+    .toLowerCase()
+  return (
+    normalized === 'kimi-k3' ||
+    normalized === KIMI_K3_API_MODEL ||
+    normalized === KIMI_K3_CLI_MODEL
+  )
+}
+
+/** K3 defaults to Max; K2.7 Coding has no configurable effort axis. */
+export function normalizeKimiReasoningEffort(
+  model?: string | null,
+  effort?: string | null
+): (typeof KIMI_K3_REASONING_EFFORTS)[number] | null {
+  if (!isKimiK3Model(model)) return null
+  const normalized = String(effort || '')
+    .trim()
+    .toLowerCase()
+  return KIMI_K3_REASONING_EFFORTS.includes(
+    normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number]
+  )
+    ? (normalized as (typeof KIMI_K3_REASONING_EFFORTS)[number])
+    : 'max'
+}
+
+/** Value exposed by Kimi Code's ACP `thinking` session config option. */
+export function kimiAcpThinkingConfigValue(
+  model?: string | null,
+  effort?: string | null
+): string {
+  return normalizeKimiReasoningEffort(model, effort) || 'on'
+}
 
 export function getStaticProviderModels(
   provider: ProviderId,

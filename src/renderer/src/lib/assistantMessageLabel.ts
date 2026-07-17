@@ -204,7 +204,7 @@ const formatAssistantMessageLabel = (
   const modelName = ensembleModel ? shortModelName(provider, '', ensembleModel) : null
   // Append a reasoning/thinking suffix when the participant carried one
   // through dispatch so the header mirrors the composer chip the user
-  // picked ("5.5 Extra High", "Opus 4.7 · Max", "K2.7 Code Thinking"). The
+  // picked ("5.5 Extra High", "Opus 4.7 · Max", "K2.7 Coding Thinking"). The
   // reasoning helper short-circuits to '' for providers without a
   // reasoning axis (Gemini) or when the effort is 'off'.
   const reasoningSuffix = modelName
@@ -219,6 +219,7 @@ const formatAssistantMessageLabel = (
         modelLabel: '',
         codexReasoningEffort: provider === 'codex' ? ensembleReasoningEffort : undefined,
         claudeReasoningEffort: provider === 'claude' ? ensembleReasoningEffort : undefined,
+        kimiReasoningEffort: provider === 'kimi' ? ensembleReasoningEffort : undefined,
         kimiThinkingEnabled: provider === 'kimi' ? ensembleThinkingEnabled : undefined
       })
     : ''

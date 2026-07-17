@@ -39,6 +39,8 @@ export interface PrepareKimiHomeInput {
   extraDenyTools?: readonly string[]
   /** Per-run thinking preference; omitted keeps the user config's setting. */
   thinkingEnabled?: boolean
+  /** Per-run K3 thinking effort; omitted keeps the user config's setting. */
+  thinkingEffort?: string
   /**
    * Keep Kimi's `sessions/` + `session_index.jsonl` in this home after cleanup.
    * Runtime config, credentials, oauth state, plugins, and skills are still
@@ -215,7 +217,8 @@ export async function prepareKimiIsolatedHome(
     const isolatedConfig = buildKimiIsolatedConfig({
       baseConfig,
       extraDenyTools: input.extraDenyTools,
-      thinkingEnabled: input.thinkingEnabled
+      thinkingEnabled: input.thinkingEnabled,
+      thinkingEffort: input.thinkingEffort
     })
     await fs.writeFile(fs.join(homeDir, 'config.toml'), isolatedConfig, 0o600)
 

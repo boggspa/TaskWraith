@@ -560,6 +560,7 @@ export class RunLifecycleCoordinator {
       claudeReasoningEffort: request?.claudeReasoningEffort,
       claudeFastMode: request?.claudeFastMode,
       kimiFastMode: request?.kimiFastMode,
+      kimiReasoningEffort: request?.kimiReasoningEffort,
       kimiThinkingEnabled: request?.kimiThinkingEnabled,
       scheduledTaskId: this.normalizeOptionalString(request?.scheduledTaskId),
       scheduledRunAt: this.normalizeOptionalString(request?.scheduledRunAt),

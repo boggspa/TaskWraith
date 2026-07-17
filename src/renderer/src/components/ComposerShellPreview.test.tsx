@@ -161,7 +161,7 @@ describe('ComposerShellPreview — single metadata source', () => {
       ['cursor', 'cursor', 'Composer 2.5', 'default', 'Default Approval'],
       ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Default Approval'],
       ['gemini', 'gemini', 'Pro 3.1', 'default', 'Default Approval'],
-      ['kimi', 'kimi', 'K2.7 Code', 'read_only', 'Read workspace'],
+      ['kimi', 'kimi', 'K2.7 Coding', 'read_only', 'Read workspace'],
       ['default', 'codex', 'Auto', 'default', 'Default Approval'],
       ['terminal', 'codex', 'Shell', 'default', 'Ask before tools']
     ]

@@ -1234,6 +1234,7 @@ function formatParticipantReasoning(input: {
     modelLabel: '',
     codexReasoningEffort: input.provider === 'codex' ? input.reasoningEffort : undefined,
     claudeReasoningEffort: input.provider === 'claude' ? input.reasoningEffort : undefined,
+    kimiReasoningEffort: input.provider === 'kimi' ? input.reasoningEffort : undefined,
     grokReasoningEffort: input.provider === 'grok' ? input.reasoningEffort : undefined,
     cursorReasoningEffort: input.provider === 'cursor' ? input.reasoningEffort : undefined,
     kimiThinkingEnabled: input.provider === 'kimi' ? input.thinkingEnabled : undefined
@@ -1241,7 +1242,7 @@ function formatParticipantReasoning(input: {
   if (label) return label
 
   if (input.provider === 'kimi') {
-    return input.thinkingEnabled === false ? 'Off' : 'Default'
+    return 'On'
   }
   if (input.provider === 'codex' || input.provider === 'claude') {
     return input.reasoningEffort?.toLowerCase() === 'off' ? 'Off' : 'Default'

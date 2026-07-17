@@ -1957,15 +1957,15 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-16","kind":"addition","title":"New Additions","body":"Kimi K3, Kimi Code HighSpeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-07-17","kind":"addition","title":"New Additions","body":"K3, K2.7 Coding Highspeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.","tone":"default","accent":"default","dismissible":true,"groups":[
             {"provider":"codex","label":"Codex","models":[
               {"name":"GPT-5.6-Luna","blurb":"Fast and affordable agentic coding — with the Max reasoning tier."},
               {"name":"GPT-5.6-Terra","blurb":"Balanced agentic coding for everyday work — Max and Ultra reasoning tiers."},
               {"name":"GPT-5.6-Sol","blurb":"Latest frontier agentic coding model — Max and Ultra reasoning tiers."}
             ]},
             {"provider":"kimi","label":"Kimi","models":[
-              {"name":"Kimi K3","blurb":"Moonshot's new flagship — long-horizon agentic coding with 256K context and always-on Max-effort thinking."},
-              {"name":"Kimi Code HighSpeed","blurb":"The same K2.7 Code intelligence at roughly 5–6× the output speed — switch it on with Fast mode."}
+              {"name":"K3","blurb":"Moonshot's new flagship for long-horizon coding with 256K context and always-on Low, High, or Max thinking."},
+              {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
             ]},
             {"provider":"cursor","label":"Cursor","models":[
               {"name":"Cursor Grok 4.5","blurb":"Cursor's first-party model pool — 500K context, Low/Medium/High reasoning, and a Fast toggle."}
@@ -4802,8 +4802,8 @@ public final class RemoteSessionModel: ObservableObject {
         /// Per-participant approval preset (read_only | plan | default | full_access;
         /// legacy workspace_write is tolerated but no longer offered for new picks).
         public var permissionPresetId: String?
-        /// Per-participant reasoning effort (provider-interpreted); Kimi uses
-        /// thinkingEnabled instead.
+        /// Per-participant reasoning effort. Kimi uses `on` for K2.7 Coding and
+        /// Low/High/Max for K3; `thinkingEnabled` remains a compatibility field.
         public var reasoningEffort: String?
         public var fastModeEnabled: Bool
         public var thinkingEnabled: Bool
@@ -5911,26 +5911,28 @@ public final class RemoteSessionModel: ObservableObject {
             threadId: threadId, taskCards: taskCards, threadSnapshots: threadSnapshots)
     }
 
-    /// The Fast + Kimi-thinking the thread last used, derived from its projected
-    /// card (mirrors ComposerView.cardFastMode/cardKimiThinking) so a plan
-    /// approve/respond inherits the thread's toggle state instead of forcing Fast
-    /// off / thinking to default.
-    private func cardFastAndThinking(threadId: String, provider: String) -> (Bool?, Bool?) {
+    /// The provider controls the thread last used, derived from its projected
+    /// card so a plan approve/respond preserves Fast and K3 effort.
+    private func cardProviderControls(
+        threadId: String, provider: String
+    ) -> (fast: Bool?, thinking: Bool?, reasoning: String?) {
         // No cached card (older thread outside the snapshot window, or projection
         // not yet landed) — return nil so the composerPrompt OMITS Fast entirely
         // and the Mac inherits it from chat metadata, rather than forcing it off.
         guard let card = taskCards.first(where: { $0.id == threadId || $0.threadId == threadId })
-        else { return (nil, nil) }
+        else { return (nil, nil, nil) }
         let fast: Bool
         switch provider.lowercased() {
         case "cursor": fast = card.cursorFastMode ?? false
         case "claude": fast = card.claudeFastMode ?? false
         case "codex": fast = card.codexServiceTier == "fast"
+        case "kimi": fast = card.kimiFastMode ?? false
         default: fast = false
         }
         let thinking: Bool? =
             provider.lowercased() == "kimi" ? (card.kimiThinkingEnabled ?? true) : nil
-        return (fast, thinking)
+        let reasoning = provider.lowercased() == "kimi" ? card.kimiReasoningEffort : nil
+        return (fast, thinking, reasoning)
     }
 
     private func failMissingProposedPlanProvider(_ threadId: String) {
@@ -5974,13 +5976,14 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         repliedProposedPlanIds.insert(messageId)
-        let (fast, thinking) = cardFastAndThinking(threadId: threadId, provider: provider)
+        let controls = cardProviderControls(threadId: threadId, provider: provider)
         send(
             BridgeAction.composerPrompt(
                 workspaceId: ws, threadId: threadId, provider: provider,
                 text: "The plan above is approved — go ahead and implement it now.",
-                approvalMode: "default", proposedPlanImplementOf: messageId,
-                fastModeEnabled: fast, kimiThinkingEnabled: thinking),
+                approvalMode: "default", reasoningEffort: controls.reasoning,
+                proposedPlanImplementOf: messageId,
+                fastModeEnabled: controls.fast, kimiThinkingEnabled: controls.thinking),
             successLabel: "Plan approved — implementing.",
             onAck: { [weak self] accepted in
                 guard let self, !accepted else { return }
@@ -6005,11 +6008,12 @@ public final class RemoteSessionModel: ObservableObject {
             return
         }
         repliedProposedPlanIds.insert(messageId)
-        let (fast, thinking) = cardFastAndThinking(threadId: threadId, provider: provider)
+        let controls = cardProviderControls(threadId: threadId, provider: provider)
         send(
             BridgeAction.composerPrompt(
                 workspaceId: ws, threadId: threadId, provider: provider, text: trimmed,
-                fastModeEnabled: fast, kimiThinkingEnabled: thinking),
+                reasoningEffort: controls.reasoning,
+                fastModeEnabled: controls.fast, kimiThinkingEnabled: controls.thinking),
             successLabel: "Feedback sent.",
             onAck: { [weak self] accepted in
                 guard let self else { return }

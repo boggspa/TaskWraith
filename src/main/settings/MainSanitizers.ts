@@ -859,9 +859,9 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       codexServiceTier: optionalString(input.codexServiceTier),
       claudeFastMode: typeof input.claudeFastMode === 'boolean' ? input.claudeFastMode : undefined,
       kimiFastMode: typeof input.kimiFastMode === 'boolean' ? input.kimiFastMode : undefined,
+      kimiReasoningEffort: optionalString(input.kimiReasoningEffort),
       cursorFastMode: typeof input.cursorFastMode === 'boolean' ? input.cursorFastMode : undefined,
-      kimiThinkingEnabled:
-        typeof input.kimiThinkingEnabled === 'boolean' ? input.kimiThinkingEnabled : undefined,
+      kimiThinkingEnabled: input.provider === 'kimi' ? true : undefined,
       runtimeProfileId: optionalString(input.runtimeProfileId),
       geminiAuthProfileId: optionalStringOrNull(input.geminiAuthProfileId),
       handoffSourceRunId: optionalString(input.handoffSourceRunId),

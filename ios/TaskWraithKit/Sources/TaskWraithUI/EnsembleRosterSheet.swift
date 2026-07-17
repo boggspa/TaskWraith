@@ -71,7 +71,8 @@ public struct EnsembleRosterSheet: View {
                     permissionPresetId: entry.permissionPresetId,
                     reasoningEffort: entry.reasoningEffort,
                     fastModeEnabled: entry.fastModeEnabled ?? false,
-                    thinkingEnabled: entry.thinkingEnabled ?? false,
+                    thinkingEnabled:
+                        entry.provider.lowercased() == "kimi" ? true : (entry.thinkingEnabled ?? false),
                     stageRole: entry.stageRole,
                     isBossman: entry.isBossman ?? false,
                     isSecondInCommand: entry.isSecondInCommand ?? false
@@ -575,7 +576,9 @@ public struct EnsembleRosterSheet: View {
                 model: nil,
                 role: TWTheme.providerLabel(provider),
                 brief: "",
-                enabled: true
+                enabled: true,
+                reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
+                thinkingEnabled: provider.lowercased() == "kimi"
             ))
         commit()
     }
@@ -653,7 +656,9 @@ public struct EnsembleRosterSheet: View {
                     permissionPresetId: participant.permissionPresetId,
                     reasoningEffort: participant.reasoningEffort,
                     fastModeEnabled: participant.fastModeEnabled ?? false,
-                    thinkingEnabled: participant.thinkingEnabled ?? false,
+                    thinkingEnabled:
+                        participant.provider.lowercased() == "kimi"
+                        ? true : (participant.thinkingEnabled ?? false),
                     stageRole: participant.stageRole,
                     isBossman: participant.isBossman ?? false,
                     isSecondInCommand: participant.isSecondInCommand ?? false

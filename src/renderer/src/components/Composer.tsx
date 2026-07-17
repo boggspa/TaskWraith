@@ -346,6 +346,7 @@ export interface ComposerProps {
   isWorkflowChatWelcome: any
   isWorkflowComposeChat: any
   kimiFastMode: any
+  kimiReasoningEffort: any
   kimiThinkingEnabled: any
   lastNonCustomModelType: any
   liveRunOutputTokens: any
@@ -427,6 +428,7 @@ export interface ComposerProps {
   setGoalPopoverOpen: any
   setIntentNote: any
   setKimiFastMode: any
+  setKimiReasoningEffort: any
   setKimiThinkingEnabled: any
   setLastNonCustomModelType: any
   setPendingElevation: any
@@ -671,7 +673,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     isWorkflowChatWelcome,
     isWorkflowComposeChat,
     kimiFastMode,
-    kimiThinkingEnabled,
+    kimiReasoningEffort,
     lastNonCustomModelType,
     liveRunOutputTokens,
     activeRunId,
@@ -745,6 +747,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setGoalPopoverOpen,
     setIntentNote,
     setKimiFastMode,
+    setKimiReasoningEffort,
     setKimiThinkingEnabled,
     setLastNonCustomModelType,
     setPendingElevation,
@@ -3413,13 +3416,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     'string'
                                 ? soloPendingProviderMetadata.claudeReasoningEffort
                                 : claudeReasoningEffort
-                          const effectiveKimiThinking =
+                          const effectiveKimiThinking = true
+                          const effectiveKimiReasoning =
                             ensembleResolved?.provider === 'kimi'
-                              ? ensembleResolved.thinkingEnabled
-                              : typeof soloPendingProviderMetadata?.kimiThinkingEnabled ===
-                                    'boolean'
-                                ? soloPendingProviderMetadata.kimiThinkingEnabled
-                                : kimiThinkingEnabled
+                              ? ensembleResolved.reasoningEffort
+                              : typeof soloPendingProviderMetadata?.kimiReasoningEffort === 'string'
+                                ? soloPendingProviderMetadata.kimiReasoningEffort
+                                : kimiReasoningEffort
                           const effectiveKimiFastMode =
                             ensembleResolved?.provider === 'kimi'
                               ? ensembleResolved.fastModeEnabled
@@ -3511,11 +3514,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   }))
                             combinedSelectedReasoning = effectiveClaudeReasoning
                           } else if (effectiveProvider === 'kimi') {
-                            combinedReasoningOptions = [
-                              { value: 'on', label: 'Thinking on' },
-                              { value: 'off', label: 'Thinking off' }
-                            ]
-                            combinedSelectedReasoning = effectiveKimiThinking ? 'on' : 'off'
+                            combinedReasoningOptions = reasoningOptionsForEffectiveModel(
+                              'kimi',
+                              effectiveSelectedModel,
+                              effectiveModelOptionsRaw
+                            )
+                            combinedSelectedReasoning = effectiveKimiReasoning
                           } else if (
                             effectiveProvider === 'grok' &&
                             isGrok45ReasoningModelId(effectiveSelectedModel)
@@ -3572,6 +3576,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 if (!claudeModelOption?.additionalSpeedTiers?.includes('fast')) {
                                   patch.fastModeEnabled = false
                                 }
+                              }
+                              if (effectiveProvider === 'kimi') {
+                                const kimiModelOption = effectiveModelOptionsRaw.find(
+                                  (model) => model.id === nextModel
+                                )
+                                patch.reasoningEffort =
+                                  kimiModelOption?.defaultReasoningEffort ||
+                                  kimiModelOption?.supportedReasoningEfforts?.find(
+                                    (option) => !option.disabled
+                                  )?.reasoningEffort ||
+                                  'on'
+                                patch.thinkingEnabled = true
                               }
                               if (effectiveProvider === 'grok') {
                                 patch.reasoningEffort = isGrok45ReasoningModelId(nextModel)
@@ -3637,6 +3653,27 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   setClaudeFastMode(false)
                                 }
                                 metadataPatch.claudeFastMode = false
+                              }
+                            }
+                            if (effectiveProvider === 'kimi') {
+                              const kimiModelOption = effectiveModelOptionsRaw.find(
+                                (model) => model.id === nextModel
+                              )
+                              const nextReasoning =
+                                kimiModelOption?.defaultReasoningEffort ||
+                                kimiModelOption?.supportedReasoningEfforts?.find(
+                                  (option) => !option.disabled
+                                )?.reasoningEffort ||
+                                'on'
+                              if (shouldUpdateLiveComposerState) {
+                                setKimiReasoningEffort(nextReasoning)
+                                setKimiThinkingEnabled(true)
+                              }
+                              metadataPatch.kimiReasoningEffort = nextReasoning
+                              metadataPatch.kimiThinkingEnabled = true
+                              if (!kimiModelOption?.additionalSpeedTiers?.includes('fast')) {
+                                if (shouldUpdateLiveComposerState) setKimiFastMode(false)
+                                metadataPatch.kimiFastMode = false
                               }
                             }
                             if (effectiveProvider === 'grok') {
@@ -3804,7 +3841,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleCombinedReasoningChange = (value: string) => {
                             if (ensembleBinding) {
                               if (ensembleBinding.provider === 'kimi') {
-                                updateSelectedParticipantWithNotice({ thinkingEnabled: value !== 'off' })
+                                updateSelectedParticipantWithNotice({
+                                  reasoningEffort: value,
+                                  thinkingEnabled: true
+                                })
                               } else {
                                 updateSelectedParticipantWithNotice({ reasoningEffort: value })
                               }
@@ -3825,12 +3865,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 claudeReasoningEffort: value
                               })
                             } else if (effectiveProvider === 'kimi') {
-                              const enabled = value !== 'off'
                               if (shouldUpdateLiveComposerState) {
-                                setKimiThinkingEnabled(enabled)
+                                setKimiReasoningEffort(value)
+                                setKimiThinkingEnabled(true)
                               }
                               rememberCurrentChatComposerSelection({
-                                kimiThinkingEnabled: enabled
+                                kimiReasoningEffort: value,
+                                kimiThinkingEnabled: true
                               })
                             } else if (effectiveProvider === 'grok') {
                               if (shouldUpdateLiveComposerState) {
@@ -3880,6 +3921,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 grokReasoningEffort={effectiveGrokReasoning}
                                 cursorReasoningEffort={effectiveCursorReasoning}
                                 kimiThinkingEnabled={effectiveKimiThinking}
+                                kimiReasoningEffort={effectiveKimiReasoning}
                                 fastModeCapableModelIds={fastModeCapableModelIds}
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}

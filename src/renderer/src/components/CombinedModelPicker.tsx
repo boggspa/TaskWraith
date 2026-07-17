@@ -192,6 +192,8 @@ interface CombinedModelPickerProps {
   cursorReasoningEffort?: string
   /** Kimi thinking flag (so the chip text can format it). */
   kimiThinkingEnabled?: boolean
+  /** K3 thinking effort (low/high/max). */
+  kimiReasoningEffort?: string
   /**
    * Set of model IDs that support the paid Fast tier (Codex GPT-5.5
    * + GPT-5.4; Claude Opus 4.7 + Opus 4.6). Used both to (1) render a
@@ -523,16 +525,14 @@ function normalizeLadderEffort(effort: string): string {
 
 /**
  * Map a reasoning-option value onto a ladder index, or null when it doesn't
- * belong on the ladder. Kimi has no reasoning axis, so its off/on thinking flag
- * rides the bottom two stops (Off / Light) — mirroring the iOS ladder's
- * synthetic Kimi binding.
+ * belong on the ladder. K2.7 Coding's fixed `on` value rides the first active
+ * stop; K3's Low/High/Max values use the ordinary effort ladder.
  */
 export function ladderIndexForOption(provider: ProviderId, value: string): number | null {
   if (provider === 'kimi') {
     const token = value.trim().toLowerCase()
     if (token === 'off') return 0
     if (token === 'on') return 1
-    return null
   }
   const normalized = normalizeLadderEffort(value)
   const stop = LADDER_STOPS.find((entry) => entry.effort === normalized)
@@ -571,6 +571,18 @@ export function resolveReasoningLadderAvailability(
   ladder: LadderModel
 ): ReasoningLadderAvailability {
   if (ladder.enabledIndices.length > 1) return { mutable: true }
+  if (provider === 'kimi' && ladder.enabledIndices.length === 1) {
+    const index = ladder.enabledIndices[0]
+    return {
+      mutable: false,
+      unavailablePresentation: {
+        index,
+        label: ladder.labelByIndex[index] || 'On',
+        disabledReason:
+          ladder.disabledReason || 'Thinking is always on and cannot be disabled for this model.'
+      }
+    }
+  }
   const cursorImplicitMedium =
     provider === 'cursor' && CURSOR_IMPLICIT_MEDIUM_MODELS.has(modelId.trim().toLowerCase())
   return {
@@ -931,6 +943,7 @@ export function CombinedModelPicker({
   grokReasoningEffort,
   cursorReasoningEffort,
   kimiThinkingEnabled,
+  kimiReasoningEffort,
   fastModeCapableModelIds,
   fastModeEnabled,
   onToggleFastMode,
@@ -1075,6 +1088,7 @@ export function CombinedModelPicker({
         grokReasoningEffort,
         cursorReasoningEffort,
         kimiThinkingEnabled,
+        kimiReasoningEffort,
         shellFastModeActive: showShellFastLabel
       }),
     [
@@ -1087,6 +1101,7 @@ export function CombinedModelPicker({
       grokReasoningEffort,
       cursorReasoningEffort,
       kimiThinkingEnabled,
+      kimiReasoningEffort,
       showShellFastLabel
     ]
   )
@@ -1102,7 +1117,8 @@ export function CombinedModelPicker({
         claudeReasoningEffort,
         grokReasoningEffort,
         cursorReasoningEffort,
-        kimiThinkingEnabled
+        kimiThinkingEnabled,
+        kimiReasoningEffort
       }),
     [
       provider,
@@ -1113,7 +1129,8 @@ export function CombinedModelPicker({
       claudeReasoningEffort,
       grokReasoningEffort,
       cursorReasoningEffort,
-      kimiThinkingEnabled
+      kimiThinkingEnabled,
+      kimiReasoningEffort
     ]
   )
 

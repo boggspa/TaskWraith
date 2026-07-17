@@ -470,6 +470,9 @@ export function buildScheduledTaskDispatchReceipt(task: ScheduledTask, generated
         : {}),
       ...(task.claudeFastMode !== undefined ? { claudeFastMode: task.claudeFastMode } : {}),
       ...(task.kimiFastMode !== undefined ? { kimiFastMode: task.kimiFastMode } : {}),
+      ...(task.kimiReasoningEffort !== undefined
+        ? { kimiReasoningEffort: task.kimiReasoningEffort }
+        : {}),
       ...(task.grokReasoningEffort !== undefined
         ? { grokReasoningEffort: task.grokReasoningEffort }
         : {}),

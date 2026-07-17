@@ -34,11 +34,11 @@ describe('shortModelName', () => {
   })
 
   it('extracts Kimi version', () => {
-    expect(shortModelName('kimi', 'Kimi K2.7 Code', 'kimi-k2.7-code')).toBe('K2.7 Code')
-    expect(shortModelName('kimi', 'Kimi K2.7 Code Thinking', 'kimi-k2.7-code-thinking')).toBe(
-      'K2.7 Code'
+    expect(shortModelName('kimi', 'K2.7 Coding', 'kimi-k2.7-code')).toBe('K2.7 Coding')
+    expect(shortModelName('kimi', 'K2.7 Coding Thinking', 'kimi-k2.7-code-thinking')).toBe(
+      'K2.7 Coding'
     )
-    expect(shortModelName('kimi', 'Kimi K3', 'kimi-k3')).toBe('K3')
+    expect(shortModelName('kimi', 'K3', 'kimi-k3')).toBe('K3')
     expect(shortModelName('kimi', 'Kimi K2.6 Thinking', 'kimi-k2.6-thinking')).toBe('K2.6')
   })
 
@@ -86,7 +86,7 @@ describe('shortModelName', () => {
   it("resolves the cli-default sentinel to each provider's real default", () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
-    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Code')
+    expect(shortModelName('kimi', '', 'cli-default')).toBe('K2.7 Coding')
     expect(shortModelName('grok', '', 'cli-default')).toBe('Grok 4.5 Fast')
     expect(shortModelName('gemini', '', 'cli-default')).toBe('Flash Lite')
     expect(shortModelName('cursor', '', 'cli-default')).toBe('Composer 2.5 Fast')
@@ -178,13 +178,13 @@ describe('reasoningDisplayLabel', () => {
     ).toBe('')
   })
 
-  it('Kimi maps boolean to Thinking / empty', () => {
+  it('Kimi maps fixed K2.7 thinking to Thinking and K3 effort to its tier', () => {
     expect(
       reasoningDisplayLabel({
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k2.7-code',
-        modelLabel: 'Kimi K2.7 Code',
+        modelLabel: 'K2.7 Coding',
         kimiThinkingEnabled: true
       })
     ).toBe('Thinking')
@@ -193,10 +193,20 @@ describe('reasoningDisplayLabel', () => {
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k2.7-code',
-        modelLabel: 'Kimi K2.7 Code',
+        modelLabel: 'K2.7 Coding',
         kimiThinkingEnabled: false
       })
     ).toBe('')
+    expect(
+      reasoningDisplayLabel({
+        provider: 'kimi',
+        composerStyle: 'kimi',
+        modelId: 'kimi-k3',
+        modelLabel: 'K3',
+        kimiReasoningEffort: 'max',
+        kimiThinkingEnabled: true
+      })
+    ).toBe('Max')
   })
 
   it('Gemini returns empty (no reasoning concept yet)', () => {
@@ -377,27 +387,29 @@ describe('formatComposerModelChip', () => {
     ).toBe('Opus 4.8 1M · Ultracode')
   })
 
-  it('Kimi shell + kimi provider + on → "K2.7 Code Thinking"', () => {
+  it('Kimi shell + kimi provider + on → "K2.7 Coding Thinking"', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k2.7-code',
-        modelLabel: 'Kimi K2.7 Code',
+        modelLabel: 'K2.7 Coding',
         kimiThinkingEnabled: true
       })
-    ).toBe('K2.7 Code Thinking')
+    ).toBe('K2.7 Coding Thinking')
   })
 
-  it('Kimi shell + kimi K3 → "K3" (thinking is server-side, no toggle suffix)', () => {
+  it('Kimi shell + K3 shows its selected always-on effort', () => {
     expect(
       formatComposerModelChip({
         provider: 'kimi',
         composerStyle: 'kimi',
         modelId: 'kimi-k3',
-        modelLabel: 'Kimi K3'
+        modelLabel: 'K3',
+        kimiReasoningEffort: 'high',
+        kimiThinkingEnabled: true
       })
-    ).toBe('K3')
+    ).toBe('K3 High')
   })
 
   it('TaskWraith native shell + codex provider falls back to "GPT-5.5 · High"', () => {
@@ -442,9 +454,9 @@ describe('formatComposerModelChip', () => {
         provider: 'kimi',
         composerStyle: 'terminal',
         modelId: 'kimi-k2.7-code',
-        modelLabel: 'Kimi K2.7 Code',
+        modelLabel: 'K2.7 Coding',
         kimiThinkingEnabled: true
       })
-    ).toBe('Kimi K2.7 Code · Thinking')
+    ).toBe('K2.7 Coding · Thinking')
   })
 })

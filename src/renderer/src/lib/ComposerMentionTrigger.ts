@@ -112,7 +112,7 @@ export interface EnsembleDmCandidate {
  *      composer's DM routing stays in lockstep with the orchestrator's
  *      auto-promotion path and the overlay tokeniser. Recognises
  *      `@codex` / `@Planner` (legacy single-token), plus the new
- *      `@GPT 5.5` / `@Sonnet 4.7` / `@Flash Lite` / `@Kimi K2.7 Code`
+ *      `@GPT 5.5` / `@Sonnet 4.7` / `@Flash Lite` / `@Kimi K2.7 Coding`
  *      model-name forms.
  *
  * Returns a DM target only when the prompt addresses exactly one participant.

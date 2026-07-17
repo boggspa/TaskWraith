@@ -123,13 +123,16 @@ describe('generateModelAliases', () => {
     expect(aliases).toContain('claude mythos 5')
   })
 
-  it('kimi: K2.7 Code + Kimi K2.7 Code + suffix forms', () => {
+  it('kimi: current Coding names and legacy Code aliases both resolve', () => {
     const aliases = generateModelAliases('kimi', 'kimi-k2.7-code-thinking')
     expect(aliases).toContain('k2.7')
     expect(aliases).toContain('kimi k2.7')
     expect(aliases).toContain('k2.7 code')
     expect(aliases).toContain('kimi k2.7 code')
     expect(aliases).toContain('k2.7 code thinking')
+    expect(aliases).toContain('k2.7 coding')
+    expect(aliases).toContain('kimi k2.7 coding')
+    expect(aliases).toContain('k2.7 coding thinking')
   })
 
   it('kimi: legacy K2.6 aliases still resolve for old participants', () => {
@@ -299,11 +302,17 @@ describe('findFirstMention — multi-word model aliases (the 1.0.4 lift)', () =>
     expect(result?.text).toBe('Flash Lite')
   })
 
-  it('resolves @Kimi K2.7 Code to the kimi participant', () => {
+  it('resolves @Kimi K2.7 Coding to the kimi participant', () => {
+    const result = findFirstMention('@Kimi K2.7 Coding weigh in', QUARTET)
+    expect(result?.kind).toBe('participant')
+    if (result?.kind === 'participant') expect(result.participant.id).toBe(KIMI.id)
+    expect(result?.text).toBe('Kimi K2.7 Coding')
+  })
+
+  it('retains the legacy @Kimi K2.7 Code alias', () => {
     const result = findFirstMention('@Kimi K2.7 Code weigh in', QUARTET)
     expect(result?.kind).toBe('participant')
     if (result?.kind === 'participant') expect(result.participant.id).toBe(KIMI.id)
-    expect(result?.text).toBe('Kimi K2.7 Code')
   })
 
   it('prefers longest-prefix when shorter prefixes also resolve', () => {

@@ -29,11 +29,12 @@ describe('reasoning ladder mapping', () => {
     expect(ladderIndexForOption('claude', 'Light')).toBe(1)
   })
 
-  it('rides Kimi thinking on the bottom two stops (off→Off, on→Light)', () => {
+  it('maps Kimi fixed On plus K3 Low/High/Max onto the shared ladder', () => {
     expect(ladderIndexForOption('kimi', 'off')).toBe(0)
     expect(ladderIndexForOption('kimi', 'on')).toBe(1)
-    // Kimi never carries reasoning efforts, so a stray effort does not map.
-    expect(ladderIndexForOption('kimi', 'high')).toBeNull()
+    expect(ladderIndexForOption('kimi', 'low')).toBe(1)
+    expect(ladderIndexForOption('kimi', 'high')).toBe(3)
+    expect(ladderIndexForOption('kimi', 'max')).toBe(5)
   })
 
   it('returns null for values off the ladder', () => {
@@ -151,17 +152,27 @@ describe('unavailable reasoning presentation', () => {
     }
   })
 
-  it('treats zero or one enabled stop as fixed and two stops as mutable', () => {
+  it('treats K2.7 Coding as fixed On and K3 Low/High/Max as mutable', () => {
     const fixed = buildLadderModel('codex', [{ value: 'medium', label: 'Medium' }])
-    const mutable = buildLadderModel('kimi', [
-      { value: 'off', label: 'Thinking off' },
-      { value: 'on', label: 'Thinking on' }
+    const kimiFixed = buildLadderModel('kimi', [{ value: 'on', label: 'On' }])
+    const kimiMutable = buildLadderModel('kimi', [
+      { value: 'low', label: 'Low' },
+      { value: 'high', label: 'High' },
+      { value: 'max', label: 'Max' }
     ])
 
     expect(resolveReasoningLadderAvailability('codex', 'fixed-live-model', fixed).mutable).toBe(
       false
     )
-    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k2.7', mutable)).toEqual({
+    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k2.7-code', kimiFixed)).toEqual({
+      mutable: false,
+      unavailablePresentation: {
+        index: 1,
+        label: 'On',
+        disabledReason: 'Thinking is always on and cannot be disabled for this model.'
+      }
+    })
+    expect(resolveReasoningLadderAvailability('kimi', 'kimi-k3', kimiMutable)).toEqual({
       mutable: true
     })
   })

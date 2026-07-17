@@ -284,11 +284,11 @@ describe('buildRemoteFirstLaunchState', () => {
     const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
     expect(kimiGroup?.models).toEqual([
       expect.objectContaining({
-        name: 'Kimi K3',
-        blurb: expect.stringMatching(/256K context.*Max-effort thinking/)
+        name: 'K3',
+        blurb: expect.stringMatching(/256K context.*Low, High, or Max thinking/)
       }),
       expect.objectContaining({
-        name: 'Kimi Code HighSpeed',
+        name: 'K2.7 Coding Highspeed',
         blurb: expect.stringMatching(/5–6×.*Fast mode/)
       })
     ])

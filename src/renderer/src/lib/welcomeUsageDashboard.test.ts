@@ -434,7 +434,7 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     expect(data.totalTokens).toBeGreaterThan(5_000)
   })
 
-  it('keeps canonical Kimi K2.7 Code and K3 plus legacy K2.6 variants and relabels them', () => {
+  it('keeps canonical K2.7 Coding and K3 plus legacy K2.6 variants and relabels them', () => {
     const records: UsageRecord[] = [
       baseRecord({
         id: 'k3',
@@ -488,8 +488,8 @@ describe('buildWelcomeUsageDashboardData model-breakdown filter (Welcome L8)', (
     ]
     const data = buildWelcomeUsageDashboardData(records, [], 'all', NOW)
     expect(data.modelBreakdown.map((m) => m.label)).toEqual([
-      'Kimi K3',
-      'Kimi K2.7 Code',
+      'K3',
+      'K2.7 Coding',
       'Kimi K2.6',
       'Kimi K2.6 Thinking'
     ])

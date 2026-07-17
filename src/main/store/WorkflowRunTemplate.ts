@@ -26,6 +26,7 @@ const WORKFLOW_RUN_TEMPLATE_FIELDS: Record<keyof WorkflowRunTemplate, true> = {
   claudeReasoningEffort: true,
   claudeFastMode: true,
   kimiFastMode: true,
+  kimiReasoningEffort: true,
   kimiThinkingEnabled: true,
   grokReasoningEffort: true,
   cursorReasoningEffort: true,

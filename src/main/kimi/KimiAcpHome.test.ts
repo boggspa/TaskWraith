@@ -69,6 +69,8 @@ describe('prepareKimiIsolatedHome', () => {
       runId: 'r1',
       homeDir: '/iso',
       sourceHome: '/src',
+      thinkingEnabled: true,
+      thinkingEffort: 'high',
       fs
     })
     expect(result.ok).toBe(true)
@@ -80,6 +82,7 @@ describe('prepareKimiIsolatedHome', () => {
     expect(config).not.toMatch(/decision = "allow"\npattern = "Bash"/)
     expect(config).toContain('pattern = "FetchURL"')
     expect(config).toContain('pattern = "WebSearch"')
+    expect(config).toContain('[thinking]\neffort = "high"\nenabled = true')
     expect(modes.get('/iso/config.toml')).toBe(0o600)
 
     // Credential seeded 0600.

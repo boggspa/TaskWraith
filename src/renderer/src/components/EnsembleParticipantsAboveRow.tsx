@@ -1865,6 +1865,7 @@ function EnsembleAddParticipantButton({
       grokReasoningEffort={draft.provider === 'grok' ? draft.reasoningEffort : undefined}
       cursorReasoningEffort={draft.provider === 'cursor' ? draft.reasoningEffort : undefined}
       kimiThinkingEnabled={draft.provider === 'kimi' ? draft.thinkingEnabled : undefined}
+      kimiReasoningEffort={draft.provider === 'kimi' ? draft.reasoningEffort : undefined}
       fastModeCapableModelIds={
         selectedGroup?.fastModeCapableModelIds || selectedDefaults.fastModeCapableModelIds
       }

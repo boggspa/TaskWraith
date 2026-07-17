@@ -62,10 +62,11 @@ describe('getDefaultEnsembleParticipantConfig', () => {
     })
   })
 
-  it('returns kimi defaults: K2.7 Code model, Standard speed, thinking ON', () => {
+  it('returns kimi defaults: K2.7 Coding, Standard speed, thinking On', () => {
     expect(getDefaultEnsembleParticipantConfig('kimi')).toEqual({
       model: 'kimi-k2.7-code',
       permissionPresetId: 'default',
+      reasoningEffort: 'on',
       fastModeEnabled: false,
       thinkingEnabled: true,
       serviceTier: 'standard'
@@ -164,7 +165,7 @@ describe('normalizeProviderModelSelection', () => {
   it('seeds Kimi thinking with the Standard speed tier', () => {
     expect(normalizeProviderModelSelection('kimi', 'kimi-k2.7-code')).toEqual({
       model: 'kimi-k2.7-code',
-      reasoningEffort: undefined,
+      reasoningEffort: 'on',
       fastModeEnabled: false,
       thinkingEnabled: true,
       serviceTier: 'standard'
@@ -363,7 +364,7 @@ describe('resolveEnsembleParticipantSettings', () => {
     expect(resolved.thinkingEnabled).toBe(false)
   })
 
-  it('resolves kimi thinking ON by default, off when overridden', () => {
+  it('keeps kimi thinking ON even when stale metadata requests off', () => {
     const defaults = resolveEnsembleParticipantSettings(
       participant({ provider: 'kimi', id: 'ensemble-kimi' })
     )
@@ -379,7 +380,7 @@ describe('resolveEnsembleParticipantSettings', () => {
         thinkingEnabled: false
       })
     )
-    expect(overridden.thinkingEnabled).toBe(false)
+    expect(overridden.thinkingEnabled).toBe(true)
   })
 })
 
@@ -459,20 +460,39 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     }
   })
 
-  it('exposes Kimi K2.7 Code as Fast-capable with thinking on by default', () => {
+  it('exposes K2.7 Coding as Fast-capable with fixed thinking on', () => {
     const kimi = getEnsembleModelDefaults('kimi')
     expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
     expect(kimi.defaultReasoning).toBe('on')
+    expect(getEnsembleReasoningOptions('kimi', 'kimi-k2.7-code')).toEqual([
+      expect.objectContaining({ value: 'on', label: 'On' })
+    ])
     expect(kimi.fastModeCapableModelIds.has('kimi-k2.7-code')).toBe(true)
   })
 
-  it('lists Kimi K3 after K2.7 Code without Fast capability or default status', () => {
+  it('lists K3 after K2.7 Coding with Low, High, and Max but no Fast capability', () => {
     const kimi = getEnsembleModelDefaults('kimi')
     expect(kimi.modelOptions.map((option) => option.id)).toEqual(['kimi-k2.7-code', 'kimi-k3'])
-    // K3 has no HighSpeed tier — Fast stays a K2.7 Code exclusive — and the
-    // provider default remains K2.7 Code.
+    expect(getEnsembleReasoningOptions('kimi', 'kimi-k3').map((option) => option.value)).toEqual([
+      'low',
+      'high',
+      'max'
+    ])
+    // K3 has no Highspeed tier — Fast stays a K2.7 Coding exclusive — and the
+    // provider default remains K2.7 Coding.
     expect(kimi.fastModeCapableModelIds.has('kimi-k3')).toBe(false)
     expect(kimi.defaultModelId).toBe('kimi-k2.7-code')
+    expect(
+      resolveEnsembleParticipantSettings(
+        participant({
+          provider: 'kimi',
+          model: 'kimi-k3',
+          reasoningEffort: undefined,
+          thinkingEnabled: false,
+          fastModeEnabled: true
+        })
+      )
+    ).toMatchObject({ reasoningEffort: 'max', thinkingEnabled: true, fastModeEnabled: false })
   })
 
   it('exposes returned Claude 5 family rows and Sonnet 4.6 Legacy without Mythos', () => {

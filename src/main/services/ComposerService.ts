@@ -53,6 +53,10 @@ import {
 } from '../mcp/McpSessionProfileFence'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
+import {
+  isKimiK3Model,
+  normalizeKimiReasoningEffort
+} from '../providers/StaticProviderModels'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
@@ -92,6 +96,7 @@ export interface ComposerInput {
   claudeReasoningEffort?: string | null
   claudeFastMode?: boolean | null
   kimiFastMode?: boolean
+  kimiReasoningEffort?: string | null
   kimiThinkingEnabled?: boolean
   grokReasoningEffort?: string | null
   cursorReasoningEffort?: string | null
@@ -544,12 +549,19 @@ export class ComposerService {
             ? optionalStringOrNull(effectiveInput.grokReasoningEffort) || null
             : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
               ? optionalStringOrNull(effectiveInput.cursorReasoningEffort) || null
+              : provider === 'kimi'
+                ? normalizeKimiReasoningEffort(
+                    requestedModel,
+                    optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
+                      optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
+                  )
               : null,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
           : provider === 'kimi'
-            ? (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
+            ? !isKimiK3Model(requestedModel) &&
+              (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
               ? 'fast'
               : 'standard'
           : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
@@ -566,9 +578,7 @@ export class ComposerService {
           ? (effectiveInput.claudeFastMode ?? metadataBoolean(chat, 'claudeFastMode') ?? false)
           : null,
       kimiThinking:
-        provider === 'kimi'
-          ? (effectiveInput.kimiThinkingEnabled ?? metadataBoolean(chat, 'kimiThinkingEnabled') ?? true)
-          : null,
+        provider === 'kimi' ? true : null,
       approvalMode,
       workflowMode,
       ...(effectiveRunPermissions ? { effectivePermissions: effectiveRunPermissions } : {}),
@@ -676,7 +686,8 @@ function applyComposerReroutePlan(
     ...(resolution.provider === 'kimi'
       ? {
           kimiFastMode: plan.kimiFastMode ?? false,
-          kimiThinkingEnabled: plan.kimiThinkingEnabled ?? true
+          kimiReasoningEffort: plan.kimiReasoningEffort ?? null,
+          kimiThinkingEnabled: true
         }
       : {}),
     ...(resolution.provider === 'grok'

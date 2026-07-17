@@ -70,21 +70,45 @@ describe('resolveSubThreadDelegationRunSettings', () => {
     })
   })
 
-  it('supports Kimi thinking control without pretending it is a reasoning-effort tier', () => {
+  it('keeps K2.7 Coding thinking on and rejects attempts to disable it', () => {
     expect(
       resolveSubThreadDelegationRunSettings({
         provider: 'kimi',
         model: 'kimi-k2.7-code',
-        kimiThinking: false
+        kimiThinking: true
       })
     ).toEqual({
       ok: true,
       requestedModel: 'kimi-k2.7-code',
-      kimiThinking: false,
-      runPayload: { model: 'kimi-k2.7-code', kimiThinking: false },
+      kimiThinking: true,
+      runPayload: { model: 'kimi-k2.7-code', kimiThinking: true },
       providerMetadataPatch: {
         selectedModelType: 'kimi-k2.7-code',
-        kimiThinkingEnabled: false
+        kimiThinkingEnabled: true
+      }
+    })
+    expect(
+      resolveSubThreadDelegationRunSettings({ provider: 'kimi', kimiThinking: false })
+    ).toMatchObject({ ok: false, message: expect.stringMatching(/always on.*cannot be disabled/i) })
+  })
+
+  it('supports K3 Low, High, and Max effort while keeping thinking on', () => {
+    expect(
+      resolveSubThreadDelegationRunSettings({
+        provider: 'kimi',
+        model: 'kimi-k3',
+        reasoningEffort: 'HIGH'
+      })
+    ).toEqual({
+      ok: true,
+      requestedModel: 'kimi-k3',
+      reasoningEffort: 'high',
+      kimiThinking: true,
+      runPayload: { model: 'kimi-k3', reasoningEffort: 'high', kimiThinking: true },
+      providerMetadataPatch: {
+        selectedModelType: 'kimi-k3',
+        kimiReasoningEffort: 'high',
+        kimiThinkingEnabled: true
       }
     })
   })
@@ -92,7 +116,7 @@ describe('resolveSubThreadDelegationRunSettings', () => {
   it('rejects provider-incompatible or unknown controls before dispatch', () => {
     expect(
       resolveSubThreadDelegationRunSettings({ provider: 'kimi', reasoningEffort: 'high' })
-    ).toMatchObject({ ok: false, message: expect.stringMatching(/not supported for kimi/i) })
+    ).toMatchObject({ ok: false, message: expect.stringMatching(/default.*does not expose/i) })
     expect(
       resolveSubThreadDelegationRunSettings({ provider: 'codex', reasoningEffort: 'warp' })
     ).toMatchObject({ ok: false, message: expect.stringMatching(/reasoningEffort.*codex/i) })

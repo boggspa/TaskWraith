@@ -41,4 +41,22 @@ struct ComposerScheduleActionTests {
         let expiresAt = try #require(payload["expiresAt"] as? Int)
         #expect(expiresAt > issuedAt)
     }
+
+    @Test("Kimi prompt carries K3 effort, Fast state, and always-on thinking")
+    func kimiPromptControls() throws {
+        let params = BridgeAction.composerPrompt(
+            workspaceId: "ws-1",
+            threadId: "t-1",
+            provider: "kimi",
+            text: "Review",
+            model: "kimi-k3",
+            reasoningEffort: "high",
+            fastModeEnabled: false,
+            kimiThinkingEnabled: false
+        )
+        let payload = try payload(params)
+        #expect(payload["reasoningEffort"] as? String == "high")
+        #expect(payload["kimiFastMode"] as? Bool == false)
+        #expect(payload["kimiThinkingEnabled"] as? Bool == true)
+    }
 }

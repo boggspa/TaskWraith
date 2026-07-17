@@ -400,6 +400,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   kimiAuthStatus: any
   kimiBinaryPath: any
   kimiFastMode: any
+  kimiReasoningEffort: any
   kimiThinkingEnabled: any
   latestSideChatRunResultSeed: any
   logsEndRef: any

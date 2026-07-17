@@ -4,8 +4,7 @@
  *
  * Real Codex shows `5.5 Extra High` (model digit + capitalised
  * reasoning level). Real Claude shows `Opus 4.7 · Max` (model name +
- * effort capped at "Max"). Real Kimi shows `K2.7 Code` or
- * `K2.7 Code Thinking`.
+ * effort capped at "Max"). Real Kimi shows `K2.7 Coding` or `K3 Max`.
  * Each upstream product has its own convention; this module captures
  * those rules in pure functions so the rendering surface stays dumb.
  *
@@ -35,6 +34,8 @@ export interface ComposerChipContext {
   cursorReasoningEffort?: string
   /** Kimi thinking toggle (boolean). */
   kimiThinkingEnabled?: boolean
+  /** K3 thinking effort token (low/high/max). */
+  kimiReasoningEffort?: string
   /** Claude composer shell only — render explicit "Fast" between model +
    * reasoning for Claude/Codex tier toggles and Cursor composer-2.5-fast. */
   shellFastModeActive?: boolean
@@ -45,7 +46,7 @@ export interface ComposerChipContext {
  *
  * Codex (`gpt-5.5`, `gpt-5.4-mini`)        → `5.5`, `5.4-Mini`
  * Claude (`claude-opus-4-7-1m`)            → `Opus 4.7 1M`
- * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Code`
+ * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
  * Kimi (`kimi-k3`)                         → `K3`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
  * Cursor (`grok-4.5`)                      → `Cursor Grok 4.5`
@@ -63,7 +64,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   if (id === 'cli-default') {
     if (provider === 'codex') return '5.5'
     if (provider === 'claude') return 'Sonnet 4.6'
-    if (provider === 'kimi') return 'K2.7 Code'
+    if (provider === 'kimi') return 'K2.7 Coding'
     if (provider === 'grok') return 'Grok 4.5 Fast'
     if (provider === 'cursor') return 'Composer 2.5 Fast'
     if (provider === 'ollama') return 'Qwen 3 (4B Param)'
@@ -102,10 +103,10 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
   }
 
   if (provider === 'kimi') {
-    // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Code. The explicit branch
-    // exists because the generic version matcher below would drop " Code";
+    // kimi-k2.7-code, kimi-k2.7-code-thinking → K2.7 Coding. The explicit branch
+    // exists because the generic version matcher below would drop " Coding";
     // plain version ids (kimi-k3 → K3, kimi-k2.6 → K2.6) fall through to it.
-    if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Code'
+    if (id.startsWith('kimi-k2.7-code')) return 'K2.7 Coding'
     const match = id.match(/^kimi-(k[\d.]+)/)
     if (match) {
       return match[1].toUpperCase()
@@ -206,7 +207,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
  * Codex: `Light` / `Medium` / `High` / `Extra High` (low/light → "Light"; xhigh → "Extra High")
  * Claude: `Low` / `Medium` / `High` / `Extra` / `Max` / `Ultracode`
  * Grok/Cursor Grok: `Low` / `Medium` / `High`
- * Kimi: `Thinking` when on, empty when off
+ * Kimi: K3's `Low`/`High`/`Max`; K2.7 Coding's fixed `Thinking`
  * Gemini: no reasoning concept today — returns empty
  *
  * `off` always returns empty so the chip omits the reasoning suffix.
@@ -223,6 +224,9 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
   }
 
   if (provider === 'kimi') {
+    if (ctx.modelId.trim().toLowerCase() === 'kimi-k3') {
+      return kimiReasoningDisplayLabel(ctx.kimiReasoningEffort)
+    }
     return ctx.kimiThinkingEnabled ? 'Thinking' : ''
   }
 
@@ -238,6 +242,14 @@ export function reasoningDisplayLabel(ctx: ComposerChipContext): string {
       : ''
   }
 
+  return ''
+}
+
+export function kimiReasoningDisplayLabel(effortValue?: string | null): string {
+  const effort = (effortValue || '').trim().toLowerCase()
+  if (effort === 'low') return 'Low'
+  if (effort === 'high') return 'High'
+  if (effort === 'max') return 'Max'
   return ''
 }
 
@@ -323,9 +335,9 @@ function formatClaudeShellChip(
  *   Claude shell + claude + fast + extra  → `Opus 4.8 · Fast Extra`
  *   Claude shell + codex + fast + xhigh   → `GPT 5.5 · Fast Extra High`
  *   Claude shell + cursor fast model      → `Composer 2.5 · Fast`
- *   Kimi shell + kimi provider + on        → `K2.7 Code Thinking`
+ *   Kimi shell + kimi provider + on        → `K2.7 Coding Thinking`
  *   TaskWraith shell + codex + high           → `GPT-5.5 · High`
- *   TaskWraith shell + kimi + on              → `Kimi K2.7 Code · Thinking`
+ *   TaskWraith shell + kimi + on              → `Kimi K2.7 Coding · Thinking`
  */
 export function formatComposerModelChip(ctx: ComposerChipContext): string {
   const { provider, composerStyle, modelLabel, modelId } = ctx
