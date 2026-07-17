@@ -111,22 +111,39 @@ describe('surroundingSunEvents', () => {
 })
 
 describe('moonPhase', () => {
+  // Eclipses pin the true phase exactly: a solar eclipse IS new moon, a
+  // lunar eclipse IS full moon. The elongation-based phase must nail both
+  // far tighter than the old mean-synodic cycle ever could (~14 h drift).
   it('is new at a total solar eclipse (2024-04-08 18:17 UTC)', () => {
     const { phase, illumination } = moonPhase(utc(2024, 4, 8, 18, 17))
     const distanceFromNew = Math.min(phase, 1 - phase)
-    expect(distanceFromNew).toBeLessThan(0.05)
-    expect(illumination).toBeLessThan(0.05)
+    expect(distanceFromNew).toBeLessThan(0.01)
+    expect(illumination).toBeLessThan(0.005)
   })
 
   it('is full at a total lunar eclipse (2015-09-28 02:47 UTC)', () => {
     const { phase, illumination } = moonPhase(utc(2015, 9, 28, 2, 47))
-    expect(Math.abs(phase - 0.5)).toBeLessThan(0.035)
-    expect(illumination).toBeGreaterThan(0.95)
+    expect(Math.abs(phase - 0.5)).toBeLessThan(0.01)
+    expect(illumination).toBeGreaterThan(0.995)
   })
 
-  it('cycles through a synodic month', () => {
-    const start = moonPhase(utc(2026, 7, 17, 12)).phase
-    const later = moonPhase(utc(2026, 7, 17, 12) + 29.530588853 * 86_400_000).phase
-    expect(Math.abs(later - start)).toBeLessThan(0.001)
+  it('waxes after a new moon and wanes before it', () => {
+    const waxing = moonPhase(utc(2024, 4, 11, 21, 0))
+    expect(waxing.phase).toBeGreaterThan(0.05)
+    expect(waxing.phase).toBeLessThan(0.18)
+
+    const waning = moonPhase(utc(2024, 4, 5, 21, 0))
+    expect(waning.phase).toBeGreaterThan(0.82)
+    expect(waning.phase).toBeLessThan(0.95)
+  })
+
+  it('advances monotonically through a lunation (real cycle, not mean)', () => {
+    // New (eclipse) → half a mean month later ≈ full; a full mean month later
+    // ≈ new again, within the true-vs-mean lunation wobble (±~0.02 cycles).
+    const start = utc(2024, 4, 8, 18, 17)
+    const half = moonPhase(start + 14.765 * 86_400_000)
+    expect(Math.abs(half.phase - 0.5)).toBeLessThan(0.03)
+    const cycle = moonPhase(start + 29.53 * 86_400_000)
+    expect(Math.min(cycle.phase, 1 - cycle.phase)).toBeLessThan(0.03)
   })
 })

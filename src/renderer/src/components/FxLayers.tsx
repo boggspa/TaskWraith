@@ -435,6 +435,12 @@ export function SkyWeatherVisual({
   const moonShadow = moonShadowPath(scene.moonPhase, southernHemisphere)
   const moonFillId = `skyMoonFill-${moonIdPrefix}`
   const moonMaskId = `skyMoonMask-${moonIdPrefix}`
+  // Aim the disc's radial highlight at the LIT limb (waxing lights the right
+  // in the northern hemisphere) so the phase direction is unmistakable — a
+  // fixed upper-left highlight made the earthshine glow fight the actual
+  // crescent for "which side is lit". Full-ish moons centre it.
+  const moonLitOnRight = southernHemisphere ? scene.moonPhase >= 0.5 : scene.moonPhase < 0.5
+  const moonHighlightX = moonShadow === null ? '42%' : moonLitOnRight ? '68%' : '32%'
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -621,7 +627,7 @@ export function SkyWeatherVisual({
         <div className="sky-moon">
           <svg className="sky-moon-glyph" viewBox="0 0 96 96" aria-hidden focusable="false">
             <defs>
-              <radialGradient id={moonFillId} cx="38%" cy="36%" r="78%">
+              <radialGradient id={moonFillId} cx={moonHighlightX} cy="40%" r="80%">
                 <stop offset="0" stopColor="#fdfefe" />
                 <stop offset="0.55" stopColor="#e8eef6" />
                 <stop offset="0.85" stopColor="#c8d4e6" />

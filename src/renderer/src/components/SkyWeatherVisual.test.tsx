@@ -52,6 +52,25 @@ describe('SkyWeatherVisual', () => {
     expect(html).toContain('sky-orb')
   })
 
+  it('lights the correct limb through the real lunar cycle', () => {
+    // Three nights AFTER the 2024-04-08 eclipse (new moon): waxing — lit on
+    // the right, highlight aimed right. Three nights BEFORE: waning — left.
+    const waxingNight = Date.UTC(2024, 3, 11, 21, 0)
+    const waningNight = Date.UTC(2024, 3, 5, 21, 0)
+
+    const waxing = renderToStaticMarkup(
+      <SkyWeatherVisual weather={weather(false)} nowMs={waxingNight} />
+    )
+    expect(waxing).toContain('sky-moon-disc')
+    expect(waxing).toContain('cx="68%"')
+
+    const waning = renderToStaticMarkup(
+      <SkyWeatherVisual weather={weather(false)} nowMs={waningNight} />
+    )
+    expect(waning).toContain('sky-moon-disc')
+    expect(waning).toContain('cx="32%"')
+  })
+
   it('shows a sun — not a moon — while the UK evening sun is still up', () => {
     // The snapshot even claims night (stale isDay): real solar elevation wins.
     const html = renderToStaticMarkup(

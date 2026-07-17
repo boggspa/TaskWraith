@@ -1238,9 +1238,10 @@
 }
 
 /* The dark side is nearly-invisible earthshine, never an opaque disc — the
- * lit crescent is carved by the SVG mask in FxLayers. */
+ * lit crescent is carved by the SVG mask in FxLayers. Kept below ~0.1 so it
+ * can never rival the lit limb for "which side is bright". */
 .sky-moon-earthshine {
-  opacity: 0.12;
+  opacity: 0.09;
 }
 
 /* Occluded sun through weather decks — the disc dims and diffuses. */

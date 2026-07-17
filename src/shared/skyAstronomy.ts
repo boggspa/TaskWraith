@@ -221,12 +221,44 @@ export interface MoonPhase {
   illumination: number
 }
 
-const SYNODIC_MONTH_DAYS = 29.530588853
-/** Known new moon: 2000-01-06 18:14 UTC. */
-const NEW_MOON_EPOCH_MS = Date.UTC(2000, 0, 6, 18, 14)
-
+/**
+ * TRUE lunar phase from Sun–Moon ecliptic elongation (low-precision series,
+ * Meeus Astronomical Algorithms ch. 22/25 leading terms, good to ~0.2°).
+ *
+ * A mean-synodic-cycle approximation was replaced deliberately: real
+ * lunations vary 29.27–29.83 days, so the mean cycle drifts up to ~14 h from
+ * the actual sky — enough to show the wrong quarter day. Elongation is exact
+ * by construction: 0° = new, 90° = first quarter, 180° = full, 270° = last
+ * quarter, and it increases monotonically (the Moon outruns the Sun).
+ */
 export function moonPhase(atMs: number): MoonPhase {
-  const cycles = (atMs - NEW_MOON_EPOCH_MS) / (SYNODIC_MONTH_DAYS * DAY_MS)
-  const phase = ((cycles % 1) + 1) % 1
-  return { phase, illumination: 0.5 * (1 - Math.cos(2 * Math.PI * phase)) }
+  const t = (atMs / DAY_MS + 2440587.5 - 2451545) / 36525
+  const norm = (deg: number): number => ((deg % 360) + 360) % 360
+
+  const meanElongation = 297.8501921 + 445267.1114034 * t
+  const sunAnomaly = 357.5291092 + 35999.0502909 * t
+  const moonAnomaly = 134.9633964 + 477198.8675055 * t
+  const moonLatArg = 93.272095 + 483202.0175233 * t
+
+  const moonLongitude =
+    218.3164477 +
+    481267.88123421 * t +
+    6.288774 * Math.sin(moonAnomaly * DEG) +
+    1.274027 * Math.sin((2 * meanElongation - moonAnomaly) * DEG) +
+    0.658314 * Math.sin(2 * meanElongation * DEG) +
+    0.213618 * Math.sin(2 * moonAnomaly * DEG) -
+    0.185116 * Math.sin(sunAnomaly * DEG) -
+    0.114332 * Math.sin(2 * moonLatArg * DEG)
+
+  const sunLongitude =
+    280.46646 +
+    36000.76983 * t +
+    1.914602 * Math.sin(sunAnomaly * DEG) +
+    0.019993 * Math.sin(2 * sunAnomaly * DEG)
+
+  const elongationDeg = norm(moonLongitude - sunLongitude)
+  return {
+    phase: elongationDeg / 360,
+    illumination: 0.5 * (1 - Math.cos(elongationDeg * DEG))
+  }
 }
