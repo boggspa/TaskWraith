@@ -197,7 +197,6 @@ import {
   ensembleFanoutPolicyEnabled,
   normalizeEnsembleFanoutPolicy
 } from './lib/ensembleFanoutPolicy'
-import { removeChatFromAllProjects } from './lib/projectsStore'
 import { createWorkspaceBoardProvenance } from './lib/workspaceBoardProvenance'
 import {
   PLAN_LABEL,
@@ -8352,6 +8351,11 @@ function App(): React.JSX.Element {
    * main store cascades sub-thread deletion. Drop the chat from our
    * local list immediately for snappy feedback, then refresh from
    * source-of-truth (if the IPC fails the next refresh restores it).
+   *
+   * Project membership is NOT cleaned here: AppStore.deleteChat reconciles
+   * memberChatIds at the main-side choke point every durable delete flows
+   * through (this IPC, the reaper, clear-chats, iOS-bridge cleanup) and
+   * broadcasts `projects-changed`, which the projects facade adopts.
    */
   const handleDeleteChat = async (chatId: string) => {
     if (!chatId) return
@@ -8374,7 +8378,6 @@ function App(): React.JSX.Element {
     }
     try {
       await window.api.deleteChat(chatId)
-      removeChatFromAllProjects(chatId)
     } catch (err) {
       console.error('[deleteChat] failed', err)
       // Best-effort: if delete failed, the next chat refresh on focus or
