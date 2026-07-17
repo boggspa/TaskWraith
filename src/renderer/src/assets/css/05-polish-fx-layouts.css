@@ -1139,7 +1139,10 @@
 
 :root[data-fx-enabled="true"] .sky-visual-fx {
   opacity: calc(var(--fx-sky-opacity, 1) * var(--fx-sky-layer-opacity, 1));
-  transition: opacity 220ms ease;
+  /* Consumes the scene transition list from 02-transcript-messages-fx.css —
+   * this rule out-specifies the base one, and a bare `opacity 220ms` here
+   * would kill the animated sun/moon/palette custom properties. */
+  transition: var(--sky-scene-transitions, opacity 220ms ease);
 }
 
 :root[data-fx-enabled="false"] .sky-visual-fx,

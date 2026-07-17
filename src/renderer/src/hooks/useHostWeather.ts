@@ -1,8 +1,10 @@
 import { useEffect, useState } from 'react'
 import type { HostWeatherVisualState } from '../components/FxLayers'
 
-// Re-fetch the host weather on this cadence while the sky visual FX are enabled.
-const SKY_WEATHER_REFRESH_MS = 30 * 60 * 1000
+// Re-fetch the host weather on this cadence while the sky visual FX are
+// enabled. Matches the main-process Open-Meteo cache TTL so a refresh here
+// actually observes new conditions instead of the cached snapshot.
+const SKY_WEATHER_REFRESH_MS = 15 * 60 * 1000
 
 // Best-effort local sky used when the host weather lookup fails. Kept pure (the
 // clock is passed in) so it can be unit-tested without a DOM; it derives the

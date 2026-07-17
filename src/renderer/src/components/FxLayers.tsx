@@ -1,5 +1,6 @@
-import { useEffect, useId, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AppSettings, ProviderId } from '../../../main/store/types'
+import { computeSkyScene, legacyTimePhase, moonShadowPath } from '../lib/skyScene'
 
 export type SkyWeatherKind =
   | 'clear'
@@ -21,8 +22,18 @@ export interface HostWeatherVisualState {
   location?: string
   isDay: boolean
   updatedAt: string
-  source: 'wttr' | 'fallback'
+  source: 'open-meteo' | 'fallback'
   error?: string
+  /** Coarse coordinates (~11 km) — the renderer recomputes sun/moon arcs and
+   * twilight locally from these between weather refreshes. */
+  latitude?: number
+  longitude?: number
+  cloudCoverPct?: number
+  precipitationMmHr?: number
+  snowfallCmHr?: number
+  windSpeedKph?: number
+  windGustKph?: number
+  humidityPct?: number
 }
 
 type SkyTimePhase = 'dawn' | 'day' | 'evening' | 'night'
@@ -304,8 +315,73 @@ export function RefractionFilterDefs() {
   )
 }
 
-export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState | null }) {
-  const localHour = new Date().getHours()
+interface SkyStar {
+  x: number
+  y: number
+  size: number
+  delaySec: number
+  durationSec: number
+  soft: boolean
+}
+
+/** Deterministic PRNG (mulberry32) so the starfield is identical across
+ * renders, panes and sessions — no per-render churn, no hydration drift. */
+function mulberry32(seed: number): () => number {
+  let a = seed >>> 0
+  return () => {
+    a = (a + 0x6d2b79f5) | 0
+    let t = Math.imul(a ^ (a >>> 15), 1 | a)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
+}
+
+function createSkyStarfield(seed: number, count: number): SkyStar[] {
+  const rand = mulberry32(seed)
+  const stars: SkyStar[] = []
+  for (let index = 0; index < count; index += 1) {
+    const sizeRoll = rand()
+    stars.push({
+      x: 1 + rand() * 98,
+      // Bias toward the top of the layer where the sky is deepest.
+      y: 2 + rand() ** 1.35 * 90,
+      size: sizeRoll < 0.62 ? 1.5 : sizeRoll < 0.92 ? 2.5 : 3.5,
+      delaySec: -(rand() * 9),
+      durationSec: 5 + rand() * 4.5,
+      soft: rand() < 0.4
+    })
+  }
+  return stars
+}
+
+const SKY_STARFIELD = createSkyStarfield(0x5eb0, 64)
+
+/** Re-derives the sky scene on a slow clock so the sun/moon keep creeping
+ * along their arcs (and twilight palettes keep blending) between the
+ * 15-minute weather refreshes. 30 s ≈ 0.04% of a day per step — the CSS
+ * transitions absorb each step invisibly. */
+const SKY_SCENE_TICK_MS = 30_000
+
+function useSkySceneClock(overrideNowMs?: number): number {
+  const [tickMs, setTickMs] = useState(() => Date.now())
+  useEffect(() => {
+    if (overrideNowMs !== undefined) {
+      return
+    }
+    const interval = window.setInterval(() => setTickMs(Date.now()), SKY_SCENE_TICK_MS)
+    return () => window.clearInterval(interval)
+  }, [overrideNowMs])
+  return overrideNowMs ?? tickMs
+}
+
+export function SkyWeatherVisual({
+  weather,
+  nowMs
+}: {
+  weather: HostWeatherVisualState | null
+  /** Test seam: freezes the scene clock (renderToStaticMarkup determinism). */
+  nowMs?: number
+}) {
   const skyKind = weather?.kind || 'unknown'
   const skyUfoSequenceRef = useRef(0)
   const skyDiffCloudSequenceRef = useRef(0)
@@ -314,16 +390,50 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
   const [skyDiffCloudFlight, setSkyDiffCloudFlight] = useState<SkyDiffCloudFlight | null>(null)
   const [skyMegaDeleteDiffCloudFlight, setSkyMegaDeleteDiffCloudFlight] =
     useState<SkyDiffCloudFlight | null>(null)
+  const moonIdPrefix = useId().replace(/:/g, '')
 
-  // Keep the backend daylight signal for core assets like stars vs sun/day state.
-  const isNightBase = weather ? !weather.isDay : localHour < 7 || localHour >= 19
+  const sceneClockMs = useSkySceneClock(nowMs)
+  const scene = useMemo(() => computeSkyScene(weather, sceneClockMs), [weather, sceneClockMs])
 
-  let timePhase: SkyTimePhase = isNightBase ? 'night' : 'day'
-  if (localHour >= 5 && localHour < 8) {
-    timePhase = 'dawn'
-  } else if (localHour >= 17 && localHour < 20) {
-    timePhase = 'evening'
-  }
+  // Real astronomy decides day vs night now — weather.isDay only feeds the
+  // scene's coordinate-free fallback, so the sky no longer jumps to a moon
+  // while a UK summer sun is still up.
+  const isNightBase = !scene.isSunUp
+  const timePhase: SkyTimePhase = legacyTimePhase(scene)
+
+  const sceneVars = {
+    '--sky-top': scene.top,
+    '--sky-upper': scene.upper,
+    '--sky-mid': scene.mid,
+    '--sky-horizon': scene.horizon,
+    '--sky-sun-x': scene.sunX.toFixed(2),
+    '--sky-sun-y': scene.sunY.toFixed(2),
+    '--sky-sun-scale': scene.sunScale.toFixed(3),
+    '--sky-sun-opacity': scene.sunOpacity.toFixed(3),
+    '--sky-sun-core': scene.sunCore,
+    '--sky-sun-mid': scene.sunMid,
+    '--sky-sun-edge': scene.sunEdge,
+    '--sky-sun-rays': scene.sunRayOpacity.toFixed(3),
+    '--sky-glow-x': scene.glowX.toFixed(2),
+    '--sky-glow-opacity': scene.glowOpacity.toFixed(3),
+    '--sky-glow-color': scene.glowColor,
+    '--sky-moon-x': scene.moonX.toFixed(2),
+    '--sky-moon-y': scene.moonY.toFixed(2),
+    '--sky-moon-bright': scene.moonBright.toFixed(3),
+    '--sky-stars': scene.starOpacity.toFixed(3),
+    '--sky-cloud-lit': scene.cloudLit,
+    '--sky-cloud-shade': scene.cloudShade,
+    '--sky-cloud-density': scene.cloudOpacity.toFixed(3),
+    '--sky-rain-slant': `${scene.rainSlantDeg.toFixed(1)}deg`,
+    '--sky-rain-opacity': scene.rainOpacity.toFixed(3)
+  } as CSSProperties
+
+  const southernHemisphere =
+    typeof weather?.latitude === 'number' && Number.isFinite(weather.latitude)
+      ? weather.latitude < 0
+      : false
+  const moonShadow = moonShadowPath(scene.moonPhase, southernHemisphere)
+  const moonFillId = `skyMoonFill-${moonIdPrefix}`
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -477,40 +587,57 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
 
   return (
     <div
-      className={`sky-visual-fx sky-${skyKind} ${isNightBase ? 'sky-night' : 'sky-day'} sky-phase-${timePhase}`}
+      className={`sky-visual-fx sky-${skyKind} ${isNightBase ? 'sky-night' : 'sky-day'} sky-phase-${timePhase} sky-scene-${scene.phase} sky-edge-${scene.edge ?? 'none'} sky-cover-${scene.cloudBand}`}
+      style={sceneVars}
       aria-hidden
     >
       {/* The fog/mist warp filter is defined ONCE globally via <SkyFogFilterDefs>
        * (rendered by App) — the CSS that applies it references a FIXED id, which
        * can't be namespaced per-instance, so emitting it here would duplicate the
        * id across the up-to-4 panes that can mount this layer at once. */}
+      <div className="sky-gradient" />
       <div className="sky-glow" />
+      <div className="sky-starfield">
+        {SKY_STARFIELD.map((star, index) => (
+          <span
+            key={`star-${index}`}
+            className={`sky-real-star${star.soft ? ' is-soft' : ''}`}
+            style={
+              {
+                '--st-x': `${star.x.toFixed(2)}%`,
+                '--st-y': `${star.y.toFixed(2)}%`,
+                '--st-s': `${star.size}px`,
+                '--st-delay': `${star.delaySec.toFixed(2)}s`,
+                '--st-dur': `${star.durationSec.toFixed(2)}s`
+              } as CSSProperties
+            }
+          />
+        ))}
+        <span className="sky-shooting-star" />
+      </div>
       <div className="sky-orb" />
-      {isNightBase && (
-        <>
-          <div className="sky-moon">
-            <svg
-              className="sky-moon-glyph"
-              viewBox="0 0 96 96"
-              aria-hidden
-              focusable="false"
-            >
-              <path
-                className="sky-moon-crescent"
-                d="M76.4 7.2C54.1 9.8 33.3 27.4 26.1 49.4c-7.7 23.3 6.2 39.9 32.3 39.4 8.5-.2 16.3-3 22.8-8.1-23 1.6-38.9-12.3-38.2-31.3.7-20 13.8-36 33.4-42.2Z"
-              />
-              <path
-                className="sky-moon-sheen"
-                d="M38.7 22.2C29.1 31.2 24.1 43.4 25.3 54.7c1.5 14.6 11.1 25.5 25.6 29"
-              />
-            </svg>
-          </div>
-          <span className="sky-star sky-star-1" />
-          <span className="sky-star sky-star-2" />
-          <span className="sky-star sky-star-3" />
-          <span className="sky-star sky-star-4" />
-          <span className="sky-star sky-star-5" />
-        </>
+      {scene.moonVisible && (
+        <div className="sky-moon">
+          <svg className="sky-moon-glyph" viewBox="0 0 96 96" aria-hidden focusable="false">
+            <defs>
+              <radialGradient id={moonFillId} cx="38%" cy="36%" r="78%">
+                <stop offset="0" stopColor="#fdfefe" />
+                <stop offset="0.55" stopColor="#e8eef6" />
+                <stop offset="0.85" stopColor="#c8d4e6" />
+                <stop offset="1" stopColor="#aebfd8" />
+              </radialGradient>
+            </defs>
+            <circle className="sky-moon-disc" cx="48" cy="48" r="44" fill={`url(#${moonFillId})`} />
+            <g className="sky-moon-maria">
+              <ellipse cx="36" cy="38" rx="11" ry="9" />
+              <ellipse cx="58" cy="30" rx="7" ry="6" />
+              <ellipse cx="55" cy="56" rx="12" ry="10" />
+              <ellipse cx="34" cy="62" rx="6" ry="5" />
+              <circle cx="66" cy="66" r="3.4" />
+            </g>
+            {moonShadow && <path className="sky-moon-shadow" d={moonShadow} />}
+          </svg>
+        </div>
       )}
       <span className="sky-cloud sky-cloud-1" />
       <span className="sky-cloud sky-cloud-2" />
@@ -536,7 +663,9 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
             >
               <span className="sky-diff-cloud-card">
                 <span className="sky-diff-cloud-stat sky-diff-cloud-add">{flight.additions}</span>
-                <span className="sky-diff-cloud-stat sky-diff-cloud-delete">{flight.deletions}</span>
+                <span className="sky-diff-cloud-stat sky-diff-cloud-delete">
+                  {flight.deletions}
+                </span>
               </span>
             </div>
           )
@@ -547,8 +676,15 @@ export function SkyWeatherVisual({ weather }: { weather: HostWeatherVisualState 
         <span />
         <span />
         <span />
+        <span />
+        <span />
+        <span />
+        <span />
       </div>
       <div className="sky-snowfall">
+        <span />
+        <span />
+        <span />
         <span />
         <span />
         <span />
@@ -691,21 +827,18 @@ export function AgentAuraLayer({
 
 export function LivingWorkspaceLayer({
   weather,
-  intensity
+  intensity,
+  nowMs
 }: {
   weather: HostWeatherVisualState | null
   intensity: AdvancedFxIntensity
+  /** Test seam: freezes the scene clock (renderToStaticMarkup determinism). */
+  nowMs?: number
 }) {
-  const localHour = new Date().getHours()
-  const isNight = weather ? !weather.isDay : localHour < 7 || localHour >= 19
-  const phase: SkyTimePhase =
-    localHour >= 5 && localHour < 8
-      ? 'dawn'
-      : localHour >= 17 && localHour < 20
-        ? 'evening'
-        : isNight
-          ? 'night'
-          : 'day'
+  const sceneClockMs = useSkySceneClock(nowMs)
+  // Same real-astronomy phase the sky layer uses, so the room lighting and
+  // the sky can never disagree about dawn/dusk.
+  const phase: SkyTimePhase = legacyTimePhase(computeSkyScene(weather, sceneClockMs))
   const kind = weather?.kind || 'unknown'
   const moteCount = intensity === 'epic' ? 18 : intensity === 'cinematic' ? 12 : 7
   const weatherParticleCount = intensity === 'epic' ? 16 : intensity === 'cinematic' ? 10 : 5

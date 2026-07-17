@@ -10,30 +10,57 @@ import {
   type HostWeatherVisualState
 } from './FxLayers'
 
+// Cambridge coordinates + fixed instants keep the scene deterministic no
+// matter when or where the suite runs (the component recomputes day/night
+// from real solar elevation, not the snapshot's isDay flag).
 const weather = (isDay: boolean): HostWeatherVisualState => ({
   kind: 'clear',
   description: isDay ? 'Clear day' : 'Clear night',
   isDay,
   updatedAt: '2026-06-30T03:00:00.000Z',
-  source: 'fallback'
+  source: 'open-meteo',
+  latitude: 52.2,
+  longitude: 0.1,
+  cloudCoverPct: 5
 })
+
+const NOON_UTC = Date.UTC(2026, 5, 30, 12, 0)
+const MIDNIGHT_UTC = Date.UTC(2026, 5, 30, 0, 30)
+// The original regression instant: 20:33 BST with sunset at 21:11 BST.
+const LATE_EVENING_SUN_UTC = Date.UTC(2026, 6, 17, 19, 33)
 
 describe('SkyWeatherVisual', () => {
   it('keeps the existing sky orb as the day sun asset', () => {
-    const html = renderToStaticMarkup(<SkyWeatherVisual weather={weather(true)} />)
+    const html = renderToStaticMarkup(<SkyWeatherVisual weather={weather(true)} nowMs={NOON_UTC} />)
 
     expect(html).toContain('sky-day')
     expect(html).toContain('sky-orb')
-    expect(html).not.toContain('sky-moon-crescent')
+    expect(html).toContain('sky-gradient')
+    expect(html).toContain('sky-starfield')
+    expect(html).not.toContain('sky-moon-disc')
   })
 
-  it('renders a dedicated crescent moon for night skies', () => {
-    const html = renderToStaticMarkup(<SkyWeatherVisual weather={weather(false)} />)
+  it('renders a phase-accurate moon disc for night skies', () => {
+    const html = renderToStaticMarkup(
+      <SkyWeatherVisual weather={weather(false)} nowMs={MIDNIGHT_UTC} />
+    )
 
     expect(html).toContain('sky-night')
     expect(html).toContain('sky-moon')
-    expect(html).toContain('sky-moon-crescent')
+    expect(html).toContain('sky-moon-disc')
+    expect(html).toContain('sky-moon-maria')
     expect(html).toContain('sky-orb')
+  })
+
+  it('shows a sun — not a moon — while the UK evening sun is still up', () => {
+    // The snapshot even claims night (stale isDay): real solar elevation wins.
+    const html = renderToStaticMarkup(
+      <SkyWeatherVisual weather={weather(false)} nowMs={LATE_EVENING_SUN_UTC} />
+    )
+
+    expect(html).toContain('sky-day')
+    expect(html).not.toContain('sky-moon-disc')
+    expect(html).toContain('sky-scene-golden')
   })
 
   it('offsets the diff-cloud pass from the UFO pass', () => {
