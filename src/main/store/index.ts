@@ -100,6 +100,12 @@ import {
 } from './types'
 import { canonicalizeExternalPathGrantMetadata } from './ExternalPathGrants'
 import { pickWorkflowRunTemplateFields } from './WorkflowRunTemplate'
+import {
+  createProjectRegistry,
+  type ProjectLegacyImportMarker,
+  type ProjectLegacyImportResult
+} from './ProjectRegistry'
+import type { Project, ProjectOp } from '../../shared/projects'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -313,8 +319,18 @@ function normalizeSideChatLifecycleState(
 const userDataPath = electron.app.getPath('userData')
 const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
+const projectsPath = path.join(userDataPath, 'projects.json')
 const usagePath = path.join(userDataPath, 'usage.json')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
+
+/** Main-owned Project registry (Work surface). Constructed against the
+ * hardened readJson/writeJson pair below (function declarations, so hoisting
+ * makes them safe to reference here); record logic lives in shared/projects. */
+const projectRegistry = createProjectRegistry({
+  filePath: projectsPath,
+  readJson: (filePath, defaultData) => readJson(filePath, defaultData),
+  writeJson: (filePath, data) => writeJson(filePath, data)
+})
 
 /** Append rotated usage records to the JSONL archive. Returns false on any
  * failure so the caller keeps the records in the hot file instead — archive
@@ -3824,6 +3840,29 @@ export class AppStore {
 
   static clearWorkspaces() {
     writeJson(workspacesPath, [])
+  }
+
+  // Projects (Work surface). Thin delegation to the ProjectRegistry singleton;
+  // all record logic lives in shared/projects so renderer optimistic applies
+  // and these authoritative applies cannot drift.
+  static getProjects(): Project[] {
+    return projectRegistry.getProjects()
+  }
+
+  static applyProjectOp(op: ProjectOp): { projects: Project[]; changed: boolean } {
+    return projectRegistry.applyOp(op)
+  }
+
+  static importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult {
+    return projectRegistry.importLegacyProjects(rawJson)
+  }
+
+  static getProjectsLegacyImportMarker(): ProjectLegacyImportMarker | null {
+    return projectRegistry.getLegacyImportMarker()
+  }
+
+  static setProjectsChangeListener(listener: ((projects: Project[]) => void) | null): void {
+    projectRegistry.setChangeListener(listener)
   }
 
   // Chats
