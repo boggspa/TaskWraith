@@ -1,256 +1,275 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
-// Keep the localStorage fake installed before importing the store module, matching
-// the pattern used across existing renderer store tests.
+// Install the fake window (localStorage + preload bridge) before importing the
+// store module, matching the pattern used across renderer store tests. The
+// facade is a sync API over async IPC, so the api fns are vi.fn mocks whose
+// per-test implementations are primed in beforeEach.
 const fake = vi.hoisted(() => {
   const store = new Map<string, string>()
-  const listeners: Record<string, Array<(event: unknown) => void>> = {}
   const localStorage = {
     getItem: (key: string) => (store.has(key) ? (store.get(key) as string) : null),
     setItem: (key: string, value: string) => {
-      const oldValue = store.get(key) ?? null
       store.set(key, value)
-      ;(listeners.storage || []).forEach((cb) =>
-        cb({
-          storageArea: localStorage,
-          key,
-          oldValue,
-          newValue: value
-        })
-      )
     },
     removeItem: (key: string) => {
-      const oldValue = store.get(key) ?? null
       store.delete(key)
-      ;(listeners.storage || []).forEach((cb) =>
-        cb({
-          storageArea: localStorage,
-          key,
-          oldValue,
-          newValue: null
-        })
-      )
     },
     clear: () => {
       store.clear()
     }
   }
-  const fakeWindow = {
-    localStorage,
-    addEventListener: (type: string, cb: (event: unknown) => void) => {
-      ;(listeners[type] ||= []).push(cb)
-    },
-    removeEventListener: (type: string, cb: (event: unknown) => void) => {
-      listeners[type] = (listeners[type] || []).filter((fn) => fn !== cb)
-    }
+  const broadcast: { cb: ((projects: unknown) => void) | null } = { cb: null }
+  const api = {
+    getProjectsSnapshot: vi.fn(),
+    applyProjectOp: vi.fn(),
+    importLegacyProjects: vi.fn(),
+    onProjectsChanged: vi.fn()
   }
+  const fakeWindow = { localStorage, api }
   ;(globalThis as unknown as { window: unknown }).window = fakeWindow
-  return { store, listeners, localStorage }
+  return { store, localStorage, api, broadcast, fakeWindow }
 })
 
 import {
   addChatToProject,
   createProject,
-  deleteProject,
-  getProject,
   listProjects,
-  moveProject,
   PROJECTS_STORAGE_KEY,
-  reorderProject,
   removeChatFromAllProjects,
-  removeChatFromProject,
   renameProject,
-  setProjectIconAndHue
+  resetProjectsStoreForTests,
+  subscribeProjects,
+  whenProjectsStoreReady,
+  type Project
 } from './projectsStore'
 
-beforeEach(() => {
-  fake.store.clear()
-})
-
-function expectSortedProjectOrder(projects: Array<{ id: string; order: number }>): string[] {
-  return [...projects].sort((a, b) => a.order - b.order).map((project) => project.id)
+function legacyRecord(id: string, name: string, memberChatIds: string[] = []): Project {
+  return {
+    schemaVersion: 1,
+    id,
+    name,
+    icon: { iconKind: 'seed', seed: id },
+    hue: 10,
+    parentId: null,
+    order: 1,
+    memberChatIds,
+    createdAt: 1,
+    updatedAt: 2
+  }
 }
 
-describe('projectsStore CRUD', () => {
-  it('creates, renames, and deletes projects, then reindexes root order', () => {
-    const first = createProject({ name: 'First' })
-    const second = createProject({ name: 'Second' })
-    const third = createProject({ name: 'Third' })
+function deferred<T>(): { promise: Promise<T>; resolve: (v: T) => void; reject: (e: unknown) => void } {
+  let resolve!: (v: T) => void
+  let reject!: (e: unknown) => void
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res
+    reject = rej
+  })
+  return { promise, resolve, reject }
+}
 
-    const renamed = renameProject(second.id, 'Second Renamed')
-    expect(renamed.name).toBe('Second Renamed')
-    expect(getProject(second.id)?.name).toBe('Second Renamed')
+beforeEach(() => {
+  resetProjectsStoreForTests()
+  fake.store.clear()
+  fake.broadcast.cb = null
+  fake.api.getProjectsSnapshot.mockReset()
+  fake.api.applyProjectOp.mockReset()
+  fake.api.importLegacyProjects.mockReset()
+  fake.api.onProjectsChanged.mockReset()
+  fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+    projects: [],
+    legacyImportMarker: null
+  }))
+  fake.api.applyProjectOp.mockImplementation(async () => ({ projects: [], changed: true }))
+  fake.api.importLegacyProjects.mockImplementation(async () => ({
+    status: 'imported',
+    importedCount: 0,
+    marker: { importedAt: 1, sourceHash: 'x', importedCount: 0, status: 'imported' }
+  }))
+  fake.api.onProjectsChanged.mockImplementation((cb: (projects: unknown) => void) => {
+    fake.broadcast.cb = cb
+    return () => {
+      fake.broadcast.cb = null
+    }
+  })
+})
 
-    const remainingBeforeDelete = expectSortedProjectOrder(
-      listProjects()
-        .filter((project) => project.parentId === null)
-        .map((project) => ({ id: project.id, order: project.order }))
-    )
-    expect(remainingBeforeDelete).toEqual([first.id, second.id, third.id])
-
-    deleteProject(renamed.id)
-    const remaining = listProjects().filter((project) => project.parentId === null)
-    expect(remaining).toHaveLength(2)
-    expect(remaining[0].order).toBe(1)
-    expect(remaining[1].order).toBe(2)
-    expect(remaining.map((project) => project.id)).toEqual([first.id, third.id])
+describe('projectsStore hydration', () => {
+  it('hydrates from the main snapshot and serves it synchronously afterwards', async () => {
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [legacyRecord('project-main', 'From Main')],
+      legacyImportMarker: null
+    }))
+    const listener = vi.fn()
+    subscribeProjects(listener)
+    await whenProjectsStoreReady()
+    expect(listProjects().map((project) => project.id)).toEqual(['project-main'])
+    expect(listener).toHaveBeenCalled()
   })
 
-  it('persists to and restores from localStorage while filtering malformed data', () => {
-    fake.localStorage.setItem(
-      PROJECTS_STORAGE_KEY,
-      JSON.stringify([
-        {
-          schemaVersion: 1,
-          id: 'bad-project',
-          name: '',
-          icon: { iconKind: 'seed', seed: 'x' },
-          hue: 12,
-          parentId: null,
-          order: 2,
-          memberChatIds: [],
-          createdAt: 1,
-          updatedAt: 1
-        },
-        {
-          schemaVersion: 1,
-          id: 'x1',
-          name: 'Valid',
-          icon: { iconKind: 'seed', seed: 'v' },
-          hue: 12,
-          parentId: null,
-          order: 2,
-          memberChatIds: [],
-          createdAt: 1,
-          updatedAt: 2
-        },
-        {
-          schemaVersion: 1,
-          id: 'x1',
-          name: 'Duplicate',
-          icon: { iconKind: 'seed', seed: 'dup' },
-          hue: 18,
-          parentId: null,
-          order: 1,
-          memberChatIds: [],
-          createdAt: 2,
-          updatedAt: 3
-        }
-      ])
-    )
+  it('adopts projects-changed broadcasts when no ops are in flight', async () => {
+    await whenProjectsStoreReady()
+    expect(fake.broadcast.cb).toBeTypeOf('function')
+    fake.broadcast.cb?.([legacyRecord('project-b', 'Broadcast')])
+    expect(listProjects().map((project) => project.name)).toEqual(['Broadcast'])
+  })
+})
 
-    const projects = listProjects()
-    expect(projects).toHaveLength(1)
-    expect(projects[0].id).toBe('x1')
-    expect(projects[0].name).toBe('Valid')
+describe('projectsStore optimistic mutations', () => {
+  it('applies locally first and dispatches the twin op to main', async () => {
+    await whenProjectsStoreReady()
+    const project = createProject({ name: 'Alpha' })
+    expect(listProjects().map((entry) => entry.id)).toEqual([project.id])
+    expect(fake.api.applyProjectOp).toHaveBeenCalledTimes(1)
+    const op = fake.api.applyProjectOp.mock.calls[0][0]
+    expect(op).toMatchObject({ kind: 'create', id: project.id, input: { name: 'Alpha' } })
+    expect(op.now).toBe(project.createdAt)
   })
 
-  it('migrates compatible stored projects before schema-version validation', () => {
-    fake.localStorage.setItem(
-      PROJECTS_STORAGE_KEY,
-      JSON.stringify([
-        {
-          schemaVersion: 999,
-          id: 'future-compatible',
-          name: '  Future Compatible  ',
-          icon: { iconKind: 'seed', seed: 'future-seed' },
-          hue: 725,
-          parentId: null,
-          order: 2.8,
-          memberChatIds: [' chat-1 ', 'chat-1', '', 'chat-2'],
-          createdAt: 10,
-          updatedAt: 20
-        }
-      ])
-    )
+  it('skips IPC for no-op mutations', async () => {
+    await whenProjectsStoreReady()
+    const project = createProject({ name: 'Alpha' })
+    fake.api.applyProjectOp.mockClear()
+    renameProject(project.id, 'Alpha')
+    expect(fake.api.applyProjectOp).not.toHaveBeenCalled()
+    addChatToProject(project.id, 'chat-1')
+    fake.api.applyProjectOp.mockClear()
+    addChatToProject(project.id, 'chat-1')
+    expect(fake.api.applyProjectOp).not.toHaveBeenCalled()
+  })
 
-    const projects = listProjects()
-    expect(projects).toHaveLength(1)
-    expect(projects[0]).toMatchObject({
-      schemaVersion: 1,
-      id: 'future-compatible',
-      name: 'Future Compatible',
-      icon: { iconKind: 'seed', seed: 'future-seed' },
-      hue: 5,
-      parentId: null,
-      order: 3,
-      memberChatIds: ['chat-1', 'chat-2'],
-      createdAt: 10,
-      updatedAt: 20
+  it('throws validation errors synchronously without dispatching', async () => {
+    await whenProjectsStoreReady()
+    expect(() => createProject({ name: '   ' })).toThrow('Project name is required.')
+    expect(() => renameProject('missing', 'Name')).toThrow('Project not found.')
+    expect(fake.api.applyProjectOp).not.toHaveBeenCalled()
+  })
+
+  it('resyncs from a fresh snapshot when main rejects an op', async () => {
+    await whenProjectsStoreReady()
+    const rejection = deferred<{ projects: Project[]; changed: boolean }>()
+    fake.api.applyProjectOp.mockImplementation(() => rejection.promise)
+    const created = createProject({ name: 'Doomed' })
+    expect(listProjects().map((project) => project.id)).toEqual([created.id])
+
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [legacyRecord('project-authoritative', 'Authoritative')],
+      legacyImportMarker: null
+    }))
+    rejection.reject(new Error('Project not found.'))
+    await vi.waitFor(() => {
+      expect(listProjects().map((project) => project.id)).toEqual(['project-authoritative'])
+    })
+  })
+
+  it('defers broadcast adoption while an op is in flight', async () => {
+    await whenProjectsStoreReady()
+    const settle = deferred<{ projects: Project[]; changed: boolean }>()
+    fake.api.applyProjectOp.mockImplementation(() => settle.promise)
+    const created = createProject({ name: 'Alpha' })
+
+    // A stale broadcast (e.g. from the import path) must not rewind the
+    // optimistic create while its op is still in flight.
+    fake.broadcast.cb?.([])
+    expect(listProjects().map((project) => project.id)).toEqual([created.id])
+
+    settle.resolve({
+      projects: [legacyRecord(created.id, 'Alpha')],
+      changed: true
+    })
+    await vi.waitFor(() => {
+      expect(listProjects().map((project) => project.id)).toEqual([created.id])
+    })
+  })
+
+  it('always dispatches chat-deletion reconciliation, even as a local no-op', async () => {
+    await whenProjectsStoreReady()
+    const changed = removeChatFromAllProjects('chat-unknown')
+    expect(changed).toBe(0)
+    expect(fake.api.applyProjectOp).toHaveBeenCalledTimes(1)
+    expect(fake.api.applyProjectOp.mock.calls[0][0]).toMatchObject({
+      kind: 'remove-chat-everywhere',
+      chatId: 'chat-unknown'
     })
   })
 })
 
-describe('projectsStore hierarchy and ordering', () => {
-  it('reorders root projects', () => {
-    const first = createProject({ name: 'Alpha' })
-    const second = createProject({ name: 'Beta' })
-    const third = createProject({ name: 'Gamma' })
+describe('projectsStore legacy migration handshake', () => {
+  const legacyPayload = JSON.stringify([legacyRecord('legacy-a', 'Legacy A', ['chat-1'])])
 
-    const moved = reorderProject(third.id, 1)
-    expect(moved.order).toBe(1)
+  it('imports the legacy payload and tombstones ONLY after the ack', async () => {
+    fake.store.set(PROJECTS_STORAGE_KEY, legacyPayload)
+    const importGate = deferred<unknown>()
+    fake.api.importLegacyProjects.mockImplementation(() => importGate.promise)
 
-    const rootIds = listProjects()
-      .filter((project) => project.parentId === null)
-      .map((project) => ({ id: project.id, order: project.order }))
-    expect(expectSortedProjectOrder(rootIds)).toEqual([third.id, first.id, second.id])
+    listProjects() // kick hydration
+    await vi.waitFor(() => {
+      expect(fake.api.importLegacyProjects).toHaveBeenCalledWith(legacyPayload)
+    })
+    // Ack not yet received: the raw payload must survive.
+    expect(fake.store.get(PROJECTS_STORAGE_KEY)).toBe(legacyPayload)
+
+    importGate.resolve({
+      status: 'imported',
+      importedCount: 1,
+      marker: { importedAt: 1, sourceHash: 'x', importedCount: 1, status: 'imported' }
+    })
+    await whenProjectsStoreReady()
+    const raw = fake.store.get(PROJECTS_STORAGE_KEY)
+    expect(raw).toBeDefined()
+    expect(JSON.parse(raw as string)).toMatchObject({ migratedToMain: true })
+    // Post-import refetch pulls the authoritative merge.
+    expect(fake.api.getProjectsSnapshot.mock.calls.length).toBeGreaterThanOrEqual(2)
   })
 
-  it('moves a project under a different parent and preserves hierarchy', () => {
-    const rootA = createProject({ name: 'Root A' })
-    const rootB = createProject({ name: 'Root B' })
-    const child = createProject({ name: 'Child', parentId: rootA.id })
+  it('skips the import and just tombstones when main already holds the marker', async () => {
+    fake.store.set(PROJECTS_STORAGE_KEY, legacyPayload)
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [],
+      legacyImportMarker: { importedAt: 1, sourceHash: 'x', importedCount: 1, status: 'imported' }
+    }))
+    await whenProjectsStoreReady()
+    expect(fake.api.importLegacyProjects).not.toHaveBeenCalled()
+    expect(JSON.parse(fake.store.get(PROJECTS_STORAGE_KEY) as string)).toMatchObject({
+      migratedToMain: true
+    })
+  })
 
-    const moved = moveProject(child.id, rootB.id, 1)
-    expect(moved.parentId).toBe(rootB.id)
+  it('leaves the legacy payload untouched when the import invoke fails', async () => {
+    fake.store.set(PROJECTS_STORAGE_KEY, legacyPayload)
+    fake.api.importLegacyProjects.mockImplementation(async () => {
+      throw new Error('main unavailable')
+    })
+    await whenProjectsStoreReady()
+    expect(fake.store.get(PROJECTS_STORAGE_KEY)).toBe(legacyPayload)
+  })
 
-    const childIdsInA = listProjects().filter((project) => project.parentId === rootA.id)
-    expect(childIdsInA).toHaveLength(0)
-    const childIdsInB = listProjects().filter((project) => project.parentId === rootB.id)
-    expect(childIdsInB).toHaveLength(1)
-    expect(childIdsInB[0]?.id).toBe(child.id)
+  it('does nothing on a fresh install and ignores an existing tombstone', async () => {
+    await whenProjectsStoreReady()
+    expect(fake.api.importLegacyProjects).not.toHaveBeenCalled()
+    expect(fake.store.has(PROJECTS_STORAGE_KEY)).toBe(false)
+
+    resetProjectsStoreForTests()
+    const tombstone = JSON.stringify({ schemaVersion: 1, migratedToMain: true, migratedAt: 5 })
+    fake.store.set(PROJECTS_STORAGE_KEY, tombstone)
+    await whenProjectsStoreReady()
+    expect(fake.api.importLegacyProjects).not.toHaveBeenCalled()
+    expect(fake.store.get(PROJECTS_STORAGE_KEY)).toBe(tombstone)
   })
 })
 
-describe('projectsStore membership', () => {
-  it('adds and removes chat ids idempotently', () => {
-    const project = createProject({ name: 'Project' })
-    const withFirst = addChatToProject(project.id, 'chat-1')
-    const withSecond = addChatToProject(withFirst.id, 'chat-1')
-    expect(withSecond.memberChatIds).toEqual(['chat-1'])
-
-    const withNew = addChatToProject(withSecond.id, 'chat-2')
-    expect(withNew.memberChatIds).toEqual(['chat-1', 'chat-2'])
-
-    const afterRemove = removeChatFromProject(withNew.id, 'chat-1')
-    expect(afterRemove.memberChatIds).toEqual(['chat-2'])
-  })
-
-  it('removes a deleted chat id from every affected project only', () => {
-    const first = createProject({ name: 'First', memberChatIds: ['chat-1', 'chat-2'] })
-    const second = createProject({ name: 'Second', memberChatIds: ['chat-2', 'chat-3'] })
-    const untouched = createProject({ name: 'Untouched', memberChatIds: ['chat-4'] })
-
-    const changed = removeChatFromAllProjects('chat-2')
-    expect(changed).toBe(2)
-
-    expect(getProject(first.id)?.memberChatIds).toEqual(['chat-1'])
-    expect(getProject(second.id)?.memberChatIds).toEqual(['chat-3'])
-    expect(getProject(untouched.id)?.memberChatIds).toEqual(['chat-4'])
-  })
-
-  it('updates project icon and hue', () => {
-    const project = createProject({ name: 'Visualized' })
-    const next = setProjectIconAndHue(project.id, {
-      hue: 42,
-      icon: { iconKind: 'named', slug: 'demo-project-icon', saturation: 72.4, brightness: 41.6 }
-    })
-    expect(next.hue).toBe(42)
-    expect(next.icon).toEqual({
-      iconKind: 'named',
-      slug: 'demo-project-icon',
-      saturation: 72,
-      brightness: 42
-    })
+describe('projectsStore without a preload bridge', () => {
+  it('degrades to a pure in-memory store for headless renders', async () => {
+    const windowRef = fake.fakeWindow as { api?: unknown }
+    const savedApi = windowRef.api
+    try {
+      delete windowRef.api
+      resetProjectsStoreForTests()
+      const project = createProject({ name: 'Headless' })
+      expect(listProjects().map((entry) => entry.id)).toEqual([project.id])
+      await whenProjectsStoreReady()
+    } finally {
+      windowRef.api = savedApi
+    }
   })
 })

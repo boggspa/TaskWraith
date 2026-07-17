@@ -16,15 +16,39 @@ import {
   sortProjectsForDisplay,
   type Project,
   type ProjectInput,
+  type ProjectOp,
   type ProjectPatch
 } from '../../../shared/projects'
 
 /**
- * Renderer-side Projects store: localStorage persistence + subscriptions over
- * the pure operations in `src/shared/projects.ts`. All record logic lives in
- * the shared module (the main-owned registry applies the identical functions);
- * this file only reads, seeds, persists, and notifies. Keep it that way — any
- * behavior added here and not in shared/ will drift the two sides apart.
+ * Renderer Projects store: a SYNCHRONOUS facade over the main-owned
+ * ProjectRegistry.
+ *
+ * The public API (sync reads, sync mutations that return records, throwing
+ * validation) predates the registry and every consumer relies on it, so the
+ * facade keeps an in-memory snapshot and applies each mutation OPTIMISTICALLY
+ * with the same shared functions main applies authoritatively — identical
+ * logic plus seeded ops (id / now / defaultHue travel inside the op) means
+ * both sides deterministically converge. The op is then dispatched over IPC;
+ * main persists, and its `projects-changed` broadcast / invoke result
+ * reconciles us.
+ *
+ * Reconciliation rule: an authoritative payload is adopted only when NO ops
+ * are in flight (`pendingOpCount === 0`). Adopting mid-flight would rewind
+ * optimistic ops that main hasn't echoed yet; the final op's own
+ * resolve/reject always closes the gap (rejects resync from a fresh
+ * snapshot).
+ *
+ * Legacy migration: project records historically lived in localStorage under
+ * PROJECTS_STORAGE_KEY. On first hydrate the facade hands that raw payload to
+ * main (one-shot, idempotent there) and replaces it with a tombstone ONLY
+ * after main acks — the ack-before-tombstone ordering is what makes a crashed
+ * import retryable instead of data loss. Old builds parse the tombstone as
+ * non-array and safely see an empty store.
+ *
+ * Without a preload bridge (renderToStaticMarkup tests, storybook-style
+ * rendering) the facade degrades to a pure in-memory store: optimistic applies
+ * still work, nothing persists.
  */
 
 const STORAGE_KEY = 'taskwraith-sidebar-projects'
@@ -33,159 +57,298 @@ export const PROJECTS_STORAGE_KEY = STORAGE_KEY
 
 export type { Project, ProjectIcon, ProjectInput } from '../../../shared/projects'
 
-function readRawProjects(): Project[] {
-  if (typeof window === 'undefined') return []
-  try {
-    const raw = window.localStorage.getItem(STORAGE_KEY)
-    if (!raw) return []
-    const parsed = JSON.parse(raw)
-    if (!Array.isArray(parsed)) return []
-    return migrateProjects(parsed, Date.now())
-  } catch {
-    return []
-  }
-}
+type ProjectsBridge = Window['api']
 
-function writeRawProjects(projects: Project[]): void {
-  if (typeof window === 'undefined') return
-  window.localStorage.setItem(STORAGE_KEY, JSON.stringify(projects))
-}
+let snapshot: Project[] = []
+let pendingOpCount = 0
+let initPromise: Promise<void> | null = null
+let unsubscribeBroadcast: (() => void) | null = null
 
 const projectListeners = new Set<() => void>()
-let storageBridged = false
+
+function bridge(): ProjectsBridge | undefined {
+  return typeof window !== 'undefined' ? window.api : undefined
+}
 
 function notifyProjectListeners(): void {
   for (const listener of [...projectListeners]) {
     try {
       listener()
     } catch {
-      // Subscriber exceptions must not block the persistence path.
+      // Subscriber exceptions must not block the store.
     }
   }
 }
 
-function ensureStorageBridge(): void {
-  if (storageBridged) return
-  if (typeof window === 'undefined' || typeof window.addEventListener !== 'function') return
-  storageBridged = true
-  window.addEventListener('storage', (event: StorageEvent) => {
-    if (event.storageArea && event.storageArea !== window.localStorage) return
-    if (event.key !== STORAGE_KEY) return
-    notifyProjectListeners()
-  })
+/** Adopt an authoritative record list from main (snapshot fetch, op result,
+ * or broadcast). Skipped while ops are in flight — see module doc. */
+function adoptAuthoritative(projects: unknown): void {
+  if (!Array.isArray(projects)) return
+  if (pendingOpCount > 0) return
+  const next = migrateProjects(projects, Date.now())
+  if (JSON.stringify(next) === JSON.stringify(snapshot)) return
+  snapshot = next
+  notifyProjectListeners()
+}
+
+function isLegacyTombstoneRaw(raw: string): boolean {
+  try {
+    const value = JSON.parse(raw) as { migratedToMain?: unknown } | null
+    return (
+      !!value && typeof value === 'object' && !Array.isArray(value) && value.migratedToMain === true
+    )
+  } catch {
+    return false
+  }
+}
+
+function writeLegacyTombstone(): void {
+  try {
+    window.localStorage.setItem(
+      STORAGE_KEY,
+      JSON.stringify({ schemaVersion: 1, migratedToMain: true, migratedAt: Date.now() })
+    )
+  } catch {
+    // Best effort — the main-side marker already prevents a double import,
+    // and the next boot retries the tombstone.
+  }
+}
+
+function readLegacyRaw(): string | null {
+  if (typeof window === 'undefined') return null
+  try {
+    return window.localStorage.getItem(STORAGE_KEY)
+  } catch {
+    return null
+  }
+}
+
+/**
+ * One-shot localStorage → registry handover. Ordering is the contract:
+ * import ack FIRST, tombstone SECOND. An invoke failure leaves the legacy
+ * payload untouched for the next boot; a tombstone-write failure is healed
+ * next boot via the main-side marker.
+ */
+async function runLegacyMigrationHandshake(
+  api: NonNullable<ProjectsBridge>,
+  markerPresent: boolean
+): Promise<void> {
+  const raw = readLegacyRaw()
+  if (raw === null || isLegacyTombstoneRaw(raw)) return
+  if (markerPresent) {
+    // A previous session imported but its tombstone write never landed.
+    writeLegacyTombstone()
+    return
+  }
+  if (typeof api.importLegacyProjects !== 'function') return
+  const result = await api.importLegacyProjects(raw)
+  if (!result) return
+  writeLegacyTombstone()
+  if (typeof api.getProjectsSnapshot === 'function') {
+    try {
+      const snap = await api.getProjectsSnapshot()
+      adoptAuthoritative(snap?.projects)
+    } catch {
+      // The projects-changed broadcast already carried the imported records.
+    }
+  }
+}
+
+function ensureInitialized(): Promise<void> {
+  if (initPromise) return initPromise
+  const api = bridge()
+  if (!api || typeof api.getProjectsSnapshot !== 'function') {
+    // Headless render: stay a pure in-memory store.
+    initPromise = Promise.resolve()
+    return initPromise
+  }
+  if (!unsubscribeBroadcast && typeof api.onProjectsChanged === 'function') {
+    unsubscribeBroadcast = api.onProjectsChanged((projects) => adoptAuthoritative(projects))
+  }
+  initPromise = (async () => {
+    try {
+      const snap = await api.getProjectsSnapshot()
+      adoptAuthoritative(snap?.projects)
+      await runLegacyMigrationHandshake(api, Boolean(snap?.legacyImportMarker))
+    } catch (error) {
+      console.error('Projects store hydrate failed', error)
+    }
+  })()
+  return initPromise
+}
+
+/** Exposed for tests and any boot path that wants to await hydration. */
+export function whenProjectsStoreReady(): Promise<void> {
+  return ensureInitialized()
+}
+
+/** Test seam: module state survives across specs otherwise. */
+export function resetProjectsStoreForTests(): void {
+  snapshot = []
+  pendingOpCount = 0
+  initPromise = null
+  unsubscribeBroadcast?.()
+  unsubscribeBroadcast = null
+  projectListeners.clear()
+}
+
+function dispatchOp(op: ProjectOp): void {
+  const api = bridge()
+  if (!api || typeof api.applyProjectOp !== 'function') return
+  pendingOpCount += 1
+  void api.applyProjectOp(op).then(
+    (result) => {
+      pendingOpCount -= 1
+      adoptAuthoritative(result?.projects)
+    },
+    (error) => {
+      pendingOpCount -= 1
+      console.error('Project op rejected by main; resyncing', error)
+      if (typeof api.getProjectsSnapshot === 'function') {
+        void api
+          .getProjectsSnapshot()
+          .then((snap) => adoptAuthoritative(snap?.projects))
+          .catch(() => {})
+      }
+    }
+  )
 }
 
 export function subscribeProjects(listener: () => void): () => void {
-  ensureStorageBridge()
+  void ensureInitialized()
   projectListeners.add(listener)
   return () => {
     projectListeners.delete(listener)
   }
 }
 
-function persist(projects: Project[]): void {
-  writeRawProjects(projects)
-  notifyProjectListeners()
-}
-
-/** Persist only when the apply produced a new list (shared ops signal a no-op
- * by returning the same array reference — see shared/projects.ts). */
-function persistIfChanged(previous: Project[], next: Project[]): void {
-  if (next !== previous) persist(next)
-}
-
 export function listProjects(): Project[] {
-  return sortProjectsForDisplay(readRawProjects().map(cloneProject))
+  void ensureInitialized()
+  return sortProjectsForDisplay(snapshot.map(cloneProject))
 }
 
 export function getProject(projectId: string): Project | null {
   if (!projectId) return null
-  const project = projectById(readRawProjects(), projectId)
+  void ensureInitialized()
+  const project = projectById(snapshot, projectId)
   return project ? cloneProject(project) : null
 }
 
 export function createProject(input: ProjectInput): Project {
-  const projects = readRawProjects()
+  void ensureInitialized()
   const id = newProjectId()
-  const { projects: next, project } = applyCreateProject(projects, input, {
+  const op: ProjectOp = {
+    kind: 'create',
+    input,
     id,
     now: Date.now(),
     defaultHue: agentIdenticonHash(id) % 360
+  }
+  const { projects: next, project } = applyCreateProject(snapshot, op.input, {
+    id: op.id,
+    now: op.now,
+    defaultHue: op.defaultHue
   })
-  persist(next)
+  snapshot = next
+  notifyProjectListeners()
+  dispatchOp(op)
   return cloneProject(project)
 }
 
 export function renameProject(projectId: string, name: string): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applyRenameProject(projects, projectId, name, Date.now())
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applyRenameProject(snapshot, projectId, name, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'rename', projectId, name, now })
+  }
   return cloneProject(project)
 }
 
 export function deleteProject(projectId: string): void {
-  const projects = readRawProjects()
-  persist(applyDeleteProject(projects, projectId))
+  void ensureInitialized()
+  snapshot = applyDeleteProject(snapshot, projectId)
+  notifyProjectListeners()
+  dispatchOp({ kind: 'delete', projectId })
 }
 
 export function reorderProject(projectId: string, order: number): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applyReorderProject(projects, projectId, order, Date.now())
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applyReorderProject(snapshot, projectId, order, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'reorder', projectId, order, now })
+  }
   return cloneProject(project)
 }
 
 export function moveProject(projectId: string, parentId: string | null, order?: number): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applyMoveProject(
-    projects,
-    projectId,
-    parentId,
-    order,
-    Date.now()
-  )
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applyMoveProject(snapshot, projectId, parentId, order, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'move', projectId, parentId, ...(order !== undefined ? { order } : {}), now })
+  }
   return cloneProject(project)
 }
 
 export function setProjectIconAndHue(projectId: string, patch: ProjectPatch): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applySetProjectIconAndHue(
-    projects,
-    projectId,
-    patch,
-    Date.now()
-  )
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applySetProjectIconAndHue(snapshot, projectId, patch, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'set-icon-hue', projectId, patch, now })
+  }
   return cloneProject(project)
 }
 
 export function addChatToProject(projectId: string, chatId: string): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applyAddChatToProject(projects, projectId, chatId, Date.now())
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applyAddChatToProject(snapshot, projectId, chatId, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'add-chat', projectId, chatId, now })
+  }
   return cloneProject(project)
 }
 
 export function removeChatFromProject(projectId: string, chatId: string): Project {
-  const projects = readRawProjects()
-  const { projects: next, project } = applyRemoveChatFromProject(
-    projects,
-    projectId,
-    chatId,
-    Date.now()
-  )
-  persistIfChanged(projects, next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applyRemoveChatFromProject(snapshot, projectId, chatId, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'remove-chat', projectId, chatId, now })
+  }
   return cloneProject(project)
 }
 
+/**
+ * Chat-deletion reconciliation. Unlike the other mutations this ALWAYS
+ * dispatches (when the chat id is non-empty): the local snapshot may not be
+ * hydrated yet when App.tsx deletes a chat right after boot, and main must
+ * clean authoritative membership regardless of what this renderer can see.
+ * Main's apply is a persisted no-op when nothing references the chat.
+ */
 export function removeChatFromAllProjects(chatId: string): number {
-  const projects = readRawProjects()
-  const { projects: next, changedCount } = applyRemoveChatFromAllProjects(
-    projects,
-    chatId,
-    Date.now()
-  )
-  if (changedCount > 0) persist(next)
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, changedCount } = applyRemoveChatFromAllProjects(snapshot, chatId, now)
+  if (changedCount > 0) {
+    snapshot = next
+    notifyProjectListeners()
+  }
+  dispatchOp({ kind: 'remove-chat-everywhere', chatId, now })
   return changedCount
 }
