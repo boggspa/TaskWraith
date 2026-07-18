@@ -44,6 +44,11 @@ export interface RunEvent {
   /** Originating Electron WebContents, when the event came from an IPC handler.
    * The built-in Electron IPC sink forwards to this. Remote sinks ignore it. */
   sender?: Electron.WebContents
+  /** Skip the legacy renderer IPC sink while preserving delivery to the other
+   * in-process sinks. Canonical Ensemble output uses this after main has
+   * already materialized the transcript; forwarding the same raw provider
+   * payload to the renderer would only create a duplicate, unbounded lane. */
+  suppressElectronIpc?: boolean
   /** ISO timestamp at publish time. Useful for ordering + telemetry. */
   publishedAt: string
 }
@@ -121,6 +126,7 @@ export function makeElectronIpcSink(): RunEventSink {
   return {
     id: 'electron-ipc',
     handle(event) {
+      if (event.suppressElectronIpc) return
       const sender = event.sender
       if (!sender) return
       try {

@@ -19677,10 +19677,11 @@ function publishRunEvent(
   channel: RunEventChannel,
   provider: ProviderId,
   payload: unknown,
-  sender?: Electron.WebContents
+  sender?: Electron.WebContents,
+  options: { suppressElectronIpc?: boolean } = {}
 ): void {
   materializeBridgeRunFromPublish(channel, provider, payload)
-  runEventBus.publish({ channel, provider, payload, sender })
+  runEventBus.publish({ channel, provider, payload, sender, ...options })
 }
 
 function sendAgentCompatLine(
@@ -19694,8 +19695,6 @@ function sendAgentCompatLine(
   if (runItemEvents.length > 0) {
     appendDurableRunItemEvents(runItemEvents)
   }
-  const routedForWire =
-    runItemEvents.length > 0 ? { ...routed, runItemEvents } : routed
   // Some provider internals are useful for the raw run ledger but too noisy
   // for the chat transcript. Keep those durable, then stop before renderer /
   // bridge / ensemble materialization can turn them into visible tool rows.
@@ -19734,10 +19733,43 @@ function sendAgentCompatLine(
   }
   materializeBackgroundSubThreadProviderOutput(provider, routed, payload)
   materializeBridgeRunProviderOutput(provider, routed, payload, { trustedCompatLane: true })
-  ensembleOrchestratorRef?.handleProviderOutput(provider, routed, payload)
+  const handledByEnsemble =
+    ensembleOrchestratorRef?.handleProviderOutput(provider, routed, payload) === true
   // Audit completion bridge — settles a tracked audit role-run on its terminal
   // `result` event (lifting token/cost/duration). No-ops for non-audit runs.
   auditRunTracker.handleProviderOutput(routed.appRunId, payload)
+
+  // EnsembleOrchestrator is the canonical transcript projection for an
+  // Ensemble seat. Once it accepts this event, sending the full compat JSON
+  // through Electron IPC as well is redundant: renderer participants do not
+  // register individual run contexts, so the event falls into the raw-log
+  // fallback and updates root React state even with that inspector closed.
+  // Tool-result previews can be tens of KiB and arrive in bursts, making that
+  // duplicate, unacknowledged lane capable of starving the visible transcript.
+  //
+  // Keep a compact bus signal so remote snapshot and git invalidation sinks
+  // still observe progress. The complete provider event is already durable,
+  // and the canonical chat update carries the user-visible projection.
+  if (handledByEnsemble) {
+    const ensembleSignal = {
+      provider,
+      appRunId: routed.appRunId,
+      appChatId: routed.appChatId,
+      compatLine: true,
+      ensembleMaterialized: true
+    }
+    publishRunEvent('agent-output', provider, ensembleSignal, sender, {
+      suppressElectronIpc: true
+    })
+    if (provider === 'gemini') {
+      publishRunEvent('gemini-output', provider, ensembleSignal, sender, {
+        suppressElectronIpc: true
+      })
+    }
+    return
+  }
+
+  const routedForWire = runItemEvents.length > 0 ? { ...routed, runItemEvents } : routed
   const line = `${JSON.stringify(routedForWire)}\n`
   const outputPayload = {
     provider,

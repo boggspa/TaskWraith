@@ -53,6 +53,20 @@ describe('makeElectronIpcSink', () => {
     ).not.toThrow()
   })
 
+  it('does not forward events explicitly suppressed from renderer IPC', () => {
+    const send = vi.fn()
+    const sink = makeElectronIpcSink()
+    sink.handle({
+      channel: 'agent-output',
+      provider: 'kimi',
+      publishedAt: new Date().toISOString(),
+      payload: { ensembleMaterialized: true },
+      sender: makeSender({ send }),
+      suppressElectronIpc: true
+    })
+    expect(send).not.toHaveBeenCalled()
+  })
+
   it('returns early when isDestroyed() reports true', () => {
     const send = vi.fn()
     const sink = makeElectronIpcSink()
