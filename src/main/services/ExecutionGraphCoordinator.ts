@@ -107,6 +107,41 @@ export interface ExecutionGraphCoordinatorDeps {
 
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
 
+/**
+ * RunQueue's generic startup recovery cannot know whether a provider crossed
+ * its side-effect boundary. It rewrites interrupted jobs to a convenient queue
+ * state (usually `failed`, or `queued` for a stale steer promotion), but that
+ * state is not provider-result evidence for the execution ledger.
+ */
+function startupRecoveryUncertainty(job: RunQueueJob): string | undefined {
+  const hasSteerPromotionEvidence =
+    job.status === 'steer_promoting' ||
+    job.recoveryReason === 'stale_steer_promoting_recovered' ||
+    Boolean(
+      job.promotionOwnerToken ||
+      job.promotionToken ||
+      job.promotedAt ||
+      job.queueMessageId ||
+      job.promotionAttempt !== undefined
+    )
+  const wasRewrittenDuringStartup = Boolean(
+    job.recoveryReason ||
+    job.interruptedAt ||
+    job.recoveredAt ||
+    job.orphanProcess ||
+    hasSteerPromotionEvidence
+  )
+  if (!wasRewrittenDuringStartup) return undefined
+
+  if (job.orphanProcess?.alive) {
+    return 'Startup recovery found a provider process that may still be running outside TaskWraith.'
+  }
+  if (hasSteerPromotionEvidence) {
+    return 'Startup recovery found an interrupted steer promotion whose dispatch boundary is uncertain.'
+  }
+  return 'Startup recovery rewrote the claimed queue job without authoritative provider outcome evidence.'
+}
+
 function canonicalPart(value: string): string {
   const normalized = value
     .replace(/[^A-Za-z0-9._-]/g, '-')
@@ -475,6 +510,12 @@ export class ExecutionGraphCoordinator {
             attempt,
             'The claimed queue job no longer carries this execution attempt authority.'
           )
+          changed = true
+          break
+        }
+        const recoveryUncertainty = startupRecoveryUncertainty(job)
+        if (recoveryUncertainty) {
+          this.requireAction(projection, attempt, recoveryUncertainty)
           changed = true
           break
         }

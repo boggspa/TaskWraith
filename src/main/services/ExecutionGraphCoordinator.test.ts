@@ -3,6 +3,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { RunSessionChangeEvent } from '../RunManager'
+import { recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import { ExecutionGraphRepository } from '../executionGraph/ExecutionGraphRepository'
 import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionGraphModel'
@@ -375,6 +376,141 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
   })
+
+  it.each(['starting', 'active', 'cancelling'] as const)(
+    'does not treat a generically recovered %s queue job as provider failure',
+    (interruptedStatus) => {
+      const h = harness()
+      const first = h.coordinator.appendStackStep(h.input())
+      const runId = providerRunId(first)
+      h.coordinator.appendStackStep(
+        h.input({
+          executionId: first.executionId,
+          stepTitle: 'Must not advance',
+          objective: 'This successor requires authoritative provider success.'
+        })
+      )
+      const original = { ...h.jobs.get(runId)!, status: interruptedStatus }
+      const genericRecovery = recoverRunQueueJobsAfterStartup(
+        [original],
+        '2026-07-18T11:01:00.000Z',
+        () => undefined
+      )
+      expect(genericRecovery.jobs[0]).toMatchObject({
+        status: 'failed',
+        recoveryReason: 'marked_failed_on_startup'
+      })
+      h.jobs.set(runId, genericRecovery.jobs[0])
+      h.transitions.mockClear()
+
+      h.coordinator.recover()
+
+      const recovered = h.coordinator.getExecution(first.executionId)!
+      expect(recovered.state).toBe('requires_action')
+      expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
+      expect(Object.values(recovered.activations).map((activation) => activation.state)).toEqual([
+        'requires_action',
+        'dormant'
+      ])
+      expect(h.transitions).not.toHaveBeenCalled()
+    }
+  )
+
+  it('requires action when startup recovery finds a possibly alive orphan provider process', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const original = { ...h.jobs.get(runId)!, status: 'active' as const, processPid: 4242 }
+    const genericRecovery = recoverRunQueueJobsAfterStartup(
+      [original],
+      '2026-07-18T11:01:00.000Z',
+      (pid, checkedAt) => ({
+        pid,
+        checkedAt,
+        alive: true,
+        command: '/usr/bin/codex',
+        detection: 'pid_signal_and_ps',
+        action: 'left_running'
+      })
+    )
+    expect(genericRecovery.jobs[0]).toMatchObject({
+      status: 'failed',
+      recoveryReason: 'orphan_detected_on_startup',
+      orphanProcess: { alive: true }
+    })
+    h.jobs.set(runId, genericRecovery.jobs[0])
+    h.transitions.mockClear()
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(started.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/still be running/i)
+    })
+    expect(h.transitions).not.toHaveBeenCalled()
+  })
+
+  it('does not replay a steer promotion that generic startup recovery requeued', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const original = {
+      ...h.jobs.get(runId)!,
+      status: 'steer_promoting' as const,
+      promotionOwnerToken: 'owner-one',
+      promotionToken: 'promotion-one',
+      promotionAttempt: 1,
+      promotedAt: '2026-07-18T11:00:30.000Z'
+    }
+    const genericRecovery = recoverRunQueueJobsAfterStartup(
+      [original],
+      '2026-07-18T11:01:00.000Z',
+      () => undefined
+    )
+    expect(genericRecovery.jobs[0]).toMatchObject({
+      status: 'queued',
+      recoveryReason: 'stale_steer_promoting_recovered'
+    })
+    h.jobs.set(runId, genericRecovery.jobs[0])
+    h.transitions.mockClear()
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(started.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/steer promotion/i)
+    })
+    expect(h.jobs.get(runId)?.status).toBe('queued')
+    expect(h.transitions).not.toHaveBeenCalled()
+  })
+
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'does not trust recovered queue status %s as a provider outcome',
+    (terminalStatus) => {
+      const h = harness()
+      const started = h.coordinator.appendStackStep(h.input())
+      const runId = providerRunId(started)
+      h.jobs.set(runId, {
+        ...h.jobs.get(runId)!,
+        status: terminalStatus,
+        recoveredAt: '2026-07-18T11:01:00.000Z',
+        recoveryReason: 'marked_failed_on_startup'
+      })
+      h.transitions.mockClear()
+
+      h.coordinator.recover()
+
+      const recovered = h.coordinator.getExecution(started.executionId)!
+      expect(recovered.state).toBe('requires_action')
+      expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
+      expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
+      expect(h.transitions).not.toHaveBeenCalled()
+    }
+  )
 
   it('reconciles a completed anchor from exact run truth after restart', () => {
     const h = harness()
