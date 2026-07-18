@@ -77,12 +77,21 @@ function summarizeToolArgs(def: TaskWraithMcpToolDefinition): ToolArgSummary {
     : []
   const allKeys = Object.keys(props)
   const optional = allKeys.filter((key) => !required.includes(key))
-  // The example carries the required args (or the first arg when nothing is
-  // required) with type-appropriate placeholders, so a small model has a concrete
-  // shape to copy.
-  const exampleKeys = required.length ? required : allKeys.slice(0, 1)
-  const args: Record<string, unknown> = {}
-  for (const key of exampleKeys) args[key] = schemaPlaceholder(props[key])
+  // Prefer a canonical catalog example when one exists. Enum discriminators in
+  // particular cannot be represented by a generic "text" placeholder.
+  const catalogExample = Array.isArray(schema.examples)
+    ? schema.examples.find((entry): entry is Record<string, unknown> =>
+        Boolean(entry && typeof entry === 'object' && !Array.isArray(entry))
+      )
+    : undefined
+  const args: Record<string, unknown> = catalogExample ? { ...catalogExample } : {}
+  if (!catalogExample) {
+    // Otherwise carry the required args (or the first arg when nothing is
+    // required) with type-appropriate placeholders, so a small model has a
+    // concrete shape to copy.
+    const exampleKeys = required.length ? required : allKeys.slice(0, 1)
+    for (const key of exampleKeys) args[key] = schemaPlaceholder(props[key])
+  }
   const example = JSON.stringify({
     taskwraith_tool: OLLAMA_DIRECT_TOOL_NAMES.has(def.name)
       ? { name: def.name, arguments: args }

@@ -1415,6 +1415,7 @@ import {
   searchGatewayCapabilities,
   type CapabilityGatewayToolName
 } from './mcp/McpToolGateway'
+import { validateMcpToolArgumentsBeforeApproval } from './mcp/McpPreApprovalArgumentValidation'
 import {
   dispatchResolvedGatewayTarget,
   type GatewayTargetDispatchMarker
@@ -15689,6 +15690,17 @@ async function canUseClaudeSdkTool(
   const unprefixedToolName = toolName
     .replace(/^mcp__/, '')
     .replace(/^taskwraith__/, '')
+  const canonicalToolName = canonicalTaskWraithToolName(unprefixedToolName)
+  if (isTaskWraithMcpToolName(canonicalToolName)) {
+    const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
+      canonicalToolName,
+      updatedInput,
+      mcpToolDefinitions()
+    )
+    if (!argumentPreflight.ok) {
+      return { behavior: 'deny', message: argumentPreflight.message }
+    }
+  }
   const approvalPriority = nativeProviderApprovalPriority(
     toolName,
     isMcpAutoAllowedForRun(unprefixedToolName, payload.effectivePermissions, normalizedInput, {
@@ -27428,6 +27440,24 @@ async function executeGeminiMcpTool(
       callerContext,
       executeCanonical: executeGeminiMcpTool
     })
+  }
+
+  const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
+    toolName,
+    args,
+    mcpToolDefinitions()
+  )
+  if (!argumentPreflight.ok) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error: argumentPreflight.code,
+        message: argumentPreflight.message,
+        issues: argumentPreflight.issues
+      }),
+      isError: true
+    }
   }
 
   const routeGuard = validateMutatingMcpRoute(toolName, effectiveRoute)

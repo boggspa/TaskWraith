@@ -6,7 +6,7 @@ const executorStart = indexSource.indexOf('async function executeGeminiMcpTool('
 const executorEnd = indexSource.indexOf('\nasync function startGeminiMcpBroker()', executorStart)
 const executorSource = indexSource.slice(executorStart, executorEnd)
 const canonicalDispatchStart = executorSource.indexOf(
-  'const routeGuard = validateMutatingMcpRoute(toolName, effectiveRoute)'
+  'const argumentPreflight = validateMcpToolArgumentsBeforeApproval('
 )
 const gatewayDispatchSource = executorSource.slice(0, canonicalDispatchStart)
 const canonicalDispatchSource = executorSource.slice(canonicalDispatchStart)
@@ -31,6 +31,7 @@ describe('main capability gateway dispatch contract', () => {
 
   it('keeps the canonical target safeguards and rich-result path downstream', () => {
     for (const seam of [
+      'validateMcpToolArgumentsBeforeApproval(',
       'validateMutatingMcpRoute(toolName, effectiveRoute)',
       'validateMcpCallerWorkspace({',
       'previewForGeminiMcpTool(toolName, args, cwd, context, parentProvider)',
@@ -43,5 +44,8 @@ describe('main capability gateway dispatch contract', () => {
     ]) {
       expect(canonicalDispatchSource, seam).toContain(seam)
     }
+    expect(canonicalDispatchSource.indexOf('validateMcpToolArgumentsBeforeApproval(')).toBeLessThan(
+      canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')
+    )
   })
 })

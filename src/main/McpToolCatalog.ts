@@ -2452,7 +2452,13 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             required: ['provider']
           }
         },
-        required: ['action']
+        required: ['action'],
+        examples: [
+          {
+            action: 'set_round_plan',
+            goal: 'Review.'
+          }
+        ]
       }
     },
     {

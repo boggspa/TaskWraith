@@ -47,6 +47,14 @@ describe('resources/Tools.md', () => {
       )
     }
   })
+
+  it('uses a valid catalog example for enum-discriminated Boss control calls', () => {
+    const section = buildOllamaToolDocSection('ensemble_bossman_control')
+    expect(section).toContain(
+      '"arguments":{"action":"set_round_plan","goal":"Review."}'
+    )
+    expect(section).not.toContain('"action":"text"')
+  })
 })
 
 describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {

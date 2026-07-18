@@ -793,7 +793,7 @@ In Ensemble Mode, allows the assigned Boss participant, or Captain only after Bo
 - Access: governed by your run permission role
 - Required args: action
 - Optional args: roundId, targetParticipantId, targetRunId, participantIds, prompt, reason, objective, acceptanceCriteria, due, assignmentStatus, assignmentId, gateId, pollId, budgetId, goal, goalStatus, status, phase, blockers, doneCriteria, decision, rationale, reopenCriteria, scope, reviewStatus, verdict, category, quarantineScope, clear, maxExtraTurns, maxFanoutCalls, maxDurationSeconds, maxTokens, question, options, includeUser, timeoutSeconds, hopDelta, maxContinuationHops, delaySeconds, provider, replacement
-- Example: `{"taskwraith_tool":{"name":"ensemble_bossman_control","arguments":{"action":"text"}}}`
+- Example: `{"taskwraith_tool":{"name":"ensemble_bossman_control","arguments":{"action":"set_round_plan","goal":"Review."}}}`
 
 ## ensemble_poll_response
 
