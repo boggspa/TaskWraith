@@ -1,0 +1,285 @@
+{
+  "catalogVersion": 1,
+  "retrievedAt": "2026-07-18",
+  "purpose": "design-reference-only",
+  "runtimeIntegrated": false,
+  "sourceBytesPreserved": true,
+  "derivedAssetsPresent": true,
+  "selectionPolicy": {
+    "firstPartyOnly": true,
+    "requiresTransparentPixels": true,
+    "appIconTilesExcludedByDefault": true,
+    "selectionExceptions": [
+      "kimi: requested first-party icon-only rounded-corner tile"
+    ],
+    "conversion": "none for sourced assets; Ollama dark variant is an exact RGB inversion with alpha copied unchanged"
+  },
+  "providers": [
+    {
+      "id": "gemini",
+      "label": "Gemini",
+      "owner": "Google LLC",
+      "status": "retired",
+      "artwork": "Gemini Spark logo",
+      "sourcePage": "https://blog.google/image-library/",
+      "brandGuidance": "https://about.google/brand-resource-center/guidance/",
+      "rightsNote": "Official Google Image Library asset. Publication use is offered with credit 'Source: Google'; no affiliation or endorsement is implied.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-gemini.png",
+          "originalFilename": "Gemini_SparkIcon_4C.original.png",
+          "downloadUrl": "https://storage.googleapis.com/gweb-uniblog-publish-prod/images/Gemini_SparkIcon_4C.original.png",
+          "dimensions": { "width": 560, "height": 560 },
+          "bytes": 91309,
+          "sha256": "86d5b2880849068ad5344132790c3496a6bb31838d93cd13ff2a26b7d11b3923",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 218915,
+            "partialAlphaPixels": 1655,
+            "opaquePixels": 93030
+          }
+        }
+      ]
+    },
+    {
+      "id": "codex",
+      "label": "Codex",
+      "owner": "OpenAI",
+      "status": "live",
+      "artwork": "Codex banner icon (untiled cloud mark)",
+      "sourcePage": "https://learn.chatgpt.com/docs/windows/windows-sandbox",
+      "brandGuidance": "https://openai.com/brand/",
+      "sourceKind": "official OpenAI developer-site asset",
+      "downloadUrl": "https://developers.openai.com/images/codex/codex-banner-icon.png",
+      "renderedVariantUrl": "https://developers.openai.com/images/codex/codex-banner-icon.webp",
+      "corroboratingBundle": {
+        "identifier": "com.openai.codex",
+        "version": "26.715.31251",
+        "member": "webview/assets/codex-app-ga-logo--UgmJjKM.png",
+        "signatureAuthority": "Developer ID Application: OpenAI OpCo, LLC (2DC432GLL2)"
+      },
+      "rightsNote": "Exact product PNG hosted on OpenAI's developer domain and used by official documentation. It is not part of OpenAI's public logo pack; source availability does not grant redistribution or imply endorsement.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-codex-cloud.png",
+          "originalFilename": "codex-banner-icon.png",
+          "downloadUrl": "https://developers.openai.com/images/codex/codex-banner-icon.png",
+          "dimensions": { "width": 262, "height": 262 },
+          "bytes": 44832,
+          "sha256": "27e259df439669978f261b1112dd3fac80a38718917fdf2aa04d0e834f19ea08",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 38417,
+            "partialAlphaPixels": 7995,
+            "opaquePixels": 22232
+          }
+        }
+      ]
+    },
+    {
+      "id": "claude",
+      "label": "Claude",
+      "owner": "Anthropic PBC",
+      "status": "live",
+      "artwork": "Claude Spark — Clay",
+      "sourcePage": "https://www.anthropic.com/news",
+      "downloadUrl": "https://www.anthropic.com/press-kit",
+      "resolvedDownloadUrl": "https://www-cdn.anthropic.com/ae59ca4ca194dac9c9dc3bc78c5829468cb0e8af.zip",
+      "archiveSha256": "c68ac92df86c825f95177e24016fcc9a8863a3fd4ca344fe6f0700b2c1e07151",
+      "rightsNote": "Official Anthropic media-resource asset. No separate public trademark/logo-use licence was found; retain unmodified for nominative reference only.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-claude.png",
+          "originalFilename": "Claude Spark - Clay.png",
+          "archiveMember": "Anthropic media resources/Anthropic logos/Claude logos/3 Claude Spark/PNG/Claude Spark - Clay.png",
+          "dimensions": { "width": 937, "height": 937 },
+          "bytes": 39563,
+          "sha256": "c7d8415b1edba67e5337d3684b480b563826f07be9e28e10ccc14bf92037ef6d",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 525328,
+            "partialAlphaPixels": 8469,
+            "opaquePixels": 344172
+          }
+        }
+      ]
+    },
+    {
+      "id": "kimi",
+      "label": "Kimi",
+      "owner": "Moonshot AI",
+      "status": "live",
+      "artwork": "Kimi rounded-corner icon without wordmark",
+      "sourcePage": "https://moonshotai.github.io/Branding-Guide/",
+      "brandGuidance": "https://moonshotai.github.io/Branding-Guide/",
+      "sourceCommit": "67b20b1315f96d05f3192b24050635745abd3d90",
+      "rightsNote": "The first-party guide supplies downloads and states all rights reserved. Use unmodified for nominative representation only; broader clearance contact is team@moonshot.ai.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-kimi.png",
+          "originalFilename": "kimi-icon-rounded-corner.png",
+          "downloadUrl": "https://raw.githubusercontent.com/MoonshotAI/Branding-Guide/67b20b1315f96d05f3192b24050635745abd3d90/scenarios/03-icon-without-kimi/kimi-icon-rounded-corner.png",
+          "dimensions": { "width": 1024, "height": 1024 },
+          "bytes": 234859,
+          "sha256": "61bc910bcb3db0995e4dbf499f5b5a883f3473c3df441963d49ecc7eaba9160d",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 57624,
+            "partialAlphaPixels": 2332,
+            "opaquePixels": 988620
+          }
+        }
+      ]
+    },
+    {
+      "id": "cursor",
+      "label": "Cursor",
+      "owner": "Anysphere, Inc.",
+      "status": "live",
+      "artwork": "Cursor Cube — 2D",
+      "sourcePage": "https://cursor.com/en-US/brand",
+      "brandGuidance": "https://cursor.com/en-US/brand",
+      "downloadUrl": "https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip",
+      "archiveSha256": "97488a7751914e60f9ff532bc33810cdeaebdddc017548abe6ca2bc29bbc3928",
+      "rightsNote": "Official Cursor brand-pack artwork. The pack contains no separate asset licence; preserve it unmodified for provider representation and do not imply endorsement.",
+      "assets": [
+        {
+          "role": "on-light",
+          "file": "png/provider-logo-cursor-on-light.png",
+          "originalFilename": "CUBE_2D_LIGHT.png",
+          "archiveMember": "General Logos/Cube/PNG/CUBE_2D_LIGHT.png",
+          "dimensions": { "width": 1401, "height": 1597 },
+          "bytes": 40415,
+          "sha256": "c61776321cea03d00860d5059029397a9b60e95e5c1f36f1b3bafe5a3a59c545",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 1025141,
+            "partialAlphaPixels": 8147,
+            "opaquePixels": 1204109
+          }
+        },
+        {
+          "role": "on-dark",
+          "file": "png/provider-logo-cursor-on-dark.png",
+          "originalFilename": "CUBE_2D_DARK.png",
+          "archiveMember": "General Logos/Cube/PNG/CUBE_2D_DARK.png",
+          "dimensions": { "width": 1401, "height": 1597 },
+          "bytes": 40047,
+          "sha256": "944f2b64bcb4b9603edb8721cf669d496ddc408d91c4a8ff471b650e4fb272b5",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 1025141,
+            "partialAlphaPixels": 8147,
+            "opaquePixels": 1204109
+          }
+        }
+      ]
+    },
+    {
+      "id": "grok",
+      "label": "Grok",
+      "owner": "X.AI LLC",
+      "status": "live",
+      "artwork": "Grok logomark",
+      "sourcePage": "https://x.ai/legal/brand-guidelines",
+      "brandGuidance": "https://x.ai/legal/brand-guidelines",
+      "downloadUrl": "https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip",
+      "archiveSha256": "db9129acd4efc4c2202d25afe31b70281a79f8507f75520ab5e6b3356895a7e9",
+      "rightsNote": "xAI permits accurate reference subject to its brand terms and requires logos to remain exactly as provided. Do not imply endorsement; permission is conditional and revocable.",
+      "assets": [
+        {
+          "role": "on-light",
+          "file": "png/provider-logo-grok-on-light.png",
+          "originalFilename": "Grok_Logomark_Dark.png",
+          "archiveMember": "SpaceXAI_Grok_Assets/Grok_Logomark_Dark.png",
+          "dimensions": { "width": 1024, "height": 1024 },
+          "bytes": 31074,
+          "sha256": "37ddbcb6e2a7f2e4b3be78a7d41296a3bc7edf6926362434efc00df5a56a3586",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 808148,
+            "partialAlphaPixels": 6339,
+            "opaquePixels": 234089
+          }
+        },
+        {
+          "role": "on-dark",
+          "file": "png/provider-logo-grok-on-dark.png",
+          "originalFilename": "Grok_Logomark_Light.png",
+          "archiveMember": "SpaceXAI_Grok_Assets/Grok_Logomark_Light.png",
+          "dimensions": { "width": 1024, "height": 1024 },
+          "bytes": 25282,
+          "sha256": "359056ee8983cfa0ba7e72795078c7c0ddf6c5d7a1870401ab960ed4f9df9e53",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 808148,
+            "partialAlphaPixels": 6339,
+            "opaquePixels": 234089
+          }
+        }
+      ]
+    },
+    {
+      "id": "ollama",
+      "label": "Ollama",
+      "owner": "Ollama",
+      "status": "live",
+      "artwork": "Ollama llama",
+      "sourcePage": "https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png",
+      "brandGuidance": "https://ollama.com/terms",
+      "sourceCommit": "573386c35eac76124ffce571f4b0fefa0a7fe13c",
+      "rightsNote": "The file is sourced from Ollama's MIT-licensed repository, while Ollama's terms separately reserve branding rights. Use only for factual provider identification.",
+      "assets": [
+        {
+          "role": "on-light",
+          "file": "png/provider-logo-ollama.png",
+          "originalFilename": "ollama.png",
+          "downloadUrl": "https://raw.githubusercontent.com/ollama/ollama/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png",
+          "dimensions": { "width": 181, "height": 256 },
+          "bytes": 7487,
+          "sha256": "5c5528504c307d34af504f39bc4e7007d2f6f31ee00dab699cc91584d1af8aca",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 32986,
+            "partialAlphaPixels": 2285,
+            "opaquePixels": 11065
+          }
+        },
+        {
+          "role": "on-dark-derived",
+          "file": "png/provider-logo-ollama-on-dark.png",
+          "derivedFrom": "png/provider-logo-ollama.png",
+          "transformation": "invert RGB channels exactly (value = 255 - value); retain alpha unchanged",
+          "transformationTool": "FFmpeg 8.1 negate=components=r+g+b",
+          "dimensions": { "width": 181, "height": 256 },
+          "bytes": 9940,
+          "sha256": "e3978078eb4c3a563e381efbdc8452b000d77c5fc12de7c611a3b8ee5b77cb0c",
+          "verification": {
+            "alphaByteIdenticalToSource": true,
+            "rgbExactInverseOfSource": true
+          },
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 32986,
+            "partialAlphaPixels": 2285,
+            "opaquePixels": 11065
+          }
+        }
+      ]
+    }
+  ]
+}

@@ -1,0 +1,242 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1400" height="1395" viewBox="0 0 1400 1395" data-provider-logo-catalog="true">
+  <title>TaskWraith provider logo reference catalogue</title>
+  <desc>Unmodified official or first-party provider PNGs reviewed on light, dark, and transparency-checker surfaces.</desc>
+  <defs>
+    <pattern id="alpha-checker" width="24" height="24" patternUnits="userSpaceOnUse">
+      <rect width="24" height="24" fill="#F4F5F7" />
+      <path d="M0 0h12v12H0zM12 12h12v12H12z" fill="#D9DDE3" />
+    </pattern>
+    <filter id="card-shadow" x="-10%" y="-10%" width="120%" height="130%">
+      <feDropShadow dx="0" dy="8" stdDeviation="12" flood-color="#000000" flood-opacity="0.22" />
+    </filter>
+  </defs>
+  <style>
+    .canvas { fill: #0B0D10; }
+    .eyebrow {
+      fill: #8D97A8;
+      font: 700 13px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: 0.16em;
+    }
+    .title {
+      fill: #F8FAFC;
+      font: 750 38px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      letter-spacing: -0.03em;
+    }
+    .subtitle {
+      fill: #AAB3C2;
+      font: 16px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .rule { stroke: #29313C; stroke-width: 1; }
+    .card {
+      fill: #15191F;
+      stroke: #282F39;
+      stroke-width: 1;
+    }
+    .provider {
+      fill: #F8FAFC;
+      font: 700 19px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .provider-detail {
+      fill: #8993A3;
+      font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .status {
+      fill: #9DA7B7;
+      font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-anchor: end;
+      letter-spacing: 0.1em;
+    }
+    .status-historical { fill: #D5A95E; }
+    .surface-light { fill: #FFFFFF; }
+    .surface-dark { fill: #080A0D; }
+    .surface-frame {
+      fill: none;
+      stroke: #303844;
+      stroke-width: 1;
+    }
+    .surface-label {
+      fill: #7F8999;
+      font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-anchor: middle;
+      letter-spacing: 0.08em;
+    }
+    .missing {
+      fill: #707A89;
+      font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      text-anchor: middle;
+      letter-spacing: 0.06em;
+    }
+    .note-title {
+      fill: #F8FAFC;
+      font: 700 21px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .note {
+      fill: #AAB3C2;
+      font: 14px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .note-key {
+      fill: #728097;
+      font: 700 10px ui-monospace, SFMono-Regular, Menlo, monospace;
+      letter-spacing: 0.1em;
+    }
+    .footer {
+      fill: #788394;
+      font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+    }
+    .footer-end { text-anchor: end; }
+  </style>
+
+  <rect class="canvas" width="1400" height="1395" />
+  <text class="eyebrow" x="60" y="66">DESIGN ASSETS / SECONDARY PROVIDER CATALOGUE</text>
+  <text class="title" x="60" y="118">Provider logos — transparent PNG references</text>
+  <text class="subtitle" x="60" y="154">Official or first-party artwork. Source bytes preserved; requested derivatives are labelled. No runtime integration.</text>
+  <line class="rule" x1="60" y1="185" x2="1340" y2="185" />
+
+  <g transform="translate(60 220)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Gemini</text>
+    <text class="provider-detail" x="96" y="34">Google • Gemini Spark</text>
+    <text class="status status-historical" x="596" y="34">HISTORICAL</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-gemini.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-gemini.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-gemini.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(720 220)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Codex</text>
+    <text class="provider-detail" x="86" y="34">OpenAI • Codex banner / cloud</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-codex-cloud.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-codex-cloud.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-codex-cloud.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(60 500)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Claude</text>
+    <text class="provider-detail" x="96" y="34">Anthropic • Claude Spark / Clay</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-claude.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-claude.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-claude.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(720 500)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Kimi</text>
+    <text class="provider-detail" x="70" y="34">Moonshot AI • icon-only tile</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-kimi.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-kimi.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-kimi.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(60 780)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Cursor</text>
+    <text class="provider-detail" x="91" y="34">Anysphere • 2D Cube</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-cursor-on-light.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-cursor-on-dark.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-cursor-on-light.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(720 780)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Grok</text>
+    <text class="provider-detail" x="71" y="34">xAI • logomark</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-grok-on-light.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-grok-on-dark.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-grok-on-light.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(60 1060)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="provider" x="24" y="34">Ollama</text>
+    <text class="provider-detail" x="94" y="34">Ollama • llama + dark derivative</text>
+    <text class="status" x="596" y="34">LIVE</text>
+    <rect class="surface-light" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-dark" x="222" y="58" width="176" height="142" rx="10" />
+    <rect x="420" y="58" width="176" height="142" rx="10" fill="url(#alpha-checker)" />
+    <image href="png/provider-logo-ollama.png" x="50" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-ollama-on-dark.png" x="248" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <image href="png/provider-logo-ollama.png" x="446" y="70" width="124" height="118" preserveAspectRatio="xMidYMid meet" />
+    <rect class="surface-frame" x="24" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="222" y="58" width="176" height="142" rx="10" />
+    <rect class="surface-frame" x="420" y="58" width="176" height="142" rx="10" />
+    <text class="surface-label" x="112" y="226">LIGHT</text>
+    <text class="surface-label" x="310" y="226">DARK • RGB INVERT</text>
+    <text class="surface-label" x="508" y="226">ALPHA</text>
+  </g>
+
+  <g transform="translate(720 1060)" filter="url(#card-shadow)">
+    <rect class="card" width="620" height="248" rx="18" />
+    <text class="note-title" x="28" y="42">Reference-set rules</text>
+    <text class="note-key" x="28" y="76">SOURCE</text>
+    <text class="note" x="28" y="99">Official brand pack, first-party site/repo,</text>
+    <text class="note" x="28" y="120">or an OpenAI-signed product bundle.</text>
+    <text class="note-key" x="28" y="151">INTEGRITY</text>
+    <text class="note" x="28" y="174">Source bytes preserved; derivatives + alpha checks recorded.</text>
+    <text class="note-key" x="28" y="205">BOUNDARY</text>
+    <text class="note" x="28" y="228">Design reference only — do not ship or imply endorsement.</text>
+  </g>
+
+  <text class="footer" x="60" y="1360">Seven canonical external providers • Ensemble omitted because it is TaskWraith-owned orchestration</text>
+  <text class="footer footer-end" x="1340" y="1360">Retrieved 2026-07-18</text>
+</svg>
