@@ -1,0 +1,673 @@
+/*
+ * Execution Graph projections. The Stack and Map intentionally contain no
+ * draggable nodes, coordinates, or canvas controls: layout is derived from the
+ * authoritative topological projection.
+ */
+
+.execution-visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.execution-status-token {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 2px 7px;
+  border: 1px solid color-mix(in srgb, currentColor 24%, transparent);
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 650;
+  line-height: 1;
+  letter-spacing: 0.025em;
+  white-space: nowrap;
+}
+
+.execution-status-token.tone-pending,
+.execution-map-node.tone-pending {
+  color: var(--text-secondary, #a6adba);
+}
+
+.execution-status-token.tone-active,
+.execution-map-node.tone-active {
+  color: var(--accent, #7c9cff);
+}
+
+.execution-status-token.tone-waiting,
+.execution-status-token.tone-attention,
+.execution-map-node.tone-waiting,
+.execution-map-node.tone-attention {
+  color: var(--warning, #f2b84b);
+}
+
+.execution-status-token.tone-success,
+.execution-map-node.tone-success {
+  color: var(--success, #61c995);
+}
+
+.execution-status-token.tone-failure,
+.execution-map-node.tone-failure {
+  color: var(--danger, #f17178);
+}
+
+.execution-status-token.tone-muted,
+.execution-map-node.tone-muted {
+  color: var(--text-tertiary, #818896);
+}
+
+/* Composer-attached operational Stack. */
+
+.execution-stack-above-row {
+  display: grid;
+  gap: 7px;
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.execution-stack-header,
+.execution-stack-heading,
+.execution-stack-actions,
+.execution-map-node-topline,
+.execution-map-node-footer,
+.execution-map-header,
+.execution-map-header-leading,
+.execution-map-header-actions,
+.execution-map-progress-meta {
+  display: flex;
+  align-items: center;
+}
+
+.execution-stack-header,
+.execution-map-header {
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.execution-stack-heading,
+.execution-stack-actions {
+  gap: 7px;
+  min-width: 0;
+}
+
+.execution-stack-kicker,
+.execution-map-kicker {
+  color: var(--text-tertiary, #818896);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+}
+
+.execution-stack-name {
+  overflow: hidden;
+  color: var(--text-primary, #eef1f7);
+  font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-stack-action,
+.execution-stack-cancel-step,
+.execution-map-back,
+.execution-map-save-workflow,
+.execution-map-open-thread {
+  min-height: 26px;
+  padding: 4px 9px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-raised, #252933) 80%, transparent);
+  color: var(--text-secondary, #c1c6d0);
+  font: inherit;
+  font-size: 11px;
+  cursor: pointer;
+}
+
+.execution-stack-action:hover,
+.execution-stack-cancel-step:hover,
+.execution-map-back:hover,
+.execution-map-save-workflow:hover,
+.execution-map-open-thread:hover {
+  border-color: color-mix(in srgb, var(--accent, #7c9cff) 46%, transparent);
+  color: var(--text-primary, #eef1f7);
+}
+
+.execution-stack-action.is-primary {
+  border-color: color-mix(in srgb, var(--accent, #7c9cff) 42%, transparent);
+  background: color-mix(in srgb, var(--accent, #7c9cff) 14%, transparent);
+}
+
+.execution-stack-list,
+.execution-map-stages,
+.execution-map-stage-steps,
+.execution-map-inspector-list,
+.execution-map-attempts {
+  padding: 0;
+  margin: 0;
+  list-style: none;
+}
+
+.execution-stack-list {
+  display: grid;
+  gap: 4px;
+  max-height: 188px;
+  overflow: auto;
+}
+
+.execution-stack-step {
+  display: grid;
+  grid-template-columns: 52px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.execution-stack-position {
+  color: var(--text-tertiary, #818896);
+  font-size: 9px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.execution-stack-step.position-current .execution-stack-position {
+  color: var(--accent, #7c9cff);
+}
+
+.execution-stack-step-summary {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 5px 7px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--surface-raised, #252933) 62%, transparent);
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.execution-stack-step-summary:hover {
+  border-color: var(--border-subtle, rgba(255, 255, 255, 0.12));
+  background: color-mix(in srgb, var(--surface-raised, #252933) 84%, transparent);
+}
+
+.execution-stack-step-copy {
+  display: grid;
+  gap: 1px;
+  min-width: 0;
+}
+
+.execution-stack-step-title {
+  overflow: hidden;
+  color: var(--text-primary, #eef1f7);
+  font-size: 11px;
+  font-weight: 610;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-stack-step-blocker {
+  overflow: hidden;
+  color: var(--warning, #f2b84b);
+  font-size: 10px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-stack-cancel-step {
+  min-height: 24px;
+  color: var(--text-tertiary, #818896);
+}
+
+.execution-runtime-badge {
+  display: inline-flex;
+  align-items: center;
+  min-height: 18px;
+  padding: 2px 6px;
+  border: 1px dashed color-mix(in srgb, var(--accent, #7c9cff) 45%, transparent);
+  border-radius: 999px;
+  color: var(--accent, #7c9cff);
+  font-size: 9px;
+  font-weight: 620;
+  white-space: nowrap;
+}
+
+/* Read-only topological Execution Map. */
+
+.execution-map-view {
+  position: relative;
+  display: grid;
+  grid-template-rows: auto auto auto minmax(0, 1fr);
+  gap: 14px;
+  width: 100%;
+  height: 100%;
+  min-width: 0;
+  min-height: 0;
+  padding: 20px;
+  overflow: hidden;
+  background:
+    radial-gradient(
+      circle at 15% 0%,
+      color-mix(in srgb, var(--accent, #7c9cff) 7%, transparent),
+      transparent 33%
+    ),
+    var(--background-primary, #111319);
+  color: var(--text-primary, #eef1f7);
+}
+
+.execution-map-view.is-empty {
+  align-content: start;
+}
+
+.execution-map-empty-state {
+  display: grid;
+  justify-items: center;
+  gap: 6px;
+  max-width: 420px;
+  padding: 48px 24px;
+  margin: auto;
+  color: var(--text-secondary, #a6adba);
+  text-align: center;
+}
+
+.execution-map-empty-state h1,
+.execution-map-empty-state p,
+.execution-map-header h1,
+.execution-map-stage h2,
+.execution-map-inspector h2,
+.execution-map-inspector h3,
+.execution-map-inspector p {
+  margin: 0;
+}
+
+.execution-map-header-leading,
+.execution-map-header-actions {
+  gap: 12px;
+  min-width: 0;
+}
+
+.execution-map-header h1 {
+  overflow: hidden;
+  max-width: min(58vw, 720px);
+  font-size: 20px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-map-progress-meta {
+  justify-content: space-between;
+  gap: 16px;
+  color: var(--text-secondary, #a6adba);
+  font-size: 11px;
+}
+
+.execution-map-progress {
+  position: relative;
+  width: min(320px, 42vw);
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary, #eef1f7) 10%, transparent);
+}
+
+.execution-map-progress > span {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: var(--accent, #7c9cff);
+  transition: width 180ms ease;
+}
+
+.execution-map-issues {
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger, #f17178) 38%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--danger, #f17178) 9%, transparent);
+  color: var(--danger, #f17178);
+  font-size: 11px;
+}
+
+.execution-map-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(280px, 340px);
+  gap: 16px;
+  min-width: 0;
+  min-height: 0;
+}
+
+.execution-map-stages {
+  display: grid;
+  grid-auto-columns: minmax(220px, 1fr);
+  grid-auto-flow: column;
+  gap: 12px;
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  scroll-snap-type: x proximity;
+}
+
+.execution-map-stage {
+  position: relative;
+  min-width: 0;
+  scroll-snap-align: start;
+}
+
+.execution-map-stage > section {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+  height: 100%;
+}
+
+.execution-map-stage h2 {
+  padding: 0 2px;
+  color: var(--text-tertiary, #818896);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.execution-map-stage-steps {
+  display: grid;
+  align-content: start;
+  gap: 8px;
+}
+
+.execution-map-node-item {
+  position: relative;
+}
+
+.execution-map-node {
+  position: relative;
+  display: grid;
+  gap: 7px;
+  width: 100%;
+  min-width: 0;
+  padding: 11px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-left: 3px solid currentColor;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-raised, #252933) 88%, transparent);
+  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.12);
+  color: var(--text-secondary, #a6adba);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition:
+    border-color 140ms ease,
+    background-color 140ms ease,
+    transform 140ms ease;
+}
+
+.execution-map-node:hover {
+  background: color-mix(in srgb, var(--surface-raised, #252933) 98%, transparent);
+  transform: translateY(-1px);
+}
+
+.execution-map-node.is-selected {
+  border-color: color-mix(in srgb, currentColor 55%, transparent);
+  background: color-mix(in srgb, var(--accent, #7c9cff) 8%, var(--surface-raised, #252933));
+}
+
+.execution-map-node-topline,
+.execution-map-node-footer {
+  justify-content: space-between;
+  gap: 7px;
+}
+
+.execution-map-node-kind {
+  color: var(--text-tertiary, #818896);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.execution-map-node-title {
+  color: var(--text-primary, #eef1f7);
+  font-size: 13px;
+  font-weight: 660;
+  line-height: 1.25;
+}
+
+.execution-map-node-objective {
+  display: -webkit-box;
+  overflow: hidden;
+  color: var(--text-secondary, #a6adba);
+  font-size: 11px;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 3;
+}
+
+.execution-map-node-dependencies {
+  display: grid;
+  gap: 2px;
+  padding: 6px 7px;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--background-primary, #111319) 48%, transparent);
+  color: var(--text-tertiary, #818896);
+  font-size: 9px;
+}
+
+.execution-map-node-blocker {
+  color: var(--warning, #f2b84b);
+  font-size: 10px;
+  line-height: 1.3;
+}
+
+.execution-map-node-footer {
+  color: var(--text-tertiary, #818896);
+  font-size: 9px;
+}
+
+.execution-map-inspector {
+  min-width: 0;
+  min-height: 0;
+  padding: 14px;
+  overflow: auto;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--surface-raised, #252933) 78%, transparent);
+}
+
+.execution-map-inspector-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 3px 8px;
+}
+
+.execution-map-inspector-header > span:first-child {
+  grid-column: 1 / -1;
+  color: var(--text-tertiary, #818896);
+  font-size: 9px;
+  font-weight: 700;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.execution-map-inspector h2 {
+  overflow-wrap: anywhere;
+  font-size: 17px;
+  line-height: 1.25;
+}
+
+.execution-map-inspector-objective {
+  padding: 10px 0 12px;
+  color: var(--text-secondary, #a6adba);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.execution-map-inspector-blocker {
+  display: grid;
+  gap: 3px;
+  padding: 8px 9px;
+  border-left: 3px solid var(--warning, #f2b84b);
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--warning, #f2b84b) 8%, transparent);
+  color: var(--warning, #f2b84b);
+  font-size: 11px;
+}
+
+.execution-map-inspector-section {
+  display: grid;
+  gap: 7px;
+  padding-top: 12px;
+  margin-top: 12px;
+  border-top: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.1));
+}
+
+.execution-map-inspector-section h3 {
+  color: var(--text-secondary, #a6adba);
+  font-size: 10px;
+  font-weight: 720;
+  letter-spacing: 0.065em;
+  text-transform: uppercase;
+}
+
+.execution-map-inspector-list,
+.execution-map-attempts,
+.execution-map-inspector-facts {
+  display: grid;
+  gap: 5px;
+  margin: 0;
+}
+
+.execution-map-inspector-list li,
+.execution-map-attempts li,
+.execution-map-inspector-facts > div {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: 8px;
+  color: var(--text-secondary, #a6adba);
+  font-size: 10px;
+}
+
+.execution-map-inspector-list code,
+.execution-map-inspector-facts code {
+  overflow: hidden;
+  color: var(--text-primary, #eef1f7);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.execution-map-inspector-facts dt {
+  color: var(--text-tertiary, #818896);
+}
+
+.execution-map-inspector-facts dd {
+  min-width: 0;
+  margin: 0;
+  text-align: right;
+}
+
+.execution-map-attempt-error {
+  grid-column: 1 / -1;
+  color: var(--danger, #f17178);
+}
+
+.execution-map-open-thread {
+  width: 100%;
+  margin-top: 14px;
+}
+
+.execution-stack-action:focus-visible,
+.execution-stack-cancel-step:focus-visible,
+.execution-stack-step-summary:focus-visible,
+.execution-map-back:focus-visible,
+.execution-map-save-workflow:focus-visible,
+.execution-map-open-thread:focus-visible,
+.execution-map-node:focus-visible {
+  outline: 2px solid var(--accent, #7c9cff);
+  outline-offset: 2px;
+}
+
+@media (max-width: 900px) {
+  .execution-map-view {
+    height: auto;
+    min-height: 100%;
+    padding: 14px;
+    overflow: auto;
+  }
+
+  .execution-map-body {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .execution-map-stages {
+    grid-auto-columns: auto;
+    grid-auto-flow: row;
+    overflow: visible;
+    scroll-snap-type: none;
+  }
+
+  .execution-map-inspector {
+    max-height: none;
+    overflow: visible;
+  }
+}
+
+@media (max-width: 620px) {
+  .execution-stack-header,
+  .execution-map-header,
+  .execution-map-progress-meta {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .execution-stack-actions {
+    width: 100%;
+    overflow-x: auto;
+  }
+
+  .execution-stack-step {
+    grid-template-columns: 42px minmax(0, 1fr);
+  }
+
+  .execution-stack-cancel-step {
+    grid-column: 2;
+    justify-self: start;
+  }
+
+  .execution-stack-step-summary {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+
+  .execution-stack-step-summary .execution-runtime-badge {
+    display: none;
+  }
+
+  .execution-map-header-actions,
+  .execution-map-progress,
+  .execution-map-save-workflow {
+    width: 100%;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .execution-map-node,
+  .execution-map-progress > span {
+    transition: none;
+  }
+
+  .execution-map-node:hover {
+    transform: none;
+  }
+}
