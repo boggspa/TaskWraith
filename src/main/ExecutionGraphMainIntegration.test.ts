@@ -48,6 +48,19 @@ describe('execution graph main integration', () => {
     )
   })
 
+  it('does not punish an ordinary anchor run when Stack evidence is rejected', () => {
+    const listener = between('runManager.onChange((event) => {', 'function recoverSubThreadWorkerQueues')
+    const attemptRejection = listener.indexOf(
+      "if (graphOwnedRun && graphDisposition !== 'accepted')"
+    )
+    const anchorWarning = listener.indexOf("if (graphDisposition === 'rejected')")
+    const ordinaryPersistence = listener.indexOf('persistRunSessionQueueState(event.session)')
+
+    expect(attemptRejection).toBeGreaterThanOrEqual(0)
+    expect(anchorWarning).toBeGreaterThan(attemptRejection)
+    expect(ordinaryPersistence).toBeGreaterThan(anchorWarning)
+  })
+
   it('delivers committed predecessor results as untrusted data before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',

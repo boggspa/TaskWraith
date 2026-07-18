@@ -6385,11 +6385,19 @@ runManager.onChange((event) => {
     )
     if (graphOwnedRun) return
   }
-  if (graphDisposition === 'rejected' || (graphOwnedRun && graphDisposition !== 'accepted')) {
+  if (graphOwnedRun && graphDisposition !== 'accepted') {
     console.error(
       `[ExecutionGraph] rejected queue persistence for ${graphDisposition} run session runId=${event.session.runId}.`
     )
     return
+  }
+  if (graphDisposition === 'rejected') {
+    // A Stack may observe an ordinary run as its anchor. Ambiguous anchor
+    // evidence attention-gates the Stack, but it must not suppress the
+    // ordinary run's own queue persistence, lifecycle audit, or cleanup.
+    console.warn(
+      `[ExecutionGraph] Stack anchor evidence was rejected without taking ownership of runId=${event.session.runId}.`
+    )
   }
   // Graph ledger correlation must commit before the generic queue projection
   // can copy any RunManager fields into the persisted row.
