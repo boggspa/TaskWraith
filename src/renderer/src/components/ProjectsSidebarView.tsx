@@ -15,18 +15,24 @@ import type {
 } from '../../../main/store/types'
 import {
   addChatToProject,
+  addProjectReference,
   createProject,
   deleteProject,
+  listProjectReferences,
   listProjects,
   listProjectWorkProfiles,
   moveProject,
   removeChatFromProject,
+  removeProjectReference,
   renameProject,
   reorderProject,
   setProjectHomeChat,
   setProjectIconAndHue,
   subscribeProjects,
+  updateProjectReference,
+  verifyProjectReference,
   type Project,
+  type ProjectReference,
   type ProjectWorkProfile
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
@@ -50,6 +56,9 @@ interface ProjectsSidebarViewProps {
    * pristine General draft and auto-claims it on its first committed send. */
   onStartProjectHome?: (projectId: string) => void
   onSearchResultCountChange?: (count: number) => void
+  /** Pre-select a project's detail panel on mount (host deep-link seam; also
+   * how static-render tests reach the selected-only detail UI). */
+  initialSelectedProjectId?: string | null
 }
 
 interface ProjectNode {
@@ -208,13 +217,19 @@ export function ProjectsSidebarView({
   isSearchActive,
   onSelectChat,
   onStartProjectHome,
-  onSearchResultCountChange
+  onSearchResultCountChange,
+  initialSelectedProjectId = null
 }: ProjectsSidebarViewProps): JSX.Element {
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
   const [workProfiles, setWorkProfiles] = useState<ProjectWorkProfile[]>(() =>
     listProjectWorkProfiles()
   )
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
+  const [projectReferences, setProjectReferences] = useState<ProjectReference[]>(() =>
+    listProjectReferences()
+  )
+  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
+    initialSelectedProjectId
+  )
   const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => {
@@ -233,6 +248,7 @@ export function ProjectsSidebarView({
     const refresh = (): void => {
       setProjects(listProjects())
       setWorkProfiles(listProjectWorkProfiles())
+      setProjectReferences(listProjectReferences())
     }
     refresh()
     return subscribeProjects(refresh)
@@ -310,6 +326,33 @@ export function ProjectsSidebarView({
       .catch((error) => {
         window.alert(error instanceof Error ? error.message : 'Project home update failed.')
       })
+  }
+
+  /** Async reference-library actions share the alert-on-reject surface; the
+   * adoption notify refreshes state, the explicit re-read covers deferrals. */
+  const runReferenceAction = (action: () => Promise<void>): void => {
+    void action()
+      .then(() => setProjectReferences(listProjectReferences()))
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Reference update failed.')
+      })
+  }
+
+  const addReferenceFromPicker = (projectId: string, mode: 'file' | 'folder'): void => {
+    runReferenceAction(async () => {
+      // The picker catalogues a locator and grants NOTHING — it is deliberately
+      // not the external-path grant picker (reference ≠ access).
+      const locator = await window.api?.pickProjectReferencePath?.(mode)
+      if (!locator) return
+      await addProjectReference({ projectId, kind: mode, locator })
+    })
+  }
+
+  const addLinkReference = (projectId: string): void => {
+    const url = window.prompt('Link URL (https://…)')
+    const trimmed = url?.trim()
+    if (!trimmed) return
+    runReferenceAction(() => addProjectReference({ projectId, kind: 'url', locator: trimmed }))
   }
 
   const startProjectDraft = (parentId: string | null): void => {
@@ -575,6 +618,9 @@ export function ProjectsSidebarView({
     const homeChatId = homeChatIdByProjectId.get(project.id)
     const homeChat = homeChatId ? chatById.get(homeChatId) : undefined
     const openableHomeChat = homeChat && homeChat.archived !== true ? homeChat : null
+    const referencesForProject = selected
+      ? projectReferences.filter((reference) => reference.projectId === project.id)
+      : []
 
     return (
       <div
@@ -793,6 +839,118 @@ export function ProjectsSidebarView({
                 ))}
               </select>
             </label>
+            <div className="sidebar-project-references">
+              <div className="sidebar-project-references-header">
+                <span className="sidebar-project-references-title">References</span>
+                <span className="sidebar-project-references-actions">
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button"
+                    onClick={() => addReferenceFromPicker(project.id, 'file')}
+                    title="Add file reference"
+                    aria-label={`Add file reference to ${project.name}`}
+                  >
+                    + File
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button"
+                    onClick={() => addReferenceFromPicker(project.id, 'folder')}
+                    title="Add folder reference"
+                    aria-label={`Add folder reference to ${project.name}`}
+                  >
+                    + Folder
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button"
+                    onClick={() => addLinkReference(project.id)}
+                    title="Add link reference"
+                    aria-label={`Add link reference to ${project.name}`}
+                  >
+                    + Link
+                  </button>
+                </span>
+              </div>
+              {referencesForProject.length === 0 ? (
+                <span className="sidebar-project-references-empty">
+                  Catalogue the files, folders, and links that matter to this project.
+                  References grant no access.
+                </span>
+              ) : (
+                referencesForProject.map((reference) => (
+                  <div
+                    key={reference.id}
+                    className={`sidebar-project-reference-row ${
+                      reference.contextPolicy === 'off' ? 'is-off' : ''
+                    }`}
+                    title={reference.locator}
+                  >
+                    <span className={`sidebar-project-reference-kind kind-${reference.kind}`}>
+                      {reference.kind === 'url' ? 'link' : reference.kind}
+                    </span>
+                    <span className="sidebar-project-reference-title">{reference.title}</span>
+                    {reference.lastVerified && (
+                      <span
+                        className={`sidebar-project-reference-dot ${reference.lastVerified.status}`}
+                        title={`${
+                          reference.lastVerified.status === 'ok' ? 'Available' : 'Missing'
+                        } when last verified`}
+                      />
+                    )}
+                    <span className="sidebar-project-reference-actions">
+                      {reference.kind !== 'url' && (
+                        <button
+                          type="button"
+                          className="sidebar-project-icon-button"
+                          onClick={() =>
+                            runReferenceAction(() => verifyProjectReference(reference.id))
+                          }
+                          title="Verify reference"
+                          aria-label={`Verify ${reference.title}`}
+                        >
+                          ✓
+                        </button>
+                      )}
+                      <button
+                        type="button"
+                        className="sidebar-project-icon-button"
+                        onClick={() =>
+                          runReferenceAction(() =>
+                            updateProjectReference(reference.id, {
+                              contextPolicy:
+                                reference.contextPolicy === 'off' ? 'available' : 'off'
+                            })
+                          )
+                        }
+                        title={
+                          reference.contextPolicy === 'off'
+                            ? 'Include in library (Available)'
+                            : 'Exclude from library (Off)'
+                        }
+                        aria-pressed={reference.contextPolicy === 'off'}
+                        aria-label={`${
+                          reference.contextPolicy === 'off' ? 'Include' : 'Exclude'
+                        } ${reference.title}`}
+                      >
+                        Off
+                      </button>
+                      <button
+                        type="button"
+                        className="sidebar-project-icon-button danger"
+                        onClick={() =>
+                          runReferenceAction(() => removeProjectReference(reference.id))
+                        }
+                        title="Remove reference"
+                        aria-label={`Remove ${reference.title}`}
+                      >
+                        -
+                      </button>
+                    </span>
+                  </div>
+                ))
+              )}
+            </div>
           </div>
         )}
 

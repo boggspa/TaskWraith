@@ -87,6 +87,81 @@ beforeEach(() => {
   })
 })
 
+describe('ProjectsSidebarView references', () => {
+  const referenceRecord = {
+    id: 'ref-1',
+    projectId: 'project-a',
+    kind: 'file' as const,
+    locator: '/repo/docs/spec.md',
+    title: 'spec.md',
+    provenance: { addedBy: 'user' as const, addedAt: 1 },
+    contextPolicy: 'available' as const,
+    lastVerified: { at: 5, status: 'missing' as const },
+    updatedAt: 1
+  }
+
+  it('renders the selected project library with availability, policy, and actions', () => {
+    seedStore(
+      [projectRecord('project-a', 'Alpha', [])],
+      [],
+    )
+    fake.broadcast.cb?.({
+      projects: [projectRecord('project-a', 'Alpha', [])],
+      workProfiles: [],
+      references: [
+        referenceRecord,
+        {
+          ...referenceRecord,
+          id: 'ref-2',
+          kind: 'url' as const,
+          locator: 'https://docs.example.com',
+          title: 'docs.example.com',
+          contextPolicy: 'off' as const,
+          lastVerified: undefined
+        }
+      ]
+    })
+
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        initialSelectedProjectId="project-a"
+      />
+    )
+
+    expect(html).toContain('sidebar-project-references')
+    expect(html).toContain('spec.md')
+    expect(html).toContain('sidebar-project-reference-dot missing')
+    expect(html).toContain('title="Add file reference"')
+    expect(html).toContain('title="Add folder reference"')
+    expect(html).toContain('title="Add link reference"')
+    expect(html).toContain('aria-label="Verify spec.md"')
+    expect(html).toContain('aria-label="Remove spec.md"')
+    // URL rows carry the Off state and never offer Verify.
+    expect(html).toContain('is-off')
+    expect(html).not.toContain('aria-label="Verify docs.example.com"')
+  })
+
+  it('shows the no-access empty state for a library-less project', () => {
+    seedStore([projectRecord('project-a', 'Alpha', [])], [])
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        initialSelectedProjectId="project-a"
+      />
+    )
+    expect(html).toContain('References grant no access.')
+  })
+})
+
 describe('ProjectsSidebarView', () => {
   it('normalizes inline project creation names before writing to the store', () => {
     expect(normalizeProjectCreateName('  Client Work  ')).toBe('Client Work')
