@@ -495,7 +495,10 @@ export function buildExecutionGraphProjection(
         latestAttempt,
         artifactRefs: latestAttempt?.result?.artifactRefs ?? [],
         isRuntimeAppended: runtimeAppendedStepIds.has(stepId),
-        canCancel: activationState === 'dormant' && Boolean(activation),
+        canCancel:
+          activationState === 'dormant' &&
+          Boolean(activation) &&
+          (order.successorIdsByStepId.get(stepId)?.size ?? 0) === 0,
         stackPosition: null
       }
     ]

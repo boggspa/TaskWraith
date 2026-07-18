@@ -96,7 +96,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
       getExecution: vi.fn((id) => (id === current.executionId ? current : undefined)),
       appendStackStep: vi.fn(() => current),
       cancelExecution: vi.fn(async () => {}),
-      cancelDormantStep: vi.fn(() => current)
+      cancelDormantStep: vi.fn(async () => current)
     },
     now: () => '2026-07-18T12:00:00.000Z',
     createId: () => 'id-one'
@@ -248,16 +248,16 @@ describe('registerExecutionGraphHandlers', () => {
     expect(deps.repository.saveRevision).toHaveBeenCalledTimes(1)
   })
 
-  it('requires an existing execution before cancelling a dormant step', () => {
+  it('requires an existing execution before cancelling a dormant step', async () => {
     const deps = createDeps()
     registerExecutionGraphHandlers(deps)
 
-    expect(() =>
+    await expect(
       handlerFor('execution-runs:cancel-step')(
         {},
         { executionId: 'missing-stack', activationId: 'activation-one' }
       )
-    ).toThrow('Execution is unavailable')
+    ).rejects.toThrow('Execution is unavailable')
     expect(deps.coordinator.cancelDormantStep).not.toHaveBeenCalled()
   })
 })

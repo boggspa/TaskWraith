@@ -9,7 +9,7 @@ export interface ExecutionStackAboveRowProps {
   projection: ExecutionGraphProjection | null
   onOpenMap: (runId: string, stepId?: string) => void
   onAddToStack?: (runId: string) => void
-  onSaveAsWorkflow?: (runId: string) => void
+  onSaveGraph?: (runId: string) => void
   onCancelStep?: (runId: string, activationId: string, stepId: string) => void
 }
 
@@ -71,9 +71,9 @@ function StackStepRow({
           type="button"
           className="execution-stack-cancel-step"
           onClick={() => onCancelStep?.(runId, row.activationId as string, row.stepId)}
-          aria-label={`Cancel planned step ${row.step.title}`}
+          aria-label={`Cancel remaining Stack at planned step ${row.step.title}`}
         >
-          Cancel
+          Cancel remaining
         </button>
       )}
     </li>
@@ -84,7 +84,7 @@ function ExecutionStackAboveRowImpl({
   projection,
   onOpenMap,
   onAddToStack,
-  onSaveAsWorkflow,
+  onSaveGraph,
   onCancelStep
 }: ExecutionStackAboveRowProps): JSX.Element | null {
   if (!projection || projection.stackRows.length === 0) return null
@@ -119,13 +119,13 @@ function ExecutionStackAboveRowImpl({
               Add to Stack
             </button>
           )}
-          {onSaveAsWorkflow && (
+          {onSaveGraph && (
             <button
               type="button"
               className="execution-stack-action"
-              onClick={() => onSaveAsWorkflow(projection.runId)}
+              onClick={() => onSaveGraph(projection.runId)}
             >
-              Save as Workflow
+              Save graph
             </button>
           )}
           <button

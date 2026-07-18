@@ -79,6 +79,7 @@ interface Harness {
   coordinator: ExecutionGraphCoordinator
   jobs: Map<string, RunQueueJob>
   transitions: ReturnType<typeof vi.fn>
+  cancelActiveRun: ReturnType<typeof vi.fn>
   templateRef: string
   ceiling: ExecutionPermissionCeilingRef
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
@@ -110,6 +111,7 @@ function harness(): Harness {
     jobs.set(runId, next)
     return next
   })
+  const cancelActiveRun = vi.fn()
   let id = 0
   const deps: ExecutionGraphCoordinatorDeps = {
     repository,
@@ -120,7 +122,7 @@ function harness(): Harness {
     },
     getQueueJob: (runId) => jobs.get(runId) ?? null,
     transitionQueueJob: transitions,
-    cancelActiveRun: vi.fn(),
+    cancelActiveRun,
     now: () => '2026-07-18T11:00:00.000Z',
     createId: () => `id-${++id}`,
     onChanged: vi.fn()
@@ -137,6 +139,7 @@ function harness(): Harness {
     coordinator,
     jobs,
     transitions,
+    cancelActiveRun,
     templateRef: template.templateId,
     ceiling,
     input: (overrides = {}) => ({
@@ -266,5 +269,95 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
     expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
+  })
+
+  it('persists cancellation before a provider callback can re-enter the coordinator', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.coordinator.onRunSessionChange(runningEvent(runId))
+    h.cancelActiveRun.mockImplementation((cancelledRunId: string) => {
+      h.coordinator.onRunSessionChange(terminalEvent(cancelledRunId, 'cancelled'))
+    })
+
+    await expect(h.coordinator.cancelExecution(started.executionId)).resolves.toBeUndefined()
+
+    const cancelled = h.coordinator.getExecution(started.executionId)!
+    expect(cancelled.state).toBe('cancelled')
+    expect(Object.values(cancelled.activations)[0].state).toBe('cancelled')
+    expect(Object.values(cancelled.attempts)[0].state).toBe('cancelled')
+    expect(h.cancelActiveRun).toHaveBeenCalledWith(runId)
+    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+  })
+
+  it('cancels the whole remaining Stack only from its dormant frontier', async () => {
+    const h = harness()
+    const first = h.coordinator.appendStackStep(h.input())
+    const firstRunId = providerRunId(first)
+    const withSecond = h.coordinator.appendStackStep(
+      h.input({
+        executionId: first.executionId,
+        stepTitle: 'Second step',
+        objective: 'Run second.'
+      })
+    )
+    const second = Object.values(withSecond.activations).find(
+      (activation) => activation.stepId !== Object.values(withSecond.activations)[0].stepId
+    )!
+    h.jobs.set(firstRunId, { ...h.jobs.get(firstRunId)!, status: 'active' })
+    h.coordinator.onRunSessionChange(runningEvent(firstRunId))
+
+    await h.coordinator.cancelDormantStep(first.executionId, second.id)
+
+    const cancelled = h.coordinator.getExecution(first.executionId)!
+    expect(cancelled.state).toBe('cancelled')
+    expect(Object.values(cancelled.activations).every((entry) => entry.state === 'cancelled')).toBe(
+      true
+    )
+    expect(h.cancelActiveRun).toHaveBeenCalledWith(firstRunId)
+  })
+
+  it('rejects cancellation of a dormant non-frontier step', async () => {
+    const h = harness()
+    const first = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    const withSecond = h.coordinator.appendStackStep(
+      h.input({
+        executionId: first.executionId,
+        anchorRunRef: 'anchor-run',
+        stepTitle: 'Second step',
+        objective: 'Run second.'
+      })
+    )
+    const nonFrontier = Object.values(withSecond.activations).find(
+      (activation) => activation.stepId === withSecond.topology.steps[0].id
+    )!
+
+    await expect(
+      h.coordinator.cancelDormantStep(first.executionId, nonFrontier.id)
+    ).rejects.toThrow(/frontier/i)
+    expect(h.coordinator.getExecution(first.executionId)?.state).toBe('waiting')
+  })
+
+  it('settles every dormant activation when the anchor fails', () => {
+    const h = harness()
+    const first = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    h.coordinator.appendStackStep(
+      h.input({
+        executionId: first.executionId,
+        anchorRunRef: 'anchor-run',
+        stepTitle: 'Second step',
+        objective: 'Run second.'
+      })
+    )
+
+    h.coordinator.onRunSessionChange(terminalEvent('anchor-run', 'failed'))
+
+    const failed = h.coordinator.getExecution(first.executionId)!
+    expect(failed.state).toBe('failed')
+    expect(Object.values(failed.activations).map((entry) => entry.state)).toEqual([
+      'skipped',
+      'skipped'
+    ])
   })
 })

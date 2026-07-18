@@ -11,7 +11,7 @@ export interface ExecutionMapViewProps {
   onSelectStep?: (stepId: string) => void
   onBack?: () => void
   onOpenThread?: (threadRef: string) => void
-  onSaveAsWorkflow?: (runId: string) => void
+  onSaveGraph?: (runId: string) => void
 }
 
 function executionStepKindLabel(kind: ExecutionStepDefinition['kind']): string {
@@ -226,7 +226,7 @@ export function ExecutionMapView({
   onSelectStep,
   onBack,
   onOpenThread,
-  onSaveAsWorkflow
+  onSaveGraph
 }: ExecutionMapViewProps): JSX.Element {
   const [internalSelectedStepId, setInternalSelectedStepId] = useState<string | null>(null)
   const selectedStep = useMemo(() => {
@@ -287,13 +287,13 @@ export function ExecutionMapView({
           <span className={`execution-status-token tone-${projection.runStatusTone}`}>
             {projection.runStatusLabel}
           </span>
-          {onSaveAsWorkflow && (
+          {onSaveGraph && (
             <button
               type="button"
               className="execution-map-save-workflow"
-              onClick={() => onSaveAsWorkflow(projection.runId)}
+              onClick={() => onSaveGraph(projection.runId)}
             >
-              Save as Workflow
+              Save graph
             </button>
           )}
         </span>

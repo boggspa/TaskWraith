@@ -153,7 +153,7 @@ describe('ExecutionMapView', () => {
         selectedStepId="draft"
         onBack={noop}
         onOpenThread={noop}
-        onSaveAsWorkflow={noop}
+        onSaveGraph={noop}
       />
     )
 

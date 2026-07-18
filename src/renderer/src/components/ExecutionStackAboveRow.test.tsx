@@ -83,7 +83,7 @@ describe('ExecutionStackAboveRow', () => {
         projection={projection()}
         onOpenMap={noop}
         onAddToStack={noop}
-        onSaveAsWorkflow={noop}
+        onSaveGraph={noop}
         onCancelStep={noop}
       />
     )
@@ -106,15 +106,15 @@ describe('ExecutionStackAboveRow', () => {
         projection={projection()}
         onOpenMap={noop}
         onAddToStack={noop}
-        onSaveAsWorkflow={noop}
+        onSaveGraph={noop}
         onCancelStep={noop}
       />
     )
 
     expect(html).toContain('Add to Stack')
-    expect(html).toContain('Save as Workflow')
+    expect(html).toContain('Save graph')
     expect(html).toContain('Open map')
-    expect(html.match(/Cancel planned step/g)).toHaveLength(2)
+    expect(html.match(/Cancel remaining Stack at planned step/g)).toHaveLength(1)
     expect(html).not.toContain('draggable=')
     expect(html).not.toContain('contenteditable=')
     expect(html).not.toMatch(/>Move</)

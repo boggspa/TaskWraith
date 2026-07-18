@@ -313,6 +313,7 @@ export class ExecutionGraphCoordinator {
     let projection = this.requireExecution(executionId)
     if (isExecutionRunTerminal(projection.state)) return
     const events: ExecutionRunEventInput[] = []
+    const queueRuns: Array<{ runId: string; cancelActive: boolean }> = []
     for (const activation of Object.values(projection.activations)) {
       if (isStepActivationTerminal(activation.state)) continue
       const attempt = latestAttemptForActivation(projection, activation)
@@ -320,15 +321,10 @@ export class ExecutionGraphCoordinator {
         if (attempt.providerRunRef) {
           const job = this.deps.getQueueJob(attempt.providerRunRef)
           if (job && !TERMINAL_QUEUE_STATUSES.has(job.status)) {
-            if (
-              job.status === 'starting' ||
-              job.status === 'active' ||
-              job.status === 'cancelling'
-            ) {
-              await this.deps.cancelActiveRun(attempt.providerRunRef)
-            }
-            this.deps.transitionQueueJob(attempt.providerRunRef, 'cancelled', {
-              statusReason: reason
+            queueRuns.push({
+              runId: attempt.providerRunRef,
+              cancelActive:
+                job.status === 'starting' || job.status === 'active' || job.status === 'cancelling'
             })
           }
         }
@@ -360,34 +356,36 @@ export class ExecutionGraphCoordinator {
     this.append(projection, events)
     projection = this.requireExecution(executionId)
     this.changed(projection, 'execution-terminal')
+    // Persist the graph cancellation before touching provider transports. A
+    // provider cancellation may synchronously finish RunManager and re-enter
+    // onRunSessionChange; the terminal ledger makes that callback a safe no-op.
+    for (const queueRun of queueRuns) {
+      if (queueRun.cancelActive) {
+        await this.deps.cancelActiveRun(queueRun.runId)
+      }
+      this.deps.transitionQueueJob(queueRun.runId, 'cancelled', {
+        statusReason: reason
+      })
+    }
   }
 
-  cancelDormantStep(executionId: string, activationId: string): ExecutionRunProjection {
+  async cancelDormantStep(
+    executionId: string,
+    activationId: string
+  ): Promise<ExecutionRunProjection> {
     const projection = this.requireExecution(executionId)
     const activation = projection.activations[activationId]
     if (!activation || activation.state !== 'dormant') {
       throw new Error('Only a dormant Stack step can be cancelled directly.')
     }
-    this.append(projection, [
-      {
-        executionId,
-        kind: 'activation_state_changed',
-        activationId,
-        state: 'cancelled',
-        reason: 'Planned Stack step cancelled by user.',
-        timestamp: this.now()
-      },
-      {
-        executionId,
-        kind: 'execution_state_changed',
-        state: 'cancelled',
-        reason: 'The append-only Stack frontier was cancelled.',
-        timestamp: this.now()
-      }
-    ])
-    const settled = this.requireExecution(executionId)
-    this.changed(settled, 'execution-terminal', [activation.stepId])
-    return settled
+    if (
+      projection.tenant?.kind !== 'stack' ||
+      !executionTopologyFrontier(projection.topology).includes(activation.stepId)
+    ) {
+      throw new Error('Only the append-only Stack frontier can cancel the remaining Stack.')
+    }
+    await this.cancelExecution(executionId, 'Remaining Stack cancelled by user.')
+    return this.requireExecution(executionId)
   }
 
   recover(): void {
@@ -819,11 +817,9 @@ export class ExecutionGraphCoordinator {
       this.drain(projection.executionId)
       return
     }
-    const activation = Object.values(projection.activations).find(
-      (candidate) => candidate.state === 'dormant'
-    )
     const events: ExecutionRunEventInput[] = []
-    if (activation) {
+    for (const activation of Object.values(projection.activations)) {
+      if (isStepActivationTerminal(activation.state)) continue
       events.push({
         executionId: projection.executionId,
         kind: 'activation_state_changed',

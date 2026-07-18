@@ -409,12 +409,12 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
     return deps.coordinator.getExecution(canonicalId) ?? null
   })
 
-  ipcMain.handle('execution-runs:cancel-step', (event, raw: unknown) => {
+  ipcMain.handle('execution-runs:cancel-step', async (event, raw: unknown) => {
     deps.assertMainRendererSender(event)
     if (!isRecord(raw)) throw new Error('Step cancellation command is invalid.')
     const canonicalId = executionId(raw.executionId)
     requireOwnedExecution(deps, canonicalId)
-    return deps.coordinator.cancelDormantStep(
+    return await deps.coordinator.cancelDormantStep(
       canonicalId,
       nonEmpty(raw.activationId, 'Activation id', 128)
     )
