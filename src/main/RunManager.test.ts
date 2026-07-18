@@ -184,6 +184,24 @@ describe('RunManager', () => {
     expect(manager.getClaimedTerminalStatus('run-1')).toBeUndefined()
   })
 
+  it('defers a claimed terminal status until the transport confirms it', () => {
+    const manager = new RunManager()
+    const events: string[] = []
+    manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
+    manager.create({ runId: 'run-1', provider: 'claude', status: 'running' })
+    manager.claimTerminalStatus('run-1', 'cancelled', { requireConfirmation: true })
+
+    manager.finish('run-1', 'failed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(events).toEqual(['created:running'])
+
+    manager.confirmClaimedTerminalStatus('run-1')
+
+    expect(manager.get('run-1')?.status).toBe('cancelled')
+    expect(events).toEqual(['created:running', 'updated:cancelled'])
+  })
+
   it.each(['completed', 'failed', 'cancelled'] as const)(
     'makes %s sessions absorbing and contains late resources',
     (terminalStatus) => {

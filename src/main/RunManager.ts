@@ -89,6 +89,7 @@ export class RunManager<TState = unknown> {
     string,
     Extract<RunSessionStatus, 'failed' | 'cancelled'>
   >()
+  private terminalStatusConfirmationsRequired = new Set<string>()
   private listeners = new Set<(event: RunSessionChangeEvent<TState>) => void>()
 
   onChange(listener: (event: RunSessionChangeEvent<TState>) => void): () => void {
@@ -300,13 +301,15 @@ export class RunManager<TState = unknown> {
    */
   claimTerminalStatus(
     runId: string,
-    status: Extract<RunSessionStatus, 'failed' | 'cancelled'>
+    status: Extract<RunSessionStatus, 'failed' | 'cancelled'>,
+    options: { requireConfirmation?: boolean } = {}
   ): RunSession<TState> | undefined {
     const session = this.sessionsByRunId.get(runId)
     if (!session || isTerminalRunSessionStatus(session.status)) return undefined
     const existing = this.terminalStatusClaims.get(runId)
     if (existing && existing !== status) return undefined
     this.terminalStatusClaims.set(runId, status)
+    if (options.requireConfirmation) this.terminalStatusConfirmationsRequired.add(runId)
     return session
   }
 
@@ -314,6 +317,12 @@ export class RunManager<TState = unknown> {
     runId: string | undefined
   ): Extract<RunSessionStatus, 'failed' | 'cancelled'> | undefined {
     return runId ? this.terminalStatusClaims.get(runId) : undefined
+  }
+
+  confirmClaimedTerminalStatus(runId: string | undefined): RunSession<TState> | undefined {
+    if (!runId || !this.terminalStatusClaims.has(runId)) return undefined
+    this.terminalStatusConfirmationsRequired.delete(runId)
+    return this.finish(runId, this.terminalStatusClaims.get(runId)!)
   }
 
   finish(runId: string | undefined, status: RunSessionStatus): RunSession<TState> | undefined {
@@ -324,6 +333,13 @@ export class RunManager<TState = unknown> {
       isTerminalRunSessionStatus(status) && claimedTerminalStatus
         ? claimedTerminalStatus
         : status
+    if (
+      session &&
+      isTerminalRunSessionStatus(effectiveStatus) &&
+      this.terminalStatusConfirmationsRequired.has(runId)
+    ) {
+      return session
+    }
     if (
       session &&
       isTerminalRunSessionStatus(session.status) &&
@@ -338,6 +354,7 @@ export class RunManager<TState = unknown> {
       session.approvalIds.clear()
       session.sessionGrants.clear()
       this.terminalStatusClaims.delete(runId)
+      this.terminalStatusConfirmationsRequired.delete(runId)
     }
     return this.update(runId, {
       status: effectiveStatus,
@@ -352,6 +369,7 @@ export class RunManager<TState = unknown> {
 
     this.sessionsByRunId.delete(runId)
     this.terminalStatusClaims.delete(runId)
+    this.terminalStatusConfirmationsRequired.delete(runId)
     this.runIdsByProvider.get(session.provider)?.delete(runId)
     if (session.providerSessionId) {
       this.runIdByProviderSession.delete(
@@ -379,6 +397,7 @@ export class RunManager<TState = unknown> {
     this.runIdByProviderSession.clear()
     this.approvalIdToRunId.clear()
     this.terminalStatusClaims.clear()
+    this.terminalStatusConfirmationsRequired.clear()
   }
 
   private emit(event: RunSessionChangeEvent<TState>): void {
