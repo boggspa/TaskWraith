@@ -100,6 +100,18 @@ describe('execution graph main integration', () => {
     expect(recovery).toContain("code: 'startup_recovery_failed'")
   })
 
+  it('recovers the ordinary queue before the graph coordinator at startup', () => {
+    const queueRecovery = source.indexOf(
+      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()'
+    )
+    const graphRecovery = source.indexOf(
+      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
+    )
+
+    expect(queueRecovery).toBeGreaterThanOrEqual(0)
+    expect(graphRecovery).toBeGreaterThan(queueRecovery)
+  })
+
   it('delivers committed predecessor results as untrusted data before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',

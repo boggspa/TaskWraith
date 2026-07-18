@@ -173,6 +173,22 @@ describe('live execution graph integration', () => {
     expect(appSource).toContain('runQueueJobs,\n        chatId,')
   })
 
+  it('keeps graph-owned queue rows out of ordinary queued-count badges', () => {
+    const queueCounts = slice(
+      appSource,
+      'const queuedRunQueueCount =',
+      'const currentExecutionRuns ='
+    )
+    expect(queueCounts.match(/!job\.executionGraph/g)).toHaveLength(2)
+  })
+
+  it('strips Electron invoke framing from all three Stack error surfaces', () => {
+    expect(appSource.match(/stripElectronInvokeErrorFraming\(error\)/g)).toHaveLength(3)
+    expect(appSource).toContain('Could not add this message to the Stack:')
+    expect(appSource).toContain('Could not save graph:')
+    expect(appSource).toContain('Could not cancel the remaining Stack:')
+  })
+
   it('uses Execution Map as the focused primary-pane alternative to the transcript', () => {
     const focusedPane = slice(layoutSource, 'renderFocusedCell={() =>', '<TranscriptPanel')
     expect(focusedPane).toContain('if (executionMapProjection) {')

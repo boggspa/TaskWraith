@@ -1,4 +1,5 @@
 import { agentIdenticonHash } from './agentIdenticon'
+import { stripElectronInvokeErrorFraming } from './electronInvokeError'
 import {
   applyAddChatToProject,
   applyCreateProject,
@@ -90,16 +91,8 @@ function bridge(): ProjectsBridge | undefined {
   return typeof window !== 'undefined' ? window.api : undefined
 }
 
-/**
- * Electron wraps a rejected invoke as
- * "Error invoking remote method '<channel>': Error: <real message>".
- * Every async facade mutation rethrows through this so UI alerts show the
- * real validation message, not the transport framing.
- */
 export function normalizeBridgeError(error: unknown): Error {
-  const message = error instanceof Error ? error.message : String(error)
-  const match = message.match(/^Error invoking remote method '[^']*': (?:Error: )?([\s\S]*)$/)
-  return new Error(match?.[1]?.trim() ? match[1].trim() : message)
+  return new Error(stripElectronInvokeErrorFraming(error))
 }
 
 async function invokeBridge<T>(operation: () => Promise<T>): Promise<T> {

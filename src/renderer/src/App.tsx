@@ -33,6 +33,7 @@ import {
 } from './lib/humanCollaborationInviteHealth'
 import { buildScheduledEnsembleSnapshot } from './lib/scheduledEnsembleSnapshot'
 import { classifyError, redactLog } from './lib/ErrorClassifier'
+import { stripElectronInvokeErrorFraming } from './lib/electronInvokeError'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { sealOrphanExitRun } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
@@ -14504,7 +14505,9 @@ function App(): React.JSX.Element {
         settleProjectReferenceContextForRequest(graphRequest, 'rejected')
         appendThreadRawLog(targetChatId, {
           type: 'stderr',
-          content: `Could not add this message to the Stack: ${redactLog(String(error))}`
+          content: `Could not add this message to the Stack: ${redactLog(
+            stripElectronInvokeErrorFraming(error)
+          )}`
         })
       })
       .finally(() => {
@@ -21227,9 +21230,12 @@ function App(): React.JSX.Element {
   const currentProviderCapabilityWarning = currentProviderCapabilities?.warnings.find(
     (warning) => warning.severity !== 'info'
   )
-  const queuedRunQueueCount = runQueueJobs.filter((job) => job.status === 'queued').length
+  const queuedRunQueueCount = runQueueJobs.filter(
+    (job) => job.status === 'queued' && !job.executionGraph
+  ).length
   const currentChatQueuedRunCount = runQueueJobs.filter(
-    (job) => job.chatId === currentChat?.appChatId && job.status === 'queued'
+    (job) =>
+      job.chatId === currentChat?.appChatId && job.status === 'queued' && !job.executionGraph
   ).length
   const currentExecutionRuns = useMemo(
     () =>
@@ -21374,7 +21380,9 @@ function App(): React.JSX.Element {
         .catch((error) => {
           appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
             type: 'stderr',
-            content: `Could not save graph: ${redactLog(String(error))}`
+            content: `Could not save graph: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
           })
         })
         .finally(() => {
@@ -21404,7 +21412,9 @@ function App(): React.JSX.Element {
         .catch((error) => {
           appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
             type: 'stderr',
-            content: `Could not cancel the remaining Stack: ${redactLog(String(error))}`
+            content: `Could not cancel the remaining Stack: ${redactLog(
+              stripElectronInvokeErrorFraming(error)
+            )}`
           })
         })
     },
