@@ -3365,6 +3365,159 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--provider-accent, currentColor);
 }
 
+/* First-party artwork for semantic provider/model labels. The source PNGs
+ * stay unmodified; paired monochrome marks switch by the actual app surface.
+ * ProviderGlyph remains the monoline fallback and generic-picker asset. */
+.provider-brand-logo {
+  --provider-brand-logo-scale: 1;
+  position: relative;
+  width: 1em;
+  height: 1em;
+  display: block;
+  flex: 0 0 auto;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.provider-brand-logo-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: contain;
+  transform: scale(var(--provider-brand-logo-scale));
+  transform-origin: center;
+  user-select: none;
+}
+
+.provider-brand-logo.has-theme-pair .provider-brand-logo-image-light {
+  display: none;
+}
+
+.provider-brand-logo.has-theme-pair .provider-brand-logo-image-dark {
+  display: block;
+}
+
+:is(
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  )
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light {
+  display: block;
+}
+
+:is(
+    [data-theme="light"],
+    [data-theme="citrus"],
+    [data-theme="mist"],
+    [data-theme="sage"],
+    [data-theme="alabaster"]
+  )
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark {
+  display: none;
+}
+
+@media (prefers-color-scheme: light) {
+  [data-theme="system"]
+    .provider-brand-logo.has-theme-pair
+    .provider-brand-logo-image-light {
+    display: block;
+  }
+
+  [data-theme="system"]
+    .provider-brand-logo.has-theme-pair
+    .provider-brand-logo-image-dark {
+    display: none;
+  }
+}
+
+/* Obsidian deliberately carries a light sidebar on a dark main surface;
+ * Alabaster does the inverse. These surface-local rules beat root theme tone. */
+[data-theme="obsidian"]
+  .app-sidebar
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light {
+  display: block;
+}
+
+[data-theme="obsidian"]
+  .app-sidebar
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark {
+  display: none;
+}
+
+[data-theme="alabaster"]
+  .app-sidebar
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light {
+  display: none;
+}
+
+[data-theme="alabaster"]
+  .app-sidebar
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark {
+  display: block;
+}
+
+/* Obsidian and Alabaster composer shells are theme-immune. Their in-tree
+ * controls and body-portaled pickers therefore override the root app tone. */
+[data-composer-style="obsidian"]
+  .composer-area
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light,
+.composer-combined-picker-popover.shell-obsidian
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light {
+  display: none;
+}
+
+[data-composer-style="obsidian"]
+  .composer-area
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark,
+.composer-combined-picker-popover.shell-obsidian
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark {
+  display: block;
+}
+
+[data-composer-style="alabaster"]
+  .composer-area
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light,
+.composer-combined-picker-popover.shell-alabaster
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-light {
+  display: block;
+}
+
+[data-composer-style="alabaster"]
+  .composer-area
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark,
+.composer-combined-picker-popover.shell-alabaster
+  .provider-brand-logo.has-theme-pair
+  .provider-brand-logo-image-dark {
+  display: none;
+}
+
+/* Preserve each supplied canvas while balancing tiny inline slots optically. */
+.provider-brand-logo-codex { --provider-brand-logo-scale: 1.2; }
+.provider-brand-logo-gemini { --provider-brand-logo-scale: 0.96; }
+.provider-brand-logo-claude,
+.provider-brand-logo-kimi,
+.provider-brand-logo-grok { --provider-brand-logo-scale: 0.92; }
+.provider-brand-logo-cursor { --provider-brand-logo-scale: 0.95; }
+.provider-brand-logo-ollama { --provider-brand-logo-scale: 1.04; }
+
 .provider-glyph-line,
 .provider-glyph-accent {
   fill: none;
@@ -3435,27 +3588,20 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   opacity: 1;
 }
 
-/* Phase L6 slice 4 — provider glyph tile. Tinted rounded-rect
- * container with the provider's accent at low opacity behind the
- * original TaskWraith mnemonic glyph. */
+/* Historical ProviderLogoTile API, now deliberately backgroundless so
+ * transparent marks stay transparent and Kimi is not double-tiled. */
 .provider-logo-tile {
   display: inline-flex;
   align-items: center;
   justify-content: center;
   flex-shrink: 0;
-  background: color-mix(in srgb, var(--provider-gemini-color) 14%, transparent);
-  overflow: hidden;
+  background: transparent;
+  overflow: visible;
 }
-.provider-logo-tile.provider-gemini { background: color-mix(in srgb, var(--provider-gemini-color) 14%, transparent); }
-.provider-logo-tile.provider-codex  { background: color-mix(in srgb, var(--provider-codex-color) 14%, transparent); }
-.provider-logo-tile.provider-claude { background: color-mix(in srgb, var(--provider-claude-color) 14%, transparent); }
-.provider-logo-tile.provider-kimi   { background: color-mix(in srgb, var(--provider-kimi-color) 14%, transparent); }
-.provider-logo-tile.provider-grok   { background: color-mix(in srgb, var(--provider-grok-color) 14%, transparent); }
-.provider-logo-tile.provider-cursor   { background: color-mix(in srgb, var(--provider-cursor-color) 14%, transparent); }
 
-.provider-logo-tile .provider-glyph {
-  width: 78%;
-  height: 78%;
+.provider-logo-tile :is(.provider-glyph, .provider-brand-logo) {
+  width: 88%;
+  height: 88%;
 }
 
 /* Phase L6 slice 5 — Activity heatmap. 30×12 grid of small rounded
@@ -3981,7 +4127,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   line-height: 1;
 }
 
-.sidebar-provider-icon svg {
+.sidebar-provider-icon > :is(svg, .provider-brand-logo) {
   width: 12px;
   height: 12px;
   display: block;

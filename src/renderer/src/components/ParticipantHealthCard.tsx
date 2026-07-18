@@ -1,6 +1,7 @@
 import React from 'react'
 import type { ChatMessage, ProviderId } from '../../../main/store/types'
-import { getProviderName, ProviderBadgeIcon } from './Sidebar'
+import { getProviderName } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 
 /**
@@ -16,7 +17,7 @@ import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollam
  *
  * EW29 keeps the same data (provider, role, status, optional
  * failure reason) but presents it as a compact card with a
- * one-line header and a chip strip — provider-tinted dots,
+ * one-line header and a chip strip — first-party provider marks,
  * provider/role labels, and per-chip status icons. Failures
  * surface their underlying code + reason in the tooltip so the
  * user can hover to see "ECONNREFUSED — Codex app-server
@@ -167,7 +168,7 @@ export function ParticipantHealthCard({
               title={tooltip}
               aria-label={tooltip}
             >
-              <ProviderBadgeIcon provider={entry.provider} />
+              <ProviderBrandLogoIcon provider={entry.provider} />
               <span className="participant-health-chip-label">{label}</span>
               {inlineReason && (
                 <span

@@ -38,11 +38,32 @@ describe('agent pool icon assets', () => {
     expect(diffNice?.raw).toContain('-420')
   })
 
-  it('provider glyphs are namespaced and carry brand accents', () => {
-    const claude = getPoolIconAsset('provider:claude')
-    expect(claude).toBeDefined()
-    expect(claude?.group).toBe('Providers')
-    expect(claude?.accent).toMatch(/^#[0-9A-F]{6}$/)
+  it('keeps all eight legacy provider SVGs available to icon pickers', () => {
+    const providerIds = [
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'ensemble'
+    ] as const
+    const providerAssets = POOL_ICON_ASSETS.filter((asset) => asset.group === 'Providers')
+
+    expect(providerAssets.map((asset) => asset.key).sort()).toEqual(
+      providerIds.map((provider) => `provider:${provider}`).sort()
+    )
+
+    for (const provider of providerIds) {
+      const asset = getPoolIconAsset(`provider:${provider}`)
+      expect(asset).toBeDefined()
+      expect(asset?.group).toBe('Providers')
+      expect(asset?.accent).toMatch(/^#[0-9A-F]{6}$/)
+      expect(asset?.raw).toContain('<svg')
+      expect(asset?.raw).toContain(`data-provider="${provider}"`)
+      expect(asset?.raw).toContain('data-provider-glyph="true"')
+    }
   })
 
   it('getPoolIconAsset returns undefined for an unknown key', () => {

@@ -117,11 +117,14 @@ describe('CombinedModelPicker', () => {
     expect(fastIndex).toBeGreaterThan(-1)
     expect(providerIndex).toBeGreaterThan(fastIndex)
     expect(modelIndex).toBeGreaterThan(providerIndex)
-    expect(html).toContain('sidebar-provider-icon provider-codex')
+    expect(html).toContain('sidebar-provider-icon provider-brand-logo-icon provider-codex')
+    expect(html).toContain('data-provider-logo="codex"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-codex')
     expect(html).toContain('>Codex<')
   })
 
-  it('uses the selected Ollama model spoof hue without changing its runtime provider or glyph', () => {
+  it('uses the selected Ollama model spoof hue without changing its runtime provider or mark', () => {
     const model = { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' }
     const html = renderToStaticMarkup(
       <CombinedModelPicker
@@ -142,8 +145,11 @@ describe('CombinedModelPicker', () => {
     expect(html).toContain('data-provider-hue="alibaba"')
     expect(html).toContain('--chip-accent:var(--provider-alibaba-color, var(--accent))')
     expect(html).toContain('>Alibaba<')
-    expect(html).toContain('provider-glyph-ollama')
-    expect(html).toContain('--provider-accent:var(--provider-alibaba-color, currentColor)')
+    expect(html).toContain('data-provider-logo="ollama"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-ollama')
+    // The spoof hue remains on the surrounding chip; official artwork is not tinted.
+    expect(html).not.toContain('--provider-accent:')
   })
 
   it('flattens provider groups without losing provider order or duplicate model ids', () => {

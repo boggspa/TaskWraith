@@ -11,6 +11,7 @@ import {
   type AppNotificationProviderGroup
 } from '../../../shared/appNotifications'
 import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 /**
  * Reusable notification zone — the app/dev "notification area" on the welcome /
@@ -95,7 +96,7 @@ function NotificationGroups({
       {groups.map((group) => (
         <div key={group.provider} className="notification-newadditions-group">
           <div className={`notification-newadditions-provider provider-${group.provider}`}>
-            <ProviderGlyph provider={group.provider} />
+            <ProviderBrandLogo provider={group.provider} />
             {group.label}
           </div>
           <ul className="notification-newadditions-models">

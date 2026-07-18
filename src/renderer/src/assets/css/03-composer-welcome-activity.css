@@ -9160,7 +9160,7 @@ button.composer-run-timecode.is-open {
   height: 18px;
 }
 
-.composer-provider-button .sidebar-provider-icon svg {
+.composer-provider-button .sidebar-provider-icon > :is(svg, .provider-brand-logo) {
   width: 18px;
   height: 18px;
 }
@@ -13263,11 +13263,8 @@ button.diff-file-row {
   font-weight: 720;
   font-size: 12px;
 }
-/* Provider glyph signpost next to each group heading. The glyph resolves its
- * own --provider-accent from the provider id and its strokes fall back to
- * currentColor, so it naturally wears the heading's hue — no per-provider
- * rules needed here. */
-.notification-newadditions-provider .provider-glyph {
+/* Provider identity signpost next to each group heading. */
+.notification-newadditions-provider :is(.provider-glyph, .provider-brand-logo) {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;

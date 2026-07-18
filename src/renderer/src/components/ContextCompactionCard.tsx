@@ -6,7 +6,8 @@ import type {
 } from '../../../shared/contextCompaction'
 import { CONTEXT_COMPACTION_MESSAGE_KIND } from '../../../shared/contextCompaction'
 import { formatContextTokens } from '../../../shared/contextWindows'
-import { getProviderName, ProviderBadgeIcon } from './Sidebar'
+import { getProviderName } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 /**
  * Context-compaction card — the transcript record of a provider (or the host)
@@ -123,7 +124,7 @@ export function ContextCompactionCard({
         )}
         {provider && (
           <span className={`context-compaction-card-provider provider-${provider}`}>
-            <ProviderBadgeIcon provider={provider} />
+            <ProviderBrandLogoIcon provider={provider} />
             <span className="context-compaction-card-provider-label">
               {participantLabel || getProviderName(provider)}
             </span>

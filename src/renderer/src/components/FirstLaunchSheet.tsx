@@ -13,7 +13,7 @@ import {
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { NotificationZone } from './NotificationZone'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -981,7 +981,7 @@ function ProviderCard({
   return (
     <div className={classes} data-provider={row.id}>
       <div className="first-launch-sheet-provider-card-header">
-        <ProviderGlyph provider={row.id} className="first-launch-sheet-provider-card-logo" />
+        <ProviderBrandLogo provider={row.id} className="first-launch-sheet-provider-card-logo" />
         <span className="first-launch-sheet-provider-card-label">{row.label}</span>
         {row.optional && (
           <span className="first-launch-sheet-provider-card-optional-badge">Optional</span>

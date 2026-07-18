@@ -44,7 +44,8 @@ import type {
 } from '../lib/combinedModelPickerTypes'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
 import { PillButton } from './PillButton'
-import { getProviderName, ProviderBadgeIcon } from './Sidebar'
+import { getProviderName } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 export type {
   CombinedModelPickerModelOption,
@@ -1531,7 +1532,7 @@ export function CombinedModelPicker({
               >
                 <div className="composer-combined-picker-provider-header">
                   <span className="composer-combined-picker-provider-header-icon" aria-hidden>
-                    <ProviderBadgeIcon provider={group.provider} />
+                    <ProviderBrandLogoIcon provider={group.provider} />
                   </span>
                   <span className="composer-combined-picker-provider-header-label">
                     {group.label || getProviderName(group.provider)}
@@ -1807,7 +1808,7 @@ export function CombinedModelPicker({
               ))}
             <span className="composer-combined-picker-trigger-provider">
               <span className="composer-combined-picker-trigger-provider-icon" aria-hidden>
-                <ProviderBadgeIcon provider={provider} accentProvider={providerHueClass} />
+                <ProviderBrandLogoIcon provider={provider} accentProvider={providerHueClass} />
               </span>
               <span className="composer-combined-picker-trigger-provider-label">
                 {providerDisplayLabel}

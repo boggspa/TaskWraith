@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react'
 import type { ProviderId } from '../../../main/store/types'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 interface ProviderSatelliteLabelProps {
   provider?: ProviderId | string
@@ -18,7 +18,7 @@ function providerClass(provider?: ProviderId | string): string {
   )
 }
 
-/** Provider glyph + hue-accented name, deliberately without badge chrome. */
+/** First-party provider mark + hue-accented name, without badge chrome. */
 export function ProviderSatelliteLabel({
   provider,
   className
@@ -35,7 +35,7 @@ export function ProviderSatelliteLabel({
         .join(' ')}
       style={style}
     >
-      <ProviderGlyph provider={providerKey} className="provider-satellite-label-glyph" />
+      <ProviderBrandLogo provider={providerKey} className="provider-satellite-label-glyph" />
       <span className="provider-satellite-label-name">{providerDisplayName(provider)}</span>
     </span>
   )

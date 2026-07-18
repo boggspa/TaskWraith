@@ -37,6 +37,9 @@ describe('ContextCompactionCard', () => {
     expect(html).toContain('24k → 1k tokens')
     expect(html).toContain('manual')
     expect(html).toContain('12s')
+    expect(html).toContain('data-provider-logo="claude"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-claude')
   })
 
   it('renders a failed compaction with the provider error inline', () => {

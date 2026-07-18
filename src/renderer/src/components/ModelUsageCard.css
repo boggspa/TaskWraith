@@ -409,10 +409,8 @@
 }
 
 .app-sidebar .model-usage-liquid-card .provider-logo-tile {
-  border: 1px solid color-mix(in srgb, currentColor 26%, rgba(211, 234, 255, 0.16));
-  box-shadow:
-    inset 0 1px 0 rgba(255, 255, 255, 0.17),
-    0 3px 9px -5px currentColor;
+  border: 0;
+  box-shadow: none;
 }
 
 .app-sidebar .model-usage-liquid-card .model-usage-tier-badge {

@@ -2346,9 +2346,7 @@
   min-width: 0;
 }
 
-/* Original provider mnemonic glyph on the left of each provider card
- * header. Labels still carry the real product names; these are visual
- * hints rather than official logos. */
+/* First-party provider mark on the left of each provider card header. */
 .first-launch-sheet-provider-card-logo {
   flex-shrink: 0;
   width: 24px;
@@ -8682,10 +8680,11 @@
   height: 14px;
   flex: 0 0 14px;
 }
-/* Several native shell skins intentionally hide decorative SVGs inside the
- * model button. The provider glyph is semantic identity, so explicitly keep
- * this one visible while leaving their other icon rules untouched. */
-.composer-combined-picker-trigger-provider-icon .sidebar-provider-icon svg {
+/* Several native shell skins hide decorative SVGs inside the model button.
+ * Keep the semantic provider identity visible without affecting other icons. */
+.composer-combined-picker-trigger-provider-icon
+  .sidebar-provider-icon
+  > :is(svg, .provider-brand-logo) {
   display: block !important;
   width: 13px;
   height: 13px;
@@ -9516,7 +9515,9 @@
   height: 14px;
   flex: 0 0 14px;
 }
-.composer-combined-picker-provider-header-icon .sidebar-provider-icon svg {
+.composer-combined-picker-provider-header-icon
+  .sidebar-provider-icon
+  > :is(svg, .provider-brand-logo) {
   display: block;
   width: 13px;
   height: 13px;
@@ -10233,6 +10234,7 @@
 }
 
 .composer-plus-picker-row-icon svg,
+.composer-plus-picker-row-icon .provider-brand-logo,
 .composer-plus-picker-row-icon .sf-symbol-icon {
   width: 16px;
   height: 16px;

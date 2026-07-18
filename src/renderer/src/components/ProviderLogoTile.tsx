@@ -1,13 +1,12 @@
 /*
  * ProviderLogoTile — Phase L6 slice 4 (+ follow-up).
  *
- * Renders an original TaskWraith provider mnemonic glyph inside a tinted
- * rounded-rect container. Provider labels still name the real products;
- * the glyphs are deliberately simplified visual hints, not official logos.
+ * Renders first-party provider artwork beside a provider label. The historical
+ * component name remains because settings and usage surfaces share this seam.
  */
 import type { ReactElement } from 'react'
 import type { ProviderId } from '../../../main/store/types'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 interface ProviderLogoTileProps {
   provider: ProviderId | undefined
@@ -37,7 +36,7 @@ export function ProviderLogoTile({
       style={tileStyle}
       aria-hidden
     >
-      <ProviderGlyph provider={providerKey} />
+      <ProviderBrandLogo provider={providerKey} />
     </span>
   )
 }

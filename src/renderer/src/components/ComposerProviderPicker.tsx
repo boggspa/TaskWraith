@@ -37,7 +37,8 @@ import { createPortal } from 'react-dom'
 import type { AppSettings, ComposerStyle, ProviderId } from '../../../main/store/types'
 import { isRetiredProvider } from '../../../shared/retiredProviders'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
-import { ProviderBadgeIcon, getProviderName } from './Sidebar'
+import { getProviderName } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 interface ComposerProviderPickerProps {
   /**
@@ -164,7 +165,7 @@ export function ComposerProviderPickerRows({
             aria-pressed={active}
           >
             <span className="composer-plus-picker-row-icon" aria-hidden>
-              <ProviderBadgeIcon provider={row.id} />
+              <ProviderBrandLogoIcon provider={row.id} />
             </span>
             <span className="composer-plus-picker-row-copy">
               <span className="composer-combined-picker-row-label">{row.label}</span>
@@ -328,7 +329,7 @@ export function ComposerProviderPicker({
         disabled={disabled}
       >
         <span className="composer-provider-button-icon" aria-hidden="true">
-          <ProviderBadgeIcon provider={provider} />
+          <ProviderBrandLogoIcon provider={provider} />
         </span>
         <span className="composer-provider-button-label">{displayLabel}</span>
         {activePauseInfo && (

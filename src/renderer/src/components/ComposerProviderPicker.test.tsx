@@ -31,7 +31,9 @@ describe('ComposerProviderPicker trigger', () => {
     expect(html).toContain('composer-provider-button')
     expect(html).toContain('aria-haspopup="dialog"')
     expect(html).toContain('sidebar-provider-icon')
-    expect(html).toContain('provider-glyph')
+    expect(html).toContain('data-provider-logo="codex"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-codex')
     // Trigger reflects the active provider's display name.
     expect(html).toContain('Codex')
   })
@@ -139,6 +141,11 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
+    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {
+      expect(html).toContain(`data-provider-logo="${provider}"`)
+      expect(html).not.toContain(`provider-glyph-${provider}`)
+    }
+    expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).toContain('Claude')
   })
 

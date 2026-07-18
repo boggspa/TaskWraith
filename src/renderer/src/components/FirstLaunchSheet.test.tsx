@@ -176,7 +176,7 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('detached read-only work')
   })
 
-  it('renders Cursor + Grok cards with original provider glyphs', () => {
+  it('renders Cursor + Grok cards with official provider PNG marks', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -191,9 +191,14 @@ describe('FirstLaunchSheet', () => {
     // Both CLI-login providers get cards.
     expect(html).toContain('data-provider="cursor"')
     expect(html).toContain('data-provider="grok"')
-    expect(html).toMatch(/data-provider="cursor"[\s\S]*provider-glyph-cursor/)
-    expect(html).toMatch(/data-provider="grok"[\s\S]*provider-glyph-grok/)
-    expect(html).not.toMatch(/<img[^>]+first-launch-sheet-provider-card-logo/)
+    const cursorCard = providerCardMarkup(html, 'cursor')
+    const grokCard = providerCardMarkup(html, 'grok')
+    expect(cursorCard).toContain('data-provider-logo="cursor"')
+    expect(cursorCard).toContain('<img class="provider-brand-logo-image')
+    expect(cursorCard).not.toContain('provider-glyph-cursor')
+    expect(grokCard).toContain('data-provider-logo="grok"')
+    expect(grokCard).toContain('<img class="provider-brand-logo-image')
+    expect(grokCard).not.toContain('provider-glyph-grok')
     // Enabled Cursor → "Available" sign-in state; disabled Grok → "disabled".
     expect(html).toContain('Available · CLI sign-in')
     expect(html).toContain('Grok disabled')

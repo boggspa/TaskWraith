@@ -80,6 +80,7 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-card--default')
     expect(html).toContain('notification-card--accent-ensemble')
     expect(html).toContain('provider-glyph-ensemble')
+    expect(html).not.toContain('data-provider-logo="ensemble"')
     expect(html).not.toContain('notification-card--danger')
   })
 
@@ -165,9 +166,12 @@ describe('NotificationZone', () => {
     expect(html).toContain('notification-newadditions-model provider-deep-reinforce')
     expect(html).toContain('notification-newadditions-model provider-poolside')
     expect(html).not.toContain('notification-newadditions-model provider-ollama')
-    // Each group heading carries its provider glyph signpost.
-    expect(html).toContain('provider-glyph-claude')
-    expect(html).toContain('provider-glyph-ollama')
+    // Each group heading carries its official provider mark signpost.
+    expect(html).toContain('data-provider-logo="claude"')
+    expect(html).toContain('data-provider-logo="ollama"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-claude')
+    expect(html).not.toContain('provider-glyph-ollama')
     // The plain body fallback paragraph is not rendered when groups are present.
     expect(html).not.toContain('Fallback summary text.')
   })
