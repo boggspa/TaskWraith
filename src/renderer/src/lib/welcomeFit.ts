@@ -21,6 +21,22 @@ export interface ResolveWelcomeFitLevelInput extends WelcomeFitRequirements {
 }
 
 /**
+ * Resolve the full-layout budget when the welcome notification is present.
+ *
+ * The notification is absolutely positioned, so its rectangle is useful for
+ * detecting a collision with the composer/heatmap. It is not, however, a
+ * replacement for the normal dashboard + composer flow requirement: when the
+ * notice happens to sit below that flow, its geometry can make the collision
+ * projection look smaller than the content that is already overflowing.
+ */
+export function resolveWelcomeFullFitHeight(
+  flowHeight: number,
+  notificationCollisionHeight: number | null
+): number {
+  return Math.max(flowHeight, notificationCollisionHeight ?? 0)
+}
+
+/**
  * The vertical bounds needed by the welcome fit observer.
  *
  * A welcome composer stack may use `display: contents` so its children can

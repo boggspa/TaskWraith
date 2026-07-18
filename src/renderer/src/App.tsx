@@ -604,6 +604,7 @@ import {
 } from './lib/welcomeState'
 import {
   WELCOME_FIT_FULL,
+  resolveWelcomeFullFitHeight,
   resolveWelcomeFitLevel,
   resolveWelcomeFitStackBounds,
   type WelcomeFitLevel
@@ -23009,17 +23010,23 @@ function App(): React.JSX.Element {
         (heatmap ? composerGap + flexHeatmapMargin + heatmapHeight : 0)
 
       const availableHeight = transcript.clientHeight
-      // Notification fit is geometry-based rather than a height sum: the
-      // notice is absolutely positioned and the three flexible grid spacers
-      // divide extra room non-linearly. Its hidden tier deliberately keeps the
-      // same grid, so these rectangles remain an exact projection while the
-      // user continues resizing in either direction.
-      const fullHeight = notificationRect
+      // The floating notification can overlap its preceding content because it
+      // is absolutely positioned, so retain its geometry-based collision
+      // projection. It supplements rather than replaces the ordinary flowed
+      // dashboard + composer budget: on short workspace/workflow welcomes the
+      // notice may be below the flow while the dashboard has already pushed the
+      // composer off-screen.
+      const fullFlowHeight = fullTranscriptPadding + dashboardHeight + flexComposerHeight
+      const notificationCollisionHeight = notificationRect
         ? availableHeight +
           ((heatmapRect || primaryBounds).bottom +
             clampPx(12, 0.018, 24) -
             notificationRect.top)
-        : fullTranscriptPadding + dashboardHeight + flexComposerHeight
+        : null
+      const fullHeight = resolveWelcomeFullFitHeight(
+        fullFlowHeight,
+        notificationCollisionHeight
+      )
       const gridComposerMinHeight =
         composerPadding +
         clampPx(18, 0.03, 48) +

@@ -4,6 +4,7 @@ import {
   WELCOME_FIT_FULL,
   WELCOME_FIT_HEATMAP_HIDDEN,
   WELCOME_FIT_NOTIFICATION_HIDDEN,
+  resolveWelcomeFullFitHeight,
   resolveWelcomeFitLevel,
   resolveWelcomeFitStackBounds
 } from './welcomeFit'
@@ -89,6 +90,29 @@ describe('resolveWelcomeFitLevel', () => {
         currentLevel: WELCOME_FIT_HEATMAP_HIDDEN
       })
     ).toBe(WELCOME_FIT_DASHBOARD_HIDDEN)
+  })
+})
+
+describe('resolveWelcomeFullFitHeight', () => {
+  it('does not let a floating notice below the flow mask a dashboard overflow', () => {
+    const fullHeight = resolveWelcomeFullFitHeight(728, 620)
+
+    expect(fullHeight).toBe(728)
+    expect(
+      resolveWelcomeFitLevel({
+        currentLevel: WELCOME_FIT_FULL,
+        availableHeight: 640,
+        fullHeight,
+        notificationHiddenHeight: 736,
+        dashboardHiddenHeight: 300,
+        hasNotification: true,
+        hasHeatmap: true
+      })
+    ).toBe(WELCOME_FIT_DASHBOARD_HIDDEN)
+  })
+
+  it('includes a floating notice when it needs more height than the flowed content', () => {
+    expect(resolveWelcomeFullFitHeight(728, 764)).toBe(764)
   })
 })
 
