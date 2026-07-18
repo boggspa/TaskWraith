@@ -81,6 +81,17 @@ export interface OrdinaryChatDispatchReservation {
 }
 
 /**
+ * Short-lived exclusive launch fence for a dispatch whose pre-session work
+ * must observe a stable chat transcript. Unlike an ordinary reservation, this
+ * excludes scheduled claims and every other ordinary/exclusive launch until a
+ * concrete RunManager session exists (or launch fails).
+ */
+export interface ExclusiveChatDispatchReservation {
+  readonly chatId: string
+  readonly nonce: symbol
+}
+
+/**
  * Derive the exact tuple accepted by AppStore's claim/heartbeat/settle APIs.
  * A task is either wholly standalone or wholly workflow-linked; partial linkage
  * is rejected rather than silently being treated as standalone authority.
@@ -177,6 +188,10 @@ export class ScheduledOccurrenceOwnerRegistry {
     string,
     Set<OrdinaryChatDispatchReservation>
   >()
+  private readonly exclusiveDispatchByChatId = new Map<
+    string,
+    ExclusiveChatDispatchReservation
+  >()
   private readonly byChildRunId = new Map<string, ScheduledChildBinding>()
   private readonly childRunIdsByOwnerRunId = new Map<string, Set<string>>()
   // A released child id must not become an ordinary renderer run later in the
@@ -189,7 +204,11 @@ export class ScheduledOccurrenceOwnerRegistry {
 
   register(input: ScheduledOccurrenceOwner): ScheduledOccurrenceOwner {
     const owner = snapshotOwner(input)
-    if (this.byChatId.has(owner.chatId) || this.ordinaryDispatchByChatId.has(owner.chatId)) {
+    if (
+      this.byChatId.has(owner.chatId) ||
+      this.ordinaryDispatchByChatId.has(owner.chatId) ||
+      this.exclusiveDispatchByChatId.has(owner.chatId)
+    ) {
       fail('duplicate-chat', `Chat ${owner.chatId} already has a live dispatch owner.`)
     }
     if (this.byTaskId.has(owner.taskId)) {
@@ -229,7 +248,7 @@ export class ScheduledOccurrenceOwnerRegistry {
     if (!isExactNonEmptyString(chatId)) {
       fail('invalid-input', 'An exact chat id is required for dispatch reservation.')
     }
-    if (this.byChatId.has(chatId)) {
+    if (this.byChatId.has(chatId) || this.exclusiveDispatchByChatId.has(chatId)) {
       fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)
     }
     const reservation = Object.freeze({ chatId, nonce: Symbol(chatId) })
@@ -249,6 +268,37 @@ export class ScheduledOccurrenceOwnerRegistry {
 
   hasOrdinaryChatDispatchReservation(chatId: string): boolean {
     return isExactNonEmptyString(chatId) && this.ordinaryDispatchByChatId.has(chatId)
+  }
+
+  /**
+   * Reserve the chat exclusively across graph composition and provider
+   * preflight. The reservation is intentionally process-local and short-lived:
+   * the caller releases it as soon as the exact RunManager session exists.
+   */
+  reserveExclusiveChatDispatch(chatId: string): ExclusiveChatDispatchReservation {
+    if (!isExactNonEmptyString(chatId)) {
+      fail('invalid-input', 'An exact chat id is required for exclusive dispatch reservation.')
+    }
+    if (
+      this.byChatId.has(chatId) ||
+      this.ordinaryDispatchByChatId.has(chatId) ||
+      this.exclusiveDispatchByChatId.has(chatId)
+    ) {
+      fail('duplicate-chat', `Chat ${chatId} already has a live dispatch owner.`)
+    }
+    const reservation = Object.freeze({ chatId, nonce: Symbol(chatId) })
+    this.exclusiveDispatchByChatId.set(chatId, reservation)
+    return reservation
+  }
+
+  releaseExclusiveChatDispatch(reservation: ExclusiveChatDispatchReservation): boolean {
+    if (this.exclusiveDispatchByChatId.get(reservation.chatId) !== reservation) return false
+    this.exclusiveDispatchByChatId.delete(reservation.chatId)
+    return true
+  }
+
+  hasExclusiveChatDispatchReservation(chatId: string): boolean {
+    return isExactNonEmptyString(chatId) && this.exclusiveDispatchByChatId.has(chatId)
   }
 
   /** Resolve a solo provider exit only when run, provider, and chat all match. */

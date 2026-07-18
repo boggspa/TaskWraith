@@ -168,6 +168,39 @@ describe('ScheduledOccurrenceOwnerRegistry', () => {
     expect(registry.lookupByChatId('chat-fanout')).toBe(scheduled)
   })
 
+  it('uses an exclusive pre-session reservation to fence every competing launch', () => {
+    const registry = new ScheduledOccurrenceOwnerRegistry()
+    const exclusive = registry.reserveExclusiveChatDispatch('chat-graph')
+
+    expect(registry.hasExclusiveChatDispatchReservation('chat-graph')).toBe(true)
+    expectCode(() => registry.reserveOrdinaryChatDispatch('chat-graph'), 'duplicate-chat')
+    expectCode(
+      () => registry.reserveExclusiveChatDispatch('chat-graph'),
+      'duplicate-chat'
+    )
+    expectCode(
+      () => registry.register({ ...owner('scheduled'), chatId: 'chat-graph' }),
+      'duplicate-chat'
+    )
+    expect(registry.releaseExclusiveChatDispatch({ ...exclusive })).toBe(false)
+    expect(registry.releaseExclusiveChatDispatch(exclusive)).toBe(true)
+    expect(registry.hasExclusiveChatDispatchReservation('chat-graph')).toBe(false)
+
+    const ordinary = registry.reserveOrdinaryChatDispatch('chat-graph')
+    expectCode(
+      () => registry.reserveExclusiveChatDispatch('chat-graph'),
+      'duplicate-chat'
+    )
+    expect(registry.releaseOrdinaryChatDispatch(ordinary)).toBe(true)
+
+    const scheduled = registry.register({ ...owner('scheduled'), chatId: 'chat-graph' })
+    expectCode(
+      () => registry.reserveExclusiveChatDispatch('chat-graph'),
+      'duplicate-chat'
+    )
+    expect(registry.release(scheduled)).toBe(true)
+  })
+
   it('requires exact provider and chat identity for solo exit lookup', () => {
     const registry = new ScheduledOccurrenceOwnerRegistry()
     const registered = registry.register(owner('solo'))
