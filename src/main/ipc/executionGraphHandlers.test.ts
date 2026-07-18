@@ -114,6 +114,7 @@ describe('registerExecutionGraphHandlers', () => {
     expect(mockedHandle.mock.calls.map(([channel]) => channel)).toEqual([
       'execution-graphs:list',
       'execution-graphs:get',
+      'execution-graphs:get-layout',
       'execution-runs:list',
       'execution-runs:get',
       'execution-runs:events',

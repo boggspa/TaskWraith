@@ -175,6 +175,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // Main-owned durable execution graph and live Stack surface.
   'execution-graphs:list': ['optionalString'],
   'execution-graphs:get': ['object'],
+  'execution-graphs:get-layout': ['object'],
   'execution-graphs:save-layout': ['object'],
   'execution-runs:list': ['optionalObject'],
   'execution-runs:get': ['nonEmptyString'],

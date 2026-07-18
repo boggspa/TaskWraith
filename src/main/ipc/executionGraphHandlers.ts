@@ -20,7 +20,35 @@ import type {
   AppendExecutionStackStepInput,
   ExecutionGraphCoordinator
 } from '../services/ExecutionGraphCoordinator'
-import type { ProviderId, RunQueueJob } from '../store/types'
+import type { ProviderId, RunQueueJob, RunQueueRequestSnapshot } from '../store/types'
+
+export interface ExecutionRunListFilter {
+  readonly workspaceId?: string
+  readonly rootChatId?: string
+  readonly includeTerminal?: boolean
+}
+
+export interface ExecutionStackAppendCommand {
+  readonly executionId?: string
+  readonly workspaceId: string
+  readonly rootChatId: string
+  readonly anchorRunRef?: string
+  readonly title?: string
+  readonly stepTitle: string
+  readonly objective: string
+  readonly provider: ProviderId
+  readonly request: RunQueueRequestSnapshot
+}
+
+export interface ExecutionRunCancelStepCommand {
+  readonly executionId: string
+  readonly activationId: string
+}
+
+export interface ExecutionRunFormalizeCommand {
+  readonly executionId: string
+  readonly name?: string
+}
 
 export interface ExecutionStackTarget {
   readonly workspaceId: string
@@ -291,6 +319,19 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
         throw new Error('Graph revision is invalid.')
       }
       return deps.repository.getRevision(graphId, Number(input.revision)) ?? null
+    }
+  )
+
+  ipcMain.handle(
+    'execution-graphs:get-layout',
+    (event, input: { graphId?: unknown; revision?: unknown }) => {
+      deps.assertMainRendererSender(event)
+      if (!isRecord(input)) throw new Error('Graph layout lookup is invalid.')
+      const graphId = nonEmpty(input.graphId, 'Graph id', 128)
+      if (!Number.isInteger(input.revision) || Number(input.revision) < 1) {
+        throw new Error('Graph revision is invalid.')
+      }
+      return deps.repository.getLayout(graphId, Number(input.revision)) ?? null
     }
   )
 

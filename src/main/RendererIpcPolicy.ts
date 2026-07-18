@@ -283,6 +283,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // repeat this assertion and resolve all workspace/chat authority in main.
   'execution-graphs:list',
   'execution-graphs:get',
+  'execution-graphs:get-layout',
   'execution-graphs:save-layout',
   'execution-runs:list',
   'execution-runs:get',
