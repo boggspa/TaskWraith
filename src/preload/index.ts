@@ -72,6 +72,11 @@ import type {
 } from '../shared/plugins/PluginTypes'
 import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import {
+  CHAT_UPDATE_ACK_CHANNEL,
+  type ChatUpdateAck,
+  type ChatUpdateDelivery
+} from '../shared/chatUpdateTransport'
 import type {
   ChatPopoutRoundExpansionSnapshot,
   ChatPopoutScrollState
@@ -1832,11 +1837,12 @@ const api = {
     ipcRenderer.on('usage-changed', wrapped)
     return () => ipcRenderer.removeListener('usage-changed', wrapped)
   },
-  onChatUpdated: (callback: (chat: unknown) => void) => {
-    const wrapped = (_event: unknown, chat: unknown): void => callback(chat)
+  onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => {
+    const wrapped = (_event: unknown, delivery: ChatUpdateDelivery): void => callback(delivery)
     ipcRenderer.on('chat-updated', wrapped)
     return () => ipcRenderer.removeListener('chat-updated', wrapped)
   },
+  ackChatUpdated: (ack: ChatUpdateAck) => ipcRenderer.send(CHAT_UPDATE_ACK_CHANNEL, ack),
   onProjectsChanged: (callback: (projects: unknown) => void) => {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)
     ipcRenderer.on('projects-changed', wrapped)

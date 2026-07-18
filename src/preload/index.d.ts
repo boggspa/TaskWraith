@@ -79,6 +79,7 @@ import {
   MemoryProposal,
   MemoryProposalPack
 } from '../main/store/types'
+import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type {
   Project,
   ProjectOp,
@@ -2109,7 +2110,8 @@ declare global {
       ) => () => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => () => void
-      onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
+      onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
+      ackChatUpdated: (ack: ChatUpdateAck) => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
       onProjectReferenceProposalsChanged: (
         callback: (payload: { projectId: string }) => void

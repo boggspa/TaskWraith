@@ -303,6 +303,11 @@ import {
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import {
+  CHAT_UPDATE_ACK_CHANNEL,
+  CHAT_UPDATE_CHANNEL,
+  normalizeChatUpdateAck
+} from '../shared/chatUpdateTransport'
 import { SoloWorkingTokenTelemetry } from './soloWorkingTokenTelemetry'
 import { resolveHealthEntryPresentation } from '../shared/ollamaBrandTable'
 import {
@@ -1510,8 +1515,14 @@ import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './Workspace
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
+import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
+import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 
 let mainWindow: BrowserWindow | null = null
+const chatUpdateDeliveryCoordinator = new ChatUpdateDeliveryCoordinator()
+const rendererResponsivenessTracker = new RendererResponsivenessTracker({
+  createIncidentId: () => randomUUID()
+})
 const workspacePopoutWindows = new Map<string, BrowserWindow>()
 const workspacePopoutOwners = new Map<
   string,
@@ -3064,6 +3075,13 @@ const desktopToolExecutors = createDesktopToolExecutors({
     isCodexClientStarted: () => Boolean(codexClient)
   },
   notifyRenderer: (channel, payload) => {
+    if (channel === CHAT_UPDATE_CHANNEL) {
+      const chatId = (payload as Partial<ChatRecord> | null)?.appChatId
+      if (typeof chatId === 'string' && chatId) {
+        broadcastChatUpdated(AppStore.getChat(chatId) ?? (payload as ChatRecord))
+        return
+      }
+    }
     safeSendToWebContents(mainWindow, channel, payload)
   },
   logger: console
@@ -7537,18 +7555,18 @@ function getPdfAttachmentRenderCacheDir(): string {
 function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
   const previous = AppStore.getChat(normalized.appChatId)
-  AppStore.saveChat(normalized)
-  broadcastChatUpdated(normalized)
-  maybeScheduleCodexNativeGoalSync(previous, normalized, 'chat-save')
+  const saved = AppStore.saveChat(normalized)
+  broadcastChatUpdated(saved)
+  maybeScheduleCodexNativeGoalSync(previous, saved, 'chat-save')
   // 1.0.5-PO2 — Notify open workspace popouts that something in
   // their workspace may have changed. The popout debounces a
   // re-fetch on its end; we just need to tell it something
   // happened. Filter on workspacePath so a chat update in a
   // *different* workspace doesn't churn unrelated popouts.
-  if (normalized.workspacePath) {
-    broadcastWorkspacePopoutRefresh(normalized.workspacePath, 'chat-updated')
+  if (saved.workspacePath) {
+    broadcastWorkspacePopoutRefresh(saved.workspacePath, 'chat-updated')
   }
-  return normalized
+  return saved
 }
 
 function saveEnsembleChatWithScheduledHeartbeat(chat: ChatRecord): ChatRecord {
@@ -7911,9 +7929,22 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
 }
 
 function broadcastChatUpdated(chat: ChatRecord): void {
-  safeSendToWebContents(mainWindow, 'chat-updated', chat)
+  enqueueChatUpdated(mainWindow, chat)
   broadcastChatPopoutUpdate(chat)
   broadcastChatOwnedWorkspacePopoutRefresh(chat.appChatId, 'chat-updated')
+}
+
+function enqueueChatUpdated(target: BrowserWindow | null | undefined, chat: ChatRecord): void {
+  if (!target || target.isDestroyed() || target.webContents.isDestroyed()) return
+  const webContents = target.webContents
+  chatUpdateDeliveryCoordinator.enqueue(
+    {
+      id: webContents.id,
+      isDestroyed: () => target.isDestroyed() || webContents.isDestroyed(),
+      send: (channel, payload) => webContents.send(channel, payload)
+    },
+    chat
+  )
 }
 
 function broadcastContextCompactionProgress(event: ContextCompactionProgressEvent): void {
@@ -7974,7 +8005,7 @@ function broadcastChatPopoutUpdate(chat: ChatRecord): void {
     // be spuriously denied until the window is reopened.
     owner.workspacePath = chat.workspacePath || undefined
   }
-  safeSendToWebContents(win, 'chat-updated', chat)
+  enqueueChatUpdated(win, chat)
 }
 
 function maybeAppendAuditTranscriptMessage(run: AuditRunRecord): void {
@@ -26027,6 +26058,45 @@ function recordProductCrash(input: ProductCrashInput): void {
   }
 }
 
+function rendererResponsivenessMetadata(window: BrowserWindow): Record<string, unknown> {
+  const webContentsId = window.webContents.id
+  let rendererPid = 0
+  try {
+    rendererPid = window.webContents.getOSProcessId()
+  } catch {
+    // The renderer may disappear while Electron is emitting a lifecycle event.
+  }
+  let processMetrics: Array<Record<string, unknown>> = []
+  try {
+    processMetrics = app
+      .getAppMetrics()
+      .filter(
+        (metric) =>
+          metric.pid === rendererPid || metric.type === 'GPU' || metric.type === 'Browser'
+      )
+      .map((metric) => ({
+        pid: metric.pid,
+        type: metric.type,
+        name: metric.name,
+        cpuPercent: metric.cpu.percentCPUUsage,
+        idleWakeupsPerSecond: metric.cpu.idleWakeupsPerSecond,
+        cumulativeCpuSeconds: metric.cpu.cumulativeCPUUsage,
+        workingSetKb: metric.memory.workingSetSize,
+        peakWorkingSetKb: metric.memory.peakWorkingSetSize,
+        privateBytes: metric.memory.privateBytes
+      }))
+  } catch {
+    // Diagnostic capture must never interfere with recovery or window teardown.
+  }
+  return {
+    windowId: window.id,
+    webContentsId,
+    rendererPid,
+    processMetrics,
+    chatUpdateTransport: chatUpdateDeliveryCoordinator.statsForTarget(webContentsId)
+  }
+}
+
 function registerProductCrashHandlers(): void {
   process.on('uncaughtExceptionMonitor', (error) => {
     recordProductCrash({
@@ -30568,6 +30638,13 @@ if (isGeminiMcpBridgeProcess) {
     setInterval(sweepMediaStagingDir, 30 * 60 * 1000).unref?.()
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
+    ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
+      const ack = normalizeChatUpdateAck(value)
+      if (!ack) return
+      // The coordinator binds delivery ids to their originating WebContents,
+      // so another renderer cannot release or advance this target's queue.
+      chatUpdateDeliveryCoordinator.acknowledge(event.sender.id, ack)
+    })
     powerMonitor.on('lock-screen', () => renewRemotePowerAssertion('screen locked'))
     powerMonitor.on('resume', () => renewRemotePowerAssertion('system resumed'))
 
@@ -36467,7 +36544,53 @@ if (isGeminiMcpBridgeProcess) {
 
     app.on('browser-window-created', (_, window) => {
       optimizer.watchWindowShortcuts(window)
+      const webContentsId = window.webContents.id
+      window.webContents.on('did-start-loading', () => {
+        // A reload creates a fresh renderer-side patch baseline. Discard any
+        // in-flight delivery so the next update is a self-contained snapshot.
+        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+      })
+      window.on('unresponsive', () => {
+        const incident = rendererResponsivenessTracker.begin(webContentsId)
+        if (!incident || window.isDestroyed() || window.webContents.isDestroyed()) return
+        recordProductCrash({
+          source: 'renderer',
+          severity: 'warning',
+          processType: 'renderer',
+          reason: 'unresponsive',
+          message: 'Renderer became unresponsive.',
+          metadata: {
+            incidentId: incident.incidentId,
+            startedAtMs: incident.startedAtMs,
+            ...rendererResponsivenessMetadata(window)
+          }
+        })
+      })
+      window.on('responsive', () => {
+        const recovery = rendererResponsivenessTracker.recover(webContentsId)
+        if (!recovery || window.isDestroyed() || window.webContents.isDestroyed()) return
+        recordProductCrash({
+          source: 'renderer',
+          severity: 'warning',
+          processType: 'renderer',
+          reason: 'responsive',
+          message: `Renderer recovered after ${recovery.durationMs} ms.`,
+          metadata: {
+            incidentId: recovery.incident.incidentId,
+            startedAtMs: recovery.incident.startedAtMs,
+            recoveredAtMs: recovery.recoveredAtMs,
+            durationMs: recovery.durationMs,
+            ...rendererResponsivenessMetadata(window)
+          }
+        })
+      })
+      window.once('closed', () => {
+        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+        rendererResponsivenessTracker.clear(webContentsId)
+      })
       window.webContents.on('render-process-gone', (_event, details) => {
+        chatUpdateDeliveryCoordinator.clearTarget(webContentsId)
+        rendererResponsivenessTracker.clear(webContentsId)
         if (details.reason === 'clean-exit') {
           return
         }

@@ -37,6 +37,7 @@ import { stripElectronInvokeErrorFraming } from './lib/electronInvokeError'
 import { shouldBackfillRunStats } from './lib/RunStatsBackfill'
 import { sealOrphanExitRun } from './lib/sealOrphanExitRun'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../../shared/runDiffBackfill'
+import { applyChatUpdateDelivery, type ChatUpdateBaseline } from '../../shared/chatUpdateTransport'
 import {
   TASKWRAITH_CLOSEOUT_KIND,
   closeoutAiSummaryFromMetadata,
@@ -3503,6 +3504,10 @@ function App(): React.JSX.Element {
   const workspaceTrustGenerationRef = useRef(0)
   const currentChatIdRef = useRef<string | null>(null)
   const chatByIdRef = useRef<Map<string, ChatRecord>>(new Map())
+  // This baseline is deliberately separate from chatByIdRef: the latter may
+  // contain optimistic or in-flight renderer-only content and is therefore
+  // not a safe base for reconstructing main-owned transport patches.
+  const chatUpdateBaselineByIdRef = useRef<Map<string, ChatUpdateBaseline>>(new Map())
   const summaryChatUpdateQueueRef = useRef(new ChatUpdateHydrationQueue<ChatRecord>())
   // rAF render-coalescer for streamed deltas (#1). chatByIdRef above stays the
   // synchronous, byte-exact source of truth; these defer the React commit
@@ -11274,10 +11279,33 @@ function App(): React.JSX.Element {
       // appChatIds), so when a sub-thread is added here the workspace
       // group containing its parent auto-expands too.
       addIpcSubscription(
-        window.api.onChatUpdated((chat) => {
-        if (clearedChatIdsRef.current.has(chat.appChatId) && !chatByIdRef.current.has(chat.appChatId)) {
-          return
-        }
+        window.api.onChatUpdated((delivery) => {
+          const baselines = chatUpdateBaselineByIdRef.current
+          let wasApplied = false
+          window.requestAnimationFrame(() => {
+            if (!wasApplied) baselines.delete(delivery.chatId)
+            window.api.ackChatUpdated({ deliveryId: delivery.deliveryId, applied: wasApplied })
+          })
+          const applied = applyChatUpdateDelivery(delivery, baselines.get(delivery.chatId))
+          if (!applied.ok) return
+          const chat = applied.baseline.chat
+          // Delete + set makes insertion order an LRU. Bounding this map avoids
+          // retaining full transcripts for every chat visited during a long app
+          // session while preserving exact bases for currently active updates.
+          baselines.delete(chat.appChatId)
+          baselines.set(chat.appChatId, applied.baseline)
+          while (baselines.size > 32) {
+            const oldestChatId = baselines.keys().next().value
+            if (typeof oldestChatId !== 'string') break
+            baselines.delete(oldestChatId)
+          }
+          if (
+            clearedChatIdsRef.current.has(chat.appChatId) &&
+            !chatByIdRef.current.has(chat.appChatId)
+          ) {
+            wasApplied = true
+            return
+          }
         // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
         // mid-stream (saveChat debounces by 200ms; sub-thread delegation
         // card injection, F2 back-prop, surfaceSubThreadDispatchFailure
@@ -11465,6 +11493,7 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
         }
+          wasApplied = true
         })
       )
     }
