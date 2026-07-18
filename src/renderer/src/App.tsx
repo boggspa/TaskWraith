@@ -139,6 +139,7 @@ import {
   updateActiveGoalLifecycle
 } from '../../main/GoalState'
 import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
+import type { ExecutionRunProjection } from '../../main/executionGraph/ExecutionGraphRun'
 import type { LocalServerEntry } from '../../main/localServers/types'
 import {
   collectExternalPathGrantsFromMetadata,
@@ -735,6 +736,17 @@ import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenT
 import { createChatWalkCache, noWalkDepsEqual } from './lib/chatWalkCache'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { type ComposerProps } from './components/Composer'
+import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
+import {
+  executionAppendSubmissionKey,
+  executionStackStepTitle,
+  executionRunTimestamp,
+  isTerminalExecutionRun,
+  mergeExecutionRunProjection,
+  projectExecutionRun,
+  shouldAppendBusySendToExecutionStack,
+  sortExecutionRunHistory
+} from './lib/executionGraphLiveState'
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
@@ -3023,6 +3035,20 @@ function App(): React.JSX.Element {
     usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
   const [workflowDefinitions, setWorkflowDefinitions] = useState<WorkflowDefinition[]>([])
+  const [executionRunsById, setExecutionRunsById] = useState<
+    Record<string, ExecutionRunProjection>
+  >({})
+  const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<
+    Record<string, string[]>
+  >({})
+  const [openExecutionMap, setOpenExecutionMap] = useState<{
+    executionId: string
+    selectedStepId?: string
+  } | null>(null)
+  const preferredExecutionByChatIdRef = useRef<Record<string, string>>({})
+  const executionAppendInFlightRef = useRef<Map<string, string>>(new Map())
+  const executionSaveInFlightRef = useRef<Set<string>>(new Set())
+  const executionRunQueryGenerationRef = useRef(0)
   const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
@@ -3642,6 +3668,123 @@ function App(): React.JSX.Element {
   useEffect(() => {
     setPreviewChatMediaRef(null)
   }, [currentComposerChatId])
+
+  const rememberExecutionRun = useCallback((run: ExecutionRunProjection): void => {
+    setExecutionRunsById((current) => ({
+      ...current,
+      [run.executionId]: mergeExecutionRunProjection(current[run.executionId], run)
+    }))
+    if (run.rootChatId) {
+      setExecutionRunIdsByChatId((current) => {
+        const existing = current[run.rootChatId as string] || []
+        if (existing.includes(run.executionId)) return current
+        return { ...current, [run.rootChatId as string]: [run.executionId, ...existing] }
+      })
+    }
+  }, [])
+
+  useEffect(() => {
+    const generation = ++executionRunQueryGenerationRef.current
+    if (
+      isChatPopoutWindow ||
+      typeof window.api.listExecutionRuns !== 'function'
+    ) {
+      return
+    }
+
+    const targets = new Map<string, string>()
+    const currentWorkspaceId = currentChatWorkspace?.id || currentChat?.workspaceId
+    if (currentComposerChatId && currentWorkspaceId && !isCurrentGlobalChat) {
+      targets.set(currentComposerChatId, currentWorkspaceId)
+    }
+    for (const paneChatId of multiview.paneChatIds) {
+      if (!paneChatId || targets.has(paneChatId)) continue
+      const paneChat = chatByIdRef.current.get(paneChatId)
+      if (!paneChat?.workspaceId || isGlobalChat(paneChat)) continue
+      targets.set(paneChatId, paneChat.workspaceId)
+    }
+
+    for (const [chatId, workspaceId] of targets) {
+      void window.api
+        .listExecutionRuns({ workspaceId, rootChatId: chatId, includeTerminal: true })
+        .then((runs) => {
+          if (executionRunQueryGenerationRef.current !== generation) return
+          const ordered = sortExecutionRunHistory(runs)
+          setExecutionRunsById((current) => {
+            const next = { ...current }
+            for (const run of ordered) {
+              next[run.executionId] = mergeExecutionRunProjection(current[run.executionId], run)
+            }
+            return next
+          })
+          setExecutionRunIdsByChatId((current) => ({
+            ...current,
+            [chatId]: Array.from(
+              new Set([
+                ...ordered.map((run) => run.executionId),
+                ...(current[chatId] || [])
+              ])
+            )
+          }))
+        })
+        .catch((error) => {
+          if (executionRunQueryGenerationRef.current === generation) {
+            console.warn(`[execution graph] failed to load run history for ${chatId}`, error)
+          }
+        })
+    }
+  }, [
+    chats.length,
+    currentChat?.workspaceId,
+    currentChatWorkspace?.id,
+    currentComposerChatId,
+    isChatPopoutWindow,
+    isCurrentGlobalChat,
+    multiview.paneChatIds
+  ])
+
+  useEffect(() => {
+    if (
+      isChatPopoutWindow ||
+      typeof window.api.onExecutionGraphChanged !== 'function' ||
+      typeof window.api.getExecutionRun !== 'function'
+    ) {
+      return undefined
+    }
+    return window.api.onExecutionGraphChanged((notice) => {
+      void window.api
+        .getExecutionRun(notice.executionId)
+        .then((run) => {
+          if (run) rememberExecutionRun(run)
+        })
+        .catch((error) => {
+          console.warn('[execution graph] failed to refresh changed run', error)
+        })
+    })
+  }, [isChatPopoutWindow, rememberExecutionRun])
+
+  useEffect(() => {
+    if (!openExecutionMap) return
+    if (!currentComposerChatId) {
+      setOpenExecutionMap(null)
+      return
+    }
+    const openRun = executionRunsById[openExecutionMap.executionId]
+    const workspaceId = currentChatWorkspace?.id || currentChat?.workspaceId
+    if (
+      (openRun?.rootChatId && openRun.rootChatId !== currentComposerChatId) ||
+      (openRun?.workspaceId && workspaceId && openRun.workspaceId !== workspaceId)
+    ) {
+      setOpenExecutionMap(null)
+    }
+  }, [
+    currentChat?.workspaceId,
+    currentChatWorkspace?.id,
+    currentComposerChatId,
+    executionRunsById,
+    openExecutionMap
+  ])
+
   const prompt = currentComposerChatId ? composerDraftsByChatId[currentComposerChatId] || '' : ''
   const composerDraftsByChatIdRef = useRef(composerDraftsByChatId)
   useEffect(() => {
@@ -4752,6 +4895,8 @@ function App(): React.JSX.Element {
     const previous = rawLogsByChatIdRef.current.get(chatId) || []
     setThreadRawLogs(chatId, [...previous, log])
   }
+  const appendThreadRawLogRef = useRef(appendThreadRawLog)
+  appendThreadRawLogRef.current = appendThreadRawLog
 
   const appendDurableRunEvent = (_event: RunEventInput) => {
     // Durable event writes are main-owned; renderer keeps local raw logs only.
@@ -9119,6 +9264,27 @@ function App(): React.JSX.Element {
     if (!targetChatId) return
     setImageAttachmentsByChatId((prev) => ({ ...prev, [targetChatId]: [] }))
     setDiscordContextSelectionByChatId((prev) => ({ ...prev, [targetChatId]: null }))
+  }
+
+  const clearSubmittedExecutionStackContext = (request: QueuedRunRequest, chatId: string): void => {
+    const submittedAttachmentIds = new Set(
+      request.imageAttachments.map((attachment) => attachment.id)
+    )
+    if (submittedAttachmentIds.size > 0) {
+      setImageAttachmentsByChatId((current) => ({
+        ...current,
+        [chatId]: (current[chatId] || []).filter(
+          (attachment) => !submittedAttachmentIds.has(attachment.id)
+        )
+      }))
+    }
+    if (request.discordContextSelection) {
+      setDiscordContextSelectionByChatId((current) =>
+        deepEqual(current[chatId], request.discordContextSelection)
+          ? { ...current, [chatId]: null }
+          : current
+      )
+    }
   }
 
   const settleProjectReferenceContextForRequest = (
@@ -14135,6 +14301,175 @@ function App(): React.JSX.Element {
     }
   }
 
+  const appendBusyRunToExecutionStack = (
+    request: QueuedRunRequest,
+    specialOverride: boolean
+  ): boolean => {
+    const targetChat = request.chatRecord || currentChat
+    const targetChatId = targetChat?.appChatId
+    const targetWorkspace = getWorkspaceForChat(targetChat)
+    const busy = isChatBusy(targetChatId)
+    if (
+      !shouldAppendBusySendToExecutionStack({
+        busy,
+        hasWorkspace: Boolean(targetWorkspace?.id),
+        isTopLevel: Boolean(targetChat && isTopLevelWorkspaceChat(targetChat)),
+        isPopout: isChatPopoutWindow,
+        isGlobal: Boolean(targetChat && isGlobalChat(targetChat)),
+        chatKind: targetChat?.chatKind,
+        existingPrompt: Boolean(request.existingPrompt),
+        scheduled: Boolean(request.scheduledRunAt || request.scheduledTaskId),
+        directedParticipant: Boolean(request.dmTargetParticipantId),
+        specialOverride:
+          specialOverride ||
+          Boolean(
+            request.verbatimPrompt ||
+              request.codexNativeReview ||
+              request.handoffSourceRunId ||
+              request.preserveComposer ||
+              request.discordContextSelection ||
+              request.geminiWorktree?.enabled ||
+              request.effectiveWorkspacePath ||
+              request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')
+          )
+      }) ||
+      !targetChatId ||
+      !targetWorkspace ||
+      typeof window.api.appendExecutionStackStep !== 'function'
+    ) {
+      return false
+    }
+
+    const requestSnapshot = createRunQueueRequestSnapshot(request)
+    const preferredExecutionId = preferredExecutionByChatIdRef.current[targetChatId]
+    const targetExecutionRuns = (executionRunIdsByChatId[targetChatId] || [])
+      .map((executionId) => executionRunsById[executionId])
+      .filter((run): run is ExecutionRunProjection => Boolean(run))
+      .sort((left, right) => executionRunTimestamp(right) - executionRunTimestamp(left))
+    const targetExecution =
+      targetExecutionRuns.find(
+        (run) => run.executionId === preferredExecutionId && !isTerminalExecutionRun(run)
+      ) || targetExecutionRuns.find((run) => !isTerminalExecutionRun(run))
+    const appendFingerprint = JSON.stringify({
+      executionId: targetExecution?.executionId,
+      provider: request.provider,
+      request: requestSnapshot
+    })
+    const inFlightFingerprint = executionAppendInFlightRef.current.get(targetChatId)
+    if (inFlightFingerprint) {
+      if (inFlightFingerprint === appendFingerprint) {
+        appendThreadRawLog(targetChatId, {
+          type: 'info',
+          content: 'This message is already being added to the Stack.'
+        })
+        return true
+      }
+      appendThreadRawLog(targetChatId, {
+        type: 'info',
+        content: 'Another Stack update is still committing; this message was queued safely.'
+      })
+      return false
+    }
+
+    const durableAppendKey = executionAppendSubmissionKey(
+      JSON.stringify({
+        workspaceId: targetWorkspace.id,
+        rootChatId: targetChatId,
+        provider: request.provider,
+        request: requestSnapshot
+      })
+    )
+    const pendingStorageKey = `taskwraith.execution-stack-pending.v1.${targetChatId}`
+    let recoveredClientRequestId: string | undefined
+    try {
+      const persisted = JSON.parse(window.localStorage.getItem(pendingStorageKey) || 'null') as {
+        key?: unknown
+        clientRequestId?: unknown
+      } | null
+      if (
+        persisted?.key === durableAppendKey &&
+        typeof persisted.clientRequestId === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(persisted.clientRequestId)
+      ) {
+        recoveredClientRequestId = persisted.clientRequestId
+      }
+    } catch {
+      // A malformed best-effort receipt cannot authorize anything in main.
+    }
+    const graphRequest = {
+      ...request,
+      appRunId: recoveredClientRequestId || request.appRunId || createAppRunId()
+    }
+    try {
+      window.localStorage.setItem(
+        pendingStorageKey,
+        JSON.stringify({ key: durableAppendKey, clientRequestId: graphRequest.appRunId })
+      )
+    } catch {
+      // Main still provides durable idempotency within this live renderer.
+    }
+
+    const liveAnchorRunRef =
+      resolveActiveRunContextForChat(targetChatId)?.runId ||
+      (activeRunChatIdRef.current === targetChatId
+        ? activeRunIdRef.current || undefined
+        : undefined)
+    executionAppendInFlightRef.current.set(targetChatId, appendFingerprint)
+
+    void window.api
+      .appendExecutionStackStep({
+        clientRequestId: graphRequest.appRunId!,
+        ...(targetExecution ? { executionId: targetExecution.executionId } : {}),
+        workspaceId: targetWorkspace.id,
+        rootChatId: targetChatId,
+        ...(!targetExecution && liveAnchorRunRef ? { anchorRunRef: liveAnchorRunRef } : {}),
+        title: `${targetChat.title || 'Task'} Stack`,
+        stepTitle: executionStackStepTitle(graphRequest.displayPrompt || graphRequest.prompt),
+        objective: graphRequest.prompt,
+        provider: graphRequest.provider,
+        request: requestSnapshot
+      })
+      .then((run) => {
+        try {
+          const persisted = JSON.parse(window.localStorage.getItem(pendingStorageKey) || 'null') as {
+            key?: unknown
+            clientRequestId?: unknown
+          } | null
+          if (
+            persisted?.key === durableAppendKey &&
+            persisted.clientRequestId === graphRequest.appRunId
+          ) {
+            window.localStorage.removeItem(pendingStorageKey)
+          }
+        } catch {
+          // Best-effort cleanup only; a retained receipt remains payload-bound in main.
+        }
+        preferredExecutionByChatIdRef.current[targetChatId] = run.executionId
+        rememberExecutionRun(run)
+        settleProjectReferenceContextForRequest(graphRequest, 'accepted')
+        clearSubmittedExecutionStackContext(graphRequest, targetChatId)
+        const submittedDraft = graphRequest.displayPrompt || graphRequest.prompt
+        if (composerDraftsByChatIdRef.current[targetChatId] === submittedDraft) {
+          setChatPromptDraft(targetChatId, '')
+        }
+      })
+      .catch((error) => {
+        settleProjectReferenceContextForRequest(graphRequest, 'rejected')
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Could not add this message to the Stack: ${redactLog(String(error))}`
+        })
+      })
+      .finally(() => {
+        if (executionAppendInFlightRef.current.get(targetChatId) === appendFingerprint) {
+          executionAppendInFlightRef.current.delete(targetChatId)
+        }
+      })
+    return true
+  }
+  const appendBusyRunToExecutionStackRef = useRef(appendBusyRunToExecutionStack)
+  appendBusyRunToExecutionStackRef.current = appendBusyRunToExecutionStack
+
   const handleRun = (
     overrideModel?: string,
     existingPrompt?: string,
@@ -14254,6 +14589,14 @@ function App(): React.JSX.Element {
         busy: isChatBusy(targetChatId)
       })
     ) {
+      if (
+        appendBusyRunToExecutionStack(
+          request,
+          Boolean(approvalModeOverride || workflowModeOverride)
+        )
+      ) {
+        return
+      }
       queueRunRequest(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
@@ -20845,6 +21188,196 @@ function App(): React.JSX.Element {
   const currentChatQueuedRunCount = runQueueJobs.filter(
     (job) => job.chatId === currentChat?.appChatId && job.status === 'queued'
   ).length
+  const currentExecutionRuns = useMemo(
+    () =>
+      sortExecutionRunHistory(
+        (currentComposerChatId ? executionRunIdsByChatId[currentComposerChatId] || [] : [])
+          .map((executionId) => executionRunsById[executionId])
+          .filter((run): run is ExecutionRunProjection => Boolean(run))
+    ),
+    [currentComposerChatId, executionRunIdsByChatId, executionRunsById]
+  )
+  const currentPreferredExecutionId = currentComposerChatId
+    ? preferredExecutionByChatIdRef.current[currentComposerChatId]
+    : undefined
+  const activeExecutionRun = useMemo(() => {
+    return (
+      currentExecutionRuns.find(
+        (run) =>
+          run.executionId === currentPreferredExecutionId && !isTerminalExecutionRun(run)
+      ) ||
+      currentExecutionRuns.find((run) => !isTerminalExecutionRun(run)) ||
+      null
+    )
+  }, [currentExecutionRuns, currentPreferredExecutionId])
+  const executionStackProjection = useMemo<ExecutionGraphProjection | null>(
+    () => (activeExecutionRun ? projectExecutionRun(activeExecutionRun) : null),
+    [activeExecutionRun]
+  )
+  const executionHistory = useMemo(
+    () =>
+      currentExecutionRuns
+        .filter((run) => run.executionId !== activeExecutionRun?.executionId)
+        .map((run) => {
+          const projection = projectExecutionRun(run)
+          return {
+            runId: run.executionId,
+            title: projection.title,
+            statusLabel: projection.runStatusLabel,
+            updatedAt: run.updatedAt
+          }
+        }),
+    [activeExecutionRun?.executionId, currentExecutionRuns]
+  )
+  const executionStackViewForChat = useCallback(
+    (chatId: string): {
+      projection: ExecutionGraphProjection | null
+      history: { runId: string; title: string; statusLabel: string; updatedAt?: string }[]
+    } => {
+      const runs = sortExecutionRunHistory(
+        (executionRunIdsByChatId[chatId] || [])
+          .map((executionId) => executionRunsById[executionId])
+          .filter((run): run is ExecutionRunProjection => Boolean(run))
+      )
+      const preferredId = preferredExecutionByChatIdRef.current[chatId]
+      const activeRun =
+        runs.find(
+          (run) => run.executionId === preferredId && !isTerminalExecutionRun(run)
+        ) ||
+        runs.find((run) => !isTerminalExecutionRun(run)) ||
+        null
+      return {
+        projection: activeRun ? projectExecutionRun(activeRun) : null,
+        history: runs
+          .filter((run) => run.executionId !== activeRun?.executionId)
+          .map((run) => {
+            const projection = projectExecutionRun(run)
+            return {
+              runId: run.executionId,
+              title: projection.title,
+              statusLabel: projection.runStatusLabel,
+              updatedAt: run.updatedAt
+            }
+          })
+      }
+    },
+    [executionRunIdsByChatId, executionRunsById]
+  )
+  const openExecutionMapProjection = useMemo<ExecutionGraphProjection | null>(() => {
+    if (!openExecutionMap) return null
+    const run = executionRunsById[openExecutionMap.executionId]
+    const workspaceId = currentChatWorkspace?.id || currentChat?.workspaceId
+    if (
+      !run ||
+      !currentComposerChatId ||
+      run.rootChatId !== currentComposerChatId ||
+      (run.workspaceId && workspaceId && run.workspaceId !== workspaceId)
+    ) {
+      return null
+    }
+    return projectExecutionRun(run)
+  }, [
+    currentChat?.workspaceId,
+    currentChatWorkspace?.id,
+    currentComposerChatId,
+    executionRunsById,
+    openExecutionMap
+  ])
+
+  const handleOpenExecutionMap = useCallback(
+    (executionId: string, selectedStepId?: string): void => {
+      const run = executionRunsById[executionId]
+      if (run?.rootChatId) {
+        preferredExecutionByChatIdRef.current[run.rootChatId] = executionId
+      }
+      setOpenExecutionMap({ executionId, ...(selectedStepId ? { selectedStepId } : {}) })
+    },
+    [executionRunsById]
+  )
+  const handleAddToExecutionStack = useCallback(
+    (executionId: string): void => {
+      if (currentComposerChatId) {
+        preferredExecutionByChatIdRef.current[currentComposerChatId] = executionId
+      }
+      setOpenExecutionMap(null)
+    },
+    [currentComposerChatId]
+  )
+  const handleSaveExecutionGraph = useCallback(
+    (executionId: string): void => {
+      if (typeof window.api.formalizeExecutionRun !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Save graph is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      if (executionSaveInFlightRef.current.has(executionId)) {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'info',
+          content: 'This graph is already being saved.'
+        })
+        return
+      }
+      executionSaveInFlightRef.current.add(executionId)
+      void window.api
+        .formalizeExecutionRun({ executionId })
+        .then((revision) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'info',
+            content: `Saved graph "${revision.name}" at revision ${revision.revision}.`
+          })
+        })
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not save graph: ${redactLog(String(error))}`
+          })
+        })
+        .finally(() => {
+          executionSaveInFlightRef.current.delete(executionId)
+        })
+    },
+    [executionRunsById]
+  )
+  const handleBackFromExecutionMap = useCallback((): void => {
+    setOpenExecutionMap(null)
+    window.requestAnimationFrame(() => {
+      composerAreaRef.current?.querySelector<HTMLTextAreaElement>('textarea')?.focus()
+    })
+  }, [])
+  const handleCancelExecutionStackStep = useCallback(
+    (executionId: string, activationId: string): void => {
+      if (typeof window.api.cancelExecutionRunStep !== 'function') {
+        appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+          type: 'stderr',
+          content: 'Stack cancellation is unavailable until this TaskWraith window reloads.'
+        })
+        return
+      }
+      void window.api
+        .cancelExecutionRunStep({ executionId, activationId })
+        .then(rememberExecutionRun)
+        .catch((error) => {
+          appendThreadRawLogRef.current(executionRunsById[executionId]?.rootChatId, {
+            type: 'stderr',
+            content: `Could not cancel the remaining Stack: ${redactLog(String(error))}`
+          })
+        })
+    },
+    [executionRunsById, rememberExecutionRun]
+  )
+  const handleOpenExecutionThread = useCallback(
+    (threadRef: string): void => {
+      const chat =
+        chatByIdRef.current.get(threadRef) ||
+        chats.find((candidate) => candidate.appChatId === threadRef)
+      if (!chat) return
+      setOpenExecutionMap(null)
+      void handleSelectChatRef.current(chat)
+    },
+    [chats]
+  )
   // Set of `appRunId`s whose run-queue job is still in `queued`
   // status. Used by the transcript dedup filter to suppress the
   // in-transcript "Queued (#N): …" system card while the queued-
@@ -20877,6 +21410,7 @@ function App(): React.JSX.Element {
       const chatId = chat.appChatId
       const sourceChat = chatByIdRef.current.get(chatId) || chat
       const durableEntries: QueuedMessageRowEntry[] = getQueuedDesktopRunJobs(runQueueJobs)
+        .filter((job) => !job.executionGraph)
         .filter((job) => job.chatId === chatId)
         .map((job) => {
           const request = resolveQueuedDesktopRunRequest(job)
@@ -24916,6 +25450,9 @@ function App(): React.JSX.Element {
           busy: isChatBusy(chatId)
         })
       ) {
+        if (appendBusyRunToExecutionStackRef.current(request, false)) {
+          return
+        }
         queueRunRequestRef.current(
           request,
           `This ${getProviderLabel(request.provider)} chat already has an in-flight run; TaskWraith will dispatch this pane prompt when the chat's previous turn finishes.`
@@ -26006,6 +26543,7 @@ function App(): React.JSX.Element {
     }
     const paneQueuedMessagesAboveRowEntries =
       buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
+    const paneExecutionStackView = executionStackViewForChat(viewerChatId)
     const paneIsChatBusyForSteer =
       viewerIsRunning || viewerEnsembleProjection.isRoundRunning
     const paneIsSteerBusyForCurrentChat = isSteerInFlight({
@@ -26123,6 +26661,21 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
         updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
       queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
+      executionStackProjection: paneExecutionStackView.projection,
+      executionHistory: paneExecutionStackView.history,
+      onOpenExecutionMap: (runId: string, stepId?: string) => {
+        handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+        handleOpenExecutionMap(runId, stepId)
+      },
+      onAddToExecutionStack: paneIsChatBusyForSteer
+        ? (runId: string) => {
+            preferredExecutionByChatIdRef.current[viewerChatId] = runId
+            handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+            setOpenExecutionMap(null)
+          }
+        : undefined,
+      onSaveExecutionGraph: handleSaveExecutionGraph,
+      onCancelExecutionStackStep: handleCancelExecutionStackStep,
       handleEditQueuedMessage: (entryId: string) =>
         handleEditQueuedMessage(entryId, viewerChat),
       handleDeleteQueuedMessage: (entryId: string) =>
@@ -27185,6 +27738,7 @@ function App(): React.JSX.Element {
       }
       const paneQueuedMessagesAboveRowEntries =
         paneCtxHelpers.buildQueuedMessagesAboveRowEntriesForChat(viewerChat)
+      const paneExecutionStackView = executionStackViewForChat(viewerChatId)
       const paneIsChatBusyForSteer =
         viewerIsRunning || viewerEnsembleProjection.isRoundRunning
       const paneIsSteerBusyForCurrentChat = isSteerInFlight({
@@ -27305,6 +27859,21 @@ function App(): React.JSX.Element {
         updateCurrentEnsembleMaxContinuationHops: (nextMax: number) =>
           paneCtxHelpers.updateEnsembleMaxContinuationHopsForChat(viewerChatId, nextMax),
         queuedMessagesAboveRowEntries: paneQueuedMessagesAboveRowEntries,
+        executionStackProjection: paneExecutionStackView.projection,
+        executionHistory: paneExecutionStackView.history,
+        onOpenExecutionMap: (runId: string, stepId?: string) => {
+          handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+          handleOpenExecutionMap(runId, stepId)
+        },
+        onAddToExecutionStack: paneIsChatBusyForSteer
+          ? (runId: string) => {
+              preferredExecutionByChatIdRef.current[viewerChatId] = runId
+              handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)
+              setOpenExecutionMap(null)
+            }
+          : undefined,
+        onSaveExecutionGraph: handleSaveExecutionGraph,
+        onCancelExecutionStackStep: handleCancelExecutionStackStep,
         handleEditQueuedMessage: (entryId: string) =>
           paneCtxHelpers.handleEditQueuedMessage(entryId, viewerChat),
         handleDeleteQueuedMessage: (entryId: string) =>
@@ -27578,14 +28147,17 @@ function App(): React.JSX.Element {
       composerStableBase,
       buildPaneComposerSlashCommands,
       discordContextSelectionByChatId,
+      executionStackViewForChat,
       externalGitSnapshotsByOwner,
       diffActionMenuOpenByChatId,
       externalPathGrantPromptBusyCountByChatId,
       externalPathGrantPromptByChatId,
       externalPathRepoMetadataByPath,
       externalPrByOwner,
+      handleCancelExecutionStackStep,
       handleCancelMultiviewPane,
       handleFocusMultiviewPane,
+      handleOpenExecutionMap,
       handlePanePaletteCommand,
       handleMultiviewPaneAddKnownWorkspaceAsSecondary,
       handleMultiviewPaneAddWorkspaceFolder,
@@ -27603,6 +28175,7 @@ function App(): React.JSX.Element {
       handleMultiviewPaneSelectNoWorkspace,
       handleMultiviewPaneToggleGrant,
       handleRunMultiviewPane,
+      handleSaveExecutionGraph,
       humanCollaborationInviteHealthByChatId,
       imageAttachmentsByChatId,
       isAttachingWindow,
@@ -27749,6 +28322,15 @@ function App(): React.JSX.Element {
     primaryCi: focusedPrimaryCi,
     onNotifyThreadOfCi: handleNotifyThreadOfCi,
     queuedMessagesAboveRowEntries,
+    executionStackProjection,
+    executionHistory,
+    onOpenExecutionMap: handleOpenExecutionMap,
+    onAddToExecutionStack:
+      currentComposerChatId && isChatBusy(currentComposerChatId)
+        ? handleAddToExecutionStack
+        : undefined,
+    onSaveExecutionGraph: handleSaveExecutionGraph,
+    onCancelExecutionStackStep: handleCancelExecutionStackStep,
     runtimeProfileControl,
     scheduleControls,
     selectedComposerModelType,
@@ -27853,6 +28435,15 @@ function App(): React.JSX.Element {
     codexThreads,
     collaboratingChatIds,
     composerCtx,
+    executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
+    executionMapSelectedStepId: openExecutionMap?.selectedStepId,
+    handleBackFromExecutionMap,
+    handleSelectExecutionMapStep: (stepId: string) =>
+      setOpenExecutionMap((current) =>
+        current ? { ...current, selectedStepId: stepId } : current
+      ),
+    handleOpenExecutionThread,
+    handleSaveExecutionGraph,
     copiedId,
     copy,
     connectedCollaborationChatIds,

@@ -56,6 +56,23 @@ export function executionStackStepTitle(objective: string): string {
   return title.length <= 96 ? title : `${title.slice(0, 93).trimEnd()}...`
 }
 
+/**
+ * Compact, non-sensitive key for recovering one uncertain Stack append after
+ * a renderer/main restart. This is not an authority digest: collisions are
+ * harmless because main binds the nonce to its own SHA-256 command receipt and
+ * rejects mismatched reuse.
+ */
+export function executionAppendSubmissionKey(value: string): string {
+  let first = 0x811c9dc5
+  let second = 0x9e3779b9
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index)
+    first = Math.imul(first ^ code, 0x01000193) >>> 0
+    second = Math.imul(second ^ code, 0x85ebca6b) >>> 0
+  }
+  return `${value.length.toString(36)}-${first.toString(36)}-${second.toString(36)}`
+}
+
 export function shouldAppendBusySendToExecutionStack(input: {
   busy: boolean
   hasWorkspace: boolean

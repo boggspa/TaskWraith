@@ -67,6 +67,8 @@ import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
+import { ExecutionStackAboveRow } from '../components/ExecutionStackAboveRow'
+import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
@@ -395,6 +397,17 @@ export interface ComposerProps {
   onNotifyThreadOfCi?: (notice: any) => void
   providerRates: any
   queuedMessagesAboveRowEntries: any
+  executionStackProjection?: ExecutionGraphProjection | null
+  executionHistory?: readonly {
+    runId: string
+    title: string
+    statusLabel: string
+    updatedAt?: string
+  }[]
+  onOpenExecutionMap?: (runId: string, stepId?: string) => void
+  onAddToExecutionStack?: (runId: string) => void
+  onSaveExecutionGraph?: (runId: string) => void
+  onCancelExecutionStackStep?: (runId: string, activationId: string, stepId: string) => void
   queuedRunQueueCount: any
   refreshWorkflowState: any
   rememberCurrentChatComposerSelection: any
@@ -717,6 +730,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     onNotifyThreadOfCi,
     providerRates,
     queuedMessagesAboveRowEntries,
+    executionStackProjection,
+    executionHistory = [],
+    onOpenExecutionMap,
+    onAddToExecutionStack,
+    onSaveExecutionGraph,
+    onCancelExecutionStackStep,
     queuedRunQueueCount,
     refreshWorkflowState,
     rememberCurrentChatComposerSelection,
@@ -1684,6 +1703,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
   const canRenderComposerAboveRowStack = Boolean(
     queuedMessagesAboveRowEntries.length > 0 ||
+      executionStackProjection ||
+      executionHistory.length > 0 ||
       (!isCurrentGlobalChat &&
         currentWorkspace &&
         ((showWorkspaceGitAboveRows && !isWelcomeChat) || isCurrentEnsembleChat)) ||
@@ -1693,6 +1714,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     canRenderComposerAboveRowStack &&
     ((showWorkspaceGitAboveRows && !isWelcomeChat && Boolean(currentWorkspace)) ||
       isCurrentEnsembleChat ||
+      Boolean(executionStackProjection) ||
+      executionHistory.length > 0 ||
       queuedMessagesAboveRowEntries.length > 0)
   const nativeNoAboveRowsClass =
     appearance.composerStyle === 'default' && !hasComposerAboveRows
@@ -2279,6 +2302,50 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     cursorAvailable={cursorProviderAvailable}
                     providerGroups={buildUnifiedProviderModelGroups(false)}
                   />
+                )}
+                <ExecutionStackAboveRow
+                  projection={executionStackProjection ?? null}
+                  onOpenMap={(runId, stepId) => onOpenExecutionMap?.(runId, stepId)}
+                  onAddToStack={
+                    onAddToExecutionStack
+                      ? (runId) => {
+                          onAddToExecutionStack(runId)
+                          focusComposerTextarea()
+                        }
+                      : undefined
+                  }
+                  onSaveGraph={onSaveExecutionGraph}
+                  onCancelStep={onCancelExecutionStackStep}
+                />
+                {executionHistory.length > 0 && onOpenExecutionMap && (
+                  <details className="queued-messages-above-row execution-stack-history-row">
+                    <summary>
+                      Execution history · {executionHistory.length}
+                    </summary>
+                    <ol className="execution-stack-list">
+                      {executionHistory.map((item) => (
+                        <li key={item.runId} className="execution-stack-step tone-muted">
+                          <button
+                            type="button"
+                            className="execution-stack-step-summary"
+                            onClick={() => onOpenExecutionMap(item.runId)}
+                          >
+                            <span className="execution-stack-step-copy">
+                              <span className="execution-stack-step-title">{item.title}</span>
+                              {item.updatedAt && (
+                                <span className="execution-stack-step-blocker">
+                                  {new Date(item.updatedAt).toLocaleString()}
+                                </span>
+                              )}
+                            </span>
+                            <span className="execution-status-token tone-muted">
+                              {item.statusLabel}
+                            </span>
+                          </button>
+                        </li>
+                      ))}
+                    </ol>
+                  </details>
                 )}
                 {/*
                   Queued-messages above-row. Renders the chat's pending

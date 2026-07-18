@@ -4,6 +4,7 @@ import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
 import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
+import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
 type SettingsSidebarProps = ComponentProps<
@@ -207,6 +208,12 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   codexThreads: any
   collaboratingChatIds: MainAppLayoutSidebarProps['collaboratingChatIds']
   composerCtx: any
+  executionMapProjection: ExecutionGraphProjection | null
+  executionMapSelectedStepId?: string
+  handleBackFromExecutionMap: () => void
+  handleSelectExecutionMapStep: (stepId: string) => void
+  handleOpenExecutionThread: (threadRef: string) => void
+  handleSaveExecutionGraph: (runId: string) => void
   copiedId: any
   copy: any
   connectedCollaborationChatIds: MainAppLayoutSidebarProps['connectedCollaborationChatIds']

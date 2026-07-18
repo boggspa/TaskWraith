@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ExecutionRunProjection } from '../../../main/executionGraph/ExecutionGraphRun'
 import {
+  executionAppendSubmissionKey,
   executionStackStepTitle,
   mergeExecutionRunProjection,
   shouldAppendBusySendToExecutionStack,
@@ -63,7 +64,13 @@ describe('executionGraphLiveState', () => {
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, chatKind: 'ensemble' })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, scheduled: true })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, existingPrompt: true })).toBe(false)
+    expect(shouldAppendBusySendToExecutionStack({ ...ordinary, directedParticipant: true })).toBe(
+      false
+    )
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, specialOverride: true })).toBe(false)
+    expect(shouldAppendBusySendToExecutionStack({ ...ordinary, busy: false })).toBe(false)
+    expect(shouldAppendBusySendToExecutionStack({ ...ordinary, hasWorkspace: false })).toBe(false)
+    expect(shouldAppendBusySendToExecutionStack({ ...ordinary, isGlobal: true })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, isTopLevel: false })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, isPopout: true })).toBe(false)
   })
@@ -72,5 +79,14 @@ describe('executionGraphLiveState', () => {
     const objective = `${'A'.repeat(120)}\nmore detail`
     expect(executionStackStepTitle(objective)).toHaveLength(96)
     expect(executionStackStepTitle('  \nShip the renderer')).toBe('Ship the renderer')
+  })
+
+  it('derives a stable non-plaintext key for an uncertain append receipt', () => {
+    const command = JSON.stringify({ chatId: 'chat-one', prompt: 'private task text' })
+    expect(executionAppendSubmissionKey(command)).toBe(executionAppendSubmissionKey(command))
+    expect(executionAppendSubmissionKey(`${command}!`)).not.toBe(
+      executionAppendSubmissionKey(command)
+    )
+    expect(executionAppendSubmissionKey(command)).not.toContain('private task text')
   })
 })

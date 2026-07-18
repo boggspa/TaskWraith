@@ -82,6 +82,7 @@ import { MediaPane } from '../../components/MediaPane'
 import { CanvasPane } from '../../components/CanvasPane'
 import { CanvasPaneLauncher } from '../../components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from '../../components/Composer'
+import { ExecutionMapView } from '../../components/ExecutionMapView'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
 import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
@@ -143,6 +144,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   codexThreads,
   collaboratingChatIds,
   composerCtx,
+  executionMapProjection,
+  executionMapSelectedStepId,
+  handleBackFromExecutionMap,
+  handleSelectExecutionMapStep,
+  handleOpenExecutionThread,
+  handleSaveExecutionGraph,
   copiedId,
   copy,
   connectedCollaborationChatIds,
@@ -1627,7 +1634,20 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 />
               )}
               renderViewerCell={renderMultiviewPaneCell}
-              renderFocusedCell={() => (
+              renderFocusedCell={() => {
+                if (executionMapProjection) {
+                  return (
+                    <ExecutionMapView
+                      projection={executionMapProjection}
+                      selectedStepId={executionMapSelectedStepId}
+                      onSelectStep={handleSelectExecutionMapStep}
+                      onBack={handleBackFromExecutionMap}
+                      onOpenThread={handleOpenExecutionThread}
+                      onSaveGraph={handleSaveExecutionGraph}
+                    />
+                  )
+                }
+                return (
             <div
               ref={appTranscriptRef}
               className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeFitLevel >= 1 ? 'welcome-notification-hidden-by-fit' : ''} ${welcomeFitLevel >= 2 ? 'welcome-dashboard-hidden-by-fit' : ''} ${welcomeFitLevel >= 3 ? 'welcome-heatmaps-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
@@ -2142,7 +2162,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
 
           <Composer {...composerCtx} />
             </div>
-              )}
+                )
+              }}
             />
           </div>
 
