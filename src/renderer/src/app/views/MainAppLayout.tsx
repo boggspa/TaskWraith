@@ -255,6 +255,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenSideChatFromMessage,
   handleOpenSideChatFromRunResult,
   handleOpenPluginWorkflowTemplate,
+  handleOpenProjectReferencesLibrary,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
   handlePersistRunAnalysis,
@@ -1192,6 +1193,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onSelectChat={handleSelectChat}
                 onStartProjectHome={handleStartProjectHome}
                 onSelectedProjectChange={handleSelectedProjectChange}
+                onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }

@@ -86,6 +86,7 @@ type MainAppLayoutSidebarProps = {
   handleOpenInMultiview: NonNullable<SidebarProps['onOpenInMultiview']>
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
   handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
+  handleOpenProjectReferencesLibrary: NonNullable<SidebarProps['onOpenReferencesLibrary']>
   handleOpenWorkflowCompose: NonNullable<SidebarProps['onCreateWorkflow']>
   handleOpenWorkspaceBoard: NonNullable<SidebarProps['onOpenWorkspaceBoard']>
   handleRemoveWorkspace: SidebarProps['onRemoveWorkspace']

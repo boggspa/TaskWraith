@@ -60,6 +60,9 @@ interface ProjectsSidebarViewProps {
   /** Passes the selected Project detail target to the host. This is ephemeral
    * Work navigation state only; it is never persisted on a chat or Project. */
   onSelectedProjectChange?: (projectId: string | null) => void
+  /** Open the References dock panel for this project — the discoverable link
+   * from the sidebar's compact library section to the full dock surface. */
+  onOpenReferencesLibrary?: (projectId: string) => void
   onSearchResultCountChange?: (count: number) => void
   /** Pre-select a project's detail panel on mount (host deep-link seam; also
    * how static-render tests reach the selected-only detail UI). */
@@ -223,6 +226,7 @@ export function ProjectsSidebarView({
   onSelectChat,
   onStartProjectHome,
   onSelectedProjectChange,
+  onOpenReferencesLibrary,
   onSearchResultCountChange,
   initialSelectedProjectId = null
 }: ProjectsSidebarViewProps): JSX.Element {
@@ -876,6 +880,17 @@ export function ProjectsSidebarView({
               <div className="sidebar-project-references-header">
                 <span className="sidebar-project-references-title">References</span>
                 <span className="sidebar-project-references-actions">
+                  {onOpenReferencesLibrary && (
+                    <button
+                      type="button"
+                      className="sidebar-project-icon-button sidebar-project-open-library"
+                      onClick={() => onOpenReferencesLibrary(project.id)}
+                      title="Open reference library"
+                      aria-label={`Open ${project.name} reference library`}
+                    >
+                      Library
+                    </button>
+                  )}
                   <button
                     type="button"
                     className="sidebar-project-icon-button"

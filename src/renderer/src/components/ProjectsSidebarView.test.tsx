@@ -145,6 +145,25 @@ describe('ProjectsSidebarView references', () => {
     // URL rows carry the Off state and never offer Verify.
     expect(html).toContain('is-off')
     expect(html).not.toContain('aria-label="Verify docs.example.com"')
+    // Without the host handler there is no dock-library affordance to render.
+    expect(html).not.toContain('title="Open reference library"')
+  })
+
+  it('links to the References dock when the host provides the library handler', () => {
+    seedStore([projectRecord('project-a', 'Alpha', [])], [])
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        onOpenReferencesLibrary={() => undefined}
+        initialSelectedProjectId="project-a"
+      />
+    )
+    expect(html).toContain('title="Open reference library"')
+    expect(html).toContain('aria-label="Open Alpha reference library"')
   })
 
   it('shows the no-access empty state for a library-less project', () => {

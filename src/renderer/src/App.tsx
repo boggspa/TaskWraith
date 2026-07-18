@@ -22938,6 +22938,16 @@ function App(): React.JSX.Element {
     }
     activateRightDockTab(panelId)
   }
+  /** The Work sidebar's "Library" affordance: open + focus the References
+   * dock for the project whose detail the user is looking at. The button only
+   * renders inside the SELECTED project's detail, so the reporter has already
+   * made it the active Work project — the set below is a defensive resync for
+   * the frame where the two could disagree, and the exclusive dock lifecycle
+   * (which also records the one-time reveal receipt) does the rest. */
+  const handleOpenProjectReferencesLibrary = (projectId: string): void => {
+    setActiveWorkProjectId(projectId)
+    activateRightDockTab('references')
+  }
   // Per-chat memory of the selected dock surface. RESTORE is declared before
   // PERSIST on purpose: on mount the saved value must be read into memory before
   // the persist effect can write the initial 'run' over it.
@@ -27920,6 +27930,7 @@ function App(): React.JSX.Element {
       setSidebarActiveTab(tab)
       if (tab !== 'projects') setActiveWorkProjectId(null)
     },
+    handleOpenProjectReferencesLibrary,
     handleSelectedProjectChange: setActiveWorkProjectId,
     handleSidebarPrimarySurfaceSelect,
     handleStartProjectHome,

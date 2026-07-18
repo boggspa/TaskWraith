@@ -203,6 +203,8 @@ interface SidebarProps {
   onStartProjectHome?: (projectId: string) => void
   /** Reports the selected Project detail target for Work-scoped host chrome. */
   onSelectedProjectChange?: (projectId: string | null) => void
+  /** Open the References dock panel for a project (Work panel pass-through). */
+  onOpenReferencesLibrary?: (projectId: string) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
@@ -2606,6 +2608,7 @@ export function Sidebar({
   onSelectChat,
   onStartProjectHome,
   onSelectedProjectChange,
+  onOpenReferencesLibrary,
   onOpenChatInSidePanel,
   onOpenInMultiview,
   onOpenSettings,
@@ -4461,6 +4464,7 @@ export function Sidebar({
                 onSelectChat={onSelectChat}
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
+                onOpenReferencesLibrary={onOpenReferencesLibrary}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
             </div>
