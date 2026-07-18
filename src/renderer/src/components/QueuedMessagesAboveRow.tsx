@@ -38,7 +38,8 @@
 import { memo, useCallback, useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
-import { ProviderBadgeIcon, getProviderName } from './Sidebar'
+import { getProviderName } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { MentionHighlightedText } from './MentionHighlightedText'
 import { formatScheduleCountdown } from '../lib/scheduledCountdown'
 
@@ -478,7 +479,7 @@ function QueuedMessageRow({
       title={`${rowLabel}. Drag to reorder.`}
     >
       <span className="queued-messages-row-meta" aria-hidden>
-        <ProviderBadgeIcon provider={entry.provider} />
+        <ProviderBrandLogoIcon provider={entry.provider} />
         <span className="queued-messages-row-position">#{position}</span>
         {dmRoleLabel && <span className="queued-messages-row-dm">→ {dmRoleLabel}</span>}
       </span>

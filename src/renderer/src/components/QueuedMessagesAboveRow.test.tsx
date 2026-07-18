@@ -60,5 +60,8 @@ describe('QueuedMessagesAboveRow steer actions', () => {
     expect(html).not.toContain('Add to Blackboard')
     // Solo row: the plain immediate-steer button.
     expect(html).toContain('Steer Codex queued message 2 from the queue now')
+    expect(html).toContain('data-provider-logo="codex"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-codex')
   })
 })
