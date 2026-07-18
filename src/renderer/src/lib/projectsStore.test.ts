@@ -23,6 +23,8 @@ const fake = vi.hoisted(() => {
     getProjectsSnapshot: vi.fn(),
     applyProjectOp: vi.fn(),
     setProjectHomeChat: vi.fn(),
+    applyProjectReferenceOp: vi.fn(),
+    verifyProjectReference: vi.fn(),
     importLegacyProjects: vi.fn(),
     onProjectsChanged: vi.fn()
   }
@@ -33,9 +35,11 @@ const fake = vi.hoisted(() => {
 
 import {
   addChatToProject,
+  addProjectReference,
   createProject,
   getProjectWorkProfile,
   listProjects,
+  listProjectReferences,
   listProjectWorkProfiles,
   PROJECTS_STORAGE_KEY,
   removeChatFromAllProjects,
@@ -43,6 +47,7 @@ import {
   resetProjectsStoreForTests,
   setProjectHomeChat,
   subscribeProjects,
+  verifyProjectReference,
   whenProjectsStoreReady,
   type Project
 } from './projectsStore'
@@ -90,6 +95,18 @@ beforeEach(() => {
   fake.api.setProjectHomeChat.mockImplementation(async () => ({
     projects: [],
     workProfiles: [],
+    changed: true
+  }))
+  fake.api.applyProjectReferenceOp.mockImplementation(async () => ({
+    projects: [],
+    workProfiles: [],
+    references: [],
+    changed: true
+  }))
+  fake.api.verifyProjectReference.mockImplementation(async () => ({
+    projects: [],
+    workProfiles: [],
+    references: [],
     changed: true
   }))
   fake.api.importLegacyProjects.mockImplementation(async () => ({
@@ -257,6 +274,67 @@ describe('projectsStore work profiles', () => {
       'Chat is already the home of another project.'
     )
     expect(listProjectWorkProfiles()).toEqual([])
+  })
+})
+
+describe('projectsStore references', () => {
+  const referenceRecord = {
+    id: 'ref-1',
+    projectId: 'project-a',
+    kind: 'file' as const,
+    locator: '/repo/spec.md',
+    title: 'spec.md',
+    provenance: { addedBy: 'user' as const, addedAt: 1 },
+    contextPolicy: 'available' as const,
+    updatedAt: 1
+  }
+
+  it('hydrates references and serves per-project filtered reads', async () => {
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [legacyRecord('project-a', 'Alpha'), legacyRecord('project-b', 'Beta')],
+      workProfiles: [],
+      references: [referenceRecord, { ...referenceRecord, id: 'ref-2', projectId: 'project-b' }],
+      legacyImportMarker: null
+    }))
+    await whenProjectsStoreReady()
+    expect(listProjectReferences()).toHaveLength(2)
+    expect(listProjectReferences('project-a').map((reference) => reference.id)).toEqual(['ref-1'])
+  })
+
+  it('adds a reference through main with generated id seeds and adopts the result', async () => {
+    fake.api.getProjectsSnapshot.mockImplementation(async () => ({
+      projects: [legacyRecord('project-a', 'Alpha')],
+      workProfiles: [],
+      references: [],
+      legacyImportMarker: null
+    }))
+    await whenProjectsStoreReady()
+    fake.api.applyProjectReferenceOp.mockImplementation(async (op: { id: string }) => ({
+      projects: [legacyRecord('project-a', 'Alpha')],
+      workProfiles: [],
+      references: [{ ...referenceRecord, id: op.id }],
+      changed: true
+    }))
+    await addProjectReference({ projectId: 'project-a', kind: 'file', locator: '/repo/spec.md' })
+    const op = fake.api.applyProjectReferenceOp.mock.calls[0][0]
+    expect(op).toMatchObject({
+      kind: 'add-reference',
+      projectId: 'project-a',
+      referenceKind: 'file',
+      locator: '/repo/spec.md'
+    })
+    expect(op.id).toMatch(/^ref-/)
+    expect(listProjectReferences('project-a')).toHaveLength(1)
+  })
+
+  it('adopts verification results and propagates rejections', async () => {
+    await whenProjectsStoreReady()
+    fake.api.verifyProjectReference.mockImplementation(async () => {
+      throw new Error('URL references cannot be verified automatically.')
+    })
+    await expect(verifyProjectReference('ref-x')).rejects.toThrow(
+      'URL references cannot be verified automatically.'
+    )
   })
 })
 

@@ -1136,6 +1136,10 @@ const api = {
   applyProjectOp: (op: unknown) => ipcRenderer.invoke('projects:apply-op', op),
   setProjectHomeChat: (projectId: string, chatId: string | null) =>
     ipcRenderer.invoke('projects:set-home-chat', projectId, chatId),
+  applyProjectReferenceOp: (op: unknown) => ipcRenderer.invoke('projects:reference-op', op),
+  verifyProjectReference: (id: string) => ipcRenderer.invoke('projects:verify-reference', id),
+  pickProjectReferencePath: (mode: 'file' | 'folder') =>
+    ipcRenderer.invoke('projects:pick-reference-path', mode),
   importLegacyProjects: (rawJson: string | null) =>
     ipcRenderer.invoke('projects:import-legacy', rawJson),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),

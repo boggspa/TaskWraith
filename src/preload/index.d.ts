@@ -79,7 +79,13 @@ import {
   MemoryProposal,
   MemoryProposalPack
 } from '../main/store/types'
-import type { Project, ProjectOp, ProjectWorkProfile } from '../shared/projects'
+import type {
+  Project,
+  ProjectOp,
+  ProjectReference,
+  ProjectReferenceOp,
+  ProjectWorkProfile
+} from '../shared/projects'
 import type {
   ProjectLegacyImportMarker,
   ProjectLegacyImportResult,
@@ -1440,6 +1446,7 @@ declare global {
       getProjectsSnapshot: () => Promise<{
         projects: Project[]
         workProfiles: ProjectWorkProfile[]
+        references: ProjectReference[]
         legacyImportMarker: ProjectLegacyImportMarker | null
       }>
       applyProjectOp: (op: ProjectOp) => Promise<ProjectRegistryMutationResult>
@@ -1447,6 +1454,9 @@ declare global {
         projectId: string,
         chatId: string | null
       ) => Promise<ProjectRegistryMutationResult>
+      applyProjectReferenceOp: (op: ProjectReferenceOp) => Promise<ProjectRegistryMutationResult>
+      verifyProjectReference: (id: string) => Promise<ProjectRegistryMutationResult>
+      pickProjectReferencePath: (mode: 'file' | 'folder') => Promise<string | null>
       importLegacyProjects: (rawJson: string | null) => Promise<ProjectLegacyImportResult>
       clearWorkspaces: () => Promise<void>
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>

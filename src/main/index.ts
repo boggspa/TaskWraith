@@ -35840,10 +35840,34 @@ if (isGeminiMcpBridgeProcess) {
     registerProjectHandlers({
       getProjects: () => AppStore.getProjects(),
       getWorkProfiles: () => AppStore.getProjectWorkProfiles(),
+      getReferences: () => AppStore.getProjectReferences(),
       getLegacyImportMarker: () => AppStore.getProjectsLegacyImportMarker(),
       applyProjectOp: (op) => AppStore.applyProjectOp(op),
+      applyReferenceOp: (op) => AppStore.applyProjectReferenceOp(op),
       setProjectHomeChat: (projectId, chatId) => AppStore.setProjectHomeChat(projectId, chatId),
       chatExists: (chatId) => Boolean(AppStore.getChat(chatId)),
+      probeReferenceLocator: (_kind, locator) => {
+        try {
+          return fsSync.existsSync(locator) ? 'ok' : 'missing'
+        } catch {
+          return 'missing'
+        }
+      },
+      pickReferencePath: async (mode) => {
+        const options = {
+          title: mode === 'folder' ? 'Add Folder Reference' : 'Add File Reference',
+          buttonLabel: 'Add Reference',
+          properties: (mode === 'folder' ? ['openDirectory'] : ['openFile']) as Array<
+            'openDirectory' | 'openFile'
+          >
+        }
+        const owner = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null
+        const result = owner
+          ? await dialog.showOpenDialog(owner, options)
+          : await dialog.showOpenDialog(options)
+        if (result.canceled || !result.filePaths?.[0]) return null
+        return result.filePaths[0]
+      },
       importLegacyProjects: (rawJson) => AppStore.importLegacyProjects(rawJson),
       assertSenderCanManageProjects: assertMainRendererSender
     })

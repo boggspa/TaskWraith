@@ -10,16 +10,22 @@ import {
   applyReorderProject,
   applySetProjectIconAndHue,
   cloneProject,
+  cloneProjectReference,
   cloneProjectWorkProfile,
+  migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
   newProjectId,
+  newProjectReferenceId,
   projectById,
   sortProjectsForDisplay,
   type Project,
   type ProjectInput,
   type ProjectOp,
   type ProjectPatch,
+  type ProjectReference,
+  type ProjectReferenceContextPolicy,
+  type ProjectReferenceKind,
   type ProjectWorkProfile
 } from '../../../shared/projects'
 
@@ -62,6 +68,9 @@ export type {
   Project,
   ProjectIcon,
   ProjectInput,
+  ProjectReference,
+  ProjectReferenceContextPolicy,
+  ProjectReferenceKind,
   ProjectWorkProfile
 } from '../../../shared/projects'
 
@@ -69,6 +78,7 @@ type ProjectsBridge = Window['api']
 
 let snapshot: Project[] = []
 let workProfiles: ProjectWorkProfile[] = []
+let references: ProjectReference[] = []
 let pendingOpCount = 0
 let initPromise: Promise<void> | null = null
 let unsubscribeBroadcast: (() => void) | null = null
@@ -99,29 +109,37 @@ function adoptAuthoritative(payload: unknown): void {
   if (pendingOpCount > 0) return
   let projectsCandidate: unknown = payload
   let profilesCandidate: unknown
+  let referencesCandidate: unknown
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
-    const state = payload as { projects?: unknown; workProfiles?: unknown }
+    const state = payload as {
+      projects?: unknown
+      workProfiles?: unknown
+      references?: unknown
+    }
     projectsCandidate = state.projects
     profilesCandidate = state.workProfiles
+    referencesCandidate = state.references
   }
   if (!Array.isArray(projectsCandidate)) return
   const now = Date.now()
   const nextProjects = migrateProjects(projectsCandidate, now)
+  const validIds = new Set(nextProjects.map((project) => project.id))
   const nextProfiles = Array.isArray(profilesCandidate)
-    ? migrateProjectWorkProfiles(
-        profilesCandidate,
-        new Set(nextProjects.map((project) => project.id)),
-        now
-      )
+    ? migrateProjectWorkProfiles(profilesCandidate, validIds, now)
     : workProfiles
+  const nextReferences = Array.isArray(referencesCandidate)
+    ? migrateProjectReferences(referencesCandidate, validIds, now)
+    : references
   if (
     JSON.stringify(nextProjects) === JSON.stringify(snapshot) &&
-    JSON.stringify(nextProfiles) === JSON.stringify(workProfiles)
+    JSON.stringify(nextProfiles) === JSON.stringify(workProfiles) &&
+    JSON.stringify(nextReferences) === JSON.stringify(references)
   ) {
     return
   }
   snapshot = nextProjects
   workProfiles = nextProfiles
+  references = nextReferences
   notifyProjectListeners()
 }
 
@@ -219,6 +237,7 @@ export function whenProjectsStoreReady(): Promise<void> {
 export function resetProjectsStoreForTests(): void {
   snapshot = []
   workProfiles = []
+  references = []
   pendingOpCount = 0
   initPromise = null
   unsubscribeBroadcast?.()
@@ -298,6 +317,81 @@ export async function setProjectHomeChat(
     throw new Error('Project home chats need the desktop bridge.')
   }
   const result = await api.setProjectHomeChat(projectId, chatId)
+  adoptAuthoritative(result)
+}
+
+export function listProjectReferences(projectId?: string): ProjectReference[] {
+  void ensureInitialized()
+  const source = projectId
+    ? references.filter((reference) => reference.projectId === projectId)
+    : references
+  return source.map(cloneProjectReference)
+}
+
+/** Reference-library mutations mirror the claim: ASYNC, main-authoritative,
+ * no optimistic twin (they're rare and their validation — project existence,
+ * dedupe — belongs to main). Rejections propagate for the UI. A reference is
+ * catalogue metadata ONLY; nothing here grants or reads anything. */
+export async function addProjectReference(input: {
+  projectId: string
+  kind: ProjectReferenceKind
+  locator: string
+  title?: string
+}): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.applyProjectReferenceOp !== 'function') {
+    throw new Error('Project references need the desktop bridge.')
+  }
+  const result = await api.applyProjectReferenceOp({
+    kind: 'add-reference',
+    id: newProjectReferenceId(),
+    projectId: input.projectId,
+    referenceKind: input.kind,
+    locator: input.locator,
+    ...(input.title !== undefined ? { title: input.title } : {}),
+    now: Date.now()
+  })
+  adoptAuthoritative(result)
+}
+
+export async function updateProjectReference(
+  id: string,
+  patch: { title?: string; contextPolicy?: ProjectReferenceContextPolicy }
+): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.applyProjectReferenceOp !== 'function') {
+    throw new Error('Project references need the desktop bridge.')
+  }
+  const result = await api.applyProjectReferenceOp({
+    kind: 'update-reference',
+    id,
+    patch,
+    now: Date.now()
+  })
+  adoptAuthoritative(result)
+}
+
+export async function removeProjectReference(id: string): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.applyProjectReferenceOp !== 'function') {
+    throw new Error('Project references need the desktop bridge.')
+  }
+  const result = await api.applyProjectReferenceOp({ kind: 'remove-reference', id })
+  adoptAuthoritative(result)
+}
+
+/** Explicit, user-triggered availability check — main runs a single stat and
+ * records the result; browse surfaces only ever show last-known state. */
+export async function verifyProjectReference(id: string): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.verifyProjectReference !== 'function') {
+    throw new Error('Project references need the desktop bridge.')
+  }
+  const result = await api.verifyProjectReference(id)
   adoptAuthoritative(result)
 }
 

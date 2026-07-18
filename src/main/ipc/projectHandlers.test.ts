@@ -26,6 +26,17 @@ function handlerFor(channel: string): RegisteredHandler {
   return handler
 }
 
+const sampleReference = {
+  id: 'ref-1',
+  projectId: 'project-a',
+  kind: 'file' as const,
+  locator: '/repo/spec.md',
+  title: 'spec.md',
+  provenance: { addedBy: 'user' as const, addedAt: 1 },
+  contextPolicy: 'available' as const,
+  updatedAt: 1
+}
+
 function createDeps() {
   const marker = {
     importedAt: 1,
@@ -36,6 +47,18 @@ function createDeps() {
   const deps: ProjectHandlerDeps = {
     getProjects: vi.fn(() => []),
     getWorkProfiles: vi.fn(() => [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 9 }]),
+    getReferences: vi.fn(() => [
+      sampleReference,
+      { ...sampleReference, id: 'ref-url', kind: 'url' as const, locator: 'https://x.dev' }
+    ]),
+    applyReferenceOp: vi.fn(() => ({
+      projects: [],
+      workProfiles: [],
+      references: [],
+      changed: true
+    })),
+    probeReferenceLocator: vi.fn(() => 'ok' as const),
+    pickReferencePath: vi.fn(async () => '/picked/path'),
     getLegacyImportMarker: vi.fn(() => marker),
     applyProjectOp: vi.fn((op: ProjectOp) => ({
       projects: [],
@@ -61,11 +84,14 @@ function createDeps() {
 }
 
 describe('registerProjectHandlers', () => {
-  it('registers the four project channels', () => {
+  it('registers the seven project channels', () => {
     registerProjectHandlers(createDeps().deps)
     expect(handlerFor('projects:snapshot')).toBeTypeOf('function')
     expect(handlerFor('projects:apply-op')).toBeTypeOf('function')
     expect(handlerFor('projects:set-home-chat')).toBeTypeOf('function')
+    expect(handlerFor('projects:reference-op')).toBeTypeOf('function')
+    expect(handlerFor('projects:verify-reference')).toBeTypeOf('function')
+    expect(handlerFor('projects:pick-reference-path')).toBeTypeOf('function')
     expect(handlerFor('projects:import-legacy')).toBeTypeOf('function')
   })
 
@@ -75,18 +101,69 @@ describe('registerProjectHandlers', () => {
     handlerFor('projects:snapshot')({})
     handlerFor('projects:apply-op')({}, { kind: 'delete', projectId: 'p' })
     handlerFor('projects:set-home-chat')({}, 'project-a', 'chat-1')
+    handlerFor('projects:reference-op')({}, { kind: 'remove-reference', id: 'ref-1' })
+    handlerFor('projects:verify-reference')({}, 'ref-1')
+    void handlerFor('projects:pick-reference-path')({}, 'file')
     handlerFor('projects:import-legacy')({}, null)
-    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(4)
+    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(7)
   })
 
-  it('returns projects, work profiles, and the import marker as the snapshot', () => {
+  it('returns projects, work profiles, references, and the import marker as the snapshot', () => {
     const { deps, marker } = createDeps()
     registerProjectHandlers(deps)
     expect(handlerFor('projects:snapshot')({})).toEqual({
       projects: [],
       workProfiles: [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 9 }],
+      references: deps.getReferences(),
       legacyImportMarker: marker
     })
+  })
+
+  it('applies parsed reference ops but refuses renderer-supplied verification records', () => {
+    const { deps } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:reference-op')
+
+    handler({}, { kind: 'remove-reference', id: 'ref-1' })
+    expect(deps.applyReferenceOp).toHaveBeenCalledWith({ kind: 'remove-reference', id: 'ref-1' })
+
+    expect(() => handler({}, { kind: 'not-an-op' })).toThrow(
+      'Malformed project reference operation.'
+    )
+    expect(() =>
+      handler({}, { kind: 'record-reference-verification', id: 'ref-1', status: 'ok', now: 1 })
+    ).toThrow('Reference verification is main-initiated.')
+    expect(deps.applyReferenceOp).toHaveBeenCalledTimes(1)
+  })
+
+  it('verifies local references with a main-side probe and rejects URL kinds', () => {
+    const { deps } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:verify-reference')
+
+    handler({}, 'ref-1')
+    expect(deps.probeReferenceLocator).toHaveBeenCalledWith('file', '/repo/spec.md')
+    expect(deps.applyReferenceOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'record-reference-verification',
+        id: 'ref-1',
+        status: 'ok'
+      })
+    )
+
+    expect(() => handler({}, 'ref-url')).toThrow('URL references cannot be verified automatically.')
+    expect(() => handler({}, 'ref-missing')).toThrow('Reference not found.')
+    expect(() => handler({}, '  ')).toThrow('Reference id is required.')
+  })
+
+  it('passes picker modes through and rejects malformed ones', async () => {
+    const { deps } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:pick-reference-path')
+
+    await expect(handler({}, 'folder')).resolves.toBe('/picked/path')
+    expect(deps.pickReferencePath).toHaveBeenCalledWith('folder')
+    await expect(handler({}, 'everything')).rejects.toThrow('Malformed picker mode.')
   })
 
   it('validates home-chat claims and gates them on chat existence', () => {

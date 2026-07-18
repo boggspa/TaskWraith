@@ -271,6 +271,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:snapshot',
   'projects:apply-op',
   'projects:set-home-chat',
+  'projects:reference-op',
+  'projects:verify-reference',
+  'projects:pick-reference-path',
   'projects:import-legacy',
 
   // Global settings, runtime profiles, encrypted secrets, and handoff records.

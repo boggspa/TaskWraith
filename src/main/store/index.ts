@@ -107,7 +107,13 @@ import {
   type ProjectRegistryMutationResult,
   type ProjectRegistryState
 } from './ProjectRegistry'
-import type { Project, ProjectOp, ProjectWorkProfile } from '../../shared/projects'
+import type {
+  Project,
+  ProjectOp,
+  ProjectReference,
+  ProjectReferenceOp,
+  ProjectWorkProfile
+} from '../../shared/projects'
 import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -3855,8 +3861,16 @@ export class AppStore {
     return projectRegistry.getWorkProfiles()
   }
 
+  static getProjectReferences(): ProjectReference[] {
+    return projectRegistry.getReferences()
+  }
+
   static applyProjectOp(op: ProjectOp): ProjectRegistryMutationResult {
     return projectRegistry.applyOp(op)
+  }
+
+  static applyProjectReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult {
+    return projectRegistry.applyReferenceOp(op)
   }
 
   static setProjectHomeChat(
