@@ -115,8 +115,9 @@ function ExecutionStackAboveRowImpl({
               type="button"
               className="execution-stack-action"
               onClick={() => onAddToStack(projection.runId)}
+              title="Choose this Stack and move focus to the composer"
             >
-              Add to Stack
+              Write next step
             </button>
           )}
           {onSaveGraph && (

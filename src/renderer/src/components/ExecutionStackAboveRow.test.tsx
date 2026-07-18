@@ -111,7 +111,8 @@ describe('ExecutionStackAboveRow', () => {
       />
     )
 
-    expect(html).toContain('Add to Stack')
+    expect(html).toContain('Write next step')
+    expect(html).toContain('Choose this Stack and move focus to the composer')
     expect(html).toContain('Save graph')
     expect(html).toContain('Open map')
     expect(html.match(/Cancel remaining Stack at planned step/g)).toHaveLength(1)

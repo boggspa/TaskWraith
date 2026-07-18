@@ -1,4 +1,4 @@
-import { useMemo, useState, type JSX } from 'react'
+import { useEffect, useMemo, useRef, useState, type JSX } from 'react'
 import type { ExecutionStepDefinition } from '../../../main/executionGraph/ExecutionGraphModel'
 import type {
   ExecutionGraphProjection,
@@ -229,6 +229,10 @@ export function ExecutionMapView({
   onSaveGraph
 }: ExecutionMapViewProps): JSX.Element {
   const [internalSelectedStepId, setInternalSelectedStepId] = useState<string | null>(null)
+  const mapRef = useRef<HTMLElement>(null)
+  useEffect(() => {
+    mapRef.current?.focus()
+  }, [projection?.runId])
   const selectedStep = useMemo(() => {
     if (!projection) return null
     const preferredId = selectedStepId ?? internalSelectedStepId
@@ -242,7 +246,12 @@ export function ExecutionMapView({
 
   if (!projection) {
     return (
-      <main className="execution-map-view is-empty" aria-label="Execution Map">
+      <main
+        ref={mapRef}
+        className="execution-map-view is-empty"
+        aria-label="Execution Map"
+        tabIndex={-1}
+      >
         {onBack && (
           <button type="button" className="execution-map-back" onClick={onBack}>
             Back
@@ -267,9 +276,11 @@ export function ExecutionMapView({
 
   return (
     <main
+      ref={mapRef}
       className="execution-map-view"
       aria-label={`${projection.title} Execution Map`}
       data-execution-run-id={projection.runId}
+      tabIndex={-1}
     >
       <header className="execution-map-header">
         <span className="execution-map-header-leading">
