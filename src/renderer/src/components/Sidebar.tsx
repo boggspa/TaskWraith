@@ -193,6 +193,8 @@ interface SidebarProps {
    */
   onPrimarySurfaceSelect?: (surface: SidebarPrimarySurface) => void
   onSelectChat: (chat: ChatRecord) => void
+  /** Start Project Home for an unhomed project (Work panel pass-through). */
+  onStartProjectHome?: (projectId: string) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
@@ -2593,6 +2595,7 @@ export function Sidebar({
   ensembleModeEnabled = true,
   onPrimarySurfaceSelect,
   onSelectChat,
+  onStartProjectHome,
   onOpenChatInSidePanel,
   onOpenInMultiview,
   onOpenSettings,
@@ -4439,6 +4442,7 @@ export function Sidebar({
                 searchQuery={sidebarSearchQuery}
                 isSearchActive={isSidebarSearchActive}
                 onSelectChat={onSelectChat}
+                onStartProjectHome={onStartProjectHome}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
             </div>

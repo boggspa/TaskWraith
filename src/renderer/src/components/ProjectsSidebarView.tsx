@@ -46,6 +46,9 @@ interface ProjectsSidebarViewProps {
   searchQuery: string
   isSearchActive: boolean
   onSelectChat: (chat: ChatRecord) => void
+  /** Start a Project Home for an unhomed project: the host creates/focuses a
+   * pristine General draft and auto-claims it on its first committed send. */
+  onStartProjectHome?: (projectId: string) => void
   onSearchResultCountChange?: (count: number) => void
 }
 
@@ -204,6 +207,7 @@ export function ProjectsSidebarView({
   searchQuery,
   isSearchActive,
   onSelectChat,
+  onStartProjectHome,
   onSearchResultCountChange
 }: ProjectsSidebarViewProps): JSX.Element {
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
@@ -634,7 +638,7 @@ export function ProjectsSidebarView({
             </span>
           </button>
           <span className="sidebar-project-actions">
-            {openableHomeChat && (
+            {openableHomeChat ? (
               <button
                 type="button"
                 className="sidebar-project-icon-button sidebar-project-open-home"
@@ -647,7 +651,20 @@ export function ProjectsSidebarView({
               >
                 ⌂
               </button>
-            )}
+            ) : onStartProjectHome ? (
+              <button
+                type="button"
+                className="sidebar-project-icon-button sidebar-project-open-home"
+                onClick={(event) => {
+                  event.stopPropagation()
+                  onStartProjectHome(project.id)
+                }}
+                title="Start Project Home"
+                aria-label={`Start ${project.name} Project Home`}
+              >
+                ⌂
+              </button>
+            ) : null}
             <button
               type="button"
               className="sidebar-project-icon-button"

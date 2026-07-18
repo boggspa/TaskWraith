@@ -140,6 +140,23 @@ describe('ProjectsSidebarView', () => {
     expect(html).toContain('aria-label="Open Alpha Project Home"')
   })
 
+  it('offers Start Project Home on unhomed projects when the host provides the handler', () => {
+    seedStore([projectRecord('project-a', 'Alpha', [])], [])
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        onStartProjectHome={() => undefined}
+      />
+    )
+    expect(html).toContain('title="Start Project Home"')
+    expect(html).toContain('aria-label="Start Alpha Project Home"')
+    expect(html).not.toContain('title="Open Project Home"')
+  })
+
   it('omits Open Project Home when the project has no claim or the home chat is unavailable', () => {
     seedStore([projectRecord('project-a', 'Alpha', ['chat-other'])], [])
     const noClaim = renderToStaticMarkup(

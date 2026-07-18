@@ -98,6 +98,7 @@ type MainAppLayoutSidebarProps = {
   handleSettingsChange: SettingsPanelUpdateHandler
   handleSidebarPrimarySurfaceSelect: NonNullable<SidebarProps['onPrimarySurfaceSelect']>
   handleSidebarQuickUpdate: NonNullable<SidebarProps['onQuickUpdate']>
+  handleStartProjectHome: NonNullable<SidebarProps['onStartProjectHome']>
   handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
   handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>
   handleTogglePinChat: NonNullable<SidebarProps['onTogglePinChat']>

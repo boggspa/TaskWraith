@@ -624,6 +624,8 @@ import {
   type RightDockTab
 } from './lib/rightDockState'
 import { readDockSurface, writeDockSurface } from './lib/rightDockPersistence'
+import { setProjectHomeChat } from './lib/projectsStore'
+import { planPendingHomeClaims } from './lib/projectHomeClaims'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
@@ -8733,6 +8735,35 @@ function App(): React.JSX.Element {
     reapAbandonedChatsAfterCreate(newChat.appChatId)
     return newChat
   }
+
+  /**
+   * "Start Project Home" (Work panel, unhomed projects): an ORDINARY pristine
+   * General draft via the create-first machinery, plus an EPHEMERAL pending
+   * claim (chatId → projectId, renderer memory only — never a stored flag, so
+   * the reaper/reuse/rebind gates keep treating the draft as any other draft).
+   * The effect below fires the real claim on the draft's first committed
+   * send; an abandoned draft is simply reaped and its entry pruned.
+   */
+  const pendingHomeClaimsRef = useRef<Map<string, string>>(new Map())
+  const handleStartProjectHome = async (projectId: string): Promise<void> => {
+    const chat = await handleNewSingleGlobalChat()
+    if (chat) pendingHomeClaimsRef.current.set(chat.appChatId, projectId)
+  }
+  useEffect(() => {
+    const pending = pendingHomeClaimsRef.current
+    if (pending.size === 0) return
+    const { claims, prune } = planPendingHomeClaims(chats, pending)
+    for (const chatId of prune) pending.delete(chatId)
+    for (const claim of claims) {
+      // One-shot: drop the entry BEFORE the async claim so a re-render can
+      // never double-fire it. A main-side rejection (project deleted, chat
+      // already another project's home) leaves an ordinary chat behind.
+      pending.delete(claim.chatId)
+      void setProjectHomeChat(claim.projectId, claim.chatId).catch((error) => {
+        console.error('Project home auto-claim failed', error)
+      })
+    }
+  }, [chats])
 
   const handleNewGlobalEnsembleChat = async (): Promise<ChatRecord | null> => {
     setActiveWorkspaceBoardId(null)
@@ -27570,6 +27601,7 @@ function App(): React.JSX.Element {
     handleSideRun,
     handleSideToggleFastMode,
     handleSidebarPrimarySurfaceSelect,
+    handleStartProjectHome,
     handleSidebarQuickUpdate,
     handleStartSharedChat,
     handleSteerToQueuedMessage,
