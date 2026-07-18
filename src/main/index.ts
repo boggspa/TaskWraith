@@ -37762,6 +37762,10 @@ if (isGeminiMcpBridgeProcess) {
         const repository = executionGraphRepositoryRef
         const coordinator = executionGraphCoordinatorRef
         if (!repository || !coordinator) {
+          const storageRoot = join(app.getPath('userData'), 'execution-graph')
+          if (!ExecutionGraphRepository.storageRootMentionsRootChat(storageRoot, chatId)) {
+            return
+          }
           throw new Error(
             'Execution-graph history authority is unavailable; chat deletion was stopped.'
           )
@@ -37775,10 +37779,15 @@ if (isGeminiMcpBridgeProcess) {
           await clearExecutionGraphHistory({ repository, coordinator }, workspaceId)
           return
         }
+        const storageRoot = join(app.getPath('userData'), 'execution-graph')
+        if (
+          workspaceId &&
+          !ExecutionGraphRepository.storageRootMentionsWorkspace(storageRoot, workspaceId)
+        ) {
+          return
+        }
         if (!workspaceId && !repository && !coordinator) {
-          ExecutionGraphRepository.clearStorageRootHistory(
-            join(app.getPath('userData'), 'execution-graph')
-          )
+          ExecutionGraphRepository.clearStorageRootHistory(storageRoot)
           return
         }
         throw new Error(

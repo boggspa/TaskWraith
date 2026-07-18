@@ -61,6 +61,18 @@ describe('execution graph main integration', () => {
     expect(ordinaryPersistence).toBeGreaterThan(anchorWarning)
   })
 
+  it('lets unrelated chat deletion bypass unavailable graph authority', () => {
+    const handlers = between('registerChatHandlers({', 'registerUsageRatesHandlers({')
+    const presenceCheck = handlers.indexOf('storageRootMentionsRootChat(storageRoot, chatId)')
+    const unavailableError = handlers.indexOf(
+      'Execution-graph history authority is unavailable; chat deletion was stopped.'
+    )
+
+    expect(presenceCheck).toBeGreaterThanOrEqual(0)
+    expect(unavailableError).toBeGreaterThan(presenceCheck)
+    expect(handlers).toContain('storageRootMentionsWorkspace(storageRoot, workspaceId)')
+  })
+
   it('delivers committed predecessor results as untrusted data before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',
