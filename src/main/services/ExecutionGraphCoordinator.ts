@@ -103,6 +103,11 @@ export type ExecutionGraphAnchorRunStatus =
 
 export type ExecutionGraphRunSessionDisposition = 'accepted' | 'rejected' | 'unclaimed'
 
+export interface ExecutionGraphRecoveryDiagnostic {
+  readonly executionId: string
+  readonly message: string
+}
+
 export interface ExecutionGraphCoordinatorRepository {
   createExecution: ExecutionGraphRepository['createExecution']
   appendExecutionEvents: ExecutionGraphRepository['appendExecutionEvents']
@@ -982,134 +987,145 @@ export class ExecutionGraphCoordinator {
     return this.requireExecution(executionId)
   }
 
-  recover(): void {
+  recover(): readonly ExecutionGraphRecoveryDiagnostic[] {
     const allExecutions = this.listExecutions({ includeTerminal: true })
+    const diagnostics: ExecutionGraphRecoveryDiagnostic[] = []
     for (const projection of allExecutions) {
-      this.reconcileTerminalAttemptQueueRows(projection)
-    }
-    // The graph ledger is authoritative. If it is already terminal, no stale
-    // queued/paused transport row may remain leaseable after restart.
-    for (const projection of allExecutions.filter((candidate) =>
-      isExecutionRunTerminal(candidate.state)
-    )) {
-      this.containTerminalExecutionQueueRows(projection)
-    }
-
-    for (const projection of this.listExecutions({ includeTerminal: false })) {
-      if (projection.integrity !== 'valid' || projection.baseRevisionMissing) continue
-
-      if (this.isWaitingForAnchor(projection)) {
-        this.recoverAnchor(projection)
-        continue
+      try {
+        this.reconcileTerminalAttemptQueueRows(projection)
+        // The graph ledger is authoritative. If it is already terminal, no
+        // stale queued/paused transport row may remain leaseable after restart.
+        if (isExecutionRunTerminal(projection.state)) {
+          this.containTerminalExecutionQueueRows(projection)
+          continue
+        }
+        this.recoverExecution(projection)
+      } catch (error) {
+        diagnostics.push(
+          Object.freeze({
+            executionId: projection.executionId,
+            message: String(error instanceof Error ? error.message : error).slice(0, 2_048)
+          })
+        )
       }
+    }
+    return Object.freeze(diagnostics)
+  }
 
-      const incompleteAttempt = Object.values(projection.attempts).find(
-        (attempt) => !isStepAttemptTerminal(attempt.state) && !attempt.providerRunRef
+  private recoverExecution(projection: ExecutionRunProjection): void {
+    if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
+
+    if (this.isWaitingForAnchor(projection)) {
+      this.recoverAnchor(projection)
+      return
+    }
+
+    const incompleteAttempt = Object.values(projection.attempts).find(
+      (attempt) => !isStepAttemptTerminal(attempt.state) && !attempt.providerRunRef
+    )
+    if (incompleteAttempt) {
+      this.requireAction(
+        projection,
+        incompleteAttempt,
+        'The durable claim is incomplete and has no exact provider run identity.'
       )
-      if (incompleteAttempt) {
+      return
+    }
+
+    const incompleteActivation = Object.values(projection.activations).find((activation) => {
+      if (
+        activation.state !== 'claimed' &&
+        activation.state !== 'queued' &&
+        activation.state !== 'running'
+      ) {
+        return false
+      }
+      const attempt = latestAttemptForActivation(projection, activation)
+      return !attempt || isStepAttemptTerminal(attempt.state) || !attempt.providerRunRef
+    })
+    if (incompleteActivation) {
+      this.requireActivationAction(
+        projection,
+        incompleteActivation,
+        'The activation claim is incomplete and cannot be correlated to a usable attempt.'
+      )
+      return
+    }
+
+    let changed = false
+    for (const attempt of Object.values(projection.attempts)) {
+      if (isStepAttemptTerminal(attempt.state)) continue
+      const providerRunRef = attempt.providerRunRef
+      if (!providerRunRef) {
         this.requireAction(
           projection,
-          incompleteAttempt,
+          attempt,
           'The durable claim is incomplete and has no exact provider run identity.'
         )
-        continue
+        changed = true
+        break
       }
-
-      const incompleteActivation = Object.values(projection.activations).find((activation) => {
-        if (
-          activation.state !== 'claimed' &&
-          activation.state !== 'queued' &&
-          activation.state !== 'running'
-        ) {
-          return false
-        }
-        const attempt = latestAttemptForActivation(projection, activation)
-        return !attempt || isStepAttemptTerminal(attempt.state) || !attempt.providerRunRef
-      })
-      if (incompleteActivation) {
-        this.requireActivationAction(
+      const job = this.deps.getQueueJob(providerRunRef)
+      if (!job) {
+        this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
+        changed = true
+        break
+      }
+      if (!this.queueJobOwnsAttempt(projection, attempt, job)) {
+        this.requireAction(
           projection,
-          incompleteActivation,
-          'The activation claim is incomplete and cannot be correlated to a usable attempt.'
+          attempt,
+          'The claimed queue job no longer carries this execution attempt authority.'
         )
-        continue
+        changed = true
+        break
       }
-
-      let changed = false
-      for (const attempt of Object.values(projection.attempts)) {
-        if (isStepAttemptTerminal(attempt.state)) continue
-        const providerRunRef = attempt.providerRunRef
-        if (!providerRunRef) {
-          this.requireAction(
-            projection,
-            attempt,
-            'The durable claim is incomplete and has no exact provider run identity.'
-          )
-          changed = true
-          break
-        }
-        const job = this.deps.getQueueJob(providerRunRef)
-        if (!job) {
-          this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
-          changed = true
-          break
-        }
-        if (!this.queueJobOwnsAttempt(projection, attempt, job)) {
-          this.requireAction(
-            projection,
-            attempt,
-            'The claimed queue job no longer carries this execution attempt authority.'
-          )
-          changed = true
-          break
-        }
-        const recoveryUncertainty = startupRecoveryUncertainty(job)
-        if (recoveryUncertainty) {
-          this.requireAction(projection, attempt, recoveryUncertainty)
-          changed = true
-          break
-        }
-        if (job.status === 'paused' && attempt.state === 'claimed') {
-          const queued = this.deps.transitionQueueJob(job.runId, 'queued', {
-            statusReason: 'Recovered graph claim; dependency is still satisfied.'
-          })
-          if (queued?.status === 'queued') {
-            this.appendAttemptQueued(this.requireExecution(projection.executionId), attempt)
-            changed = true
-          }
-          break
-        }
-        if (job.status === 'queued' && attempt.state === 'claimed') {
-          this.appendAttemptQueued(projection, attempt)
-          changed = true
-          break
-        }
-        if (job.status === 'queued' && attempt.state === 'queued') {
-          this.deps.onAttemptQueued?.(job.runId)
-          changed = true
-          break
-        }
-        if (TERMINAL_QUEUE_STATUSES.has(job.status)) {
-          this.requireAction(
-            projection,
-            attempt,
-            `Queue status "${job.status}" is not authoritative provider terminal evidence after restart.`
-          )
-          changed = true
-          break
-        }
-        if (job.status !== 'queued') {
-          this.requireAction(
-            projection,
-            attempt,
-            'Provider dispatch may have crossed the side-effect boundary before restart.'
-          )
-          changed = true
-          break
-        }
+      const recoveryUncertainty = startupRecoveryUncertainty(job)
+      if (recoveryUncertainty) {
+        this.requireAction(projection, attempt, recoveryUncertainty)
+        changed = true
+        break
       }
-      if (!changed) this.drainOne(projection.executionId)
+      if (job.status === 'paused' && attempt.state === 'claimed') {
+        const queued = this.deps.transitionQueueJob(job.runId, 'queued', {
+          statusReason: 'Recovered graph claim; dependency is still satisfied.'
+        })
+        if (queued?.status === 'queued') {
+          this.appendAttemptQueued(this.requireExecution(projection.executionId), attempt)
+          changed = true
+        }
+        break
+      }
+      if (job.status === 'queued' && attempt.state === 'claimed') {
+        this.appendAttemptQueued(projection, attempt)
+        changed = true
+        break
+      }
+      if (job.status === 'queued' && attempt.state === 'queued') {
+        this.deps.onAttemptQueued?.(job.runId)
+        changed = true
+        break
+      }
+      if (TERMINAL_QUEUE_STATUSES.has(job.status)) {
+        this.requireAction(
+          projection,
+          attempt,
+          `Queue status "${job.status}" is not authoritative provider terminal evidence after restart.`
+        )
+        changed = true
+        break
+      }
+      if (job.status !== 'queued') {
+        this.requireAction(
+          projection,
+          attempt,
+          'Provider dispatch may have crossed the side-effect boundary before restart.'
+        )
+        changed = true
+        break
+      }
     }
+    if (!changed) this.drainOne(projection.executionId)
   }
 
   private drainOne(executionId: string): void {

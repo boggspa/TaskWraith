@@ -7,6 +7,7 @@ import { recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import { ExecutionGraphRepository } from '../executionGraph/ExecutionGraphRepository'
 import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionGraphModel'
+import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
 import { buildExecutionGraphAttemptTerminalReceipt } from '../executionGraph/ExecutionGraphAttemptResult'
 import {
   ExecutionGraphCoordinator,
@@ -831,6 +832,39 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
     expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
+  })
+
+  it('continues recovering healthy executions after one execution throws', () => {
+    const h = harness()
+    const broken = h.coordinator.appendStackStep(h.input())
+    const healthy = h.coordinator.appendStackStep(
+      h.input({ rootChatId: 'chat-two', title: 'Second Stack' })
+    )
+    const healthyRunId = providerRunId(healthy)
+    h.jobs.set(healthyRunId, { ...h.jobs.get(healthyRunId)!, status: 'completed' })
+
+    const internals = h.coordinator as unknown as {
+      reconcileTerminalAttemptQueueRows: (projection: ExecutionRunProjection) => void
+    }
+    const original = internals.reconcileTerminalAttemptQueueRows.bind(h.coordinator)
+    vi.spyOn(internals, 'reconcileTerminalAttemptQueueRows').mockImplementation((projection) => {
+      if (projection.executionId === broken.executionId) {
+        throw new Error('one execution is unreadable')
+      }
+      original(projection)
+    })
+
+    const diagnostics = h.coordinator.recover()
+
+    expect(diagnostics).toEqual([
+      {
+        executionId: broken.executionId,
+        message: 'one execution is unreadable'
+      }
+    ])
+    expect(h.coordinator.getExecution(healthy.executionId)).toMatchObject({
+      state: 'requires_action'
+    })
   })
 
   it.each(['starting', 'active', 'cancelling'] as const)(
