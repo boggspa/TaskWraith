@@ -166,6 +166,24 @@ describe('RunManager', () => {
     expect(manager.get('run-1')?.status).toBe('failed')
   })
 
+  it('exposes a terminal claim without publishing a terminal session', () => {
+    const manager = new RunManager()
+    const events: string[] = []
+    manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
+    manager.create({ runId: 'run-1', provider: 'codex', status: 'running' })
+
+    expect(manager.claimTerminalStatus('run-1', 'cancelled')?.status).toBe('running')
+
+    expect(manager.getClaimedTerminalStatus('run-1')).toBe('cancelled')
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(events).toEqual(['created:running'])
+
+    manager.finish('run-1', 'failed')
+
+    expect(manager.get('run-1')?.status).toBe('cancelled')
+    expect(manager.getClaimedTerminalStatus('run-1')).toBeUndefined()
+  })
+
   it.each(['completed', 'failed', 'cancelled'] as const)(
     'makes %s sessions absorbing and contains late resources',
     (terminalStatus) => {

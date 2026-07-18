@@ -85,7 +85,10 @@ export class RunManager<TState = unknown> {
   private runIdsByProvider = new Map<ProviderId, Set<string>>()
   private runIdByProviderSession = new Map<string, string>()
   private approvalIdToRunId = new Map<string, string>()
-  private terminalStatusClaims = new Map<string, RunSessionStatus>()
+  private terminalStatusClaims = new Map<
+    string,
+    Extract<RunSessionStatus, 'failed' | 'cancelled'>
+  >()
   private listeners = new Set<(event: RunSessionChangeEvent<TState>) => void>()
 
   onChange(listener: (event: RunSessionChangeEvent<TState>) => void): () => void {
@@ -305,6 +308,12 @@ export class RunManager<TState = unknown> {
     if (existing && existing !== status) return undefined
     this.terminalStatusClaims.set(runId, status)
     return session
+  }
+
+  getClaimedTerminalStatus(
+    runId: string | undefined
+  ): Extract<RunSessionStatus, 'failed' | 'cancelled'> | undefined {
+    return runId ? this.terminalStatusClaims.get(runId) : undefined
   }
 
   finish(runId: string | undefined, status: RunSessionStatus): RunSession<TState> | undefined {
