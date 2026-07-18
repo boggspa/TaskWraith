@@ -121,6 +121,25 @@ describe('ChatUpdateDeliveryCoordinator', () => {
     expect(coordinator.statsForTarget(sink.id).inFlight).toBe(1)
   })
 
+  it('releases an unacknowledged delivery and resyncs the latest pending chat', () => {
+    vi.useFakeTimers()
+    const sink = target()
+    const coordinator = new ChatUpdateDeliveryCoordinator({
+      minDeliveryIntervalMs: 0,
+      ackTimeoutMs: 250
+    })
+    coordinator.enqueue(sink, chat(1, ['one']))
+    coordinator.enqueue(sink, chat(2, ['latest']))
+
+    vi.advanceTimersByTime(250)
+
+    expect(sink.deliveries).toHaveLength(2)
+    expect(sink.deliveries[1].kind).toBe('snapshot')
+    if (sink.deliveries[1].kind !== 'snapshot') throw new Error('Expected snapshot')
+    expect(sink.deliveries[1].chat.updatedAt).toBe(2)
+    vi.useRealTimers()
+  })
+
   it('throttles acknowledged delivery bursts while retaining the latest pending chat', () => {
     vi.useFakeTimers()
     let now = 1_000

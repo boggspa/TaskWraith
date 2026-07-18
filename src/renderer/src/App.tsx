@@ -11281,13 +11281,23 @@ function App(): React.JSX.Element {
       addIpcSubscription(
         window.api.onChatUpdated((delivery) => {
           const baselines = chatUpdateBaselineByIdRef.current
-          let wasApplied = false
-          window.requestAnimationFrame(() => {
+          const acknowledge = (wasApplied: boolean): void => {
             if (!wasApplied) baselines.delete(delivery.chatId)
-            window.api.ackChatUpdated({ deliveryId: delivery.deliveryId, applied: wasApplied })
-          })
+            // ACK means the revision was validated and accepted into renderer
+            // state. Waiting for requestAnimationFrame made progress depend on
+            // paint: under GC/render pressure (or a throttled hidden window),
+            // the frame never arrived, main retained one in-flight delivery,
+            // and every later transcript/tool patch was intentionally withheld.
+            // Main still caps accepted traffic at 10 Hz and keeps only latest.
+            if (typeof window.api.ackChatUpdated === 'function') {
+              window.api.ackChatUpdated({ deliveryId: delivery.deliveryId, applied: wasApplied })
+            }
+          }
           const applied = applyChatUpdateDelivery(delivery, baselines.get(delivery.chatId))
-          if (!applied.ok) return
+          if (!applied.ok) {
+            acknowledge(false)
+            return
+          }
           const chat = applied.baseline.chat
           // Delete + set makes insertion order an LRU. Bounding this map avoids
           // retaining full transcripts for every chat visited during a long app
@@ -11303,7 +11313,7 @@ function App(): React.JSX.Element {
             clearedChatIdsRef.current.has(chat.appChatId) &&
             !chatByIdRef.current.has(chat.appChatId)
           ) {
-            wasApplied = true
+            acknowledge(true)
             return
           }
         // Stream-safe merge: main may broadcast a disk-stale `ChatRecord`
@@ -11493,7 +11503,7 @@ function App(): React.JSX.Element {
             setIsThinking(true)
           }
         }
-          wasApplied = true
+        acknowledge(true)
         })
       )
     }

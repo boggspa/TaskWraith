@@ -30,6 +30,7 @@ interface TargetChatState {
   inFlight?: InFlightChatUpdate
   pending?: PendingChatUpdate
   timer?: ReturnType<typeof setTimeout>
+  ackTimer?: ReturnType<typeof setTimeout>
   consecutiveRejects: number
   lastSentAt: number
   lastTouchedAt: number
@@ -45,6 +46,8 @@ export interface ChatUpdateDeliveryStats {
 export interface ChatUpdateDeliveryCoordinatorOptions {
   /** Caps deliveries per target/chat even when producers and ACKs are faster. */
   minDeliveryIntervalMs?: number
+  /** Releases a delivery if an old/mismatched preload never ACKs it. */
+  ackTimeoutMs?: number
   /** Bounds acknowledged baselines retained for patch generation per renderer. */
   maxTrackedChatsPerTarget?: number
   now?: () => number
@@ -63,6 +66,7 @@ export class ChatUpdateDeliveryCoordinator {
   private readonly statesByTarget = new Map<number, Map<string, TargetChatState>>()
   private readonly deliveryIndex = new Map<string, { targetId: number; chatId: string }>()
   private readonly minDeliveryIntervalMs: number
+  private readonly ackTimeoutMs: number
   private readonly maxTrackedChatsPerTarget: number
   private readonly now: () => number
   private readonly setTimer: (
@@ -74,6 +78,7 @@ export class ChatUpdateDeliveryCoordinator {
 
   constructor(options: ChatUpdateDeliveryCoordinatorOptions = {}) {
     this.minDeliveryIntervalMs = Math.max(0, options.minDeliveryIntervalMs ?? 100)
+    this.ackTimeoutMs = Math.max(0, options.ackTimeoutMs ?? 5_000)
     this.maxTrackedChatsPerTarget = Math.max(2, options.maxTrackedChatsPerTarget ?? 24)
     this.now = options.now ?? Date.now
     this.setTimer = options.setTimer ?? ((callback, delayMs) => setTimeout(callback, delayMs))
@@ -113,6 +118,10 @@ export class ChatUpdateDeliveryCoordinator {
     if (!state || !inFlight || inFlight.deliveryId !== ack.deliveryId) return false
 
     this.deliveryIndex.delete(ack.deliveryId)
+    if (state.ackTimer) {
+      this.clearTimer(state.ackTimer)
+      state.ackTimer = undefined
+    }
     state.inFlight = undefined
     state.lastTouchedAt = this.now()
     if (ack.applied) {
@@ -187,6 +196,21 @@ export class ChatUpdateDeliveryCoordinator {
     this.deliveryIndex.set(deliveryId, { targetId: state.target.id, chatId: state.chatId })
     try {
       state.target.send(CHAT_UPDATE_CHANNEL, delivery)
+      if (this.ackTimeoutMs > 0) {
+        state.ackTimer = this.setTimer(() => {
+          state.ackTimer = undefined
+          if (state.inFlight?.deliveryId !== deliveryId) return
+          this.deliveryIndex.delete(deliveryId)
+          state.inFlight = undefined
+          // A renderer that cannot ACK cannot share a revision baseline. The
+          // newest pending update will therefore repair itself as a snapshot.
+          state.acknowledged = undefined
+          state.lastTouchedAt = this.now()
+          this.maybeSend(state)
+          this.pruneTarget(state.target.id)
+        }, this.ackTimeoutMs)
+        ;(state.ackTimer as ReturnType<typeof setTimeout> & { unref?: () => void }).unref?.()
+      }
     } catch {
       this.clearTarget(state.target.id)
     }
@@ -208,6 +232,7 @@ export class ChatUpdateDeliveryCoordinator {
 
   private disposeState(state: TargetChatState): void {
     if (state.timer) this.clearTimer(state.timer)
+    if (state.ackTimer) this.clearTimer(state.ackTimer)
     if (state.inFlight) this.deliveryIndex.delete(state.inFlight.deliveryId)
   }
 }
