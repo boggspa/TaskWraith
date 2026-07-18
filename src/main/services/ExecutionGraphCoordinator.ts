@@ -762,6 +762,7 @@ export class ExecutionGraphCoordinator {
   private async cancelExecutionOnce(executionId: string, reason: string): Promise<void> {
     let projection = this.requireExecution(executionId)
     if (isExecutionRunTerminal(projection.state)) return
+    const startedInRequiresAction = projection.state === 'requires_action'
     const context = {
       terminalOutcomes: new Map<
         string,
@@ -923,7 +924,11 @@ export class ExecutionGraphCoordinator {
     }
 
     projection = this.requireExecution(executionId)
-    if (cleanupFailed || projection.state === 'requires_action') {
+    if (
+      cleanupFailed ||
+      (projection.state === 'requires_action' &&
+        (!startedInRequiresAction || !this.requiresActionCancellationIsContained(projection)))
+    ) {
       this.cancellationContexts.delete(executionId)
       return
     }
@@ -1423,6 +1428,36 @@ export class ExecutionGraphCoordinator {
       binding.runTemplateRef === step.agent.runTemplateRef &&
       binding.permissionCeilingAuthorityDigest === projection.permissionCeilingRef.authorityDigest
     )
+  }
+
+  private requiresActionCancellationIsContained(
+    projection: ExecutionRunProjection
+  ): boolean {
+    for (const activation of Object.values(projection.activations)) {
+      if (isStepActivationTerminal(activation.state)) continue
+      const attempt = latestAttemptForActivation(projection, activation)
+      if (!attempt) {
+        if (
+          activation.state === 'dormant' ||
+          activation.state === 'ready' ||
+          activation.state === 'requires_action'
+        ) {
+          continue
+        }
+        return false
+      }
+      const runId = attempt.providerRunRef
+      const job = runId ? this.deps.getQueueJob(runId) : null
+      if (
+        !runId ||
+        !job ||
+        !TERMINAL_QUEUE_STATUSES.has(job.status) ||
+        !this.queueJobOwnsAttempt(projection, attempt, job)
+      ) {
+        return false
+      }
+    }
+    return true
   }
 
   private attemptResultBinding(

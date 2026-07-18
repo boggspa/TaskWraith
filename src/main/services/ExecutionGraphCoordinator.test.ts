@@ -644,7 +644,29 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     })
   })
 
-  it('persists graph attention when pre-session queue containment cannot be confirmed', () => {
+  it('terminalizes a durably contained requires-action Stack when the user cancels it', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'starting' })
+    h.coordinator.recordPreSessionDispatchFailure(
+      runId,
+      'Composer rejected the frozen graph request.'
+    )
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    const cancelled = h.coordinator.getExecution(started.executionId)!
+    expect(cancelled.state).toBe('cancelled')
+    expect(Object.values(cancelled.activations)[0].state).toBe('cancelled')
+    expect(Object.values(cancelled.attempts)[0].state).toBe('interrupted')
+    expect(h.jobs.get(runId)?.status).toBe('failed')
+
+    const replacement = h.coordinator.appendStackStep(h.input())
+    expect(replacement.executionId).not.toBe(started.executionId)
+  })
+
+  it('persists graph attention when pre-session queue containment cannot be confirmed', async () => {
     const h = harness()
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
@@ -658,6 +680,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const attention = h.coordinator.getExecution(started.executionId)!
     expect(attention.state).toBe('requires_action')
     expect(Object.values(attention.attempts)[0].state).toBe('interrupted')
+
+    await h.coordinator.cancelExecution(started.executionId)
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('requires_action')
+    expect(h.jobs.get(runId)?.status).toBe('starting')
   })
 
   it('rejects pre-session failure reconciliation for a mismatched queue binding', () => {
