@@ -119,6 +119,8 @@ export interface ComposerInput {
   handoffSourceRunId?: string
   discordContextSnapshots?: DiscordContextSnapshot[]
   chatSnapshot?: ChatRecord
+  /** Main-only graph lane: no transcript, goal, compaction, or native-session inheritance. */
+  contextIsolation?: 'execution_graph'
   /** Send the prompt to the provider verbatim (no context/preamble blocks) —
    * provider-native slash dispatches only (see ComposeRunPromptInput). */
   verbatimPrompt?: boolean
@@ -219,10 +221,23 @@ export class ComposerService {
   composeRun(input: ComposerInput): ComposerRunPayload {
     const chatId = requireNonEmptyString(input?.chatId, 'Chat id')
     const storedChat = this.deps.appStore.getChat(chatId)
-    const chat = input.chatSnapshot || storedChat
-    if (!chat) {
+    const sourceChat = input.chatSnapshot || storedChat
+    if (!sourceChat) {
       throw new Error(`Chat was not found: ${chatId}`)
     }
+    const graphContextIsolated = input.contextIsolation === 'execution_graph'
+    const chat: ChatRecord = graphContextIsolated
+      ? {
+          ...sourceChat,
+          messages: [],
+          runs: [],
+          linkedProviderSessionId: undefined,
+          linkedGeminiSessionId: undefined,
+          taskWraithMcpProfileReceipt: undefined,
+          activeGoal: undefined,
+          contextCompactionSummary: undefined
+        }
+      : sourceChat
     const trustedApprovalChat: ChatRecord = storedChat || {
       ...chat,
       providerMetadata: {},
@@ -445,7 +460,7 @@ export class ComposerService {
     const chatOllamaRunProfile = isOllamaRunProfileId(rawChatOllamaRunProfile)
       ? rawChatOllamaRunProfile
       : undefined
-    const mcpProfileOwner = storedChat || chat
+    const mcpProfileOwner = graphContextIsolated ? chat : storedChat || chat
     const claudePinnedMcpReceipt =
       provider === 'claude' &&
       isTaskWraithMcpProfileReceiptForSession(mcpProfileOwner.taskWraithMcpProfileReceipt, {
@@ -485,7 +500,7 @@ export class ComposerService {
       contextCompactionSummary: chat.contextCompactionSummary || null,
       finalPrompt: contextualFinalPrompt,
       messages: chat.messages || [],
-      chatContextTurns: settings.chatContextTurns,
+      chatContextTurns: graphContextIsolated ? 0 : settings.chatContextTurns,
       resumeSessionId: resumeDecision.sessionId || undefined,
       lastCompletedCodexModel,
       nextModel: requestedModel,

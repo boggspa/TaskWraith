@@ -174,6 +174,27 @@ function makeGrant(overrides: Partial<ExternalPathGrant> = {}): ExternalPathGran
 }
 
 describe('ComposerService', () => {
+  it('isolates execution-graph attempts from transcript and native-session context', () => {
+    const payload = compose(
+      {
+        provider: 'codex',
+        linkedProviderSessionId: 'thread-old'
+      },
+      {
+        provider: 'codex',
+        selectedModelType: 'gpt-5.6',
+        contextIsolation: 'execution_graph'
+      }
+    )
+
+    expect(payload.providerSessionId).toBeNull()
+    expect(payload.composer.providerSessionId).toBeNull()
+    expect(payload.composer.contextTurnsApplied).toBe(0)
+    expect(payload.prompt).not.toContain('Previous question')
+    expect(payload.prompt).not.toContain('Previous answer')
+    expect(payload.prompt).toContain('Do the thing')
+  })
+
   it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
