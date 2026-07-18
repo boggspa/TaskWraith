@@ -322,6 +322,7 @@ describe('ApprovalService — registries', () => {
       commandText: 'ls -la',
       cwd: '/tmp',
       threadId: 't-1',
+      appRunId: 'run-one',
       model: 'm-1',
       reasoningEffort: 'xhigh',
       reason: 'sandbox',
@@ -329,9 +330,12 @@ describe('ApprovalService — registries', () => {
     }
     svc.registerHostCommand('h-1', approval)
     expect(svc.getHostCommand('h-1')).toBe(approval)
+    expect(svc.hasPendingHostCommandForRun(approval.appRunId)).toBe(true)
+    expect(svc.hasPendingHostCommandForRun('another-run')).toBe(false)
     expect(svc.getHostCommand('h-1')?.reasoningEffort).toBe('xhigh')
     svc.deleteHostCommand('h-1')
     expect(svc.getHostCommand('h-1')).toBeUndefined()
+    expect(svc.hasPendingHostCommandForRun(approval.appRunId)).toBe(false)
   })
 
   it('getPendingExternalPathDetection reads provider approval registries', () => {

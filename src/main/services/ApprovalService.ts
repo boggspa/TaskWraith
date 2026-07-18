@@ -348,6 +348,13 @@ export class ApprovalService {
     return this.pendingHostCommand.get(approvalId)
   }
 
+  hasPendingHostCommandForRun(appRunId: string | undefined): boolean {
+    if (!appRunId) return false
+    return [...this.pendingHostCommand.values()].some(
+      (approval) => approval.appRunId === appRunId
+    )
+  }
+
   deleteHostCommand(approvalId: string): void {
     this.pendingHostCommand.delete(approvalId)
   }
