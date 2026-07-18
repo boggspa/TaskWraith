@@ -143,6 +143,8 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
    * Close-out must preserve the protocol outcome as authoritative.
    */
   terminalResultFailed?: boolean
+  /** Wire transports may report a provisional result before process close. */
+  deferTerminalResult?: boolean
   assistantText: string
   /** Token-sized Kimi ACP thinking deltas awaiting their next UI/ledger batch. */
   kimiThinkingPendingText?: string

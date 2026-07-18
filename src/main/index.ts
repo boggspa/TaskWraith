@@ -42,6 +42,7 @@ import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } fr
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { spawn, ChildProcess, execFile } from 'child_process'
 import { randomBytes, randomUUID } from 'crypto'
+import { AsyncLocalStorage } from 'node:async_hooks'
 import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
 import * as pty from 'node-pty'
@@ -475,7 +476,7 @@ import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
 import { detectConfiguredProviders } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
-import { isProviderPaused } from './ProviderRunPause'
+import { isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
 import {
   authorizeMainOwnedScheduledOccurrenceDispatch,
   createRunDispatchFacade,
@@ -506,6 +507,8 @@ import { decideCancelInterrupt, shouldFlushPendingInterrupt } from './CodexPendi
 import { getNextScheduledTaskRunAtMs } from './ScheduledTaskTimer'
 import {
   ScheduledOccurrenceOwnerRegistry,
+  ScheduledOccurrenceOwnerRegistryError,
+  type ExclusiveChatDispatchReservation,
   type ScheduledOccurrenceOwner
 } from './ScheduledOccurrenceOwnerRegistry'
 import { ScheduledOccurrenceTransaction } from './ScheduledOccurrenceTransaction'
@@ -527,7 +530,9 @@ import {
 } from './ScheduledHeadlessRun'
 import {
   ComposerService,
-  getDefaultModelForProvider
+  getDefaultModelForProvider,
+  type ComposerInput,
+  type ComposerRunPayload
 } from './services/ComposerService'
 import {
   DiscordContextService,
@@ -554,6 +559,46 @@ import { ProjectReferenceContextAuditService } from './services/ProjectReference
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
+import { ExecutionGraphRepository } from './executionGraph/ExecutionGraphRepository'
+import {
+  clearExecutionGraphHistory,
+  deleteExecutionGraphHistoryForChat
+} from './executionGraph/ExecutionGraphHistoryRetention'
+import {
+  ExecutionGraphCoordinator,
+  type ExecutionGraphAnchorRunStatus
+} from './services/ExecutionGraphCoordinator'
+import {
+  assertExecutionGraphPermissionPostureStillCurrent,
+  buildExecutionGraphPermissionPosture,
+  mintExecutionGraphAttemptPermissionPosture,
+  resolveExecutionGraphQueuePermissionPosture
+} from './executionGraph/ExecutionGraphPermissionAuthority'
+import type { JsonObject, StepAttempt } from './executionGraph/ExecutionGraphModel'
+import { stableExecutionGraphStringify } from './executionGraph/ExecutionGraphCompiler'
+import { executionGraphRunTemplatePermissionCeilingDigest } from './executionGraph/ExecutionGraphRunTemplateAuthority'
+import { buildRemoteExecutionRunList } from './executionGraph/ExecutionGraphRemoteProjection'
+import {
+  canonicalExecutionGraphRunId,
+  isExecutionGraphReservedRunIdentity
+} from './executionGraph/ExecutionGraphRunIdentity'
+import {
+  buildExecutionGraphAttemptTerminalReceipt,
+  boundExecutionGraphAttemptError,
+  formatExecutionGraphPredecessorResults,
+  mergeExecutionGraphProviderTerminalCandidate,
+  type ExecutionGraphAttemptResultBinding,
+  type ExecutionGraphAttemptTerminalReceipt
+} from './executionGraph/ExecutionGraphAttemptResult'
+import {
+  attachExecutionGraphAttemptReceipt,
+  executionGraphAttemptEvidenceContent,
+  executionGraphAttemptPromptContent,
+  projectExecutionGraphAttemptTranscript,
+  seedExecutionGraphAttemptTranscript,
+  verifyExecutionGraphAttemptReceiptOnChat
+} from './executionGraph/ExecutionGraphAttemptTranscript'
+import { registerExecutionGraphHandlers } from './ipc/executionGraphHandlers'
 import { createMainOwnedRunQueueAttachmentStager } from './RunQueueAttachmentAuthority'
 import {
   authorizeRemoteComposerQueueDispatch,
@@ -687,6 +732,7 @@ import {
   RunAnalystSignal,
   RunAnalystSnapshot,
   RunQueueJob,
+  RunQueueRequestSnapshot,
   RunEventInput,
   AgentApprovalAction,
   ApprovalLedgerRequestInput,
@@ -1207,7 +1253,10 @@ import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGra
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
-import { registerRunQueueHandlers } from './ipc/runQueueHandlers'
+import {
+  registerRunQueueHandlers,
+  type RendererRunQueueMutation
+} from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
 import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
@@ -4124,6 +4173,7 @@ function releaseProviderSessionPersistenceDecision(runId: string): void {
  * sub-thread transcript path: accumulate in main and flush to
  * `AppStore` so both Mac and phone snapshots stay live. */
 type BridgeRunTranscriptState = {
+  owner: 'bridge' | 'execution_graph'
   runId: string
   chatId: string
   provider: ProviderId
@@ -4166,9 +4216,21 @@ type BridgeRunTranscriptState = {
   extraWorkspacePaths?: string[]
   runDiff?: ChatRun['runDiff']
   runDiffByPath?: ChatRun['runDiffByPath']
+  executionGraphBinding?: ExecutionGraphAttemptResultBinding
+  providerTerminalCandidate?: 'completed' | 'failed' | 'cancelled'
+  providerTerminalCandidateConflict?: boolean
 }
 
 const bridgeRunTranscripts = new Map<string, BridgeRunTranscriptState>()
+
+function bridgeRunRouteMatches(
+  state: BridgeRunTranscriptState,
+  provider: ProviderId,
+  chatId: string | undefined
+): boolean {
+  if (state.provider !== provider) return false
+  return state.owner === 'execution_graph' ? chatId === state.chatId : !chatId || chatId === state.chatId
+}
 let pushBridgeRunSnapshot: ((chat: ChatRecord) => void) | null = null
 let pushBridgeRunTaskCardDelta: ((chatId: string) => void) | null = null
 let pushRemoteThreadSnapshotForChat: ((chat: ChatRecord) => boolean) | null = null
@@ -5893,10 +5955,69 @@ const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
 let runQueueServiceRef: RunQueueService | null = null
 let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
+let executionGraphRepositoryRef: ExecutionGraphRepository | null = null
+let executionGraphCoordinatorRef: ExecutionGraphCoordinator | null = null
+interface ExecutionGraphComposedPayloadEntry {
+  readonly executionId: string
+  readonly activationId: string
+  readonly attemptId: string
+  readonly runTemplateRef: string
+  readonly payload: ComposerRunPayload
+}
+const executionGraphComposedPayloads = new Map<string, ExecutionGraphComposedPayloadEntry>()
+const executionGraphDispatchesInFlight = new Set<string>()
+const executionGraphAdapterAdmissions = new Map<string, ExecutionGraphComposedPayloadEntry>()
+const executionGraphAdapterContext = new AsyncLocalStorage<{
+  readonly appRunId: string
+  readonly token: object
+  readonly admission?: ExecutionGraphComposedPayloadEntry
+}>()
+const providerAdapterInvocationTokens = new Map<string, object>()
+const hostCommandRerunsInFlight = new Set<string>()
 const remoteComposerInternalDispatches = new WeakMap<
   BridgeComposerPromptAction,
   { appRunId: string; queueRunId: string }
 >()
+
+function executionGraphOwnsOrAnchorsRunId(runId: string | undefined): boolean {
+  return isExecutionGraphReservedRunIdentity({
+    runId,
+    getRunQueueJob: (runIdOrId) => AppStore.getRunQueueJob(runIdOrId),
+    listExecutions: () =>
+      executionGraphCoordinatorRef?.listExecutions({ includeTerminal: true }) ?? []
+  })
+}
+
+function executionGraphOwnsAttemptRunId(runId: string | undefined): boolean {
+  if (!runId) return false
+  const queued = AppStore.getRunQueueJob(runId)
+  if (queued?.runId === runId && queued.executionGraph) return true
+  return Boolean(
+    executionGraphCoordinatorRef
+      ?.listExecutions({ includeTerminal: true })
+      .some((projection) =>
+        Object.values(projection.attempts).some(
+          (attempt) => attempt.providerRunRef === runId
+        )
+      )
+  )
+}
+
+function isExecutionGraphIsolatedPayload(payload: AgentRunPayload): boolean {
+  const runId = payload.appRunId?.trim()
+  if (!runId || !executionGraphDispatchesInFlight.has(runId)) return false
+  const admission = executionGraphAdapterAdmissions.get(runId)
+  const job = AppStore.getRunQueueJob(runId)
+  return Boolean(
+    admission &&
+      job?.executionGraph &&
+      job.runId === runId &&
+      admission.executionId === job.executionGraph.executionId &&
+      admission.attemptId === job.executionGraph.attemptId &&
+      admission.payload.provider === payload.provider &&
+      admission.payload.appChatId === payload.appChatId
+  )
+}
 
 
 function getActiveTaskWraithThreadCount(): number {
@@ -6142,6 +6263,9 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 
 runManager.onChange((event) => {
   if (event.type === 'removed') {
+    executionGraphComposedPayloads.delete(event.session.runId)
+    executionGraphDispatchesInFlight.delete(event.session.runId)
+    executionGraphAdapterAdmissions.delete(event.session.runId)
     projectReferenceContextAuditServiceRef?.release(event.session.runId)
     externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, 'run-removed')
@@ -6153,6 +6277,76 @@ runManager.onChange((event) => {
     })
     return
   }
+  const graphJobCandidate = AppStore.getRunQueueJob(event.session.runId)
+  const graphJob = graphJobCandidate?.executionGraph ? graphJobCandidate : null
+  let durableGraphClaim = false
+  try {
+    durableGraphClaim = Boolean(
+      executionGraphCoordinatorRef
+        ?.listExecutions({ includeTerminal: true })
+        .some((projection) =>
+          Object.values(projection.attempts).some(
+            (attempt) => attempt.providerRunRef === event.session.runId
+          )
+        )
+    )
+  } catch (error) {
+    console.error(
+      `[ExecutionGraph] could not resolve durable run ownership runId=${event.session.runId}:`,
+      error
+    )
+    return
+  }
+  const graphOwnedRun = Boolean(graphJob || durableGraphClaim)
+  if (graphOwnedRun && !executionGraphCoordinatorRef) {
+    console.error(
+      `[ExecutionGraph] rejected run session because graph authority is unavailable runId=${event.session.runId}.`
+    )
+    return
+  }
+  let executionGraphTerminalReceipt: ExecutionGraphAttemptTerminalReceipt | undefined
+  const graphTerminalSession = Boolean(
+    graphOwnedRun &&
+    event.type === 'updated' &&
+    (event.session.status === 'completed' ||
+      event.session.status === 'failed' ||
+      event.session.status === 'cancelled')
+  )
+  if (graphTerminalSession) {
+    try {
+      executionGraphTerminalReceipt = sealExecutionGraphRunTranscript(
+        event.session.runId,
+        event.session.status as 'completed' | 'failed' | 'cancelled'
+      )
+    } catch (error) {
+      console.error(
+        `[ExecutionGraph] terminal transcript/result commit failed for runId=${event.session.runId}:`,
+        error
+      )
+    }
+  }
+  let graphDisposition: ReturnType<ExecutionGraphCoordinator['onRunSessionChange']> = 'unclaimed'
+  try {
+    graphDisposition =
+      executionGraphCoordinatorRef?.onRunSessionChange(
+        event,
+        executionGraphTerminalReceipt
+      ) ?? 'unclaimed'
+  } catch (error) {
+    console.error(
+      `[ExecutionGraph] run-state reconciliation failed for runId=${event.session.runId}:`,
+      error
+    )
+    if (graphOwnedRun) return
+  }
+  if (graphDisposition === 'rejected' || (graphOwnedRun && graphDisposition !== 'accepted')) {
+    console.error(
+      `[ExecutionGraph] rejected queue persistence for ${graphDisposition} run session runId=${event.session.runId}.`
+    )
+    return
+  }
+  // Graph ledger correlation must commit before the generic queue projection
+  // can copy any RunManager fields into the persisted row.
   persistRunPermissionPostureOnChatRun(event.session)
   persistRunSessionQueueState(event.session)
   expireRunScopedApprovalLedger(event.session)
@@ -6163,6 +6357,15 @@ runManager.onChange((event) => {
       event.session.status === 'failed' ||
       event.session.status === 'cancelled')
   ) {
+    executionGraphComposedPayloads.delete(event.session.runId)
+    executionGraphDispatchesInFlight.delete(event.session.runId)
+    executionGraphAdapterAdmissions.delete(event.session.runId)
+    const graphTranscript = bridgeRunTranscripts.get(event.session.runId)
+    if (graphTranscript?.owner === 'execution_graph') {
+      if (graphTranscript.flushTimer) clearTimeout(graphTranscript.flushTimer)
+      bridgeRunTranscripts.delete(event.session.runId)
+      releaseProviderSessionPersistenceDecision(event.session.runId)
+    }
     projectReferenceContextAuditServiceRef?.release(event.session.runId)
     externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
@@ -8555,6 +8758,7 @@ function registerBridgeRunTranscript(args: {
   workspacePath?: string
 }): void {
   bridgeRunTranscripts.set(args.runId, {
+    owner: 'bridge',
     runId: args.runId,
     chatId: args.chatId,
     provider: args.provider,
@@ -8580,12 +8784,278 @@ function registerBridgeRunTranscript(args: {
   pushBridgeRunTaskCardDelta?.(args.chatId)
 }
 
+function registerExecutionGraphRunTranscript(args: {
+  job: RunQueueJob
+  entry: ExecutionGraphComposedPayloadEntry
+}): void {
+  const binding = args.job.executionGraph
+  if (
+    !AppStore.getSettings().storeLocalChatHistory ||
+    !binding ||
+    !args.job.workspaceId ||
+    !args.job.chatId ||
+    args.job.runId !== args.entry.payload.appRunId
+  ) {
+    throw new Error('V1 Stack attempts require durable local transcript authority.')
+  }
+  const chat = AppStore.getChat(args.job.chatId)
+  if (!chat) throw new Error('Execution graph transcript root chat is unavailable.')
+  const resultBinding: ExecutionGraphAttemptResultBinding = {
+    schemaVersion: 1,
+    executionId: binding.executionId,
+    activationId: binding.activationId,
+    attemptId: binding.attemptId,
+    providerRunRef: args.job.runId,
+    workspaceId: args.job.workspaceId,
+    rootChatId: args.job.chatId,
+    provider: args.job.provider
+  }
+  const startedAt = new Date().toISOString()
+  const seeded = seedExecutionGraphAttemptTranscript({
+    chat,
+    binding: resultBinding,
+    // Persist the exact adapter prompt, including the typed predecessor-result
+    // envelope plus the main-owned runtime preamble/context appendices.
+    prompt: args.entry.payload.prompt,
+    startedAt,
+    ...(args.entry.payload.composer.requestedModel
+      ? { requestedModel: args.entry.payload.composer.requestedModel }
+      : {}),
+    approvalMode: args.entry.payload.approvalMode,
+    workflowMode: args.entry.payload.workflowMode,
+    ...(args.job.permissionPosture ? { permissionPosture: args.job.permissionPosture } : {}),
+    ...(args.job.runtimeProfileId ? { runtimeProfileId: args.job.runtimeProfileId } : {})
+  })
+  // Register before the first durable write so a partially successful seed can
+  // still be terminally sealed (or attention-gated) by the outer dispatcher.
+  bridgeRunTranscripts.set(args.job.runId, {
+    owner: 'execution_graph',
+    runId: args.job.runId,
+    chatId: args.job.chatId,
+    provider: args.job.provider,
+    promptMessageId: seeded.promptMessageId,
+    assistantMessageId: seeded.assistantMessageId,
+    toolMessageId: seeded.toolMessageId,
+    startedAt,
+    content: '',
+    streamBuffer: '',
+    status: 'running',
+    flushedOnce: false,
+    activities: [],
+    parts: [],
+    workspacePath: args.job.workspacePath,
+    executionGraphBinding: resultBinding
+  })
+  saveAndBroadcastChat(seeded.chat)
+  const persisted = AppStore.getChat(args.job.chatId)
+  const persistedPrompt = persisted
+    ? executionGraphAttemptPromptContent(persisted, resultBinding)
+    : undefined
+  if (
+    !persisted ||
+    persistedPrompt !== args.entry.payload.prompt ||
+    !persisted.runs.some(
+      (run) =>
+        run.runId === args.job.runId &&
+        stableExecutionGraphStringify(run.providerMetadata?.executionGraphAttempt) ===
+          stableExecutionGraphStringify({
+            schemaVersion: 1,
+            executionId: binding.executionId,
+            activationId: binding.activationId,
+            attemptId: binding.attemptId,
+            providerRunRef: args.job.runId,
+            workspaceId: args.job.workspaceId,
+            rootChatId: args.job.chatId,
+            provider: args.job.provider
+          })
+    )
+  ) {
+    throw new Error('Execution graph transcript seed was not durably persisted.')
+  }
+}
+
+function boundedExecutionGraphTranscriptError(value: string | undefined): string | undefined {
+  return boundExecutionGraphAttemptError(value)
+}
+
+function recordExecutionGraphProviderTerminalCandidate(
+  state: BridgeRunTranscriptState,
+  candidate: 'completed' | 'failed' | 'cancelled',
+  errorMessage?: string
+): void {
+  if (state.owner !== 'execution_graph') return
+  const claimedStatus = runManager.getClaimedTerminalStatus(state.runId)
+  const lifecycleStatus = runManager.getTerminalJoinState(state.runId).lifecycleStatus
+  const effectiveCandidate = claimedStatus ?? lifecycleStatus ?? candidate
+  const merged = mergeExecutionGraphProviderTerminalCandidate(
+    {
+      ...(state.providerTerminalCandidate
+        ? { candidate: state.providerTerminalCandidate }
+        : {}),
+      conflict: state.providerTerminalCandidateConflict ?? false
+    },
+    effectiveCandidate
+  )
+  state.providerTerminalCandidate = merged.candidate
+  state.providerTerminalCandidateConflict = merged.conflict
+  if (effectiveCandidate !== 'completed' && errorMessage) state.errorMessage = errorMessage
+  runManager.confirmTerminalStatus(state.runId, effectiveCandidate)
+}
+
+function discardExecutionGraphRunTranscript(runId: string): void {
+  const state = bridgeRunTranscripts.get(runId)
+  if (!state || state.owner !== 'execution_graph') return
+  if (state.flushTimer) clearTimeout(state.flushTimer)
+  bridgeRunTranscripts.delete(runId)
+  releaseProviderSessionPersistenceDecision(runId)
+}
+
+function projectAndPersistExecutionGraphRunTranscript(
+  state: BridgeRunTranscriptState,
+  status: 'running' | 'completed' | 'failed' | 'cancelled',
+  errorMessage?: string
+): { chat: ChatRecord; evidenceRefs: readonly string[] } {
+  if (
+    state.owner !== 'execution_graph' ||
+    !state.executionGraphBinding ||
+    !AppStore.getSettings().storeLocalChatHistory
+  ) {
+    throw new Error('Execution graph transcript persistence authority is unavailable.')
+  }
+  const current = AppStore.getChat(state.chatId)
+  if (!current) throw new Error('Execution graph transcript root chat is unavailable.')
+  const timestamp = new Date().toISOString()
+  const projected = projectExecutionGraphAttemptTranscript({
+    chat: current,
+    binding: state.executionGraphBinding,
+    promptMessageId: state.promptMessageId,
+    startedAt: state.startedAt,
+    parts: state.parts.map((part) => ({
+      ...part,
+      content: part.kind === 'text' ? annotateRecallCitations(state.runId, part.content) : ''
+    })),
+    status,
+    timestamp,
+    ...(state.actualModel ? { actualModel: state.actualModel } : {}),
+    ...(state.providerSessionId !== undefined
+      ? { providerSessionId: state.providerSessionId }
+      : {}),
+    ...(state.stats ? { stats: state.stats } : {}),
+    ...(errorMessage ? { errorMessage } : {})
+  })
+  saveAndBroadcastChat(projected.chat)
+  const persisted = AppStore.getChat(state.chatId)
+  if (!persisted) throw new Error('Execution graph transcript projection was not persisted.')
+  return { chat: persisted, evidenceRefs: projected.evidenceRefs }
+}
+
+function flushExecutionGraphRunTranscript(runId: string): void {
+  const state = bridgeRunTranscripts.get(runId)
+  if (!state || state.owner !== 'execution_graph') return
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer)
+    state.flushTimer = undefined
+  }
+  projectAndPersistExecutionGraphRunTranscript(state, 'running')
+  state.flushedOnce = true
+}
+
+function sealExecutionGraphRunTranscript(
+  runId: string,
+  status: 'completed' | 'failed' | 'cancelled',
+  errorMessage?: string
+): ExecutionGraphAttemptTerminalReceipt | undefined {
+  const state = bridgeRunTranscripts.get(runId)
+  if (!state || state.owner !== 'execution_graph' || !state.executionGraphBinding) return undefined
+  if (state.flushTimer) {
+    clearTimeout(state.flushTimer)
+    state.flushTimer = undefined
+  }
+  const toolFailureWithoutAnswer =
+    status === 'completed' &&
+    state.content.trim().length === 0 &&
+    state.activities.some((activity) => activity.status === 'error')
+  const candidateMismatch = Boolean(
+    state.providerTerminalCandidate && state.providerTerminalCandidate !== status
+  )
+  const terminalError = boundedExecutionGraphTranscriptError(
+    toolFailureWithoutAnswer
+      ? 'The provider completed without an assistant response after a tool failed or was rejected.'
+      : state.providerTerminalCandidateConflict
+        ? 'Provider terminal signals conflicted; manual review is required.'
+        : status === 'completed' && !state.providerTerminalCandidate
+          ? 'Provider completed without a terminal result or exit signal; manual review is required.'
+        : candidateMismatch
+        ? `Provider result reported ${state.providerTerminalCandidate}, but RunManager reported ${status}.`
+        : errorMessage || (status === 'completed' ? undefined : state.errorMessage)
+  )
+  const projected = projectAndPersistExecutionGraphRunTranscript(
+    state,
+    status,
+    terminalError
+  )
+  if (!state.providerTerminalCandidate) {
+    throw new Error(
+      'Execution graph terminal settlement is waiting for an exact provider result or exit signal.'
+    )
+  }
+  if (state.providerTerminalCandidateConflict || candidateMismatch) {
+    throw new Error(
+      state.providerTerminalCandidateConflict
+        ? 'Execution graph terminal settlement rejected conflicting provider signals.'
+        : 'Execution graph terminal settlement rejected a provider/RunManager status mismatch.'
+    )
+  }
+  const committedEvidence = executionGraphAttemptEvidenceContent(
+    projected.chat,
+    state.executionGraphBinding,
+    projected.evidenceRefs
+  )
+  if (!committedEvidence) {
+    throw new Error('Execution graph transcript evidence was not durably bound to the attempt.')
+  }
+  const committedPrompt = executionGraphAttemptPromptContent(
+    projected.chat,
+    state.executionGraphBinding
+  )
+  if (committedPrompt === undefined) {
+    throw new Error('Execution graph transcript prompt was not durably bound to the attempt.')
+  }
+  const receipt = buildExecutionGraphAttemptTerminalReceipt({
+    binding: state.executionGraphBinding,
+    status,
+    committedAt: new Date().toISOString(),
+    prompt: committedPrompt,
+    content: committedEvidence.assistantContent,
+    evidenceRefs: projected.evidenceRefs,
+    ...(terminalError ? { error: terminalError } : {})
+  })
+  const withReceipt = attachExecutionGraphAttemptReceipt(projected.chat, receipt)
+  saveAndBroadcastChat(withReceipt)
+  const committed = AppStore.getChat(state.chatId)
+  if (!committed || !verifyExecutionGraphAttemptReceiptOnChat(committed, receipt)) {
+    throw new Error('Execution graph transcript/result receipt was not durably committed.')
+  }
+  state.status =
+    status === 'completed' ? 'success' : status === 'cancelled' ? 'cancelled' : 'failed'
+  bridgeRunTranscripts.delete(runId)
+  releaseProviderSessionPersistenceDecision(runId)
+  return receipt
+}
+
 function flushBridgeRunTranscript(runId: string, final = false): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
   if (state.flushTimer) {
     clearTimeout(state.flushTimer)
     state.flushTimer = undefined
+  }
+  if (state.owner === 'execution_graph') {
+    if (final) {
+      throw new Error('Execution graph terminal transcripts must seal at the RunManager barrier.')
+    }
+    flushExecutionGraphRunTranscript(runId)
+    return
   }
   const current = AppStore.getChat(state.chatId)
   if (!current) return
@@ -8755,7 +9225,14 @@ function scheduleBridgeRunFlush(runId: string): void {
   if (!state) return
   if (state.flushTimer) clearTimeout(state.flushTimer)
   state.flushTimer = setTimeout(() => {
-    flushBridgeRunTranscript(runId)
+    try {
+      flushBridgeRunTranscript(runId)
+    } catch (error) {
+      console.error(
+        `[ExecutionGraph] live transcript flush failed for runId=${runId}:`,
+        error
+      )
+    }
   }, 250)
 }
 
@@ -8766,6 +9243,14 @@ function finalizeBridgeRunTranscript(
 ): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  if (state.owner === 'execution_graph') {
+    recordExecutionGraphProviderTerminalCandidate(
+      state,
+      status === 'success' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed',
+      errorMessage
+    )
+    return
+  }
   if (state.status !== 'running') return // exit event often follows result
   const toolFailureWithoutAnswer =
     status === 'success' &&
@@ -9222,6 +9707,15 @@ function bridgeResultFailed(payload: Record<string, unknown>): boolean {
   return status !== 'running'
 }
 
+function bridgeResultTerminalStatus(
+  payload: Record<string, unknown>
+): 'completed' | 'failed' | 'cancelled' {
+  const rawStatus = typeof payload.status === 'string' ? payload.status : payload.subtype
+  const status = String(rawStatus || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  if (status === 'cancelled' || status === 'canceled') return 'cancelled'
+  return bridgeResultFailed(payload) ? 'failed' : 'completed'
+}
+
 function materializeBridgeRunProviderOutput(
   provider: ProviderId,
   routed: AgentRunRoute,
@@ -9236,8 +9730,7 @@ function materializeBridgeRunProviderOutput(
   const runId = routed.appRunId
   if (!runId) return
   const state = bridgeRunTranscripts.get(runId)
-  if (!state || state.provider !== provider) return
-  if (routed.appChatId && routed.appChatId !== state.chatId) return
+  if (!state || !bridgeRunRouteMatches(state, provider, routed.appChatId)) return
 
   const providerSessionId = extractProviderSessionId(payload)
   if (providerSessionId) state.providerSessionId = providerSessionId
@@ -9311,7 +9804,13 @@ function materializeBridgeRunProviderOutput(
   }
   if (payload?.type === 'result') {
     if (payload.stats) state.stats = payload.stats
-    const status = bridgeResultFailed(payload) ? 'failed' : 'success'
+    const terminalStatus = bridgeResultTerminalStatus(payload)
+    const status = terminalStatus === 'completed' ? 'success' : terminalStatus
+    if (state.owner === 'execution_graph') {
+      recordExecutionGraphProviderTerminalCandidate(state, terminalStatus)
+      scheduleBridgeRunFlush(runId)
+      return
+    }
     finalizeBridgeRunTranscript(runId, status)
   }
 }
@@ -9327,6 +9826,8 @@ function materializeBridgeRunFromPublish(
   if (!runId) return
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  const appChatId = typeof record.appChatId === 'string' ? record.appChatId : undefined
+  if (!bridgeRunRouteMatches(state, provider, appChatId)) return
 
   if (channel === 'agent-exit' || channel === 'gemini-exit') {
     const code = typeof record.code === 'number' ? record.code : -1
@@ -12728,9 +13229,22 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
   missingEnsembleParticipant: boolean
   routeProviderMismatch: boolean
   ephemeralProviderReroute: boolean
+  executionGraphIsolated: boolean
   storeWritable: boolean
 } {
   const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+  if (isExecutionGraphIsolatedPayload(payload)) {
+    return {
+      storeSessionId: null,
+      storeReceipt: undefined,
+      chatFound: Boolean(chat),
+      missingEnsembleParticipant: false,
+      routeProviderMismatch: false,
+      ephemeralProviderReroute: false,
+      executionGraphIsolated: true,
+      storeWritable: false
+    }
+  }
   const ensembleParticipantId = payload.ensembleRun?.participantId
   const participant =
     chat?.ensemble && ensembleParticipantId
@@ -12776,6 +13290,7 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
     missingEnsembleParticipant,
     routeProviderMismatch,
     ephemeralProviderReroute,
+    executionGraphIsolated: false,
     storeWritable
   }
 }
@@ -13081,6 +13596,7 @@ function applyProviderSeatGeneration(args: {
 function recordProviderSeatCacheEvidenceForRun(
   session: NonNullable<ReturnType<typeof runManager.get>>
 ): void {
+  if (executionGraphOwnsAttemptRunId(session.runId)) return
   const chat = session.appChatId ? AppStore.getChat(session.appChatId) : null
   if (!chat) return
   const state = session.state as
@@ -13172,7 +13688,9 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   // A cross-provider solo reroute has no target-provider store lane. Never
   // resume the source provider's handle as Claude, and never birth core because
   // its receipt could not be persisted authoritatively.
-  if (storeState.ephemeralProviderReroute) applied.providerSessionId = null
+  if (storeState.ephemeralProviderReroute || storeState.executionGraphIsolated) {
+    applied.providerSessionId = null
+  }
   if (
     shouldRejectTaskWraithMcpStaleDispatch({
       provider: applied.provider,
@@ -13227,7 +13745,9 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     receipt: storeState.storeReceipt,
     coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
     profileReceiptCanPersist:
-      applied.provider !== 'claude' || (storeState.chatFound && storeState.storeWritable),
+      applied.provider !== 'claude' ||
+      storeState.executionGraphIsolated ||
+      (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised: applied.provider === 'grok' ? taskWraithMcpAdvertised : undefined
   })
   const desiredFreshResolution = resolveTaskWraithMcpProfile({
@@ -13237,7 +13757,9 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     storeProviderSessionId: null,
     receipt: undefined,
     profileReceiptCanPersist:
-      applied.provider !== 'claude' || (storeState.chatFound && storeState.storeWritable),
+      applied.provider !== 'claude' ||
+      storeState.executionGraphIsolated ||
+      (storeState.chatFound && storeState.storeWritable),
     grokMcpAdvertised:
       applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined
   })
@@ -13253,7 +13775,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
   applied.taskWraithMcpAdvertised = providerSeat.advertised
   refreshTaskWraithMcpProfileFenceStoreIdentity(applied)
   if (applied.appRunId) {
-    if (storeState.ephemeralProviderReroute) {
+    if (storeState.ephemeralProviderReroute || storeState.executionGraphIsolated) {
       suppressProviderSessionPersistenceForRun(applied.appRunId)
     } else {
       releaseProviderSessionPersistenceDecision(applied.appRunId)
@@ -13495,6 +14017,7 @@ function updateCliProviderSession(
 
   if (
     state.provider === 'claude' &&
+    (!state.appRunId || shouldPersistProviderSessionForRun(state.appRunId)) &&
     state.taskWraithMcpProfileId &&
     state.taskWraithMcpProfileFence &&
     state.taskWraithMcpProfileFence.storeWritable &&
@@ -13605,6 +14128,7 @@ function persistKimiAcpNativeSession(
   sessionId: string
 ): void {
   if (!state.appChatId || !sessionId) return
+  if (executionGraphOwnsAttemptRunId(state.appRunId)) return
   if (state.appRunId && !shouldPersistProviderSessionForRun(state.appRunId)) return
   const participantId = state.ensembleRun?.participantId
   const target = providerSeatStoreTarget(state.appChatId, 'kimi', participantId)
@@ -14427,13 +14951,23 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
     (event?.method === 'event' && event?.params?.type === 'TurnEnd')
   ) {
     state.completed = true
+    const terminalStatus = event?.status || event?.result?.status || event?.subtype || 'success'
+    if (state.deferTerminalResult) {
+      state.terminalResultFailed = state.terminalResultFailed || bridgeResultFailed({
+        status: terminalStatus,
+        error: event?.error,
+        is_error: event?.is_error,
+        subtype: event?.subtype
+      })
+      return
+    }
     sendAgentCompatLine(
       state.sender,
       state.provider,
       {
         type: 'result',
-        subtype: event?.subtype || event?.status || event?.result?.status || 'success',
-        status: event?.status || event?.result?.status || 'success',
+        subtype: event?.subtype || terminalStatus,
+        status: terminalStatus,
         stats: {
           ...(state.tokenUsage || {}),
           duration_ms: event?.duration_ms || event?.durationMs || Date.now() - state.startedAt,
@@ -16878,6 +17412,7 @@ async function runKimiWireProvider(
     startedAt: Date.now(),
     model,
     fallback: false,
+    deferTerminalResult: true,
     completed: false,
     assistantText: '',
     providerSessionId: payload.providerSessionId || null,
@@ -17039,6 +17574,7 @@ async function runKimiWireProvider(
     let promptSequence = 0
     let activePromptId = ''
     let currentKimiPrompt = payload.prompt
+    let provisionalTerminalStatus: 'completed' | 'failed' | 'cancelled' | undefined
     const kimiRetryPasses: KimiContentFilterRetryPass[] = []
     // Bug fix: every Kimi exit path MUST publish an `agent-exit` IPC
     // event, otherwise the renderer never invokes `clearActiveRunContext`
@@ -17107,6 +17643,9 @@ async function runKimiWireProvider(
 
     const maybeRetryKimiContentFilter = (promptErrorMessage: string): boolean => {
       if (!isKimiContentFilterRejection(promptErrorMessage)) return false
+      // A graph attempt's provider input was already durably bound and frozen.
+      // Retrying different bytes would create an unrecorded implicit branch.
+      if (executionGraphOwnsAttemptRunId(route.appRunId)) return false
       const settings = AppStore.getSettings()
       const keywordResult = !kimiRetryPasses.includes('keyword')
         ? sanitiseForKimi(currentKimiPrompt, {
@@ -17221,31 +17760,17 @@ async function runKimiWireProvider(
             }
             updateCliProviderSession(state, extractProviderSessionId(message), false)
             state.completed = true
-            sendAgentCompatLine(
-              event.sender,
-              'kimi',
-              {
-                type: 'result',
-                status:
-                  message.result?.status === 'cancelled'
-                    ? 'cancelled'
-                    : message.error
-                      ? 'failed'
-                      : 'success',
-                stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-                provider: 'kimi',
-                providerThreadId: state.providerSessionId || undefined,
-                fallback: false
-              },
-              state
-            )
-            emitKimiExit(message.error ? 1 : 0)
+            provisionalTerminalStatus =
+              message.result?.status === 'cancelled'
+                ? 'cancelled'
+                : message.error
+                  ? 'failed'
+                  : 'completed'
+            state.terminalResultFailed = provisionalTerminalStatus === 'failed'
+            // The JSON-RPC response is provisional until the transport closes.
+            // A later non-zero close must be able to override apparent success.
             child.kill()
-            settled = true
             clearTimeout(timeout)
-            if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-            runManager.finish(route.appRunId, message.error ? 'failed' : 'completed')
-            finishWire(true)
             continue
           }
           if (message.method === 'request') {
@@ -17560,26 +18085,34 @@ async function runKimiWireProvider(
       sendAgentCompatError(event.sender, 'kimi', chunk.toString(), state)
     })
 
-    child.on('error', () => {
+    child.on('error', (error) => {
       if (settled) return
       settled = true
       clearTimeout(timeout)
       if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      // Bug fix (sidebar "Running" badge): if `handleCliProviderJsonEvent`
-      // already flipped `state.completed = true` via a result/TurnEnd
-      // notification, the renderer recorded the chat in `runningChatIds`
-      // and is waiting for `agent-exit` to call `clearActiveRunContext`.
-      // The pre-fix error handler silently returned `false` and let the
-      // print-mode fallback do the eventual IPC, but `runKimiWireProvider`
-      // is only retried into print-mode when the prompt wasn't sent;
-      // otherwise the chat would sit in `runningChatIds` until a manual
-      // refresh. Backfill `agent-exit` here through the idempotent guard
-      // so a Wire-mode error after completion still clears the badge.
-      if (state.completed && promptSent) {
+      if (promptSent) {
+        state.completed = true
+        state.terminalResultFailed = true
+        sendAgentCompatError(event.sender, 'kimi', error.message, state)
+        sendAgentCompatLine(
+          event.sender,
+          'kimi',
+          {
+            type: 'result',
+            status: 'failed',
+            stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+            provider: 'kimi',
+            providerThreadId: state.providerSessionId || undefined,
+            fallback: false
+          },
+          state
+        )
         emitKimiExit(1)
+        runManager.finish(route.appRunId, 'failed')
+        finishWire(true)
+        return
       }
-      if (promptSent) runManager.finish(route.appRunId, 'failed')
-      else runManager.update(route.appRunId!, { process: undefined })
+      runManager.update(route.appRunId!, { process: undefined })
       finishWire(false)
     })
 
@@ -17594,20 +18127,48 @@ async function runKimiWireProvider(
       if (decision.ignore) return
       clearTimeout(timeout)
       if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      if (decision.emitResultLine) {
-        sendAgentCompatLine(event.sender, 'kimi', {
-          type: 'result',
-          status: code === 0 ? 'success' : 'failed',
-          stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-          provider: 'kimi',
-          fallback: false
-        })
+      const terminalStatus = decision.terminalStatus
+        ? provisionalTerminalStatus === 'cancelled'
+          ? 'cancelled'
+          : state.terminalResultFailed || decision.terminalStatus === 'failed'
+            ? 'failed'
+            : 'completed'
+        : undefined
+      if (terminalStatus) {
+        state.completed = true
+        sendAgentCompatLine(
+          event.sender,
+          'kimi',
+          {
+            type: 'result',
+            status:
+              terminalStatus === 'completed'
+                ? 'success'
+                : terminalStatus === 'cancelled'
+                  ? 'cancelled'
+                  : 'failed',
+            stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
+            provider: 'kimi',
+            providerThreadId: state.providerSessionId || undefined,
+            fallback: false
+          },
+          state
+        )
+        emitKimiExit(
+          terminalStatus === 'completed'
+            ? code === null
+              ? 0
+              : code
+            : terminalStatus === 'cancelled'
+              ? 130
+              : code === null || code === 0
+                ? 1
+                : code
+        )
+        runManager.finish(route.appRunId, terminalStatus)
+      } else {
+        runManager.update(route.appRunId!, { process: undefined })
       }
-      if (decision.emitExit) {
-        emitKimiExit(code)
-      }
-      if (decision.terminalStatus) runManager.finish(route.appRunId, decision.terminalStatus)
-      else runManager.update(route.appRunId!, { process: undefined })
       settled = true
       finishWire(decision.resolveWire)
     })
@@ -17654,6 +18215,9 @@ function kimiAcpSeatHomeDirForIdentity(chatId: string, participantId = 'solo'): 
 }
 
 function kimiAcpSeatHomeDir(payload: AgentRunPayload): string {
+  if (isExecutionGraphIsolatedPayload(payload)) {
+    return kimiIsolatedHomeDirForRun(payload.appRunId || 'unknown')
+  }
   if (!payload.appChatId) return kimiIsolatedHomeDirForRun(payload.appRunId || 'unknown')
   return kimiAcpSeatHomeDirForIdentity(
     payload.appChatId,
@@ -17784,6 +18348,7 @@ async function runKimiAcpProvider(
   binaryPath: string
 ): Promise<void> {
   const route = routeWithRunId('kimi', payload)
+  const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
 
   let kimiCwd: string
   try {
@@ -17848,7 +18413,7 @@ async function runKimiAcpProvider(
     thinkingEnabled: true,
     ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
     selectedModelAlias: kimiModelConfig,
-    preserveSessionState: Boolean(payload.appChatId),
+    preserveSessionState: !graphContextIsolated && Boolean(payload.appChatId),
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) {
@@ -18056,13 +18621,17 @@ async function runKimiAcpProvider(
           }
         }
       },
-      onClose: (_code, turnComplete, terminalStatus) => {
+      onClose: (code, turnComplete, terminalStatus) => {
         void teardown()
         if (!state.completed) {
           flushKimiAcpThinking(state)
           state.completed = true
           const status = turnComplete ? terminalStatus || 'success' : 'failed'
-          const failed = !turnComplete || (status !== 'success' && status !== 'end_turn')
+          const transportFailed = typeof code === 'number' && code !== 0
+          const failed =
+            transportFailed ||
+            !turnComplete ||
+            (status !== 'success' && status !== 'end_turn')
           const stats = estimateKimiAcpTokenUsage({
             inputChars: state.kimiUsageInputChars || 0,
             outputChars: state.kimiUsageOutputChars || 0,
@@ -18132,7 +18701,12 @@ async function runKimiAcpProvider(
             },
             state
           )
-          sendAgentCompatExit(event.sender, 'kimi', failed ? 1 : 0, state)
+          sendAgentCompatExit(
+            event.sender,
+            'kimi',
+            failed ? (transportFailed ? code : 1) : 0,
+            state
+          )
           runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
         }
       }
@@ -18209,29 +18783,39 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       if (result.redacted) {
         payload.prompt = result.text
         const diagnostic = formatKimiSanitiserDiagnostic(result)
-        sendAgentCompatLine(event.sender, 'kimi', {
-          type: 'provider_diagnostic',
-          provider: 'kimi',
-          message: diagnostic,
-          source: 'kimi-compatibility-filter',
-          matchCount: result.matches.length,
-          triggers: result.matches.map((m) => m.trigger)
-        })
+        sendAgentCompatLine(
+          event.sender,
+          'kimi',
+          {
+            type: 'provider_diagnostic',
+            provider: 'kimi',
+            message: diagnostic,
+            source: 'kimi-compatibility-filter',
+            matchCount: result.matches.length,
+            triggers: result.matches.map((m) => m.trigger)
+          },
+          route
+        )
       }
     }
   }
 
   const resolved = await resolveCliProviderBinary('kimi', payload.runtimeProfile)
   if (!resolved.binaryPath) {
-    sendAgentCompatError(event.sender, 'kimi', resolved.error || 'Kimi CLI is not configured.')
+    sendAgentCompatError(
+      event.sender,
+      'kimi',
+      resolved.error || 'Kimi CLI is not configured.',
+      route
+    )
     sendAgentCompatLine(event.sender, 'kimi', {
       type: 'result',
       status: 'failed',
       stats: {},
       provider: 'kimi',
       setupRequired: true
-    })
-    sendAgentCompatExit(event.sender, 'kimi', 1)
+    }, route)
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
     runManager.finish(route.appRunId, 'failed')
     return
   }
@@ -18254,7 +18838,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     sendAgentCompatError(
       event.sender,
       'kimi',
-      buildKimiFlavourGateMessage(kimiFlavour, resolved.binaryPath)
+      buildKimiFlavourGateMessage(kimiFlavour, resolved.binaryPath),
+      route
     )
     sendAgentCompatLine(event.sender, 'kimi', {
       type: 'result',
@@ -18262,8 +18847,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       stats: {},
       provider: 'kimi',
       setupRequired: true
-    })
-    sendAgentCompatExit(event.sender, 'kimi', 1)
+    }, route)
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
     runManager.finish(route.appRunId, 'failed')
     return
   }
@@ -18279,7 +18864,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
     sendAgentCompatError(
       event.sender,
       'kimi',
-      'Kimi Wire mode did not complete startup. Print-mode fallback is skipped outside Plan/read-only because Kimi print mode is non-interactive and can auto-approve provider tool calls.'
+      'Kimi Wire mode did not complete startup. Print-mode fallback is skipped outside Plan/read-only because Kimi print mode is non-interactive and can auto-approve provider tool calls.',
+      route
     )
     sendAgentCompatLine(event.sender, 'kimi', {
       type: 'result',
@@ -18287,8 +18873,8 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       stats: {},
       provider: 'kimi',
       fallback: true
-    })
-    sendAgentCompatExit(event.sender, 'kimi', 1)
+    }, route)
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
     runManager.finish(route.appRunId, 'failed')
     return
   }
@@ -18549,7 +19135,120 @@ function registerRunSession(
   requireExistingRun = false
 ) {
   const routed = routeWithRunId(provider, route)
+  const resolvedQueueIdentity = routed.appRunId
+    ? AppStore.getRunQueueJob(routed.appRunId)
+    : null
+  if (
+    resolvedQueueIdentity?.runId &&
+    resolvedQueueIdentity.runId !== routed.appRunId &&
+    executionGraphOwnsOrAnchorsRunId(routed.appRunId)
+  ) {
+    throw new Error('Provider session registration cannot use an alias of a graph-owned identity.')
+  }
   const existing = runManager.get(routed.appRunId)
+  const adapterContext = executionGraphAdapterContext.getStore()
+  const graphQueueJobs = AppStore.getRunQueueJobs({ includeTerminal: true }).filter(
+    (job) => job.runId === routed.appRunId && Boolean(job.executionGraph)
+  )
+  const graphClaims = executionGraphCoordinatorRef
+    ? executionGraphCoordinatorRef
+        .listExecutions({ includeTerminal: true })
+        .flatMap((projection) =>
+          Object.values(projection.attempts)
+            .filter((attempt) => attempt.providerRunRef === routed.appRunId)
+            .map((attempt) => ({ projection, attempt }))
+        )
+    : []
+  const graphAnchorClaims = executionGraphCoordinatorRef
+    ? executionGraphCoordinatorRef
+        // Anchor identities remain reserved even after their Stack projection
+        // terminalizes: cancelling a waiting Stack does not stop or rename the
+        // independent provider transport it was observing.
+        .listExecutions({ includeTerminal: true })
+        .filter((projection) => projection.anchorRunRef === routed.appRunId)
+    : []
+  if (graphAnchorClaims.length > 0) {
+    let sameInvocation = false
+    try {
+      sameInvocation = Boolean(
+        routed.appRunId &&
+          existing &&
+          adapterContext?.appRunId === routed.appRunId &&
+          providerAdapterInvocationTokens.get(routed.appRunId) === adapterContext.token &&
+          existing.provider === provider &&
+          existing.appChatId === routed.appChatId &&
+          existing.workspacePath &&
+          workspacePath &&
+          canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
+      )
+    } catch {
+      sameInvocation = false
+    }
+    if (!sameInvocation) {
+      throw new Error('Provider session registration cannot reuse a live Stack anchor identity.')
+    }
+  }
+  if (graphQueueJobs.length > 0 || graphClaims.length > 0) {
+    const admission = routed.appRunId
+      ? executionGraphAdapterAdmissions.get(routed.appRunId)
+      : undefined
+    const job = graphQueueJobs.length === 1 ? graphQueueJobs[0] : undefined
+    const claim = graphClaims.length === 1 ? graphClaims[0] : undefined
+    const binding = job?.executionGraph
+    let workspaceMatches = false
+    try {
+      workspaceMatches = Boolean(
+        workspacePath &&
+          admission?.payload.workspace &&
+          canonicalPath(workspacePath) === canonicalPath(admission.payload.workspace)
+      )
+    } catch {
+      workspaceMatches = false
+    }
+    let existingIdentityMatches = true
+    if (existing) {
+      try {
+        existingIdentityMatches = Boolean(
+          existing.provider === provider &&
+            existing.appChatId === routed.appChatId &&
+            existing.workspacePath &&
+            workspacePath &&
+            canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
+        )
+      } catch {
+        existingIdentityMatches = false
+      }
+    }
+    const lifecycleMatches = existing
+      ? job?.status === 'active' &&
+        (existing.status === 'starting' || existing.status === 'running')
+      : job?.status === 'starting'
+    if (
+      !routed.appRunId ||
+      !admission ||
+      adapterContext?.appRunId !== routed.appRunId ||
+      adapterContext.admission !== admission ||
+      !executionGraphDispatchesInFlight.has(routed.appRunId) ||
+      !executionGraphCoordinatorRef ||
+      !job ||
+      !lifecycleMatches ||
+      !claim ||
+      binding?.executionId !== admission.executionId ||
+      binding.activationId !== admission.activationId ||
+      binding.attemptId !== admission.attemptId ||
+      binding.runTemplateRef !== admission.runTemplateRef ||
+      claim.projection.executionId !== admission.executionId ||
+      claim.attempt.id !== admission.attemptId ||
+      provider !== job.provider ||
+      routed.appChatId !== job.chatId ||
+      !workspaceMatches ||
+      !existingIdentityMatches
+    ) {
+      throw new Error('Provider session registration collided with a graph-owned run identity.')
+    }
+    if (!existing) executionGraphCoordinatorRef.assertQueueJobDispatchable(routed.appRunId)
+  }
+  const graphOwnedRegistration = graphQueueJobs.length > 0 || graphClaims.length > 0
   if (existing) {
     if (isTerminalRunSessionStatus(existing.status)) return undefined
     runManager.update(existing.runId, {
@@ -18560,10 +19259,11 @@ function registerRunSession(
       state,
       status: 'running'
     })
+    if (graphOwnedRegistration) runManager.requireTerminalConfirmation(existing.runId)
     return runManager.get(existing.runId)!
   }
   if (requireExistingRun) return undefined
-  return runManager.create({
+  const created = runManager.create({
     runId: routed.appRunId!,
     provider,
     appChatId: routed.appChatId,
@@ -18573,6 +19273,8 @@ function registerRunSession(
     state,
     status: 'running'
   })
+  if (graphOwnedRegistration) runManager.requireTerminalConfirmation(created.runId)
+  return created
 }
 
 function getRuntimeSession(provider: ProviderId, route?: AgentRunRoute | null) {
@@ -18608,6 +19310,7 @@ function allowsTerminalCodexNativeGoalSession(
   session: ReturnType<typeof runManager.get> | undefined
 ): boolean {
   if (!session || session.provider !== 'codex' || session.status !== 'completed') return false
+  if (executionGraphOwnsAttemptRunId(session.runId)) return false
   const chat = session.appChatId ? AppStore.getChat(session.appChatId) : null
   return Boolean(
     chat &&
@@ -18924,7 +19627,11 @@ function sendAgentCompatError(
     // Stderr can be advisory while the provider keeps running (Codex version
     // warnings are the common case). Let result/exit decide terminal status.
     const bridgeState = bridgeRunTranscripts.get(routed.appRunId)
-    if (bridgeState && bridgeState.status === 'running') {
+    if (
+      bridgeState &&
+      bridgeState.status === 'running' &&
+      bridgeRunRouteMatches(bridgeState, provider, routed.appChatId)
+    ) {
       bridgeState.errorMessage = error
     }
   }
@@ -18963,15 +19670,35 @@ function sendAgentCompatExit(
           chatId: routed.appChatId
         })
       : undefined
+  const claimedTerminalStatus = runManager.getClaimedTerminalStatus(routed.appRunId)
+  const pendingLifecycleStatus = runManager.getTerminalJoinState(
+    routed.appRunId
+  ).lifecycleStatus
   const runCancelled = Boolean(
-    routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled'
+    claimedTerminalStatus === 'cancelled' ||
+      pendingLifecycleStatus === 'cancelled' ||
+      (routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled')
   )
+  const runFailed =
+    claimedTerminalStatus === 'failed' || pendingLifecycleStatus === 'failed'
+  const graphExitState = routed.appRunId
+    ? bridgeRunTranscripts.get(routed.appRunId)
+    : undefined
+  const authorizedGraphExit = Boolean(
+    graphExitState?.owner === 'execution_graph' &&
+      bridgeRunRouteMatches(graphExitState, provider, routed.appChatId)
+  )
+  const graphTerminalStatus: 'completed' | 'failed' | 'cancelled' = runCancelled
+    ? 'cancelled'
+    : !runFailed && (code ?? -1) === 0
+      ? 'completed'
+      : 'failed'
   const exitRunItemEvents = runItemEventsForDrafts(provider, routed, [
     {
       kind: 'run/completed',
       itemKind: 'run',
       itemId: routed.appRunId ? `${routed.appRunId}:run` : undefined,
-      status: (code ?? -1) === 0 ? 'success' : 'failed',
+      status: !runFailed && !runCancelled && (code ?? -1) === 0 ? 'success' : 'failed',
       exitCode: code,
       ...(exitStats ? { stats: exitStats } : {}),
       source: 'taskwraith'
@@ -19002,10 +19729,16 @@ function sendAgentCompatExit(
   // and once already settled by a result. Mirrors the markRunExited hook.
   auditRunTracker.handleExit(routed.appRunId, typeof code === 'number' ? code : -1)
   if (routed.appRunId) {
-    finalizeBridgeRunTranscript(
-      routed.appRunId,
-      runCancelled ? 'cancelled' : (code ?? -1) === 0 ? 'success' : 'failed'
-    )
+    if (graphExitState?.owner !== 'execution_graph' || authorizedGraphExit) {
+      finalizeBridgeRunTranscript(
+        routed.appRunId,
+        graphTerminalStatus === 'completed'
+          ? 'success'
+          : graphTerminalStatus === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+      )
+    }
     // Auto-failover: on a terminal FAILED exit with a stashed quota-wall signal,
     // pause the throttled provider and re-dispatch the request to a healthy one.
     if (!runCancelled && !scheduledSoloOwner) {
@@ -19057,6 +19790,9 @@ function sendAgentCompatExit(
   publishRunEvent('agent-exit', provider, routedForWire, sender)
   if (provider === 'gemini') {
     publishRunEvent('gemini-exit', provider, routedForWire, sender)
+  }
+  if (authorizedGraphExit && routed.appRunId) {
+    runManager.finish(routed.appRunId, graphTerminalStatus)
   }
   // Renderer-owned solo runs do not use a main transcript finalizer. Drop their
   // in-memory suppression decision after the terminal event; ChatService also
@@ -22278,6 +23014,19 @@ function maybeRequestCodexHostRerun(
     return
   }
 
+  const hostRunId = state.appRunId?.trim()
+  if (hostRunId && executionGraphOwnsOrAnchorsRunId(hostRunId)) {
+    const reason =
+      'Host-process command reruns are unavailable for graph-owned attempts and Stack anchors.'
+    try {
+      executionGraphCoordinatorRef?.requireActionForProviderRun(hostRunId, reason)
+    } catch (error) {
+      console.error('[ExecutionGraph] host-rerun attention gate failed:', error)
+    }
+    sendAgentCompatError(state.sender, 'codex', reason, state)
+    return
+  }
+
   state.hostRerunRequestedItemIds.add(itemId)
   const approvalId = `host-rerun-${Date.now()}-${Math.random().toString(36).slice(2)}`
   const swiftPmNestedSandbox = isSwiftPmNestedSandboxFailure(command, output)
@@ -22404,28 +23153,6 @@ async function continueCodexAfterHostRerun(
     approval
   )
   continuationState.reasoningEffort = codexReasoning.effort
-  registerRunSession(
-    'codex',
-    approval.sender,
-    continuationState,
-    approval.workspacePath,
-    continuationState,
-    approval.threadId
-  )
-  setActiveCodexRunState(continuationState)
-  sendAgentCompatLine(
-    approval.sender,
-    'codex',
-    {
-      type: 'init',
-      session_id: approval.threadId,
-      model: approval.model,
-      timestamp: new Date().toISOString(),
-      provider: 'codex',
-      continuation: true
-    },
-    continuationState
-  )
   const prompt = [
     'TaskWraith reran a previously failed shell command once from the app host process after explicit user approval.',
     `Command: ${approval.commandText}`,
@@ -22437,6 +23164,31 @@ async function continueCodexAfterHostRerun(
     'Continue from this real output. Do not rerun the command unless a new approval is needed.'
   ].join('\n')
   try {
+    const registeredContinuation = registerRunSession(
+      'codex',
+      approval.sender,
+      continuationState,
+      approval.workspacePath,
+      continuationState,
+      approval.threadId
+    )
+    if (!registeredContinuation) {
+      throw new Error('Codex continuation could not reserve its exact run identity.')
+    }
+    setActiveCodexRunState(continuationState)
+    sendAgentCompatLine(
+      approval.sender,
+      'codex',
+      {
+        type: 'init',
+        session_id: approval.threadId,
+        model: approval.model,
+        timestamp: new Date().toISOString(),
+        provider: 'codex',
+        continuation: true
+      },
+      continuationState
+    )
     await codexClient.request(
       'turn/start',
       buildCodexTurnStartRequest(
@@ -22473,52 +23225,81 @@ async function continueCodexAfterHostRerun(
 async function runApprovedHostCommand(requestId: string): Promise<boolean> {
   const approval = approvalService?.getHostCommand(requestId)
   if (!approval) return false
+  const approvalRunId = approval.appRunId?.trim()
+  if (!approvalRunId) {
+    approvalService?.deleteHostCommand(requestId)
+    runManager.clearApproval(requestId)
+    return false
+  }
+  if (executionGraphOwnsOrAnchorsRunId(approvalRunId)) {
+    const reason =
+      'Host-process command reruns are unavailable inside a durable Stack attempt; the execution requires review instead.'
+    try {
+      executionGraphCoordinatorRef?.requireActionForProviderRun(approvalRunId, reason)
+    } catch (error) {
+      console.error('[ExecutionGraph] approved host-rerun attention gate failed:', error)
+    }
+    approvalService?.deleteHostCommand(requestId)
+    runManager.clearApproval(requestId)
+    sendAgentCompatError(
+      approval.sender,
+      'codex',
+      reason,
+      approval
+    )
+    return false
+  }
+  hostCommandRerunsInFlight.add(approvalRunId)
   approvalService?.deleteHostCommand(requestId)
   runManager.clearApproval(requestId)
-  const toolId = `${requestId}-result`
-  sendAgentCompatLine(
-    approval.sender,
-    'codex',
-    {
-      type: 'tool_use',
-      tool_id: toolId,
-      tool_name: 'run_shell_command',
-      parameters: {
-        command: approval.commandText,
-        cwd: approval.cwd,
-        hostRerun: true,
-        reason: approval.reason
+  try {
+    const toolId = `${requestId}-result`
+    sendAgentCompatLine(
+      approval.sender,
+      'codex',
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: 'run_shell_command',
+        parameters: {
+          command: approval.commandText,
+          cwd: approval.cwd,
+          hostRerun: true,
+          reason: approval.reason
+        },
+        provider: 'codex'
       },
-      provider: 'codex'
-    },
-    approval
-  )
-  const result = await runHostCommand(approval.command, approval.cwd, {
-    releaseApproval: {
-      allowReleaseCommand: true,
-      approvalSource: 'approvedHostCommand'
-    }
-  })
-  const resultText = formatHostCommandResult(result)
-  sendAgentCompatLine(
-    approval.sender,
-    'codex',
-    {
-      type: 'tool_result',
-      tool_id: toolId,
-      tool_name: 'run_shell_command',
-      status:
-        result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
-          ? 'error'
-          : 'success',
-      output: resultText,
-      result: { exitCode: result.exitCode, durationMs: result.durationMs, hostRerun: true },
-      provider: 'codex'
-    },
-    approval
-  )
-  await continueCodexAfterHostRerun(approval, result, resultText)
-  return true
+      approval
+    )
+    const result = await runHostCommand(approval.command, approval.cwd, {
+      releaseApproval: {
+        allowReleaseCommand: true,
+        approvalSource: 'approvedHostCommand'
+      }
+    })
+    const resultText = formatHostCommandResult(result)
+    sendAgentCompatLine(
+      approval.sender,
+      'codex',
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        tool_name: 'run_shell_command',
+        status:
+          result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
+            ? 'error'
+            : 'success',
+        output: resultText,
+        result: { exitCode: result.exitCode, durationMs: result.durationMs, hostRerun: true },
+        provider: 'codex'
+      },
+      approval
+    )
+    await continueCodexAfterHostRerun(approval, result, resultText)
+    return true
+  } finally {
+    hostCommandRerunsInFlight.delete(approvalRunId)
+  }
 }
 
 function syncCodexGoalCapabilityMetadata(
@@ -22671,6 +23452,12 @@ async function syncCodexNativeGoalForSavedChat(
 
 function syncCodexNativeGoalNotification(state: CodexRunState, message: any): boolean {
   if (!state.appChatId) return false
+  if (
+    executionGraphOwnsAttemptRunId(state.appRunId) &&
+    (message.method === 'thread/goal/updated' || message.method === 'thread/goal/cleared')
+  ) {
+    return true
+  }
   const chat = AppStore.getChat(state.appChatId)
   const taskWraithOwnsGoal = Boolean(state.ensembleRun) || chat?.chatKind === 'ensemble'
   if (
@@ -22729,6 +23516,7 @@ async function runCodexAppServerWithClient(
   payload: AgentRunPayload,
   client: CodexAppServerClient
 ) {
+  const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
   client.setNotificationHandler(handleCodexNotification)
   client.setRequestHandler(handleCodexServerRequest)
   client.setStderrHandler((chunk) => {
@@ -22762,7 +23550,9 @@ async function runCodexAppServerWithClient(
   }
 
   await client.ensureStarted(app.getVersion())
-  syncCodexGoalCapabilityMetadata(payload.appChatId, client.supportsNativeGoalControl())
+  if (!graphContextIsolated) {
+    syncCodexGoalCapabilityMetadata(payload.appChatId, client.supportsNativeGoalControl())
+  }
 
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   const model = normalizeCodexModel(payload.model)
@@ -22837,12 +23627,14 @@ async function runCodexAppServerWithClient(
     )
   }
 
-  await syncCodexNativeGoalForRun(
-    client,
-    payload.appChatId,
-    threadId,
-    Boolean(payload.ensembleRun)
-  )
+  if (!graphContextIsolated) {
+    await syncCodexNativeGoalForRun(
+      client,
+      payload.appChatId,
+      threadId,
+      Boolean(payload.ensembleRun)
+    )
+  }
 
   const route = routeWithRunId('codex', payload)
   const codexState = createCodexRunState(
@@ -23717,6 +24509,9 @@ async function runOllamaProviderAdapter(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload
 ): Promise<void> {
+  const graphOwnedOllamaAttempt = Boolean(
+    payload.appRunId && AppStore.getRunQueueJob(payload.appRunId)?.executionGraph
+  )
   const ollamaTaskWraithMcpAdvertised = Boolean(
     payload.scope !== 'global' &&
       payload.workspace &&
@@ -23773,6 +24568,7 @@ async function runOllamaProviderAdapter(
       emitProviderCapabilityWarnings,
       executeTool: executeOllamaLocalTool,
       getOllamaSessionMemory: (chatId, memoryKey) => {
+        if (graphOwnedOllamaAttempt) return null
         const chat = AppStore.getChat(chatId)
         if (!chat) return null
         if (memoryKey) {
@@ -23783,6 +24579,7 @@ async function runOllamaProviderAdapter(
         return normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
       },
       saveOllamaSessionMemory: (chatId, memory, memoryKey) => {
+        if (graphOwnedOllamaAttempt) return
         const chat = AppStore.getChat(chatId)
         if (!chat) return
         if (memoryKey) {
@@ -23820,27 +24617,36 @@ async function terminateExactProviderSession(
   }
 
   const codexState = provider === 'codex' ? getCodexStateFromSession(session) : undefined
+  const graphOwnedAttempt = Boolean(AppStore.getRunQueueJob(runId)?.executionGraph)
+  const exactAbortController = session.abortController
+  const exactProcess = session.process
+  if (
+    graphOwnedAttempt &&
+    !runManager.claimTerminalStatus(runId, terminalStatus, { requireConfirmation: true })
+  ) {
+    return false
+  }
   try {
     try {
-      session.abortController?.abort()
+      exactAbortController?.abort()
     } catch {
       // Continue through every exact transport stop before terminalizing.
     }
     try {
-      session.process?.kill()
+      exactProcess?.kill()
     } catch {
       // A provider process may already have exited after publishing its handle.
     }
-    if (cliProviderProcesses.get(provider) === session.process) {
+    if (cliProviderProcesses.get(provider) === exactProcess) {
       cliProviderProcesses.delete(provider)
     }
-    if (cliProviderAbortControllers.get(provider) === session.abortController) {
+    if (cliProviderAbortControllers.get(provider) === exactAbortController) {
       cliProviderAbortControllers.delete(provider)
     }
-    if (provider === 'gemini' && geminiProcess === session.process) {
+    if (provider === 'gemini' && geminiProcess === exactProcess) {
       geminiProcess = null
     }
-    if (provider === 'codex' && codexExecProcess === session.process) {
+    if (provider === 'codex' && codexExecProcess === exactProcess) {
       codexExecProcess = null
     }
     if (provider === 'codex') {
@@ -23854,7 +24660,10 @@ async function terminateExactProviderSession(
       }
     }
   } finally {
-    runManager.finish(runId, terminalStatus)
+    // A graph cancellation request is not terminal evidence. Its coordinator
+    // waits for the provider's real result/exit callback and committed receipt;
+    // ordinary runs retain the legacy eager terminal claim.
+    if (!graphOwnedAttempt) runManager.finish(runId, terminalStatus)
   }
 
   if (provider === 'gemini' && !geminiSessionProcess) {
@@ -23864,6 +24673,91 @@ async function terminateExactProviderSession(
     activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
   }
   return true
+}
+
+function hasCommittedExecutionGraphTerminalReceipt(
+  runId: string,
+  status: 'completed' | 'failed' | 'cancelled'
+): boolean {
+  const job = AppStore.getRunQueueJob(runId)
+  const binding = job?.executionGraph
+  const chat = job?.chatId ? AppStore.getChat(job.chatId) : null
+  const run = chat?.runs?.find((candidate) => candidate.runId === runId)
+  const receipt = run?.providerMetadata
+    ?.executionGraphResultReceipt as ExecutionGraphAttemptTerminalReceipt | undefined
+  return Boolean(
+    binding &&
+      chat &&
+      receipt &&
+      receipt.status === status &&
+      receipt.binding.executionId === binding.executionId &&
+      receipt.binding.activationId === binding.activationId &&
+      receipt.binding.attemptId === binding.attemptId &&
+      verifyExecutionGraphAttemptReceiptOnChat(chat, receipt)
+  )
+}
+
+async function cancelExecutionGraphProviderRun(
+  provider: ProviderId,
+  runId: string
+): Promise<boolean> {
+  const job = AppStore.getRunQueueJob(runId)
+  if (!job?.executionGraph || job.provider !== provider || job.runId !== runId) return false
+
+  let settle: (confirmed: boolean) => void = () => {}
+  let settled = false
+  let timeout: NodeJS.Timeout | undefined
+  let unsubscribe: () => void = () => {}
+  const finish = (confirmed: boolean): void => {
+    if (settled) return
+    settled = true
+    if (timeout) clearTimeout(timeout)
+    unsubscribe()
+    settle(confirmed)
+  }
+  const terminal = new Promise<boolean>((resolve) => {
+    settle = resolve
+    unsubscribe = runManager.onChange((event) => {
+      if (
+        event.type !== 'removed' &&
+        event.session.runId === runId &&
+        (event.session.status === 'completed' ||
+          event.session.status === 'failed' ||
+          event.session.status === 'cancelled')
+      ) {
+        finish(
+          hasCommittedExecutionGraphTerminalReceipt(runId, event.session.status)
+        )
+      }
+    })
+    timeout = setTimeout(() => finish(false), 15_000)
+  })
+
+  try {
+    const transcriptState = bridgeRunTranscripts.get(runId)
+    const providerTerminalAlreadyObserved = Boolean(
+      transcriptState?.owner === 'execution_graph' &&
+        transcriptState.provider === provider &&
+        transcriptState.chatId === job.chatId &&
+        transcriptState.providerTerminalCandidate
+    )
+    if (!providerTerminalAlreadyObserved) {
+      const requested = await cancelProviderRun(provider, runId)
+      if (!requested) finish(false)
+    }
+    const current = runManager.get(runId)
+    if (
+      current &&
+      (current.status === 'completed' ||
+        current.status === 'failed' ||
+        current.status === 'cancelled')
+    ) {
+      finish(hasCommittedExecutionGraphTerminalReceipt(runId, current.status))
+    }
+  } catch {
+    finish(false)
+  }
+  return await terminal
 }
 
 async function cancelProviderRun(
@@ -27592,13 +28486,22 @@ async function executeGeminiMcpTool(
         }
       }
     } else if (toolName === 'goal_read') {
-      const chatId = String(context.appChatId || '').trim()
-      const chat = chatId ? AppStore.getChat(chatId) : null
-      text = mcpJson({
-        ok: true,
-        tool: 'goal_read',
-        goal: chat?.activeGoal || null
-      })
+      if (executionGraphOwnsAttemptRunId(context.appRunId)) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'goal_read',
+          error: 'Execution graph attempts cannot read or mutate root-task goal state.'
+        })
+      } else {
+        const chatId = String(context.appChatId || '').trim()
+        const chat = chatId ? AppStore.getChat(chatId) : null
+        text = mcpJson({
+          ok: true,
+          tool: 'goal_read',
+          goal: chat?.activeGoal || null
+        })
+      }
     } else if (
       toolName === 'goal_update' ||
       toolName === 'update_goal' ||
@@ -27608,7 +28511,14 @@ async function executeGeminiMcpTool(
       const chatId = String(context.appChatId || '').trim()
       const chat = chatId ? AppStore.getChat(chatId) : null
       const goal = chat?.activeGoal
-      if (!chat || !goal) {
+      if (executionGraphOwnsAttemptRunId(context.appRunId)) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: toolName,
+          error: 'Execution graph attempts cannot read or mutate root-task goal state.'
+        })
+      } else if (!chat || !goal) {
         toolIsError = true
         text = mcpJson({
           ok: false,
@@ -27680,7 +28590,14 @@ async function executeGeminiMcpTool(
       }
     } else if (toolName === 'todo_write') {
       const validated = validateTodoWriteArgs(args)
-      if (!validated.ok) {
+      if (executionGraphOwnsAttemptRunId(context.appRunId)) {
+        toolIsError = true
+        text = mcpJson({
+          ok: false,
+          tool: 'todo_write',
+          error: 'Execution graph attempts cannot mutate the root task checklist.'
+        })
+      } else if (!validated.ok) {
         text = mcpJson({ ok: false, error: validated.error })
       } else {
         const todoFollowupHint =
@@ -29744,6 +30661,11 @@ if (isGeminiMcpBridgeProcess) {
       }),
       canLeaseJob: (job) => {
         if (!job.chatId) return true
+        const queueLeaseAlreadyHeld = AppStore.getRunQueueJobs({
+          chatId: job.chatId,
+          statuses: ['starting', 'active', 'cancelling']
+        }).some((candidate) => candidate.runId !== job.runId)
+        if (queueLeaseAlreadyHeld) return false
         // 1.0.6-CRUX26 — sweep all AVAILABLE providers (incl. gated grok/cursor)
         // so a grok/cursor session already active on this chat blocks a
         // concurrent lease, matching the core four.
@@ -29766,6 +30688,421 @@ if (isGeminiMcpBridgeProcess) {
       },
       cancelProviderRun
     })
+
+    // Execution graphs are a main-owned durable scheduler, not a renderer
+    // projection over ad-hoc queue rows. Initialization is deliberately
+    // fail-closed: a corrupt registry disables this surface for the process
+    // rather than replacing or partially trusting persisted graph authority.
+    executionGraphComposedPayloads.clear()
+    executionGraphDispatchesInFlight.clear()
+    executionGraphAdapterAdmissions.clear()
+    const pendingExecutionGraphDispatchRunIds = new Set<string>()
+    let executionGraphAttemptDispatcher: ((runId: string) => Promise<void>) | null = null
+    let executionGraphDispatchFlushScheduled = false
+    const scheduleExecutionGraphAttemptDispatch = (runId: string): void => {
+      pendingExecutionGraphDispatchRunIds.add(runId)
+      if (!executionGraphAttemptDispatcher || executionGraphDispatchFlushScheduled) return
+      executionGraphDispatchFlushScheduled = true
+      queueMicrotask(() => {
+        executionGraphDispatchFlushScheduled = false
+        const dispatch = executionGraphAttemptDispatcher
+        if (!dispatch) return
+        const runIds = [...pendingExecutionGraphDispatchRunIds]
+        pendingExecutionGraphDispatchRunIds.clear()
+        for (const pendingRunId of runIds) {
+          void dispatch(pendingRunId).catch((error) => {
+            console.error(
+              `[ExecutionGraph] main-owned dispatch failed for runId=${pendingRunId}:`,
+              error
+            )
+          })
+        }
+      })
+    }
+    try {
+      const executionGraphRepository = new ExecutionGraphRepository(
+        join(app.getPath('userData'), 'execution-graph')
+      )
+      const resolveAnchorRunStatus = (
+        runId: string,
+        expected?: { readonly workspaceId: string; readonly rootChatId?: string }
+      ): ExecutionGraphAnchorRunStatus => {
+        const session = runManager.get(runId)
+        const matchingJobs = AppStore.getRunQueueJobs({ includeTerminal: true }).filter(
+          (job) => job.runId === runId
+        )
+        if (matchingJobs.length > 1) return 'ambiguous'
+        const job = matchingJobs[0]
+        if (expected) {
+          const workspace = AppStore.getWorkspaces().find(
+            (candidate) => candidate.id === expected.workspaceId
+          )
+          if (!workspace) return 'ambiguous'
+          let expectedWorkspacePath: string
+          try {
+            expectedWorkspacePath = requireRegisteredWorkspace(
+              workspace.path,
+              'Stack anchor workspace'
+            )
+          } catch {
+            return 'ambiguous'
+          }
+          const sessionMatches =
+            !session ||
+            (session.appChatId === expected.rootChatId &&
+              Boolean(session.workspacePath) &&
+              canonicalPath(session.workspacePath!) === expectedWorkspacePath)
+          const jobMatches =
+            !job ||
+            (job.workspaceId === expected.workspaceId &&
+              job.chatId === expected.rootChatId &&
+              Boolean(job.workspacePath) &&
+              canonicalPath(job.workspacePath!) === expectedWorkspacePath)
+          if (!sessionMatches || !jobMatches) return 'ambiguous'
+          if (session && job && session.provider !== job.provider) return 'ambiguous'
+        }
+        const sessionStatus: ExecutionGraphAnchorRunStatus | undefined = session
+          ? session.status === 'starting' || session.status === 'running'
+            ? 'nonterminal'
+            : session.status
+          : undefined
+        const jobStatus: ExecutionGraphAnchorRunStatus | undefined = job
+          ? job.status === 'completed' || job.status === 'failed' || job.status === 'cancelled'
+            ? job.status
+            : 'nonterminal'
+          : undefined
+        if (sessionStatus && jobStatus && sessionStatus !== jobStatus) {
+          if (
+            sessionStatus !== 'nonterminal' &&
+            job &&
+            (job.status === 'starting' || job.status === 'active' || job.status === 'cancelling')
+          ) {
+            return sessionStatus
+          }
+          return 'ambiguous'
+        }
+        return sessionStatus ?? jobStatus ?? 'missing'
+      }
+      const resolveStackTarget = (input: {
+        workspaceId: string
+        rootChatId: string
+        anchorRunRef?: string
+      }) => {
+        const workspaceMatches = AppStore.getWorkspaces().filter(
+          (candidate) => candidate.id === input.workspaceId
+        )
+        if (workspaceMatches.length !== 1) {
+          throw new Error('Stack workspace is unavailable or ambiguous.')
+        }
+        const workspace = workspaceMatches[0]
+        const workspacePath = requireRegisteredWorkspace(workspace.path, 'Stack workspace')
+        const chat = AppStore.getChat(input.rootChatId)
+        if (
+          !chat ||
+          chat.archived ||
+          chat.parentChatId ||
+          chatScope(chat) !== 'workspace' ||
+          chat.chatKind === 'ensemble' ||
+          chat.ensemble?.enabled
+        ) {
+          throw new Error('Stack steps require an active top-level workspace solo chat.')
+        }
+        if (
+          chat.workspaceId !== workspace.id ||
+          !chat.workspacePath ||
+          canonicalPath(chat.workspacePath) !== workspacePath
+        ) {
+          throw new Error('Stack chat does not belong to the selected workspace.')
+        }
+        validateChatWorkspaceIdentity(chat.appChatId, workspace)
+
+        const activeRunIds = new Set<string>()
+        for (const provider of RUN_MANAGER_PROVIDERS) {
+          for (const session of runManager.getActiveByProvider(provider)) {
+            if (session.appChatId === chat.appChatId) activeRunIds.add(session.runId)
+          }
+        }
+
+        let anchorRunRef = input.anchorRunRef?.trim() || undefined
+        if (!anchorRunRef) {
+          if (activeRunIds.size > 1) {
+            throw new Error('Stack anchor is ambiguous; select an exact active run.')
+          }
+          anchorRunRef = [...activeRunIds][0]
+        }
+        if (anchorRunRef) {
+          if (
+            approvalService?.hasPendingHostCommandForRun(anchorRunRef) ||
+            hostCommandRerunsInFlight.has(anchorRunRef)
+          ) {
+            throw new Error(
+              'Stack cannot anchor while a host-process command continuation is pending.'
+            )
+          }
+          const matchingJobs = AppStore.getRunQueueJobs({ includeTerminal: true }).filter(
+            (job) => job.runId === anchorRunRef
+          )
+          if (matchingJobs.length > 1) {
+            throw new Error('Stack anchor resolves to multiple queue jobs.')
+          }
+          const job = matchingJobs[0]
+          const session = runManager.get(anchorRunRef)
+          if (
+            !session ||
+            (session.status !== 'starting' && session.status !== 'running')
+          ) {
+            throw new Error('Stack anchor must be one exact active provider session.')
+          }
+          if (job) {
+            if (
+              job.chatId !== chat.appChatId ||
+              job.workspaceId !== workspace.id ||
+              !job.workspacePath ||
+              canonicalPath(job.workspacePath) !== workspacePath
+            ) {
+              throw new Error('Stack anchor does not belong to the selected chat.')
+            }
+          }
+          if (session.appChatId !== chat.appChatId) {
+            throw new Error('Stack anchor session does not belong to the selected chat.')
+          }
+          if (
+            !session.workspacePath ||
+            canonicalPath(session.workspacePath) !== workspacePath
+          ) {
+            throw new Error('Stack anchor session does not belong to the selected workspace.')
+          }
+          if (job && session.provider !== job.provider) {
+            throw new Error('Stack anchor provider identity is ambiguous.')
+          }
+          if (resolveAnchorRunStatus(anchorRunRef) !== 'nonterminal') {
+            throw new Error('Stack anchor must be one exact active run.')
+          }
+        }
+        return {
+          workspaceId: workspace.id,
+          workspacePath,
+          rootChatId: chat.appChatId,
+          ...(anchorRunRef ? { anchorRunRef } : {})
+        }
+      }
+      const executionGraphCoordinator = new ExecutionGraphCoordinator({
+        repository: executionGraphRepository,
+        materializePausedQueueJob: (input) => {
+          if (
+            executionGraphRunTemplatePermissionCeilingDigest(input.runTemplate.content) !==
+            input.permissionCeilingAuthorityDigest
+          ) {
+            throw new Error('Persisted graph run template exceeds its permission ceiling.')
+          }
+          const content = input.runTemplate.content as Record<string, unknown>
+          if (
+            content.schemaVersion !== 1 ||
+            content.provider !== input.provider ||
+            content.scope !== 'workspace' ||
+            content.workspaceId !== input.workspaceId ||
+            content.chatId !== input.rootChatId ||
+            typeof content.workspacePath !== 'string' ||
+            !isRecord(content.request) ||
+            !isRecord(content.permissionPosture)
+          ) {
+            throw new Error('Persisted graph run template target is invalid.')
+          }
+          const workspace = AppStore.getWorkspaces().find(
+            (candidate) => candidate.id === input.workspaceId
+          )
+          if (!workspace) throw new Error('Persisted graph workspace is unavailable.')
+          const workspacePath = requireRegisteredWorkspace(workspace.path, 'Graph workspace')
+          if (canonicalPath(content.workspacePath) !== workspacePath) {
+            throw new Error('Persisted graph run template workspace changed.')
+          }
+          const chat = AppStore.getChat(input.rootChatId)
+          if (
+            !chat ||
+            chat.archived ||
+            chat.parentChatId ||
+            chat.chatKind === 'ensemble' ||
+            chat.ensemble?.enabled ||
+            chat.workspaceId !== workspace.id
+          ) {
+            throw new Error('Persisted graph run template chat is unavailable.')
+          }
+          validateChatWorkspaceIdentity(chat.appChatId, workspace)
+          const request = content.request as unknown as RunQueueRequestSnapshot
+          if (request.scope !== 'workspace' || request.sessionTrust !== false) {
+            throw new Error('Persisted graph run template cannot retain Trusted Session.')
+          }
+          if (
+            request.scheduledTaskId ||
+            request.scheduledRunAt ||
+            request.remoteComposer ||
+            request.guestParentChatId ||
+            request.guestRole ||
+            request.dmTargetParticipantId ||
+            request.discordContextSelection ||
+            request.codexNativeReview ||
+            request.preserveComposer ||
+            request.geminiWorktree ||
+            request.effectiveWorkspacePath ||
+            request.handoffSourceRunId ||
+            content.handoffSourceRunId
+          ) {
+            throw new Error('Persisted graph run template contains unsupported provenance.')
+          }
+          if (request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')) {
+            throw new Error('Persisted graph run template contains a run-bound external grant.')
+          }
+          const runtimeProfileId =
+            typeof content.runtimeProfileId === 'string' && content.runtimeProfileId.trim()
+              ? content.runtimeProfileId.trim()
+              : undefined
+          if ((request.runtimeProfileId?.trim() || undefined) !== runtimeProfileId) {
+            throw new Error('Persisted graph runtime profile authority is inconsistent.')
+          }
+          if (runtimeProfileId) {
+            throw new Error('V1 Stack execution does not support mutable runtime profiles.')
+          }
+          const templatePermissionPosture =
+            content.permissionPosture as unknown as RunPermissionPostureSnapshot
+          const currentPermissionPosture = buildExecutionGraphPermissionPosture({
+            provider: input.provider,
+            workspacePath,
+            chatId: input.rootChatId,
+            request,
+            settings: AppStore.getSettings(),
+            sign: signRunPosture
+          })
+          assertExecutionGraphPermissionPostureStillCurrent(
+            templatePermissionPosture,
+            currentPermissionPosture
+          )
+          const permissionPosture = mintExecutionGraphAttemptPermissionPosture({
+            appRunId: input.runId,
+            provider: input.provider,
+            workspacePath,
+            chatId: input.rootChatId,
+            request,
+            ...(runtimeProfileId ? { runtimeProfileId } : {}),
+            templatePosture: templatePermissionPosture,
+            sign: signRunPosture,
+            verifyTemplate: verifyRunPosture
+          })
+          const job = runQueueService.requestJob(
+            {
+              id: input.runId,
+              runId: input.runId,
+              provider: input.provider,
+              scope: 'workspace',
+              workspaceId: input.workspaceId,
+              workspacePath,
+              chatId: input.rootChatId,
+              source: 'system',
+              status: 'paused',
+              request: { ...request, sessionTrust: false },
+              permissionPosture,
+              ...(runtimeProfileId ? { runtimeProfileId } : {})
+            },
+            {
+              authorizedFilePaths: [],
+              executionGraph: {
+                schemaVersion: 1,
+                executionId: input.executionId,
+                activationId: input.activationId,
+                attemptId: input.attemptId,
+                runTemplateRef: input.runTemplate.templateId,
+                permissionCeilingAuthorityDigest: input.permissionCeilingAuthorityDigest
+              }
+            }
+          )
+          if (
+            job.runId !== input.runId ||
+            job.status !== 'paused' ||
+            job.provider !== input.provider ||
+            job.workspaceId !== input.workspaceId ||
+            job.workspacePath !== workspacePath ||
+            job.chatId !== input.rootChatId ||
+            job.executionGraph?.executionId !== input.executionId ||
+            job.executionGraph.activationId !== input.activationId ||
+            job.executionGraph.attemptId !== input.attemptId ||
+            job.executionGraph.runTemplateRef !== input.runTemplate.templateId ||
+            job.executionGraph.permissionCeilingAuthorityDigest !==
+              input.permissionCeilingAuthorityDigest
+          ) {
+            throw new Error('Graph queue materialization did not preserve exact authority.')
+          }
+          return job
+        },
+        getQueueJob: (runId) => {
+          const job = AppStore.getRunQueueJob(runId)
+          return job?.runId === runId ? job : null
+        },
+        transitionQueueJob: (runId, status, partial) => {
+          const job = AppStore.getRunQueueJob(runId)
+          return job?.runId === runId ? runQueueService.transitionJob(runId, status, partial) : null
+        },
+        resolveAnchorRunStatus,
+        cancelActiveRun: async (runId) => {
+          const candidate = AppStore.getRunQueueJob(runId)
+          const job = candidate?.runId === runId ? candidate : null
+          const session = runManager.get(runId)
+          const provider = job?.provider ?? session?.provider
+          if (!provider || (job && session && job.provider !== session.provider)) {
+            throw new Error('Graph run cancellation target is unavailable or ambiguous.')
+          }
+          return await cancelExecutionGraphProviderRun(provider, runId)
+        },
+        onAttemptQueued: scheduleExecutionGraphAttemptDispatch,
+        onChanged: (notice) => {
+          if (notice.kind === 'execution-terminal') {
+            const projection = executionGraphRepository.getExecution(notice.executionId)
+            for (const attempt of Object.values(projection?.attempts ?? {})) {
+              if (!attempt.providerRunRef) continue
+              executionGraphComposedPayloads.delete(attempt.providerRunRef)
+              executionGraphDispatchesInFlight.delete(attempt.providerRunRef)
+              executionGraphAdapterAdmissions.delete(attempt.providerRunRef)
+            }
+          }
+          safeSendToWebContents(mainWindow, 'execution-graph-changed', notice)
+          requestThrottledRemoteProjectionSnapshot()
+        }
+      })
+      registerExecutionGraphHandlers({
+        assertMainRendererSender,
+        assertLocalChatHistoryDurable: () => {
+          if (!AppStore.getSettings().storeLocalChatHistory) {
+            throw new Error('V1 Stacks require local chat history to remain enabled.')
+          }
+        },
+        resolveStackTarget,
+        resolveAuthorizedAttachmentPaths: rendererAttachmentCapabilityPaths,
+        prepareQueueJob: (input, options) => runQueueService.prepareJob(input, options),
+        resolvePermissionPosture: (input) => {
+          if (input.runtimeProfileId) {
+            throw new Error('V1 Stack steps do not support mutable runtime profiles.')
+          }
+          return buildExecutionGraphPermissionPosture({
+            provider: input.provider,
+            workspacePath: input.workspacePath,
+            chatId: input.rootChatId,
+            request: input.request,
+            ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
+            settings: AppStore.getSettings(),
+            sign: signRunPosture
+          })
+        },
+        repository: executionGraphRepository,
+        coordinator: executionGraphCoordinator
+      })
+      executionGraphRepositoryRef = executionGraphRepository
+      executionGraphCoordinatorRef = executionGraphCoordinator
+    } catch (error) {
+      executionGraphRepositoryRef = null
+      executionGraphCoordinatorRef = null
+      console.error(
+        '[ExecutionGraph] durable graph service is disabled because initialization failed:',
+        error
+      )
+    }
 
     // Phase C5 scaffold: APNs wake-on-approval. Today both the pusher and
     // token store are wired as no-ops / persistent stubs; the real APNs
@@ -33563,6 +34900,28 @@ if (isGeminiMcpBridgeProcess) {
       // allowlist set — a cheap set-diff when nothing changed.
       remoteGitSnapshotFeedRef?.reconcile()
       for (const workspaceId of visibleWorkspaceIds) {
+        const executionRuns = buildRemoteExecutionRunList(
+          executionGraphCoordinatorRef?.listExecutions({
+            workspaceId,
+            includeTerminal: true
+          }) ?? [],
+          { workspaceId }
+        )
+        if (executionRuns.length > 0) {
+          const workspace = AppStore.getWorkspaces().find(
+            (candidate) => candidate.id === workspaceId
+          )
+          envelopes.push(
+            buildRemoteProjectionEnvelope({
+              kind: 'executionRuns',
+              payload: { schemaVersion: 1, runs: executionRuns },
+              generatedAt,
+              workspaceId,
+              workspacePath: workspace?.path,
+              envelopeId: `remote-execution-runs:${workspaceId}`
+            })
+          )
+        }
         ensureRemoteGitSnapshotFresh(workspaceId)
         const cached = remoteGitSnapshotCache.get(workspaceId)
         if (!cached) continue
@@ -34809,6 +36168,14 @@ if (isGeminiMcpBridgeProcess) {
 
     const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
     recordStartupRecoveryEvents(startupRecoveryRecords)
+    try {
+      // Queue recovery owns process/transport reconciliation. Only after it has
+      // settled those rows may the graph ledger decide whether a claimed
+      // attempt is safe to requeue or must stop at requires_action.
+      executionGraphCoordinatorRef?.recover()
+    } catch (error) {
+      console.error('[ExecutionGraph] startup recovery failed:', error)
+    }
     if (!scheduledOccurrenceRecoveryBlockedReason) {
       AppStore.recoverInterruptedScheduledTasksAfterStartup()
       // Widened backstop at boot: the 'running'-only startup recovery above misses a
@@ -35286,10 +36653,251 @@ if (isGeminiMcpBridgeProcess) {
       getThemeAppearance: () => AppStore.getSettings().themeAppearance,
       getWindows: () => BrowserWindow.getAllWindows()
     })
+
+    const executionGraphDurableClaimForRun = (appRunId: string) => {
+      const coordinator = executionGraphCoordinatorRef
+      if (!coordinator) return null
+      const claims = coordinator
+        .listExecutions({ includeTerminal: true })
+        .flatMap((projection) =>
+          Object.values(projection.attempts)
+            .filter((attempt) => attempt.providerRunRef === appRunId)
+            .map((attempt) => ({ projection, attempt }))
+        )
+      if (claims.length > 1) {
+        throw new Error('Execution graph run identity is claimed by multiple attempts.')
+      }
+      return claims[0] ?? null
+    }
+
+    const executionGraphAnchorClaimsForRun = (appRunId: string) => {
+      const canonicalRunId = canonicalExecutionGraphRunId(
+        appRunId,
+        (runIdOrId) => AppStore.getRunQueueJob(runIdOrId)
+      )
+      return (
+        executionGraphCoordinatorRef
+          ?.listExecutions({ includeTerminal: true })
+          .filter((projection) => projection.anchorRunRef === canonicalRunId) ?? []
+      )
+    }
+
+    const resolveExecutionGraphQueueAuthority = (appRunId: string) => {
+      const repository = executionGraphRepositoryRef
+      const coordinator = executionGraphCoordinatorRef
+      if (!repository || !coordinator) {
+        throw new Error('Execution graph runtime authority is unavailable.')
+      }
+      const job = coordinator.assertQueueJobDispatchable(appRunId)
+      if (
+        !job.executionGraph ||
+        !job.workspaceId ||
+        !job.workspacePath ||
+        !job.chatId ||
+        !job.request ||
+        !job.permissionPosture ||
+        job.scope !== 'workspace'
+      ) {
+        throw new Error('Execution graph queue authority is incomplete.')
+      }
+      const template = repository.getRunTemplate(job.executionGraph.runTemplateRef)
+      if (!template) throw new Error('Execution graph run template is unavailable.')
+      const content = template.content as Record<string, unknown>
+      if (
+        content.schemaVersion !== 1 ||
+        content.provider !== job.provider ||
+        content.scope !== 'workspace' ||
+        content.workspaceId !== job.workspaceId ||
+        content.chatId !== job.chatId ||
+        typeof content.workspacePath !== 'string' ||
+        canonicalPath(content.workspacePath) !== canonicalPath(job.workspacePath)
+      ) {
+        throw new Error('Execution graph run template target changed before dispatch.')
+      }
+      const queuedTemplateContent = {
+        ...template.content,
+        request: job.request,
+        // The persisted template proof is reusable; the queue row carries a
+        // separately signed, run-bound attempt proof. Compare the complete
+        // request while retaining the original template proof here.
+        permissionPosture: content.permissionPosture,
+        runtimeProfileId: job.runtimeProfileId
+      } as unknown as JsonObject
+      if (
+        stableExecutionGraphStringify(queuedTemplateContent) !==
+        stableExecutionGraphStringify(template.content)
+      ) {
+        throw new Error('Execution graph queue request no longer matches its complete template.')
+      }
+      const currentPermissionPosture = buildExecutionGraphPermissionPosture({
+        provider: job.provider,
+        workspacePath: job.workspacePath,
+        chatId: job.chatId,
+        request: job.request,
+        settings: AppStore.getSettings(),
+        sign: signRunPosture
+      })
+      assertExecutionGraphPermissionPostureStillCurrent(
+        content.permissionPosture as unknown as RunPermissionPostureSnapshot,
+        currentPermissionPosture
+      )
+      if (
+        executionGraphRunTemplatePermissionCeilingDigest(template.content) !==
+          job.executionGraph.permissionCeilingAuthorityDigest ||
+        executionGraphRunTemplatePermissionCeilingDigest({
+          ...template.content,
+          request: job.request,
+          permissionPosture: job.permissionPosture,
+          runtimeProfileId: job.runtimeProfileId
+        } as unknown as JsonObject) !== job.executionGraph.permissionCeilingAuthorityDigest
+      ) {
+        throw new Error('Execution graph queue authority exceeds its frozen permission ceiling.')
+      }
+      return { job, template }
+    }
+
+    const graphOwnedComposerInput = (appRunId: string): ComposerInput | null => {
+      const candidate = AppStore.getRunQueueJob(appRunId)
+      if (!candidate?.executionGraph) return null
+      const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+      if (job.status !== 'starting') {
+        throw new Error('Execution graph queue run must hold an exact starting lease to compose.')
+      }
+      const graphBinding = job.executionGraph
+      if (!graphBinding) {
+        throw new Error('Execution graph composer lost its durable queue binding.')
+      }
+      const request = job.request!
+      const chat = AppStore.getChat(job.chatId!)
+      if (!chat || chat.archived || chat.parentChatId || chat.chatKind === 'ensemble') {
+        throw new Error('Execution graph composer chat is unavailable.')
+      }
+      const projection = executionGraphCoordinatorRef?.getExecution(
+        graphBinding.executionId
+      )
+      const activation = projection?.activations[graphBinding.activationId]
+      if (
+        !projection ||
+        !activation ||
+        activation.stepId !==
+          projection.attempts[graphBinding.attemptId]?.stepId
+      ) {
+        throw new Error('Execution graph composer lost its exact activation identity.')
+      }
+      const predecessorStepIds = projection.topology.edges
+        .filter(
+          (edge): edge is Extract<typeof edge, { kind: 'control' }> =>
+            edge.kind === 'control' && edge.toStepId === activation.stepId
+        )
+        .map((edge) => edge.fromStepId)
+      if (predecessorStepIds.length > 1) {
+        throw new Error('V1 Stack composition supports one immediate success predecessor.')
+      }
+      const predecessorResults = predecessorStepIds.map((stepId) => {
+        const predecessorActivation = Object.values(projection.activations).find(
+          (candidate) => candidate.stepId === stepId
+        )
+        const predecessorAttempt = predecessorActivation?.attemptIds
+          .map((attemptId) => projection.attempts[attemptId])
+          .filter((attempt): attempt is StepAttempt => Boolean(attempt))
+          .sort((left, right) => right.ordinal - left.ordinal)[0]
+        if (
+          !predecessorActivation ||
+          predecessorActivation.state !== 'succeeded' ||
+          !predecessorAttempt ||
+          predecessorAttempt.state !== 'succeeded' ||
+          !predecessorAttempt.providerRunRef ||
+          !predecessorAttempt.result
+        ) {
+          throw new Error('Execution graph predecessor has no committed structured result.')
+        }
+        const predecessorRun = chat.runs?.find(
+          (run) => run.runId === predecessorAttempt.providerRunRef
+        )
+        const predecessorReceipt = predecessorRun?.providerMetadata
+          ?.executionGraphResultReceipt as ExecutionGraphAttemptTerminalReceipt | undefined
+        if (
+          !predecessorReceipt ||
+          !verifyExecutionGraphAttemptReceiptOnChat(chat, predecessorReceipt) ||
+          predecessorReceipt.binding.executionId !== projection.executionId ||
+          predecessorReceipt.binding.activationId !== predecessorActivation.id ||
+          predecessorReceipt.binding.attemptId !== predecessorAttempt.id ||
+          stableExecutionGraphStringify(predecessorReceipt.result) !==
+            stableExecutionGraphStringify(predecessorAttempt.result)
+        ) {
+          throw new Error(
+            'Execution graph predecessor result lost its exact durable transcript receipt.'
+          )
+        }
+        return {
+          stepId,
+          attemptId: predecessorAttempt.id,
+          providerRunRef: predecessorAttempt.providerRunRef,
+          threadRef: chat.appChatId,
+          result: predecessorAttempt.result
+        }
+      })
+      return {
+        chatId: chat.appChatId,
+        appRunId: job.runId,
+        provider: job.provider,
+        scope: 'workspace',
+        workspace: job.workspacePath,
+        userInput: formatExecutionGraphPredecessorResults(
+          request.prompt,
+          predecessorResults
+        ),
+        selectedModelType: request.selectedModelType,
+        customModel: request.customModel,
+        approvalMode: request.approvalMode,
+        permissionPresetId: request.permissionPresetId,
+        workflowMode: request.workflowMode,
+        contextIsolation: 'execution_graph',
+        sessionTrust: false,
+        imageAttachments: request.imageAttachments.map((attachment) => ({
+          id: attachment.id,
+          path: attachment.path,
+          name: attachment.name
+        })),
+        externalPathGrants: request.externalPathGrants,
+        projectReferenceContextSelection: request.projectReferenceContextSelection,
+        codexReasoningEffort: request.codexReasoningEffort,
+        codexServiceTier: request.codexServiceTier,
+        claudeReasoningEffort: request.claudeReasoningEffort,
+        claudeFastMode: request.claudeFastMode,
+        kimiFastMode: request.kimiFastMode,
+        kimiReasoningEffort: request.kimiReasoningEffort,
+        kimiThinkingEnabled: request.kimiThinkingEnabled,
+        grokReasoningEffort: request.grokReasoningEffort,
+        cursorReasoningEffort: request.cursorReasoningEffort,
+        cursorFastMode: request.cursorFastMode,
+        runtimeProfileId: request.runtimeProfileId,
+        geminiAuthProfileId: request.geminiAuthProfileId,
+        chatSnapshot: chat
+      }
+    }
+
     const composerService = new ComposerService({
       appStore: AppStore,
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
+      resolveFrozenPermissionPosture: (input) => {
+        const candidate = AppStore.getRunQueueJob(input.appRunId)
+        if (!candidate?.executionGraph) return null
+        const { job } = resolveExecutionGraphQueueAuthority(input.appRunId)
+        return resolveExecutionGraphQueuePermissionPosture({
+          job,
+          expected: {
+            appRunId: input.appRunId,
+            provider: input.provider,
+            scope: input.scope,
+            chatId: input.chatId,
+            ...(input.workspacePath ? { workspacePath: canonicalPath(input.workspacePath) } : {}),
+            ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId.trim() } : {})
+          },
+          verify: verifyRunPosture
+        })
+      },
       resolveUnattendedElevation,
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
     })
@@ -35851,7 +37459,12 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
     registerComposeRunHandlers({
-      composeRun: (input) => composerService.composeRun(input),
+      composeRun: (input) => {
+        const appRunId = input.appRunId?.trim()
+        const graphJob = appRunId ? AppStore.getRunQueueJob(appRunId) : null
+        if (!appRunId || !graphJob?.executionGraph) return composerService.composeRun(input)
+        throw new Error('Execution graph attempts are composed and dispatched by MAIN only.')
+      },
       requireNonEmptyString,
       resolveSenderComposeAuthority: (event, input) => {
         const chatId = requireNonEmptyString(input.chatId, 'Chat id')
@@ -35866,6 +37479,10 @@ if (isGeminiMcpBridgeProcess) {
           chat,
           isMainRenderer: isMainRendererSender(event),
           owner: workspacePopoutOwnerForSender(event.sender.id),
+          resolveGraphOwnedComposerInput: (appRunId) => {
+            const graphInput = graphOwnedComposerInput(appRunId)
+            return graphInput ? { input: graphInput, mainOwnedAttachments: true } : null
+          },
           canonicalizePath: canonicalPath
         })
       },
@@ -36009,6 +37626,33 @@ if (isGeminiMcpBridgeProcess) {
 
     registerChatHandlers({
       chatService,
+      deleteExecutionGraphHistoryForChat: async (chatId) => {
+        const repository = executionGraphRepositoryRef
+        const coordinator = executionGraphCoordinatorRef
+        if (!repository || !coordinator) {
+          throw new Error(
+            'Execution-graph history authority is unavailable; chat deletion was stopped.'
+          )
+        }
+        await deleteExecutionGraphHistoryForChat({ repository, coordinator }, chatId)
+      },
+      clearExecutionGraphHistory: async (workspaceId) => {
+        const repository = executionGraphRepositoryRef
+        const coordinator = executionGraphCoordinatorRef
+        if (repository && coordinator) {
+          await clearExecutionGraphHistory({ repository, coordinator }, workspaceId)
+          return
+        }
+        if (!workspaceId && !repository && !coordinator) {
+          ExecutionGraphRepository.clearStorageRootHistory(
+            join(app.getPath('userData'), 'execution-graph')
+          )
+          return
+        }
+        throw new Error(
+          'Execution-graph history authority is unavailable; scoped chat clearing was stopped.'
+        )
+      },
       getSettings: () => AppStore.getSettings(),
       detectConfiguredProviders,
       normalizeTranscriptMarkdownMediaForChat,
@@ -36333,6 +37977,72 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
+    const graphQueueJobForRendererMutation = (value: unknown): RunQueueJob | null => {
+      if (typeof value !== 'string' || !value.trim()) return null
+      const job = AppStore.getRunQueueJob(value.trim())
+      return job?.executionGraph ? job : null
+    }
+    const graphIdentityForRendererMutation = (value: unknown): boolean =>
+      typeof value === 'string' && executionGraphOwnsOrAnchorsRunId(value.trim())
+    const authorizeRendererRunQueueMutation = (mutation: RendererRunQueueMutation): void => {
+      if (mutation.operation === 'request') {
+        if (isRecord(mutation.job)) {
+          if (Object.prototype.hasOwnProperty.call(mutation.job, 'executionGraph')) {
+            throw new Error('Execution graph queue bindings are main-owned.')
+          }
+          const existing =
+            graphQueueJobForRendererMutation(mutation.job.runId) ||
+            graphQueueJobForRendererMutation(mutation.job.id)
+          if (
+            existing ||
+            graphIdentityForRendererMutation(mutation.job.runId) ||
+            graphIdentityForRendererMutation(mutation.job.id)
+          ) {
+            throw new Error(
+              'Renderer queue requests cannot overwrite a graph-owned attempt or Stack anchor.'
+            )
+          }
+        }
+        return
+      }
+      if (mutation.operation === 'lease') {
+        const runId = mutation.request.runId?.trim()
+        if (!runId) {
+          throw new Error('Renderer queue leases must name one exact run.')
+        }
+        const job = graphQueueJobForRendererMutation(runId)
+        if (job) {
+          throw new Error('Execution graph queue leases are acquired by MAIN only.')
+        }
+        if (graphIdentityForRendererMutation(runId)) {
+          throw new Error('Renderer queue leases cannot reuse a Stack anchor identity.')
+        }
+        return
+      }
+      const graphTargets: Array<RunQueueJob | null> = []
+      if (mutation.operation === 'transition') {
+        graphTargets.push(graphQueueJobForRendererMutation(mutation.runIdOrId))
+      } else if (mutation.operation === 'promote-steer') {
+        graphTargets.push(
+          graphQueueJobForRendererMutation(mutation.input.runId),
+          graphQueueJobForRendererMutation(mutation.input.cancelRunId)
+        )
+      } else {
+        graphTargets.push(graphQueueJobForRendererMutation(mutation.input.runId))
+      }
+      const graphIdentityTargets =
+        mutation.operation === 'transition'
+          ? [mutation.runIdOrId]
+          : mutation.operation === 'promote-steer'
+            ? [mutation.input.runId, mutation.input.cancelRunId]
+            : [mutation.input.runId]
+      if (graphTargets.some(Boolean) || graphIdentityTargets.some(graphIdentityForRendererMutation)) {
+        throw new Error(
+          'Graph-owned attempts and Stack anchors can only be changed through graph-aware controls.'
+        )
+      }
+    }
+
     registerRunQueueHandlers({
       resolveSenderRunQueueScope: (event) => {
         if (isMainRendererSender(event)) return { kind: 'main' }
@@ -36362,6 +38072,8 @@ if (isGeminiMcpBridgeProcess) {
             chat.runs?.some((run) => run.ensembleRoundId === targetId)
         )?.appChatId
       },
+      authorizeRendererRunQueueMutation: (mutation) =>
+        authorizeRendererRunQueueMutation(mutation),
       getRunQueueJobs: (filter) => runQueueService.getJobs(filter),
       getRunRecoveryRecords: (filter) => getRunRepository().getRunRecoveryRecords(filter || {}),
       requestRunQueueJob: (job, options) => runQueueService.requestJob(job, options),
@@ -37138,10 +38850,17 @@ if (isGeminiMcpBridgeProcess) {
           params,
           (left, right) => canonicalPath(left) === canonicalPath(right)
         )
+        const route = routeWithRunId('codex', params)
+        const reviewRunId = route.appRunId
+        if (
+          reviewRunId &&
+          executionGraphOwnsOrAnchorsRunId(reviewRunId)
+        ) {
+          throw new Error('Native review cannot reuse a graph-owned run identity.')
+        }
         const client = getCodexClient()
         await client.ensureStarted(app.getVersion())
         const model = normalizeCodexModel(params?.model)
-        const route = routeWithRunId('codex', params)
         const reviewState = createCodexRunState(
           event.sender,
           threadId,
@@ -37151,7 +38870,7 @@ if (isGeminiMcpBridgeProcess) {
           'workspace',
           route
         )
-        registerRunSession(
+        const registeredReviewSession = registerRunSession(
           'codex',
           event.sender,
           reviewState,
@@ -37159,6 +38878,9 @@ if (isGeminiMcpBridgeProcess) {
           reviewState,
           threadId
         )
+        if (!registeredReviewSession) {
+          throw new Error('Native review could not reserve its exact run identity.')
+        }
         setActiveCodexRunState(reviewState)
         sendAgentCompatLine(
           event.sender,
@@ -37468,6 +39190,77 @@ if (isGeminiMcpBridgeProcess) {
         projectReferenceContextAuditService.prepare(payload),
       captureReferenceContext: (payload) =>
         projectReferenceContextAuditService.capture(payload),
+      authorizeBeforeAdapterRun: (payload) => {
+        const appRunId = payload.appRunId?.trim()
+        if (!appRunId) return
+        const candidate = AppStore.getRunQueueJob(appRunId)
+        const durableClaim = executionGraphDurableClaimForRun(appRunId)
+        if (executionGraphAnchorClaimsForRun(appRunId).length > 0) {
+          throw new Error('A live Stack anchor run identity cannot start another transport.')
+        }
+        if (!candidate?.executionGraph && !durableClaim) return
+        if (!candidate?.executionGraph || !durableClaim) {
+          throw new Error('Execution graph adapter authority is missing its exact durable twin.')
+        }
+        const admission = executionGraphAdapterAdmissions.get(appRunId)
+        if (!admission || !executionGraphDispatchesInFlight.has(appRunId)) {
+          throw new Error('Execution graph adapter dispatch lacks one-shot main authority.')
+        }
+        const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+        const binding = job.executionGraph!
+        if (
+          job.status !== 'starting' ||
+          admission.executionId !== binding.executionId ||
+          admission.activationId !== binding.activationId ||
+          admission.attemptId !== binding.attemptId ||
+          admission.runTemplateRef !== binding.runTemplateRef ||
+          durableClaim.projection.executionId !== admission.executionId ||
+          durableClaim.attempt.id !== admission.attemptId ||
+          payload.provider !== admission.payload.provider ||
+          payload.appChatId !== admission.payload.appChatId ||
+          payload.scope !== 'workspace' ||
+          !payload.workspace ||
+          !admission.payload.workspace ||
+          canonicalPath(payload.workspace) !== canonicalPath(admission.payload.workspace) ||
+          payload.prompt !== admission.payload.prompt ||
+          runManager.get(appRunId)
+        ) {
+          throw new Error('Execution graph adapter dispatch identity changed before launch.')
+        }
+        const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
+        if (
+          resolution.provider !== payload.provider ||
+          resolution.reroute ||
+          payload.providerReroute
+        ) {
+          throw new Error('Execution graph attempts cannot be rerouted after composition.')
+        }
+      },
+      runAdapter: async (adapter, event, payload) => {
+        const appRunId = payload.appRunId?.trim()
+        const admission = appRunId
+          ? executionGraphAdapterAdmissions.get(appRunId)
+          : undefined
+        if (!appRunId) {
+          await adapter.run({ event, payload })
+          return
+        }
+        if (providerAdapterInvocationTokens.has(appRunId)) {
+          throw new Error('A provider adapter invocation already owns this run identity.')
+        }
+        const token = Object.freeze({})
+        providerAdapterInvocationTokens.set(appRunId, token)
+        try {
+          await executionGraphAdapterContext.run(
+            { appRunId, token, ...(admission ? { admission } : {}) },
+            () => adapter.run({ event, payload })
+          )
+        } finally {
+          if (providerAdapterInvocationTokens.get(appRunId) === token) {
+            providerAdapterInvocationTokens.delete(appRunId)
+          }
+        }
+      },
       getAdapter: (provider) => providerAdapters.require(provider),
       sendError: sendAgentCompatError,
       sendExit: sendAgentCompatExit
@@ -37476,6 +39269,195 @@ if (isGeminiMcpBridgeProcess) {
     // (Phase F3) can dispatch agent-driven sub-thread runs without
     // requiring a Gemini-renderer round-trip.
     runCoordinatorRef = runCoordinator
+
+    const composeMainOwnedExecutionGraphAttempt = (
+      appRunId: string
+    ): ExecutionGraphComposedPayloadEntry => {
+      const input = graphOwnedComposerInput(appRunId)
+      if (!input) throw new Error('Execution graph composer authority is unavailable.')
+      const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+      if (job.status !== 'starting') {
+        throw new Error('Execution graph queue run lost its main-owned starting lease.')
+      }
+      const binding = job.executionGraph!
+      const payload = composerService.composeRun(input)
+      if (
+        payload.appRunId !== job.runId ||
+        payload.appChatId !== job.chatId ||
+        payload.provider !== job.provider ||
+        payload.scope !== 'workspace' ||
+        !payload.workspace ||
+        canonicalPath(payload.workspace) !== canonicalPath(job.workspacePath!) ||
+        !payload.prompt.trim() ||
+        payload.sessionTrust !== false ||
+        payload.geminiWorktree
+      ) {
+        throw new Error('Execution graph composition changed its main-owned dispatch target.')
+      }
+      const entry: ExecutionGraphComposedPayloadEntry = {
+        executionId: binding.executionId,
+        activationId: binding.activationId,
+        attemptId: binding.attemptId,
+        runTemplateRef: binding.runTemplateRef,
+        payload
+      }
+      executionGraphComposedPayloads.set(appRunId, entry)
+      return entry
+    }
+
+    const dispatchMainOwnedExecutionGraphAttempt = async (appRunId: string): Promise<void> => {
+      const candidate = AppStore.getRunQueueJob(appRunId)
+      if (!candidate?.executionGraph || candidate.runId !== appRunId) return
+      if (candidate.status !== 'queued') {
+        if (
+          candidate.status === 'completed' ||
+          candidate.status === 'failed' ||
+          candidate.status === 'cancelled' ||
+          executionGraphDispatchesInFlight.has(appRunId) ||
+          runManager.get(appRunId)
+        ) {
+          return
+        }
+        throw new Error(
+          `Execution graph queue run "${appRunId}" is ${candidate.status}, not queued.`
+        )
+      }
+      if (!mainWindow || mainWindow.isDestroyed() || mainWindow.webContents.isDestroyed()) {
+        setTimeout(() => scheduleExecutionGraphAttemptDispatch(appRunId), 1_000)
+        return
+      }
+      if (executionGraphDispatchesInFlight.has(appRunId)) return
+
+      const failGraphDispatch = (reason: string): void => {
+        executionGraphComposedPayloads.delete(appRunId)
+        executionGraphCoordinatorRef?.recordPreSessionDispatchFailure(appRunId, reason)
+      }
+      let exclusiveReservation: ExclusiveChatDispatchReservation | undefined
+      try {
+        try {
+          exclusiveReservation = scheduledOccurrenceOwners.reserveExclusiveChatDispatch(
+            requireNonEmptyString(candidate.chatId, 'Graph chat id')
+          )
+        } catch (error) {
+          if (
+            error instanceof ScheduledOccurrenceOwnerRegistryError &&
+            error.code === 'duplicate-chat'
+          ) {
+            setTimeout(() => scheduleExecutionGraphAttemptDispatch(appRunId), 250)
+            return
+          }
+          throw error
+        }
+        if (!AppStore.getSettings().storeLocalChatHistory) {
+          throw new Error('V1 Stacks require local chat history to remain enabled.')
+        }
+        const preLeaseAuthority = resolveExecutionGraphQueueAuthority(appRunId)
+        if (
+          preLeaseAuthority.job.runId !== appRunId ||
+          preLeaseAuthority.job.status !== 'queued' ||
+          preLeaseAuthority.job.executionGraph?.executionId !==
+            candidate.executionGraph.executionId ||
+          preLeaseAuthority.job.executionGraph.attemptId !== candidate.executionGraph.attemptId
+        ) {
+          throw new Error('Execution graph queue authority changed before its main lease.')
+        }
+        const leased = runQueueService.leaseJob({
+          runId: appRunId,
+          provider: candidate.provider,
+          statusReason: 'Leased by the main-owned execution graph scheduler.'
+        })
+        if (!leased) {
+          const current = AppStore.getRunQueueJob(appRunId)
+          if (current?.runId === appRunId && current.status === 'queued') {
+            setTimeout(() => scheduleExecutionGraphAttemptDispatch(appRunId), 250)
+            return
+          }
+          throw new Error('Execution graph scheduler lost its queued attempt before lease.')
+        }
+        if (
+          leased.runId !== appRunId ||
+          leased.status !== 'starting' ||
+          !leased.executionGraph
+        ) {
+          throw new Error('Execution graph scheduler could not acquire its exact queue lease.')
+        }
+        const entry = composeMainOwnedExecutionGraphAttempt(appRunId)
+        const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+        const binding = job.executionGraph!
+        if (
+          entry.executionId !== binding.executionId ||
+          entry.activationId !== binding.activationId ||
+          entry.attemptId !== binding.attemptId ||
+          entry.runTemplateRef !== binding.runTemplateRef
+        ) {
+          throw new Error('Main-owned execution graph payload belongs to a stale attempt.')
+        }
+        registerExecutionGraphRunTranscript({ job, entry })
+
+        // Consume composition authority before provider launch. No renderer or
+        // second main pump can replay this attempt while the adapter starts.
+        executionGraphDispatchesInFlight.add(appRunId)
+        executionGraphAdapterAdmissions.set(appRunId, entry)
+        executionGraphComposedPayloads.delete(appRunId)
+        await repairKnownStaleGeminiMcpBridgeConfigs(entry.payload.workspace).catch(() => {})
+        await expandPdfImagePathsForPayload(entry.payload).catch((error) => {
+          console.warn(
+            `[pdf-attachments] graph expansion failed for runId=${appRunId}: ${error instanceof Error ? error.message : String(error)}`
+          )
+        })
+        // Re-read the predecessor receipt at the last main-owned boundary. A
+        // concurrent transcript clear or stale renderer save cannot turn the
+        // graph ledger alone into dispatch authority.
+        graphOwnedComposerInput(appRunId)
+        const result = await runCoordinator.dispatch(entry.payload, {
+          sender: mainWindow.webContents
+        } as Electron.IpcMainInvokeEvent)
+        const session = runManager.get(appRunId)
+        if (
+          !result.dispatched ||
+          !session ||
+          session.provider !== job.provider ||
+          session.appChatId !== job.chatId ||
+          session.workspacePath !== job.workspacePath
+        ) {
+          throw new Error('Provider dispatch did not create the exact graph run session.')
+        }
+      } catch (error) {
+        const reason = `Graph-owned provider dispatch failed: ${error instanceof Error ? error.message : String(error)}`
+        if (!runManager.get(appRunId)) {
+          try {
+            sealExecutionGraphRunTranscript(appRunId, 'failed', reason)
+          } catch (transcriptError) {
+            console.error(
+              `[ExecutionGraph] pre-session transcript seal failed for runId=${appRunId}:`,
+              transcriptError
+            )
+          } finally {
+            discardExecutionGraphRunTranscript(appRunId)
+          }
+          try {
+            failGraphDispatch(reason)
+          } catch (containmentError) {
+            console.error(
+              `[ExecutionGraph] provider-start containment failed for runId=${appRunId}:`,
+              containmentError
+            )
+          }
+        }
+        throw error
+      } finally {
+        executionGraphComposedPayloads.delete(appRunId)
+        executionGraphAdapterAdmissions.delete(appRunId)
+        executionGraphDispatchesInFlight.delete(appRunId)
+        if (exclusiveReservation) {
+          scheduledOccurrenceOwners.releaseExclusiveChatDispatch(exclusiveReservation)
+        }
+      }
+    }
+    executionGraphAttemptDispatcher = dispatchMainOwnedExecutionGraphAttempt
+    for (const job of AppStore.getRunQueueJobs({ statuses: ['queued'] })) {
+      if (job.executionGraph) scheduleExecutionGraphAttemptDispatch(job.runId)
+    }
     // M3-2a seam (design-m3-2-spec + General's ratified amendment): the dispatch
     // orchestrator's index.ts-coupled deps as an explicit bundle, built ONCE here.
     // Registries inject by DIRECT REFERENCE (const Maps/registry mutated in place)
@@ -37907,14 +39889,20 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     ipcMain.handle('run-agent', async (event, payload: AgentRunPayload) => {
-      const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
-      assertRendererChatScope(event, chatId)
       if (Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) {
         throw new Error('Renderer scheduled-run dispatch is retired; MAIN owns every occurrence.')
       }
       if (payload.ensembleRun || payload.auditRun) {
         throw new Error('Renderer orchestration identities are MAIN-owned.')
       }
+      const appRunId = optionalString(payload?.appRunId)
+      const candidate = appRunId ? AppStore.getRunQueueJob(appRunId) : null
+      if (appRunId && candidate?.executionGraph) {
+        assertMainRendererSender(event)
+        throw new Error('Execution graph attempts are dispatched by MAIN, not the renderer.')
+      }
+      const chatId = requireNonEmptyString(payload?.appChatId, 'Chat id')
+      assertRendererChatScope(event, chatId)
       const authorityBoundPayload = deriveRendererRunPayload(event, payload)
       return dispatchWithAuthorizedAttachmentPaths(
         authorityBoundPayload,

@@ -37,6 +37,10 @@ export interface ChatHandlerDeps {
     | 'rebindChatWorkspace'
     | 'getSideChats'
   >
+  /** Main-owned graph cleanup must settle live graph work before chat deletion. */
+  deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
+  /** Global clear erases the entire graph repository; scoped clear erases that workspace. */
+  clearExecutionGraphHistory: (workspaceId?: string) => Promise<void>
   getSettings: () => AppSettings
   detectConfiguredProviders: (settings: AppSettings) => Promise<Set<ProviderId>>
   normalizeTranscriptMarkdownMediaForChat: (chat: ChatRecord) => ChatRecord
@@ -120,6 +124,58 @@ const runHasDiff = (run: ChatRun | undefined): boolean =>
 function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'> | null): number {
   const revision = chat?.persistenceRevision
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
+}
+
+function preserveExecutionGraphTranscript(
+  previous: ChatRecord | null | undefined,
+  incoming: ChatRecord
+): ChatRecord {
+  if (!previous) return incoming
+  const ownedRuns = (previous.runs ?? []).filter(
+    (run) => run.providerMetadata?.executionGraphAttempt !== undefined
+  )
+  const ownedRunIds = new Set(ownedRuns.map((run) => run.runId).filter(Boolean))
+  const ownedMessages = previous.messages.filter(
+    (message) => message.runId !== undefined && ownedRunIds.has(message.runId)
+  )
+  const ownedMessagesById = new Map(ownedMessages.map((message) => [message.id, message]))
+  const retainedMessageIds = new Set<string>()
+  const messages = incoming.messages.flatMap((message) => {
+    const durable = ownedMessagesById.get(message.id)
+    if (durable) {
+      if (retainedMessageIds.has(durable.id)) return []
+      retainedMessageIds.add(durable.id)
+      return [durable]
+    }
+    if (
+      (message.runId !== undefined && ownedRunIds.has(message.runId)) ||
+      message.metadata?.kind === 'executionGraphAttempt' ||
+      message.metadata?.kind === 'executionGraphAttemptOutput'
+    ) {
+      return []
+    }
+    return [message]
+  })
+  for (const message of ownedMessages) {
+    if (!retainedMessageIds.has(message.id)) messages.push(message)
+  }
+
+  const ownedRunsById = new Map(ownedRuns.map((run) => [run.runId, run]))
+  const retainedRunIds = new Set<string>()
+  const runs = (incoming.runs ?? []).flatMap((run) => {
+    const durable = ownedRunsById.get(run.runId)
+    if (durable) {
+      if (retainedRunIds.has(durable.runId)) return []
+      retainedRunIds.add(durable.runId)
+      return [durable]
+    }
+    if (run.providerMetadata?.executionGraphAttempt !== undefined) return []
+    return [run]
+  })
+  for (const run of ownedRuns) {
+    if (!retainedRunIds.has(run.runId)) runs.push(run)
+  }
+  return { ...incoming, messages, runs }
 }
 
 function assertReadableChat(scope: SenderChatReadScope, chatId: string): void {
@@ -308,8 +364,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('save-chat', (event, chat: ChatRecord) => {
     const chatId = chat.appChatId
     deps.assertSenderChatScope(event, chatId, 'save-chat')
-    const normalized = deps.normalizeTranscriptMarkdownMediaForChat(chat)
-    const previous = deps.chatService.getChat(normalized.appChatId)
+    const previous = deps.chatService.getChat(chatId)
+    const normalized = preserveExecutionGraphTranscript(
+      previous,
+      deps.normalizeTranscriptMarkdownMediaForChat(chat)
+    )
     const saved = deps.chatService.saveChat(normalized)
     deps.broadcastChatUpdated(saved)
     deps.maybeScheduleCodexNativeGoalSync(previous, saved, 'renderer-save-chat')
@@ -343,8 +402,11 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
 
   ipcMain.handle('delete-chat', (event, chatId: string) => {
     deps.assertSenderChatScope(event, chatId, 'delete-chat')
-    deps.chatService.deleteChat(chatId)
-    deps.broadcastThreadList()
+    return (async () => {
+      await deps.deleteExecutionGraphHistoryForChat(chatId)
+      deps.chatService.deleteChat(chatId)
+      deps.broadcastThreadList()
+    })()
   })
 
   /**
@@ -401,23 +463,30 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
    */
   ipcMain.handle('truncate-chat', (event, chatId: string) => {
     deps.assertSenderChatScope(event, chatId, 'truncate-chat')
-    const existing = deps.chatService.getChat(chatId)
-    if (!existing) return null
-    const truncated: ChatRecord = {
-      ...existing,
-      messages: [],
-      runs: [],
-      updatedAt: Date.now()
-    }
-    const saved = deps.chatService.saveChat(truncated)
-    deps.broadcastChatUpdated(saved)
-    deps.broadcastThreadUpdate(chatId)
-    return saved
+    return (async () => {
+      if (!deps.chatService.getChat(chatId)) return null
+      await deps.deleteExecutionGraphHistoryForChat(chatId)
+      const current = deps.chatService.getChat(chatId)
+      if (!current) return null
+      const truncated: ChatRecord = {
+        ...current,
+        messages: [],
+        runs: [],
+        updatedAt: Date.now()
+      }
+      const saved = deps.chatService.saveChat(truncated)
+      deps.broadcastChatUpdated(saved)
+      deps.broadcastThreadUpdate(chatId)
+      return saved
+    })()
   })
 
   ipcMain.handle('clear-chats', (event, workspaceId?: string) => {
     deps.assertSenderCanManageChatCollection(event, 'clear-chats')
-    deps.chatService.clearChats(workspaceId)
-    deps.broadcastThreadList()
+    return (async () => {
+      await deps.clearExecutionGraphHistory(workspaceId)
+      deps.chatService.clearChats(workspaceId)
+      deps.broadcastThreadList()
+    })()
   })
 }
