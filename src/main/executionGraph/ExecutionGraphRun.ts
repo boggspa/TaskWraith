@@ -212,7 +212,14 @@ const ACTIVATION_TRANSITIONS: Readonly<
   Record<StepActivationState, readonly StepActivationState[]>
 > = {
   dormant: ['ready', 'skipped', 'cancelled'],
-  ready: ['claimed', 'skipped', 'cancelled'],
+  ready: [
+    'claimed',
+    'waiting_input',
+    'waiting_approval',
+    'requires_action',
+    'skipped',
+    'cancelled'
+  ],
   claimed: ['queued', 'running', 'ready', 'requires_action', 'cancelled'],
   queued: ['running', 'ready', 'requires_action', 'cancelled'],
   running: [

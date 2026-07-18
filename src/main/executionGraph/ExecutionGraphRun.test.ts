@@ -350,6 +350,55 @@ describe('Execution Stack frontier append', () => {
 })
 
 describe('Execution-run event fold', () => {
+  it('allows a ready activation to enter a durable wait or attention state', () => {
+    const first = appendFirst()
+    if (!first.ok) throw new Error('fixture append failed')
+    const events = [
+      creation(),
+      createExecutionRunEvent(first.input, 2, now),
+      createExecutionRunEvent(
+        { executionId: 'execution-1', kind: 'execution_state_changed', state: 'running' },
+        3,
+        now
+      ),
+      createExecutionRunEvent(
+        {
+          executionId: 'execution-1',
+          kind: 'activation_created',
+          activationId: 'activation-1',
+          stepId: 'investigate'
+        },
+        4,
+        now
+      ),
+      createExecutionRunEvent(
+        {
+          executionId: 'execution-1',
+          kind: 'activation_state_changed',
+          activationId: 'activation-1',
+          state: 'ready'
+        },
+        5,
+        now
+      ),
+      createExecutionRunEvent(
+        {
+          executionId: 'execution-1',
+          kind: 'activation_state_changed',
+          activationId: 'activation-1',
+          state: 'waiting_approval',
+          reason: 'User approval is required.'
+        },
+        6,
+        now
+      )
+    ]
+
+    const projection = foldExecutionRun('execution-1', events)
+    expect(projection.integrity).toBe('valid')
+    expect(projection.activations['activation-1'].state).toBe('waiting_approval')
+  })
+
   it('pins an immutable base revision and fails closed when it is missing or mismatched', () => {
     const compiled = compileExecutionGraphRevision({
       graphId: 'saved-graph',
