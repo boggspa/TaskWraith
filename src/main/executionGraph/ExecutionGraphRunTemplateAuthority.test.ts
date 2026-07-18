@@ -236,6 +236,41 @@ describe('ExecutionGraphRunTemplateAuthority', () => {
     )
   })
 
+  it('canonicalizes absent, empty, and reordered workspace grant service ids', () => {
+    const original = template()
+    const originalPosture = original.permissionPosture as JsonObject
+    const postureWithoutWorkspaceGrantServiceIds = { ...originalPosture }
+    delete postureWithoutWorkspaceGrantServiceIds.workspaceGrantServiceIds
+    const absent = template({
+      permissionPosture: postureWithoutWorkspaceGrantServiceIds
+    })
+    const empty = template({
+      permissionPosture: {
+        ...originalPosture,
+        workspaceGrantServiceIds: []
+      }
+    })
+    const ordered = template({
+      permissionPosture: {
+        ...originalPosture,
+        workspaceGrantServiceIds: ['fileChanges', 'shellCommands']
+      }
+    })
+    const reordered = template({
+      permissionPosture: {
+        ...originalPosture,
+        workspaceGrantServiceIds: ['shellCommands', 'fileChanges', 'fileChanges']
+      }
+    })
+
+    expect(executionGraphRunTemplatePermissionCeilingDigest(absent)).toBe(
+      executionGraphRunTemplatePermissionCeilingDigest(empty)
+    )
+    expect(executionGraphRunTemplatePermissionCeilingDigest(reordered)).toBe(
+      executionGraphRunTemplatePermissionCeilingDigest(ordered)
+    )
+  })
+
   it('changes the ceiling for permission, workspace, runtime, and grant changes', () => {
     const original = template()
     const originalPosture = original.permissionPosture as JsonObject

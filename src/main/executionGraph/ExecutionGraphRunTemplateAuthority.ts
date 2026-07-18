@@ -92,6 +92,12 @@ function permissionCeilingGrantEnvelope(request: Record<string, unknown>): unkno
   })
 }
 
+function canonicalWorkspaceGrantServiceIds(value: unknown): unknown {
+  if (!Array.isArray(value)) return []
+  if (!value.every((entry) => typeof entry === 'string')) return value
+  return [...new Set(value)].sort()
+}
+
 /**
  * Build the permission-only ceiling shared by compatible Stack steps.
  *
@@ -123,7 +129,9 @@ export function executionGraphRunTemplatePermissionCeilingEnvelope(
     readOnly: posture.readOnly,
     agenticServices: posture.agenticServices,
     networkAccess: posture.networkAccess,
-    workspaceGrantServiceIds: posture.workspaceGrantServiceIds,
+    workspaceGrantServiceIds: canonicalWorkspaceGrantServiceIds(
+      posture.workspaceGrantServiceIds
+    ),
     externalPathGrantCount: posture.externalPathGrantCount,
     externalPathGrantHash: posture.externalPathGrantHash,
     externalPathGrants: permissionCeilingGrantEnvelope(request)

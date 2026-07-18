@@ -7,11 +7,23 @@ import {
 } from './RunQueueService'
 import type { RunSession } from '../RunManager'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
+import {
+  signRunPermissionPosture,
+  verifyRunPermissionPosture
+} from '../RunPermissionPosture'
+import {
+  buildExecutionGraphPermissionPosture,
+  mintExecutionGraphAttemptPermissionPosture
+} from '../executionGraph/ExecutionGraphPermissionAuthority'
+import { executionGraphRunTemplatePermissionCeilingDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
+import type { JsonObject } from '../executionGraph/ExecutionGraphModel'
 import type {
+  AppSettings,
   ChatRecord,
   ExternalPathGrant,
   RunQueueJob,
   RunQueueJobFilter,
+  RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
 
@@ -246,6 +258,107 @@ describe('RunQueueService', () => {
         executionGraph: { ...binding, permissionCeilingAuthorityDigest: 'not-a-digest' }
       })
     ).toThrow(/queue binding is invalid/i)
+  })
+
+  it('preserves the frozen permission ceiling while normalizing a run-bound graph posture', () => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const secret = 'run-queue-graph-ceiling-test-secret'
+    const request: RunQueueRequestSnapshot = {
+      scope: 'workspace',
+      prompt: 'Run the claimed graph step.',
+      selectedModelType: 'default',
+      customModel: '',
+      approvalMode: 'default',
+      permissionPresetId: 'workspace_write',
+      sessionTrust: false,
+      imageAttachments: []
+    }
+    const settings = {
+      agenticServices: {
+        shellCommands: 'ask',
+        fileChanges: 'ask',
+        externalPublish: 'ask',
+        mcpTools: 'ask',
+        subThreadDelegation: 'ask',
+        canvasInteraction: 'ask',
+        crossThreadRead: 'ask',
+        mediaEditing: 'ask',
+        mediaRecording: 'deny',
+        canvasEval: 'ask',
+        networkAccess: 'allow'
+      },
+      agenticWorkspaceGrants: []
+    } as Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
+    const sign = (approvalMode: string, permissions: Parameters<typeof signRunPermissionPosture>[2], context: Parameters<typeof signRunPermissionPosture>[3]) =>
+      signRunPermissionPosture(secret, approvalMode, permissions, context)
+    const verify = (
+      approvalMode: string,
+      permissions: Parameters<typeof verifyRunPermissionPosture>[2],
+      signature: string,
+      context: Parameters<typeof verifyRunPermissionPosture>[4]
+    ) => verifyRunPermissionPosture(secret, approvalMode, permissions, signature, context)
+    const templatePosture = buildExecutionGraphPermissionPosture({
+      provider: 'codex',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request,
+      settings,
+      sign
+    })
+    const templateContent = {
+      schemaVersion: 1,
+      provider: 'codex',
+      scope: 'workspace',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request,
+      permissionPosture: templatePosture
+    } as unknown as JsonObject
+    const frozenCeiling = executionGraphRunTemplatePermissionCeilingDigest(templateContent)
+    const attemptPosture = mintExecutionGraphAttemptPermissionPosture({
+      appRunId: 'graph-run-one',
+      provider: 'codex',
+      workspacePath: '/repo',
+      chatId: 'chat-1',
+      request,
+      templatePosture,
+      sign,
+      verifyTemplate: verify
+    })
+
+    const prepared = service.prepareJob(
+      {
+        runId: 'graph-run-one',
+        provider: 'codex',
+        workspacePath: '/repo',
+        workspaceId: 'workspace-1',
+        chatId: 'chat-1',
+        source: 'system',
+        status: 'paused',
+        request,
+        permissionPosture: attemptPosture
+      },
+      {
+        executionGraph: {
+          schemaVersion: 1,
+          executionId: 'execution-one',
+          activationId: 'activation-one',
+          attemptId: 'attempt-one',
+          runTemplateRef: `run-template-${'a'.repeat(64)}`,
+          permissionCeilingAuthorityDigest: frozenCeiling
+        }
+      }
+    )
+
+    expect(
+      executionGraphRunTemplatePermissionCeilingDigest({
+        ...templateContent,
+        request: prepared.request!,
+        permissionPosture: prepared.permissionPosture!
+      } as unknown as JsonObject)
+    ).toBe(frozenCeiling)
   })
 
   it('forwards getJobs filters to the run repository', () => {
