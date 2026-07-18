@@ -6,9 +6,12 @@
   provider, CLI vendor, or platform vendor.
 - Provider names are used only to identify compatible integrations and user
   configuration paths.
-- Provider logos, proprietary provider fonts, credentials, signing identities,
-  notarization profiles, and private release artifacts should not be committed
-  to the public repository.
+- A narrowly scoped set of first-party provider PNG marks is committed for
+  factual provider identification. The source and rights notes are recorded in
+  `design-assets/provider-logos/`; the marks remain their owners' property and
+  do not imply endorsement. Proprietary provider fonts, credentials, signing
+  identities, notarization profiles, and private release artifacts should not
+  be committed to the public repository.
 - TaskWraith does not scrape provider web properties, bypass authentication,
   bypass quotas, bypass rate limits, or grant itself provider account access.
 - Users are responsible for complying with the terms that apply to the provider

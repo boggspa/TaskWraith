@@ -3,9 +3,12 @@
 Official or first-party PNG artwork collected to evaluate a secondary provider
 identity direction alongside [`../provider-glyphs`](../provider-glyphs/).
 
-This is a **design-reference set only**. Nothing in the desktop or iOS runtime
-loads these files, and no implementation path was changed. The catalogue SVG
-links to the PNGs in this directory rather than embedding or re-encoding them.
+The files in this directory remain the source/provenance catalogue rather than
+an application resource path. Byte-identical runtime copies are vendored under
+`src/renderer/src/assets/provider-logos/` and
+`ios/TaskWraithKit/Sources/TaskWraithUI/Resources/`; the desktop and iOS apps use
+those copies only as identity marks beside provider or model names. The
+catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
 
 ## Selection rules
 
@@ -46,8 +49,8 @@ without filling or changing its transparent canvas.
 - `png/*.png` — first-party PNG bytes plus the explicitly labelled Ollama dark
   derivative.
 
-`on-light` and `on-dark` describe the intended review surface, not a runtime
-theme token.
+`on-light` and `on-dark` describe the intended surface. The runtime maps them to
+the actual light/dark app surface while preserving the sourced pixels.
 
 ## Source map
 
@@ -71,8 +74,9 @@ affiliation, endorsement, sponsorship, or a transferable licence. Provider
 brand terms remain controlling, can change, and may require separate approval
 for public redistribution or product use.
 
-This local reference set is an explicit exception for design evaluation to the
-repository's normal public-source boundary in `TERMS_NOTES.md` and `README.md`,
-which says provider logos should not be committed. Do not stage, publish, ship,
-or wire these files into the product without owner/legal review. The existing
-packaging configuration excludes `design-assets/**` from application bundles.
+The app now vendors byte-identical copies for factual, nominative provider
+identification. `design-assets/**` itself remains excluded from application
+bundles, and the manifest records the exact relationship between every runtime
+copy and its sourced or explicitly derived catalogue file. Public distribution
+still needs to follow the owners' current brand terms and the project's release
+review process.

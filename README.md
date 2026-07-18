@@ -216,8 +216,12 @@ attestation.
 
 TaskWraith source code is licensed under Apache-2.0. Provider product names are
 used nominatively to describe interoperability with user-installed tools and
-accounts. The repository does not intentionally bundle provider logos,
-trademarks, API credentials, signing material, or proprietary provider fonts.
+accounts. A narrowly scoped set of first-party provider PNG marks is bundled
+for factual identity labels; provenance and source-specific rights notes live
+in [`design-assets/provider-logos`](design-assets/provider-logos/). Those marks
+remain the property of their respective owners and do not imply endorsement.
+The repository does not intentionally bundle API credentials, signing material,
+or proprietary provider fonts.
 
 Users are responsible for installing and authenticating the provider CLIs, SDKs,
 or accounts they choose to use. TaskWraith does not bypass provider authentication,

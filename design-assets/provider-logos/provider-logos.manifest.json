@@ -1,8 +1,13 @@
 {
   "catalogVersion": 1,
   "retrievedAt": "2026-07-18",
-  "purpose": "design-reference-only",
-  "runtimeIntegrated": false,
+  "purpose": "provider-identity-reference-and-runtime-source",
+  "runtimeIntegrated": true,
+  "catalogueFilesLoadedAtRuntime": false,
+  "runtimeCopies": [
+    "src/renderer/src/assets/provider-logos/",
+    "ios/TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-*.png"
+  ],
   "sourceBytesPreserved": true,
   "derivedAssetsPresent": true,
   "selectionPolicy": {
