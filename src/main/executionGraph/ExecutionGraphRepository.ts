@@ -1,7 +1,6 @@
 import {
   closeSync,
   existsSync,
-  ftruncateSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -56,11 +55,28 @@ interface ExecutionRegistryEntry {
   readonly executionId: string
   readonly fileName: string
   readonly createdAt: string
+  readonly ledgerCheckpoint: ExecutionLedgerCheckpoint
 }
+
+interface LegacyExecutionRegistryEntry {
+  readonly schemaVersion: 1
+  readonly executionId: string
+  readonly fileName: string
+  readonly createdAt: string
+}
+
+interface ExecutionLedgerCheckpoint {
+  readonly schemaVersion: 1
+  readonly lastSequence: number
+  readonly tailHash: string
+  readonly completeByteLength: number
+}
+
+type StoredExecutionRegistryEntry = ExecutionRegistryEntry | LegacyExecutionRegistryEntry
 
 interface ExecutionRegistry {
   readonly schemaVersion: 1
-  readonly executions: readonly ExecutionRegistryEntry[]
+  readonly executions: readonly StoredExecutionRegistryEntry[]
 }
 
 interface LayoutRegistry {
@@ -118,8 +134,6 @@ interface CachedExecution {
   readonly projection: ExecutionRunProjection
   readonly tailHash: string
   readonly completeByteLength: number
-  readonly observedByteLength: number
-  readonly hasTornFinalFragment: boolean
 }
 
 interface ExecutionLedgerBatchFrame {
@@ -395,8 +409,11 @@ function fsyncDirectory(path: string): void {
   try {
     fd = openSync(path, 'r')
     fsyncSync(fd)
-  } catch {
-    // Directory fsync is not supported by every platform/filesystem. File fsync + rename remains atomic.
+  } catch (error) {
+    const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined
+    if (!code || !['EBADF', 'EINVAL', 'EISDIR', 'ENOTSUP'].includes(code)) throw error
+    // Directory fsync is unsupported on a small set of platforms/filesystems.
+    // All other failures are durability failures and must reach the caller.
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
@@ -612,7 +629,7 @@ export class ExecutionGraphRepository {
   private readonly layoutsPath: string
   private readonly templatesPath: string
   private revisions: ExecutionGraphRevision[]
-  private executions: ExecutionRegistryEntry[]
+  private executions: StoredExecutionRegistryEntry[]
   private layouts: ExecutionGraphLayout[]
   private templates: ExecutionGraphRunTemplate[]
   private readonly executionCache = new Map<string, CachedExecution>()
@@ -783,6 +800,7 @@ export class ExecutionGraphRepository {
 
     let fd: number | undefined
     let createdLedger = false
+    let checkpointCommitted = false
     try {
       const batch = createExecutionLedgerBatch(
         input.executionId,
@@ -797,11 +815,18 @@ export class ExecutionGraphRepository {
       closeSync(fd)
       fd = undefined
       fsyncDirectory(this.ledgersDirectory)
+      const completeByteLength = Buffer.byteLength(serialized, 'utf8')
       const entry: ExecutionRegistryEntry = {
         schemaVersion: REPOSITORY_SCHEMA_VERSION,
         executionId: input.executionId,
         fileName,
-        createdAt: event.timestamp
+        createdAt: event.timestamp,
+        ledgerCheckpoint: {
+          schemaVersion: REPOSITORY_SCHEMA_VERSION,
+          lastSequence: event.sequence,
+          tailHash: batch.hash,
+          completeByteLength
+        }
       }
       const next = [...this.executions, entry].sort((a, b) =>
         a.createdAt.localeCompare(b.createdAt)
@@ -810,20 +835,19 @@ export class ExecutionGraphRepository {
         schemaVersion: REPOSITORY_SCHEMA_VERSION,
         executions: next
       } satisfies ExecutionRegistry)
+      checkpointCommitted = true
       this.executions = next
       this.executionCache.set(input.executionId, {
         events: Object.freeze([event]),
         projection,
         tailHash: batch.hash,
-        completeByteLength: Buffer.byteLength(serialized, 'utf8'),
-        observedByteLength: Buffer.byteLength(serialized, 'utf8'),
-        hasTornFinalFragment: false
+        completeByteLength
       })
       this.repositoryDiagnostics.delete(input.executionId)
       return projection
     } catch (error) {
       if (fd !== undefined) closeSync(fd)
-      if (createdLedger) {
+      if (createdLedger && !checkpointCommitted) {
         rmSync(path, { force: true })
         fsyncDirectory(this.ledgersDirectory)
       }
@@ -853,7 +877,7 @@ export class ExecutionGraphRepository {
     }
     const entry = this.executions.find((candidate) => candidate.executionId === executionId)
     if (!entry) throw new Error(`Unknown execution "${executionId}".`)
-    let cached = this.executionCache.get(executionId)
+    const cached = this.executionCache.get(executionId)
     if (!cached) {
       throw new Error(`Execution "${executionId}" is quarantined and cannot accept events.`)
     }
@@ -868,31 +892,12 @@ export class ExecutionGraphRepository {
       )
       throw error
     }
-    const observedSize = lstatSync(path).size
-    if (observedSize !== cached.observedByteLength) {
-      let reparsed: ParsedLedger | undefined
-      try {
-        reparsed = this.parseLedger(path, executionId)
-      } catch {
-        // Report the stable repository diagnostic below rather than exposing parser details here.
-      }
-      const unchangedCompletePrefix =
-        reparsed?.hasTornFinalFragment === true &&
-        reparsed.completeByteLength === cached.completeByteLength &&
-        stableExecutionGraphStringify(reparsed.events) ===
-          stableExecutionGraphStringify(cached.events)
-      if (!reparsed || !unchangedCompletePrefix) {
-        const message = `Execution ledger changed outside the repository for "${executionId}".`
-        this.quarantineExecution(entry, 'execution_ledger_corrupt', message)
-        throw new Error(message)
-      }
-      cached = {
-        ...cached,
-        observedByteLength: reparsed.observedByteLength,
-        tailHash: reparsed.tailHash,
-        hasTornFinalFragment: true
-      }
-      this.executionCache.set(executionId, cached)
+    try {
+      this.assertCheckpointedLedger(entry, this.parseLedger(path, executionId), cached)
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      this.quarantineExecution(entry, 'execution_ledger_corrupt', message)
+      throw new Error(message)
     }
     const actualLastSequence = cached.projection.lastSequence
     if (
@@ -906,16 +911,6 @@ export class ExecutionGraphRepository {
         actualLastSequence
       )
     }
-    if (cached.hasTornFinalFragment) {
-      this.truncateTornFinalFragment(path, cached.completeByteLength)
-      cached = {
-        ...cached,
-        observedByteLength: cached.completeByteLength,
-        hasTornFinalFragment: false
-      }
-      this.executionCache.set(executionId, cached)
-    }
-
     const events = inputs.map((input, index) => {
       const event = createExecutionRunEvent(input, actualLastSequence + index + 1)
       validateEventEnvelope(event, executionId, actualLastSequence + index + 1)
@@ -933,6 +928,7 @@ export class ExecutionGraphRepository {
       )
     }
     let fd: number | undefined
+    let ledgerAppended = false
     try {
       fd = openSync(path, 'a', 0o600)
       const batch = createExecutionLedgerBatch(executionId, events, cached.tailHash)
@@ -940,16 +936,46 @@ export class ExecutionGraphRepository {
       const serializedBytes = Buffer.from(serialized, 'utf8')
       writeAll(fd, serializedBytes)
       fsyncSync(fd)
+      closeSync(fd)
+      fd = undefined
+      ledgerAppended = true
       const completeByteLength = cached.completeByteLength + serializedBytes.byteLength
+      const updatedEntry: ExecutionRegistryEntry = {
+        schemaVersion: REPOSITORY_SCHEMA_VERSION,
+        executionId: entry.executionId,
+        fileName: entry.fileName,
+        createdAt: entry.createdAt,
+        ledgerCheckpoint: {
+          schemaVersion: REPOSITORY_SCHEMA_VERSION,
+          lastSequence: projection.lastSequence,
+          tailHash: batch.hash,
+          completeByteLength
+        }
+      }
+      const next = this.executions.map((candidate) =>
+        candidate.executionId === executionId ? updatedEntry : candidate
+      )
+      atomicWriteJson(this.executionsPath, {
+        schemaVersion: REPOSITORY_SCHEMA_VERSION,
+        executions: next
+      } satisfies ExecutionRegistry)
+      this.executions = next
       this.executionCache.set(executionId, {
         events: Object.freeze(allEvents),
         projection,
         tailHash: batch.hash,
-        completeByteLength,
-        observedByteLength: completeByteLength,
-        hasTornFinalFragment: false
+        completeByteLength
       })
       return events
+    } catch (error) {
+      if (ledgerAppended) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          `Execution ledger advanced without a durable checkpoint for "${executionId}".`
+        )
+      }
+      throw error
     } finally {
       if (fd !== undefined) closeSync(fd)
     }
@@ -957,22 +983,22 @@ export class ExecutionGraphRepository {
 
   readExecutionEvents(executionId: string): readonly ExecutionRunEvent[] {
     assertCanonicalId(executionId, 'executionId')
-    return this.executionCache.get(executionId)?.events ?? []
+    return this.verifyCachedExecution(executionId)?.events ?? []
   }
 
   hasExecution(executionId: string): boolean {
     assertCanonicalId(executionId, 'executionId')
-    return this.executionCache.has(executionId)
+    return Boolean(this.verifyCachedExecution(executionId))
   }
 
   getExecution(executionId: string): ExecutionRunProjection | undefined {
     assertCanonicalId(executionId, 'executionId')
-    return this.executionCache.get(executionId)?.projection
+    return this.verifyCachedExecution(executionId)?.projection
   }
 
   listExecutions(): readonly ExecutionRunProjection[] {
     return this.executions.flatMap((entry) => {
-      const projection = this.executionCache.get(entry.executionId)?.projection
+      const projection = this.verifyCachedExecution(entry.executionId)?.projection
       return projection ? [projection] : []
     })
   }
@@ -982,7 +1008,7 @@ export class ExecutionGraphRepository {
     readonly events: readonly ExecutionRunEvent[]
   }[] {
     return this.executions.flatMap((entry) => {
-      const events = this.executionCache.get(entry.executionId)?.events
+      const events = this.verifyCachedExecution(entry.executionId)?.events
       return events ? [{ executionId: entry.executionId, events }] : []
     })
   }
@@ -1008,7 +1034,7 @@ export class ExecutionGraphRepository {
     return revisions
   }
 
-  private loadExecutionRegistry(): ExecutionRegistryEntry[] {
+  private loadExecutionRegistry(): StoredExecutionRegistryEntry[] {
     const raw = readJson(this.executionsPath)
     let rawExecutions: unknown[] = []
     if (raw !== undefined) {
@@ -1018,7 +1044,7 @@ export class ExecutionGraphRepository {
       rawExecutions = raw.executions
     }
     const seen = new Set<string>()
-    const registered: ExecutionRegistryEntry[] = []
+    const registered: StoredExecutionRegistryEntry[] = []
     for (const candidate of rawExecutions) {
       if (!isRecord(candidate) || candidate.schemaVersion !== 1) {
         throw new Error('Execution registry entry is invalid.')
@@ -1031,7 +1057,32 @@ export class ExecutionGraphRepository {
       if (seen.has(candidate.executionId))
         throw new Error(`Duplicate execution "${candidate.executionId}".`)
       seen.add(candidate.executionId)
-      const entry = cloneAndFreeze(candidate as unknown as ExecutionRegistryEntry)
+      const identity = cloneAndFreeze({
+        schemaVersion: REPOSITORY_SCHEMA_VERSION,
+        executionId: candidate.executionId,
+        fileName,
+        createdAt: candidate.createdAt
+      } satisfies LegacyExecutionRegistryEntry)
+      if (candidate.ledgerCheckpoint === undefined) {
+        // Pre-checkpoint development ledgers cannot prove that a complete suffix was not
+        // deleted before this startup. Keep their identity reserved, but require an
+        // explicit offline migration/review instead of silently blessing a new baseline.
+        registered.push(identity)
+        this.quarantineExecution(
+          identity,
+          'execution_ledger_corrupt',
+          `Legacy execution "${identity.executionId}" has no durable ledger checkpoint and was quarantined; automatic migration is unsafe.`
+        )
+        continue
+      }
+      const ledgerCheckpoint = this.validateLedgerCheckpoint(
+        candidate.ledgerCheckpoint,
+        candidate.executionId
+      )
+      const entry = cloneAndFreeze({
+        ...identity,
+        ledgerCheckpoint
+      } satisfies ExecutionRegistryEntry)
       registered.push(entry)
       const path = join(this.ledgersDirectory, entry.fileName)
       if (!existsSync(path)) {
@@ -1049,6 +1100,7 @@ export class ExecutionGraphRepository {
       let parsed: ParsedLedger
       try {
         parsed = this.parseLedger(path, entry.executionId)
+        this.assertCheckpointedLedger(entry, parsed)
       } catch (error) {
         this.quarantineExecution(
           entry,
@@ -1076,7 +1128,6 @@ export class ExecutionGraphRepository {
       }
     }
 
-    let repaired = false
     for (const fileName of readdirSync(this.ledgersDirectory)) {
       if (!fileName.startsWith('execution-') || !fileName.endsWith('.jsonl')) continue
       const executionId = fileName.slice('execution-'.length, -'.jsonl'.length)
@@ -1090,61 +1141,15 @@ export class ExecutionGraphRepository {
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error(`Execution ledger is not a regular file for "${executionId}".`)
       }
-      let parsed: ParsedLedger
-      try {
-        parsed = this.parseLedger(path, executionId)
-      } catch (error) {
-        this.quarantineExecution(
-          {
-            executionId,
-            fileName
-          },
-          'execution_ledger_corrupt',
-          error instanceof Error ? error.message : String(error)
-        )
-        continue
-      }
-      const created = parsed.events[0]
-      if (!created || created.kind !== 'execution_created') {
-        this.quarantineExecution(
-          {
-            executionId,
-            fileName
-          },
-          'execution_ledger_corrupt',
-          `Execution "${executionId}" is missing its authoritative creation event.`
-        )
-        continue
-      }
-      const entry = cloneAndFreeze({
-        schemaVersion: REPOSITORY_SCHEMA_VERSION,
-        executionId,
-        fileName,
-        createdAt: created.timestamp
-      } satisfies ExecutionRegistryEntry)
-      try {
-        this.cacheParsedExecution(entry, parsed)
-      } catch (error) {
-        this.quarantineExecution(
-          entry,
-          'execution_ledger_corrupt',
-          error instanceof Error ? error.message : String(error)
-        )
-        continue
-      }
-      registered.push(entry)
-      seen.add(executionId)
-      repaired = true
+      this.quarantineExecution(
+        { executionId, fileName },
+        'execution_ledger_corrupt',
+        `Execution ledger "${executionId}" has no durable registry checkpoint and was quarantined; automatic index rebuilding is unsafe.`
+      )
     }
     registered.sort(
       (a, b) => a.createdAt.localeCompare(b.createdAt) || a.executionId.localeCompare(b.executionId)
     )
-    if (repaired) {
-      atomicWriteJson(this.executionsPath, {
-        schemaVersion: REPOSITORY_SCHEMA_VERSION,
-        executions: registered
-      } satisfies ExecutionRegistry)
-    }
     return registered
   }
 
@@ -1209,7 +1214,7 @@ export class ExecutionGraphRepository {
     }
   }
 
-  private ledgerPath(entry: ExecutionRegistryEntry): string {
+  private ledgerPath(entry: StoredExecutionRegistryEntry): string {
     const expected = expectedLedgerFileName(entry.executionId)
     if (entry.fileName !== expected)
       throw new Error('Execution registry contains a non-canonical path.')
@@ -1324,17 +1329,6 @@ export class ExecutionGraphRepository {
     }
   }
 
-  private truncateTornFinalFragment(path: string, completeByteLength: number): void {
-    let fd: number | undefined
-    try {
-      fd = openSync(path, 'r+')
-      ftruncateSync(fd, completeByteLength)
-      fsyncSync(fd)
-    } finally {
-      if (fd !== undefined) closeSync(fd)
-    }
-  }
-
   private resolveBaseRevision(
     events: readonly ExecutionRunEvent[]
   ): ExecutionGraphRevision | undefined {
@@ -1384,11 +1378,85 @@ export class ExecutionGraphRepository {
       events: parsed.events,
       projection,
       tailHash: parsed.tailHash,
-      completeByteLength: parsed.completeByteLength,
-      observedByteLength: parsed.observedByteLength,
-      hasTornFinalFragment: parsed.hasTornFinalFragment
+      completeByteLength: parsed.completeByteLength
     })
     this.repositoryDiagnostics.delete(entry.executionId)
+  }
+
+  private validateLedgerCheckpoint(value: unknown, executionId: string): ExecutionLedgerCheckpoint {
+    if (!isRecord(value) || value.schemaVersion !== REPOSITORY_SCHEMA_VERSION) {
+      throw new Error(`Execution registry checkpoint is invalid for "${executionId}".`)
+    }
+    if (!isPositiveInteger(value.lastSequence)) {
+      throw new Error(`Execution registry checkpoint sequence is invalid for "${executionId}".`)
+    }
+    assertDigest(value.tailHash, 'execution registry checkpoint tailHash')
+    if (!isPositiveInteger(value.completeByteLength)) {
+      throw new Error(`Execution registry checkpoint length is invalid for "${executionId}".`)
+    }
+    return cloneAndFreeze({
+      schemaVersion: REPOSITORY_SCHEMA_VERSION,
+      lastSequence: value.lastSequence,
+      tailHash: value.tailHash,
+      completeByteLength: value.completeByteLength
+    })
+  }
+
+  private assertCheckpointedLedger(
+    entry: StoredExecutionRegistryEntry,
+    parsed: ParsedLedger,
+    cached?: CachedExecution
+  ): asserts entry is ExecutionRegistryEntry {
+    if (!('ledgerCheckpoint' in entry)) {
+      throw new Error(`Execution "${entry.executionId}" has no durable ledger checkpoint.`)
+    }
+    const checkpoint = entry.ledgerCheckpoint
+    const lastSequence = parsed.events.at(-1)?.sequence ?? 0
+    if (
+      parsed.hasTornFinalFragment ||
+      parsed.observedByteLength !== checkpoint.completeByteLength ||
+      parsed.completeByteLength !== checkpoint.completeByteLength ||
+      lastSequence !== checkpoint.lastSequence ||
+      parsed.tailHash !== checkpoint.tailHash
+    ) {
+      throw new Error(
+        `Execution ledger does not match its durable checkpoint for "${entry.executionId}".`
+      )
+    }
+    if (
+      cached &&
+      (cached.completeByteLength !== checkpoint.completeByteLength ||
+        cached.projection.lastSequence !== checkpoint.lastSequence ||
+        cached.tailHash !== checkpoint.tailHash)
+    ) {
+      throw new Error(
+        `Execution cache does not match its durable checkpoint for "${entry.executionId}".`
+      )
+    }
+  }
+
+  private verifyCachedExecution(executionId: string): CachedExecution | undefined {
+    const cached = this.executionCache.get(executionId)
+    if (!cached) return undefined
+    const entry = this.executions.find((candidate) => candidate.executionId === executionId)
+    if (!entry) {
+      this.executionCache.delete(executionId)
+      return undefined
+    }
+    try {
+      const path = this.ledgerPath(entry)
+      this.assertCheckpointedLedger(entry, this.parseLedger(path, executionId), cached)
+      return cached
+    } catch (error) {
+      this.quarantineExecution(
+        entry,
+        existsSync(join(this.ledgersDirectory, entry.fileName))
+          ? 'execution_ledger_corrupt'
+          : 'execution_ledger_missing',
+        error instanceof Error ? error.message : String(error)
+      )
+      return undefined
+    }
   }
 
   private quarantineExecution(

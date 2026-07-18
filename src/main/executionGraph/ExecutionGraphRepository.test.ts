@@ -238,9 +238,26 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     })
     expect(frames[1].events).toHaveLength(2)
     expect(frames[1].hash).toMatch(/^[a-f0-9]{64}$/)
+    const registry = JSON.parse(
+      readFileSync(join(root, 'execution-graph-executions-v1.json'), 'utf8')
+    ) as {
+      executions: Array<{
+        ledgerCheckpoint: {
+          lastSequence: number
+          tailHash: string
+          completeByteLength: number
+        }
+      }>
+    }
+    expect(registry.executions[0].ledgerCheckpoint).toEqual({
+      schemaVersion: 1,
+      lastSequence: 3,
+      tailHash: frames[1].hash,
+      completeByteLength: readFileSync(ledger).byteLength
+    })
   })
 
-  it('ignores a semantic append torn at every byte until its frame newline is durable', () => {
+  it('quarantines a checkpointed semantic append torn at every byte', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
     const base = repository.saveRevision(revision())
@@ -269,10 +286,14 @@ describe('ExecutionGraphRepository execution ledgers', () => {
 
     for (let byteLength = 0; byteLength < appendedFrame.byteLength; byteLength += 1) {
       writeFileSync(ledger, Buffer.concat([firstFrame, appendedFrame.subarray(0, byteLength)]))
-      expect(new ExecutionGraphRepository(root).getExecution('execution-one')).toMatchObject({
-        lastSequence: 1,
-        state: 'pending'
-      })
+      const recovered = new ExecutionGraphRepository(root)
+      expect(recovered.getExecution('execution-one')).toBeUndefined()
+      expect(recovered.listRepositoryDiagnostics()).toEqual([
+        expect.objectContaining({
+          code: 'execution_ledger_corrupt',
+          message: expect.stringMatching(/durable checkpoint/)
+        })
+      ])
     }
 
     writeFileSync(ledger, complete)
@@ -280,6 +301,110 @@ describe('ExecutionGraphRepository execution ledgers', () => {
       lastSequence: 3,
       integrity: 'valid'
     })
+  })
+
+  it('quarantines deletion of every complete ledger suffix instead of accepting a valid prefix', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'running',
+      timestamp: '2026-07-18T10:02:00.000Z'
+    })
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'waiting',
+      timestamp: '2026-07-18T10:03:00.000Z'
+    })
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'running',
+      timestamp: '2026-07-18T10:04:00.000Z'
+    })
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const complete = readFileSync(ledger)
+    const completeFrameEnds: number[] = []
+    for (let index = 0; index < complete.byteLength; index += 1) {
+      if (complete[index] === 0x0a) completeFrameEnds.push(index + 1)
+    }
+
+    for (const retainedByteLength of [0, ...completeFrameEnds.slice(0, -1)]) {
+      writeFileSync(ledger, complete.subarray(0, retainedByteLength))
+      const recovered = new ExecutionGraphRepository(root)
+      expect(recovered.getExecution('execution-one')).toBeUndefined()
+      expect(recovered.listRepositoryDiagnostics()).toEqual([
+        expect.objectContaining({
+          code: 'execution_ledger_corrupt',
+          message: expect.stringMatching(/durable checkpoint/)
+        })
+      ])
+    }
+
+    writeFileSync(ledger, complete)
+    expect(new ExecutionGraphRepository(root).getExecution('execution-one')).toMatchObject({
+      lastSequence: 4,
+      state: 'running'
+    })
+  })
+
+  it('quarantines registry checkpoint mutations and ledger-ahead mismatches', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'running',
+      timestamp: '2026-07-18T10:02:00.000Z'
+    })
+    const registryPath = join(root, 'execution-graph-executions-v1.json')
+    const checkpointedRegistry = readFileSync(registryPath)
+    const registry = JSON.parse(checkpointedRegistry.toString('utf8')) as {
+      executions: Array<{
+        ledgerCheckpoint: {
+          lastSequence: number
+          tailHash: string
+          completeByteLength: number
+        }
+      }>
+    }
+    const originalCheckpoint = registry.executions[0].ledgerCheckpoint
+    const mutations = [
+      { ...originalCheckpoint, lastSequence: originalCheckpoint.lastSequence - 1 },
+      { ...originalCheckpoint, tailHash: '0'.repeat(64) },
+      {
+        ...originalCheckpoint,
+        completeByteLength: originalCheckpoint.completeByteLength - 1
+      }
+    ]
+
+    for (const ledgerCheckpoint of mutations) {
+      registry.executions[0].ledgerCheckpoint = ledgerCheckpoint
+      writeFileSync(registryPath, JSON.stringify(registry), 'utf8')
+      const recovered = new ExecutionGraphRepository(root)
+      expect(recovered.getExecution('execution-one')).toBeUndefined()
+      expect(recovered.listRepositoryDiagnostics()).toEqual([
+        expect.objectContaining({ message: expect.stringMatching(/durable checkpoint/) })
+      ])
+    }
+
+    writeFileSync(registryPath, checkpointedRegistry)
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'waiting',
+      timestamp: '2026-07-18T10:03:00.000Z'
+    })
+    writeFileSync(registryPath, checkpointedRegistry)
+    const ledgerAhead = new ExecutionGraphRepository(root)
+    expect(ledgerAhead.getExecution('execution-one')).toBeUndefined()
+    expect(ledgerAhead.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({ message: expect.stringMatching(/durable checkpoint/) })
+    ])
   })
 
   it('quarantines a complete batch whose hash no longer matches its events', () => {
@@ -388,33 +513,27 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     expect(repository.readExecutionEvents('execution-one')).toBe(updatedEvents)
   })
 
-  it('ignores and repairs only an unterminated final fragment before the next append', () => {
+  it('fails closed when an unterminated fragment appears beyond the durable checkpoint', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
     createExecution(repository)
     const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
 
     appendFileSync(ledger, '{"schemaVersion":1,"eventId":"torn"', 'utf8')
-    expect(repository.readExecutionEvents('execution-one')).toHaveLength(1)
-
-    repository.appendExecutionEvent(
-      {
+    expect(repository.readExecutionEvents('execution-one')).toEqual([])
+    expect(repository.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        message: expect.stringMatching(/durable checkpoint/)
+      })
+    ])
+    expect(() =>
+      repository.appendExecutionEvent({
         kind: 'execution_state_changed',
         executionId: 'execution-one',
-        state: 'running',
-        timestamp: '2026-07-18T10:02:00.000Z'
-      },
-      { expectedLastSequence: 1 }
-    )
-
-    const ledgerText = readFileSync(ledger, 'utf8')
-    expect(ledgerText).not.toContain('"eventId":"torn"')
-    expect(ledgerText.endsWith('\n')).toBe(true)
-    expect(new ExecutionGraphRepository(root).getExecution('execution-one')).toMatchObject({
-      state: 'running',
-      lastSequence: 2,
-      integrity: 'valid'
-    })
+        state: 'running'
+      })
+    ).toThrow(/quarantined/)
   })
 
   it('quarantines one corrupt ledger without hiding healthy executions', () => {
@@ -476,21 +595,50 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     expect(() => new ExecutionGraphRepository(secondRoot)).toThrow(/identity is corrupt/)
   })
 
-  it('rebuilds a missing projection index from an authoritative ledger', () => {
+  it('quarantines an orphan ledger because rebuilding would silently bless a rollback', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
     createExecution(repository)
     rmSync(join(root, 'execution-graph-executions-v1.json'))
 
     const recovered = new ExecutionGraphRepository(root)
-    expect(recovered.listExecutions()).toHaveLength(1)
-    expect(recovered.getExecution('execution-one')).toMatchObject({
-      title: 'Stack execution',
-      integrity: 'valid',
-      lastSequence: 1
-    })
-    expect(readFileSync(join(root, 'execution-graph-executions-v1.json'), 'utf8')).toContain(
-      'execution-one'
-    )
+    expect(recovered.listExecutions()).toEqual([])
+    expect(recovered.getExecution('execution-one')).toBeUndefined()
+    expect(recovered.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        message: expect.stringMatching(/no durable registry checkpoint/)
+      })
+    ])
+    expect(() => createExecution(recovered)).toThrow(/ledger already exists/)
+  })
+
+  it('quarantines legacy registry entries without silently migrating an unprotected baseline', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    const registryPath = join(root, 'execution-graph-executions-v1.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as {
+      executions: Array<{ ledgerCheckpoint?: unknown }>
+    }
+    delete registry.executions[0].ledgerCheckpoint
+    writeFileSync(registryPath, JSON.stringify(registry), 'utf8')
+
+    const recovered = new ExecutionGraphRepository(root)
+    expect(recovered.getExecution('execution-one')).toBeUndefined()
+    expect(recovered.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        message: expect.stringMatching(/Legacy execution.*automatic migration is unsafe/)
+      })
+    ])
+    expect(readFileSync(registryPath, 'utf8')).not.toContain('ledgerCheckpoint')
+    expect(() =>
+      recovered.appendExecutionEvent({
+        kind: 'execution_state_changed',
+        executionId: 'execution-one',
+        state: 'running'
+      })
+    ).toThrow(/quarantined/)
   })
 })
