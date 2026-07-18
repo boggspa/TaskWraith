@@ -5,7 +5,11 @@ import {
   executionGraphRunTemplatePermissionCeilingDigest
 } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
-import type { RunPermissionPostureSnapshot, RunQueueJob } from '../store/types'
+import type {
+  RunPermissionPostureSnapshot,
+  RunQueueJob,
+  RunQueueRequestSnapshot
+} from '../store/types'
 import type { ExecutionGraphHandlersDeps } from './executionGraphHandlers'
 import { registerExecutionGraphHandlers } from './executionGraphHandlers'
 
@@ -48,6 +52,56 @@ function projection(overrides: Partial<ExecutionRunProjection> = {}): ExecutionR
   }
 }
 
+function preparedRequest(
+  overrides: Partial<RunQueueRequestSnapshot> = {}
+): RunQueueRequestSnapshot {
+  return {
+    scope: 'workspace',
+    prompt: 'Inspect this change.',
+    selectedModelType: 'default',
+    customModel: '',
+    approvalMode: 'auto',
+    permissionPresetId: 'workspace_write',
+    sessionTrust: true,
+    imageAttachments: [],
+    ...overrides
+  }
+}
+
+function preparedJob(
+  requestOverrides: Partial<RunQueueRequestSnapshot> = {},
+  jobOverrides: Partial<RunQueueJob> = {}
+): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
+  return {
+    id: 'graph-template-probe-test',
+    runId: 'graph-template-probe-test',
+    provider: 'codex',
+    scope: 'workspace',
+    workspaceId: 'workspace-one',
+    workspacePath: '/workspace',
+    chatId: 'chat-one',
+    source: 'system',
+    status: 'paused',
+    ...jobOverrides,
+    request: preparedRequest(requestOverrides)
+  }
+}
+
+function appendStackStep(handler: RegisteredHandler): unknown {
+  return handler(
+    {},
+    {
+      clientRequestId: 'renderer-run-admission',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      provider: 'codex',
+      stepTitle: 'Inspect the change',
+      objective: 'Inspect this change carefully.',
+      request: { prompt: 'Inspect this change.' }
+    }
+  )
+}
+
 function createDeps(): ExecutionGraphHandlersDeps {
   const current = projection()
   return {
@@ -63,28 +117,16 @@ function createDeps(): ExecutionGraphHandlersDeps {
       const record = input as Record<string, unknown>
       const runtimeProfileId =
         typeof record.runtimeProfileId === 'string' ? record.runtimeProfileId : undefined
-      return {
-        id: String(record.id),
-        runId: record.runId as string,
-        provider: 'codex' as const,
-        scope: 'workspace' as const,
-        workspaceId: 'workspace-one',
-        workspacePath: '/workspace',
-        chatId: 'chat-one',
-        source: 'system' as const,
-        status: 'paused' as const,
-        ...(runtimeProfileId ? { runtimeProfileId } : {}),
-        request: {
-          prompt: 'Inspect this change.',
-          selectedModelType: 'default',
-          customModel: '',
-          approvalMode: 'auto',
-          permissionPresetId: 'workspace_write' as const,
-          sessionTrust: true,
-          imageAttachments: [],
+      return preparedJob(
+        {
+          ...(runtimeProfileId ? { runtimeProfileId } : {})
+        },
+        {
+          id: String(record.id),
+          runId: record.runId as string,
           ...(runtimeProfileId ? { runtimeProfileId } : {})
         }
-      }
+      )
     }),
     resolvePermissionPosture: vi.fn(
       (): RunPermissionPostureSnapshot => ({
@@ -404,6 +446,147 @@ describe('registerExecutionGraphHandlers', () => {
     ).toThrow(/runtime profile did not preserve/i)
     expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      name: 'scheduled provenance',
+      request: { scheduledTaskId: 'scheduled-one' },
+      error: /scheduled, remote, guest, or Ensemble provenance/i
+    },
+    {
+      name: 'an Ensemble direct-message target',
+      request: { dmTargetParticipantId: 'participant-one' },
+      error: /scheduled, remote, guest, or Ensemble provenance/i
+    },
+    {
+      name: 'Discord context',
+      request: {
+        discordContextSelection: {
+          guildId: 'guild-one',
+          channelId: 'channel-one',
+          limit: 25 as const
+        }
+      },
+      error: /Discord context/i
+    },
+    {
+      name: 'Codex native review',
+      request: { codexNativeReview: true },
+      error: /Codex native review/i
+    },
+    {
+      name: 'a handoff source',
+      request: { handoffSourceRunId: 'source-run-one' },
+      error: /handoff source run/i
+    },
+    {
+      name: 'composer preservation',
+      request: { preserveComposer: true },
+      error: /originating composer/i
+    },
+    {
+      name: 'a Gemini worktree',
+      request: { geminiWorktree: { enabled: true, name: 'feature-one' } },
+      error: /worktree-bound execution context/i
+    },
+    {
+      name: 'an effective worktree path',
+      request: { effectiveWorkspacePath: '/workspace-worktree' },
+      error: /worktree-bound execution context/i
+    },
+    {
+      name: 'a this-run external path grant',
+      request: {
+        externalPathGrants: [
+          {
+            id: 'grant-one',
+            provider: 'codex' as const,
+            bindingVersion: 2 as const,
+            workspaceId: 'workspace-one',
+            chatId: 'chat-one',
+            appRunId: 'renderer-run-one',
+            path: '/external/file.txt',
+            kind: 'file' as const,
+            access: 'read' as const,
+            duration: 'thisRun' as const,
+            issuedBy: 'main' as const,
+            signature: 'signed-grant',
+            createdAt: '2026-07-18T12:00:00.000Z'
+          }
+        ]
+      },
+      error: /run-scoped external path grants/i
+    }
+  ])('rejects $name from a bound Stack request', ({ request, error }) => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() => preparedJob(request))
+    registerExecutionGraphHandlers(deps)
+
+    expect(() => appendStackStep(handlerFor('execution-runs:append-stack-step'))).toThrow(error)
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    {
+      name: 'the prepared queue job',
+      request: {},
+      job: { scope: 'global' as const },
+      error: /workspace-scoped request/i
+    },
+    {
+      name: 'the prepared request snapshot',
+      request: { scope: 'global' as const },
+      job: {},
+      error: /workspace-scoped request/i
+    },
+    {
+      name: 'the prepared queue job handoff binding',
+      request: {},
+      job: { handoffSourceRunId: 'source-run-one' },
+      error: /handoff source run/i
+    }
+  ])('rejects unsupported runtime authority on $name', ({ request, job, error }) => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() => preparedJob(request, job))
+    registerExecutionGraphHandlers(deps)
+
+    expect(() => appendStackStep(handlerFor('execution-runs:append-stack-step'))).toThrow(error)
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('keeps durable external path grants admissible for future Stack attempts', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() =>
+      preparedJob({
+        externalPathGrants: [
+          {
+            id: 'grant-thread-one',
+            provider: 'codex',
+            bindingVersion: 2,
+            workspaceId: 'workspace-one',
+            chatId: 'chat-one',
+            path: '/external/directory',
+            kind: 'directory',
+            access: 'read',
+            duration: 'thisThread',
+            issuedBy: 'main',
+            signature: 'signed-grant',
+            createdAt: '2026-07-18T12:00:00.000Z'
+          }
+        ]
+      })
+    )
+    registerExecutionGraphHandlers(deps)
+
+    expect(() => appendStackStep(handlerFor('execution-runs:append-stack-step'))).not.toThrow()
+    expect(deps.coordinator.appendStackStep).toHaveBeenCalledWith(
+      expect.objectContaining({ effect: 'external_side_effect' })
+    )
   })
 
   it('formalizes only the verified effective topology as a new immutable revision', () => {

@@ -189,6 +189,44 @@ function runTemplateContent(
   })
 }
 
+function assertBoundStackRuntimeAdmission(
+  prepared: Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
+): asserts prepared is typeof prepared & { request: RunQueueRequestSnapshot } {
+  const request = prepared.request
+  if (!request) throw new Error('Prepared Stack request snapshot is unavailable.')
+  if (prepared.scope !== 'workspace' || (request.scope && request.scope !== 'workspace')) {
+    throw new Error('Stack steps require a workspace-scoped request.')
+  }
+  if (
+    request.scheduledTaskId ||
+    request.scheduledRunAt ||
+    request.remoteComposer ||
+    request.guestParentChatId ||
+    request.guestRole ||
+    request.dmTargetParticipantId
+  ) {
+    throw new Error('Stack steps cannot reuse scheduled, remote, guest, or Ensemble provenance.')
+  }
+  if (request.discordContextSelection) {
+    throw new Error('Stack steps cannot reuse Discord context.')
+  }
+  if (request.codexNativeReview) {
+    throw new Error('Stack steps cannot run a Codex native review.')
+  }
+  if (request.handoffSourceRunId || prepared.handoffSourceRunId) {
+    throw new Error('Stack steps cannot reuse a handoff source run.')
+  }
+  if (request.preserveComposer) {
+    throw new Error('Stack steps cannot preserve an originating composer submission.')
+  }
+  if (request.geminiWorktree || request.effectiveWorkspacePath) {
+    throw new Error('Stack steps cannot use worktree-bound execution context.')
+  }
+  if (request.externalPathGrants?.some((grant) => grant.duration === 'thisRun')) {
+    throw new Error('Stack steps cannot reuse run-scoped external path grants.')
+  }
+}
+
 function prepareStackTemplate(
   deps: ExecutionGraphHandlersDeps,
   event: IpcMainInvokeEvent,
@@ -240,16 +278,7 @@ function prepareStackTemplate(
     throw new Error('Prepared Stack runtime profile did not preserve its signed request context.')
   }
   if (!prepared.request.prompt.trim()) throw new Error('Stack step prompt is required.')
-  if (
-    prepared.request.scheduledTaskId ||
-    prepared.request.scheduledRunAt ||
-    prepared.request.remoteComposer ||
-    prepared.request.guestParentChatId ||
-    prepared.request.guestRole ||
-    prepared.request.dmTargetParticipantId
-  ) {
-    throw new Error('Stack steps cannot reuse scheduled, remote, guest, or Ensemble provenance.')
-  }
+  assertBoundStackRuntimeAdmission(prepared)
   const frozenRequest: RunQueueRequestSnapshot = {
     ...prepared.request,
     sessionTrust: false
