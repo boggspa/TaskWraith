@@ -692,6 +692,16 @@ describe('Sidebar chat row markup', () => {
     expect(html).toContain('Shared thread')
     expect(html).toContain('Child thread')
 
+    const workspaceTitleIndex = html.indexOf('sidebar-chat-title">Workspace thread')
+    expect(workspaceTitleIndex).toBeGreaterThanOrEqual(0)
+    const workspaceIdentityContext = html.slice(
+      Math.max(0, workspaceTitleIndex - 1_000),
+      workspaceTitleIndex
+    )
+    expect(workspaceIdentityContext).toContain('data-provider-logo="gemini"')
+    expect(workspaceIdentityContext).toContain('<img class="provider-brand-logo-image')
+    expect(workspaceIdentityContext).not.toContain('provider-glyph-gemini')
+
     const chatHtml = renderSidebar(chats, { activeChatId: 'global-1' })
     expect(chatHtml).toMatch(/<div role="button"[^>]*class="[^"]*sidebar-chat-item/)
     expect(chatHtml).toContain('Global thread')

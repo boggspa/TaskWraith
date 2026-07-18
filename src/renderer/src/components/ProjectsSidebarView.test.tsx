@@ -57,6 +57,7 @@ function chatRecord(appChatId: string, title: string): ChatRecord {
     title,
     scope: 'global',
     chatKind: 'single',
+    provider: 'codex',
     messages: []
   } as unknown as ChatRecord
 }
@@ -213,6 +214,9 @@ describe('ProjectsSidebarView', () => {
     expect(html).toContain('title="Set as Project Home"')
     expect(html).toContain('aria-pressed="true"')
     expect(html).toContain('aria-label="Open Alpha Project Home"')
+    expect(html).toContain('data-provider-logo="codex"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-codex')
   })
 
   it('offers Start Project Home on unhomed projects when the host provides the handler', () => {

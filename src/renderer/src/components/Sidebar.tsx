@@ -55,6 +55,7 @@ import { ModelUsageCard, type ModelUsageApiSpendOptions } from './ModelUsageCard
 import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOverflowMenu'
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { isSubThreadChat } from '../lib/chatScope'
 import {
   primarySurfaceForSidebarTabChange,
@@ -1720,7 +1721,7 @@ function SidebarProviderLabel({
   const providerName = provider || 'gemini'
   return (
     <span className={`sidebar-provider-label provider-${providerName}`}>
-      <ProviderBadgeIcon provider={provider} />
+      <ProviderBrandLogoIcon provider={provider} />
       <span>
         {getProviderName(provider)}
         {showModel ? ` / ${showModel}` : ''}

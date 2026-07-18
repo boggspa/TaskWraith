@@ -38,7 +38,7 @@ import {
 import { getProviderLabel } from '../lib/providerLabels'
 import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { IdentityIconPicker } from './IdentityIconPicker'
 
 const EXPANDED_PROJECTS_STORAGE_KEY = 'taskwraith-sidebar-expanded-project-ids'
@@ -546,9 +546,7 @@ export function ProjectsSidebarView({
         >
           <span className="sidebar-project-member-title-line">
             <span className={`sidebar-provider-label provider-${provider}`}>
-              <span className={`sidebar-provider-icon provider-${provider}`} aria-hidden>
-                <ProviderGlyph provider={provider} />
-              </span>
+              <ProviderBrandLogoIcon provider={provider} />
               <span>{providerLabel(chat)}</span>
             </span>
             <span className="sidebar-project-member-title">
