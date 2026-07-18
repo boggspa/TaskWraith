@@ -193,6 +193,7 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphDiagnosticsSnapshot,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -1828,6 +1829,7 @@ declare global {
         partial: WorkflowDefinitionRendererUpdate
       ) => Promise<WorkflowDefinition | null>
       deleteWorkflowDefinition: (id: string) => Promise<void>
+      getExecutionGraphDiagnostics: () => Promise<ExecutionGraphDiagnosticsSnapshot>
       listExecutionGraphRevisions: (
         workspaceId?: string
       ) => Promise<readonly ExecutionGraphRevision[]>

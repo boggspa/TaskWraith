@@ -12,6 +12,7 @@ import type {
   JsonObject
 } from '../executionGraph/ExecutionGraphModel'
 import type {
+  ExecutionGraphRepositoryDiagnostic,
   ExecutionGraphRepository,
   ExecutionGraphRunTemplate
 } from '../executionGraph/ExecutionGraphRepository'
@@ -19,7 +20,8 @@ import type { ExecutionRunEvent, ExecutionRunProjection } from '../executionGrap
 import { executionGraphRunTemplatePermissionCeilingDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type {
   AppendExecutionStackStepInput,
-  ExecutionGraphCoordinator
+  ExecutionGraphCoordinator,
+  ExecutionGraphRecoveryDiagnostic
 } from '../services/ExecutionGraphCoordinator'
 import type {
   ProviderId,
@@ -32,6 +34,23 @@ export interface ExecutionRunListFilter {
   readonly workspaceId?: string
   readonly rootChatId?: string
   readonly includeTerminal?: boolean
+}
+
+export interface ExecutionGraphServiceDiagnostic {
+  readonly code: 'initialization_failed' | 'startup_recovery_failed'
+  readonly message: string
+}
+
+export interface ExecutionGraphDiagnosticsSnapshot {
+  readonly schemaVersion: 1
+  readonly repositoryDiagnostics: readonly ExecutionGraphRepositoryDiagnostic[]
+  readonly recoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[]
+  readonly serviceDiagnostics: readonly ExecutionGraphServiceDiagnostic[]
+}
+
+export interface ExecutionGraphDiagnosticsHandlerDeps {
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
+  getSnapshot: () => ExecutionGraphDiagnosticsSnapshot
 }
 
 export interface ExecutionStackAppendCommand {
@@ -561,5 +580,15 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
     deps.assertMainRendererSender(event)
     if (!isRecord(raw)) throw new Error('Execution layout is invalid.')
     return deps.repository.saveLayout(raw as unknown as ExecutionGraphLayout)
+  })
+}
+
+/** Keep subsystem diagnostics queryable even when graph initialization fails. */
+export function registerExecutionGraphDiagnosticsHandler(
+  deps: ExecutionGraphDiagnosticsHandlerDeps
+): void {
+  ipcMain.handle('execution-graphs:diagnostics', (event) => {
+    deps.assertMainRendererSender(event)
+    return deps.getSnapshot()
   })
 }

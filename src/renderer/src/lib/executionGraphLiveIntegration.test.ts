@@ -46,6 +46,22 @@ describe('live execution graph integration', () => {
     expect(subscription).toContain('.getExecutionRun(notice.executionId)')
   })
 
+  it('surfaces repository and recovery diagnostics through a stale-safe root notice', () => {
+    const diagnostics = slice(
+      appSource,
+      'const refreshExecutionGraphDiagnostics =',
+      'const generation = ++executionRunQueryGenerationRef.current'
+    )
+    expect(diagnostics).toContain(
+      "typeof window.api.getExecutionGraphDiagnostics !== 'function'"
+    )
+    expect(diagnostics).toContain('.getExecutionGraphDiagnostics()')
+    expect(appSource).toContain('executionGraphDiagnostics.repositoryDiagnostics.map(')
+    expect(appSource).toContain('executionGraphDiagnostics.recoveryDiagnostics.map(')
+    expect(appSource).toContain('className="execution-graph-diagnostics-notice"')
+    expect(appSource).toContain('Stack history needs attention')
+  })
+
   it('routes an eligible busy target chat to Stack before the legacy queue fallback', () => {
     const handleRun = slice(appSource, 'const handleRun =', 'const createSideChatFromCurrentChat =')
     const busyBranch = slice(

@@ -51,6 +51,7 @@ describe('RendererIpcPolicy', () => {
     'canvas:set-bounds',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',
+    'execution-graphs:diagnostics',
     'execution-graphs:list',
     'execution-runs:append-stack-step',
     'execution-runs:cancel',

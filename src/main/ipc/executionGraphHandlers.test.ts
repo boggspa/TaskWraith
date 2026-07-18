@@ -10,8 +10,14 @@ import type {
   RunQueueJob,
   RunQueueRequestSnapshot
 } from '../store/types'
-import type { ExecutionGraphHandlersDeps } from './executionGraphHandlers'
-import { registerExecutionGraphHandlers } from './executionGraphHandlers'
+import type {
+  ExecutionGraphDiagnosticsSnapshot,
+  ExecutionGraphHandlersDeps
+} from './executionGraphHandlers'
+import {
+  registerExecutionGraphDiagnosticsHandler,
+  registerExecutionGraphHandlers
+} from './executionGraphHandlers'
 
 vi.mock('electron', () => ({
   ipcMain: {
@@ -754,5 +760,46 @@ describe('registerExecutionGraphHandlers', () => {
       )
     ).rejects.toThrow('Execution is unavailable')
     expect(deps.coordinator.cancelDormantStep).not.toHaveBeenCalled()
+  })
+})
+
+describe('registerExecutionGraphDiagnosticsHandler', () => {
+  it('keeps diagnostics readable through a main-renderer-only handler', () => {
+    const snapshot: ExecutionGraphDiagnosticsSnapshot = {
+      schemaVersion: 1,
+      repositoryDiagnostics: [
+        {
+          code: 'execution_ledger_corrupt',
+          executionId: 'stack-broken',
+          fileName: 'stack-broken.jsonl',
+          message: 'Ledger checksum mismatch.'
+        }
+      ],
+      recoveryDiagnostics: [
+        { executionId: 'stack-recovery', message: 'Recovery could not read the queue row.' }
+      ],
+      serviceDiagnostics: []
+    }
+    const assertMainRendererSender = vi.fn()
+    const getSnapshot = vi.fn(() => snapshot)
+
+    registerExecutionGraphDiagnosticsHandler({ assertMainRendererSender, getSnapshot })
+
+    expect(handlerFor('execution-graphs:diagnostics')({ sender: 'main' })).toBe(snapshot)
+    expect(assertMainRendererSender).toHaveBeenCalledWith({ sender: 'main' })
+    expect(getSnapshot).toHaveBeenCalledOnce()
+  })
+
+  it('checks renderer authority before reading diagnostics', () => {
+    const getSnapshot = vi.fn()
+    registerExecutionGraphDiagnosticsHandler({
+      assertMainRendererSender: () => {
+        throw new Error('main renderer only')
+      },
+      getSnapshot
+    })
+
+    expect(() => handlerFor('execution-graphs:diagnostics')({})).toThrow('main renderer only')
+    expect(getSnapshot).not.toHaveBeenCalled()
   })
 })

@@ -281,6 +281,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
 
   // Execution graphs are app-level orchestration state. Their domain handlers
   // repeat this assertion and resolve all workspace/chat authority in main.
+  'execution-graphs:diagnostics',
   'execution-graphs:list',
   'execution-graphs:get',
   'execution-graphs:get-layout',

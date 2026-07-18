@@ -140,6 +140,7 @@ import {
 } from '../../main/GoalState'
 import type { HumanCollaborationShare } from '../../main/collaboration/HumanCollaborationStore'
 import type { ExecutionRunProjection } from '../../main/executionGraph/ExecutionGraphRun'
+import type { ExecutionGraphDiagnosticsSnapshot } from '../../main/ipc/executionGraphHandlers'
 import type { LocalServerEntry } from '../../main/localServers/types'
 import {
   collectExternalPathGrantsFromMetadata,
@@ -3038,6 +3039,27 @@ function App(): React.JSX.Element {
   const [executionRunsById, setExecutionRunsById] = useState<
     Record<string, ExecutionRunProjection>
   >({})
+  const [executionGraphDiagnostics, setExecutionGraphDiagnostics] =
+    useState<ExecutionGraphDiagnosticsSnapshot | null>(null)
+  const executionGraphDiagnosticReasons = useMemo(() => {
+    if (!executionGraphDiagnostics) return []
+    const boundedReason = (value: string): string => redactLog(value).slice(0, 512)
+    return [
+      ...executionGraphDiagnostics.serviceDiagnostics.map(
+        (diagnostic) => `Stack service: ${boundedReason(diagnostic.message)}`
+      ),
+      ...executionGraphDiagnostics.repositoryDiagnostics.map(
+        (diagnostic) =>
+          `Stack ${diagnostic.executionId}: ${boundedReason(diagnostic.message)}`
+      ),
+      ...executionGraphDiagnostics.recoveryDiagnostics.map(
+        (diagnostic) =>
+          `Stack ${diagnostic.executionId}: startup recovery paused — ${boundedReason(
+            diagnostic.message
+          )}`
+      )
+    ]
+  }, [executionGraphDiagnostics])
   const [executionRunIdsByChatId, setExecutionRunIdsByChatId] = useState<
     Record<string, string[]>
   >({})
@@ -3683,6 +3705,25 @@ function App(): React.JSX.Element {
     }
   }, [])
 
+  const refreshExecutionGraphDiagnostics = useCallback((): void => {
+    if (
+      isChatPopoutWindow ||
+      typeof window.api.getExecutionGraphDiagnostics !== 'function'
+    ) {
+      return
+    }
+    void window.api
+      .getExecutionGraphDiagnostics()
+      .then(setExecutionGraphDiagnostics)
+      .catch((error) => {
+        console.warn('[execution graph] failed to load repository diagnostics', error)
+      })
+  }, [isChatPopoutWindow])
+
+  useEffect(() => {
+    refreshExecutionGraphDiagnostics()
+  }, [refreshExecutionGraphDiagnostics])
+
   useEffect(() => {
     const generation = ++executionRunQueryGenerationRef.current
     if (
@@ -3726,6 +3767,7 @@ function App(): React.JSX.Element {
               ])
             )
           }))
+          refreshExecutionGraphDiagnostics()
         })
         .catch((error) => {
           if (executionRunQueryGenerationRef.current === generation) {
@@ -3740,7 +3782,8 @@ function App(): React.JSX.Element {
     currentComposerChatId,
     isChatPopoutWindow,
     isCurrentGlobalChat,
-    multiview.paneChatIds
+    multiview.paneChatIds,
+    refreshExecutionGraphDiagnostics
   ])
 
   useEffect(() => {
@@ -3752,6 +3795,7 @@ function App(): React.JSX.Element {
       return undefined
     }
     return window.api.onExecutionGraphChanged((notice) => {
+      refreshExecutionGraphDiagnostics()
       void window.api
         .getExecutionRun(notice.executionId)
         .then((run) => {
@@ -3761,7 +3805,7 @@ function App(): React.JSX.Element {
           console.warn('[execution graph] failed to refresh changed run', error)
         })
     })
-  }, [isChatPopoutWindow, rememberExecutionRun])
+  }, [isChatPopoutWindow, refreshExecutionGraphDiagnostics, rememberExecutionRun])
 
   useEffect(() => {
     if (!openExecutionMap) return
@@ -28909,6 +28953,24 @@ function App(): React.JSX.Element {
     >
       <div className="window-drag-strip" aria-hidden />
       {bootMaskVisible && <AppBootMask leaving={isBootMaskLeaving} />}
+      {!isChatPopoutWindow && executionGraphDiagnosticReasons.length > 0 && (
+        <aside className="execution-graph-diagnostics-notice" role="status">
+          <details>
+            <summary>
+              Stack history needs attention
+              <span>{executionGraphDiagnosticReasons.length}</span>
+            </summary>
+            <ul>
+              {executionGraphDiagnosticReasons.slice(0, 12).map((reason, index) => (
+                <li key={`${index}:${reason}`}>{reason}</li>
+              ))}
+            </ul>
+            {executionGraphDiagnosticReasons.length > 12 && (
+              <p>{executionGraphDiagnosticReasons.length - 12} more diagnostics</p>
+            )}
+          </details>
+        </aside>
+      )}
       <MainAppLayout {...mainAppLayoutProps} />
 
       {/*

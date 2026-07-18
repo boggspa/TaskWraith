@@ -567,7 +567,8 @@ import {
 } from './executionGraph/ExecutionGraphHistoryRetention'
 import {
   ExecutionGraphCoordinator,
-  type ExecutionGraphAnchorRunStatus
+  type ExecutionGraphAnchorRunStatus,
+  type ExecutionGraphRecoveryDiagnostic
 } from './services/ExecutionGraphCoordinator'
 import {
   assertExecutionGraphPermissionPostureStillCurrent,
@@ -599,7 +600,11 @@ import {
   seedExecutionGraphAttemptTranscript,
   verifyExecutionGraphAttemptReceiptOnChat
 } from './executionGraph/ExecutionGraphAttemptTranscript'
-import { registerExecutionGraphHandlers } from './ipc/executionGraphHandlers'
+import {
+  registerExecutionGraphDiagnosticsHandler,
+  registerExecutionGraphHandlers,
+  type ExecutionGraphServiceDiagnostic
+} from './ipc/executionGraphHandlers'
 import { createMainOwnedRunQueueAttachmentStager } from './RunQueueAttachmentAuthority'
 import {
   authorizeRemoteComposerQueueDispatch,
@@ -5960,6 +5965,13 @@ let runQueueServiceRef: RunQueueService | null = null
 let runLifecycleCoordinatorRef: RunLifecycleCoordinator | null = null
 let executionGraphRepositoryRef: ExecutionGraphRepository | null = null
 let executionGraphCoordinatorRef: ExecutionGraphCoordinator | null = null
+let executionGraphRecoveryDiagnostics: readonly ExecutionGraphRecoveryDiagnostic[] = []
+let executionGraphServiceDiagnostics: readonly ExecutionGraphServiceDiagnostic[] = []
+
+function executionGraphDiagnosticMessage(error: unknown): string {
+  return String(error instanceof Error ? error.message : error).slice(0, 2_048)
+}
+
 interface ExecutionGraphComposedPayloadEntry {
   readonly executionId: string
   readonly activationId: string
@@ -30828,6 +30840,18 @@ if (isGeminiMcpBridgeProcess) {
     executionGraphComposedPayloads.clear()
     executionGraphDispatchesInFlight.clear()
     executionGraphAdapterAdmissions.clear()
+    executionGraphRecoveryDiagnostics = []
+    executionGraphServiceDiagnostics = []
+    registerExecutionGraphDiagnosticsHandler({
+      assertMainRendererSender,
+      getSnapshot: () => ({
+        schemaVersion: 1,
+        repositoryDiagnostics:
+          executionGraphRepositoryRef?.listRepositoryDiagnostics() ?? [],
+        recoveryDiagnostics: executionGraphRecoveryDiagnostics,
+        serviceDiagnostics: executionGraphServiceDiagnostics
+      })
+    })
     const pendingExecutionGraphDispatchRunIds = new Set<string>()
     let executionGraphAttemptDispatcher: ((runId: string) => Promise<void>) | null = null
     let executionGraphDispatchFlushScheduled = false
@@ -31230,6 +31254,12 @@ if (isGeminiMcpBridgeProcess) {
     } catch (error) {
       executionGraphRepositoryRef = null
       executionGraphCoordinatorRef = null
+      executionGraphServiceDiagnostics = [
+        {
+          code: 'initialization_failed',
+          message: executionGraphDiagnosticMessage(error)
+        }
+      ]
       console.error(
         '[ExecutionGraph] durable graph service is disabled because initialization failed:',
         error
@@ -36304,8 +36334,21 @@ if (isGeminiMcpBridgeProcess) {
       // Queue recovery owns process/transport reconciliation. Only after it has
       // settled those rows may the graph ledger decide whether a claimed
       // attempt is safe to requeue or must stop at requires_action.
-      executionGraphCoordinatorRef?.recover()
+      executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
+      for (const diagnostic of executionGraphRecoveryDiagnostics) {
+        console.error(
+          `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
+        )
+      }
     } catch (error) {
+      executionGraphRecoveryDiagnostics = []
+      executionGraphServiceDiagnostics = [
+        ...executionGraphServiceDiagnostics,
+        {
+          code: 'startup_recovery_failed',
+          message: executionGraphDiagnosticMessage(error)
+        }
+      ]
       console.error('[ExecutionGraph] startup recovery failed:', error)
     }
     if (!scheduledOccurrenceRecoveryBlockedReason) {

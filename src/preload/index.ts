@@ -56,6 +56,7 @@ import type {
 } from '../main/executionGraph/ExecutionGraphRun'
 import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
 import type {
+  ExecutionGraphDiagnosticsSnapshot,
   ExecutionRunCancelStepCommand,
   ExecutionRunFormalizeCommand,
   ExecutionRunListFilter,
@@ -1481,6 +1482,10 @@ const api = {
   updateWorkflowDefinition: (id: string, partial: WorkflowDefinitionRendererUpdate) =>
     ipcRenderer.invoke('update-workflow-definition', id, partial),
   deleteWorkflowDefinition: (id: string) => ipcRenderer.invoke('delete-workflow-definition', id),
+  getExecutionGraphDiagnostics: () =>
+    ipcRenderer.invoke('execution-graphs:diagnostics') as Promise<
+      ExecutionGraphDiagnosticsSnapshot
+    >,
   listExecutionGraphRevisions: (workspaceId?: string) =>
     ipcRenderer.invoke('execution-graphs:list', workspaceId) as Promise<
       readonly ExecutionGraphRevision[]

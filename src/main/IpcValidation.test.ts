@@ -86,6 +86,7 @@ describe('IpcValidation', () => {
   })
 
   it('shape-gates the execution graph command surface', () => {
+    expect(() => validateIpcArgs('execution-graphs:diagnostics', [])).not.toThrow()
     expect(() => validateIpcArgs('execution-graphs:list', [])).not.toThrow()
     expect(() =>
       validateIpcArgs('execution-graphs:get', [{ graphId: 'graph-1', revision: 1 }])

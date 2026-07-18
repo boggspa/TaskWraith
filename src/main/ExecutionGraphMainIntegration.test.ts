@@ -73,6 +73,33 @@ describe('execution graph main integration', () => {
     expect(handlers).toContain('storageRootMentionsWorkspace(storageRoot, workspaceId)')
   })
 
+  it('keeps graph diagnostics available across initialization and recovery failures', () => {
+    const initialization = between(
+      'executionGraphComposedPayloads.clear()',
+      '// Phase C5 scaffold: APNs wake-on-approval.'
+    )
+    const diagnosticsRegistration = initialization.indexOf(
+      'registerExecutionGraphDiagnosticsHandler({'
+    )
+    const repositoryInitialization = initialization.indexOf(
+      'const executionGraphRepository = new ExecutionGraphRepository('
+    )
+
+    expect(diagnosticsRegistration).toBeGreaterThanOrEqual(0)
+    expect(repositoryInitialization).toBeGreaterThan(diagnosticsRegistration)
+    expect(initialization).toContain('executionGraphRepositoryRef?.listRepositoryDiagnostics()')
+    expect(initialization).toContain("code: 'initialization_failed'")
+
+    const recovery = between(
+      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()',
+      'if (!scheduledOccurrenceRecoveryBlockedReason) {'
+    )
+    expect(recovery).toContain(
+      'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
+    )
+    expect(recovery).toContain("code: 'startup_recovery_failed'")
+  })
+
   it('delivers committed predecessor results as untrusted data before composition', () => {
     const composer = between(
       'const graphOwnedComposerInput =',
