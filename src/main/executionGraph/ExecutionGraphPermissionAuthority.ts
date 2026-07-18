@@ -5,10 +5,12 @@ import {
 } from '../RunPermissionPosture'
 import type {
   AppSettings,
+  ChatScope,
   EffectiveRunPermissions,
   PermissionPresetId,
   ProviderId,
   RunPermissionPostureSnapshot,
+  RunQueueJob,
   RunQueueRequestSnapshot
 } from '../store/types'
 
@@ -45,6 +47,20 @@ export interface FrozenExecutionGraphPermissionPosture {
   readonly approvalMode: string
   readonly workflowMode: 'normal' | 'plan'
   readonly effectivePermissions: EffectiveRunPermissions
+}
+
+export interface ExecutionGraphComposerIdentity {
+  readonly provider: ProviderId
+  readonly scope: ChatScope
+  readonly chatId: string
+  readonly workspacePath?: string
+  readonly runtimeProfileId?: string
+}
+
+export interface ResolveExecutionGraphQueuePermissionPostureInput {
+  readonly job: RunQueueJob | null | undefined
+  readonly expected: ExecutionGraphComposerIdentity
+  readonly verify: VerifyExecutionGraphPermissionPostureInput['verify']
 }
 
 const PERMISSION_PRESETS = new Set<PermissionPresetId>([
@@ -153,4 +169,70 @@ export function verifyExecutionGraphPermissionPosture(
     workflowMode: workflowMode(input.request),
     effectivePermissions
   }
+}
+
+/**
+ * Resolve the frozen posture for a graph-owned queue job at the composer
+ * boundary. The renderer supplies the composer identity, but the request and
+ * permission snapshot are read only from the main-owned queue row. Ordinary
+ * jobs deliberately fall through so their existing composer policy applies.
+ */
+export function resolveExecutionGraphQueuePermissionPosture(
+  input: ResolveExecutionGraphQueuePermissionPostureInput
+): FrozenExecutionGraphPermissionPosture | null {
+  const job = input.job
+  if (!job?.executionGraph) return null
+
+  const { expected } = input
+  if (expected.scope !== 'workspace' || job.scope !== expected.scope) {
+    throw new Error('Execution graph queue job scope does not match the composer.')
+  }
+  if (!expected.workspacePath || job.workspacePath !== expected.workspacePath) {
+    throw new Error('Execution graph queue job workspace does not match the composer.')
+  }
+  if (job.provider !== expected.provider) {
+    throw new Error('Execution graph queue job provider does not match the composer.')
+  }
+  if (job.chatId !== expected.chatId) {
+    throw new Error('Execution graph queue job chat does not match the composer.')
+  }
+
+  const request = job.request
+  if (!request) throw new Error('Execution graph queue job request is unavailable.')
+  const posture = job.permissionPosture
+  if (!posture) throw new Error('Execution graph queue job permission posture is unavailable.')
+
+  if (request.scope !== expected.scope) {
+    throw new Error('Execution graph queue request scope does not match the composer.')
+  }
+  if (
+    job.runtimeProfileId !== expected.runtimeProfileId ||
+    request.runtimeProfileId !== expected.runtimeProfileId
+  ) {
+    throw new Error('Execution graph queue job runtime profile does not match the composer.')
+  }
+
+  const expectedWorkflowMode = workflowMode(request)
+  const context = posture.context
+  if (
+    !context ||
+    context.provider !== expected.provider ||
+    context.scope !== expected.scope ||
+    context.appChatId !== expected.chatId ||
+    context.workflowMode !== expectedWorkflowMode ||
+    context.runtimeProfileId !== expected.runtimeProfileId ||
+    !context.promptHash
+  ) {
+    throw new Error('Execution graph queue permission authority does not match the composer.')
+  }
+
+  return verifyExecutionGraphPermissionPosture({
+    provider: expected.provider,
+    workspacePath: expected.workspacePath,
+    chatId: expected.chatId,
+    request,
+    ...(expected.runtimeProfileId ? { runtimeProfileId: expected.runtimeProfileId } : {}),
+    posture,
+    verify: input.verify
+  })
 }
