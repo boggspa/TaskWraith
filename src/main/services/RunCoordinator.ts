@@ -61,6 +61,12 @@ export interface RunCoordinatorDeps {
    * normalization, runtime-profile application, preflight, and context capture.
    */
   authorizeBeforeAdapterRun?: (payload: AgentRunPayload) => void | Promise<void>
+  /** Optional main-owned adapter invocation context for provenance fencing. */
+  runAdapter?: (
+    adapter: ProviderAdapter,
+    event: RunDispatchEvent,
+    payload: AgentRunPayload
+  ) => Promise<void>
   /** Adapter lookup. Throws when the provider isn't registered.
    * Currently `providerAdapters.require`. */
   getAdapter: (provider: ProviderId) => ProviderAdapter
@@ -164,7 +170,11 @@ export class RunCoordinator {
       return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
     }
     await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload)
-    await adapter.run({ event, payload: normalizedPayload })
+    if (this.deps.runAdapter) {
+      await this.deps.runAdapter(adapter, event, normalizedPayload)
+    } else {
+      await adapter.run({ event, payload: normalizedPayload })
+    }
     return { dispatched: true, appRunId: normalizedPayload.appRunId ?? '' }
   }
 }

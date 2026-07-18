@@ -194,6 +194,22 @@ describe('RunCoordinator', () => {
     expect(adapter.run).not.toHaveBeenCalled()
   })
 
+  it('can invoke the adapter inside a main-owned provenance wrapper', async () => {
+    const order: string[] = []
+    const { deps, adapter } = makeDeps({
+      runAdapter: async (selectedAdapter, event, payload) => {
+        order.push('wrapper')
+        await selectedAdapter.run({ event, payload })
+      }
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('adapter')
+    })
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(order).toEqual(['wrapper', 'adapter'])
+  })
+
   it('does not capture reference context when preflight rejects', async () => {
     const captureReferenceContext = vi.fn()
     const { deps, spies } = makeDeps({ captureReferenceContext })
