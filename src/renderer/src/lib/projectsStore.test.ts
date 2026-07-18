@@ -265,13 +265,15 @@ describe('projectsStore work profiles', () => {
     expect(listProjects().map((project) => project.id)).toEqual(['project-a'])
   })
 
-  it('propagates claim rejections to the caller', async () => {
+  it('propagates claim rejections with the Electron invoke framing stripped', async () => {
     await whenProjectsStoreReady()
     fake.api.setProjectHomeChat.mockImplementation(async () => {
-      throw new Error('Chat is already the home of another project.')
+      throw new Error(
+        "Error invoking remote method 'projects:set-home-chat': Error: Chat is already the home of another project."
+      )
     })
     await expect(setProjectHomeChat('project-a', 'chat-1')).rejects.toThrow(
-      'Chat is already the home of another project.'
+      /^Chat is already the home of another project\.$/
     )
     expect(listProjectWorkProfiles()).toEqual([])
   })
@@ -327,13 +329,15 @@ describe('projectsStore references', () => {
     expect(listProjectReferences('project-a')).toHaveLength(1)
   })
 
-  it('adopts verification results and propagates rejections', async () => {
+  it('adopts verification results and propagates rejections without invoke framing', async () => {
     await whenProjectsStoreReady()
     fake.api.verifyProjectReference.mockImplementation(async () => {
-      throw new Error('URL references cannot be verified automatically.')
+      throw new Error(
+        "Error invoking remote method 'projects:verify-reference': Error: URL references cannot be verified automatically."
+      )
     })
     await expect(verifyProjectReference('ref-x')).rejects.toThrow(
-      'URL references cannot be verified automatically.'
+      /^URL references cannot be verified automatically\.$/
     )
   })
 })

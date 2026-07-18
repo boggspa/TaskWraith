@@ -89,6 +89,26 @@ function bridge(): ProjectsBridge | undefined {
   return typeof window !== 'undefined' ? window.api : undefined
 }
 
+/**
+ * Electron wraps a rejected invoke as
+ * "Error invoking remote method '<channel>': Error: <real message>".
+ * Every async facade mutation rethrows through this so UI alerts show the
+ * real validation message, not the transport framing.
+ */
+export function normalizeBridgeError(error: unknown): Error {
+  const message = error instanceof Error ? error.message : String(error)
+  const match = message.match(/^Error invoking remote method '[^']*': (?:Error: )?([\s\S]*)$/)
+  return new Error(match?.[1]?.trim() ? match[1].trim() : message)
+}
+
+async function invokeBridge<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation()
+  } catch (error) {
+    throw normalizeBridgeError(error)
+  }
+}
+
 function notifyProjectListeners(): void {
   for (const listener of [...projectListeners]) {
     try {
@@ -316,7 +336,7 @@ export async function setProjectHomeChat(
   if (!api || typeof api.setProjectHomeChat !== 'function') {
     throw new Error('Project home chats need the desktop bridge.')
   }
-  const result = await api.setProjectHomeChat(projectId, chatId)
+  const result = await invokeBridge(() => api.setProjectHomeChat(projectId, chatId))
   adoptAuthoritative(result)
 }
 
@@ -343,15 +363,17 @@ export async function addProjectReference(input: {
   if (!api || typeof api.applyProjectReferenceOp !== 'function') {
     throw new Error('Project references need the desktop bridge.')
   }
-  const result = await api.applyProjectReferenceOp({
-    kind: 'add-reference',
-    id: newProjectReferenceId(),
-    projectId: input.projectId,
-    referenceKind: input.kind,
-    locator: input.locator,
-    ...(input.title !== undefined ? { title: input.title } : {}),
-    now: Date.now()
-  })
+  const result = await invokeBridge(() =>
+    api.applyProjectReferenceOp({
+      kind: 'add-reference',
+      id: newProjectReferenceId(),
+      projectId: input.projectId,
+      referenceKind: input.kind,
+      locator: input.locator,
+      ...(input.title !== undefined ? { title: input.title } : {}),
+      now: Date.now()
+    })
+  )
   adoptAuthoritative(result)
 }
 
@@ -364,12 +386,9 @@ export async function updateProjectReference(
   if (!api || typeof api.applyProjectReferenceOp !== 'function') {
     throw new Error('Project references need the desktop bridge.')
   }
-  const result = await api.applyProjectReferenceOp({
-    kind: 'update-reference',
-    id,
-    patch,
-    now: Date.now()
-  })
+  const result = await invokeBridge(() =>
+    api.applyProjectReferenceOp({ kind: 'update-reference', id, patch, now: Date.now() })
+  )
   adoptAuthoritative(result)
 }
 
@@ -379,7 +398,7 @@ export async function removeProjectReference(id: string): Promise<void> {
   if (!api || typeof api.applyProjectReferenceOp !== 'function') {
     throw new Error('Project references need the desktop bridge.')
   }
-  const result = await api.applyProjectReferenceOp({ kind: 'remove-reference', id })
+  const result = await invokeBridge(() => api.applyProjectReferenceOp({ kind: 'remove-reference', id }))
   adoptAuthoritative(result)
 }
 
@@ -391,7 +410,7 @@ export async function verifyProjectReference(id: string): Promise<void> {
   if (!api || typeof api.verifyProjectReference !== 'function') {
     throw new Error('Project references need the desktop bridge.')
   }
-  const result = await api.verifyProjectReference(id)
+  const result = await invokeBridge(() => api.verifyProjectReference(id))
   adoptAuthoritative(result)
 }
 
