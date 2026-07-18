@@ -619,7 +619,7 @@ private struct ProviderReadinessCard: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(alignment: .center, spacing: 8) {
-                ProviderGlyphIcon(provider: card.id, size: 18)
+                ProviderLogoIcon(provider: card.id, size: 18)
                 Text(card.label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)

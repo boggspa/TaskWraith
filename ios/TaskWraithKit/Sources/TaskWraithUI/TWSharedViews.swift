@@ -3478,6 +3478,94 @@ public struct ProviderGlyphIcon: View {
     }
 }
 
+/// Resolves the first-party provider mark bundled for identity labels. The
+/// light/dark choice names the surface the monochrome mark is displayed on;
+/// full-colour marks use the same asset in both appearances.
+enum ProviderLogoAssetResolver {
+    static func assetName(for provider: String?, darkBackground: Bool) -> String? {
+        guard
+            let provider = provider?
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+                .lowercased(),
+            !provider.isEmpty
+        else { return nil }
+
+        switch provider {
+        case "gemini", "codex", "claude", "kimi":
+            return "provider-logo-\(provider)"
+        case "cursor", "grok", "ollama":
+            return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
+        default:
+            return nil
+        }
+    }
+
+    static func resourceURL(for assetName: String) -> URL? {
+        Bundle.module.url(forResource: assetName, withExtension: "png")
+    }
+}
+
+/// Original-colour provider identity mark for use directly beside a provider
+/// or model label. Generic identity pickers and icon-only contexts continue to
+/// use ``ProviderGlyphIcon``; Ensemble and unknown providers fall back to it.
+public struct ProviderLogoIcon: View {
+    @Environment(\.colorScheme) private var colorScheme
+
+    let provider: String?
+    let modelId: String?
+    let isEnsemble: Bool
+    let size: CGFloat
+
+    public init(
+        provider: String?, modelId: String? = nil, isEnsemble: Bool = false, size: CGFloat = 16
+    ) {
+        self.provider = provider
+        self.modelId = modelId
+        self.isEnsemble = isEnsemble
+        self.size = size
+    }
+
+    private static func logoImage(named assetName: String) -> Image? {
+        #if canImport(UIKit)
+            if let url = ProviderLogoAssetResolver.resourceURL(for: assetName),
+                let data = try? Data(contentsOf: url),
+                let ui = UIImage(data: data)
+            {
+                return Image(uiImage: ui)
+            }
+            if let ui = UIImage(named: assetName) {
+                return Image(uiImage: ui)
+            }
+        #endif
+        return nil
+    }
+
+    public var body: some View {
+        let assetName = isEnsemble
+            ? nil
+            : ProviderLogoAssetResolver.assetName(
+                for: provider,
+                darkBackground: colorScheme == .dark)
+
+        Group {
+            if let assetName, let logo = Self.logoImage(named: assetName) {
+                logo
+                    .renderingMode(.original)
+                    .resizable()
+                    .scaledToFit()
+                    .accessibilityHidden(true)
+            } else {
+                ProviderGlyphIcon(
+                    provider: provider,
+                    modelId: modelId,
+                    isEnsemble: isEnsemble,
+                    size: size)
+            }
+        }
+        .frame(width: size, height: size)
+    }
+}
+
 public struct MarkdownLite: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -7129,7 +7217,7 @@ public struct AppSettingsSheet: View {
     private func providerReadinessRow(_ card: SettingsProviderSnapshot) -> some View {
         VStack(alignment: .leading, spacing: 9) {
             HStack(spacing: 8) {
-                ProviderGlyphIcon(provider: card.id, size: 18)
+                ProviderLogoIcon(provider: card.id, size: 18)
                 Text(card.label)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)
