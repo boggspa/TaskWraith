@@ -17,7 +17,10 @@ import {
   updateProjectReference,
   verifyProjectReference
 } from '../lib/projectsStore'
-import { projectReferencePresentation } from '../lib/projectReferencePresentation'
+import {
+  projectReferencePresentation,
+  summarizeReferenceAttention
+} from '../lib/projectReferencePresentation'
 import {
   clearProjectReferenceContextSelection,
   getProjectReferenceContextSelection,
@@ -267,6 +270,7 @@ export function ProjectReferencesDockPanel({
     proposalId: string
   } | null>(null)
   const references = referencesForActiveProject(referenceState, projectId, listProjectReferences)
+  const attention = summarizeReferenceAttention(references)
   const proposals =
     proposalState.projectId === projectId
       ? proposalState.proposals
@@ -587,6 +591,39 @@ export function ProjectReferencesDockPanel({
           + Link
         </button>
       </div>
+
+      {attention.actionable.length > 0 && (
+        <div className="project-references-dock-attention" role="status">
+          <span>
+            Needs attention:{' '}
+            {[
+              attention.missing.length > 0 ? `${attention.missing.length} missing` : null,
+              attention.unverified.length > 0
+                ? `${attention.unverified.length} unverified`
+                : null
+            ]
+              .filter(Boolean)
+              .join(' · ')}
+          </span>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() =>
+              runAction(async () => {
+                // Explicit, user-triggered, and sequential: one probe per
+                // entry, never on browse. Failures stop the pass so the
+                // first real error (e.g. credential loss) is surfaced.
+                for (const reference of attention.actionable) {
+                  await verifyProjectReference(reference.id)
+                }
+              })
+            }
+            aria-label={`Verify ${attention.actionable.length} references needing attention`}
+          >
+            Verify {attention.actionable.length}
+          </button>
+        </div>
+      )}
 
       <div className="project-references-dock-list">
         <ProjectReferenceSuggestions

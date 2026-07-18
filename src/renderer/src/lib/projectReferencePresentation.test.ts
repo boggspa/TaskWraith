@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 
-import { projectReferencePresentation } from './projectReferencePresentation'
+import {
+  projectReferencePresentation,
+  summarizeReferenceAttention
+} from './projectReferencePresentation'
 
 describe('projectReferencePresentation', () => {
   it.each([
@@ -37,5 +40,56 @@ describe('connector presentation', () => {
     expect(
       projectReferencePresentation({ kind: 'connector', locator: 'github://a/b/docs/spec.md' })
     ).toEqual({ kind: 'connector', label: 'GitHub' })
+  })
+})
+
+describe('summarizeReferenceAttention', () => {
+  const base = {
+    id: 'ref',
+    projectId: 'p',
+    locator: '/x',
+    title: 'x',
+    provenance: { addedBy: 'user' as const, addedAt: 1 },
+    updatedAt: 1
+  }
+
+  it('collects missing and never-verified probeable kinds, excluding Off and URLs', () => {
+    const attention = summarizeReferenceAttention([
+      { ...base, kind: 'file' as const, contextPolicy: 'available' as const },
+      {
+        ...base,
+        kind: 'folder' as const,
+        contextPolicy: 'available' as const,
+        lastVerified: { at: 1, status: 'missing' as const }
+      },
+      {
+        ...base,
+        kind: 'connector' as const,
+        contextPolicy: 'available' as const,
+        lastVerified: { at: 1, status: 'ok' as const, revision: 'sha' }
+      },
+      { ...base, kind: 'url' as const, contextPolicy: 'available' as const },
+      {
+        ...base,
+        kind: 'file' as const,
+        contextPolicy: 'off' as const,
+        lastVerified: { at: 1, status: 'missing' as const }
+      }
+    ])
+    expect(attention.missing).toHaveLength(1)
+    expect(attention.unverified).toHaveLength(1)
+    expect(attention.actionable).toHaveLength(2)
+  })
+
+  it('returns empty rollups for a healthy library', () => {
+    const attention = summarizeReferenceAttention([
+      {
+        ...base,
+        kind: 'file' as const,
+        contextPolicy: 'available' as const,
+        lastVerified: { at: 1, status: 'ok' as const }
+      }
+    ])
+    expect(attention.actionable).toHaveLength(0)
   })
 })

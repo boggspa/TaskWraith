@@ -41,7 +41,10 @@ import {
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
 import { normalizeGitHubReferenceInput } from '../../../shared/projects'
-import { projectReferencePresentation } from '../lib/projectReferencePresentation'
+import {
+  projectReferencePresentation,
+  summarizeReferenceAttention
+} from '../lib/projectReferencePresentation'
 import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -705,6 +708,9 @@ export function ProjectsSidebarView({
     const referencesForProject = selected
       ? projectReferences.filter((reference) => reference.projectId === project.id)
       : []
+    const referenceAttentionCount = selected
+      ? summarizeReferenceAttention(referencesForProject).actionable.length
+      : 0
     const workProfile = selected
       ? workProfiles.find((profile) => profile.projectId === project.id) ?? null
       : null
@@ -984,7 +990,19 @@ export function ProjectsSidebarView({
             </label>
             <div className="sidebar-project-references">
               <div className="sidebar-project-references-header">
-                <span className="sidebar-project-references-title">References</span>
+                <span className="sidebar-project-references-title">
+                  References
+                  {referenceAttentionCount > 0 && (
+                    <span
+                      className="sidebar-project-references-attention"
+                      title={`${referenceAttentionCount} reference${
+                        referenceAttentionCount === 1 ? '' : 's'
+                      } need attention — open the Library to verify`}
+                    >
+                      {referenceAttentionCount}
+                    </span>
+                  )}
+                </span>
                 <span className="sidebar-project-references-actions">
                   {onOpenReferencesLibrary && (
                     <button

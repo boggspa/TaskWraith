@@ -5452,3 +5452,16 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+.sidebar-project-references-attention {
+  display: inline-block;
+  min-width: 14px;
+  margin-left: 5px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: color-mix(in srgb, #e0a63f 26%, transparent);
+  color: color-mix(in srgb, var(--sidebar-text) 92%, transparent);
+  font-size: 9px;
+  line-height: 14px;
+  text-align: center;
+}

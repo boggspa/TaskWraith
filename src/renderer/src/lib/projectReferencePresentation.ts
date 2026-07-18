@@ -117,6 +117,40 @@ const CODE_FILENAMES = new Set([
   'package.json'
 ])
 
+export interface ProjectReferenceAttention {
+  /** Definitively gone at the last explicit probe. */
+  missing: ProjectReference[]
+  /** Probeable kinds that have never been verified. */
+  unverified: ProjectReference[]
+  /** missing + unverified — what a "Verify all" pass should act on. */
+  actionable: ProjectReference[]
+}
+
+/**
+ * The needs-attention rollup over one Project's library. Deliberate
+ * exclusions: Off entries (exclusion is intentional user state, not a
+ * problem) and URL kinds (never probeable — no network on the library's
+ * behalf), so every surfaced item has a real remedy.
+ */
+export function summarizeReferenceAttention(
+  references: ReadonlyArray<
+    Pick<ProjectReference, 'kind' | 'contextPolicy'> & Partial<Pick<ProjectReference, 'lastVerified'>>
+  >
+): ProjectReferenceAttention {
+  const missing: ProjectReference[] = []
+  const unverified: ProjectReference[] = []
+  for (const reference of references) {
+    if (reference.contextPolicy === 'off') continue
+    if (reference.kind === 'url') continue
+    if (reference.lastVerified?.status === 'missing') {
+      missing.push(reference as ProjectReference)
+    } else if (!reference.lastVerified) {
+      unverified.push(reference as ProjectReference)
+    }
+  }
+  return { missing, unverified, actionable: [...missing, ...unverified] }
+}
+
 /**
  * Formats a catalogue entry without changing its authority kind. Office,
  * code, and media labels are presentation-only derivations over `file`, so

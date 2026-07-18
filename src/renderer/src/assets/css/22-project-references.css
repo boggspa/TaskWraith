@@ -328,3 +328,20 @@
   cursor: default;
   opacity: 0.5;
 }
+
+.project-references-dock-attention {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 6px 0;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, #e0a63f 45%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, #e0a63f 10%, transparent);
+  font-size: 11px;
+}
+
+.project-references-dock-attention button {
+  flex: 0 0 auto;
+}
