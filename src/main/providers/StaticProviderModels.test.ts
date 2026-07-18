@@ -264,6 +264,14 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     }
   })
 
+  it('retains the Fast tier on GPT-5.5 and GPT-5.4', () => {
+    const models = getStaticProviderModels('codex') as StaticModelShape[]
+
+    for (const modelId of ['gpt-5.5', 'gpt-5.4']) {
+      expect(models.find((model) => model.id === modelId)?.additionalSpeedTiers).toEqual(['fast'])
+    }
+  })
+
   it('maps stale OpenAI preview placeholder IDs to their concrete GPT-5.6 slugs', () => {
     expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:sol')).toBe('gpt-5.6-sol')
     expect(normalizeCliProviderModel('codex', 'preview:openai:gpt-5.6:terra')).toBe('gpt-5.6-terra')

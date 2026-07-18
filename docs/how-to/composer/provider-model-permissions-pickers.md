@@ -29,6 +29,7 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
    session state before the next turn.
 
 ## Tips & related
+- [Model Catalogue](../../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.
 - [Plus Tools Menu](plus-tools-menu.md) — sits at the start of the same action row as these pickers.
 - [Ensemble Mode Picker](ensemble-mode-picker.md) — when these pickers edit a selected participant instead of the chat.
 - [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to providers and manage agentic service policies that back the Tool Grants column.

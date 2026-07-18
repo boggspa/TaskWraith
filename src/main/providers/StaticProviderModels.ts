@@ -369,7 +369,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
   },
   {
     id: 'gpt-5.4',
@@ -379,7 +380,8 @@ export const CODEX_STATIC_MODELS = [
       { reasoningEffort: 'high' },
       { reasoningEffort: 'xhigh' }
     ]),
-    defaultReasoningEffort: 'medium'
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
   },
   {
     id: 'gpt-5.4-mini',

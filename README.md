@@ -138,7 +138,8 @@ baseline.
   presets).
   Historical Gemini chats remain readable, but Gemini is retired for new runs.
   Provider names describe compatible integrations only — CLIs and accounts stay
-  user-installed.
+  user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
+  for the curated model rows, reasoning controls, and Fast-tier semantics.
 - **Multiview and Workflows**: Split the workbench into live panes, and run
   Workflows as first-class chat/run objects with scheduled recovery, dedicated
   sidebar space, and optional ensemble execution where enabled.
