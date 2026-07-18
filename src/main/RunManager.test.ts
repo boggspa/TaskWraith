@@ -238,7 +238,7 @@ describe('RunManager', () => {
     expect(events).toEqual(['created:running', 'updated:completed'])
   })
 
-  it('does not join conflicting provider and lifecycle terminal statuses', () => {
+  it('exposes and contains conflicting provider and lifecycle terminal statuses', () => {
     const manager = new RunManager()
     const events: string[] = []
     manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
@@ -250,6 +250,58 @@ describe('RunManager', () => {
 
     expect(manager.get('run-1')?.status).toBe('running')
     expect(events).toEqual(['created:running'])
+    expect(manager.getTerminalJoinState('run-1')).toMatchObject({
+      required: true,
+      providerStatus: 'completed',
+      lifecycleStatus: 'failed',
+      conflict: true
+    })
+
+    manager.containTerminalJoin('run-1')
+
+    expect(manager.get('run-1')?.status).toBe('failed')
+    expect(events).toEqual(['created:running', 'updated:failed'])
+    expect(manager.getTerminalJoinState('run-1')).toEqual({
+      required: false,
+      conflict: false
+    })
+  })
+
+  it('keeps the first lifecycle terminal status when later finishes disagree', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'kimi', status: 'running' })
+    manager.requireTerminalConfirmation('run-1')
+
+    manager.finish('run-1', 'failed')
+    manager.finish('run-1', 'completed')
+    manager.confirmTerminalStatus('run-1', 'completed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(manager.getTerminalJoinState('run-1')).toMatchObject({
+      lifecycleStatus: 'failed',
+      providerStatus: 'completed',
+      conflict: true
+    })
+
+    manager.finish('run-1', 'completed')
+    expect(manager.get('run-1')?.status).toBe('running')
+  })
+
+  it('keeps the first provider terminal status when later confirmations disagree', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'kimi', status: 'running' })
+    manager.requireTerminalConfirmation('run-1')
+
+    manager.confirmTerminalStatus('run-1', 'completed')
+    manager.confirmTerminalStatus('run-1', 'failed')
+    manager.finish('run-1', 'completed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(manager.getTerminalJoinState('run-1')).toMatchObject({
+      lifecycleStatus: 'completed',
+      providerStatus: 'completed',
+      conflict: true
+    })
   })
 
   it.each(['completed', 'failed', 'cancelled'] as const)(
