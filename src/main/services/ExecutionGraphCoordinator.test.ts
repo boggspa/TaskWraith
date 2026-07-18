@@ -30,6 +30,7 @@ function queueJob(input: {
   provider: ProviderId
   workspaceId: string
   rootChatId: string
+  executionGraph?: RunQueueJob['executionGraph']
 }): RunQueueJob {
   return {
     id: input.runId,
@@ -41,6 +42,7 @@ function queueJob(input: {
     chatId: input.rootChatId,
     source: 'system',
     status: 'paused',
+    ...(input.executionGraph ? { executionGraph: input.executionGraph } : {}),
     priority: 0,
     attempt: 1,
     createdAt: '2026-07-18T11:00:00.000Z',
@@ -88,7 +90,9 @@ interface Harness {
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
 }
 
-function harness(options: { materializeError?: Error } = {}): Harness {
+function harness(
+  options: { materializeError?: Error; omitExecutionGraphBinding?: boolean } = {}
+): Harness {
   const repository = new ExecutionGraphRepository(storageRoot())
   const template = repository.saveRunTemplate({
     schemaVersion: 1,
@@ -116,12 +120,41 @@ function harness(options: { materializeError?: Error } = {}): Harness {
   })
   const cancelActiveRun = vi.fn()
   const anchorStatuses = new Map<string, ExecutionGraphAnchorRunStatus>()
-  const materializePausedQueueJob = vi.fn(({ runId, provider, workspaceId, rootChatId }) => {
-    if (options.materializeError) throw options.materializeError
-    const job = queueJob({ runId, provider, workspaceId, rootChatId })
-    jobs.set(runId, job)
-    return job
-  })
+  const materializePausedQueueJob = vi.fn(
+    ({
+      runId,
+      provider,
+      workspaceId,
+      rootChatId,
+      executionId,
+      activationId,
+      attemptId,
+      runTemplate,
+      permissionCeilingAuthorityDigest
+    }) => {
+      if (options.materializeError) throw options.materializeError
+      const job = queueJob({
+        runId,
+        provider,
+        workspaceId,
+        rootChatId,
+        ...(options.omitExecutionGraphBinding
+          ? {}
+          : {
+              executionGraph: {
+                schemaVersion: 1,
+                executionId,
+                activationId,
+                attemptId,
+                runTemplateRef: runTemplate.templateId,
+                permissionCeilingAuthorityDigest
+              }
+            })
+      })
+      jobs.set(runId, job)
+      return job
+    }
+  )
   let id = 0
   const deps: ExecutionGraphCoordinatorDeps = {
     repository,
@@ -431,13 +464,24 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const h = harness()
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
     appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated', 'paused-graph-run')
+    const claimed = h.coordinator.getExecution(waiting.executionId)!
+    const attempt = Object.values(claimed.attempts)[0]
+    const activation = claimed.activations[attempt.activationId]
     h.jobs.set(
       'paused-graph-run',
       queueJob({
         runId: 'paused-graph-run',
         provider: 'codex',
         workspaceId: 'workspace-one',
-        rootChatId: 'chat-one'
+        rootChatId: 'chat-one',
+        executionGraph: {
+          schemaVersion: 1,
+          executionId: waiting.executionId,
+          activationId: activation.id,
+          attemptId: attempt.id,
+          runTemplateRef: h.templateRef,
+          permissionCeilingAuthorityDigest: h.ceiling.authorityDigest
+        }
       })
     )
 
@@ -448,6 +492,29 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.activations)[0].state).toBe('queued')
     expect(Object.values(recovered.attempts)[0].state).toBe('queued')
     expect(h.jobs.get('paused-graph-run')?.status).toBe('queued')
+  })
+
+  it('does not recover a queue row whose graph authority binding is missing', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated', 'unowned-graph-run')
+    h.jobs.set(
+      'unowned-graph-run',
+      queueJob({
+        runId: 'unowned-graph-run',
+        provider: 'codex',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one'
+      })
+    )
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
+    expect(h.jobs.get('unowned-graph-run')?.status).toBe('paused')
+    expect(h.transitions).not.toHaveBeenCalled()
   })
 
   it('retains durable run correlation when queue materialization throws', () => {
@@ -462,6 +529,24 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       providerRunRef: expect.stringMatching(/^graph-run-/)
     })
     expect(h.jobs.size).toBe(0)
+  })
+
+  it('requires action when materialization omits the main-owned graph binding', () => {
+    const h = harness({ omitExecutionGraphBinding: true })
+
+    const recovered = h.coordinator.appendStackStep(h.input())
+
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      providerRunRef: expect.stringMatching(/^graph-run-/)
+    })
+    expect([...h.jobs.values()][0]?.status).toBe('failed')
+    expect(h.transitions).toHaveBeenCalledWith(
+      expect.stringMatching(/^graph-run-/),
+      'failed',
+      expect.objectContaining({ lastError: expect.stringMatching(/authority binding/i) })
+    )
   })
 
   it('persists cancellation before a provider callback can re-enter the coordinator', async () => {

@@ -337,7 +337,11 @@ export class ExecutionGraphCoordinator {
       if (attempt && !isStepAttemptTerminal(attempt.state)) {
         if (attempt.providerRunRef) {
           const job = this.deps.getQueueJob(attempt.providerRunRef)
-          if (job && !TERMINAL_QUEUE_STATUSES.has(job.status)) {
+          if (
+            job &&
+            this.queueJobOwnsAttempt(projection, attempt, job) &&
+            !TERMINAL_QUEUE_STATUSES.has(job.status)
+          ) {
             queueRuns.push({
               runId: attempt.providerRunRef,
               cancelActive:
@@ -462,6 +466,15 @@ export class ExecutionGraphCoordinator {
         const job = this.deps.getQueueJob(providerRunRef)
         if (!job) {
           this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
+          changed = true
+          break
+        }
+        if (!this.queueJobOwnsAttempt(projection, attempt, job)) {
+          this.requireAction(
+            projection,
+            attempt,
+            'The claimed queue job no longer carries this execution attempt authority.'
+          )
           changed = true
           break
         }
@@ -712,12 +725,18 @@ export class ExecutionGraphCoordinator {
       job.status !== 'paused' ||
       job.chatId !== projection.rootChatId ||
       job.workspaceId !== projection.workspaceId ||
-      job.provider !== step.agent.provider
+      job.provider !== step.agent.provider ||
+      !this.queueJobOwnsAttempt(projection, attempt, job)
     ) {
+      if (job.runId === runId && job.status === 'paused') {
+        this.deps.transitionQueueJob(runId, 'failed', {
+          lastError: 'Execution graph queue authority binding was not preserved.'
+        })
+      }
       this.requireAction(
         projection,
         attempt,
-        'Queue materialization did not preserve graph identity or paused readiness.'
+        'Queue materialization did not preserve graph identity, authority, or paused readiness.'
       )
       return
     }
@@ -754,6 +773,34 @@ export class ExecutionGraphCoordinator {
     this.changed(this.requireExecution(projection.executionId), 'execution-progressed', [
       attempt.stepId
     ])
+  }
+
+  private queueJobOwnsAttempt(
+    projection: ExecutionRunProjection,
+    attempt: StepAttempt,
+    job: RunQueueJob
+  ): boolean {
+    const activation = projection.activations[attempt.activationId]
+    const step = projection.topology.steps.find((candidate) => candidate.id === attempt.stepId)
+    const binding = job.executionGraph
+    return Boolean(
+      activation &&
+      step?.kind === 'solo_agent' &&
+      step.agent.runTemplateRef &&
+      projection.permissionCeilingRef &&
+      attempt.providerRunRef &&
+      job.runId === attempt.providerRunRef &&
+      job.scope === 'workspace' &&
+      job.workspaceId === projection.workspaceId &&
+      job.chatId === projection.rootChatId &&
+      job.provider === step.agent.provider &&
+      binding?.schemaVersion === 1 &&
+      binding.executionId === projection.executionId &&
+      binding.activationId === activation.id &&
+      binding.attemptId === attempt.id &&
+      binding.runTemplateRef === step.agent.runTemplateRef &&
+      binding.permissionCeilingAuthorityDigest === projection.permissionCeilingRef.authorityDigest
+    )
   }
 
   private markAttemptRunning(projection: ExecutionRunProjection, attempt: StepAttempt): void {
