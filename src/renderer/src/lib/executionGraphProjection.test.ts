@@ -240,4 +240,56 @@ describe('buildExecutionGraphProjection', () => {
       'The effective topology contains a dependency cycle; cyclic steps are display-only.'
     ])
   })
+
+  it('ignores unknown and malformed persisted edge kinds with diagnostic issues', () => {
+    const unsafeEdges = [
+      {
+        id: 'future-edge',
+        kind: 'feedback',
+        fromStepId: 'alpha',
+        toStepId: 'beta'
+      },
+      {
+        id: 'broken-data',
+        kind: 'data',
+        from: { stepId: 'alpha', port: 'report' },
+        to: null
+      }
+    ] as unknown as ExecutionEdge[]
+
+    const projection = buildExecutionGraphProjection({
+      runId: 'run-forward-compatible',
+      runState: 'running',
+      topology: topology([step('alpha'), step('beta')], unsafeEdges),
+      activations: [activation('alpha', 'dormant'), activation('beta', 'dormant')]
+    })
+
+    expect(projection.orderedSteps.map((item) => [item.stepId, item.stage])).toEqual([
+      ['alpha', 0],
+      ['beta', 0]
+    ])
+    expect(projection.orderedSteps.every((item) => item.dependencies.length === 0)).toBe(true)
+    expect(projection.orderedSteps.every((item) => item.canCancel)).toBe(true)
+    expect(projection.issues).toEqual([
+      'Edge future-edge has unsupported kind "feedback" and was ignored.',
+      'Edge broken-data is malformed for kind "data" and was ignored.'
+    ])
+  })
+
+  it('keeps dormant cancellation limited to the effective topology frontier', () => {
+    const projection = buildExecutionGraphProjection({
+      runId: 'run-cancellable-frontier',
+      runState: 'running',
+      topology: topology(
+        [step('source'), step('frontier')],
+        [control('source-frontier', 'source', 'frontier')]
+      ),
+      activations: [activation('source', 'dormant'), activation('frontier', 'dormant')]
+    })
+
+    expect(projection.orderedSteps.map((item) => [item.stepId, item.canCancel])).toEqual([
+      ['source', false],
+      ['frontier', true]
+    ])
+  })
 })

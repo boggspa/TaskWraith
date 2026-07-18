@@ -8,7 +8,19 @@ const css = (): string =>
     'utf8'
   ).replace(/\r\n/g, '\n')
 
+const mainCss = (): string =>
+  readFileSync(join(process.cwd(), 'src/renderer/src/assets/main.css'), 'utf8').replace(
+    /\r\n/g,
+    '\n'
+  )
+
 describe('Execution Map CSS contract', () => {
+  it('loads the Execution Map stylesheet from the renderer entrypoint exactly once', () => {
+    const imports = mainCss().match(/@import url\('\.\/css\/23-execution-map\.css'\);/g) ?? []
+
+    expect(imports).toHaveLength(1)
+  })
+
   it('lays out semantic stages without a coordinate canvas contract', () => {
     const source = css()
 

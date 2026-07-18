@@ -156,10 +156,94 @@ function attemptsByStep(attempts: readonly StepAttempt[]): ReadonlyMap<string, S
   return byStep
 }
 
-function edgeEndpoints(edge: ExecutionEdge): { fromStepId: string; toStepId: string } {
-  return edge.kind === 'control'
-    ? { fromStepId: edge.fromStepId, toStepId: edge.toStepId }
-    : { fromStepId: edge.from.stepId, toStepId: edge.to.stepId }
+interface ValidatedExecutionEdge {
+  edge: ExecutionEdge
+  fromStepId: string
+  toStepId: string
+}
+
+type ExecutionEdgeValidation =
+  | { valid: true; value: ValidatedExecutionEdge }
+  | { valid: false; issue: string }
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value)
+}
+
+function isNonEmptyString(value: unknown): value is string {
+  return typeof value === 'string' && value.trim().length > 0
+}
+
+function edgeReference(value: unknown, index: number): string {
+  return isRecord(value) && isNonEmptyString(value.id) ? value.id : `at position ${index + 1}`
+}
+
+function validateExecutionEdge(value: unknown, index: number): ExecutionEdgeValidation {
+  const reference = edgeReference(value, index)
+  if (!isRecord(value)) {
+    return {
+      valid: false,
+      issue: `Edge ${reference} is malformed and was ignored.`
+    }
+  }
+
+  if (value.kind !== 'control' && value.kind !== 'data') {
+    const kind = isNonEmptyString(value.kind) ? `"${value.kind}"` : 'without a kind'
+    return {
+      valid: false,
+      issue: `Edge ${reference} has unsupported kind ${kind} and was ignored.`
+    }
+  }
+
+  if (!isNonEmptyString(value.id)) {
+    return {
+      valid: false,
+      issue: `Edge ${reference} is malformed for kind "${value.kind}" and was ignored.`
+    }
+  }
+
+  if (value.kind === 'control') {
+    if (
+      !isNonEmptyString(value.fromStepId) ||
+      !isNonEmptyString(value.toStepId) ||
+      value.outcome !== 'success'
+    ) {
+      return {
+        valid: false,
+        issue: `Edge ${reference} is malformed for kind "control" and was ignored.`
+      }
+    }
+    return {
+      valid: true,
+      value: {
+        edge: value as unknown as ExecutionEdge,
+        fromStepId: value.fromStepId,
+        toStepId: value.toStepId
+      }
+    }
+  }
+
+  if (
+    !isRecord(value.from) ||
+    !isNonEmptyString(value.from.stepId) ||
+    !isNonEmptyString(value.from.port) ||
+    !isRecord(value.to) ||
+    !isNonEmptyString(value.to.stepId) ||
+    !isNonEmptyString(value.to.port)
+  ) {
+    return {
+      valid: false,
+      issue: `Edge ${reference} is malformed for kind "data" and was ignored.`
+    }
+  }
+  return {
+    valid: true,
+    value: {
+      edge: value as unknown as ExecutionEdge,
+      fromStepId: value.from.stepId,
+      toStepId: value.to.stepId
+    }
+  }
 }
 
 function dataDependencyLabel(edge: ExecutionDataEdge, sourceTitle: string): string {
@@ -167,15 +251,15 @@ function dataDependencyLabel(edge: ExecutionDataEdge, sourceTitle: string): stri
 }
 
 function dependencyProjection(
-  edge: ExecutionEdge,
+  validatedEdge: ValidatedExecutionEdge,
   stepById: ReadonlyMap<string, ExecutionStepDefinition>
 ): ExecutionDependencyProjection {
-  const endpoints = edgeEndpoints(edge)
-  const sourceTitle = stepById.get(endpoints.fromStepId)?.title ?? endpoints.fromStepId
+  const { edge, fromStepId } = validatedEdge
+  const sourceTitle = stepById.get(fromStepId)?.title ?? fromStepId
   return {
     edgeId: edge.id,
     kind: edge.kind,
-    fromStepId: endpoints.fromStepId,
+    fromStepId,
     fromStepTitle: sourceTitle,
     label:
       edge.kind === 'control'
@@ -189,6 +273,7 @@ interface TopologyOrder {
   stageByStepId: Map<string, number>
   predecessorIdsByStepId: Map<string, Set<string>>
   successorIdsByStepId: Map<string, Set<string>>
+  validEdges: ValidatedExecutionEdge[]
   issues: string[]
 }
 
@@ -197,6 +282,7 @@ function topologicalOrder(topology: EffectiveExecutionTopology): TopologyOrder {
   const stepIds = new Set(topology.steps.map((step) => step.id))
   const predecessorIdsByStepId = new Map<string, Set<string>>()
   const successorIdsByStepId = new Map<string, Set<string>>()
+  const validEdges: ValidatedExecutionEdge[] = []
   const issues: string[] = []
 
   for (const step of topology.steps) {
@@ -204,12 +290,20 @@ function topologicalOrder(topology: EffectiveExecutionTopology): TopologyOrder {
     successorIdsByStepId.set(step.id, new Set())
   }
 
-  for (const edge of topology.edges) {
-    const { fromStepId, toStepId } = edgeEndpoints(edge)
-    if (!stepIds.has(fromStepId) || !stepIds.has(toStepId)) {
-      issues.push(`Edge ${edge.id} references a step outside the effective topology.`)
+  for (const [index, edge] of topology.edges.entries()) {
+    const validation = validateExecutionEdge(edge, index)
+    if (!validation.valid) {
+      issues.push(validation.issue)
       continue
     }
+    const { fromStepId, toStepId } = validation.value
+    if (!stepIds.has(fromStepId) || !stepIds.has(toStepId)) {
+      issues.push(
+        `Edge ${validation.value.edge.id} references a step outside the effective topology.`
+      )
+      continue
+    }
+    validEdges.push(validation.value)
     predecessorIdsByStepId.get(toStepId)?.add(fromStepId)
     successorIdsByStepId.get(fromStepId)?.add(toStepId)
   }
@@ -267,6 +361,7 @@ function topologicalOrder(topology: EffectiveExecutionTopology): TopologyOrder {
     stageByStepId,
     predecessorIdsByStepId,
     successorIdsByStepId,
+    validEdges,
     issues
   }
 }
@@ -446,9 +541,9 @@ export function buildExecutionGraphProjection(
   const stepAttempts = attemptsByStep(input.attempts ?? [])
   const runtimeAppendedStepIds = new Set(input.runtimeAppendedStepIds ?? [])
   const order = topologicalOrder(input.topology)
-  const incomingEdges = new Map<string, ExecutionEdge[]>()
-  for (const edge of input.topology.edges) {
-    const { toStepId } = edgeEndpoints(edge)
+  const incomingEdges = new Map<string, ValidatedExecutionEdge[]>()
+  for (const edge of order.validEdges) {
+    const { toStepId } = edge
     const bucket = incomingEdges.get(toStepId) ?? []
     bucket.push(edge)
     incomingEdges.set(toStepId, bucket)
