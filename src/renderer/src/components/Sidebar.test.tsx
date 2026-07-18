@@ -1283,7 +1283,7 @@ describe('Sidebar ensembles section', () => {
     expect(html).not.toContain('sidebar-provider-dot-ensemble')
   })
 
-  it('uses provider glyphs instead of colored dots in Pinned and Recents', () => {
+  it('uses official provider marks instead of monoline glyphs in Pinned and Recents', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('pinned', 'recents')
     })
@@ -1312,8 +1312,10 @@ describe('Sidebar ensembles section', () => {
     )
     const recentsBlock = html.slice(html.indexOf('sidebar-recents-section'))
 
-    expect(pinnedBlock).toContain('provider-glyph-codex')
-    expect(recentsBlock).toContain('provider-glyph-ollama')
+    expect(pinnedBlock).toContain('data-provider-logo="codex"')
+    expect(pinnedBlock).not.toContain('provider-glyph-codex')
+    expect(recentsBlock).toContain('data-provider-logo="ollama"')
+    expect(recentsBlock).not.toContain('provider-glyph-ollama')
     expect(html).not.toContain('sidebar-provider-dot')
   })
 

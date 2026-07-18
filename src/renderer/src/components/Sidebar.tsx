@@ -1459,7 +1459,7 @@ function SidebarCompactChatRowInner({
       aria-busy={isRunning || undefined}
       {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
     >
-      <ProviderBadgeIcon provider={badgeId} />
+      <ProviderBrandLogoIcon provider={badgeId} />
       <SidebarChatTitleEditable
         chat={chat}
         className={labelClass}
