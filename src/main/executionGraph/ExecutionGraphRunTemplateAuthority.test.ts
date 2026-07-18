@@ -2,7 +2,9 @@ import { describe, expect, it } from 'vitest'
 import type { JsonObject } from './ExecutionGraphModel'
 import {
   executionGraphRunTemplateAuthorityDigest,
-  executionGraphRunTemplateAuthorityEnvelope
+  executionGraphRunTemplateAuthorityEnvelope,
+  executionGraphRunTemplatePermissionCeilingDigest,
+  executionGraphRunTemplatePermissionCeilingEnvelope
 } from './ExecutionGraphRunTemplateAuthority'
 
 function template(overrides: JsonObject = {}): JsonObject {
@@ -27,11 +29,17 @@ function template(overrides: JsonObject = {}): JsonObject {
       sessionTrust: true,
       externalPathGrants: [
         {
+          id: 'grant-one',
           provider: 'codex',
+          bindingVersion: 2,
+          workspaceId: 'workspace-one',
+          chatId: 'chat-one',
+          appRunId: 'graph-template-probe-one',
           path: '/approved/reference',
           kind: 'directory',
           access: 'read',
           duration: 'thisRun',
+          securityScopedBookmark: 'bookmark-one',
           issuedBy: 'main',
           signature: 'signed-grant',
           createdAt: '2026-07-18T11:00:00.000Z',
@@ -44,6 +52,26 @@ function template(overrides: JsonObject = {}): JsonObject {
     },
     permissionPosture: {
       schemaVersion: 1,
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      presetId: 'workspace_write',
+      readOnly: false,
+      agenticServices: {
+        shellCommands: 'workspace',
+        fileChanges: 'workspace',
+        externalPublish: 'ask',
+        mcpTools: 'ask',
+        subThreadDelegation: 'ask',
+        canvasInteraction: 'ask',
+        canvasEval: 'ask',
+        crossThreadRead: 'ask',
+        mediaEditing: 'workspace',
+        mediaRecording: 'deny'
+      },
+      networkAccess: 'allow',
+      workspaceGrantServiceIds: ['fileChanges'],
+      externalPathGrantCount: 1,
+      externalPathGrantHash: 'd'.repeat(64),
       postureHash: 'c'.repeat(64),
       signature: 'signed-posture',
       signaturePresent: true
@@ -123,5 +151,117 @@ describe('ExecutionGraphRunTemplateAuthority', () => {
     expect(executionGraphRunTemplateAuthorityDigest(otherRuntime)).not.toBe(
       executionGraphRunTemplateAuthorityDigest(original)
     )
+  })
+
+  it('builds a reusable permission-only ceiling from normalized authority', () => {
+    expect(executionGraphRunTemplatePermissionCeilingEnvelope(template())).toEqual({
+      schemaVersion: 1,
+      provider: 'codex',
+      scope: 'workspace',
+      workspaceId: 'workspace-one',
+      workspacePath: '/workspace',
+      chatId: 'chat-one',
+      effectiveWorkspacePath: '/workspace/.taskwraith/worktrees/one',
+      runtimeProfileId: 'runtime-codex-one',
+      sessionTrust: false,
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal',
+      presetId: 'workspace_write',
+      readOnly: false,
+      agenticServices: {
+        shellCommands: 'workspace',
+        fileChanges: 'workspace',
+        externalPublish: 'ask',
+        mcpTools: 'ask',
+        subThreadDelegation: 'ask',
+        canvasInteraction: 'ask',
+        canvasEval: 'ask',
+        crossThreadRead: 'ask',
+        mediaEditing: 'workspace',
+        mediaRecording: 'deny'
+      },
+      networkAccess: 'allow',
+      workspaceGrantServiceIds: ['fileChanges'],
+      externalPathGrantCount: 1,
+      externalPathGrantHash: 'd'.repeat(64),
+      externalPathGrants: [
+        {
+          id: 'grant-one',
+          provider: 'codex',
+          bindingVersion: 2,
+          workspaceId: 'workspace-one',
+          chatId: 'chat-one',
+          appRunId: 'graph-template-probe-one',
+          path: '/approved/reference',
+          kind: 'directory',
+          access: 'read',
+          duration: 'thisRun',
+          securityScopedBookmark: 'bookmark-one',
+          issuedBy: 'main',
+          signature: 'signed-grant',
+          createdAt: '2026-07-18T11:00:00.000Z'
+        }
+      ]
+    })
+  })
+
+  it('shares a ceiling across different prompt, model, and Project-reference data', () => {
+    const original = template()
+    const otherRequest = template({
+      request: {
+        ...(original.request as JsonObject),
+        prompt: 'A completely different second Stack step.',
+        displayPrompt: 'Different presentation',
+        selectedModelType: 'gpt-5.6-sol',
+        customModel: 'gpt-5.6-sol',
+        projectReferenceContextSelection: { referenceIds: ['reference-two'] }
+      },
+      permissionPosture: {
+        ...(original.permissionPosture as JsonObject),
+        postureHash: 'e'.repeat(64),
+        signature: 'different-prompt-bound-signature',
+        context: {
+          promptHash: 'f'.repeat(64),
+          projectReferenceContextHash: '1'.repeat(64)
+        }
+      },
+      presentation: { title: 'Second Stack card' }
+    })
+
+    expect(executionGraphRunTemplatePermissionCeilingDigest(otherRequest)).toBe(
+      executionGraphRunTemplatePermissionCeilingDigest(original)
+    )
+    expect(executionGraphRunTemplateAuthorityDigest(otherRequest)).not.toBe(
+      executionGraphRunTemplateAuthorityDigest(original)
+    )
+  })
+
+  it('changes the ceiling for permission, workspace, runtime, and grant changes', () => {
+    const original = template()
+    const originalPosture = original.permissionPosture as JsonObject
+    const originalRequest = original.request as JsonObject
+    const originalGrants = originalRequest.externalPathGrants as JsonObject[]
+    const digest = executionGraphRunTemplatePermissionCeilingDigest(original)
+    const variants = [
+      template({
+        permissionPosture: {
+          ...originalPosture,
+          presetId: 'read_only',
+          readOnly: true
+        }
+      }),
+      template({ workspacePath: '/another-workspace' }),
+      template({ runtimeProfileId: 'runtime-codex-two' }),
+      template({
+        request: {
+          ...originalRequest,
+          externalPathGrants: [{ ...originalGrants[0], access: 'write' }]
+        }
+      })
+    ]
+
+    for (const variant of variants) {
+      expect(executionGraphRunTemplatePermissionCeilingDigest(variant)).not.toBe(digest)
+    }
   })
 })

@@ -13,9 +13,10 @@ function jsonObject(value: unknown): JsonObject {
 }
 
 /**
- * Build the stable permission-ceiling envelope for a persisted graph run
- * template. Presentation-only request fields (for example `displayPrompt`)
- * are deliberately absent, while every field in the original v1 authority
+ * Build the original stable authority envelope for a persisted graph run
+ * template. This is prompt/model bound and is therefore suitable for checking
+ * one exact saved template, not for deciding whether another Stack step fits
+ * the same reusable permission ceiling. Every field in the original v1
  * contract remains byte-for-byte compatible.
  *
  * Trusted Session is an ephemeral renderer-turn capability. Even if stale or
@@ -65,5 +66,75 @@ export function executionGraphRunTemplateAuthorityEnvelope(content: JsonObject):
 export function executionGraphRunTemplateAuthorityDigest(content: JsonObject): string {
   return createHash('sha256')
     .update(stableExecutionGraphStringify(executionGraphRunTemplateAuthorityEnvelope(content)))
+    .digest('hex')
+}
+
+function permissionCeilingGrantEnvelope(request: Record<string, unknown>): unknown[] {
+  if (!Array.isArray(request.externalPathGrants)) return []
+  return request.externalPathGrants.map((grant) => {
+    if (!isRecord(grant)) return null
+    return {
+      id: grant.id,
+      provider: grant.provider,
+      bindingVersion: grant.bindingVersion,
+      workspaceId: grant.workspaceId,
+      chatId: grant.chatId,
+      appRunId: grant.appRunId,
+      path: grant.path,
+      kind: grant.kind,
+      access: grant.access,
+      duration: grant.duration,
+      securityScopedBookmark: grant.securityScopedBookmark,
+      issuedBy: grant.issuedBy,
+      signature: grant.signature,
+      createdAt: grant.createdAt
+    }
+  })
+}
+
+/**
+ * Build the permission-only ceiling shared by compatible Stack steps.
+ *
+ * Prompt, model, Project-reference selection, posture hashes/signatures, and
+ * presentation are intentionally absent: they identify a particular request,
+ * not the authority that request may exercise. The normalized effective
+ * permission snapshot and detailed main-issued grants remain bound, along
+ * with every target/runtime field that can change where that authority acts.
+ */
+export function executionGraphRunTemplatePermissionCeilingEnvelope(
+  content: JsonObject
+): JsonObject {
+  const request = isRecord(content.request) ? content.request : {}
+  const posture = isRecord(content.permissionPosture) ? content.permissionPosture : {}
+
+  return jsonObject({
+    schemaVersion: 1,
+    provider: content.provider,
+    scope: content.scope,
+    workspaceId: content.workspaceId,
+    workspacePath: content.workspacePath,
+    chatId: content.chatId,
+    effectiveWorkspacePath: request.effectiveWorkspacePath,
+    runtimeProfileId: content.runtimeProfileId,
+    sessionTrust: false,
+    approvalMode: posture.approvalMode,
+    workflowMode: posture.workflowMode,
+    presetId: posture.presetId,
+    readOnly: posture.readOnly,
+    agenticServices: posture.agenticServices,
+    networkAccess: posture.networkAccess,
+    workspaceGrantServiceIds: posture.workspaceGrantServiceIds,
+    externalPathGrantCount: posture.externalPathGrantCount,
+    externalPathGrantHash: posture.externalPathGrantHash,
+    externalPathGrants: permissionCeilingGrantEnvelope(request)
+  })
+}
+
+/** Return the lowercase SHA-256 identity of the reusable Stack permission ceiling. */
+export function executionGraphRunTemplatePermissionCeilingDigest(content: JsonObject): string {
+  return createHash('sha256')
+    .update(
+      stableExecutionGraphStringify(executionGraphRunTemplatePermissionCeilingEnvelope(content))
+    )
     .digest('hex')
 }

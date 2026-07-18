@@ -1,5 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
+import {
+  executionGraphRunTemplateAuthorityDigest,
+  executionGraphRunTemplatePermissionCeilingDigest
+} from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
 import type { RunPermissionPostureSnapshot, RunQueueJob } from '../store/types'
 import type { ExecutionGraphHandlersDeps } from './executionGraphHandlers'
@@ -246,6 +250,15 @@ describe('registerExecutionGraphHandlers', () => {
           authorityDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
         })
       })
+    )
+    const savedContent = vi.mocked(deps.repository.saveRunTemplate).mock.calls[0]?.[0]
+    const appendInput = vi.mocked(deps.coordinator.appendStackStep).mock.calls[0]?.[0]
+    expect(savedContent).toBeDefined()
+    expect(appendInput?.permissionCeilingRef.authorityDigest).toBe(
+      executionGraphRunTemplatePermissionCeilingDigest(savedContent!)
+    )
+    expect(appendInput?.permissionCeilingRef.authorityDigest).not.toBe(
+      executionGraphRunTemplateAuthorityDigest(savedContent!)
     )
   })
 

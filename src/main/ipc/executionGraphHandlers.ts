@@ -13,7 +13,7 @@ import type {
   ExecutionGraphRunTemplate
 } from '../executionGraph/ExecutionGraphRepository'
 import type { ExecutionRunEvent, ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
-import { executionGraphRunTemplateAuthorityDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
+import { executionGraphRunTemplatePermissionCeilingDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type {
   AppendExecutionStackStepInput,
   ExecutionGraphCoordinator
@@ -254,7 +254,7 @@ function prepareStackTemplate(
   }
   const content = runTemplateContent({ ...prepared, request: frozenRequest }, permissionPosture)
   const record = deps.repository.saveRunTemplate(content)
-  const authorityDigest = executionGraphRunTemplateAuthorityDigest(content)
+  const authorityDigest = executionGraphRunTemplatePermissionCeilingDigest(content)
   const ceiling: ExecutionPermissionCeilingRef = {
     schemaVersion: 1,
     referenceId: `execution-ceiling-${authorityDigest}`,
