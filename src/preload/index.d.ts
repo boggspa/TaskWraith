@@ -183,6 +183,21 @@ import type {
   PromoteQueuedJobForSteerInput,
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
+import type {
+  ExecutionGraphLayout,
+  ExecutionGraphRevision
+} from '../main/executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionRunEvent,
+  ExecutionRunProjection
+} from '../main/executionGraph/ExecutionGraphRun'
+import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
+import type {
+  ExecutionRunCancelStepCommand,
+  ExecutionRunFormalizeCommand,
+  ExecutionRunListFilter,
+  ExecutionStackAppendCommand
+} from '../main/ipc/executionGraphHandlers'
 
 type GeminiCapabilityKind = 'mcp' | 'extensions' | 'skills' | 'agents'
 type GeminiCapabilityFormat = 'json' | 'raw' | 'error'
@@ -1813,6 +1828,36 @@ declare global {
         partial: WorkflowDefinitionRendererUpdate
       ) => Promise<WorkflowDefinition | null>
       deleteWorkflowDefinition: (id: string) => Promise<void>
+      listExecutionGraphRevisions: (
+        workspaceId?: string
+      ) => Promise<readonly ExecutionGraphRevision[]>
+      getExecutionGraphRevision: (
+        graphId: string,
+        revision: number
+      ) => Promise<ExecutionGraphRevision | null>
+      getExecutionGraphLayout: (
+        graphId: string,
+        revision: number
+      ) => Promise<ExecutionGraphLayout | null>
+      listExecutionRuns: (
+        filter?: ExecutionRunListFilter
+      ) => Promise<readonly ExecutionRunProjection[]>
+      getExecutionRun: (executionId: string) => Promise<ExecutionRunProjection | null>
+      getExecutionRunEvents: (executionId: string) => Promise<readonly ExecutionRunEvent[]>
+      appendExecutionStackStep: (
+        command: ExecutionStackAppendCommand
+      ) => Promise<ExecutionRunProjection>
+      cancelExecutionRun: (
+        executionId: string,
+        reason?: string
+      ) => Promise<ExecutionRunProjection | null>
+      cancelExecutionRunStep: (
+        command: ExecutionRunCancelStepCommand
+      ) => Promise<ExecutionRunProjection>
+      formalizeExecutionRun: (
+        command: ExecutionRunFormalizeCommand
+      ) => Promise<ExecutionGraphRevision>
+      saveExecutionGraphLayout: (layout: ExecutionGraphLayout) => Promise<ExecutionGraphLayout>
       getWorkspaceBoards: (workspaceId?: string) => Promise<WorkspaceBoardDefinition[]>
       saveWorkspaceBoard: (
         board: Omit<WorkspaceBoardDefinition, 'id' | 'createdAt' | 'updatedAt' | 'activity'> &
@@ -2010,6 +2055,9 @@ declare global {
           workspaceId?: string
           sequence: number
         }) => void
+      ) => () => void
+      onExecutionGraphChanged: (
+        callback: (notice: ExecutionGraphChangedNotice) => void
       ) => () => void
       onAgentApprovalRequest: (callback: (payload: AgentApprovalRequest) => void) => () => void
       onAgentApprovalTimeout: (

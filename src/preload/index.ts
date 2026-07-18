@@ -47,6 +47,21 @@ import type {
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
 import type {
+  ExecutionGraphLayout,
+  ExecutionGraphRevision
+} from '../main/executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionRunEvent,
+  ExecutionRunProjection
+} from '../main/executionGraph/ExecutionGraphRun'
+import type { ExecutionGraphChangedNotice } from '../main/services/ExecutionGraphCoordinator'
+import type {
+  ExecutionRunCancelStepCommand,
+  ExecutionRunFormalizeCommand,
+  ExecutionRunListFilter,
+  ExecutionStackAppendCommand
+} from '../main/ipc/executionGraphHandlers'
+import type {
   TaskWraithPluginCatalogSnapshot,
   TaskWraithPluginActivationSnapshot,
   TaskWraithPluginContributionSnapshot,
@@ -1466,6 +1481,45 @@ const api = {
   updateWorkflowDefinition: (id: string, partial: WorkflowDefinitionRendererUpdate) =>
     ipcRenderer.invoke('update-workflow-definition', id, partial),
   deleteWorkflowDefinition: (id: string) => ipcRenderer.invoke('delete-workflow-definition', id),
+  listExecutionGraphRevisions: (workspaceId?: string) =>
+    ipcRenderer.invoke('execution-graphs:list', workspaceId) as Promise<
+      readonly ExecutionGraphRevision[]
+    >,
+  getExecutionGraphRevision: (graphId: string, revision: number) =>
+    ipcRenderer.invoke('execution-graphs:get', {
+      graphId,
+      revision
+    }) as Promise<ExecutionGraphRevision | null>,
+  getExecutionGraphLayout: (graphId: string, revision: number) =>
+    ipcRenderer.invoke('execution-graphs:get-layout', {
+      graphId,
+      revision
+    }) as Promise<ExecutionGraphLayout | null>,
+  listExecutionRuns: (filter: ExecutionRunListFilter = {}) =>
+    ipcRenderer.invoke('execution-runs:list', filter) as Promise<readonly ExecutionRunProjection[]>,
+  getExecutionRun: (executionId: string) =>
+    ipcRenderer.invoke('execution-runs:get', executionId) as Promise<ExecutionRunProjection | null>,
+  getExecutionRunEvents: (executionId: string) =>
+    ipcRenderer.invoke('execution-runs:events', executionId) as Promise<
+      readonly ExecutionRunEvent[]
+    >,
+  appendExecutionStackStep: (command: ExecutionStackAppendCommand) =>
+    ipcRenderer.invoke(
+      'execution-runs:append-stack-step',
+      command
+    ) as Promise<ExecutionRunProjection>,
+  cancelExecutionRun: (executionId: string, reason?: string) =>
+    ipcRenderer.invoke(
+      'execution-runs:cancel',
+      executionId,
+      reason
+    ) as Promise<ExecutionRunProjection | null>,
+  cancelExecutionRunStep: (command: ExecutionRunCancelStepCommand) =>
+    ipcRenderer.invoke('execution-runs:cancel-step', command) as Promise<ExecutionRunProjection>,
+  formalizeExecutionRun: (command: ExecutionRunFormalizeCommand) =>
+    ipcRenderer.invoke('execution-runs:formalize', command) as Promise<ExecutionGraphRevision>,
+  saveExecutionGraphLayout: (layout: ExecutionGraphLayout) =>
+    ipcRenderer.invoke('execution-graphs:save-layout', layout) as Promise<ExecutionGraphLayout>,
   getWorkspaceBoards: (workspaceId?: string) =>
     ipcRenderer.invoke('get-workspace-boards', workspaceId) as Promise<WorkspaceBoardDefinition[]>,
   saveWorkspaceBoard: (board: any) =>
@@ -1656,6 +1710,11 @@ const api = {
     const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
     ipcRenderer.on('run-events-changed', wrapped)
     return () => ipcRenderer.removeListener('run-events-changed', wrapped)
+  },
+  onExecutionGraphChanged: (callback: (notice: ExecutionGraphChangedNotice) => void) => {
+    const wrapped = (_event: unknown, notice: ExecutionGraphChangedNotice): void => callback(notice)
+    ipcRenderer.on('execution-graph-changed', wrapped)
+    return () => ipcRenderer.removeListener('execution-graph-changed', wrapped)
   },
   onAgentApprovalRequest: (callback: (payload: any) => void) => {
     const wrapped = (_event: unknown, payload: unknown): void => callback(payload)
@@ -1967,6 +2026,7 @@ const api = {
     ipcRenderer.removeAllListeners('agent-exit')
     ipcRenderer.removeAllListeners('run-queue-changed')
     ipcRenderer.removeAllListeners('run-events-changed')
+    ipcRenderer.removeAllListeners('execution-graph-changed')
     ipcRenderer.removeAllListeners('agent-approval-request')
     ipcRenderer.removeAllListeners('agent-approval-timeout')
     ipcRenderer.removeAllListeners('agent-approval-resolved')
