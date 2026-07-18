@@ -12,7 +12,7 @@ function sourceBetween(start: string, end: string): string {
 }
 
 describe('execution-graph queued-run authority', () => {
-  it('rehydrates graph-owned jobs from their persisted request instead of pending chat config', () => {
+  it('can rehydrate graph-owned rows for projections without treating chat config as authority', () => {
     const rehydrator = sourceBetween(
       'const queuedRunRequestFromJob =',
       'const discordContextSelectionQueueKey ='
@@ -33,19 +33,12 @@ describe('execution-graph queued-run authority', () => {
     expect(resolver).toContain('return queuedRunRequestFromJob(job, workspaces')
   })
 
-  it('does not finalize pending chat changes or replace the leased provider at dispatch', () => {
-    const scheduler = sourceBetween(
-      'const queuedJobs = getQueuedDesktopRunJobs(runQueueJobs)',
-      "window.localStorage.setItem('taskwraith.workspaceSidebarWidth'"
+  it('keeps graph-owned rows out of the renderer lease and dispatch pump', () => {
+    const queueSelector = sourceBetween(
+      'const getQueuedDesktopRunJobs =',
+      'const resolveQueuedDesktopRunRequest ='
     )
 
-    expect(scheduler).toContain('const isExecutionGraphDispatch = Boolean(leased.executionGraph)')
-    expect(scheduler).toMatch(
-      /if \(\s*!isExecutionGraphDispatch &&\s*dispatchChat &&\s*\(hasPendingProviderChange/
-    )
-    expect(scheduler).toMatch(
-      /const dispatchProvider = isExecutionGraphDispatch\s+\? leased\.provider\s+: getChatProvider/
-    )
-    expect(scheduler).toContain('provider: dispatchProvider')
+    expect(queueSelector).toContain('.filter((job) => !job.executionGraph)')
   })
 })

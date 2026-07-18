@@ -12136,6 +12136,9 @@ function App(): React.JSX.Element {
     })
     return sourceJobs
       .filter(isQueuedDesktopRunQueueJob)
+      // Execution-graph rows are observed here for Stack/Map projection only.
+      // Their lease, composition, and provider launch are owned by main.
+      .filter((job) => !job.executionGraph)
       .slice()
       .sort((a, b) => {
         const aOrder = cachedOrder.get(a.runId)
@@ -18353,10 +18356,8 @@ function App(): React.JSX.Element {
         if (!leased) {
           return
         }
-        const isExecutionGraphDispatch = Boolean(leased.executionGraph)
         let dispatchChat = nextRun.chatRecord
         if (
-          !isExecutionGraphDispatch &&
           dispatchChat &&
           (hasPendingProviderChange(dispatchChat) ||
             hasPendingEnsembleRosterPresetApply(dispatchChat))
@@ -18374,9 +18375,7 @@ function App(): React.JSX.Element {
             }
           }
         }
-        const dispatchProvider = isExecutionGraphDispatch
-          ? leased.provider
-          : getChatProvider(dispatchChat || nextRun.chatRecord)
+        const dispatchProvider = getChatProvider(dispatchChat || nextRun.chatRecord)
         appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
           type: 'info',
           content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(
