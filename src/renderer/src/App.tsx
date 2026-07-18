@@ -3709,7 +3709,9 @@ function App(): React.JSX.Element {
   const chatMediaPromoteTarget = useMemo(() => {
     const chatId = currentChat?.appChatId
     if (!chatId) return undefined
-    const owners = listProjects().filter((project) => project.memberChatIds.includes(chatId))
+    const owners = listProjects().filter(
+      (project) => !project.archived && project.memberChatIds.includes(chatId)
+    )
     if (owners.length !== 1) return undefined
     const project = owners[0]
     return {

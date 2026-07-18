@@ -28,6 +28,7 @@ import {
   removeProjectReference,
   renameProject,
   reorderProject,
+  setProjectArchived,
   setProjectHomeChat,
   setProjectIconAndHue,
   subscribeProjects,
@@ -248,6 +249,7 @@ export function ProjectsSidebarView({
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     initialSelectedProjectId
   )
+  const [showArchivedProjects, setShowArchivedProjects] = useState(false)
   const [projectDropTargetId, setProjectDropTargetId] = useState<string | null>(null)
   const [projectDraft, setProjectDraft] = useState<ProjectDraft | null>(null)
   const [expandedProjectIds, setExpandedProjectIds] = useState<Set<string>>(() => {
@@ -314,10 +316,24 @@ export function ProjectsSidebarView({
     }
     return map
   }, [workProfiles])
-  const projectTree = useMemo(() => buildProjectTree(projects), [projects])
+  // Archived projects are shelved out of the tree entirely (the cascade
+  // guarantees whole subtrees, so the tree never re-roots) and surface as
+  // subtree roots in the collapsed section below it.
+  const liveProjects = useMemo(() => projects.filter((project) => !project.archived), [projects])
+  const archivedSubtreeRoots = useMemo(() => {
+    const byId = new Map(projects.map((project) => [project.id, project]))
+    return projects
+      .filter(
+        (project) =>
+          project.archived &&
+          (!project.parentId || byId.get(project.parentId)?.archived !== true)
+      )
+      .sort(sortProjects)
+  }, [projects])
+  const projectTree = useMemo(() => buildProjectTree(liveProjects), [liveProjects])
   const flatNodes = useMemo(() => flattenNodes(projectTree), [projectTree])
   const selectedProject = selectedProjectId
-    ? projects.find((project) => project.id === selectedProjectId) ?? null
+    ? liveProjects.find((project) => project.id === selectedProjectId) ?? null
     : null
 
   const descendantIdsByProjectId = useMemo(() => {
@@ -329,7 +345,7 @@ export function ProjectsSidebarView({
   }, [flatNodes])
 
   const eligibleParentProjects = selectedProject
-    ? projects
+    ? liveProjects
         .filter(
           (project) =>
             project.id !== selectedProject.id &&
@@ -846,6 +862,21 @@ export function ProjectsSidebarView({
             >
               x
             </button>
+            <button
+              type="button"
+              className="sidebar-project-icon-button"
+              onClick={(event) => {
+                event.stopPropagation()
+                runStoreAction(() => {
+                  setProjectArchived(project.id, true)
+                })
+                setSelectedProjectId((current) => (current === project.id ? null : current))
+              }}
+              title="Archive project"
+              aria-label={`Archive ${project.name}`}
+            >
+              Archive
+            </button>
           </span>
         </div>
 
@@ -1121,7 +1152,7 @@ export function ProjectsSidebarView({
 
       {renderProjectDraftForm()}
 
-      {projects.length === 0 ? (
+      {liveProjects.length === 0 && archivedSubtreeRoots.length === 0 ? (
         <div className="sidebar-empty-state sidebar-project-empty">
           <strong>No projects yet</strong>
           <span>Create a project to group threads across workspaces, providers, or folders.</span>
@@ -1138,6 +1169,47 @@ export function ProjectsSidebarView({
         </div>
       ) : (
         <div className="sidebar-project-tree">{projectTree.map((node) => renderNode(node))}</div>
+      )}
+
+      {archivedSubtreeRoots.length > 0 && !isSearchActive && (
+        <div className="sidebar-project-archived-section">
+          <button
+            type="button"
+            className="sidebar-project-archived-toggle"
+            onClick={() => setShowArchivedProjects((current) => !current)}
+            aria-expanded={showArchivedProjects}
+          >
+            <ProjectChevron isExpanded={showArchivedProjects} />
+            Archived ({archivedSubtreeRoots.length})
+          </button>
+          {showArchivedProjects && (
+            <div className="sidebar-project-archived-list">
+              {archivedSubtreeRoots.map((project) => (
+                <div key={project.id} className="sidebar-project-archived-row" title={project.name}>
+                  <span className="sidebar-project-archived-name">{project.name}</span>
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button"
+                    onClick={() => runStoreAction(() => setProjectArchived(project.id, false))}
+                    title="Restore project"
+                    aria-label={`Restore ${project.name}`}
+                  >
+                    Restore
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button danger"
+                    onClick={() => runStoreAction(() => { deleteProject(project.id) })}
+                    title="Delete archived project"
+                    aria-label={`Delete ${project.name}`}
+                  >
+                    x
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
       )}
     </section>
   )

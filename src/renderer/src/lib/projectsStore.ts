@@ -8,6 +8,7 @@ import {
   applyRemoveChatFromProject,
   applyRenameProject,
   applyReorderProject,
+  applySetProjectArchived,
   applySetProjectIconAndHue,
   cloneProject,
   cloneProjectReference,
@@ -489,6 +490,18 @@ export function moveProject(projectId: string, parentId: string | null, order?: 
     snapshot = next
     notifyProjectListeners()
     dispatchOp({ kind: 'move', projectId, parentId, ...(order !== undefined ? { order } : {}), now })
+  }
+  return cloneProject(project)
+}
+
+export function setProjectArchived(projectId: string, archived: boolean): Project {
+  void ensureInitialized()
+  const now = Date.now()
+  const { projects: next, project } = applySetProjectArchived(snapshot, projectId, archived, now)
+  if (next !== snapshot) {
+    snapshot = next
+    notifyProjectListeners()
+    dispatchOp({ kind: 'set-archived', projectId, archived, now })
   }
   return cloneProject(project)
 }

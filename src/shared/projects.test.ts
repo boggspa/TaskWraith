@@ -10,6 +10,7 @@ import {
   applyRemoveChatFromAllProjects,
   applyRenameProject,
   applyReorderProject,
+  applySetProjectArchived,
   applySetProjectIconAndHue,
   defaultProjectReferenceTitle,
   migrateProjectReferences,
@@ -391,6 +392,55 @@ describe('project references', () => {
       contextPolicy: 'off',
       lastVerified: { at: 5, status: 'ok' }
     })
+  })
+})
+
+describe('applySetProjectArchived', () => {
+  function nestedProjects(): Project[] {
+    let projects = buildThreeRoots()
+    projects = applyCreateProject(
+      projects,
+      { name: 'Child', parentId: 'project-a' },
+      seed('project-child')
+    ).projects
+    projects = applyCreateProject(
+      projects,
+      { name: 'Grandchild', parentId: 'project-child' },
+      seed('project-grandchild')
+    ).projects
+    return projects
+  }
+
+  it('archives and restores the whole descendant subtree', () => {
+    const projects = nestedProjects()
+    const archived = applySetProjectArchived(projects, 'project-a', true, 500).projects
+    const archivedIds = archived.filter((p) => p.archived).map((p) => p.id).sort()
+    expect(archivedIds).toEqual(['project-a', 'project-child', 'project-grandchild'])
+    expect(archived.find((p) => p.id === 'project-b')?.archived).toBeUndefined()
+
+    const restored = applySetProjectArchived(archived, 'project-a', false, 600).projects
+    expect(restored.every((p) => p.archived === undefined)).toBe(true)
+    // Membership, claims, and hierarchy untouched either way.
+    expect(restored.find((p) => p.id === 'project-grandchild')?.parentId).toBe('project-child')
+  })
+
+  it('is a same-reference no-op when the subtree already matches and validates ids', () => {
+    const projects = nestedProjects()
+    expect(applySetProjectArchived(projects, 'project-a', false, 500).projects).toBe(projects)
+    expect(() => applySetProjectArchived(projects, 'missing', true, 1)).toThrow(
+      'Project not found.'
+    )
+  })
+
+  it('round-trips the set-archived op through parser, dispatch, and migration', () => {
+    const op: ProjectOp = { kind: 'set-archived', projectId: 'project-a', archived: true, now: 9 }
+    expect(parseProjectOp(JSON.parse(JSON.stringify(op)))).toEqual(op)
+    expect(parseProjectOp({ kind: 'set-archived', projectId: 'p', archived: 'yes', now: 1 })).toBeNull()
+
+    const projects = applyProjectOp(nestedProjects(), op).projects
+    const migrated = migrateProjects(JSON.parse(JSON.stringify(projects)), 999)
+    expect(migrated.find((p) => p.id === 'project-a')?.archived).toBe(true)
+    expect(migrated.find((p) => p.id === 'project-b')?.archived).toBeUndefined()
   })
 })
 

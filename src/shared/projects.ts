@@ -47,6 +47,10 @@ export type Project = {
   parentId: string | null
   order: number
   memberChatIds: string[]
+  /** Shelved but fully retained: archiving never deletes chats, claims, or
+   * references, and always cascades over the descendant subtree (mirroring
+   * delete's cascade mental model) so a tree never re-roots. Absent = live. */
+  archived?: boolean
   createdAt: number
   updatedAt: number
 }
@@ -334,6 +338,7 @@ export function isProject(value: unknown): value is Project {
     typeof entry.hue === 'number' &&
     Number.isFinite(entry.hue) &&
     (entry.parentId === null || typeof entry.parentId === 'string') &&
+    (typeof entry.archived === 'undefined' || typeof entry.archived === 'boolean') &&
     typeof entry.order === 'number' &&
     Number.isFinite(entry.order) &&
     Array.isArray(entry.memberChatIds) &&
@@ -379,6 +384,7 @@ export function migrateProject(value: unknown, now: number): Project | null {
       )
     ),
     memberChatIds: normalizeChatIds(entry.memberChatIds),
+    ...(entry.archived === true ? { archived: true } : {}),
     createdAt,
     updatedAt
   }
@@ -701,6 +707,45 @@ export function applyMoveProject(
   return { projects: next, project: projectById(next, projectId) ?? nextTarget }
 }
 
+/**
+ * Archive or restore a project AND its descendant subtree. Both directions
+ * cascade so the tree never re-roots: archiving a folder shelves everything
+ * inside it, restoring brings the subtree back together. Chats, home claims,
+ * and references are untouched — a shelf, not a shredder.
+ */
+export function applySetProjectArchived(
+  projects: Project[],
+  projectId: string,
+  archived: boolean,
+  now: number
+): ProjectMutation {
+  const project = assertProjectExists(projects, projectId)
+  const targetIds = new Set<string>([projectId])
+  const queue = [projectId]
+  while (queue.length > 0) {
+    const current = queue.shift()
+    if (!current) continue
+    for (const child of projects) {
+      if (child.parentId === current && !targetIds.has(child.id)) {
+        targetIds.add(child.id)
+        queue.push(child.id)
+      }
+    }
+  }
+  let changed = false
+  const next = projects.map((entry) => {
+    if (!targetIds.has(entry.id)) return entry
+    if ((entry.archived === true) === archived) return entry
+    changed = true
+    const updated: Project = { ...entry, updatedAt: now }
+    if (archived) updated.archived = true
+    else delete updated.archived
+    return updated
+  })
+  if (!changed) return { projects, project }
+  return { projects: next, project: projectById(next, projectId) ?? project }
+}
+
 export function applySetProjectIconAndHue(
   projects: Project[],
   projectId: string,
@@ -813,6 +858,7 @@ export type ProjectOp =
   | { kind: 'reorder'; projectId: string; order: number; now: number }
   | { kind: 'move'; projectId: string; parentId: string | null; order?: number; now: number }
   | { kind: 'set-icon-hue'; projectId: string; patch: ProjectPatch; now: number }
+  | { kind: 'set-archived'; projectId: string; archived: boolean; now: number }
   | { kind: 'add-chat'; projectId: string; chatId: string; now: number }
   | { kind: 'remove-chat'; projectId: string; chatId: string; now: number }
   | { kind: 'remove-chat-everywhere'; chatId: string; now: number }
@@ -909,6 +955,11 @@ export function parseProjectOp(value: unknown): ProjectOp | null {
         now: op.now
       }
     }
+    case 'set-archived': {
+      if (!isNonEmptyString(op.projectId) || typeof op.archived !== 'boolean') return null
+      if (!isFiniteNumber(op.now)) return null
+      return { kind: 'set-archived', projectId: op.projectId, archived: op.archived, now: op.now }
+    }
     case 'add-chat':
     case 'remove-chat': {
       if (!isNonEmptyString(op.projectId) || typeof op.chatId !== 'string') return null
@@ -960,6 +1011,10 @@ export function applyProjectOp(
     }
     case 'set-icon-hue': {
       const result = applySetProjectIconAndHue(projects, op.projectId, op.patch, op.now)
+      return { projects: result.projects, changed: result.projects !== projects }
+    }
+    case 'set-archived': {
+      const result = applySetProjectArchived(projects, op.projectId, op.archived, op.now)
       return { projects: result.projects, changed: result.projects !== projects }
     }
     case 'add-chat': {

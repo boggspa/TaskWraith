@@ -2981,6 +2981,50 @@
   gap: 4px;
 }
 
+.sidebar-project-archived-section {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid color-mix(in srgb, var(--sidebar-border) 55%, transparent);
+}
+
+.sidebar-project-archived-toggle {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 2px 4px;
+  border: none;
+  background: none;
+  color: color-mix(in srgb, var(--sidebar-text-secondary) 92%, transparent);
+  font: inherit;
+  font-size: 10.5px;
+  font-weight: 760;
+  cursor: pointer;
+}
+
+.sidebar-project-archived-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 5px;
+}
+
+.sidebar-project-archived-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  opacity: 0.75;
+}
+
+.sidebar-project-archived-name {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11px;
+}
+
 .sidebar-project-empty {
   gap: 9px;
 }

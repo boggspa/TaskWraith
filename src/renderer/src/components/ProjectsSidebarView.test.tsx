@@ -233,6 +233,30 @@ describe('ProjectsSidebarView references', () => {
     expect(html).toContain('aria-label="Verify electron/electron · README.md"')
   })
 
+  it('shelves archived projects out of the tree into the Archived section', () => {
+    seedStore(
+      [
+        projectRecord('project-live', 'Live One', []),
+        { ...projectRecord('project-shelved', 'Shelved One', []), archived: true }
+      ],
+      []
+    )
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+      />
+    )
+    expect(html).toContain('Live One')
+    expect(html).toContain('Archived (1)')
+    // The shelved project is out of the tree (no row actions rendered for it).
+    expect(html).not.toContain('aria-label="Archive Shelved One"')
+    expect(html).toContain('aria-label="Archive Live One"')
+  })
+
   it('shows the no-access empty state for a library-less project', () => {
     seedStore([projectRecord('project-a', 'Alpha', [])], [])
     const html = renderToStaticMarkup(
