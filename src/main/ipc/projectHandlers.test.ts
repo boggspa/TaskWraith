@@ -40,9 +40,15 @@ function createDeps() {
     applyProjectOp: vi.fn((op: ProjectOp) => ({
       projects: [],
       workProfiles: [],
+      references: [],
       changed: op.kind !== 'delete'
     })),
-    setProjectHomeChat: vi.fn(() => ({ projects: [], workProfiles: [], changed: true })),
+    setProjectHomeChat: vi.fn(() => ({
+      projects: [],
+      workProfiles: [],
+      references: [],
+      changed: true
+    })),
     chatExists: vi.fn((chatId: string) => chatId !== 'chat-missing'),
     importLegacyProjects: vi.fn((rawJson: string | null) => ({
       status: rawJson === null ? ('nothing-to-import' as const) : ('imported' as const),
@@ -91,6 +97,7 @@ describe('registerProjectHandlers', () => {
     expect(handler({}, 'project-a', '  chat-1  ')).toEqual({
       projects: [],
       workProfiles: [],
+      references: [],
       changed: true
     })
     expect(deps.setProjectHomeChat).toHaveBeenCalledWith('project-a', 'chat-1')
@@ -115,6 +122,7 @@ describe('registerProjectHandlers', () => {
     expect(handlerFor('projects:apply-op')({}, op)).toEqual({
       projects: [],
       workProfiles: [],
+      references: [],
       changed: true
     })
     expect(deps.applyProjectOp).toHaveBeenCalledWith(op)

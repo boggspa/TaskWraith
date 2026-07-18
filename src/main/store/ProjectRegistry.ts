@@ -3,11 +3,15 @@ import { createHash } from 'crypto'
 import {
   applyAddChatToProject,
   applyProjectOp,
+  applyProjectReferenceOp,
+  migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
   projectById,
   type Project,
   type ProjectOp,
+  type ProjectReference,
+  type ProjectReferenceOp,
   type ProjectWorkProfile
 } from '../../shared/projects'
 
@@ -75,6 +79,7 @@ export interface ProjectLegacyImportResult {
 export interface ProjectRegistryState {
   projects: Project[]
   workProfiles: ProjectWorkProfile[]
+  references: ProjectReference[]
 }
 
 export interface ProjectRegistryMutationResult extends ProjectRegistryState {
@@ -85,17 +90,22 @@ interface ProjectRegistryFileV1 {
   schemaVersion: 1
   projects: Project[]
   workProfiles: ProjectWorkProfile[]
+  references: ProjectReference[]
   legacyImport?: ProjectLegacyImportMarker
 }
 
 export interface ProjectRegistry {
   getProjects(): Project[]
   getWorkProfiles(): ProjectWorkProfile[]
+  getReferences(): ProjectReference[]
   /** Apply a wire op against authoritative state. Persists and notifies only
-   * when the op changed something (profile reconciliation counts). Validation
-   * errors propagate to the caller (the IPC handler surfaces them to the
-   * renderer). */
+   * when the op changed something (profile/reference reconciliation counts).
+   * Validation errors propagate to the caller (the IPC handler surfaces them
+   * to the renderer). */
   applyOp(op: ProjectOp): ProjectRegistryMutationResult
+  /** Apply a reference-library op. References are catalogue metadata ONLY —
+   * nothing here reads, fetches, or grants access to the referenced source. */
+  applyReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult
   /**
    * The home-chat claim transaction: sets `homeChatId` AND adds the chat to
    * the Project's membership in ONE envelope write, enforcing one-home-per-
@@ -192,25 +202,33 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
     // (readJson has already preserved a .corrupt backup of unparseable files).
     if (Array.isArray(raw)) {
       const projects = migrateProjects(raw, now())
-      return { schemaVersion: 1, projects, workProfiles: [] }
+      return { schemaVersion: 1, projects, workProfiles: [], references: [] }
     }
     if (!raw || typeof raw !== 'object') {
-      return { schemaVersion: 1, projects: [], workProfiles: [] }
+      return { schemaVersion: 1, projects: [], workProfiles: [], references: [] }
     }
     const envelope = raw as Partial<ProjectRegistryFileV1>
+    const timestamp = now()
     const projects = migrateProjects(
       Array.isArray(envelope.projects) ? envelope.projects : [],
-      now()
+      timestamp
     )
+    const validIds = new Set(projects.map((project) => project.id))
     const workProfiles = migrateProjectWorkProfiles(
       Array.isArray(envelope.workProfiles) ? envelope.workProfiles : [],
-      new Set(projects.map((project) => project.id)),
-      now()
+      validIds,
+      timestamp
+    )
+    const references = migrateProjectReferences(
+      Array.isArray(envelope.references) ? envelope.references : [],
+      validIds,
+      timestamp
     )
     return {
       schemaVersion: 1,
       projects,
       workProfiles,
+      references,
       ...(isImportMarker(envelope.legacyImport) ? { legacyImport: envelope.legacyImport } : {})
     }
   }
@@ -237,6 +255,10 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
       return readEnvelope().workProfiles
     },
 
+    getReferences(): ProjectReference[] {
+      return readEnvelope().references
+    },
+
     applyOp(op: ProjectOp): ProjectRegistryMutationResult {
       const envelope = readEnvelope()
       const { projects, changed: listChanged } = applyProjectOp(envelope.projects, op)
@@ -246,12 +268,46 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         op,
         now()
       )
-      const changed = listChanged || workProfiles !== envelope.workProfiles
-      if (changed) {
-        writeEnvelope({ ...envelope, projects, workProfiles })
-        notify({ projects, workProfiles })
+      // Deleting a project (or its descendants) takes its library entries
+      // with it — a reference without a project is meaningless.
+      let references = envelope.references
+      if (op.kind === 'delete') {
+        const surviving = new Set(projects.map((project) => project.id))
+        const kept = references.filter((reference) => surviving.has(reference.projectId))
+        if (kept.length !== references.length) references = kept
       }
-      return { projects, workProfiles, changed }
+      const changed =
+        listChanged ||
+        workProfiles !== envelope.workProfiles ||
+        references !== envelope.references
+      if (changed) {
+        writeEnvelope({ ...envelope, projects, workProfiles, references })
+        notify({ projects, workProfiles, references })
+      }
+      return { projects, workProfiles, references, changed }
+    },
+
+    applyReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult {
+      const envelope = readEnvelope()
+      const { references, changed } = applyProjectReferenceOp(
+        envelope.references,
+        envelope.projects,
+        op
+      )
+      if (changed) {
+        writeEnvelope({ ...envelope, references })
+        notify({
+          projects: envelope.projects,
+          workProfiles: envelope.workProfiles,
+          references
+        })
+      }
+      return {
+        projects: envelope.projects,
+        workProfiles: envelope.workProfiles,
+        references,
+        changed
+      }
     },
 
     setHomeChat(projectId: string, chatId: string | null): ProjectRegistryMutationResult {
@@ -267,11 +323,21 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
           nowMs
         )
         if (workProfiles === envelope.workProfiles) {
-          return { projects: envelope.projects, workProfiles, changed: false }
+          return {
+            projects: envelope.projects,
+            workProfiles,
+            references: envelope.references,
+            changed: false
+          }
         }
         writeEnvelope({ ...envelope, workProfiles })
-        notify({ projects: envelope.projects, workProfiles })
-        return { projects: envelope.projects, workProfiles, changed: true }
+        notify({ projects: envelope.projects, workProfiles, references: envelope.references })
+        return {
+          projects: envelope.projects,
+          workProfiles,
+          references: envelope.references,
+          changed: true
+        }
       }
 
       const trimmed = chatId.trim()
@@ -285,7 +351,12 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
       const alreadyClaimed =
         existing?.homeChatId === trimmed && project.memberChatIds.includes(trimmed)
       if (alreadyClaimed) {
-        return { projects: envelope.projects, workProfiles: envelope.workProfiles, changed: false }
+        return {
+          projects: envelope.projects,
+          workProfiles: envelope.workProfiles,
+          references: envelope.references,
+          changed: false
+        }
       }
 
       // Claim + membership are one transaction: the home chat must always be
@@ -305,8 +376,8 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         : [...envelope.workProfiles, nextProfile]
 
       writeEnvelope({ ...envelope, projects, workProfiles })
-      notify({ projects, workProfiles })
-      return { projects, workProfiles, changed: true }
+      notify({ projects, workProfiles, references: envelope.references })
+      return { projects, workProfiles, references: envelope.references, changed: true }
     },
 
     importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult {
@@ -362,7 +433,13 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         status
       }
       writeEnvelope({ ...envelope, projects: merged, legacyImport: marker })
-      if (added.length > 0) notify({ projects: merged, workProfiles: envelope.workProfiles })
+      if (added.length > 0) {
+        notify({
+          projects: merged,
+          workProfiles: envelope.workProfiles,
+          references: envelope.references
+        })
+      }
       return { status, importedCount: added.length, marker }
     },
 

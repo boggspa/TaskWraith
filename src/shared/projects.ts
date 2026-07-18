@@ -86,6 +86,37 @@ export type ProjectWorkProfile = {
   updatedAt: number
 }
 
+export type ProjectReferenceKind = 'file' | 'folder' | 'url'
+export type ProjectReferenceContextPolicy = 'available' | 'off'
+export type ProjectReferenceAvailability = 'ok' | 'missing'
+
+/**
+ * A Project's durable library entry: "this source matters to the Project."
+ *
+ * THE SAFETY BOUNDARY (non-negotiable, from the design brief): a reference
+ * is a CATALOGUE entry — it grants NO filesystem, network, or provider
+ * access, is never read, fetched, indexed, or injected into context, and
+ * never creates an external-path grant. Access remains per-chat/per-run
+ * through the existing grant machinery; explicit context attachment is a
+ * later phase with its own disclosure. `lastVerified` is the LAST-KNOWN
+ * availability from an explicit user-triggered probe (a single stat — never
+ * content), shown as-is at browse time; nothing verifies on open.
+ */
+export type ProjectReference = {
+  id: string
+  projectId: string
+  kind: ProjectReferenceKind
+  /** Absolute path (file/folder) or URL. Opaque to this module. */
+  locator: string
+  title: string
+  provenance: { addedBy: 'user'; addedAt: number }
+  /** 'available': listed for future explicit context selection. 'off':
+   * retained for the user but excluded from any agent-facing surface. */
+  contextPolicy: ProjectReferenceContextPolicy
+  lastVerified?: { at: number; status: ProjectReferenceAvailability }
+  updatedAt: number
+}
+
 /** Seed data a `create` op must carry so apply stays deterministic. */
 export type CreateProjectSeed = {
   id: string
@@ -101,6 +132,16 @@ export function newProjectId(): string {
       ? globalThis.crypto.randomUUID()
       : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
   return `${PROJECT_ID_PREFIX}${uuid}`
+}
+
+const PROJECT_REFERENCE_ID_PREFIX = 'ref-'
+
+export function newProjectReferenceId(): string {
+  const uuid =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  return `${PROJECT_REFERENCE_ID_PREFIX}${uuid}`
 }
 
 function normalizeHue(value: unknown): number {
@@ -842,6 +883,274 @@ export function applyProjectOp(
     default: {
       const exhausted: never = op
       throw new Error(`Unknown project op: ${String((exhausted as { kind?: string }).kind)}`)
+    }
+  }
+}
+
+function isProjectReferenceKind(value: unknown): value is ProjectReferenceKind {
+  return value === 'file' || value === 'folder' || value === 'url'
+}
+
+function isProjectReferenceContextPolicy(
+  value: unknown
+): value is ProjectReferenceContextPolicy {
+  return value === 'available' || value === 'off'
+}
+
+function isProjectReferenceAvailability(value: unknown): value is ProjectReferenceAvailability {
+  return value === 'ok' || value === 'missing'
+}
+
+export function cloneProjectReference(reference: ProjectReference): ProjectReference {
+  return {
+    ...reference,
+    provenance: { ...reference.provenance },
+    ...(reference.lastVerified ? { lastVerified: { ...reference.lastVerified } } : {})
+  }
+}
+
+/** Human title fallback: last path segment for files/folders, hostname for
+ * URLs, the raw locator when neither parses. */
+export function defaultProjectReferenceTitle(
+  kind: ProjectReferenceKind,
+  locator: string
+): string {
+  const trimmed = locator.trim()
+  if (kind === 'url') {
+    try {
+      const parsed = new URL(trimmed)
+      return parsed.hostname || trimmed
+    } catch {
+      return trimmed
+    }
+  }
+  const segments = trimmed.split(/[\\/]/).filter(Boolean)
+  return segments[segments.length - 1] || trimmed
+}
+
+/**
+ * Best-effort reference migration, same philosophy as the other record
+ * normalizers: reconstruct known fields, drop orphans (vanished project),
+ * duplicates, and anything untrustworthy.
+ */
+export function migrateProjectReferences(
+  candidates: unknown[],
+  validProjectIds: ReadonlySet<string>,
+  now: number
+): ProjectReference[] {
+  const seen = new Set<string>()
+  const references: ProjectReference[] = []
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue
+    const entry = candidate as Partial<ProjectReference>
+    if (typeof entry.id !== 'string' || !entry.id.trim()) continue
+    if (seen.has(entry.id)) continue
+    if (typeof entry.projectId !== 'string' || !validProjectIds.has(entry.projectId)) continue
+    if (!isProjectReferenceKind(entry.kind)) continue
+    if (typeof entry.locator !== 'string' || !entry.locator.trim()) continue
+    const locator = entry.locator.trim()
+    const provenanceAddedAt =
+      entry.provenance &&
+      typeof entry.provenance === 'object' &&
+      typeof entry.provenance.addedAt === 'number' &&
+      Number.isFinite(entry.provenance.addedAt)
+        ? entry.provenance.addedAt
+        : now
+    const lastVerified =
+      entry.lastVerified &&
+      typeof entry.lastVerified === 'object' &&
+      typeof entry.lastVerified.at === 'number' &&
+      Number.isFinite(entry.lastVerified.at) &&
+      isProjectReferenceAvailability(entry.lastVerified.status)
+        ? { at: entry.lastVerified.at, status: entry.lastVerified.status }
+        : undefined
+    seen.add(entry.id)
+    references.push({
+      id: entry.id,
+      projectId: entry.projectId,
+      kind: entry.kind,
+      locator,
+      title:
+        typeof entry.title === 'string' && entry.title.trim()
+          ? entry.title.trim()
+          : defaultProjectReferenceTitle(entry.kind, locator),
+      provenance: { addedBy: 'user', addedAt: provenanceAddedAt },
+      contextPolicy: isProjectReferenceContextPolicy(entry.contextPolicy)
+        ? entry.contextPolicy
+        : 'available',
+      ...(lastVerified ? { lastVerified } : {}),
+      updatedAt:
+        typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
+          ? entry.updatedAt
+          : now
+    })
+  }
+  return references
+}
+
+/**
+ * The wire format for reference-library mutations. Same contract as
+ * `ProjectOp`: initiator supplies id/now seeds, apply re-validates against
+ * the state it runs on, malformed field types are rejected by the parser
+ * before apply can TypeError. `referenceKind` (not `kind`) on the add op —
+ * `kind` is the op discriminant.
+ */
+export type ProjectReferenceOp =
+  | {
+      kind: 'add-reference'
+      id: string
+      projectId: string
+      referenceKind: ProjectReferenceKind
+      locator: string
+      title?: string
+      now: number
+    }
+  | {
+      kind: 'update-reference'
+      id: string
+      patch: { title?: string; contextPolicy?: ProjectReferenceContextPolicy }
+      now: number
+    }
+  | { kind: 'remove-reference'; id: string }
+  | {
+      kind: 'record-reference-verification'
+      id: string
+      status: ProjectReferenceAvailability
+      now: number
+    }
+
+export function parseProjectReferenceOp(value: unknown): ProjectReferenceOp | null {
+  if (!value || typeof value !== 'object') return null
+  const op = value as Record<string, unknown>
+  switch (op.kind) {
+    case 'add-reference': {
+      if (!isNonEmptyString(op.id) || !isNonEmptyString(op.projectId)) return null
+      if (!isProjectReferenceKind(op.referenceKind)) return null
+      if (typeof op.locator !== 'string' || !isFiniteNumber(op.now)) return null
+      if (op.title !== undefined && typeof op.title !== 'string') return null
+      return {
+        kind: 'add-reference',
+        id: op.id,
+        projectId: op.projectId,
+        referenceKind: op.referenceKind,
+        locator: op.locator,
+        title: op.title as string | undefined,
+        now: op.now
+      }
+    }
+    case 'update-reference': {
+      if (!isNonEmptyString(op.id) || !isFiniteNumber(op.now)) return null
+      const patch = op.patch
+      if (!patch || typeof patch !== 'object') return null
+      const candidate = patch as Record<string, unknown>
+      if (candidate.title !== undefined && typeof candidate.title !== 'string') return null
+      if (
+        candidate.contextPolicy !== undefined &&
+        !isProjectReferenceContextPolicy(candidate.contextPolicy)
+      ) {
+        return null
+      }
+      return {
+        kind: 'update-reference',
+        id: op.id,
+        patch: {
+          title: candidate.title as string | undefined,
+          contextPolicy: candidate.contextPolicy as ProjectReferenceContextPolicy | undefined
+        },
+        now: op.now
+      }
+    }
+    case 'remove-reference': {
+      if (!isNonEmptyString(op.id)) return null
+      return { kind: 'remove-reference', id: op.id }
+    }
+    case 'record-reference-verification': {
+      if (!isNonEmptyString(op.id) || !isFiniteNumber(op.now)) return null
+      if (!isProjectReferenceAvailability(op.status)) return null
+      return { kind: 'record-reference-verification', id: op.id, status: op.status, now: op.now }
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * Apply a reference op. `projects` is consulted for add-time referential
+ * integrity only — references never mutate the project list. Adds are
+ * idempotent per (projectId, kind, locator): re-adding an existing source
+ * returns the current record unchanged.
+ */
+export function applyProjectReferenceOp(
+  references: ProjectReference[],
+  projects: Project[],
+  op: ProjectReferenceOp
+): { references: ProjectReference[]; changed: boolean } {
+  switch (op.kind) {
+    case 'add-reference': {
+      if (!projectById(projects, op.projectId)) throw new Error('Project not found.')
+      const locator = op.locator.trim()
+      if (!locator) throw new Error('Reference locator is required.')
+      const existing = references.find(
+        (reference) =>
+          reference.projectId === op.projectId &&
+          reference.kind === op.referenceKind &&
+          reference.locator === locator
+      )
+      if (existing) return { references, changed: false }
+      const title = op.title?.trim() || defaultProjectReferenceTitle(op.referenceKind, locator)
+      const next: ProjectReference = {
+        id: op.id,
+        projectId: op.projectId,
+        kind: op.referenceKind,
+        locator,
+        title,
+        provenance: { addedBy: 'user', addedAt: op.now },
+        contextPolicy: 'available',
+        updatedAt: op.now
+      }
+      return { references: [...references, next], changed: true }
+    }
+    case 'update-reference': {
+      const current = references.find((reference) => reference.id === op.id)
+      if (!current) throw new Error('Reference not found.')
+      const title = op.patch.title?.trim()
+      const next: ProjectReference = {
+        ...current,
+        ...(title ? { title } : {}),
+        ...(op.patch.contextPolicy ? { contextPolicy: op.patch.contextPolicy } : {}),
+        updatedAt: op.now
+      }
+      if (next.title === current.title && next.contextPolicy === current.contextPolicy) {
+        return { references, changed: false }
+      }
+      return {
+        references: references.map((reference) => (reference.id === op.id ? next : reference)),
+        changed: true
+      }
+    }
+    case 'remove-reference': {
+      const next = references.filter((reference) => reference.id !== op.id)
+      if (next.length === references.length) throw new Error('Reference not found.')
+      return { references: next, changed: true }
+    }
+    case 'record-reference-verification': {
+      const current = references.find((reference) => reference.id === op.id)
+      if (!current) throw new Error('Reference not found.')
+      const next: ProjectReference = {
+        ...current,
+        lastVerified: { at: op.now, status: op.status },
+        updatedAt: op.now
+      }
+      return {
+        references: references.map((reference) => (reference.id === op.id ? next : reference)),
+        changed: true
+      }
+    }
+    default: {
+      const exhausted: never = op
+      throw new Error(
+        `Unknown project reference op: ${String((exhausted as { kind?: string }).kind)}`
+      )
     }
   }
 }

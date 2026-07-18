@@ -6,16 +6,22 @@ import {
   applyDeleteProject,
   applyMoveProject,
   applyProjectOp,
+  applyProjectReferenceOp,
   applyRemoveChatFromAllProjects,
   applyRenameProject,
   applyReorderProject,
   applySetProjectIconAndHue,
+  defaultProjectReferenceTitle,
+  migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
   parseProjectOp,
+  parseProjectReferenceOp,
   sortProjectsForDisplay,
   type Project,
-  type ProjectOp
+  type ProjectOp,
+  type ProjectReference,
+  type ProjectReferenceOp
 } from './projects'
 
 const seed = (id: string, now = 1000, defaultHue = 120) => ({ id, now, defaultHue })
@@ -263,6 +269,129 @@ describe('migrateProjectWorkProfiles', () => {
       { projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 1 },
       { projectId: 'project-b', brief: 'keeps brief', updatedAt: 3 }
     ])
+  })
+})
+
+describe('project references', () => {
+  const projects = buildThreeRoots()
+  const addOp = (overrides: Partial<ProjectReferenceOp & { kind: 'add-reference' }> = {}): ProjectReferenceOp => ({
+    kind: 'add-reference',
+    id: 'ref-1',
+    projectId: 'project-a',
+    referenceKind: 'file',
+    locator: '/repo/docs/spec.md',
+    now: 100,
+    ...overrides
+  })
+
+  it('derives titles from path segments and URL hostnames', () => {
+    expect(defaultProjectReferenceTitle('file', '/repo/docs/spec.md')).toBe('spec.md')
+    expect(defaultProjectReferenceTitle('folder', '/repo/docs/')).toBe('docs')
+    expect(defaultProjectReferenceTitle('url', 'https://docs.example.com/page')).toBe(
+      'docs.example.com'
+    )
+    expect(defaultProjectReferenceTitle('url', 'not a url')).toBe('not a url')
+  })
+
+  it('adds with defaults, is idempotent per (project, kind, locator), and validates', () => {
+    const { references, changed } = applyProjectReferenceOp([], projects, addOp())
+    expect(changed).toBe(true)
+    expect(references[0]).toMatchObject({
+      id: 'ref-1',
+      kind: 'file',
+      title: 'spec.md',
+      contextPolicy: 'available',
+      provenance: { addedBy: 'user', addedAt: 100 }
+    })
+
+    const again = applyProjectReferenceOp(references, projects, addOp({ id: 'ref-2' }))
+    expect(again.changed).toBe(false)
+    expect(again.references).toBe(references)
+
+    expect(() =>
+      applyProjectReferenceOp([], projects, addOp({ projectId: 'missing' }))
+    ).toThrow('Project not found.')
+    expect(() => applyProjectReferenceOp([], projects, addOp({ locator: '   ' }))).toThrow(
+      'Reference locator is required.'
+    )
+  })
+
+  it('updates title/contextPolicy, removes, and records verification', () => {
+    let references = applyProjectReferenceOp([], projects, addOp()).references
+    references = applyProjectReferenceOp(references, projects, {
+      kind: 'update-reference',
+      id: 'ref-1',
+      patch: { title: 'The Spec', contextPolicy: 'off' },
+      now: 200
+    }).references
+    expect(references[0]).toMatchObject({ title: 'The Spec', contextPolicy: 'off', updatedAt: 200 })
+
+    const noop = applyProjectReferenceOp(references, projects, {
+      kind: 'update-reference',
+      id: 'ref-1',
+      patch: { title: 'The Spec' },
+      now: 300
+    })
+    expect(noop.changed).toBe(false)
+
+    references = applyProjectReferenceOp(references, projects, {
+      kind: 'record-reference-verification',
+      id: 'ref-1',
+      status: 'missing',
+      now: 400
+    }).references
+    expect(references[0].lastVerified).toEqual({ at: 400, status: 'missing' })
+
+    const removed = applyProjectReferenceOp(references, projects, {
+      kind: 'remove-reference',
+      id: 'ref-1'
+    })
+    expect(removed.references).toEqual([])
+    expect(() =>
+      applyProjectReferenceOp(removed.references, projects, { kind: 'remove-reference', id: 'ref-1' })
+    ).toThrow('Reference not found.')
+  })
+
+  it('round-trips ops through the parser and rejects malformed payloads', () => {
+    const ops: ProjectReferenceOp[] = [
+      addOp(),
+      { kind: 'update-reference', id: 'ref-1', patch: { contextPolicy: 'off' }, now: 1 },
+      { kind: 'remove-reference', id: 'ref-1' },
+      { kind: 'record-reference-verification', id: 'ref-1', status: 'ok', now: 1 }
+    ]
+    for (const op of ops) {
+      expect(parseProjectReferenceOp(JSON.parse(JSON.stringify(op)))).toEqual(op)
+    }
+    expect(parseProjectReferenceOp({ kind: 'add-reference', id: 'x' })).toBeNull()
+    expect(
+      parseProjectReferenceOp({ ...addOp(), referenceKind: 'connector' })
+    ).toBeNull()
+    expect(
+      parseProjectReferenceOp({ kind: 'update-reference', id: 'x', patch: { contextPolicy: 'pinned' }, now: 1 })
+    ).toBeNull()
+    expect(
+      parseProjectReferenceOp({ kind: 'record-reference-verification', id: 'x', status: 'gone', now: 1 })
+    ).toBeNull()
+  })
+
+  it('migrates references with referential integrity and dedupe', () => {
+    const migrated = migrateProjectReferences(
+      [
+        { id: 'ref-1', projectId: 'project-a', kind: 'file', locator: '/a.md' },
+        { id: 'ref-1', projectId: 'project-a', kind: 'file', locator: '/dup.md' },
+        { id: 'ref-2', projectId: 'project-gone', kind: 'file', locator: '/b.md' },
+        { id: 'ref-3', projectId: 'project-a', kind: 'connector', locator: '/c.md' },
+        { id: 'ref-4', projectId: 'project-a', kind: 'url', locator: 'https://x.dev', contextPolicy: 'off', lastVerified: { at: 5, status: 'ok' } }
+      ] as unknown[],
+      new Set(['project-a']),
+      900
+    )
+    expect(migrated.map((reference) => reference.id)).toEqual(['ref-1', 'ref-4'])
+    expect(migrated[0]).toMatchObject({ title: 'a.md', contextPolicy: 'available', updatedAt: 900 })
+    expect(migrated[1]).toMatchObject({
+      contextPolicy: 'off',
+      lastVerified: { at: 5, status: 'ok' }
+    })
   })
 })
 

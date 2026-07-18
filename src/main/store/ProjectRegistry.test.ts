@@ -293,6 +293,52 @@ describe('ProjectRegistry home-chat claims', () => {
     expect(afterEverywhere.workProfiles).toEqual([])
   })
 
+  it('stores references, drops them with their project, and round-trips instances', () => {
+    const harness = harnessWithProjects()
+    const added = harness.registry.applyReferenceOp({
+      kind: 'add-reference',
+      id: 'ref-1',
+      projectId: 'project-a',
+      referenceKind: 'url',
+      locator: 'https://docs.example.com/spec',
+      now: 50
+    })
+    expect(added.changed).toBe(true)
+    expect(added.references[0]).toMatchObject({ title: 'docs.example.com' })
+    expect(harness.changes.at(-1)?.references).toHaveLength(1)
+
+    const verified = harness.registry.applyReferenceOp({
+      kind: 'record-reference-verification',
+      id: 'ref-1',
+      status: 'ok',
+      now: 60
+    })
+    expect(verified.references[0].lastVerified).toEqual({ at: 60, status: 'ok' })
+    expect(harness.registry.getReferences()).toHaveLength(1)
+
+    const afterDelete = harness.registry.applyOp({ kind: 'delete', projectId: 'project-a' })
+    expect(afterDelete.references).toEqual([])
+    expect(afterDelete.changed).toBe(true)
+  })
+
+  it('rejects reference ops against unknown projects or ids without corrupting state', () => {
+    const harness = harnessWithProjects()
+    expect(() =>
+      harness.registry.applyReferenceOp({
+        kind: 'add-reference',
+        id: 'ref-x',
+        projectId: 'missing',
+        referenceKind: 'file',
+        locator: '/a.md',
+        now: 1
+      })
+    ).toThrow('Project not found.')
+    expect(() =>
+      harness.registry.applyReferenceOp({ kind: 'remove-reference', id: 'ref-x' })
+    ).toThrow('Reference not found.')
+    expect(harness.registry.getReferences()).toEqual([])
+  })
+
   it('persists claims across registry instances and heals duplicate claims on read', () => {
     const harness = harnessWithProjects()
     harness.registry.setHomeChat('project-a', 'chat-home')
