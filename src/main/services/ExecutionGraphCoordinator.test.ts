@@ -7,6 +7,7 @@ import { recoverRunQueueJobsAfterStartup } from '../RunRecovery'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import { ExecutionGraphRepository } from '../executionGraph/ExecutionGraphRepository'
 import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionGraphModel'
+import { buildExecutionGraphAttemptTerminalReceipt } from '../executionGraph/ExecutionGraphAttemptResult'
 import {
   ExecutionGraphCoordinator,
   type AppendExecutionStackStepInput,
@@ -191,6 +192,7 @@ function harness(
     input: (overrides = {}) => {
       const clientRequestId = overrides.clientRequestId ?? `client-request-${++clientRequest}`
       return {
+        clientSubmissionDigest: 'c'.repeat(64),
         workspaceId: 'workspace-one',
         rootChatId: 'chat-one',
         stepTitle: 'Inspect the change',
@@ -275,6 +277,35 @@ function markQueueStarting(h: Harness, runId: string): void {
   h.jobs.set(runId, { ...job, status: 'starting' })
 }
 
+function terminalReceipt(
+  h: Harness,
+  runId: string,
+  status: 'completed' | 'failed' | 'cancelled'
+) {
+  const job = h.jobs.get(runId)
+  const binding = job?.executionGraph
+  if (!job || !binding || !job.workspaceId || !job.chatId) {
+    throw new Error('Fixture has no exact graph queue binding.')
+  }
+  return buildExecutionGraphAttemptTerminalReceipt({
+    binding: {
+      schemaVersion: 1,
+      executionId: binding.executionId,
+      activationId: binding.activationId,
+      attemptId: binding.attemptId,
+      providerRunRef: runId,
+      workspaceId: job.workspaceId,
+      rootChatId: job.chatId,
+      provider: job.provider
+    },
+    status,
+    committedAt: '2026-07-18T11:00:02.000Z',
+    content: status === 'completed' ? `Result from ${runId}` : '',
+    evidenceRefs: [`assistant-${runId}`],
+    ...(status === 'failed' ? { error: 'Provider run failed.' } : {})
+  })
+}
+
 describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
   it('returns the committed projection when the same client mutation is retried', () => {
     const h = harness()
@@ -304,9 +335,55 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(append).toMatchObject({
       clientRequestReceipt: {
         clientRequestId: 'renderer-run-retry-one',
-        clientRequestDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+        clientRequestDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
+        clientSubmissionDigest: 'c'.repeat(64)
       }
     })
+  })
+
+  it('preflights a committed submission without requiring its original live anchor', () => {
+    const h = harness()
+    const clientSubmissionDigest = 'd'.repeat(64)
+    const first = h.coordinator.appendStackStep(
+      h.input({
+        clientRequestId: 'renderer-run-preflight-one',
+        clientSubmissionDigest,
+        anchorRunRef: 'anchor-run'
+      })
+    )
+
+    expect(
+      h.coordinator.resolveStackAppendReceipt({
+        clientRequestId: 'renderer-run-preflight-one',
+        clientSubmissionDigest,
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one'
+      })
+    ).toMatchObject({ executionId: first.executionId, anchorRunRef: 'anchor-run' })
+    expect(() =>
+      h.coordinator.resolveStackAppendReceipt({
+        clientRequestId: 'renderer-run-preflight-one',
+        clientSubmissionDigest: 'e'.repeat(64),
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one'
+      })
+    ).toThrow(/different submitted payload/i)
+    expect(() =>
+      h.coordinator.resolveStackAppendReceipt({
+        clientRequestId: 'renderer-run-preflight-one',
+        clientSubmissionDigest,
+        workspaceId: 'workspace-two',
+        rootChatId: 'chat-one'
+      })
+    ).toThrow(/different execution target/i)
+    expect(
+      h.coordinator.resolveStackAppendReceipt({
+        clientRequestId: 'renderer-run-preflight-missing',
+        clientSubmissionDigest,
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one'
+      })
+    ).toBeUndefined()
   })
 
   it('rejects client request id reuse with a different semantic payload', () => {
@@ -322,6 +399,38 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     ).toThrow(/already used with a different payload or target/i)
     expect(h.coordinator.getExecution(first.executionId)?.topology.steps).toHaveLength(1)
+  })
+
+  it('rejects direct retry when the renderer submission digest changes', () => {
+    const h = harness()
+    const command = h.input({ clientRequestId: 'renderer-run-digest-reused' })
+    const first = h.coordinator.appendStackStep(command)
+
+    expect(() =>
+      h.coordinator.appendStackStep({
+        ...command,
+        executionId: first.executionId,
+        clientSubmissionDigest: 'f'.repeat(64)
+      })
+    ).toThrow(/different submitted payload/i)
+    expect(h.coordinator.getExecution(first.executionId)?.topology.steps).toHaveLength(1)
+  })
+
+  it('attention-gates an exact provider attempt on an unsupported continuation path', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    const gated = h.coordinator.requireActionForProviderRun(
+      runId,
+      'Host-process reruns are not replay-safe for Stack attempts.'
+    )
+
+    expect(gated).toMatchObject({ state: 'requires_action' })
+    expect(Object.values(gated?.attempts ?? {})[0]).toMatchObject({ state: 'interrupted' })
+    expect(Object.values(gated?.activations ?? {})[0]).toMatchObject({
+      state: 'requires_action'
+    })
   })
 
   it('does not deduplicate intentionally identical prompts with distinct request ids', () => {
@@ -350,14 +459,43 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const started = h.coordinator.appendStackStep(command)
     const runId = providerRunId(started)
     markQueueStarting(h, runId)
-    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+    h.coordinator.onRunSessionChange(
+      terminalEvent(runId, 'completed'),
+      terminalReceipt(h, runId, 'completed')
+    )
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+
+    expect(
+      h.coordinator.resolveStackAppendReceipt({
+        clientRequestId: command.clientRequestId,
+        clientSubmissionDigest: command.clientSubmissionDigest,
+        workspaceId: command.workspaceId,
+        rootChatId: command.rootChatId
+      })
+    ).toMatchObject({ executionId: started.executionId, state: 'succeeded' })
 
     const retried = h.coordinator.appendStackStep(command)
 
     expect(retried.executionId).toBe(started.executionId)
     expect(retried.state).toBe('succeeded')
     expect(retried.topology.steps).toHaveLength(1)
+  })
+
+  it('reconciles a terminal graph attempt before a stale queue lease can block successors', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    markQueueStarting(h, runId)
+    h.coordinator.onRunSessionChange(
+      terminalEvent(runId, 'completed'),
+      terminalReceipt(h, runId, 'completed')
+    )
+    expect(h.jobs.get(runId)?.status).toBe('starting')
+
+    h.coordinator.recover()
+
+    expect(h.jobs.get(runId)?.status).toBe('completed')
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
   })
 
   it('rejects a received request id when its retry points at another target', () => {
@@ -403,7 +541,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     markQueueStarting(h, firstRunId)
     h.coordinator.onRunSessionChange(runningEvent(firstRunId))
     expect(h.jobs.size).toBe(1)
-    h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'completed'))
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'completed'),
+      terminalReceipt(h, firstRunId, 'completed')
+    )
 
     const advanced = h.coordinator.getExecution(first.executionId)!
     const states = Object.values(advanced.activations).map((activation) => activation.state)
@@ -415,8 +556,38 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )?.providerRunRef
     if (!secondRunId) throw new Error('Second attempt did not materialize.')
     markQueueStarting(h, secondRunId)
-    h.coordinator.onRunSessionChange(terminalEvent(secondRunId, 'completed'))
+    h.coordinator.onRunSessionChange(
+      terminalEvent(secondRunId, 'completed'),
+      terminalReceipt(h, secondRunId, 'completed')
+    )
     expect(h.coordinator.getExecution(first.executionId)?.state).toBe('succeeded')
+  })
+
+  it('attention-gates terminal evidence until the exact structured result is committed', () => {
+    const h = harness()
+    const first = h.coordinator.appendStackStep(h.input())
+    const firstRunId = providerRunId(first)
+    h.coordinator.appendStackStep(
+      h.input({
+        executionId: first.executionId,
+        stepTitle: 'Must wait for result commit',
+        objective: 'Do not launch from provider status alone.'
+      })
+    )
+    markQueueStarting(h, firstRunId)
+
+    expect(
+      h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'completed'))
+    ).toBe('accepted')
+
+    const gated = h.coordinator.getExecution(first.executionId)!
+    expect(gated.state).toBe('requires_action')
+    expect(Object.values(gated.activations).map((activation) => activation.state)).toEqual([
+      'requires_action',
+      'dormant'
+    ])
+    expect(h.jobs.size).toBe(1)
+    expect(Object.values(gated.attempts)[0].error).toMatch(/durable result barrier/i)
   })
 
   it('asserts exact graph authority at the queue dispatch boundary', () => {
@@ -532,7 +703,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )
 
     markQueueStarting(h, firstRunId)
-    h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'failed'))
+    h.coordinator.onRunSessionChange(
+      terminalEvent(firstRunId, 'failed'),
+      terminalReceipt(h, firstRunId, 'failed')
+    )
     const failed = h.coordinator.getExecution(first.executionId)!
     expect(failed.state).toBe('failed')
     expect(Object.values(failed.activations).map((activation) => activation.state)).toEqual([
@@ -995,7 +1169,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     h.coordinator.onRunSessionChange(runningEvent(runId))
     h.transitions.mockClear()
     h.cancelActiveRun.mockImplementation((cancelledRunId: string) => {
-      h.coordinator.onRunSessionChange(terminalEvent(cancelledRunId, 'cancelled'))
+      h.coordinator.onRunSessionChange(
+        terminalEvent(cancelledRunId, 'cancelled'),
+        terminalReceipt(h, cancelledRunId, 'cancelled')
+      )
     })
 
     await expect(h.coordinator.cancelExecution(started.executionId)).resolves.toBeUndefined()
@@ -1111,7 +1288,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     )
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
     h.cancelActiveRun.mockImplementationOnce((cancelledRunId: string) => {
-      h.coordinator.onRunSessionChange(terminalEvent(cancelledRunId, 'completed'))
+      h.coordinator.onRunSessionChange(
+        terminalEvent(cancelledRunId, 'completed'),
+        terminalReceipt(h, cancelledRunId, 'completed')
+      )
       return true
     })
 
@@ -1126,12 +1306,15 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.jobs.size).toBe(1)
   })
 
-  it('contains a stale queued row when its graph execution is already terminal', () => {
+  it('reconciles a stale queued row from its terminal graph attempt', () => {
     const h = harness()
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
     markQueueStarting(h, runId)
-    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+    h.coordinator.onRunSessionChange(
+      terminalEvent(runId, 'completed'),
+      terminalReceipt(h, runId, 'completed')
+    )
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'queued' })
     expect(h.jobs.get(runId)?.status).toBe('queued')
@@ -1139,11 +1322,11 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
 
     h.coordinator.recover()
 
-    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+    expect(h.jobs.get(runId)?.status).toBe('completed')
     expect(h.transitions).toHaveBeenCalledWith(
       runId,
-      'cancelled',
-      expect.objectContaining({ statusReason: expect.stringMatching(/terminal execution/i) })
+      'completed',
+      expect.objectContaining({ statusReason: expect.stringMatching(/authoritative execution/i) })
     )
   })
 

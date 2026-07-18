@@ -96,7 +96,7 @@ function appendStackStep(handler: RegisteredHandler): unknown {
       rootChatId: 'chat-one',
       provider: 'codex',
       stepTitle: 'Inspect the change',
-      objective: 'Inspect this change carefully.',
+      objective: 'Inspect this change.',
       request: { prompt: 'Inspect this change.' }
     }
   )
@@ -106,6 +106,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
   const current = projection()
   return {
     assertMainRendererSender: vi.fn(),
+    assertLocalChatHistoryDurable: vi.fn(),
     resolveStackTarget: vi.fn(() => ({
       workspaceId: 'workspace-one',
       workspacePath: '/workspace',
@@ -172,6 +173,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
     coordinator: {
       listExecutions: vi.fn(() => [current]),
       getExecution: vi.fn((id) => (id === current.executionId ? current : undefined)),
+      resolveStackAppendReceipt: vi.fn(() => undefined),
       appendStackStep: vi.fn(() => current),
       cancelExecution: vi.fn(async () => {}),
       cancelDormantStep: vi.fn(async () => current)
@@ -231,7 +233,7 @@ describe('registerExecutionGraphHandlers', () => {
         anchorRunRef: 'anchor-one',
         provider: 'codex',
         stepTitle: 'Inspect the change',
-        objective: 'Inspect this change carefully.',
+        objective: 'Inspect this change.',
         request: {
           prompt: 'Untrusted renderer snapshot'
         }
@@ -277,6 +279,7 @@ describe('registerExecutionGraphHandlers', () => {
     expect(deps.coordinator.appendStackStep).toHaveBeenCalledWith(
       expect.objectContaining({
         clientRequestId: 'renderer-run-one',
+        clientSubmissionDigest: expect.stringMatching(/^[a-f0-9]{64}$/),
         workspaceId: 'workspace-one',
         rootChatId: 'chat-one',
         anchorRunRef: 'anchor-one',
@@ -298,6 +301,119 @@ describe('registerExecutionGraphHandlers', () => {
     expect(appendInput?.permissionCeilingRef.authorityDigest).not.toBe(
       executionGraphRunTemplateAuthorityDigest(savedContent!)
     )
+    expect(appendInput?.objective).toBe(
+      (savedContent?.request as { prompt?: unknown } | undefined)?.prompt
+    )
+  })
+
+  it('rejects an objective that diverges from the canonical prepared prompt', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() => preparedJob({ prompt: 'Canonical frozen provider prompt.' }))
+    registerExecutionGraphHandlers(deps)
+
+    expect(() => appendStackStep(handlerFor('execution-runs:append-stack-step'))).toThrow(
+      /objective must match its canonical prepared prompt/i
+    )
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('stores the trimmed prepared prompt as the exact durable objective', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() => preparedJob({ prompt: '  Inspect this change.\n' }))
+    registerExecutionGraphHandlers(deps)
+
+    appendStackStep(handlerFor('execution-runs:append-stack-step'))
+
+    const savedContent = vi.mocked(deps.repository.saveRunTemplate).mock.calls[0]?.[0]
+    const appendInput = vi.mocked(deps.coordinator.appendStackStep).mock.calls[0]?.[0]
+    expect((savedContent?.request as { prompt?: unknown } | undefined)?.prompt).toBe(
+      'Inspect this change.'
+    )
+    expect(appendInput?.objective).toBe('Inspect this change.')
+  })
+
+  it('returns an exact committed receipt before resolving a stale live target', () => {
+    const deps = createDeps()
+    const committed = projection({
+      executionId: 'stack-committed',
+      anchorRunRef: 'anchor-one'
+    })
+    deps.coordinator.resolveStackAppendReceipt = vi.fn(() => committed)
+    deps.resolveStackTarget = vi.fn(() => {
+      throw new Error('stale anchor must not be consulted')
+    })
+    deps.resolveAuthorizedAttachmentPaths = vi.fn(() => {
+      throw new Error('attachment authority must not be consulted')
+    })
+    deps.resolvePermissionPosture = vi.fn(() => {
+      throw new Error('current permission policy must not be consulted')
+    })
+    deps.assertLocalChatHistoryDurable = vi.fn(() => {
+      throw new Error('current history setting must not be consulted')
+    })
+    registerExecutionGraphHandlers(deps)
+
+    const result = handlerFor('execution-runs:append-stack-step')(
+      {},
+      {
+        clientRequestId: 'renderer-run-retry',
+        // These volatile routing hints may legitimately change after a lost
+        // reply; the durable receipt still owns the original target.
+        executionId: 'stack-now-preferred',
+        anchorRunRef: 'anchor-now-active',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        provider: 'codex',
+        stepTitle: 'Inspect the change',
+        objective: 'Inspect this change carefully.',
+        request: { prompt: 'Inspect this change.' }
+      }
+    )
+
+    expect(result).toBe(committed)
+    expect(deps.coordinator.resolveStackAppendReceipt).toHaveBeenCalledWith({
+      clientRequestId: 'renderer-run-retry',
+      workspaceId: 'workspace-one',
+      rootChatId: 'chat-one',
+      clientSubmissionDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+    })
+    expect(deps.resolveStackTarget).not.toHaveBeenCalled()
+    expect(deps.assertLocalChatHistoryDurable).not.toHaveBeenCalled()
+    expect(deps.resolveAuthorizedAttachmentPaths).not.toHaveBeenCalled()
+    expect(deps.prepareQueueJob).not.toHaveBeenCalled()
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('checks a committed receipt before failing a new append without durable history', () => {
+    const deps = createDeps()
+    const calls: string[] = []
+    deps.coordinator.resolveStackAppendReceipt = vi.fn(() => {
+      calls.push('receipt')
+      return undefined
+    })
+    deps.assertLocalChatHistoryDurable = vi.fn(() => {
+      calls.push('durability')
+      throw new Error('Local chat history is disabled.')
+    })
+    deps.resolveStackTarget = vi.fn(() => {
+      calls.push('target')
+      throw new Error('target must not be resolved')
+    })
+    registerExecutionGraphHandlers(deps)
+
+    expect(() => appendStackStep(handlerFor('execution-runs:append-stack-step'))).toThrow(
+      /Local chat history is disabled/i
+    )
+    expect(calls).toEqual(['receipt', 'durability'])
+    expect(deps.resolveStackTarget).not.toHaveBeenCalled()
+    expect(deps.resolveAuthorizedAttachmentPaths).not.toHaveBeenCalled()
+    expect(deps.prepareQueueJob).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })
 
   it('rejects malformed commands before persisting a template', () => {
@@ -465,6 +581,17 @@ describe('registerExecutionGraphHandlers', () => {
         }
       },
       error: /Discord context/i
+    },
+    {
+      name: 'mutable project-reference context',
+      request: {
+        projectReferenceContextSelection: {
+          schemaVersion: 1 as const,
+          projectId: 'project-one',
+          referenceIds: ['reference-one']
+        }
+      },
+      error: /mutable project-reference context/i
     },
     {
       name: 'Codex native review',

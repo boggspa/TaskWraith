@@ -22,9 +22,16 @@ import {
 } from '../executionGraph/ExecutionGraphRun'
 import type {
   AppendExecutionEventOptions,
+  ExecutionCreatedEventInput,
   ExecutionGraphRepository,
   ExecutionGraphRunTemplate
 } from '../executionGraph/ExecutionGraphRepository'
+import {
+  resolveExecutionGraphTerminalBarrier,
+  type ExecutionGraphAttemptResultBinding,
+  type ExecutionGraphAttemptTerminalReceipt,
+  type ExecutionGraphTerminalBarrierResolution
+} from '../executionGraph/ExecutionGraphAttemptResult'
 
 export interface ExecutionGraphChangedNotice {
   readonly schemaVersion: 1
@@ -43,6 +50,8 @@ export interface ExecutionGraphChangedNotice {
 export interface AppendExecutionStackStepInput {
   /** Canonical renderer nonce used only for durable mutation idempotency. */
   readonly clientRequestId: string
+  /** Main-computed digest of the canonical renderer submission. */
+  readonly clientSubmissionDigest: string
   readonly executionId?: string
   readonly workspaceId: string
   readonly rootChatId: string
@@ -56,6 +65,13 @@ export interface AppendExecutionStackStepInput {
   readonly effect: ExecutionEffect
   readonly runTemplateRef: string
   readonly permissionCeilingRef: ExecutionPermissionCeilingRef
+}
+
+export interface ResolveExecutionStackAppendReceiptInput {
+  readonly clientRequestId: string
+  readonly clientSubmissionDigest: string
+  readonly workspaceId: string
+  readonly rootChatId: string
 }
 
 export interface MaterializeExecutionQueueJobInput {
@@ -116,6 +132,8 @@ export interface ExecutionGraphCoordinatorDeps {
    * authoritative confirmation.
    */
   cancelActiveRun: (runId: string) => Promise<boolean> | boolean
+  /** Notify the main-owned dispatcher after a queued attempt is durable. */
+  onAttemptQueued?: (runId: string) => void
   onChanged?: (notice: ExecutionGraphChangedNotice) => void
   now?: () => string
   createId?: () => string
@@ -123,6 +141,19 @@ export interface ExecutionGraphCoordinatorDeps {
 
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
 const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+
+type StackAppendAuthorityContext = Pick<
+  ExecutionRunProjection,
+  | 'executionId'
+  | 'workspaceId'
+  | 'rootChatId'
+  | 'tenant'
+  | 'state'
+  | 'topology'
+  | 'permissionCeilingRef'
+  | 'anchorRunRef'
+>
 
 /**
  * RunQueue's generic startup recovery cannot know whether a provider crossed
@@ -178,7 +209,7 @@ function canonicalClientRequestId(value: string): string {
 }
 
 function appendClientRequestDigest(
-  projection: ExecutionRunProjection,
+  projection: StackAppendAuthorityContext,
   input: AppendExecutionStackStepInput
 ): string {
   const normalizedModel = input.model?.trim()
@@ -235,16 +266,6 @@ function terminalSession(status: RunSessionStatus): status is 'completed' | 'fai
   return status === 'completed' || status === 'failed' || status === 'cancelled'
 }
 
-function executionResult(runId: string, rootChatId: string | undefined): ExecutionStepResult {
-  return {
-    schemaVersion: 1,
-    artifactRefs: [],
-    trust: 'untrusted_agent_output',
-    providerRunRef: runId,
-    ...(rootChatId ? { threadRef: rootChatId } : {})
-  }
-}
-
 /**
  * Main-owned V1 scheduler for implicit linear Stacks.
  *
@@ -261,7 +282,15 @@ export class ExecutionGraphCoordinator {
   private readonly cancellationContexts = new Map<
     string,
     {
-      readonly terminalOutcomes: Map<string, 'completed' | 'failed' | 'cancelled'>
+      readonly terminalOutcomes: Map<
+        string,
+        {
+          readonly ok: true
+          readonly status: 'completed' | 'failed' | 'cancelled'
+          readonly result?: ExecutionStepResult
+          readonly error?: string
+        }
+      >
       readonly invalidRunIds: Set<string>
     }
   >()
@@ -397,11 +426,54 @@ export class ExecutionGraphCoordinator {
     return this.requireExecution(binding.executionId)
   }
 
+  /**
+   * Attention-gate the exact graph attempt when an unsupported continuation
+   * path (for example a host-process rerun) is encountered before the provider
+   * can produce an authoritative terminal result.
+   */
+  requireActionForProviderRun(
+    runId: string,
+    reason: string
+  ): ExecutionRunProjection | undefined {
+    const claims = this.listExecutions({ includeTerminal: false }).flatMap((projection) =>
+      Object.values(projection.attempts)
+        .filter(
+          (attempt) =>
+            attempt.providerRunRef === runId && !isStepAttemptTerminal(attempt.state)
+        )
+        .map((attempt) => ({ projection, attempt }))
+    )
+    if (claims.length > 1) {
+      throw new Error(`Provider run "${runId}" is claimed by multiple execution attempts.`)
+    }
+    const claim = claims[0]
+    if (!claim) return undefined
+    const job = this.deps.getQueueJob(runId)
+    if (!job || !this.queueJobOwnsAttempt(claim.projection, claim.attempt, job)) {
+      throw new Error(`Provider run "${runId}" lacks its exact graph queue authority.`)
+    }
+    const detail = reason.trim()
+    if (!detail) throw new Error('Execution graph attention requires a reason.')
+    this.requireAction(claim.projection, claim.attempt, detail)
+    return this.requireExecution(claim.projection.executionId)
+  }
+
   appendStackStep(input: AppendExecutionStackStepInput): ExecutionRunProjection {
     const clientRequestId = canonicalClientRequestId(input.clientRequestId)
+    if (!SHA256_PATTERN.test(input.clientSubmissionDigest)) {
+      throw new Error('Stack append submission digest is invalid.')
+    }
     const existingReceipt = this.findClientRequestReceipt(clientRequestId)
     if (existingReceipt) {
       const projection = this.requireExecution(existingReceipt.event.executionId)
+      if (
+        existingReceipt.event.clientRequestReceipt?.clientSubmissionDigest !==
+        input.clientSubmissionDigest
+      ) {
+        throw new Error(
+          `Stack append client request id "${clientRequestId}" was already used with a different submitted payload.`
+        )
+      }
       if (input.executionId && input.executionId !== projection.executionId) {
         throw new Error(
           `Stack append client request id "${clientRequestId}" was already used for a different execution.`
@@ -420,11 +492,22 @@ export class ExecutionGraphCoordinator {
     let projection = input.executionId
       ? this.requireExecution(input.executionId)
       : this.findOpenStack(input.workspaceId, input.rootChatId)
-
+    let creationInput: ExecutionCreatedEventInput | undefined
+    const appendContext: StackAppendAuthorityContext = projection
+      ? projection
+      : {
+          executionId: this.id('stack'),
+          workspaceId: input.workspaceId,
+          rootChatId: input.rootChatId,
+          tenant: { kind: 'stack', tenantId: input.rootChatId },
+          state: 'pending',
+          topology: { steps: [], edges: [] },
+          permissionCeilingRef: input.permissionCeilingRef,
+          ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {})
+        }
     if (!projection) {
-      const executionId = this.id('stack')
-      projection = this.repository.createExecution({
-        executionId,
+      creationInput = {
+        executionId: appendContext.executionId,
         kind: 'execution_created',
         title: input.title?.trim() || 'Task Stack',
         workspaceId: input.workspaceId,
@@ -433,15 +516,16 @@ export class ExecutionGraphCoordinator {
         ...(input.anchorRunRef ? { anchorRunRef: input.anchorRunRef } : {}),
         permissionCeilingRef: input.permissionCeilingRef,
         timestamp: this.now()
-      })
-      this.changed(projection, 'execution-created')
+      }
     }
 
-    this.assertAppendAuthority(projection, input)
-    if (isExecutionRunTerminal(projection.state)) {
-      throw new Error(`Execution "${projection.executionId}" is already ${projection.state}.`)
+    this.assertAppendAuthority(appendContext, input)
+    if (isExecutionRunTerminal(appendContext.state)) {
+      throw new Error(
+        `Execution "${appendContext.executionId}" is already ${appendContext.state}.`
+      )
     }
-    const frontier = executionTopologyFrontier(projection.topology)
+    const frontier = executionTopologyFrontier(appendContext.topology)
     if (frontier.length > 1) {
       throw new Error('V1 Stack append requires exactly one open frontier step.')
     }
@@ -459,7 +543,7 @@ export class ExecutionGraphCoordinator {
       permissionRequestRef: {
         schemaVersion: 1,
         referenceId: input.permissionCeilingRef.referenceId,
-        ceilingReferenceId: projection.permissionCeilingRef!.referenceId,
+        ceilingReferenceId: appendContext.permissionCeilingRef!.referenceId,
         authorityDigest: input.permissionCeilingRef.authorityDigest
       },
       agent: {
@@ -482,10 +566,10 @@ export class ExecutionGraphCoordinator {
       : []
     const prepared = prepareUserFrontierAppend(
       {
-        executionId: projection.executionId,
-        topology: projection.topology,
-        runState: projection.state,
-        permissionCeilingRef: projection.permissionCeilingRef
+        executionId: appendContext.executionId,
+        topology: appendContext.topology,
+        runState: appendContext.state,
+        permissionCeilingRef: appendContext.permissionCeilingRef
       },
       { appendedBy: 'user', step, incomingEdges }
     )
@@ -500,34 +584,75 @@ export class ExecutionGraphCoordinator {
         ...prepared.input,
         clientRequestReceipt: {
           clientRequestId,
-          clientRequestDigest: appendClientRequestDigest(projection, input)
+          clientRequestDigest: appendClientRequestDigest(appendContext, input),
+          clientSubmissionDigest: input.clientSubmissionDigest
         },
         timestamp: this.now()
       },
       {
-        executionId: projection.executionId,
+        executionId: appendContext.executionId,
         kind: 'activation_created',
         activationId,
         stepId,
         timestamp: this.now()
       }
     ]
-    if (projection.state === 'pending') {
+    if (appendContext.state === 'pending') {
       events.push({
-        executionId: projection.executionId,
+        executionId: appendContext.executionId,
         kind: 'execution_state_changed',
-        state: projection.anchorRunRef ? 'waiting' : 'running',
-        reason: projection.anchorRunRef
+        state: appendContext.anchorRunRef ? 'waiting' : 'running',
+        reason: appendContext.anchorRunRef
           ? 'Waiting for the Stack anchor run to finish.'
           : 'Stack is ready to execute.',
         timestamp: this.now()
       })
     }
-    this.append(projection, events)
-    projection = this.requireExecution(projection.executionId)
+    if (creationInput) {
+      projection = this.repository.createExecution(creationInput, events)
+      this.changed(projection, 'execution-created')
+    } else {
+      this.append(projection!, events)
+      projection = this.requireExecution(appendContext.executionId)
+    }
     this.changed(projection, 'step-appended', [stepId])
     this.drain(projection.executionId)
     return this.requireExecution(projection.executionId)
+  }
+
+  /**
+   * Resolve an already-committed renderer mutation before consulting live
+   * anchor, attachment, or permission state. The submission digest is minted
+   * by the main handler, while durable ownership is still checked against the
+   * resulting execution.
+   */
+  resolveStackAppendReceipt(
+    input: ResolveExecutionStackAppendReceiptInput
+  ): ExecutionRunProjection | undefined {
+    const clientRequestId = canonicalClientRequestId(input.clientRequestId)
+    if (!SHA256_PATTERN.test(input.clientSubmissionDigest)) {
+      throw new Error('Stack append submission digest is invalid.')
+    }
+    const existingReceipt = this.findClientRequestReceipt(clientRequestId)
+    if (!existingReceipt) return undefined
+    if (
+      existingReceipt.event.clientRequestReceipt?.clientSubmissionDigest !==
+      input.clientSubmissionDigest
+    ) {
+      throw new Error(
+        `Stack append client request id "${clientRequestId}" was already used with a different submitted payload.`
+      )
+    }
+    const projection = this.requireExecution(existingReceipt.event.executionId)
+    if (
+      projection.workspaceId !== input.workspaceId ||
+      projection.rootChatId !== input.rootChatId
+    ) {
+      throw new Error(
+        `Stack append client request id "${clientRequestId}" was already used for a different execution target.`
+      )
+    }
+    return projection
   }
 
   drain(executionId?: string): void {
@@ -537,7 +662,10 @@ export class ExecutionGraphCoordinator {
     for (const id of ids) this.drainOne(id)
   }
 
-  onRunSessionChange(event: RunSessionChangeEvent): ExecutionGraphRunSessionDisposition {
+  onRunSessionChange(
+    event: RunSessionChangeEvent,
+    terminalReceipt?: ExecutionGraphAttemptTerminalReceipt
+  ): ExecutionGraphRunSessionDisposition {
     if (event.type === 'removed') return 'unclaimed'
     const runId = event.session.runId
     const projections = this.listExecutions({ includeTerminal: false })
@@ -591,11 +719,24 @@ export class ExecutionGraphCoordinator {
       if (event.session.status === 'starting' || event.session.status === 'running') {
         this.markAttemptRunning(projection, attempt)
       } else if (terminalSession(event.session.status)) {
+        const terminal = resolveExecutionGraphTerminalBarrier({
+          expectedBinding: this.attemptResultBinding(projection, attempt),
+          providerStatus: event.session.status,
+          receipt: terminalReceipt
+        })
+        if (!terminal.ok) {
+          this.requireAction(
+            projection,
+            attempt,
+            `Provider terminal result could not cross the durable result barrier: ${terminal.reason}`
+          )
+          continue
+        }
         const cancellation = this.cancellationContexts.get(projection.executionId)
         if (cancellation) {
-          cancellation.terminalOutcomes.set(runId, event.session.status)
+          cancellation.terminalOutcomes.set(runId, terminal)
         } else {
-          this.settleAttempt(projection, attempt, event.session.status)
+          this.settleAttempt(projection, attempt, terminal.status, terminal.result)
         }
       }
     }
@@ -617,7 +758,10 @@ export class ExecutionGraphCoordinator {
     let projection = this.requireExecution(executionId)
     if (isExecutionRunTerminal(projection.state)) return
     const context = {
-      terminalOutcomes: new Map<string, 'completed' | 'failed' | 'cancelled'>(),
+      terminalOutcomes: new Map<
+        string,
+        Extract<ExecutionGraphTerminalBarrierResolution, { readonly ok: true }>
+      >(),
       invalidRunIds: new Set<string>()
     }
     this.cancellationContexts.set(executionId, context)
@@ -707,15 +851,23 @@ export class ExecutionGraphCoordinator {
       }
 
       const authoritativeOutcome = context.terminalOutcomes.get(queueRun.runId)
-      if (authoritativeOutcome === 'completed' || authoritativeOutcome === 'failed') {
+      if (
+        authoritativeOutcome?.status === 'completed' ||
+        authoritativeOutcome?.status === 'failed'
+      ) {
         const current = this.requireExecution(executionId)
         const currentAttempt = current.attempts[queueRun.attemptId]
         if (currentAttempt && !isStepAttemptTerminal(currentAttempt.state)) {
-          this.settleAttempt(current, currentAttempt, authoritativeOutcome)
+          this.settleAttempt(
+            current,
+            currentAttempt,
+            authoritativeOutcome.status,
+            authoritativeOutcome.result
+          )
         }
         continue
       }
-      if (authoritativeOutcome === 'cancelled') transportConfirmed = true
+      if (authoritativeOutcome?.status === 'cancelled') transportConfirmed = true
 
       if (!transportConfirmed || transportError || context.invalidRunIds.has(queueRun.runId)) {
         this.recordCancellationCleanupFailure(
@@ -831,9 +983,13 @@ export class ExecutionGraphCoordinator {
   }
 
   recover(): void {
+    const allExecutions = this.listExecutions({ includeTerminal: true })
+    for (const projection of allExecutions) {
+      this.reconcileTerminalAttemptQueueRows(projection)
+    }
     // The graph ledger is authoritative. If it is already terminal, no stale
     // queued/paused transport row may remain leaseable after restart.
-    for (const projection of this.listExecutions({ includeTerminal: true }).filter((candidate) =>
+    for (const projection of allExecutions.filter((candidate) =>
       isExecutionRunTerminal(candidate.state)
     )) {
       this.containTerminalExecutionQueueRows(projection)
@@ -925,6 +1081,11 @@ export class ExecutionGraphCoordinator {
         }
         if (job.status === 'queued' && attempt.state === 'claimed') {
           this.appendAttemptQueued(projection, attempt)
+          changed = true
+          break
+        }
+        if (job.status === 'queued' && attempt.state === 'queued') {
+          this.deps.onAttemptQueued?.(job.runId)
           changed = true
           break
         }
@@ -1207,6 +1368,7 @@ export class ExecutionGraphCoordinator {
     this.changed(this.requireExecution(projection.executionId), 'execution-progressed', [
       attempt.stepId
     ])
+    if (attempt.providerRunRef) this.deps.onAttemptQueued?.(attempt.providerRunRef)
   }
 
   private queueJobOwnsAttempt(
@@ -1245,6 +1407,33 @@ export class ExecutionGraphCoordinator {
       binding.runTemplateRef === step.agent.runTemplateRef &&
       binding.permissionCeilingAuthorityDigest === projection.permissionCeilingRef.authorityDigest
     )
+  }
+
+  private attemptResultBinding(
+    projection: ExecutionRunProjection,
+    attempt: StepAttempt
+  ): ExecutionGraphAttemptResultBinding {
+    const runId = attempt.providerRunRef
+    const job = runId ? this.deps.getQueueJob(runId) : null
+    if (
+      !runId ||
+      !job ||
+      !projection.workspaceId ||
+      !projection.rootChatId ||
+      !this.queueJobOwnsAttempt(projection, attempt, job)
+    ) {
+      throw new Error('Execution attempt cannot bind a result without exact queue authority.')
+    }
+    return {
+      schemaVersion: 1,
+      executionId: projection.executionId,
+      activationId: attempt.activationId,
+      attemptId: attempt.id,
+      providerRunRef: runId,
+      workspaceId: projection.workspaceId,
+      rootChatId: projection.rootChatId,
+      provider: job.provider
+    }
   }
 
   private runSessionOwnsAttempt(
@@ -1356,6 +1545,38 @@ export class ExecutionGraphCoordinator {
     }
   }
 
+  private reconcileTerminalAttemptQueueRows(projection: ExecutionRunProjection): void {
+    if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
+    for (const attempt of Object.values(projection.attempts)) {
+      if (!isStepAttemptTerminal(attempt.state) || !attempt.providerRunRef) continue
+      const job = this.deps.getQueueJob(attempt.providerRunRef)
+      if (
+        !job ||
+        TERMINAL_QUEUE_STATUSES.has(job.status) ||
+        !this.queueJobOwnsAttempt(projection, attempt, job)
+      ) {
+        continue
+      }
+      const status: RunQueueJobStatus =
+        attempt.state === 'succeeded'
+          ? 'completed'
+          : attempt.state === 'cancelled'
+            ? 'cancelled'
+            : 'failed'
+      try {
+        this.deps.transitionQueueJob(job.runId, status, {
+          statusReason: `Reconciled from authoritative execution attempt ${attempt.id}.`,
+          ...(status === 'failed'
+            ? { lastError: attempt.error || 'Execution attempt requires review.' }
+            : {})
+        })
+      } catch {
+        // A later recovery pass retries. The graph ledger remains authoritative
+        // and the stale nonterminal row is never treated as provider evidence.
+      }
+    }
+  }
+
   private markAttemptRunning(projection: ExecutionRunProjection, attempt: StepAttempt): void {
     const activation = projection.activations[attempt.activationId]
     const events: ExecutionRunEventInput[] = []
@@ -1389,7 +1610,8 @@ export class ExecutionGraphCoordinator {
   private settleAttempt(
     projection: ExecutionRunProjection,
     attempt: StepAttempt,
-    status: 'completed' | 'failed' | 'cancelled'
+    status: 'completed' | 'failed' | 'cancelled',
+    result?: ExecutionStepResult
   ): void {
     if (!isStepAttemptTerminal(attempt.state) && attempt.state !== 'running') {
       this.markAttemptRunning(projection, attempt)
@@ -1399,6 +1621,9 @@ export class ExecutionGraphCoordinator {
     if (isStepAttemptTerminal(attempt.state)) return
     const activation = projection.activations[attempt.activationId]
     if (status === 'completed') {
+      if (!result) {
+        throw new Error('A completed provider attempt cannot settle without a structured result.')
+      }
       this.append(projection, [
         {
           executionId: projection.executionId,
@@ -1406,7 +1631,7 @@ export class ExecutionGraphCoordinator {
           attemptId: attempt.id,
           state: 'succeeded',
           providerRunRef: attempt.providerRunRef,
-          result: executionResult(attempt.providerRunRef!, projection.rootChatId),
+          result,
           timestamp: this.now()
         },
         {
@@ -1740,7 +1965,7 @@ export class ExecutionGraphCoordinator {
   }
 
   private assertAppendAuthority(
-    projection: ExecutionRunProjection,
+    projection: StackAppendAuthorityContext,
     input: AppendExecutionStackStepInput
   ): void {
     if (

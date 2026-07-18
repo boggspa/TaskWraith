@@ -1,6 +1,9 @@
 import { createHash } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { compileExecutionGraphRevision } from '../executionGraph/ExecutionGraphCompiler'
+import {
+  compileExecutionGraphRevision,
+  stableExecutionGraphStringify
+} from '../executionGraph/ExecutionGraphCompiler'
 import type {
   ExecutionEffect,
   ExecutionGraphLayout,
@@ -63,6 +66,7 @@ export interface ExecutionStackTarget {
 
 export interface ExecutionGraphHandlersDeps {
   assertMainRendererSender: (event: IpcMainInvokeEvent) => void
+  assertLocalChatHistoryDurable: () => void
   resolveStackTarget: (input: {
     workspaceId: string
     rootChatId: string
@@ -93,7 +97,12 @@ export interface ExecutionGraphHandlersDeps {
   >
   coordinator: Pick<
     ExecutionGraphCoordinator,
-    'listExecutions' | 'getExecution' | 'appendStackStep' | 'cancelExecution' | 'cancelDormantStep'
+    | 'listExecutions'
+    | 'getExecution'
+    | 'resolveStackAppendReceipt'
+    | 'appendStackStep'
+    | 'cancelExecution'
+    | 'cancelDormantStep'
   >
   now?: () => string
 }
@@ -144,6 +153,31 @@ function providerId(value: unknown): ProviderId {
     throw new Error('Execution provider is invalid or retired.')
   }
   return value as ProviderId
+}
+
+function stackAppendSubmissionDigest(input: {
+  workspaceId: string
+  rootChatId: string
+  stepTitle: string
+  objective: string
+  provider: ProviderId
+  request: JsonObject
+}): string {
+  return createHash('sha256')
+    .update(
+      stableExecutionGraphStringify({
+        schemaVersion: 1,
+        workspaceId: input.workspaceId,
+        rootChatId: input.rootChatId,
+        step: {
+          title: input.stepTitle,
+          objective: input.objective,
+          provider: input.provider,
+          request: input.request
+        }
+      })
+    )
+    .digest('hex')
 }
 
 function jsonObject(value: unknown): JsonObject {
@@ -210,6 +244,9 @@ function assertBoundStackRuntimeAdmission(
   if (request.discordContextSelection) {
     throw new Error('Stack steps cannot reuse Discord context.')
   }
+  if (request.projectReferenceContextSelection) {
+    throw new Error('V1 Stack steps cannot resolve mutable project-reference context at dispatch.')
+  }
   if (request.codexNativeReview) {
     throw new Error('Stack steps cannot run a Codex native review.')
   }
@@ -233,7 +270,8 @@ function prepareStackTemplate(
   input: Record<string, unknown>,
   target: ExecutionStackTarget,
   provider: ProviderId,
-  clientRequestId: string
+  clientRequestId: string,
+  objective: string
 ): PreparedStackTemplate {
   if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
   const runtimeProfileId = optionalString(input.request.runtimeProfileId)
@@ -280,10 +318,15 @@ function prepareStackTemplate(
   if (prepared.runtimeProfileId !== prepared.request.runtimeProfileId) {
     throw new Error('Prepared Stack runtime profile did not preserve its signed request context.')
   }
-  if (!prepared.request.prompt.trim()) throw new Error('Stack step prompt is required.')
+  const canonicalPrompt = prepared.request.prompt.trim()
+  if (!canonicalPrompt) throw new Error('Stack step prompt is required.')
+  if (objective !== canonicalPrompt) {
+    throw new Error('Stack step objective must match its canonical prepared prompt.')
+  }
   assertBoundStackRuntimeAdmission(prepared)
   const frozenRequest: RunQueueRequestSnapshot = {
     ...prepared.request,
+    prompt: canonicalPrompt,
     sessionTrust: false
   }
   const permissionPosture = deps.resolvePermissionPosture({
@@ -437,6 +480,22 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
     const objective = nonEmpty(raw.objective, 'Step objective', 32_000)
     const provider = providerId(raw.provider)
     if (!isRecord(raw.request)) throw new Error('Stack step request snapshot is required.')
+    const clientSubmissionDigest = stackAppendSubmissionDigest({
+      workspaceId,
+      rootChatId,
+      stepTitle,
+      objective,
+      provider,
+      request: jsonObject(raw.request)
+    })
+    const committed = deps.coordinator.resolveStackAppendReceipt({
+      clientRequestId: canonicalClientRequestId,
+      clientSubmissionDigest,
+      workspaceId,
+      rootChatId
+    })
+    if (committed) return committed
+    deps.assertLocalChatHistoryDurable()
     const target = deps.resolveStackTarget({
       workspaceId,
       rootChatId,
@@ -448,10 +507,12 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
       raw,
       target,
       provider,
-      canonicalClientRequestId
+      canonicalClientRequestId,
+      objective
     )
     const command: AppendExecutionStackStepInput = {
       clientRequestId: canonicalClientRequestId,
+      clientSubmissionDigest,
       ...(canonicalExecutionId ? { executionId: canonicalExecutionId } : {}),
       workspaceId: target.workspaceId,
       rootChatId: target.rootChatId,
