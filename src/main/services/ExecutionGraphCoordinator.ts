@@ -65,6 +65,20 @@ export interface MaterializeExecutionQueueJobInput {
   readonly runTemplate: ExecutionGraphRunTemplate
 }
 
+/**
+ * Main-owned, exact truth for an anchor run identity after RunQueue and
+ * RunManager have been reconciled. Callers must resolve by runId, never by
+ * provider/chat heuristics. `nonterminal` includes queued, paused, starting,
+ * active, and cancelling runs whose eventual terminal event is still expected.
+ */
+export type ExecutionGraphAnchorRunStatus =
+  | 'nonterminal'
+  | 'completed'
+  | 'failed'
+  | 'cancelled'
+  | 'missing'
+  | 'ambiguous'
+
 export interface ExecutionGraphCoordinatorRepository {
   createExecution: ExecutionGraphRepository['createExecution']
   appendExecutionEvents: ExecutionGraphRepository['appendExecutionEvents']
@@ -82,6 +96,7 @@ export interface ExecutionGraphCoordinatorDeps {
     status: RunQueueJobStatus,
     partial?: Pick<Partial<RunQueueJob>, 'statusReason' | 'lastError'>
   ) => RunQueueJob | null
+  resolveAnchorRunStatus: (runId: string) => ExecutionGraphAnchorRunStatus
   cancelActiveRun: (runId: string) => Promise<void> | void
   onChanged?: (notice: ExecutionGraphChangedNotice) => void
   now?: () => string
@@ -391,10 +406,58 @@ export class ExecutionGraphCoordinator {
   recover(): void {
     for (const projection of this.listExecutions({ includeTerminal: false })) {
       if (projection.integrity !== 'valid' || projection.baseRevisionMissing) continue
+
+      if (this.isWaitingForAnchor(projection)) {
+        this.recoverAnchor(projection)
+        continue
+      }
+
+      const incompleteAttempt = Object.values(projection.attempts).find(
+        (attempt) => !isStepAttemptTerminal(attempt.state) && !attempt.providerRunRef
+      )
+      if (incompleteAttempt) {
+        this.requireAction(
+          projection,
+          incompleteAttempt,
+          'The durable claim is incomplete and has no exact provider run identity.'
+        )
+        continue
+      }
+
+      const incompleteActivation = Object.values(projection.activations).find((activation) => {
+        if (
+          activation.state !== 'claimed' &&
+          activation.state !== 'queued' &&
+          activation.state !== 'running'
+        ) {
+          return false
+        }
+        const attempt = latestAttemptForActivation(projection, activation)
+        return !attempt || isStepAttemptTerminal(attempt.state) || !attempt.providerRunRef
+      })
+      if (incompleteActivation) {
+        this.requireActivationAction(
+          projection,
+          incompleteActivation,
+          'The activation claim is incomplete and cannot be correlated to a usable attempt.'
+        )
+        continue
+      }
+
       let changed = false
       for (const attempt of Object.values(projection.attempts)) {
-        if (isStepAttemptTerminal(attempt.state) || !attempt.providerRunRef) continue
-        const job = this.deps.getQueueJob(attempt.providerRunRef)
+        if (isStepAttemptTerminal(attempt.state)) continue
+        const providerRunRef = attempt.providerRunRef
+        if (!providerRunRef) {
+          this.requireAction(
+            projection,
+            attempt,
+            'The durable claim is incomplete and has no exact provider run identity.'
+          )
+          changed = true
+          break
+        }
+        const job = this.deps.getQueueJob(providerRunRef)
         if (!job) {
           this.requireAction(projection, attempt, 'The claimed queue job is missing after restart.')
           changed = true
@@ -587,41 +650,11 @@ export class ExecutionGraphCoordinator {
     }
     const attemptId = this.id('attempt')
     const runId = this.id('graph-run')
-    let job: RunQueueJob
-    try {
-      job = this.deps.materializePausedQueueJob({
-        runId,
-        executionId: projection.executionId,
-        activationId: activation.id,
-        attemptId,
-        workspaceId: projection.workspaceId!,
-        rootChatId: projection.rootChatId!,
-        provider: step.agent.provider as ProviderId,
-        runTemplate: template
-      })
-    } catch (error) {
-      this.requireActivationAction(
-        projection,
-        activation,
-        `Queue materialization failed: ${error instanceof Error ? error.message : String(error)}`
-      )
-      return
-    }
-    if (
-      job.runId !== runId ||
-      job.status !== 'paused' ||
-      job.chatId !== projection.rootChatId ||
-      job.workspaceId !== projection.workspaceId ||
-      job.provider !== step.agent.provider
-    ) {
-      this.requireActivationAction(
-        projection,
-        activation,
-        'Queue materialization did not preserve graph identity or paused readiness.'
-      )
-      return
-    }
 
+    // Persist the exact graph <-> queue run correlation before touching the
+    // queue store. A crash can leave a claimed attempt without a job, which is
+    // safely attention-gated on recovery; it can no longer leave an invisible
+    // orphan paused job with no durable graph owner.
     this.append(projection, [
       {
         executionId: projection.executionId,
@@ -650,10 +683,44 @@ export class ExecutionGraphCoordinator {
       }
     ])
     projection = this.requireExecution(projection.executionId)
+    const attempt = projection.attempts[attemptId]
+    let job: RunQueueJob
+    try {
+      job = this.deps.materializePausedQueueJob({
+        runId,
+        executionId: projection.executionId,
+        activationId: activation.id,
+        attemptId,
+        workspaceId: projection.workspaceId!,
+        rootChatId: projection.rootChatId!,
+        provider: step.agent.provider as ProviderId,
+        runTemplate: template
+      })
+    } catch (error) {
+      this.requireAction(
+        projection,
+        attempt,
+        `Queue materialization failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return
+    }
+    if (
+      job.runId !== runId ||
+      job.status !== 'paused' ||
+      job.chatId !== projection.rootChatId ||
+      job.workspaceId !== projection.workspaceId ||
+      job.provider !== step.agent.provider
+    ) {
+      this.requireAction(
+        projection,
+        attempt,
+        'Queue materialization did not preserve graph identity or paused readiness.'
+      )
+      return
+    }
     const queued = this.deps.transitionQueueJob(runId, 'queued', {
       statusReason: 'Execution-graph dependencies are satisfied.'
     })
-    const attempt = projection.attempts[attemptId]
     if (!queued || queued.status !== 'queued') {
       this.requireAction(projection, attempt, 'Claimed queue job could not be released.')
       return
@@ -802,7 +869,7 @@ export class ExecutionGraphCoordinator {
     projection: ExecutionRunProjection,
     status: 'completed' | 'failed' | 'cancelled'
   ): void {
-    if (projection.state !== 'waiting') return
+    if (!this.isWaitingForAnchor(projection)) return
     if (status === 'completed') {
       this.append(projection, [
         {
@@ -838,6 +905,56 @@ export class ExecutionGraphCoordinator {
     })
     this.append(projection, events)
     this.changed(this.requireExecution(projection.executionId), 'execution-terminal')
+  }
+
+  private recoverAnchor(projection: ExecutionRunProjection): void {
+    const anchorRunRef = projection.anchorRunRef!
+    let status: ExecutionGraphAnchorRunStatus
+    try {
+      status = this.deps.resolveAnchorRunStatus(anchorRunRef)
+    } catch (error) {
+      this.requireAnchorAction(
+        projection,
+        `Anchor status could not be reconciled after restart: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return
+    }
+
+    if (status === 'nonterminal') return
+    if (status === 'completed' || status === 'failed' || status === 'cancelled') {
+      this.settleAnchor(projection, status)
+      return
+    }
+    this.requireAnchorAction(
+      projection,
+      status === 'missing'
+        ? 'The Stack anchor run is missing after restart and cannot be inferred safely.'
+        : 'The Stack anchor run has ambiguous queue/provider state after restart.'
+    )
+  }
+
+  private isWaitingForAnchor(projection: ExecutionRunProjection): boolean {
+    const activations = Object.values(projection.activations)
+    return Boolean(
+      projection.anchorRunRef &&
+      projection.state === 'waiting' &&
+      activations.length > 0 &&
+      activations.every((activation) => activation.state === 'dormant') &&
+      Object.keys(projection.attempts).length === 0
+    )
+  }
+
+  private requireAnchorAction(projection: ExecutionRunProjection, reason: string): void {
+    this.append(projection, [
+      {
+        executionId: projection.executionId,
+        kind: 'execution_state_changed',
+        state: 'requires_action',
+        reason,
+        timestamp: this.now()
+      }
+    ])
+    this.changed(this.requireExecution(projection.executionId), 'execution-progressed')
   }
 
   private completeDeterministicStep(
@@ -942,7 +1059,12 @@ export class ExecutionGraphCoordinator {
   ): void {
     const activation = projection.activations[attempt.activationId]
     const events: ExecutionRunEventInput[] = []
-    if (!isStepAttemptTerminal(attempt.state)) {
+    if (
+      attempt.state === 'created' ||
+      attempt.state === 'claimed' ||
+      attempt.state === 'queued' ||
+      attempt.state === 'running'
+    ) {
       events.push({
         executionId: projection.executionId,
         kind: 'attempt_state_changed',

@@ -9,6 +9,7 @@ import type { ExecutionPermissionCeilingRef } from '../executionGraph/ExecutionG
 import {
   ExecutionGraphCoordinator,
   type AppendExecutionStackStepInput,
+  type ExecutionGraphAnchorRunStatus,
   type ExecutionGraphCoordinatorDeps
 } from './ExecutionGraphCoordinator'
 
@@ -80,12 +81,14 @@ interface Harness {
   jobs: Map<string, RunQueueJob>
   transitions: ReturnType<typeof vi.fn>
   cancelActiveRun: ReturnType<typeof vi.fn>
+  materializePausedQueueJob: ReturnType<typeof vi.fn>
+  anchorStatuses: Map<string, ExecutionGraphAnchorRunStatus>
   templateRef: string
   ceiling: ExecutionPermissionCeilingRef
   input: (overrides?: Partial<AppendExecutionStackStepInput>) => AppendExecutionStackStepInput
 }
 
-function harness(): Harness {
+function harness(options: { materializeError?: Error } = {}): Harness {
   const repository = new ExecutionGraphRepository(storageRoot())
   const template = repository.saveRunTemplate({
     schemaVersion: 1,
@@ -112,16 +115,20 @@ function harness(): Harness {
     return next
   })
   const cancelActiveRun = vi.fn()
+  const anchorStatuses = new Map<string, ExecutionGraphAnchorRunStatus>()
+  const materializePausedQueueJob = vi.fn(({ runId, provider, workspaceId, rootChatId }) => {
+    if (options.materializeError) throw options.materializeError
+    const job = queueJob({ runId, provider, workspaceId, rootChatId })
+    jobs.set(runId, job)
+    return job
+  })
   let id = 0
   const deps: ExecutionGraphCoordinatorDeps = {
     repository,
-    materializePausedQueueJob: ({ runId, provider, workspaceId, rootChatId }) => {
-      const job = queueJob({ runId, provider, workspaceId, rootChatId })
-      jobs.set(runId, job)
-      return job
-    },
+    materializePausedQueueJob,
     getQueueJob: (runId) => jobs.get(runId) ?? null,
     transitionQueueJob: transitions,
+    resolveAnchorRunStatus: (runId) => anchorStatuses.get(runId) ?? 'missing',
     cancelActiveRun,
     now: () => '2026-07-18T11:00:00.000Z',
     createId: () => `id-${++id}`,
@@ -140,6 +147,8 @@ function harness(): Harness {
     jobs,
     transitions,
     cancelActiveRun,
+    materializePausedQueueJob,
+    anchorStatuses,
     templateRef: template.templateId,
     ceiling,
     input: (overrides = {}) => ({
@@ -154,6 +163,63 @@ function harness(): Harness {
       ...overrides
     })
   }
+}
+
+function appendClaimCrashWindow(
+  h: Harness,
+  executionId: string,
+  completeness: 'activation-only' | 'attempt-created' | 'fully-correlated',
+  providerRunRef = 'orphan-graph-run'
+): void {
+  const projection = h.coordinator.getExecution(executionId)!
+  const activation = Object.values(projection.activations)[0]
+  const attemptId = 'crash-attempt'
+  h.repository.appendExecutionEvents(
+    [
+      {
+        executionId,
+        kind: 'execution_state_changed',
+        state: 'running',
+        reason: 'Anchor completed immediately before shutdown.'
+      },
+      {
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'ready'
+      },
+      {
+        executionId,
+        kind: 'activation_state_changed',
+        activationId: activation.id,
+        state: 'claimed'
+      },
+      ...(completeness === 'activation-only'
+        ? []
+        : [
+            {
+              executionId,
+              kind: 'attempt_created' as const,
+              attemptId,
+              activationId: activation.id,
+              stepId: activation.stepId,
+              ordinal: 1
+            }
+          ]),
+      ...(completeness === 'fully-correlated'
+        ? [
+            {
+              executionId,
+              kind: 'attempt_state_changed' as const,
+              attemptId,
+              state: 'claimed' as const,
+              providerRunRef
+            }
+          ]
+        : [])
+    ],
+    { expectedLastSequence: projection.lastSequence }
+  )
 }
 
 function providerRunId(projection: ReturnType<ExecutionGraphCoordinator['getExecution']>): string {
@@ -269,6 +335,127 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
     expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
     expect(h.transitions).not.toHaveBeenCalledWith(runId, 'queued', expect.anything())
+  })
+
+  it('reconciles a completed anchor from exact run truth after restart', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    h.anchorStatuses.set('anchor-run', 'completed')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('running')
+    expect(Object.values(recovered.activations)[0].state).toBe('queued')
+    expect(h.jobs.size).toBe(1)
+  })
+
+  it.each(['missing', 'ambiguous'] as const)(
+    'requires action when anchor truth is %s after restart',
+    (anchorStatus) => {
+      const h = harness()
+      const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+      h.anchorStatuses.set('anchor-run', anchorStatus)
+
+      h.coordinator.recover()
+
+      const recovered = h.coordinator.getExecution(waiting.executionId)!
+      expect(recovered.state).toBe('requires_action')
+      expect(Object.values(recovered.activations)[0].state).toBe('dormant')
+      expect(h.jobs.size).toBe(0)
+    }
+  )
+
+  it('keeps waiting only while exact anchor truth remains nonterminal', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    h.anchorStatuses.set('anchor-run', 'nonterminal')
+
+    h.coordinator.recover()
+
+    expect(h.coordinator.getExecution(waiting.executionId)?.state).toBe('waiting')
+    expect(h.jobs.size).toBe(0)
+  })
+
+  it('turns an activation-only torn claim batch into requires action', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    appendClaimCrashWindow(h, waiting.executionId, 'activation-only')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)).toHaveLength(0)
+  })
+
+  it('interrupts an attempt-created torn claim batch without replaying it', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    appendClaimCrashWindow(h, waiting.executionId, 'attempt-created')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
+    expect(Object.values(recovered.attempts)[0]).not.toHaveProperty('providerRunRef')
+    expect(h.materializePausedQueueJob).toHaveBeenCalledTimes(0)
+  })
+
+  it('fails safely when restart lands after durable correlation but before materialization', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated')
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      providerRunRef: 'orphan-graph-run'
+    })
+    expect(h.transitions).not.toHaveBeenCalled()
+  })
+
+  it('recovers a paused job only when its durable claim is fully correlated', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    appendClaimCrashWindow(h, waiting.executionId, 'fully-correlated', 'paused-graph-run')
+    h.jobs.set(
+      'paused-graph-run',
+      queueJob({
+        runId: 'paused-graph-run',
+        provider: 'codex',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one'
+      })
+    )
+
+    h.coordinator.recover()
+
+    const recovered = h.coordinator.getExecution(waiting.executionId)!
+    expect(recovered.state).toBe('running')
+    expect(Object.values(recovered.activations)[0].state).toBe('queued')
+    expect(Object.values(recovered.attempts)[0].state).toBe('queued')
+    expect(h.jobs.get('paused-graph-run')?.status).toBe('queued')
+  })
+
+  it('retains durable run correlation when queue materialization throws', () => {
+    const h = harness({ materializeError: new Error('disk unavailable') })
+
+    const recovered = h.coordinator.appendStackStep(h.input())
+
+    expect(recovered.state).toBe('requires_action')
+    expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
+    expect(Object.values(recovered.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      providerRunRef: expect.stringMatching(/^graph-run-/)
+    })
+    expect(h.jobs.size).toBe(0)
   })
 
   it('persists cancellation before a provider callback can re-enter the coordinator', async () => {
