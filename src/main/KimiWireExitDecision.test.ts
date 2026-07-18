@@ -1,6 +1,10 @@
 import { describe, expect, it } from 'vitest'
 
-import { decideKimiContentFilterRetry, decideKimiWireClose } from './KimiWireExitDecision'
+import {
+  decideKimiContentFilterRetry,
+  decideKimiWireClose,
+  mergeKimiWireTerminalEvidence
+} from './KimiWireExitDecision'
 
 describe('decideKimiWireClose', () => {
   it('ignores the close event when the run is already settled', () => {
@@ -101,6 +105,38 @@ describe('decideKimiWireClose', () => {
       code: 0
     })
     expect(decision.terminalStatus).toBe('completed')
+  })
+})
+
+describe('mergeKimiWireTerminalEvidence', () => {
+  it('preserves typed cancellation evidence', () => {
+    expect(mergeKimiWireTerminalEvidence({ conflict: false }, 'cancelled')).toEqual({
+      status: 'cancelled',
+      conflict: false
+    })
+  })
+
+  it('does not let a later success overwrite an earlier failure', () => {
+    expect(
+      mergeKimiWireTerminalEvidence(
+        { status: 'failed', conflict: false },
+        'completed'
+      )
+    ).toEqual({ status: 'failed', conflict: true })
+  })
+
+  it('fails closed when any provisional terminal statuses disagree', () => {
+    expect(
+      mergeKimiWireTerminalEvidence(
+        { status: 'completed', conflict: false },
+        'cancelled'
+      )
+    ).toEqual({ status: 'failed', conflict: true })
+  })
+
+  it('keeps conflict sticky after it has been observed', () => {
+    const conflicted = { status: 'failed' as const, conflict: true }
+    expect(mergeKimiWireTerminalEvidence(conflicted, 'failed')).toBe(conflicted)
   })
 })
 

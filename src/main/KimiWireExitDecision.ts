@@ -42,6 +42,23 @@ export interface KimiWireCloseDecision {
   resolveWire: boolean
 }
 
+export type KimiWireTerminalStatus = 'completed' | 'failed' | 'cancelled'
+
+export interface KimiWireTerminalEvidence {
+  readonly status?: KimiWireTerminalStatus
+  readonly conflict: boolean
+}
+
+/** Preserve typed provisional evidence and fail closed on disagreement. */
+export function mergeKimiWireTerminalEvidence(
+  current: KimiWireTerminalEvidence,
+  incoming: KimiWireTerminalStatus
+): KimiWireTerminalEvidence {
+  if (!current.status) return { status: incoming, conflict: current.conflict }
+  if (current.status === incoming) return current
+  return { status: 'failed', conflict: true }
+}
+
 export type KimiContentFilterRetryPass = 'keyword' | 'classifier'
 
 export interface KimiContentFilterRetryInputs {
