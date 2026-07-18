@@ -51,6 +51,10 @@ describe('RendererIpcPolicy', () => {
     'canvas:set-bounds',
     'projects:list-reference-proposals',
     'projects:review-reference-proposal',
+    'execution-graphs:list',
+    'execution-runs:append-stack-step',
+    'execution-runs:cancel',
+    'execution-runs:formalize',
     'app:quit'
   ])('keeps %s behind main-renderer authority', (channel) => {
     expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
@@ -77,15 +81,13 @@ describe('RendererIpcPolicy', () => {
     expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(true)
   })
 
-  it.each([
-    'brand-new-settings-channel',
-    'get-setting',
-    '',
-    'authorize-image-preview'
-  ])('fails closed for unknown channel %j', (channel) => {
-    expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
-    expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
-  })
+  it.each(['brand-new-settings-channel', 'get-setting', '', 'authorize-image-preview'])(
+    'fails closed for unknown channel %j',
+    (channel) => {
+      expect(ipcChannelRequiresMainRenderer(channel)).toBe(true)
+      expect(SECONDARY_RENDERER_SAFE_IPC_CHANNELS.has(channel)).toBe(false)
+    }
+  )
 
   it('classifies the complete registered IPC catalogue exactly once', () => {
     const registeredChannels = Object.keys(IPC_ARGUMENT_SCHEMAS).sort()
@@ -110,9 +112,9 @@ describe('RendererIpcPolicy', () => {
     expect(conflicting).toEqual([])
     expect(staleMainOnly).toEqual([])
     expect(staleSecondarySafe).toEqual([])
-    expect(
-      MAIN_RENDERER_ONLY_IPC_CHANNELS.size + SECONDARY_RENDERER_SAFE_IPC_CHANNELS.size
-    ).toBe(registeredChannels.length)
+    expect(MAIN_RENDERER_ONLY_IPC_CHANNELS.size + SECONDARY_RENDERER_SAFE_IPC_CHANNELS.size).toBe(
+      registeredChannels.length
+    )
   })
 
   it('exposes no generic renderer-string image-preview authorizer', () => {
@@ -147,9 +149,7 @@ describe('RendererIpcPolicy', () => {
     expect(preload).toContain("window.addEventListener(\n  'paste'")
     expect(preload).toContain('if (!event.isTrusted) return')
     expect(preload).toContain("ipcRenderer.send('authorize-clipboard-paste-intent', token)")
-    expect(preload).toContain(
-      "ipcRenderer.invoke('save-clipboard-image-attachment', intent.token)"
-    )
+    expect(preload).toContain("ipcRenderer.invoke('save-clipboard-image-attachment', intent.token)")
     expect(main).toContain("ipcMain.on('authorize-clipboard-paste-intent'")
     expect(main).toContain('saveClipboardImageFromTrustedPaste({')
   })
@@ -169,7 +169,9 @@ describe('RendererIpcPolicy', () => {
   it('projects provider status reads for secondary renderers instead of returning account/path payloads', () => {
     const main = readFileSync(join(process.cwd(), 'src/main/index.ts'), 'utf8')
 
-    expect(main).toContain('return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)')
+    expect(main).toContain(
+      'return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)'
+    )
     expect(ipcChannelRequiresMainRenderer('get-gemini-oauth-login-status')).toBe(true)
   })
 })

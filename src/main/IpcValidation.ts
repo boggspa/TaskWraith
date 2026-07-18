@@ -172,6 +172,17 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // Stage 1 slice 4 — durable run-ledger read queries.
   'get-workflow-run-summaries': ['optionalString'],
   'get-workflow-run-events': ['optionalObject'],
+  // Main-owned durable execution graph and live Stack surface.
+  'execution-graphs:list': ['optionalString'],
+  'execution-graphs:get': ['object'],
+  'execution-graphs:save-layout': ['object'],
+  'execution-runs:list': ['optionalObject'],
+  'execution-runs:get': ['nonEmptyString'],
+  'execution-runs:events': ['nonEmptyString'],
+  'execution-runs:append-stack-step': ['object'],
+  'execution-runs:cancel': ['nonEmptyString', 'optionalString'],
+  'execution-runs:cancel-step': ['object'],
+  'execution-runs:formalize': ['object'],
   'get-evidence-packs': ['optionalString'],
   'save-evidence-pack': ['object'],
   'delete-evidence-pack': ['nonEmptyString'],
@@ -766,10 +777,7 @@ export function validateIpcArgs(channel: string, args: unknown[]): unknown[] {
   return args
 }
 
-export type IpcInvocationAuthorizer = (
-  channel: string,
-  event: IpcMainInvokeEvent
-) => void
+export type IpcInvocationAuthorizer = (channel: string, event: IpcMainInvokeEvent) => void
 
 export function installIpcValidation(
   ipcMain: IpcMain,

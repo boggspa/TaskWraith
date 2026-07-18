@@ -279,6 +279,19 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:list-reference-proposals',
   'projects:review-reference-proposal',
 
+  // Execution graphs are app-level orchestration state. Their domain handlers
+  // repeat this assertion and resolve all workspace/chat authority in main.
+  'execution-graphs:list',
+  'execution-graphs:get',
+  'execution-graphs:save-layout',
+  'execution-runs:list',
+  'execution-runs:get',
+  'execution-runs:events',
+  'execution-runs:append-stack-step',
+  'execution-runs:cancel',
+  'execution-runs:cancel-step',
+  'execution-runs:formalize',
+
   // Global settings, runtime profiles, encrypted secrets, and handoff records.
   'update-settings',
   'prompt-cache:get-policy',

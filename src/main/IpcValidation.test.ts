@@ -2,11 +2,7 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import type { IpcMain, IpcMainInvokeEvent } from 'electron'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  installIpcValidation,
-  validateIpcArgs,
-  IPC_ARGUMENT_SCHEMAS
-} from './IpcValidation'
+import { installIpcValidation, validateIpcArgs, IPC_ARGUMENT_SCHEMAS } from './IpcValidation'
 
 describe('IpcValidation', () => {
   it('runs renderer authorization before dispatching a validated invocation', async () => {
@@ -55,9 +51,7 @@ describe('IpcValidation', () => {
         sources.push(readFileSync(join(ipcDir, entry), 'utf8'))
       }
     }
-    sources.push(
-      readFileSync(join(process.cwd(), 'src/main/canvas/CanvasEmbedIpc.ts'), 'utf8')
-    )
+    sources.push(readFileSync(join(process.cwd(), 'src/main/canvas/CanvasEmbedIpc.ts'), 'utf8'))
     const handled = new Set<string>()
     const re = /ipcMain\.handle\(\s*['"`]([^'"`]+)['"`]/g
     for (const source of sources) {
@@ -91,21 +85,30 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('cancel-scheduled-task', [''])).toThrow(/non-empty/)
   })
 
-  it('registers the Project reference-proposal review boundary', () => {
+  it('shape-gates the execution graph command surface', () => {
+    expect(() => validateIpcArgs('execution-graphs:list', [])).not.toThrow()
     expect(() =>
-      validateIpcArgs('projects:list-reference-proposals', ['project-a'])
+      validateIpcArgs('execution-graphs:get', [{ graphId: 'graph-1', revision: 1 }])
     ).not.toThrow()
-    expect(() => validateIpcArgs('projects:list-reference-proposals', ['   '])).toThrow(
-      /non-empty/
-    )
+    expect(() =>
+      validateIpcArgs('execution-runs:list', [{ workspaceId: 'workspace-1' }])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('execution-runs:get', ['execution-1'])).not.toThrow()
+    expect(() => validateIpcArgs('execution-runs:events', [''])).toThrow(/non-empty/)
+    expect(() => validateIpcArgs('execution-runs:append-stack-step', ['invalid'])).toThrow(/object/)
+    expect(() => validateIpcArgs('execution-runs:cancel', ['execution-1'])).not.toThrow()
+    expect(() => validateIpcArgs('execution-runs:formalize', [{}])).not.toThrow()
+  })
+
+  it('registers the Project reference-proposal review boundary', () => {
+    expect(() => validateIpcArgs('projects:list-reference-proposals', ['project-a'])).not.toThrow()
+    expect(() => validateIpcArgs('projects:list-reference-proposals', ['   '])).toThrow(/non-empty/)
     expect(() =>
       validateIpcArgs('projects:review-reference-proposal', [
         { projectId: 'project-a', proposalId: 'proposal-a', decision: 'approve' }
       ])
     ).not.toThrow()
-    expect(() => validateIpcArgs('projects:review-reference-proposal', ['nope'])).toThrow(
-      /object/
-    )
+    expect(() => validateIpcArgs('projects:review-reference-proposal', ['nope'])).toThrow(/object/)
   })
 
   it('validates Canvas open payloads and embedded bounds deeply', () => {
@@ -120,10 +123,7 @@ describe('IpcValidation', () => {
     ).not.toThrow()
     expect(() => validateIpcArgs('canvas:open-sketch-window', [])).not.toThrow()
     expect(() =>
-      validateIpcArgs('canvas:set-bounds', [
-        'canvas-1',
-        { x: 1, y: 2, width: 800, height: 600 }
-      ])
+      validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: 800, height: 600 }])
     ).not.toThrow()
 
     expect(() => validateIpcArgs('canvas:open-window', [{ chatId: '../settings' }])).toThrow(
@@ -133,16 +133,10 @@ describe('IpcValidation', () => {
       /unknown field/
     )
     expect(() =>
-      validateIpcArgs('canvas:set-bounds', [
-        'canvas-1',
-        { x: '1', y: 2, width: 800, height: 600 }
-      ])
+      validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: '1', y: 2, width: 800, height: 600 }])
     ).toThrow(/bounds.x must be a finite number/)
     expect(() =>
-      validateIpcArgs('canvas:set-bounds', [
-        'canvas-1',
-        { x: 1, y: 2, width: -1, height: 600 }
-      ])
+      validateIpcArgs('canvas:set-bounds', ['canvas-1', { x: 1, y: 2, width: -1, height: 600 }])
     ).toThrow(/dimensions must be non-negative/)
     expect(() => validateIpcArgs('canvas:set-visible', ['canvas-1', 'false'])).toThrow(/boolean/)
   })
@@ -612,9 +606,9 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('sidebar:show-chat-workspace-in-finder', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('sidebar:copy-chat-working-directory', ['chat-1'])).not.toThrow()
     expect(() => validateIpcArgs('sidebar:copy-chat-transcript-path', ['chat-1'])).not.toThrow()
-    expect(() =>
-      validateIpcArgs('sidebar:copy-chat-transcript-path', ['../settings'])
-    ).toThrow(/safe chat id/)
+    expect(() => validateIpcArgs('sidebar:copy-chat-transcript-path', ['../settings'])).toThrow(
+      /safe chat id/
+    )
   })
 
   it('accepts bridge daemon status and toggle APIs', () => {
