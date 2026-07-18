@@ -65,6 +65,8 @@ export type ProjectPatch = {
   hue?: number
 }
 
+export const MAX_PROJECT_BRIEF_LENGTH = 4000
+
 /**
  * Main-owned companion record for a Project's Work-surface semantics. Kept
  * OUTSIDE the V1 Project shape on purpose: the V1 record round-trips through
@@ -358,7 +360,10 @@ export function migrateProjectWorkProfiles(
       if (claimedHomeChatIds.has(homeChatId)) homeChatId = undefined
       else claimedHomeChatIds.add(homeChatId)
     }
-    const brief = typeof entry.brief === 'string' && entry.brief.trim() ? entry.brief : undefined
+    const brief =
+      typeof entry.brief === 'string' && entry.brief.trim()
+        ? entry.brief.slice(0, MAX_PROJECT_BRIEF_LENGTH)
+        : undefined
     const preferredWorkspaceId = normalizeOptionalIdField(entry.preferredWorkspaceId)
     const profile: ProjectWorkProfile = {
       projectId,

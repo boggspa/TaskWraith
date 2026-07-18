@@ -12,7 +12,8 @@ import {
 import type {
   ChatRecord,
   PooledAgentIdentitySnapshot,
-  ProviderId
+  ProviderId,
+  WorkspaceRecord
 } from '../../../main/store/types'
 import {
   addChatToProject,
@@ -31,6 +32,7 @@ import {
   setProjectIconAndHue,
   subscribeProjects,
   updateProjectReference,
+  updateProjectWorkProfile,
   verifyProjectReference,
   type Project,
   type ProjectReference,
@@ -63,6 +65,8 @@ interface ProjectsSidebarViewProps {
   /** Open the References dock panel for this project — the discoverable link
    * from the sidebar's compact library section to the full dock surface. */
   onOpenReferencesLibrary?: (projectId: string) => void
+  /** Registered workspaces, for the profile's preferred-workspace picker. */
+  workspaces?: readonly WorkspaceRecord[]
   onSearchResultCountChange?: (count: number) => void
   /** Pre-select a project's detail panel on mount (host deep-link seam; also
    * how static-render tests reach the selected-only detail UI). */
@@ -227,6 +231,7 @@ export function ProjectsSidebarView({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  workspaces = [],
   onSearchResultCountChange,
   initialSelectedProjectId = null
 }: ProjectsSidebarViewProps): JSX.Element {
@@ -382,6 +387,19 @@ export function ProjectsSidebarView({
     const trimmed = url?.trim()
     if (!trimmed) return
     runReferenceAction(() => addProjectReference({ projectId, kind: 'url', locator: trimmed }))
+  }
+
+  /** Profile edits share the async alert-on-reject surface; the adoption
+   * notify refreshes state, the explicit re-read covers deferrals. */
+  const runProfileUpdate = (
+    projectId: string,
+    patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+  ): void => {
+    void updateProjectWorkProfile(projectId, patch)
+      .then(() => setWorkProfiles(listProjectWorkProfiles()))
+      .catch((error) => {
+        window.alert(error instanceof Error ? error.message : 'Project profile update failed.')
+      })
   }
 
   const startProjectDraft = (parentId: string | null): void => {
@@ -656,6 +674,9 @@ export function ProjectsSidebarView({
     const referencesForProject = selected
       ? projectReferences.filter((reference) => reference.projectId === project.id)
       : []
+    const workProfile = selected
+      ? workProfiles.find((profile) => profile.projectId === project.id) ?? null
+      : null
 
     return (
       <div
@@ -875,6 +896,45 @@ export function ProjectsSidebarView({
                   </option>
                 ))}
               </select>
+            </label>
+            <label className="sidebar-project-select-row">
+              <span>Home workspace</span>
+              <select
+                value={workProfile?.preferredWorkspaceId ?? ''}
+                onChange={(event: ChangeEvent<HTMLSelectElement>) => {
+                  runProfileUpdate(project.id, {
+                    preferredWorkspaceId: event.target.value || null
+                  })
+                }}
+                aria-label={`Preferred workspace for ${project.name} home drafts`}
+              >
+                <option value="">General (no workspace)</option>
+                {workspaces.map((workspace) => (
+                  <option key={workspace.id} value={workspace.id}>
+                    {workspace.displayName}
+                  </option>
+                ))}
+              </select>
+            </label>
+            <label className="sidebar-project-brief-row">
+              <span>Brief</span>
+              {/* Uncontrolled + keyed by project so switching projects resets
+                  the draft; the durable write happens on blur, only when the
+                  text actually changed. */}
+              <textarea
+                key={project.id}
+                className="sidebar-project-brief-input"
+                rows={3}
+                defaultValue={workProfile?.brief ?? ''}
+                placeholder="What this project is about, for humans first. Never sent to agents automatically."
+                aria-label={`Brief for ${project.name}`}
+                onBlur={(event) => {
+                  const nextBrief = event.target.value.trim()
+                  const currentBrief = workProfile?.brief ?? ''
+                  if (nextBrief === currentBrief.trim()) return
+                  runProfileUpdate(project.id, { brief: nextBrief ? nextBrief : null })
+                }}
+              />
             </label>
             <div className="sidebar-project-references">
               <div className="sidebar-project-references-header">

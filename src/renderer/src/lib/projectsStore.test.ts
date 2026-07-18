@@ -23,6 +23,7 @@ const fake = vi.hoisted(() => {
     getProjectsSnapshot: vi.fn(),
     applyProjectOp: vi.fn(),
     setProjectHomeChat: vi.fn(),
+    updateProjectWorkProfile: vi.fn(),
     applyProjectReferenceOp: vi.fn(),
     verifyProjectReference: vi.fn(),
     importLegacyProjects: vi.fn(),
@@ -47,6 +48,7 @@ import {
   resetProjectsStoreForTests,
   setProjectHomeChat,
   subscribeProjects,
+  updateProjectWorkProfile,
   verifyProjectReference,
   whenProjectsStoreReady,
   type Project
@@ -84,6 +86,7 @@ beforeEach(() => {
   fake.api.getProjectsSnapshot.mockReset()
   fake.api.applyProjectOp.mockReset()
   fake.api.setProjectHomeChat.mockReset()
+  fake.api.updateProjectWorkProfile.mockReset()
   fake.api.importLegacyProjects.mockReset()
   fake.api.onProjectsChanged.mockReset()
   fake.api.getProjectsSnapshot.mockImplementation(async () => ({
@@ -95,6 +98,12 @@ beforeEach(() => {
   fake.api.setProjectHomeChat.mockImplementation(async () => ({
     projects: [],
     workProfiles: [],
+    changed: true
+  }))
+  fake.api.updateProjectWorkProfile.mockImplementation(async () => ({
+    projects: [],
+    workProfiles: [],
+    references: [],
     changed: true
   }))
   fake.api.applyProjectReferenceOp.mockImplementation(async () => ({
@@ -276,6 +285,41 @@ describe('projectsStore work profiles', () => {
       /^Chat is already the home of another project\.$/
     )
     expect(listProjectWorkProfiles()).toEqual([])
+  })
+})
+
+describe('projectsStore work-profile updates', () => {
+  it('updates profile fields through main and adopts the authoritative result', async () => {
+    await whenProjectsStoreReady()
+    fake.api.updateProjectWorkProfile.mockImplementation(async () => ({
+      projects: [legacyRecord('project-a', 'Alpha')],
+      workProfiles: [
+        { projectId: 'project-a', brief: 'Ship it', preferredWorkspaceId: 'ws-1', updatedAt: 6 }
+      ],
+      references: [],
+      changed: true
+    }))
+    await updateProjectWorkProfile('project-a', { brief: 'Ship it', preferredWorkspaceId: 'ws-1' })
+    expect(fake.api.updateProjectWorkProfile).toHaveBeenCalledWith('project-a', {
+      brief: 'Ship it',
+      preferredWorkspaceId: 'ws-1'
+    })
+    expect(getProjectWorkProfile('project-a')).toMatchObject({
+      brief: 'Ship it',
+      preferredWorkspaceId: 'ws-1'
+    })
+  })
+
+  it('propagates profile rejections without invoke framing', async () => {
+    await whenProjectsStoreReady()
+    fake.api.updateProjectWorkProfile.mockImplementation(async () => {
+      throw new Error(
+        "Error invoking remote method 'projects:update-work-profile': Error: Preferred workspace is not registered."
+      )
+    })
+    await expect(
+      updateProjectWorkProfile('project-a', { preferredWorkspaceId: 'ws-gone' })
+    ).rejects.toThrow(/^Preferred workspace is not registered\.$/)
   })
 })
 

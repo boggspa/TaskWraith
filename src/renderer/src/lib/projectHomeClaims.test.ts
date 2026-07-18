@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   hasChatStarted,
   planPendingHomeClaims,
+  resolveStartProjectHomeTarget,
   type PendingHomeClaimChatLike
 } from './projectHomeClaims'
 
@@ -33,6 +34,27 @@ describe('hasChatStarted', () => {
 
   it('ignores system bookkeeping messages, matching the welcome-surface gate', () => {
     expect(hasChatStarted({ appChatId: 'a', messages: [{ role: 'system' }] })).toBe(false)
+  })
+})
+
+describe('resolveStartProjectHomeTarget', () => {
+  const workspaces = [
+    { id: 'ws-1', path: '/repos/one' },
+    { id: 'ws-2', path: '/repos/two' }
+  ]
+
+  it('prefers a registered preferred workspace', () => {
+    expect(
+      resolveStartProjectHomeTarget({ preferredWorkspaceId: 'ws-2' }, workspaces)
+    ).toEqual({ kind: 'workspace', workspace: workspaces[1] })
+  })
+
+  it('falls back to General without a profile, preference, or registered match', () => {
+    expect(resolveStartProjectHomeTarget(null, workspaces)).toEqual({ kind: 'global' })
+    expect(resolveStartProjectHomeTarget({}, workspaces)).toEqual({ kind: 'global' })
+    expect(
+      resolveStartProjectHomeTarget({ preferredWorkspaceId: 'ws-gone' }, workspaces)
+    ).toEqual({ kind: 'global' })
   })
 })
 

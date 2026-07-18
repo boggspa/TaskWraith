@@ -70,9 +70,16 @@ export interface ProjectHandlerDeps {
   applyProjectOp: (op: ProjectOp) => ProjectRegistryMutationResult
   applyReferenceOp: (op: ProjectReferenceOp) => ProjectRegistryMutationResult
   setProjectHomeChat: (projectId: string, chatId: string | null) => ProjectRegistryMutationResult
+  setProjectWorkProfileFields: (
+    projectId: string,
+    patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+  ) => ProjectRegistryMutationResult
   /** Home claims must reference a chat main actually knows — the registry is
    * deliberately chat-blind, so existence is validated here at the boundary. */
   chatExists: (chatId: string) => boolean
+  /** Preferred-workspace pointers must reference a registered workspace —
+   * the registry is workspace-blind, so existence is validated here. */
+  workspaceExists: (workspaceId: string) => boolean
   /** One existence stat for a local locator — NEVER content. URLs are not
    * probed in this phase (no network on behalf of the library). */
   probeReferenceLocator: (
@@ -152,6 +159,41 @@ export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
       references: deps.getReferences(),
       legacyImportMarker: deps.getLegacyImportMarker()
     }
+  })
+
+  ipcMain.handle('projects:update-work-profile', (event, projectId: unknown, patch: unknown) => {
+    deps.assertSenderCanManageProjects(event)
+    if (typeof projectId !== 'string' || !projectId.trim()) {
+      throw new Error('Project id is required.')
+    }
+    if (!patch || typeof patch !== 'object' || Array.isArray(patch)) {
+      throw new Error('Malformed profile patch.')
+    }
+    const candidate = patch as { brief?: unknown; preferredWorkspaceId?: unknown }
+    const normalized: { brief?: string | null; preferredWorkspaceId?: string | null } = {}
+    if ('brief' in candidate) {
+      if (candidate.brief !== null && typeof candidate.brief !== 'string') {
+        throw new Error('Malformed brief.')
+      }
+      normalized.brief = candidate.brief
+    }
+    if ('preferredWorkspaceId' in candidate) {
+      if (
+        candidate.preferredWorkspaceId !== null &&
+        typeof candidate.preferredWorkspaceId !== 'string'
+      ) {
+        throw new Error('Malformed preferred workspace.')
+      }
+      const preferred =
+        typeof candidate.preferredWorkspaceId === 'string'
+          ? candidate.preferredWorkspaceId.trim()
+          : null
+      if (preferred && !deps.workspaceExists(preferred)) {
+        throw new Error('Preferred workspace is not registered.')
+      }
+      normalized.preferredWorkspaceId = preferred
+    }
+    return deps.setProjectWorkProfileFields(projectId, normalized)
   })
 
   ipcMain.handle('projects:reference-op', (event, op: unknown) => {

@@ -35902,7 +35902,11 @@ if (isGeminiMcpBridgeProcess) {
       referenceProposalService: projectReferenceProposalService,
       notifyReferenceProposalsChanged: emitProjectReferenceProposalsChanged,
       setProjectHomeChat: (projectId, chatId) => AppStore.setProjectHomeChat(projectId, chatId),
+      setProjectWorkProfileFields: (projectId, patch) =>
+        AppStore.setProjectWorkProfileFields(projectId, patch),
       chatExists: (chatId) => Boolean(AppStore.getChat(chatId)),
+      workspaceExists: (workspaceId) =>
+        AppStore.getWorkspaces().some((workspace) => workspace.id === workspaceId),
       probeReferenceLocator: (_kind, locator) => {
         try {
           return fsSync.existsSync(locator) ? 'ok' : 'missing'

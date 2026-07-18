@@ -340,6 +340,21 @@ export async function setProjectHomeChat(
   adoptAuthoritative(result)
 }
 
+/** Update the user-authored profile fields (brief, preferred workspace).
+ * Same contract as the claim: async, main-authoritative, no optimistic twin. */
+export async function updateProjectWorkProfile(
+  projectId: string,
+  patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.updateProjectWorkProfile !== 'function') {
+    throw new Error('Project profiles need the desktop bridge.')
+  }
+  const result = await invokeBridge(() => api.updateProjectWorkProfile(projectId, patch))
+  adoptAuthoritative(result)
+}
+
 export function listProjectReferences(projectId?: string): ProjectReference[] {
   void ensureInitialized()
   const source = projectId

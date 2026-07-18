@@ -1136,6 +1136,10 @@ const api = {
   applyProjectOp: (op: unknown) => ipcRenderer.invoke('projects:apply-op', op),
   setProjectHomeChat: (projectId: string, chatId: string | null) =>
     ipcRenderer.invoke('projects:set-home-chat', projectId, chatId),
+  updateProjectWorkProfile: (
+    projectId: string,
+    patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+  ) => ipcRenderer.invoke('projects:update-work-profile', projectId, patch),
   applyProjectReferenceOp: (op: unknown) => ipcRenderer.invoke('projects:reference-op', op),
   verifyProjectReference: (id: string) => ipcRenderer.invoke('projects:verify-reference', id),
   pickProjectReferencePath: (mode: 'file' | 'folder') =>

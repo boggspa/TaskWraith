@@ -149,6 +149,40 @@ describe('ProjectsSidebarView references', () => {
     expect(html).not.toContain('title="Open reference library"')
   })
 
+  it('renders the profile brief and preferred-workspace rows with stored values', () => {
+    seedStore([projectRecord('project-a', 'Alpha', [])], [])
+    fake.broadcast.cb?.({
+      projects: [projectRecord('project-a', 'Alpha', [])],
+      workProfiles: [
+        {
+          projectId: 'project-a',
+          brief: 'Ship the Work surface end-to-end.',
+          preferredWorkspaceId: 'ws-2',
+          updatedAt: 5
+        }
+      ],
+      references: []
+    })
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        workspaces={[
+          { id: 'ws-1', path: '/repos/one', displayName: 'One', createdAt: 1, lastOpenedAt: 1, pinned: false },
+          { id: 'ws-2', path: '/repos/two', displayName: 'Two', createdAt: 1, lastOpenedAt: 1, pinned: false }
+        ]}
+        initialSelectedProjectId="project-a"
+      />
+    )
+    expect(html).toContain('Home workspace')
+    expect(html).toContain('<option value="ws-2" selected="">Two</option>')
+    expect(html).toContain('Ship the Work surface end-to-end.')
+    expect(html).toContain('Never sent to agents automatically.')
+  })
+
   it('links to the References dock when the host provides the library handler', () => {
     seedStore([projectRecord('project-a', 'Alpha', [])], [])
     const html = renderToStaticMarkup(

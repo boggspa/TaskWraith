@@ -1,6 +1,7 @@
 import { createHash } from 'crypto'
 
 import {
+  MAX_PROJECT_BRIEF_LENGTH,
   applyAddChatToProject,
   applyProjectOp,
   applyProjectReferenceOp,
@@ -113,6 +114,14 @@ export interface ProjectRegistry {
    * untouched — un-homing a thread must not eject it from the Project).
    */
   setHomeChat(projectId: string, chatId: string | null): ProjectRegistryMutationResult
+  /** Upsert the user-authored profile fields. `null` clears a field,
+   * `undefined` leaves it; a profile emptied of every semantic field is
+   * dropped. Workspace existence is the HANDLER's concern (the registry is
+   * workspace-blind, mirroring its chat-blindness). */
+  setWorkProfileFields(
+    projectId: string,
+    patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+  ): ProjectRegistryMutationResult
   importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult
   getLegacyImportMarker(): ProjectLegacyImportMarker | null
   /** Single listener (the window broadcast); fires after every persisted
@@ -378,6 +387,69 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
       writeEnvelope({ ...envelope, projects, workProfiles })
       notify({ projects, workProfiles, references: envelope.references })
       return { projects, workProfiles, references: envelope.references, changed: true }
+    },
+
+    setWorkProfileFields(
+      projectId: string,
+      patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+    ): ProjectRegistryMutationResult {
+      const envelope = readEnvelope()
+      if (!projectById(envelope.projects, projectId)) throw new Error('Project not found.')
+      if (patch.brief === undefined && patch.preferredWorkspaceId === undefined) {
+        throw new Error('No profile update provided.')
+      }
+
+      const existing = envelope.workProfiles.find((profile) => profile.projectId === projectId)
+      const nowMs = now()
+      const next: ProjectWorkProfile = {
+        ...(existing ?? { projectId }),
+        projectId,
+        updatedAt: nowMs
+      }
+      if (patch.brief !== undefined) {
+        const brief = patch.brief?.trim() ? patch.brief.slice(0, MAX_PROJECT_BRIEF_LENGTH) : null
+        if (brief === null) delete next.brief
+        else next.brief = brief
+      }
+      if (patch.preferredWorkspaceId !== undefined) {
+        const preferred = patch.preferredWorkspaceId?.trim() || null
+        if (preferred === null) delete next.preferredWorkspaceId
+        else next.preferredWorkspaceId = preferred
+      }
+
+      const unchanged =
+        existing !== undefined &&
+        existing.brief === next.brief &&
+        existing.preferredWorkspaceId === next.preferredWorkspaceId
+      const meaningful =
+        next.homeChatId !== undefined ||
+        next.brief !== undefined ||
+        next.preferredWorkspaceId !== undefined
+      if (unchanged || (!existing && !meaningful)) {
+        return {
+          projects: envelope.projects,
+          workProfiles: envelope.workProfiles,
+          references: envelope.references,
+          changed: false
+        }
+      }
+
+      const workProfiles = !meaningful
+        ? envelope.workProfiles.filter((profile) => profile.projectId !== projectId)
+        : existing
+          ? envelope.workProfiles.map((profile) =>
+              profile.projectId === projectId ? next : profile
+            )
+          : [...envelope.workProfiles, next]
+
+      writeEnvelope({ ...envelope, workProfiles })
+      notify({ projects: envelope.projects, workProfiles, references: envelope.references })
+      return {
+        projects: envelope.projects,
+        workProfiles,
+        references: envelope.references,
+        changed: true
+      }
     },
 
     importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult {

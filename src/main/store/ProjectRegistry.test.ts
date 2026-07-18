@@ -339,6 +339,54 @@ describe('ProjectRegistry home-chat claims', () => {
     expect(harness.registry.getReferences()).toEqual([])
   })
 
+  it('upserts and clears user-authored profile fields without touching the claim', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setHomeChat('project-a', 'chat-home')
+
+    const withFields = harness.registry.setWorkProfileFields('project-a', {
+      brief: '  Ship the Work surface  ',
+      preferredWorkspaceId: 'ws-1'
+    })
+    expect(withFields.changed).toBe(true)
+    expect(withFields.workProfiles).toEqual([
+      expect.objectContaining({
+        projectId: 'project-a',
+        homeChatId: 'chat-home',
+        brief: '  Ship the Work surface  '.slice(0, 4000),
+        preferredWorkspaceId: 'ws-1'
+      })
+    ])
+
+    const unchanged = harness.registry.setWorkProfileFields('project-a', { brief: withFields.workProfiles[0].brief })
+    expect(unchanged.changed).toBe(false)
+
+    const cleared = harness.registry.setWorkProfileFields('project-a', {
+      brief: null,
+      preferredWorkspaceId: null
+    })
+    expect(cleared.workProfiles).toEqual([
+      expect.objectContaining({ projectId: 'project-a', homeChatId: 'chat-home' })
+    ])
+    expect(cleared.workProfiles[0].brief).toBeUndefined()
+    expect(cleared.workProfiles[0].preferredWorkspaceId).toBeUndefined()
+  })
+
+  it('drops a profile emptied of every semantic field and validates inputs', () => {
+    const harness = harnessWithProjects()
+    harness.registry.setWorkProfileFields('project-a', { brief: 'Something' })
+    const emptied = harness.registry.setWorkProfileFields('project-a', { brief: null })
+    expect(emptied.workProfiles).toEqual([])
+
+    expect(() => harness.registry.setWorkProfileFields('missing', { brief: 'x' })).toThrow(
+      'Project not found.'
+    )
+    expect(() => harness.registry.setWorkProfileFields('project-a', {})).toThrow(
+      'No profile update provided.'
+    )
+    const noProfileNoop = harness.registry.setWorkProfileFields('project-a', { brief: null })
+    expect(noProfileNoop.changed).toBe(false)
+  })
+
   it('persists claims across registry instances and heals duplicate claims on read', () => {
     const harness = harnessWithProjects()
     harness.registry.setHomeChat('project-a', 'chat-home')

@@ -642,8 +642,8 @@ import {
   type ProjectReferenceContextSelection
 } from './lib/projectReferenceContextSelection'
 import { projectReferenceContextDisclosure } from '../../shared/projectReferenceContext'
-import { listProjects, setProjectHomeChat } from './lib/projectsStore'
-import { planPendingHomeClaims } from './lib/projectHomeClaims'
+import { getProjectWorkProfile, listProjects, setProjectHomeChat } from './lib/projectsStore'
+import { planPendingHomeClaims, resolveStartProjectHomeTarget } from './lib/projectHomeClaims'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
   type WorkspaceSelectIntent
@@ -8859,7 +8859,14 @@ function App(): React.JSX.Element {
    */
   const pendingHomeClaimsRef = useRef<Map<string, string>>(new Map())
   const handleStartProjectHome = async (projectId: string): Promise<void> => {
-    const chat = await handleNewSingleGlobalChat()
+    // A profile's preferred workspace decides where the draft is born; a
+    // vanished workspace falls back to General (re-scopable on the live
+    // draft through the normal pristine-rebind flows).
+    const target = resolveStartProjectHomeTarget(getProjectWorkProfile(projectId), workspaces)
+    const chat =
+      target.kind === 'workspace'
+        ? await handleNewChat(target.workspace.id, target.workspace.path)
+        : await handleNewSingleGlobalChat()
     if (chat) pendingHomeClaimsRef.current.set(chat.appChatId, projectId)
   }
   useEffect(() => {

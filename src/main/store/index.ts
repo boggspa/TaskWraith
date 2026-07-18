@@ -3880,6 +3880,13 @@ export class AppStore {
     return projectRegistry.setHomeChat(projectId, chatId)
   }
 
+  static setProjectWorkProfileFields(
+    projectId: string,
+    patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+  ): ProjectRegistryMutationResult {
+    return projectRegistry.setWorkProfileFields(projectId, patch)
+  }
+
   static importLegacyProjects(rawJson: string | null): ProjectLegacyImportResult {
     return projectRegistry.importLegacyProjects(rawJson)
   }

@@ -108,7 +108,14 @@ function createDeps() {
       references: [],
       changed: true
     })),
+    setProjectWorkProfileFields: vi.fn(() => ({
+      projects: [],
+      workProfiles: [],
+      references: [],
+      changed: true
+    })),
     chatExists: vi.fn((chatId: string) => chatId !== 'chat-missing'),
+    workspaceExists: vi.fn((workspaceId: string) => workspaceId !== 'ws-missing'),
     importLegacyProjects: vi.fn((rawJson: string | null) => ({
       status: rawJson === null ? ('nothing-to-import' as const) : ('imported' as const),
       importedCount: 0,
@@ -123,11 +130,12 @@ function createDeps() {
 }
 
 describe('registerProjectHandlers', () => {
-  it('registers the nine project channels', () => {
+  it('registers the ten project channels', () => {
     registerProjectHandlers(createDeps().deps)
     expect(handlerFor('projects:snapshot')).toBeTypeOf('function')
     expect(handlerFor('projects:apply-op')).toBeTypeOf('function')
     expect(handlerFor('projects:set-home-chat')).toBeTypeOf('function')
+    expect(handlerFor('projects:update-work-profile')).toBeTypeOf('function')
     expect(handlerFor('projects:reference-op')).toBeTypeOf('function')
     expect(handlerFor('projects:verify-reference')).toBeTypeOf('function')
     expect(handlerFor('projects:pick-reference-path')).toBeTypeOf('function')
@@ -142,6 +150,7 @@ describe('registerProjectHandlers', () => {
     handlerFor('projects:snapshot')({})
     handlerFor('projects:apply-op')({}, { kind: 'delete', projectId: 'p' })
     handlerFor('projects:set-home-chat')({}, 'project-a', 'chat-1')
+    handlerFor('projects:update-work-profile')({}, 'project-a', { brief: 'x' })
     handlerFor('projects:reference-op')({}, { kind: 'remove-reference', id: 'ref-1' })
     handlerFor('projects:verify-reference')({}, 'ref-1')
     void handlerFor('projects:pick-reference-path')({}, 'file')
@@ -152,7 +161,7 @@ describe('registerProjectHandlers', () => {
       proposalId: 'proposal-1',
       decision: 'reject'
     })
-    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(9)
+    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(10)
   })
 
   it('returns projects, work profiles, references, and the import marker as the snapshot', () => {
@@ -164,6 +173,33 @@ describe('registerProjectHandlers', () => {
       references: deps.getReferences(),
       legacyImportMarker: marker
     })
+  })
+
+  it('validates work-profile patches and gates preferred workspaces on registration', () => {
+    const { deps } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:update-work-profile')
+
+    handler({}, 'project-a', { brief: 'Ship it', preferredWorkspaceId: 'ws-1' })
+    expect(deps.setProjectWorkProfileFields).toHaveBeenCalledWith('project-a', {
+      brief: 'Ship it',
+      preferredWorkspaceId: 'ws-1'
+    })
+    handler({}, 'project-a', { preferredWorkspaceId: null })
+    expect(deps.setProjectWorkProfileFields).toHaveBeenLastCalledWith('project-a', {
+      preferredWorkspaceId: null
+    })
+
+    expect(() => handler({}, '', { brief: 'x' })).toThrow('Project id is required.')
+    expect(() => handler({}, 'project-a', null)).toThrow('Malformed profile patch.')
+    expect(() => handler({}, 'project-a', { brief: 42 })).toThrow('Malformed brief.')
+    expect(() => handler({}, 'project-a', { preferredWorkspaceId: 42 })).toThrow(
+      'Malformed preferred workspace.'
+    )
+    expect(() => handler({}, 'project-a', { preferredWorkspaceId: 'ws-missing' })).toThrow(
+      'Preferred workspace is not registered.'
+    )
+    expect(deps.setProjectWorkProfileFields).toHaveBeenCalledTimes(2)
   })
 
   it('applies parsed reference ops but refuses renderer-supplied verification records', () => {

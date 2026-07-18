@@ -4465,6 +4465,7 @@ export function Sidebar({
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
+                workspaces={workspaces}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
             </div>

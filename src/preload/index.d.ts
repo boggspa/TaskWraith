@@ -1481,6 +1481,10 @@ declare global {
         projectId: string,
         chatId: string | null
       ) => Promise<ProjectRegistryMutationResult>
+      updateProjectWorkProfile: (
+        projectId: string,
+        patch: { brief?: string | null; preferredWorkspaceId?: string | null }
+      ) => Promise<ProjectRegistryMutationResult>
       applyProjectReferenceOp: (op: ProjectReferenceOp) => Promise<ProjectRegistryMutationResult>
       verifyProjectReference: (id: string) => Promise<ProjectRegistryMutationResult>
       pickProjectReferencePath: (mode: 'file' | 'folder') => Promise<string | null>

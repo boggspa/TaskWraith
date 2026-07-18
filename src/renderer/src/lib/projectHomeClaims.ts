@@ -49,6 +49,33 @@ export function hasChatStarted(chat: PendingHomeClaimChatLike): boolean {
   return hasConversationContent(chat.messages ?? [])
 }
 
+export interface StartProjectHomeWorkspaceLike {
+  id: string
+  path: string
+}
+
+export type StartProjectHomeTarget =
+  | { kind: 'global' }
+  | { kind: 'workspace'; workspace: StartProjectHomeWorkspaceLike }
+
+/**
+ * Where a fresh Project Home draft should be created. A profile's
+ * preferredWorkspaceId wins when that workspace is still registered;
+ * everything else falls back to a General draft (whose scope the user can
+ * re-pick on the live draft through the normal pristine-rebind flows).
+ */
+export function resolveStartProjectHomeTarget(
+  profile: { preferredWorkspaceId?: string } | null | undefined,
+  workspaces: ReadonlyArray<StartProjectHomeWorkspaceLike>
+): StartProjectHomeTarget {
+  const preferredId = profile?.preferredWorkspaceId
+  if (preferredId) {
+    const workspace = workspaces.find((candidate) => candidate.id === preferredId)
+    if (workspace) return { kind: 'workspace', workspace }
+  }
+  return { kind: 'global' }
+}
+
 export function planPendingHomeClaims(
   chats: ReadonlyArray<PendingHomeClaimChatLike>,
   pending: ReadonlyMap<string, string>
