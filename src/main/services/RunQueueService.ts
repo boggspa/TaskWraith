@@ -24,6 +24,7 @@ import type {
   RunQueueRequestSnapshot,
   WorkspaceRecord
 } from '../store/types'
+import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
@@ -453,6 +454,12 @@ export class RunQueueService {
     const discordContextSelection = isRecord(value.discordContextSelection)
       ? normalizeDiscordContextSelection(value.discordContextSelection)
       : undefined
+    const projectReferenceContextSelection = parseProjectReferenceContextSelection(
+      value.projectReferenceContextSelection
+    )
+    if (value.projectReferenceContextSelection !== undefined && !projectReferenceContextSelection) {
+      throw new Error('Queued Project reference context selection is invalid.')
+    }
     if (
       rawExternalPathGrants.length &&
       externalPathGrants.length !== rawExternalPathGrants.length
@@ -497,6 +504,7 @@ export class RunQueueService {
       sessionTrust: Boolean(value.sessionTrust),
       imageAttachments,
       ...(discordContextSelection ? { discordContextSelection } : {}),
+      ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
       externalPathGrants: externalPathGrants.length ? externalPathGrants : undefined,
       geminiWorktree: sanitizeWorkspaceGeminiWorktree(value.geminiWorktree),
       codexNativeReview: Boolean(value.codexNativeReview) || undefined,
@@ -654,7 +662,11 @@ function sanitizePermissionPostureContext(
     appChatId: optionalString(value.appChatId),
     workflowMode: optionalString(value.workflowMode),
     runtimeProfileId: optionalString(value.runtimeProfileId),
-    promptHash: optionalString(value.promptHash)
+    ensembleParticipantId: optionalString(value.ensembleParticipantId),
+    ensembleLaneId: optionalString(value.ensembleLaneId),
+    projectReferenceContextHash: optionalString(value.projectReferenceContextHash),
+    promptHash: optionalString(value.promptHash),
+    resumeFallbackPromptHash: optionalString(value.resumeFallbackPromptHash)
   }
   return Object.values(context).some(Boolean) ? context : undefined
 }

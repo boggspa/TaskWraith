@@ -76,6 +76,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'projects:verify-reference': ['nonEmptyString'],
   'projects:pick-reference-path': ['nonEmptyString'],
   'projects:import-legacy': ['optionalString'],
+  'projects:list-reference-proposals': ['nonEmptyString'],
+  'projects:review-reference-proposal': ['object'],
   'get-chats': ['optionalString'],
   'get-chat-list': ['optionalString'],
   'get-pinned-messages': ['optionalString'],

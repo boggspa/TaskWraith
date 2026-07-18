@@ -201,6 +201,8 @@ interface SidebarProps {
   onSelectChat: (chat: ChatRecord) => void
   /** Start Project Home for an unhomed project (Work panel pass-through). */
   onStartProjectHome?: (projectId: string) => void
+  /** Reports the selected Project detail target for Work-scoped host chrome. */
+  onSelectedProjectChange?: (projectId: string | null) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
@@ -2603,6 +2605,7 @@ export function Sidebar({
   onActiveSidebarTabChange,
   onSelectChat,
   onStartProjectHome,
+  onSelectedProjectChange,
   onOpenChatInSidePanel,
   onOpenInMultiview,
   onOpenSettings,
@@ -4457,6 +4460,7 @@ export function Sidebar({
                 isSearchActive={isSidebarSearchActive}
                 onSelectChat={onSelectChat}
                 onStartProjectHome={onStartProjectHome}
+                onSelectedProjectChange={onSelectedProjectChange}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
             </div>

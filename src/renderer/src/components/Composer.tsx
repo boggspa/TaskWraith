@@ -227,6 +227,8 @@ export interface ComposerProps {
   currentComposerChatId: any
   currentComposerMentionParticipants: any
   currentDiscordContextSelection: any
+  /** Explicit Project references selected for this chat's next solo send. */
+  hasProjectReferenceContext?: boolean
   discordContextUnavailableReason?: string
   currentEnsembleConcurrentMode: any
   currentEnsembleFanoutPolicy: EnsembleFanoutPolicy
@@ -654,6 +656,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleStopWorkSession,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
+    hasProjectReferenceContext = false,
     imageAttachments,
     intentNote,
     interfaceStyle,
@@ -788,7 +791,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
-  const hasSendablePromptContent = hasAttachmentPromptContent(prompt, imageAttachments)
+  const hasSendablePromptContent =
+    hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
   const [seatChangeNoticeRoundKey, setSeatChangeNoticeRoundKey] = useState<string | null>(null)
   const [dismissedSeatChangeNoticeRoundKey, setDismissedSeatChangeNoticeRoundKey] = useState<
@@ -4486,7 +4490,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   : !isCurrentGlobalChat && !currentWorkspace
                                     ? 'Pick a workspace folder first'
                                     : !hasSendablePromptContent
-                                      ? 'Type a prompt or attach a file first'
+                                      ? 'Type a prompt, attach a file, or choose Project references first'
                                       : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
                                           : isCurrentEnsembleChat && effectiveSelectedParticipantId

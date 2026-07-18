@@ -148,6 +148,20 @@ describe('ProviderSeatGeneration', () => {
     )
   })
 
+  it('rotates a gateway-v1 seat to v2 even when the broader tool fingerprint is unchanged', () => {
+    const gatewayV1 = input('claude')
+    const gatewayV2 = {
+      ...gatewayV1,
+      taskWraithMcpProfileId: 'taskwraith-gateway-v2' as const
+    }
+    const first = planProviderSeatGeneration(undefined, gatewayV1).generation
+    const next = planProviderSeatGeneration(first, gatewayV2)
+
+    expect(next.freshSessionRequired).toBe(true)
+    expect(next.causes).toEqual(['tools'])
+    expect(next.generation.config.taskWraithMcpProfileId).toBe('taskwraith-gateway-v2')
+  })
+
   it('does not redundantly rotate an initial seat with no provider session', () => {
     const runtime = planProviderSeatRuntime(undefined, input('claude'), {
       now: '2026-07-11T12:00:00.000Z'

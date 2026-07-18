@@ -2336,6 +2336,15 @@ const MCP_TOOL_OVERRIDES: Partial<
     iconRef: 'tool:diagnostics',
     policyKey: 'shellCommands',
     description: 'Runs fixed workspace diagnostic tools and returns structured problems.'
+  },
+  project_reference_propose: {
+    label: 'Propose Project reference',
+    transcript: 'Proposed Project reference',
+    group: 'goals',
+    iconRef: 'tool:plan',
+    policyKey: 'mcpTools',
+    description:
+      'Adds an untrusted file, folder, or link suggestion to the human review inbox without reading it or granting access.'
   }
 }
 
@@ -2468,6 +2477,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'workspace_board_snapshot',
     'workspace_board_preview_plan',
     'workspace_board_apply_plan',
+    'project_reference_propose',
     'prompt_task_normalize',
     'scope_radar',
     'repo_convention_scan',

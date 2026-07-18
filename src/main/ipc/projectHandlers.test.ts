@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerProjectHandlers, type ProjectHandlerDeps } from './projectHandlers'
+import {
+  registerProjectHandlers,
+  type ProjectHandlerDeps,
+  type ProjectReferenceProposalServiceFacade
+} from './projectHandlers'
 import type { ProjectOp } from '../../shared/projects'
 
 vi.mock('electron', () => ({
@@ -37,12 +41,44 @@ const sampleReference = {
   updatedAt: 1
 }
 
+const sampleProposal = {
+  payload: {
+    schemaVersion: 1 as const,
+    purpose: 'library-addition-proposal' as const,
+    action: 'proposed' as const,
+    proposalId: 'proposal-1',
+    projectId: 'project-a',
+    materializationReferenceId: 'ref-proposed',
+    candidate: {
+      kind: 'file' as const,
+      locator: '/repo/agent-brief.docx',
+      title: 'Agent brief'
+    },
+    reason: 'Useful source for the report',
+    proposedAt: 25
+  },
+  event: {
+    runId: 'run-1',
+    provider: 'codex' as const,
+    // Event internals intentionally must not cross the renderer boundary.
+    hash: 'private-run-event-hash'
+  }
+}
+
 function createDeps() {
   const marker = {
     importedAt: 1,
     sourceHash: 'hash',
     importedCount: 2,
     status: 'imported' as const
+  }
+  const referenceProposalService = {
+    listPending: vi.fn(() => [sampleProposal]),
+    review: vi.fn<() => unknown>(() => ({
+      created: true,
+      proposal: sampleProposal,
+      reference: sampleReference
+    }))
   }
   const deps: ProjectHandlerDeps = {
     getProjects: vi.fn(() => []),
@@ -78,13 +114,16 @@ function createDeps() {
       importedCount: 0,
       marker
     })),
+    referenceProposalService:
+      referenceProposalService as unknown as ProjectReferenceProposalServiceFacade,
+    notifyReferenceProposalsChanged: vi.fn(),
     assertSenderCanManageProjects: vi.fn()
   }
-  return { deps, marker }
+  return { deps, marker, referenceProposalService }
 }
 
 describe('registerProjectHandlers', () => {
-  it('registers the seven project channels', () => {
+  it('registers the nine project channels', () => {
     registerProjectHandlers(createDeps().deps)
     expect(handlerFor('projects:snapshot')).toBeTypeOf('function')
     expect(handlerFor('projects:apply-op')).toBeTypeOf('function')
@@ -93,6 +132,8 @@ describe('registerProjectHandlers', () => {
     expect(handlerFor('projects:verify-reference')).toBeTypeOf('function')
     expect(handlerFor('projects:pick-reference-path')).toBeTypeOf('function')
     expect(handlerFor('projects:import-legacy')).toBeTypeOf('function')
+    expect(handlerFor('projects:list-reference-proposals')).toBeTypeOf('function')
+    expect(handlerFor('projects:review-reference-proposal')).toBeTypeOf('function')
   })
 
   it('guards every channel with the sender assertion', () => {
@@ -105,7 +146,13 @@ describe('registerProjectHandlers', () => {
     handlerFor('projects:verify-reference')({}, 'ref-1')
     void handlerFor('projects:pick-reference-path')({}, 'file')
     handlerFor('projects:import-legacy')({}, null)
-    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(7)
+    handlerFor('projects:list-reference-proposals')({}, 'project-a')
+    handlerFor('projects:review-reference-proposal')({}, {
+      projectId: 'project-a',
+      proposalId: 'proposal-1',
+      decision: 'reject'
+    })
+    expect(deps.assertSenderCanManageProjects).toHaveBeenCalledTimes(9)
   })
 
   it('returns projects, work profiles, references, and the import marker as the snapshot', () => {
@@ -164,6 +211,79 @@ describe('registerProjectHandlers', () => {
     await expect(handler({}, 'folder')).resolves.toBe('/picked/path')
     expect(deps.pickReferencePath).toHaveBeenCalledWith('folder')
     await expect(handler({}, 'everything')).rejects.toThrow('Malformed picker mode.')
+  })
+
+  it('projects pending proposals without exposing mutable run-event internals', () => {
+    const { deps, referenceProposalService } = createDeps()
+    registerProjectHandlers(deps)
+
+    expect(handlerFor('projects:list-reference-proposals')({}, '  project-a  ')).toEqual([
+      {
+        proposalId: 'proposal-1',
+        projectId: 'project-a',
+        candidate: {
+          kind: 'file',
+          locator: '/repo/agent-brief.docx',
+          title: 'Agent brief'
+        },
+        reason: 'Useful source for the report',
+        proposedAt: 25,
+        provider: 'codex',
+        runId: 'run-1'
+      }
+    ])
+    expect(referenceProposalService.listPending).toHaveBeenCalledWith('project-a')
+
+    expect(() => handlerFor('projects:list-reference-proposals')({}, '  ')).toThrow(
+      'Project id is required.'
+    )
+    expect(() => handlerFor('projects:list-reference-proposals')({}, 42)).toThrow(
+      'Project id is required.'
+    )
+  })
+
+  it('reviews strictly shaped proposal input and only broadcasts real changes', () => {
+    const { deps, referenceProposalService } = createDeps()
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:review-reference-proposal')
+
+    expect(
+      handler({}, {
+        projectId: ' project-a ',
+        proposalId: ' proposal-1 ',
+        decision: 'approve'
+      })
+    ).toEqual({ created: true, referenceId: 'ref-1' })
+    expect(referenceProposalService.review).toHaveBeenCalledWith({
+      projectId: 'project-a',
+      proposalId: 'proposal-1',
+      decision: 'approve'
+    })
+    expect(deps.notifyReferenceProposalsChanged).toHaveBeenCalledWith('project-a')
+
+    referenceProposalService.review.mockReturnValueOnce({
+      created: false,
+      proposal: sampleProposal
+    })
+    expect(
+      handler({}, { projectId: 'project-a', proposalId: 'proposal-1', decision: 'approve' })
+    ).toEqual({ created: false })
+    expect(deps.notifyReferenceProposalsChanged).toHaveBeenCalledTimes(1)
+
+    expect(() =>
+      handler({}, { projectId: 'project-a', proposalId: 'proposal-1', decision: 'maybe' })
+    ).toThrow('Project reference proposal decision is invalid.')
+    expect(() => handler({}, { projectId: 'project-a', decision: 'reject' })).toThrow(
+      'Proposal id is required.'
+    )
+    expect(() =>
+      handler({}, {
+        projectId: 'project-a',
+        proposalId: 'proposal-1',
+        decision: 'reject',
+        privateEvent: true
+      })
+    ).toThrow('Malformed Project reference proposal review.')
   })
 
   it('validates home-chat claims and gates them on chat existence', () => {

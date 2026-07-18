@@ -42,9 +42,16 @@ export interface DockContextProjectLike {
  */
 export function resolveDockSurfaceContext(input: {
   activeSidebarTab: string | null | undefined
+  activeProjectId?: string | null
   chatId: string | null | undefined
   projects: ReadonlyArray<DockContextProjectLike>
 }): DockSurfaceContext | null {
+  if (input.activeSidebarTab === 'projects') {
+    const activeProjectId = input.activeProjectId?.trim()
+    if (activeProjectId && input.projects.some((project) => project.id === activeProjectId)) {
+      return { kind: 'work', projectId: activeProjectId }
+    }
+  }
   const chatId = input.chatId?.trim()
   if (!chatId) return null
   if (input.activeSidebarTab === 'projects') {

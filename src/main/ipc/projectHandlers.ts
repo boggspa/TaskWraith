@@ -11,6 +11,12 @@ import {
   type ProjectWorkProfile
 } from '../../shared/projects'
 import type {
+  ReviewProjectReferenceProposalInput,
+  ReviewProjectReferenceProposalResult,
+  StoredProjectReferenceProposal
+} from '../services/ProjectReferenceProposalService'
+import type { ProviderId } from '../store/types'
+import type {
   ProjectLegacyImportMarker,
   ProjectLegacyImportResult,
   ProjectRegistryMutationResult
@@ -24,6 +30,36 @@ export interface ProjectsSnapshot {
   workProfiles: ProjectWorkProfile[]
   references: ProjectReference[]
   legacyImportMarker: ProjectLegacyImportMarker | null
+}
+
+/**
+ * The renderer gets a deliberately flat proposal view, never the mutable
+ * run-event record used to establish its provenance. The locator remains
+ * visible because this is a human review surface; it is still catalogue
+ * metadata, not a grant to open, read, or fetch the target.
+ */
+export interface ProjectReferenceProposalView {
+  proposalId: string
+  projectId: string
+  candidate: {
+    kind: ProjectReferenceKind
+    locator: string
+    title: string
+  }
+  reason?: string
+  proposedAt: number
+  provider?: ProviderId
+  runId: string
+}
+
+export interface ProjectReferenceProposalReviewView {
+  created: boolean
+  referenceId?: string
+}
+
+export interface ProjectReferenceProposalServiceFacade {
+  listPending(projectId: string): readonly StoredProjectReferenceProposal[]
+  review(input: ReviewProjectReferenceProposalInput): ReviewProjectReferenceProposalResult
 }
 
 export interface ProjectHandlerDeps {
@@ -48,6 +84,12 @@ export interface ProjectHandlerDeps {
    * grants NOTHING — reference ≠ access is the safety boundary. */
   pickReferencePath: (mode: 'file' | 'folder') => Promise<string | null>
   importLegacyProjects: (rawJson: string | null) => ProjectLegacyImportResult
+  /** Append-only proposal evidence is resolved in main and is only surfaced
+   * to the renderer through the narrow view above. */
+  referenceProposalService: ProjectReferenceProposalServiceFacade
+  /** Broadcast a dedicated invalidation after an IPC-originated review. MCP
+   * proposal creation uses the same callback at its own main-only boundary. */
+  notifyReferenceProposalsChanged: (projectId: string) => void
   /**
    * Projects are app-level organisational state managed from the main window.
    * Every channel — reads included — is main-renderer-only until a secondary
@@ -55,6 +97,50 @@ export interface ProjectHandlerDeps {
    * a one-line change here, tightening later is an incident.
    */
   assertSenderCanManageProjects: (event: IpcMainInvokeEvent) => void
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function requireProjectReferenceProposalId(value: unknown, label: string): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required.`)
+  return value.trim()
+}
+
+function parseProjectReferenceProposalReview(
+  value: unknown
+): ReviewProjectReferenceProposalInput {
+  if (!isRecord(value)) throw new Error('Malformed Project reference proposal review.')
+  const allowed = new Set(['projectId', 'proposalId', 'decision'])
+  if (Object.keys(value).some((key) => !allowed.has(key))) {
+    throw new Error('Malformed Project reference proposal review.')
+  }
+  const projectId = requireProjectReferenceProposalId(value.projectId, 'Project id')
+  const proposalId = requireProjectReferenceProposalId(value.proposalId, 'Proposal id')
+  if (value.decision !== 'approve' && value.decision !== 'reject') {
+    throw new Error('Project reference proposal decision is invalid.')
+  }
+  return { projectId, proposalId, decision: value.decision }
+}
+
+function toProjectReferenceProposalView(
+  proposal: StoredProjectReferenceProposal
+): ProjectReferenceProposalView {
+  const { payload, event } = proposal
+  return {
+    proposalId: payload.proposalId,
+    projectId: payload.projectId,
+    candidate: {
+      kind: payload.candidate.kind,
+      locator: payload.candidate.locator,
+      title: payload.candidate.title
+    },
+    ...(payload.reason ? { reason: payload.reason } : {}),
+    proposedAt: payload.proposedAt,
+    ...(event.provider ? { provider: event.provider } : {}),
+    runId: event.runId
+  }
 }
 
 export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
@@ -102,6 +188,25 @@ export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
     deps.assertSenderCanManageProjects(event)
     if (mode !== 'file' && mode !== 'folder') throw new Error('Malformed picker mode.')
     return deps.pickReferencePath(mode)
+  })
+
+  ipcMain.handle('projects:list-reference-proposals', (event, projectId: unknown) => {
+    deps.assertSenderCanManageProjects(event)
+    const normalizedProjectId = requireProjectReferenceProposalId(projectId, 'Project id')
+    return deps.referenceProposalService
+      .listPending(normalizedProjectId)
+      .map(toProjectReferenceProposalView)
+  })
+
+  ipcMain.handle('projects:review-reference-proposal', (event, input: unknown) => {
+    deps.assertSenderCanManageProjects(event)
+    const review = parseProjectReferenceProposalReview(input)
+    const result = deps.referenceProposalService.review(review)
+    if (result.created) deps.notifyReferenceProposalsChanged(review.projectId)
+    return {
+      created: result.created,
+      ...(result.reference ? { referenceId: result.reference.id } : {})
+    } satisfies ProjectReferenceProposalReviewView
   })
 
   ipcMain.handle('projects:apply-op', (event, op: unknown) => {

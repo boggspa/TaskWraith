@@ -13,6 +13,7 @@ import type {
   TaskWraithMcpProfileId,
   ProviderRunReroute
 } from '../store/types'
+import type { ResolvedProjectReferenceContext } from '../../shared/projectReferenceContext'
 
 // Phase B1: AgentRunPayload + AgentRunRoute exported so extracted run services
 // can type their public surface without importing from main/index.ts.
@@ -76,6 +77,8 @@ export interface AgentRunPayload {
   imagePaths?: string[]
   providerSessionId?: string | null
   externalPathGrants?: ExternalPathGrant[]
+  /** Explicit user-selected Project catalogue context, re-resolved and signed by main. */
+  projectReferenceContext?: ResolvedProjectReferenceContext
   sessionTrust?: boolean
   geminiWorktree?: GeminiWorktreeLaunchOption
   runtimeProfileId?: string

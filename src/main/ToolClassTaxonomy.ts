@@ -261,6 +261,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'repo_convention_scan',
   'coherence_gate_check',
   'evidence_pack_write',
+  'project_reference_propose',
   'completion_claim_check'
 ])
 

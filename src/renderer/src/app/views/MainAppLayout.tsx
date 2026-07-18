@@ -58,6 +58,7 @@ import {
   ChatMediaPreviewOverlay
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
+import { ProjectReferencesDockPanel } from '../../components/ProjectReferencesDockPanel'
 import { AgentIdentityIcon } from '../../components/icons/AgentIdentityIcon'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
 import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
@@ -82,6 +83,7 @@ import { CanvasPaneLauncher } from '../../components/CanvasPaneLauncher'
 import { Composer, type ComposerProps } from '../../components/Composer'
 import { WorkspaceBoardCreatorSheet } from '../../components/WorkspaceBoardCreatorSheet'
 import { withSessionActivityLedger } from '../../lib/sessionActivityLedger'
+import { getProjectReferenceContextSelection } from '../../lib/projectReferenceContextSelection'
 
 import type { MainAppLayoutProps } from './MainAppLayout.types'
 
@@ -91,6 +93,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   activeDiff,
   activeRightDockTab,
   activeSidebarChatId,
+  activeWorkProjectId,
   activeThreadSearchIndex,
   activeWorkspaceBoard,
   activeWorkspaceBoardCards,
@@ -287,6 +290,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleSidebarPrimarySurfaceSelect,
   handleSidebarQuickUpdate,
   handleStartProjectHome,
+  handleSelectedProjectChange,
   handleStartSharedChat,
   handleBlackboardQueuedMessage,
   handleSteerToQueuedMessage,
@@ -322,6 +326,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isMultiviewSplit,
   isOldVersion,
   isPinnedMessagesPanelOpen,
+  isProjectReferencesPanelOpen,
   isSideChatProviderLocked,
   isSideChatRunning,
   isSideComposerLocked,
@@ -900,6 +905,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           sideComposerSelection?.workflowMode ||
           sideChat.workflowMode ||
           (sideComposerSelection?.approvalMode === 'plan' ? 'plan' : 'normal'),
+        hasProjectReferenceContext: Boolean(
+          getProjectReferenceContextSelection(sideChat.appChatId)?.referenceIds.length
+        ),
         imageAttachments: sideComposerAttachments,
         composerImageAttachments: sideComposerImageAttachments,
         composerFileAttachments: sideComposerFileAttachments,
@@ -1183,6 +1191,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onActiveSidebarTabChange={handleActiveSidebarTabChange}
                 onSelectChat={handleSelectChat}
                 onStartProjectHome={handleStartProjectHome}
+                onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
@@ -2420,6 +2429,18 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     onDetachToPane={openMediaPane}
                   />
                 )}
+
+                {activeRightDockTab === 'references' &&
+                  isProjectReferencesPanelOpen &&
+                  activeWorkProjectId && (
+                    <ProjectReferencesDockPanel
+                      key={activeWorkProjectId}
+                      projectId={activeWorkProjectId}
+                      chatId={currentChat?.appChatId}
+                      contextSelectionEnabled={currentChat?.chatKind !== 'ensemble'}
+                      onClose={() => closeRightDockPanel('references')}
+                    />
+                  )}
 
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (
                   <PinnedMessagesPanel

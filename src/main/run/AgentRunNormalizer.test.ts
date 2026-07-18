@@ -85,6 +85,53 @@ function makeDeps(overrides: Partial<AgentRunNormalizerDeps> = {}): AgentRunNorm
 }
 
 describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', () => {
+  it('preserves only a posture-authorized Project reference context', () => {
+    const context = {
+      schemaVersion: 1,
+      projectId: 'project-a',
+      projectName: 'Alpha',
+      references: [
+        {
+          id: 'ref-a',
+          kind: 'file',
+          title: 'Brief',
+          locator: '/repo/brief.txt',
+          access: 'workspace'
+        }
+      ]
+    } as const
+    const authorized = normalizeAgentRunPayload(
+      {
+        provider: 'codex',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'Use the brief',
+        approvalMode: 'auto_edit',
+        effectivePermissions: VALID_PERMS,
+        effectivePermissionsSignature: 'deadbeef',
+        projectReferenceContext: context
+      },
+      makeDeps({ verifyRunPosture: vi.fn(() => true) })
+    )
+    expect(authorized.projectReferenceContext).toEqual(context)
+
+    expect(() =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo',
+          prompt: 'Use the brief',
+          approvalMode: 'auto_edit',
+          effectivePermissions: VALID_PERMS,
+          effectivePermissionsSignature: 'forged',
+          projectReferenceContext: context
+        },
+        makeDeps({ verifyRunPosture: vi.fn(() => false) })
+      )
+    ).toThrow(/context authorization is invalid/)
+  })
+
   it('strips renderer-supplied MCP profile and fence state', () => {
     const result = normalizeAgentRunPayload(
       {

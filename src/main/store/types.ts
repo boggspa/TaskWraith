@@ -10,6 +10,7 @@ import type {
   TaskWraithPluginResourceProvenance,
   TaskWraithPluginReviewState
 } from '../../shared/plugins/PluginTypes'
+import type { ProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 
 export type AppearanceMode = 'solid' | 'soft_glass' | 'native_glass'
 export type VisualEffectStyle = 'auto' | 'liquid_glass' | 'thin_material' | 'classic'
@@ -625,6 +626,7 @@ export interface RunPermissionPostureSnapshot {
     runtimeProfileId?: string
     ensembleParticipantId?: string
     ensembleLaneId?: string
+    projectReferenceContextHash?: string
     promptHash?: string
     resumeFallbackPromptHash?: string
   }
@@ -695,6 +697,7 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-full-v1'
   | 'taskwraith-core-v1'
   | 'taskwraith-gateway-v1'
+  | 'taskwraith-gateway-v2'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -3686,6 +3689,7 @@ export type RunEventKind =
   | 'diff'
   | 'final_message'
   | 'lifecycle'
+  | 'reference_context'
   // Provider context-window compaction (src/shared/contextCompaction.ts) —
   // a provider (or the host, for manual Codex compacts) shrank the session's
   // live context. Distinct from ChatCompaction.ts disk-size compaction.
@@ -5237,6 +5241,7 @@ export interface RunQueueRequestSnapshot {
   imageAttachments: RunQueueImageAttachmentSnapshot[]
   discordContextSelection?: RunQueueDiscordContextSelectionSnapshot
   externalPathGrants?: ExternalPathGrant[]
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
   geminiWorktree?: GeminiWorktreeConfig
   codexNativeReview?: boolean
   codexReasoningEffort?: string | null

@@ -133,6 +133,50 @@ describe('RunCoordinator', () => {
     expect(adapter.run).not.toHaveBeenCalled()
   })
 
+  it('captures reference context after preflight and before adapter dispatch', async () => {
+    const order: string[] = []
+    const { deps, adapter, spies } = makeDeps({
+      prepareReferenceContext: vi.fn(() => {
+        order.push('prepare')
+      }),
+      captureReferenceContext: vi.fn(() => {
+        order.push('capture')
+      })
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      return true
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('adapter')
+    })
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(order).toEqual(['prepare', 'preflight', 'capture', 'adapter'])
+  })
+
+  it('does not capture reference context when preflight rejects', async () => {
+    const captureReferenceContext = vi.fn()
+    const { deps, spies } = makeDeps({ captureReferenceContext })
+    spies.ensureProviderRunPreflight.mockResolvedValueOnce(false)
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(captureReferenceContext).not.toHaveBeenCalled()
+  })
+
+  it('reports a reference-context materialization error and aborts dispatch', async () => {
+    const { deps, adapter, spies } = makeDeps({
+      captureReferenceContext: () => {
+        throw new Error('reference changed')
+      }
+    })
+    const result = await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(result.dispatched).toBe(false)
+    expect(adapter.run).not.toHaveBeenCalled()
+    expect(spies.sendError.mock.calls[0][2]).toContain('reference changed')
+    expect(spies.sendExit).toHaveBeenCalledTimes(1)
+  })
+
   it('reports a runtime-profile error to the sender and aborts dispatch', async () => {
     const { deps, adapter, spies } = makeDeps()
     spies.applyRuntimeProfileToPayload.mockImplementationOnce(() => {

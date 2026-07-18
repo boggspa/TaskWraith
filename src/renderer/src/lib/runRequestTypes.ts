@@ -16,6 +16,8 @@ import type {
   ProviderRunReroute,
   RunWarning
 } from '../../../main/store/types'
+import type { ProjectReferenceContextSelection } from '../../../shared/projectReferenceContext'
+import type { ProjectReferenceContextClaim } from './projectReferenceContextSelection'
 
 export interface QueuedRunRequest {
   appRunId?: string
@@ -36,6 +38,9 @@ export interface QueuedRunRequest {
   discordContextSelection?: DiscordContextSelection
   discordContextSnapshots?: DiscordContextSnapshot[]
   externalPathGrants?: ExternalPathGrant[]
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
+  /** Renderer-only ownership token for the one-send selection. Never persisted. */
+  projectReferenceContextClaim?: ProjectReferenceContextClaim
   geminiWorktree?: GeminiWorktreeConfig
   codexNativeReview?: boolean
   codexReasoningEffort?: string | null

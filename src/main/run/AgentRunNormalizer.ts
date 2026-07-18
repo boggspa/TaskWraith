@@ -23,6 +23,7 @@ import {
   normalizeKimiReasoningEffort
 } from '../providers/StaticProviderModels'
 import type { ExternalPathGrantRunBindingContext } from '../ExternalPathGrantBinding'
+import { parseResolvedProjectReferenceContext } from '../../shared/projectReferenceContext'
 import {
   assertLiveProviderId,
   assertProviderId,
@@ -149,6 +150,37 @@ export function normalizeAgentRunPayload(
     ? (payload.effectivePermissions as unknown as EffectiveRunPermissions)
     : undefined
   const requestedWorkflowMode = payload.workflowMode === 'plan' ? 'plan' : 'normal'
+  const projectReferenceContext =
+    payload.projectReferenceContext === undefined
+      ? null
+      : parseResolvedProjectReferenceContext(payload.projectReferenceContext)
+  if (payload.projectReferenceContext !== undefined && !projectReferenceContext) {
+    throw new Error('Project reference context is malformed.')
+  }
+  const postureContext = runPostureContextFromPayload({
+    provider,
+    scope,
+    appRunId: optionalString(payload.appRunId),
+    appChatId,
+    prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    resumeFallbackPrompt:
+      typeof payload.resumeFallbackPrompt === 'string' ? payload.resumeFallbackPrompt : undefined,
+    workflowMode: requestedWorkflowMode,
+    runtimeProfileId: optionalString(payload.runtimeProfileId),
+    ensembleRun: payload.ensembleRun,
+    projectReferenceContext
+  })
+  const projectReferenceContextAuthorized = projectReferenceContext
+    ? deps.verifyRunPosture(
+        optionalString(payload.approvalMode),
+        suppliedEffectivePermissions,
+        optionalString(payload.effectivePermissionsSignature),
+        postureContext
+      )
+    : false
+  if (projectReferenceContext && !projectReferenceContextAuthorized) {
+    throw new Error('Project reference context authorization is invalid.')
+  }
   // Downgrade-only permission-posture clamp at the renderer / bridge trust
   // boundary. A validly-signed posture (stamped by a main-side producer via
   // `signRunPosture`) passes through byte-for-byte; an unsigned / forged /
@@ -161,18 +193,7 @@ export function normalizeAgentRunPayload(
       approvalMode: optionalString(payload.approvalMode),
       effectivePermissions: suppliedEffectivePermissions,
       signature: optionalString(payload.effectivePermissionsSignature),
-      context: runPostureContextFromPayload({
-        provider,
-        scope,
-        appRunId: optionalString(payload.appRunId),
-        appChatId,
-        prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
-        resumeFallbackPrompt:
-          typeof payload.resumeFallbackPrompt === 'string' ? payload.resumeFallbackPrompt : undefined,
-        workflowMode: requestedWorkflowMode,
-        runtimeProfileId: optionalString(payload.runtimeProfileId),
-        ensembleRun: payload.ensembleRun
-      })
+      context: postureContext
     },
     {
       verify: deps.verifyRunPosture,
@@ -234,6 +255,9 @@ export function normalizeAgentRunPayload(
     imagePaths: stringArray(payload.imagePaths),
     providerSessionId: optionalStringOrNull(payload.providerSessionId),
     externalPathGrants: scopedExternalPathGrants,
+    ...(projectReferenceContextAuthorized && projectReferenceContext
+      ? { projectReferenceContext }
+      : {}),
     sessionTrust: Boolean(payload.sessionTrust),
     geminiWorktree: (payload.geminiWorktree ?? null) as GeminiWorktreeLaunchOption,
     runtimeProfileId: optionalString(payload.runtimeProfileId),

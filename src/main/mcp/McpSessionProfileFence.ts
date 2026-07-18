@@ -5,13 +5,19 @@ import type {
   TaskWraithMcpProfileReceipt
 } from '../store/types'
 
-// Each v1 id maps to a literal membership snapshot in McpToolProfiles. Never
+// Each versioned id maps to an immutable membership snapshot in McpToolProfiles. Never
 // mutate an existing mapping: mint a new id for any membership/schema change so
 // a resumable native provider session retains the surface it observed at birth.
 export const TASKWRAITH_FULL_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-full-v1'
 export const TASKWRAITH_CORE_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-core-v1'
+export const TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v1'
+export const TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v2'
+/** Current birth profile for a fresh, persistently fenceable gateway session. */
+export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
+  TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
+/** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  'taskwraith-gateway-v1'
+  TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
 
 export type TaskWraithMcpProfileResolutionSource =
   | 'pinned_receipt'
@@ -46,7 +52,8 @@ export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcp
   return (
     value === TASKWRAITH_FULL_MCP_PROFILE_ID ||
     value === TASKWRAITH_CORE_MCP_PROFILE_ID ||
-    value === TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+    value === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
   )
 }
 
@@ -107,8 +114,9 @@ export function taskWraithCoreMcpProfileOptInEnabled(
  * Claude is birth-pinned: an exact full/core/gateway receipt always wins. A
  * resumed session without an exact receipt is grandfathered to full because it
  * may already have observed that catalog. Every fresh, tool-capable session
- * defaults to gateway without a user flag; a fresh Claude session only does so
- * when its birth receipt can be persisted authoritatively.
+ * defaults to the current gateway birth profile (v2) without a user flag; a
+ * fresh Claude session only does so when its birth receipt can be persisted
+ * authoritatively.
  */
 export function resolveTaskWraithMcpProfile(input: {
   provider: ProviderId
@@ -375,5 +383,14 @@ export function isCoreTaskWraithMcpProfile(
 export function isGatewayTaskWraithMcpProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): boolean {
-  return profileId === TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+  return (
+    profileId === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
+  )
+}
+
+export function isGatewayV2TaskWraithMcpProfile(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): boolean {
+  return profileId === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
 }

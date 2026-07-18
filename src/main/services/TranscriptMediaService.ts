@@ -716,14 +716,14 @@ function pathAllowedByWorkspaceOrExternalGrant(
   })
 }
 
-type WorkspaceFileOpenReason =
+export type WorkspaceFileOpenReason =
   | 'invalid_path'
   | 'outside_allowed_roots'
   | 'missing'
   | 'not_file'
   | 'too_large'
 
-type OpenedWorkspaceFile =
+export type OpenedWorkspaceFile =
   | {
       ok: true
       fd: number
@@ -759,7 +759,7 @@ function sameFileSnapshotVersion(left: fs.Stats, right: fs.Stats): boolean {
  * returns, consumers read/copy from the descriptor and never reopen the source
  * path, so later swaps cannot alter the consumed bytes.
  */
-function openAuthorizedWorkspaceFile({
+export function openAuthorizedWorkspaceFile({
   workspacePath,
   candidatePath,
   externalPathGrants,
@@ -957,7 +957,9 @@ export function snapshotRasterOrPdfAttachment({
   }
 }
 
-function readOpenedWorkspaceFile(opened: Extract<OpenedWorkspaceFile, { ok: true }>): Buffer | null {
+export function readOpenedWorkspaceFile(
+  opened: Extract<OpenedWorkspaceFile, { ok: true }>
+): Buffer | null {
   const expectedBytes = opened.stat.size
   const buffer = Buffer.allocUnsafe(expectedBytes)
   let offset = 0

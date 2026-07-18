@@ -95,10 +95,11 @@ export type ProjectReferenceAvailability = 'ok' | 'missing'
  *
  * THE SAFETY BOUNDARY (non-negotiable, from the design brief): a reference
  * is a CATALOGUE entry — it grants NO filesystem, network, or provider
- * access, is never read, fetched, indexed, or injected into context, and
- * never creates an external-path grant. Access remains per-chat/per-run
- * through the existing grant machinery; explicit context attachment is a
- * later phase with its own disclosure. `lastVerified` is the LAST-KNOWN
+ * access, is never read, fetched, indexed, or injected merely because it is
+ * present, and never creates an external-path grant. A user may explicitly
+ * select entries for one committed send; main then re-resolves their ids,
+ * binds the disclosure to that run, and applies only authority the run already
+ * had. `lastVerified` is the LAST-KNOWN
  * availability from an explicit user-triggered probe (a single stat — never
  * content), shown as-is at browse time; nothing verifies on open.
  */

@@ -275,6 +275,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:verify-reference',
   'projects:pick-reference-path',
   'projects:import-legacy',
+  'projects:list-reference-proposals',
+  'projects:review-reference-proposal',
 
   // Global settings, runtime profiles, encrypted secrets, and handoff records.
   'update-settings',

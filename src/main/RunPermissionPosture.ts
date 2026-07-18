@@ -1,4 +1,8 @@
 import { createHash, createHmac, timingSafeEqual } from 'node:crypto'
+import {
+  parseResolvedProjectReferenceContext,
+  serializeResolvedProjectReferenceContext
+} from '../shared/projectReferenceContext'
 import type { EffectiveRunPermissions, RunPermissionPostureSnapshot } from './store/types'
 import { isRecord, optionalString } from './settings/MainSanitizers'
 
@@ -151,6 +155,7 @@ export interface RunPermissionPostureContext {
   runtimeProfileId?: string | null
   ensembleParticipantId?: string | null
   ensembleLaneId?: string | null
+  projectReferenceContextHash?: string | null
 }
 
 /**
@@ -170,6 +175,7 @@ export function runPostureContextFromPayload(payload: {
   workflowMode?: unknown
   runtimeProfileId?: unknown
   ensembleRun?: unknown
+  projectReferenceContext?: unknown
 }): RunPermissionPostureContext {
   const ensembleRun = isRecord(payload.ensembleRun) ? payload.ensembleRun : null
   const resumeFallbackPrompt =
@@ -184,8 +190,14 @@ export function runPostureContextFromPayload(payload: {
     workflowMode: payload.workflowMode === 'plan' ? 'plan' : 'normal',
     runtimeProfileId: optionalString(payload.runtimeProfileId),
     ensembleParticipantId: ensembleRun ? optionalString(ensembleRun.participantId) : null,
-    ensembleLaneId: ensembleRun ? optionalString(ensembleRun.laneId) : null
+    ensembleLaneId: ensembleRun ? optionalString(ensembleRun.laneId) : null,
+    projectReferenceContextHash: hashProjectReferenceContext(payload.projectReferenceContext)
   }
+}
+
+export function hashProjectReferenceContext(value: unknown): string | null {
+  const context = parseResolvedProjectReferenceContext(value)
+  return context ? sha256Hex(serializeResolvedProjectReferenceContext(context)) : null
 }
 
 export interface UntrustedRunPosture {
@@ -300,7 +312,8 @@ function normalizeRunPermissionPostureContext(
     workflowMode: normalizeContextString(context.workflowMode),
     runtimeProfileId: normalizeContextString(context.runtimeProfileId),
     ensembleParticipantId: normalizeContextString(context.ensembleParticipantId),
-    ensembleLaneId: normalizeContextString(context.ensembleLaneId)
+    ensembleLaneId: normalizeContextString(context.ensembleLaneId),
+    projectReferenceContextHash: normalizeContextString(context.projectReferenceContextHash)
   }
 }
 
@@ -327,6 +340,9 @@ function snapshotContext(
       ? { ensembleParticipantId: context.ensembleParticipantId }
       : {}),
     ...(context.ensembleLaneId ? { ensembleLaneId: context.ensembleLaneId } : {}),
+    ...(context.projectReferenceContextHash
+      ? { projectReferenceContextHash: context.projectReferenceContextHash }
+      : {}),
     ...(promptHash ? { promptHash } : {}),
     ...(resumeFallbackPromptHash ? { resumeFallbackPromptHash } : {})
   }

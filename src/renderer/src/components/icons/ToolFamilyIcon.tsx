@@ -260,6 +260,7 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     // + conventions (search), gate the diff / completion claims (diagnostic),
     // and persist the capability-cell + claims checklist (task).
     case 'prompt_task_normalize':
+    case 'project_reference_propose':
       return 'plan'
     case 'scope_radar':
     case 'repo_convention_scan':

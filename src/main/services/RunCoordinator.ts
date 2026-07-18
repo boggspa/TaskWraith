@@ -49,6 +49,12 @@ export interface RunCoordinatorDeps {
     sender: Electron.WebContents,
     payload: AgentRunPayload
   ) => Promise<boolean>
+  /** Materialize an explicit, signed Project reference context after all
+   * preflight checks and immediately before provider dispatch. */
+  captureReferenceContext?: (payload: AgentRunPayload) => void | Promise<void>
+  /** Register context identity without reading it so approvals raised by
+   * preflight can be linked after materialization. */
+  prepareReferenceContext?: (payload: AgentRunPayload) => void
   /** Adapter lookup. Throws when the provider isn't registered.
    * Currently `providerAdapters.require`. */
   getAdapter: (provider: ProviderId) => ProviderAdapter
@@ -130,7 +136,25 @@ export class RunCoordinator {
       return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
     }
     const adapter = this.deps.getAdapter(normalizedPayload.provider)
+    try {
+      this.deps.prepareReferenceContext?.(normalizedPayload)
+    } catch (error) {
+      const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+      const message = error instanceof Error ? error.message : String(error)
+      this.deps.sendError(event.sender, normalizedPayload.provider, message, route)
+      this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
+      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+    }
     if (!(await this.deps.ensureProviderRunPreflight(event.sender, normalizedPayload))) {
+      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+    }
+    try {
+      await this.deps.captureReferenceContext?.(normalizedPayload)
+    } catch (error) {
+      const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+      const message = error instanceof Error ? error.message : String(error)
+      this.deps.sendError(event.sender, normalizedPayload.provider, message, route)
+      this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
       return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
     }
     await adapter.run({ event, payload: normalizedPayload })

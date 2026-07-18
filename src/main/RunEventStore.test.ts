@@ -180,6 +180,44 @@ describe('RunEventStore', () => {
     expect(response.approvalId).toBeUndefined()
   })
 
+  it('hash-binds reference-context approval links and immutable artifact refs', () => {
+    const event = createRunEventRecord(
+      {
+        runId: 'run-context',
+        chatId: 'chat-context',
+        approvalId: 'approval-context',
+        kind: 'reference_context',
+        phase: 'artifact',
+        source: 'main',
+        payload: { schemaVersion: 1, purpose: 'approval-context', action: 'linked' },
+        artifacts: [
+          {
+            id: 'project-reference:abc',
+            kind: 'snapshot',
+            path: '/private/reference-context/abc.snapshot',
+            sha256: 'abc',
+            sizeBytes: 3
+          }
+        ]
+      },
+      1
+    )
+
+    expect(parseRunEventLine(serializeRunEventRecord(event))).toMatchObject({
+      approvalId: 'approval-context',
+      artifacts: [{ sha256: 'abc', sizeBytes: 3 }]
+    })
+    expect(verifyRunEventHashChain([event])).toBe(true)
+    expect(
+      verifyRunEventHashChain([{ ...event, approvalId: 'approval-tampered' }])
+    ).toBe(false)
+    expect(
+      verifyRunEventHashChain([
+        { ...event, artifacts: [{ ...event.artifacts![0], sha256: 'def' }] }
+      ])
+    ).toBe(false)
+  })
+
   it('infers external urls from tool payload url fields', () => {
     const event = createRunEventRecord(
       {

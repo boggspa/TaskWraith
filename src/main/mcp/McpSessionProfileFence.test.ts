@@ -3,7 +3,12 @@ import {
   TASKWRAITH_CORE_MCP_PROFILE_ID,
   TASKWRAITH_FULL_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
+  isGatewayTaskWraithMcpProfile,
+  isGatewayV2TaskWraithMcpProfile,
+  isTaskWraithMcpProfileId,
   isTaskWraithMcpProfileReceiptForSession,
   isTaskWraithMcpEnsembleLanePresent,
   isTaskWraithMcpAuthorizedEphemeralReroute,
@@ -13,12 +18,13 @@ import {
   shouldAcceptTaskWraithMcpSessionId,
   taskWraithCoreMcpProfileOptInEnabled,
   taskWraithMcpRunStartedWithPinnedReceipt,
+  taskWraithMcpProfileReceiptFingerprint,
   taskWraithMcpProfileStoreIdentity,
   transitionTaskWraithMcpProfileReceipt
 } from './McpSessionProfileFence'
 
 describe('resolveTaskWraithMcpProfile', () => {
-  it('defaults a fresh persistable Claude session to gateway without a feature flag', () => {
+  it('defaults a fresh persistable Claude session to gateway-v2 without a feature flag', () => {
     for (const coreProfileOptIn of [false, true]) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -30,6 +36,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)
     }
   })
 
@@ -61,11 +68,12 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('preserves exact existing full, core, and gateway Claude receipts', () => {
+  it('preserves exact existing full, core, gateway-v1, and gateway-v2 Claude receipts', () => {
     for (const profileId of [
       TASKWRAITH_FULL_MCP_PROFILE_ID,
       TASKWRAITH_CORE_MCP_PROFILE_ID,
-      TASKWRAITH_GATEWAY_MCP_PROFILE_ID
+      TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
     ]) {
       const receipt = createTaskWraithMcpProfileReceipt({
         provider: 'claude',
@@ -93,7 +101,7 @@ describe('resolveTaskWraithMcpProfile', () => {
     }
   })
 
-  it('defaults every fresh tool-capable provider to gateway', () => {
+  it('defaults every fresh tool-capable provider to gateway-v2', () => {
     for (const provider of ['codex', 'kimi', 'cursor', 'ollama'] as const) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -109,6 +117,15 @@ describe('resolveTaskWraithMcpProfile', () => {
         grokMcpAdvertised: true
       }).profileId
     ).toBe(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
+  })
+
+  it('recognizes both gateway generations without treating v1 as v2', () => {
+    expect(isTaskWraithMcpProfileId(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(true)
+    expect(isTaskWraithMcpProfileId(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(false)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
   })
 
   it('does not claim a gateway surface for headless or toolless Grok runs', () => {
@@ -273,6 +290,25 @@ describe('resolveTaskWraithMcpProfile', () => {
 })
 
 describe('MCP profile receipt validation and CAS rotation', () => {
+  it('binds the gateway generation into the durable receipt fingerprint', () => {
+    const common = {
+      provider: 'claude' as const,
+      providerSessionId: 'claude-a',
+      pinnedAt: '2026-07-11T10:00:00.000Z'
+    }
+    const v1 = createTaskWraithMcpProfileReceipt({
+      ...common,
+      profileId: TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID
+    })
+    const v2 = createTaskWraithMcpProfileReceipt({
+      ...common,
+      profileId: TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID
+    })
+    expect(taskWraithMcpProfileReceiptFingerprint(v1)).not.toBe(
+      taskWraithMcpProfileReceiptFingerprint(v2)
+    )
+  })
+
   it('keeps the immutable run-start pin authoritative across later CAS rotations', () => {
     const fence = {
       runStartedProviderSessionId: 'claude-a',
@@ -335,6 +371,32 @@ describe('MCP profile receipt validation and CAS rotation', () => {
     expect(transition).toEqual({
       accepted: true,
       receipt: { ...receiptA, providerSessionId: 'claude-b' }
+    })
+  })
+
+  it('never upgrades a receipted gateway-v1 lineage during CAS rotation', () => {
+    const receiptV1 = createTaskWraithMcpProfileReceipt({
+      provider: 'claude',
+      providerSessionId: 'claude-v1-a',
+      profileId: TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
+      pinnedAt: '2026-07-11T10:00:00.000Z'
+    })
+    expect(
+      transitionTaskWraithMcpProfileReceipt({
+        provider: 'claude',
+        profileId: TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
+        nextProviderSessionId: 'claude-v1-b',
+        previousRunProviderSessionId: 'claude-v1-a',
+        expectedStoreIdentity: taskWraithMcpProfileStoreIdentity({
+          providerSessionId: 'claude-v1-a',
+          receipt: receiptV1
+        }),
+        currentStoreSessionId: 'claude-v1-a',
+        currentReceipt: receiptV1
+      })
+    ).toEqual({
+      accepted: true,
+      receipt: { ...receiptV1, providerSessionId: 'claude-v1-b' }
     })
   })
 

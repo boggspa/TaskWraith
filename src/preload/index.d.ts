@@ -87,6 +87,11 @@ import type {
   ProjectWorkProfile
 } from '../shared/projects'
 import type {
+  ProjectReferenceContextSelection,
+  ResolvedProjectReferenceContext
+} from '../shared/projectReferenceContext'
+import type { DispatchResult } from '../main/services/RunCoordinator'
+import type {
   ProjectLegacyImportMarker,
   ProjectLegacyImportResult,
   ProjectRegistryMutationResult,
@@ -243,6 +248,25 @@ interface HostWeatherState {
   humidityPct?: number
 }
 
+/**
+ * Human-review projection of append-only agent proposal evidence. It carries
+ * catalogue metadata only; the presence of a local locator grants no host
+ * filesystem access and a URL is not fetched by this API.
+ */
+interface ProjectReferenceProposalView {
+  proposalId: string
+  projectId: string
+  candidate: {
+    kind: ProjectReference['kind']
+    locator: string
+    title: string
+  }
+  reason?: string
+  proposedAt: number
+  provider?: ProviderId
+  runId: string
+}
+
 type AgentApprovalAction =
   | 'accept'
   | 'acceptForSession'
@@ -274,6 +298,7 @@ interface AgentRunPayload {
   imagePaths?: string[]
   providerSessionId?: string | null
   externalPathGrants?: ExternalPathGrant[]
+  projectReferenceContext?: ResolvedProjectReferenceContext
   sessionTrust?: boolean
   geminiWorktree?: GeminiWorktreeLaunchOption
   runtimeProfileId?: string
@@ -317,6 +342,7 @@ interface ComposerRunInput {
   attachments?: ComposerImageAttachment[]
   imageAttachments?: ComposerImageAttachment[]
   externalPathGrants?: ExternalPathGrant[]
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
   geminiWorktree?: GeminiWorktreeLaunchOption
   codexReasoningEffort?: string | null
   codexServiceTier?: string | null
@@ -359,6 +385,7 @@ interface ComposerRunMetadata {
   uiNoticeMessage?: string
   imagePaths: string[]
   discordContextReads?: DiscordContextReadMetadata[]
+  projectReferenceContext?: ResolvedProjectReferenceContext
   planModeParsed?: boolean
 }
 
@@ -559,7 +586,7 @@ declare global {
       ) => Promise<void>
       cancelGemini: (runId?: string) => Promise<void>
       composeRun: (input: ComposerRunInput) => Promise<ComposerRunPayload>
-      runAgent: (payload: AgentRunPayload) => Promise<void>
+      runAgent: (payload: AgentRunPayload) => Promise<DispatchResult>
       cancelAgentRun: (provider?: ProviderId, runId?: string) => Promise<void>
       getAgentStatus: (provider: ProviderId) => Promise<any>
       getProviderCapabilities: (
@@ -1458,6 +1485,14 @@ declare global {
       verifyProjectReference: (id: string) => Promise<ProjectRegistryMutationResult>
       pickProjectReferencePath: (mode: 'file' | 'folder') => Promise<string | null>
       importLegacyProjects: (rawJson: string | null) => Promise<ProjectLegacyImportResult>
+      listProjectReferenceProposals: (
+        projectId: string
+      ) => Promise<ProjectReferenceProposalView[]>
+      reviewProjectReferenceProposal: (input: {
+        projectId: string
+        proposalId: string
+        decision: 'approve' | 'reject'
+      }) => Promise<{ created: boolean; referenceId?: string }>
       clearWorkspaces: () => Promise<void>
       getChats: (workspaceId?: string) => Promise<ChatRecord[]>
       getChatList: (workspaceId?: string) => Promise<ChatListItem[]>
@@ -2022,6 +2057,9 @@ declare global {
       onUsageChanged: (callback: () => void) => () => void
       onChatUpdated: (callback: (chat: ChatRecord) => void) => () => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void
+      onProjectReferenceProposalsChanged: (
+        callback: (payload: { projectId: string }) => void
+      ) => () => void
       onContextCompactionProgress: (
         callback: (event: ContextCompactionProgressEvent) => void
       ) => () => void

@@ -1,4 +1,4 @@
-import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback } from 'react'
+import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef, useCallback, useSyncExternalStore } from 'react'
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
@@ -390,6 +390,7 @@ import {
   FileMenuSelectionIcon,
   GhostCompanionIcon,
   InfoCircleIcon,
+  LinkCircleSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
   QuestionCircleIcon,
@@ -628,6 +629,19 @@ import {
   resolveDockSurfaceContext,
   writeDockSurface
 } from './lib/rightDockPersistence'
+import {
+  rememberProjectReferencesDockOpened,
+  shouldAutoOpenProjectReferences
+} from './lib/projectReferencesDockMemory'
+import {
+  claimProjectReferenceContextSelection,
+  clearProjectReferenceContextSelection,
+  getProjectReferenceContextSelection,
+  settleProjectReferenceContextClaim,
+  subscribeProjectReferenceContextSelection,
+  type ProjectReferenceContextSelection
+} from './lib/projectReferenceContextSelection'
+import { projectReferenceContextDisclosure } from '../../shared/projectReferenceContext'
 import { listProjects, setProjectHomeChat } from './lib/projectsStore'
 import { planPendingHomeClaims } from './lib/projectHomeClaims'
 import {
@@ -1392,6 +1406,9 @@ function App(): React.JSX.Element {
   const [sidebarActiveTab, setSidebarActiveTab] = useState<'chat' | 'threads' | 'projects'>('chat')
   const sidebarActiveTabRef = useRef(sidebarActiveTab)
   sidebarActiveTabRef.current = sidebarActiveTab
+  const [activeWorkProjectId, setActiveWorkProjectId] = useState<string | null>(null)
+  const activeWorkProjectIdRef = useRef(activeWorkProjectId)
+  activeWorkProjectIdRef.current = activeWorkProjectId
   // Legacy process-wide YOLO visibility. New Trusted Session is lane-scoped;
   // this state only lets the composer show/stop an old global auto-approval
   // switch if one is active inside the current process.
@@ -2281,6 +2298,7 @@ function App(): React.JSX.Element {
   const [geminiTerminalInputByChatId, setGeminiTerminalInputForChat] = usePerChatState('')
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
+  const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
     messageId: string
@@ -3308,6 +3326,8 @@ function App(): React.JSX.Element {
         return showCockpit
       case 'media':
         return isChatMediaPanelOpen
+      case 'references':
+        return isProjectReferencesPanelOpen
       case 'pins':
         return isPinnedMessagesPanelOpen
       case 'files':
@@ -3598,6 +3618,15 @@ function App(): React.JSX.Element {
     visibleExternalPathGrants
   )
   const currentComposerChatId = currentChat?.appChatId || null
+  const currentProjectReferenceContextSelection = useSyncExternalStore(
+    useCallback(
+      (listener) =>
+        subscribeProjectReferenceContextSelection(currentComposerChatId, listener),
+      [currentComposerChatId]
+    ),
+    () => getProjectReferenceContextSelection(currentComposerChatId),
+    () => null
+  )
   useEffect(() => {
     setPreviewChatMediaRef(null)
   }, [currentComposerChatId])
@@ -3663,21 +3692,47 @@ function App(): React.JSX.Element {
     () => collectChatMediaRefs(currentChat, imageAttachments, externalPathGrants),
     [currentChat, imageAttachments, externalPathGrants]
   )
-  const runRequestHasContent = (request: Pick<QueuedRunRequest, 'prompt' | 'imageAttachments'>) =>
-    hasAttachmentPromptContent(request.prompt, request.imageAttachments)
+  const projectReferenceContextSummary = (
+    selection: ProjectReferenceContextSelection | null | undefined
+  ): string =>
+    selection
+      ? `${selection.referenceIds.length} Project reference${selection.referenceIds.length === 1 ? '' : 's'}`
+      : ''
+  const runRequestHasContent = (
+    request: Pick<
+      QueuedRunRequest,
+      'prompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+    >
+  ) =>
+    hasAttachmentPromptContent(request.prompt, request.imageAttachments) ||
+    Boolean(request.projectReferenceContextSelection?.referenceIds.length)
   const runRequestDisplayPrompt = (
-    request: Pick<QueuedRunRequest, 'prompt' | 'displayPrompt' | 'imageAttachments'>,
+    request: Pick<
+      QueuedRunRequest,
+      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+    >,
     finalPrompt: string
   ): string => {
     if (request.displayPrompt?.trim()) return request.displayPrompt
     if (request.prompt.trim()) return finalPrompt
-    return attachmentSummary(request.imageAttachments) || finalPrompt
+    return (
+      attachmentSummary(request.imageAttachments) ||
+      projectReferenceContextSummary(request.projectReferenceContextSelection) ||
+      finalPrompt
+    )
   }
   const runRequestPromptPreview = (
-    request: Pick<QueuedRunRequest, 'prompt' | 'displayPrompt' | 'imageAttachments'>
+    request: Pick<
+      QueuedRunRequest,
+      'prompt' | 'displayPrompt' | 'imageAttachments' | 'projectReferenceContextSelection'
+    >
   ): string => {
     const text = (request.displayPrompt || request.prompt || '').trim()
-    return text || attachmentSummary(request.imageAttachments)
+    return (
+      text ||
+      attachmentSummary(request.imageAttachments) ||
+      projectReferenceContextSummary(request.projectReferenceContextSelection)
+    )
   }
   const buildSubmittedImageThumbnailMetadata = async (
     attachments: readonly ImageAttachment[]
@@ -8145,6 +8200,17 @@ function App(): React.JSX.Element {
     (chatId?: string | null) => {
       const targetChatId = chatId || currentChatIdRef.current
       if (!targetChatId) return
+      const pendingRun = externalPathGrantPromptByChatIdRef.current[targetChatId]?.pendingRun
+      if (pendingRun) {
+        settleProjectReferenceContextClaim(
+          pendingRun.projectReferenceContextClaim,
+          'rejected'
+        )
+      }
+      externalPathGrantPromptByChatIdRef.current = {
+        ...externalPathGrantPromptByChatIdRef.current,
+        [targetChatId]: null
+      }
       setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [targetChatId]: null }))
     },
     []
@@ -8158,13 +8224,28 @@ function App(): React.JSX.Element {
       trigger: 'preflight' | 'attach'
     }) => {
       if (input.gaps.length === 0) return
+      const previousRun = externalPathGrantPromptByChatIdRef.current[input.chatId]?.pendingRun
+      if (
+        previousRun?.projectReferenceContextClaim?.claimId !==
+        input.pendingRun?.projectReferenceContextClaim?.claimId
+      ) {
+        settleProjectReferenceContextClaim(
+          previousRun?.projectReferenceContextClaim,
+          'rejected'
+        )
+      }
+      const nextPrompt = {
+        gaps: input.gaps,
+        pendingRun: input.pendingRun ?? null,
+        trigger: input.trigger
+      }
+      externalPathGrantPromptByChatIdRef.current = {
+        ...externalPathGrantPromptByChatIdRef.current,
+        [input.chatId]: nextPrompt
+      }
       setExternalPathGrantPromptByChatId((prev) => ({
         ...prev,
-        [input.chatId]: {
-          gaps: input.gaps,
-          pendingRun: input.pendingRun ?? null,
-          trigger: input.trigger
-        }
+        [input.chatId]: nextPrompt
       }))
     },
     []
@@ -8179,6 +8260,7 @@ function App(): React.JSX.Element {
     }))
     try {
       for (const gap of prompt.gaps) {
+        if (externalPathGrantPromptByChatIdRef.current[chatId] !== prompt) return
         const result = await window.api.pickAndPersistExternalPathGrant({
           chatId,
           access: gap.access,
@@ -8187,8 +8269,15 @@ function App(): React.JSX.Element {
         })
         if (!result.ok) return
       }
+      if (externalPathGrantPromptByChatIdRef.current[chatId] !== prompt) return
       const resumeRun = prompt.pendingRun
-      setExternalPathGrantPromptByChatId((prev) => ({ ...prev, [chatId]: null }))
+      externalPathGrantPromptByChatIdRef.current = {
+        ...externalPathGrantPromptByChatIdRef.current,
+        [chatId]: null
+      }
+      setExternalPathGrantPromptByChatId((prev) =>
+        prev[chatId] === prompt ? { ...prev, [chatId]: null } : prev
+      )
       if (resumeRun) executeExternalPathGrantRunRef.current(resumeRun)
     } catch (err) {
       console.warn('[external-path:pick-and-persist] prompt grant failed', err)
@@ -8377,6 +8466,8 @@ function App(): React.JSX.Element {
         ? window.confirm("Delete this chat? This can't be undone.")
         : true
     if (!ok) return
+    clearExternalPathGrantPrompt(chatId)
+    clearProjectReferenceContextSelection(chatId)
     summaryChatUpdateQueueRef.current.cancel(chatId)
     const pendingSave = saveChatTimersRef.current.get(chatId)
     if (pendingSave) {
@@ -8417,6 +8508,17 @@ function App(): React.JSX.Element {
     )
 
     summaryChatUpdateQueueRef.current.clear()
+
+    for (const prompt of Object.values(externalPathGrantPromptByChatIdRef.current)) {
+      settleProjectReferenceContextClaim(
+        prompt?.pendingRun?.projectReferenceContextClaim,
+        'rejected'
+      )
+    }
+    externalPathGrantPromptByChatIdRef.current = {}
+    for (const chatId of deletedChatIds) {
+      clearProjectReferenceContextSelection(chatId)
+    }
 
     await Promise.allSettled([
       ...activeRunContexts.map((context) =>
@@ -8970,6 +9072,13 @@ function App(): React.JSX.Element {
     if (!targetChatId) return
     setImageAttachmentsByChatId((prev) => ({ ...prev, [targetChatId]: [] }))
     setDiscordContextSelectionByChatId((prev) => ({ ...prev, [targetChatId]: null }))
+  }
+
+  const settleProjectReferenceContextForRequest = (
+    request: QueuedRunRequest,
+    outcome: 'accepted' | 'rejected'
+  ) => {
+    settleProjectReferenceContextClaim(request.projectReferenceContextClaim, outcome)
   }
 
   const imageAttachmentsFromPaths = (paths: string[]) =>
@@ -11506,6 +11615,9 @@ function App(): React.JSX.Element {
       ...(snapshot.discordContextSelection
         ? { discordContextSelection: snapshot.discordContextSelection }
         : {}),
+      ...(snapshot.projectReferenceContextSelection
+        ? { projectReferenceContextSelection: snapshot.projectReferenceContextSelection }
+        : {}),
       ...(snapshot.externalPathGrants
         ? { externalPathGrants: snapshot.externalPathGrants }
         : {}),
@@ -11598,6 +11710,9 @@ function App(): React.JSX.Element {
     ...(request.discordContextSelection
       ? { discordContextSelection: request.discordContextSelection }
       : {}),
+    ...(request.projectReferenceContextSelection
+      ? { projectReferenceContextSelection: request.projectReferenceContextSelection }
+      : {}),
     ...(request.externalPathGrants?.length
       ? { externalPathGrants: request.externalPathGrants }
       : {}),
@@ -11640,33 +11755,31 @@ function App(): React.JSX.Element {
     request: QueuedRunRequest,
     status: RunQueueJobStatus,
     statusReason?: string
-  ) => {
+  ): Promise<RunQueueJob | null> => {
     const workspace =
       request.workspaceRecord || getWorkspaceForChat(request.chatRecord) || currentWorkspace
     const chat = request.chatRecord || currentChat
     const scope = request.scope || getChatScope(chat)
     const runId = request.appRunId
-    if (!runId || !chat) return
-    if (scope !== 'global' && !workspace) return
-    window.api
-      .requestRunQueueJob({
-        id: runId,
-        runId,
-        provider: request.provider,
-        scope,
-        ...(scope === 'global'
-          ? {}
-          : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
-        chatId: chat?.appChatId,
-        source: getRunQueueSource(request),
-        status,
-        promptPreview: runRequestPromptPreview(request),
-        runtimeProfileId: request.runtimeProfileId,
-        handoffSourceRunId: request.handoffSourceRunId,
-        request: createRunQueueRequestSnapshot(request),
-        ...(statusReason ? { statusReason } : {})
-      })
-      .catch(() => {})
+    if (!runId || !chat) return Promise.resolve(null)
+    if (scope !== 'global' && !workspace) return Promise.resolve(null)
+    return window.api.requestRunQueueJob({
+      id: runId,
+      runId,
+      provider: request.provider,
+      scope,
+      ...(scope === 'global'
+        ? {}
+        : { workspaceId: workspace!.id, workspacePath: workspace!.path }),
+      chatId: chat.appChatId,
+      source: getRunQueueSource(request),
+      status,
+      promptPreview: runRequestPromptPreview(request),
+      runtimeProfileId: request.runtimeProfileId,
+      handoffSourceRunId: request.handoffSourceRunId,
+      request: createRunQueueRequestSnapshot(request),
+      ...(statusReason ? { statusReason } : {})
+    })
   }
 
   const updateRunQueueJobStatus = (
@@ -11739,6 +11852,7 @@ function App(): React.JSX.Element {
         ...persistedAttachmentMetadata(attachment)
       })),
       discordContextSelection: request.discordContextSelection,
+      projectReferenceContextSelection: request.projectReferenceContextSelection,
       externalPathGrants: request.externalPathGrants,
       geminiWorktree: request.geminiWorktree,
       codexNativeReview: request.codexNativeReview,
@@ -11791,6 +11905,11 @@ function App(): React.JSX.Element {
           selection.guildName || ''
         ].join(':')
       : ''
+
+  const projectReferenceContextSelectionQueueKey = (
+    selection: ProjectReferenceContextSelection | null | undefined
+  ): string =>
+    selection ? `${selection.projectId}:${selection.referenceIds.join(',')}` : ''
 
   const getQueuedDesktopRunJobs = (sourceJobs: RunQueueJob[] = runQueueJobsRef.current) => {
     const cachedOrder = new Map<string, number>()
@@ -11935,6 +12054,8 @@ function App(): React.JSX.Element {
       sessionTrust?: boolean
       imageAttachments?: ImageAttachment[]
       discordContextSelection?: DiscordContextSelection | null
+      projectReferenceContextSelection?: ProjectReferenceContextSelection | null
+      claimProjectReferenceContext?: boolean
     }
   ): QueuedRunRequest => {
     const selectedChat =
@@ -12032,6 +12153,23 @@ function App(): React.JSX.Element {
       currentSelection: currentDiscordContextSelection,
       targetSelection: targetDiscordContextSelection
     })
+    const targetProjectReferenceContextSelection =
+      target && Object.prototype.hasOwnProperty.call(target, 'projectReferenceContextSelection')
+        ? target.projectReferenceContextSelection
+        : undefined
+    const projectReferenceContextClaim =
+      !existingPrompt &&
+      selectedChat?.chatKind !== 'ensemble' &&
+      targetProjectReferenceContextSelection === undefined &&
+      (!target || target.claimProjectReferenceContext === true)
+        ? claimProjectReferenceContextSelection(selectedChat?.appChatId)
+        : null
+    const requestProjectReferenceContextSelection =
+      !existingPrompt && selectedChat?.chatKind !== 'ensemble'
+        ? targetProjectReferenceContextSelection !== undefined
+          ? targetProjectReferenceContextSelection
+          : projectReferenceContextClaim?.selection ?? null
+        : null
 
     return {
       appRunId: createAppRunId(),
@@ -12053,6 +12191,12 @@ function App(): React.JSX.Element {
         : {}),
       ...(requestDiscordContextSelection
         ? { discordContextSelection: requestDiscordContextSelection }
+        : {}),
+      ...(requestProjectReferenceContextSelection
+        ? { projectReferenceContextSelection: requestProjectReferenceContextSelection }
+        : {}),
+      ...(projectReferenceContextClaim
+        ? { projectReferenceContextClaim }
         : {}),
       externalPathGrants,
       geminiWorktree:
@@ -12100,7 +12244,13 @@ function App(): React.JSX.Element {
         attachmentQueueKey(job.request?.imageAttachments || []) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
-          discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
+          discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
+        projectReferenceContextSelectionQueueKey(
+          job.request?.projectReferenceContextSelection
+        ) ===
+          projectReferenceContextSelectionQueueKey(
+            queuedRequest.projectReferenceContextSelection
+          )
     )
     const duplicateLocalQueuedRun = queuedRunsRef.current.some(
       (request) =>
@@ -12115,9 +12265,14 @@ function App(): React.JSX.Element {
         attachmentQueueKey(request.imageAttachments) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(request.discordContextSelection) ===
-          discordContextSelectionQueueKey(queuedRequest.discordContextSelection)
+          discordContextSelectionQueueKey(queuedRequest.discordContextSelection) &&
+        projectReferenceContextSelectionQueueKey(request.projectReferenceContextSelection) ===
+          projectReferenceContextSelectionQueueKey(
+            queuedRequest.projectReferenceContextSelection
+          )
     )
     if (duplicateQueuedRun || duplicateLocalQueuedRun) {
+      settleProjectReferenceContextForRequest(queuedRequest, 'rejected')
       updateRunQueueJobStatus(queuedRequest.appRunId, 'cancelled', 'Duplicate queued run ignored.')
       appendThreadRawLog(targetChatId, {
         type: 'info',
@@ -12135,7 +12290,23 @@ function App(): React.JSX.Element {
       getQueuedDesktopRunJobs().filter((job) => job.chatId === targetChatId).length +
       localQueuedRunsForChat.length +
       1
-    persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
+    void persistRunQueueJobForRequest(queuedRequest, 'queued', reason)
+      .then((job) => {
+        if (!job) {
+          throw new Error('The queued run could not be persisted.')
+        }
+        settleProjectReferenceContextForRequest(queuedRequest, 'accepted')
+      })
+      .catch((error) => {
+        settleProjectReferenceContextForRequest(queuedRequest, 'rejected')
+        setQueuedRuns((prev) =>
+          prev.filter((candidate) => candidate.appRunId !== queuedRequest.appRunId)
+        )
+        appendThreadRawLog(targetChatId, {
+          type: 'stderr',
+          content: `Failed to queue ${getProviderLabel(targetProvider)} run: ${redactLog(String(error))}`
+        })
+      })
     setQueuedRuns((prev) => [...prev, queuedRequest])
     appendThreadRawLog(targetChatId, {
       type: 'info',
@@ -12260,11 +12431,13 @@ function App(): React.JSX.Element {
     // user always sees an error if something escapes the inner catches.
     let currentRunIdForCleanup = runRequest?.appRunId
     let dispatchAccepted = false
+    let requestForClaimCleanup = runRequest
     try {
       const baseRequest = runRequest ?? buildRunRequest()
       let request = baseRequest.appRunId
         ? baseRequest
         : { ...baseRequest, appRunId: createAppRunId() }
+      requestForClaimCleanup = request
       let runChat = request.chatRecord || currentChat
       if (runChat && isChatSummaryRecord(runChat)) {
         const hydrated = await refreshSingleChat(runChat.appChatId)
@@ -12280,6 +12453,7 @@ function App(): React.JSX.Element {
       const currentRunId = request.appRunId || Date.now().toString()
       currentRunIdForCleanup = currentRunId
       if (!runChat || (!isGlobalRun && !runWorkspace) || !runRequestHasContent(request)) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
         updateRunQueueJobStatus(
           currentRunId,
           'failed',
@@ -12323,6 +12497,7 @@ function App(): React.JSX.Element {
             content: discordContextToolResult(snapshot.metadata)
           })
         } catch (error) {
+          settleProjectReferenceContextForRequest(request, 'rejected')
           const message = `Failed to read Discord context: ${redactLog(String(error))}`
           updateRunQueueJobStatus(currentRunId, 'failed', 'Discord context read failed.', message)
           appendThreadRawLog(runChat.appChatId, { type: 'stderr', content: message })
@@ -12458,7 +12633,11 @@ function App(): React.JSX.Element {
         return
       }
 
-      persistRunQueueJobForRequest(request, 'starting', 'Provider runner is preparing this task.')
+      void persistRunQueueJobForRequest(
+        request,
+        'starting',
+        'Provider runner is preparing this task.'
+      ).catch(() => {})
       runSchedulerBusyRef.current = true
 
       errorCountRef.current = 0
@@ -12492,6 +12671,7 @@ function App(): React.JSX.Element {
           sessionTrust: request.sessionTrust,
           imageAttachments: request.imageAttachments,
           externalPathGrants: request.externalPathGrants,
+          projectReferenceContextSelection: request.projectReferenceContextSelection,
           geminiWorktree: requestedRunWorktree,
           codexReasoningEffort: request.codexReasoningEffort,
           codexServiceTier: request.codexServiceTier,
@@ -12511,6 +12691,7 @@ function App(): React.JSX.Element {
           chatSnapshot: runChat
         })
       } catch (error) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
         // Diagnostic fix (send-message regression investigation, 2026-05-16):
         // Previously this catch wrote only to the Inspector raw log, which a
         // user without the Inspector tab open never sees — producing the
@@ -12569,6 +12750,7 @@ function App(): React.JSX.Element {
           : undefined
       const worktreeRequiredMessage = worktreeSelectionRequiredWarning(runtimeWorktreeIntent)
       if (worktreeRequiredMessage) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
         updateRunQueueJobStatus(
           currentRunId,
           'failed',
@@ -12606,6 +12788,9 @@ function App(): React.JSX.Element {
                 request.discordContextSnapshots.map((snapshot) => snapshot.metadata)
               )
             : []
+      const projectReferenceContextMetadata = composerMetadata.projectReferenceContext
+        ? projectReferenceContextDisclosure(composerMetadata.projectReferenceContext)
+        : null
       const displayFinalPrompt = runRequestDisplayPrompt(request, finalPrompt)
       const modelToPass =
         composedPayload.model ||
@@ -12670,6 +12855,9 @@ function App(): React.JSX.Element {
         }
         if (discordContextReads.length > 0) {
           messageMetadata.discordContextReads = discordContextReads
+        }
+        if (projectReferenceContextMetadata) {
+          messageMetadata.projectReferenceContext = projectReferenceContextMetadata
         }
         const userMessage: ChatMessage = {
           id: createMessageId(),
@@ -13691,7 +13879,6 @@ function App(): React.JSX.Element {
           resumeSessionId &&
           typeof window.api.startAgentReview === 'function'
         ) {
-          dispatchAccepted = true
           await window.api.startAgentReview('codex', resumeSessionId, {
             model: modelToPass,
             target: { type: 'uncommittedChanges' },
@@ -13700,6 +13887,8 @@ function App(): React.JSX.Element {
             appRunId: currentRunId,
             appChatId: runChatId
           })
+          dispatchAccepted = true
+          settleProjectReferenceContextForRequest(request, 'rejected')
         } else {
           // Thread scheduledTaskId onto the DISPATCHED payload for a scheduled
           // run. composeRun consumes it (to force the unattended posture) but does
@@ -13710,7 +13899,6 @@ function App(): React.JSX.Element {
           // routedPayload.scheduledTaskId (read PRE-normalize), so without this
           // all three were inert for solo scheduled runs. scheduledTaskId is not
           // part of the signed posture context, so this cannot affect the clamp.
-          dispatchAccepted = true
           const dispatchPayload = {
             ...composedPayload,
             ...(runtimeWorktreeIntent ? { runtimeWorktree: runtimeWorktreeIntent } : {}),
@@ -13719,9 +13907,15 @@ function App(): React.JSX.Element {
               : {}),
             ...(request.scheduledTaskId ? { scheduledTaskId: request.scheduledTaskId } : {})
           } as typeof composedPayload
-          await window.api.runAgent(dispatchPayload)
+          const dispatchResult = await window.api.runAgent(dispatchPayload)
+          dispatchAccepted = dispatchResult.dispatched
+          settleProjectReferenceContextForRequest(
+            request,
+            dispatchResult.dispatched ? 'accepted' : 'rejected'
+          )
         }
       } catch (error) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
         clearActiveRunContext(runContext)
         const message = `Failed to start ${getProviderLabel(effectiveRunProvider)}: ${redactLog(String(error))}`
         updateRunQueueJobStatus(
@@ -13751,6 +13945,9 @@ function App(): React.JSX.Element {
       }
       await refreshChatList()
     } catch (error) {
+      if (requestForClaimCleanup) {
+        settleProjectReferenceContextForRequest(requestForClaimCleanup, 'rejected')
+      }
       // Last line of defense — any uncaught exception in the function
       // body (between the inner try/catches that wrap composeRun + the
       // runAgent dispatch) surfaces here. Without this catch the void
@@ -13909,7 +14106,8 @@ function App(): React.JSX.Element {
       approvalModeOverride || workflowModeOverride
         ? {
             ...(approvalModeOverride ? { approvalMode: approvalModeOverride } : {}),
-            ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {})
+            ...(workflowModeOverride ? { workflowMode: workflowModeOverride } : {}),
+            claimProjectReferenceContext: true
           }
         : undefined
     )
@@ -13928,12 +14126,14 @@ function App(): React.JSX.Element {
       ? { ...baseRequest, dmTargetParticipantId: resolvedDmTargetParticipantId }
       : baseRequest
     if (!runRequestHasContent(request)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
     // Workflow compose: the first "send" CREATES the workflow (captures the
     // prompt + run settings into a WorkflowDefinition) instead of dispatching a
     // one-off run. The chat becomes the workflow's thread.
     if (workflowDraft && request.chatRecord?.appChatId === workflowDraft.chatId) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       void createWorkflowFromDraft(request)
       clearComposerAttachmentsForSubmittedRequest(request)
       if (!request.existingPrompt) {
@@ -13955,6 +14155,7 @@ function App(): React.JSX.Element {
     if (!existingPrompt && scheduleRunAt) {
       const scheduledRunAt = normalizeScheduledQueueRunAt(scheduleRunAt)
       if (!scheduledRunAt) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
         appendThreadRawLog(request.chatRecord?.appChatId || currentChat?.appChatId, {
           type: 'info',
           content: 'Choose a future time for scheduled runs.'
@@ -14572,14 +14773,6 @@ function App(): React.JSX.Element {
     if (!sideChat) return
     const sideRunAttachments =
       imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
-    if (
-      !runRequestHasContent({
-        prompt: sidePrompt,
-        imageAttachments: sideRunAttachments
-      })
-    ) {
-      return
-    }
     const hiddenContextPrompt = getPendingSideChatHiddenContextPrompt(sideChat)
     const requestPrompt = hiddenContextPrompt
       ? buildHiddenSideChatInitialPrompt(hiddenContextPrompt, sidePrompt)
@@ -14600,8 +14793,13 @@ function App(): React.JSX.Element {
       prompt: requestPrompt,
       imageAttachments: sideRunAttachments,
       approvalMode: sideSelectedApprovalMode,
-      workflowMode: sideComposerWorkflowMode
+      workflowMode: sideComposerWorkflowMode,
+      claimProjectReferenceContext: true
     })
+    if (!runRequestHasContent(request)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
     if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
     if (hiddenContextPrompt) {
       request.displayPrompt =
@@ -14786,6 +14984,7 @@ function App(): React.JSX.Element {
   const handleSteer = async (overrideModel?: string, existingPrompt?: string) => {
     const request = buildRunRequest(overrideModel, existingPrompt)
     if (!runRequestHasContent(request)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
     if (
@@ -14798,6 +14997,7 @@ function App(): React.JSX.Element {
 
     const targetChatId = request.chatRecord?.appChatId || currentChat?.appChatId
     if (!targetChatId) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
     // Steering is a composer gesture in the visible chat — same re-lock as a
@@ -14887,6 +15087,7 @@ function App(): React.JSX.Element {
     // `isSteerInFlight` reports true; defence-in-depth.
     const liveState = steerStateRef.current
     if (isSteerInFlight({ state: liveState, chatId: targetChatId })) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
 
@@ -14994,6 +15195,7 @@ function App(): React.JSX.Element {
         steerSuppressedSummaryRunIdsRef.current.delete(cancelTargetRunId)
         intentionalCancelRunIdsRef.current.delete(cancelTargetRunId)
       }
+      settleProjectReferenceContextForRequest(request, 'rejected')
       return
     }
 
@@ -16591,9 +16793,13 @@ function App(): React.JSX.Element {
       prompt: buildPlanImportRunPrompt(review),
       displayPrompt: buildPlanImportDisplayPrompt(review),
       approvalMode: planImportApprovalModeForPolicy(review.selectedPolicy),
-      imageAttachments
+      imageAttachments,
+      claimProjectReferenceContext: true
     })
-    if (!runRequestHasContent(request)) return
+    if (!runRequestHasContent(request)) {
+      settleProjectReferenceContextForRequest(request, 'rejected')
+      return
+    }
 
     setPendingPlanImport(null)
     const targetChat = request.chatRecord || currentChat
@@ -22513,6 +22719,10 @@ function App(): React.JSX.Element {
     () => currentChat?.ensemble?.blackboard || [],
     [currentChat?.ensemble?.blackboard]
   )
+  const activeWorkProject =
+    sidebarActiveTab === 'projects' && activeWorkProjectId
+      ? listProjects().find((project) => project.id === activeWorkProjectId) ?? null
+      : null
   const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = buildRightDockTabs({
     showHome: showRightDockHome,
@@ -22523,6 +22733,7 @@ function App(): React.JSX.Element {
     showFileEditor,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
+    isProjectReferencesPanelOpen: isProjectReferencesPanelOpen && Boolean(activeWorkProject),
     isPinnedMessagesPanelOpen,
     isTerminalDockAvailable
   })
@@ -22597,6 +22808,17 @@ function App(): React.JSX.Element {
       hint: 'Images, audio & video'
     },
     {
+      id: 'references',
+      label:
+        currentProjectReferenceContextSelection?.projectId === activeWorkProject?.id
+          ? `Refs · ${currentProjectReferenceContextSelection?.referenceIds.length ?? 0}`
+          : 'Refs',
+      icon: <LinkCircleSymbolIcon />,
+      enabled: Boolean(activeWorkProject),
+      group: 'work',
+      hint: 'Reusable Project reference library'
+    },
+    {
       id: 'pins',
       label: 'Notes',
       icon: <PinnedMessagesIcon />,
@@ -22643,6 +22865,9 @@ function App(): React.JSX.Element {
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(false)
         break
+      case 'references':
+        setIsProjectReferencesPanelOpen(false)
+        break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
         break
@@ -22670,6 +22895,12 @@ function App(): React.JSX.Element {
         break
       case 'media':
         setChatMediaPanelOpenPreservingTranscript(true)
+        break
+      case 'references':
+        if (activeWorkProject) {
+          setIsProjectReferencesPanelOpen(true)
+          rememberProjectReferencesDockOpened(activeWorkProject.id)
+        }
         break
       case 'pins':
         if (currentChat) setIsPinnedMessagesPanelOpen(true)
@@ -22724,6 +22955,7 @@ function App(): React.JSX.Element {
     // on the next chat or tab switch.
     const context = resolveDockSurfaceContext({
       activeSidebarTab: sidebarActiveTab,
+      activeProjectId: activeWorkProjectId,
       chatId: currentChat?.appChatId,
       projects: listProjects()
     })
@@ -22738,7 +22970,34 @@ function App(): React.JSX.Element {
     if (restore.shouldOpen) activateRightDockTab(restore.tab)
     else setRightDockTab(restore.tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId, sidebarActiveTab])
+  }, [activeWorkProjectId, currentChat?.appChatId, sidebarActiveTab])
+  // One gentle reveal per Project on this device. It only fires once the Work
+  // surface is wide enough to support a useful dock, and a manual open counts
+  // as having seen it too. Normal contextual dock persistence owns every
+  // subsequent visit.
+  useEffect(() => {
+    const context = resolveDockSurfaceContext({
+      activeSidebarTab: sidebarActiveTab,
+      activeProjectId: activeWorkProject?.id ?? null,
+      chatId: currentChat?.appChatId,
+      projects: listProjects()
+    })
+    if (
+      !shouldAutoOpenProjectReferences({
+        activeSidebarTab: sidebarActiveTab,
+        projectId: activeWorkProject?.id ?? null,
+        viewportWidth,
+        hasSavedDockSurface: readDockSurface(context) !== null
+      })
+    ) {
+      return
+    }
+    activateRightDockTab('references')
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeWorkProject?.id, currentChat?.appChatId, sidebarActiveTab, viewportWidth])
+  useEffect(() => {
+    if (!activeWorkProject?.id) setIsProjectReferencesPanelOpen(false)
+  }, [activeWorkProject?.id])
   // Persist EVERY surface change — the switcher, ⌘K, and the imperative
   // feature-jumps that call setRightDockTab directly (openInspectorTab, run
   // finish, etc.) — so switching away and back restores the TRUE last surface
@@ -22751,6 +23010,7 @@ function App(): React.JSX.Element {
     writeDockSurface(
       resolveDockSurfaceContext({
         activeSidebarTab: sidebarActiveTabRef.current,
+        activeProjectId: activeWorkProjectIdRef.current,
         chatId: currentChatIdRef.current,
         projects: listProjects()
       }),
@@ -22834,7 +23094,12 @@ function App(): React.JSX.Element {
       value={scheduleRunAt}
       onChange={setScheduleRunAt}
       onSchedule={handleScheduleRun}
-      hasPrompt={hasAttachmentPromptContent(prompt, imageAttachments)}
+      hasPrompt={
+        hasAttachmentPromptContent(prompt, imageAttachments) ||
+        Boolean(
+          currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
+        )
+      }
       disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
       disabledReason={scheduleDisabledReason}
     />
@@ -24528,11 +24793,11 @@ function App(): React.JSX.Element {
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
-      if (!hasAttachmentPromptContent(panePrompt, paneAttachments)) return
       multiview.paneRefs[paneIndex]?.relockToLatest()
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
+        claimProjectReferenceContext: true,
         // Trusted Session is a focused-renderer grant, not pane-owned state.
         // A resting pane must never inherit it from whichever chat is focused.
         sessionTrust:
@@ -24542,6 +24807,10 @@ function App(): React.JSX.Element {
         imageAttachments: paneAttachments,
         discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
       })
+      if (!runRequestHasContent(request)) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        return
+      }
       if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
       if (
         shouldQueueRunBeforeDispatch({
@@ -25243,6 +25512,12 @@ function App(): React.JSX.Element {
         case 'media':
           setChatMediaPanelOpenPreservingTranscript(true)
           break
+        case 'references':
+          if (activeWorkProject) {
+            setIsProjectReferencesPanelOpen(true)
+            rememberProjectReferencesDockOpened(activeWorkProject.id)
+          }
+          break
         case 'pins':
           setIsPinnedMessagesPanelOpen(true)
           break
@@ -25678,6 +25953,10 @@ function App(): React.JSX.Element {
       shouldShowGhostCompanion: paneGhostEnabled(viewerPaneIndex),
       currentChat: viewerChat,
       currentComposerChatId: viewerChatId,
+      hasProjectReferenceContext: Boolean(
+        !paneIsEnsembleChat &&
+          getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+      ),
       currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
       resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
       humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
@@ -26853,6 +27132,10 @@ function App(): React.JSX.Element {
         shouldShowGhostCompanion: paneCtxHelpers.paneGhostEnabled(viewerPaneIndex),
         currentChat: viewerChat,
         currentComposerChatId: viewerChatId,
+        hasProjectReferenceContext: Boolean(
+          !paneIsEnsembleChat &&
+            getProjectReferenceContextSelection(viewerChatId)?.referenceIds.length
+        ),
         currentDiscordContextSelection: discordContextSelectionByChatId[viewerChatId] || null,
         resumeAppWatchSnapshot: viewerResumeAppWatchSnapshot,
         humanCollaborationInviteActive: Boolean(paneHumanCollaborationShare),
@@ -27294,6 +27577,9 @@ function App(): React.JSX.Element {
     currentEnsembleRoundStatus: currentEnsembleRound?.status,
     currentEnsembleActiveGoalStatus: currentChat?.activeGoal?.status ?? null,
     currentComposerChatId,
+    hasProjectReferenceContext: Boolean(
+      currentProjectReferenceContextSelection?.referenceIds.length && !isCurrentEnsembleChat
+    ),
     humanCollaborationInviteActive: Boolean(currentChatHumanCollaborationShare),
     humanCollaborationShare: currentChatHumanCollaborationShare,
     humanCollaborationInviteHealth: currentChat?.appChatId
@@ -27418,6 +27704,7 @@ function App(): React.JSX.Element {
     activeProvider,
     activeRightDockTab,
     activeSidebarChatId,
+    activeWorkProjectId: activeWorkProject?.id ?? null,
     activeThreadSearchIndex,
     activeWorkspaceBoard,
     activeWorkspaceBoardCards,
@@ -27629,7 +27916,11 @@ function App(): React.JSX.Element {
     handleSideReasoningChange,
     handleSideRun,
     handleSideToggleFastMode,
-    handleActiveSidebarTabChange: setSidebarActiveTab,
+    handleActiveSidebarTabChange: (tab) => {
+      setSidebarActiveTab(tab)
+      if (tab !== 'projects') setActiveWorkProjectId(null)
+    },
+    handleSelectedProjectChange: setActiveWorkProjectId,
     handleSidebarPrimarySurfaceSelect,
     handleStartProjectHome,
     handleSidebarQuickUpdate,
@@ -27668,6 +27959,7 @@ function App(): React.JSX.Element {
     isMultiviewSplit,
     isOldVersion,
     isPinnedMessagesPanelOpen,
+    isProjectReferencesPanelOpen,
     isSideChatProviderLocked,
     isSideChatRunning,
     isSideComposerLocked,

@@ -44,6 +44,8 @@ export interface CodexRunState {
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
+  /** Main-resolved gateway generation used to fence hidden capability discovery. */
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
   effectivePermissions?: EffectiveRunPermissions
   effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity
@@ -91,6 +93,8 @@ export interface GeminiToolContext {
   sessionTrust?: boolean
   externalPathGrants?: ExternalPathGrant[]
   runtimeProfileId?: string
+  /** Main-resolved gateway generation used to fence hidden capability discovery. */
+  taskWraithMcpProfileId?: TaskWraithMcpProfileId
   effectivePermissions?: EffectiveRunPermissions
   effectivePermissionsSignature?: string
   ensembleRun?: EnsembleRunIdentity

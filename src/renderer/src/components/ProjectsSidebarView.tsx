@@ -1,6 +1,7 @@
 import {
   useEffect,
   useMemo,
+  useRef,
   useState,
   type CSSProperties,
   type ChangeEvent,
@@ -36,6 +37,7 @@ import {
   type ProjectWorkProfile
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
+import { projectReferencePresentation } from '../lib/projectReferencePresentation'
 import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -55,6 +57,9 @@ interface ProjectsSidebarViewProps {
   /** Start a Project Home for an unhomed project: the host creates/focuses a
    * pristine General draft and auto-claims it on its first committed send. */
   onStartProjectHome?: (projectId: string) => void
+  /** Passes the selected Project detail target to the host. This is ephemeral
+   * Work navigation state only; it is never persisted on a chat or Project. */
+  onSelectedProjectChange?: (projectId: string | null) => void
   onSearchResultCountChange?: (count: number) => void
   /** Pre-select a project's detail panel on mount (host deep-link seam; also
    * how static-render tests reach the selected-only detail UI). */
@@ -217,9 +222,12 @@ export function ProjectsSidebarView({
   isSearchActive,
   onSelectChat,
   onStartProjectHome,
+  onSelectedProjectChange,
   onSearchResultCountChange,
   initialSelectedProjectId = null
 }: ProjectsSidebarViewProps): JSX.Element {
+  const selectedProjectReporterRef = useRef(onSelectedProjectChange)
+  selectedProjectReporterRef.current = onSelectedProjectChange
   const [projects, setProjects] = useState<Project[]>(() => listProjects())
   const [workProfiles, setWorkProfiles] = useState<ProjectWorkProfile[]>(() =>
     listProjectWorkProfiles()
@@ -261,6 +269,23 @@ export function ProjectsSidebarView({
       // Project expansion memory is renderer-local and best-effort.
     }
   }, [expandedProjectIds])
+
+  useEffect(() => {
+    onSelectedProjectChange?.(selectedProjectId)
+  }, [onSelectedProjectChange, selectedProjectId])
+
+  useEffect(
+    () => () => {
+      selectedProjectReporterRef.current?.(null)
+    },
+    []
+  )
+
+  useEffect(() => {
+    if (selectedProjectId && !projects.some((project) => project.id === selectedProjectId)) {
+      setSelectedProjectId(null)
+    }
+  }, [projects, selectedProjectId])
 
   const chatById = useMemo(() => {
     const map = new Map<string, ChatRecord>()
@@ -444,6 +469,11 @@ export function ProjectsSidebarView({
     runStoreAction(() => removeChatFromProject(projectId, chatId))
   }
 
+  const activateProject = (projectId: string): void => {
+    setSelectedProjectId(projectId)
+    onSelectedProjectChange?.(projectId)
+  }
+
   const onProjectDragOver = (
     event: ReactDragEvent<HTMLElement>,
     project: Project
@@ -533,7 +563,10 @@ export function ProjectsSidebarView({
           className="sidebar-project-member-main"
           aria-busy={isRunning || undefined}
           onClick={() => {
-            if (!isArchived) onSelectChat(chat)
+            if (!isArchived) {
+              activateProject(project.id)
+              onSelectChat(chat)
+            }
           }}
           disabled={isArchived}
           draggable={!isArchived}
@@ -688,6 +721,7 @@ export function ProjectsSidebarView({
                 className="sidebar-project-icon-button sidebar-project-open-home"
                 onClick={(event) => {
                   event.stopPropagation()
+                  activateProject(project.id)
                   onSelectChat(openableHomeChat)
                 }}
                 title="Open Project Home"
@@ -701,6 +735,7 @@ export function ProjectsSidebarView({
                 className="sidebar-project-icon-button sidebar-project-open-home"
                 onClick={(event) => {
                   event.stopPropagation()
+                  activateProject(project.id)
                   onStartProjectHome(project.id)
                 }}
                 title="Start Project Home"
@@ -876,16 +911,18 @@ export function ProjectsSidebarView({
                   References grant no access.
                 </span>
               ) : (
-                referencesForProject.map((reference) => (
-                  <div
-                    key={reference.id}
-                    className={`sidebar-project-reference-row ${
-                      reference.contextPolicy === 'off' ? 'is-off' : ''
-                    }`}
-                    title={reference.locator}
-                  >
-                    <span className={`sidebar-project-reference-kind kind-${reference.kind}`}>
-                      {reference.kind === 'url' ? 'link' : reference.kind}
+                referencesForProject.map((reference) => {
+                  const presentation = projectReferencePresentation(reference)
+                  return (
+                    <div
+                      key={reference.id}
+                      className={`sidebar-project-reference-row ${
+                        reference.contextPolicy === 'off' ? 'is-off' : ''
+                      }`}
+                      title={reference.locator}
+                    >
+                    <span className={`sidebar-project-reference-kind kind-${presentation.kind}`}>
+                      {presentation.label}
                     </span>
                     <span className="sidebar-project-reference-title">{reference.title}</span>
                     {reference.lastVerified && (
@@ -945,8 +982,9 @@ export function ProjectsSidebarView({
                         -
                       </button>
                     </span>
-                  </div>
-                ))
+                    </div>
+                  )
+                })
               )}
             </div>
           </div>

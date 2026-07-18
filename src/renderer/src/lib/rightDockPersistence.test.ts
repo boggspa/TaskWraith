@@ -26,13 +26,32 @@ describe('resolveDockSurfaceContext', () => {
     { id: 'project-b', memberChatIds: ['chat-2', 'chat-3'] }
   ]
 
-  it('returns null without a focused chat', () => {
+  it('returns null without either an active project or focused chat', () => {
     expect(
       resolveDockSurfaceContext({ activeSidebarTab: 'projects', chatId: null, projects })
     ).toBeNull()
     expect(
       resolveDockSurfaceContext({ activeSidebarTab: 'chat', chatId: '   ', projects })
     ).toBeNull()
+  })
+
+  it('prefers the explicitly selected Work project, including without a focused chat', () => {
+    expect(
+      resolveDockSurfaceContext({
+        activeSidebarTab: 'projects',
+        activeProjectId: 'project-b',
+        chatId: null,
+        projects
+      })
+    ).toEqual({ kind: 'work', projectId: 'project-b' })
+    expect(
+      resolveDockSurfaceContext({
+        activeSidebarTab: 'projects',
+        activeProjectId: 'project-a',
+        chatId: 'chat-2',
+        projects
+      })
+    ).toEqual({ kind: 'work', projectId: 'project-a' })
   })
 
   it('keys by project on the Work tab when membership is unambiguous', () => {

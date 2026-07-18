@@ -14,6 +14,7 @@ import type {
 } from '../store/types'
 import {
   clampUntrustedRunPosture,
+  runPostureContextFromPayload,
   signRunPermissionPosture,
   verifyRunPermissionPosture
 } from '../RunPermissionPosture'
@@ -178,7 +179,7 @@ describe('ComposerService', () => {
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
       const payload = compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v1')
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v2')
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
@@ -265,7 +266,7 @@ describe('ComposerService', () => {
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v1')
+      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v2')
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
       expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')
@@ -1254,6 +1255,107 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
     prompt: payload.prompt,
     workflowMode: payload.workflowMode,
     runtimeProfileId: payload.runtimeProfileId
+  })
+
+  it('re-resolves selected Project references and binds the exact context into the run signature', () => {
+    const chat = makeChat({ provider: 'codex' })
+    const { deps, store } = makeDeps(chat)
+    store.getProjects = () => [
+      {
+        schemaVersion: 1,
+        id: 'project-a',
+        name: 'Alpha',
+        icon: { iconKind: 'seed', seed: 'alpha' },
+        hue: 1,
+        parentId: null,
+        order: 1,
+        memberChatIds: [chat.appChatId],
+        createdAt: 1,
+        updatedAt: 1
+      }
+    ]
+    store.getProjectReferences = () => [
+      {
+        id: 'reference-a',
+        projectId: 'project-a',
+        kind: 'file',
+        locator: '/repo/brief.txt',
+        title: 'Brief',
+        provenance: { addedBy: 'user', addedAt: 1 },
+        contextPolicy: 'available',
+        updatedAt: 1
+      }
+    ]
+    const service = new ComposerService({
+      ...deps,
+      signRunPermissionPosture: (mode, perms, context) =>
+        signRunPermissionPosture(SECRET, mode, perms, context)
+    })
+
+    const payload = service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'run-reference-context',
+      provider: 'codex',
+      workspace: '/repo',
+      userInput: 'Use the brief',
+      selectedModelType: 'cli-default',
+      approvalMode: 'default',
+      projectReferenceContextSelection: {
+        schemaVersion: 1,
+        projectId: 'project-a',
+        referenceIds: ['reference-a']
+      }
+    })
+
+    expect(payload.projectReferenceContext).toEqual({
+      schemaVersion: 1,
+      projectId: 'project-a',
+      projectName: 'Alpha',
+      references: [
+        {
+          id: 'reference-a',
+          kind: 'file',
+          title: 'Brief',
+          locator: '/repo/brief.txt',
+          access: 'workspace'
+        }
+      ]
+    })
+    expect(payload.composer.projectReferenceContext).toEqual(payload.projectReferenceContext)
+    expect(payload.prompt).toContain('<project_reference_context>')
+    expect(payload.prompt).toContain('Selection grants no new filesystem or network access.')
+    expect(payload.prompt).toContain('/repo/brief.txt')
+    expect(
+      verifyRunPermissionPosture(
+        SECRET,
+        payload.approvalMode,
+        payload.effectivePermissions,
+        payload.effectivePermissionsSignature,
+        runPostureContextFromPayload(payload)
+      )
+    ).toBe(true)
+
+    const tampered = {
+      ...payload,
+      projectReferenceContext: {
+        ...payload.projectReferenceContext!,
+        references: [
+          {
+            ...payload.projectReferenceContext!.references[0],
+            locator: '/repo/other.txt'
+          }
+        ]
+      }
+    }
+    expect(
+      verifyRunPermissionPosture(
+        SECRET,
+        tampered.approvalMode,
+        tampered.effectivePermissions,
+        tampered.effectivePermissionsSignature,
+        runPostureContextFromPayload(tampered)
+      )
+    ).toBe(false)
   })
 
   it('stamps a verifiable signature on a plan run that survives the clamp byte-for-byte', () => {

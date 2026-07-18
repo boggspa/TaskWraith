@@ -549,6 +549,9 @@ import {
 } from './EnsembleRosterMutation'
 import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
+import { ProjectReferenceArtifactStore } from './services/ProjectReferenceArtifactStore'
+import { ProjectReferenceContextAuditService } from './services/ProjectReferenceContextAuditService'
+import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import { createMainOwnedRunQueueAttachmentStager } from './RunQueueAttachmentAuthority'
@@ -1006,8 +1009,8 @@ import {
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
 import {
-  FULL_MCP_ADVERTISE_TOOLS,
-  GATEWAY_MCP_DIRECT_TOOLS
+  GATEWAY_MCP_DIRECT_TOOLS,
+  taskWraithGatewayHiddenToolNamesForProfile
 } from './mcp/McpToolProfiles'
 import {
   TASKWRAITH_FULL_MCP_PROFILE_ID,
@@ -1337,6 +1340,10 @@ import {
 } from './TodoList'
 import { createTaskWraithMcpToolDefinitions } from './McpToolCatalog'
 import {
+  createProjectReferenceToolExecutors,
+  isProjectReferenceMcpToolName
+} from './mcp/ProjectReferenceToolExecutors'
+import {
   MCP_AUTO_ALLOWED_TOOLS,
   PLAN_MCP_ADVERTISE_TOOLS,
   READ_ONLY_MCP_ADVERTISE_TOOLS
@@ -1381,6 +1388,7 @@ import {
   resolveSubThreadRecall
 } from './SubThreadRecall'
 import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
+import { newProjectReferenceId } from '../shared/projects'
 import {
   delegationApprovalBudget,
   delegationApprovalBudgetExhaustedMessage
@@ -2226,6 +2234,7 @@ let approvalService: ApprovalService | null = null
 // the newly-created sub-thread without going through the renderer.
 // Stays null until whenReady; the consumer null-checks.
 let runCoordinatorRef: RunCoordinator | null = null
+let projectReferenceContextAuditServiceRef: ProjectReferenceContextAuditService | null = null
 const subThreadMailboxDeliveriesInFlight = new Set<string>()
 const subThreadJoinWakeTimers = new Map<string, ReturnType<typeof setTimeout>>()
 const subThreadWorkerDrainsInFlight = new Set<string>()
@@ -5927,6 +5936,30 @@ function getRunRepository(): RunRepository {
   return runRepository
 }
 
+function emitProjectReferenceProposalsChanged(projectId: string): void {
+  safeSendToWebContents(mainWindow, 'project-reference-proposals-changed', { projectId })
+}
+
+const projectReferenceProposalService = new ProjectReferenceProposalService({
+  getProjects: () => AppStore.getProjects(),
+  getReferences: () => AppStore.getProjectReferences(),
+  getRunIdsForChat: (chatId) =>
+    (AppStore.getChat(chatId)?.runs ?? [])
+      .map((run) => run.runId)
+      .filter((runId): runId is string => Boolean(runId)),
+  getRunEvents: (runId) => AppStore.getRunEvents({ runId }),
+  appendRunEvent: (input) => getRunRepository().appendRunEvent(input),
+  applyReferenceOp: (op) => AppStore.applyProjectReferenceOp(op),
+  createId: (kind) =>
+    kind === 'reference' ? newProjectReferenceId() : `project-reference-proposal-${randomUUID()}`,
+  now: () => Date.now()
+})
+
+const projectReferenceToolExecutors = createProjectReferenceToolExecutors({
+  proposalService: projectReferenceProposalService,
+  notifyChanged: emitProjectReferenceProposalsChanged
+})
+
 const workspaceToolExecutors = createWorkspaceToolExecutors({
   host: {
     runHostCommand,
@@ -6101,6 +6134,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 
 runManager.onChange((event) => {
   if (event.type === 'removed') {
+    projectReferenceContextAuditServiceRef?.release(event.session.runId)
     externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, 'run-removed')
     void appShellStatsService.refresh().catch((err) => {
@@ -6121,6 +6155,7 @@ runManager.onChange((event) => {
       event.session.status === 'failed' ||
       event.session.status === 'cancelled')
   ) {
+    projectReferenceContextAuditServiceRef?.release(event.session.runId)
     externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
     // Main owns the durable terminal boundary. The renderer normally consumes
@@ -9719,6 +9754,7 @@ function recordApprovalLedgerRequest(
   const approvalId = String(payload.approvalId || payload.id || '').trim()
   if (!approvalId) return
   const context = approvalRouteContext(provider, route)
+  let recorded = false
   try {
     permissionService.recordApprovalRequest({
       approvalId,
@@ -9739,8 +9775,12 @@ function recordApprovalLedgerRequest(
       rpcId: payload.requestId,
       metadata: mergePermissionPostureMetadata(options.metadata, context.permissionPosture)
     })
+    recorded = true
   } catch (error) {
     console.error('Failed to record approval ledger request', error)
+  }
+  if (recorded) {
+    projectReferenceContextAuditServiceRef?.linkApproval(context.runId, approvalId, provider)
   }
 }
 
@@ -16838,6 +16878,7 @@ async function runKimiWireProvider(
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
@@ -17832,6 +17873,7 @@ async function runKimiAcpProvider(
     sessionTrust: Boolean(payload.sessionTrust),
     externalPathGrants: payload.externalPathGrants,
     runtimeProfileId: payload.runtimeProfileId,
+    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
     effectivePermissions: payload.effectivePermissions,
     effectivePermissionsSignature: payload.effectivePermissionsSignature,
     ensembleRun: payload.ensembleRun,
@@ -18736,6 +18778,7 @@ function getAgentToolContext(
     workflowMode: state.workflowMode,
     sessionTrust: state.sessionTrust,
     externalPathGrants: state.externalPathGrants,
+    taskWraithMcpProfileId: state.taskWraithMcpProfileId,
     effectivePermissions: state.effectivePermissions,
     effectivePermissionsSignature: state.effectivePermissionsSignature,
     ensembleRun: state.ensembleRun,
@@ -19324,6 +19367,7 @@ function createCodexRunState(
     sessionTrust: Boolean(payload?.sessionTrust),
     externalPathGrants: payload?.externalPathGrants,
     runtimeProfileId: payload?.runtimeProfileId,
+    taskWraithMcpProfileId: payload?.taskWraithMcpProfileId,
     effectivePermissions: payload?.effectivePermissions,
     ensembleRun: payload?.ensembleRun,
     ...normalizeRunRoute(route),
@@ -23701,6 +23745,7 @@ async function runOllamaProviderAdapter(
       sessionTrust: Boolean(payload.sessionTrust),
       externalPathGrants: payload.externalPathGrants,
       runtimeProfileId: payload.runtimeProfileId,
+      taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
       effectivePermissions: payload.effectivePermissions,
       effectivePermissionsSignature: payload.effectivePermissionsSignature,
       ensembleRun: payload.ensembleRun,
@@ -26109,18 +26154,15 @@ async function executeAgentRosterPresetImport(
   }
 }
 
-const GATEWAY_V1_FULL_TOOL_SET: ReadonlySet<string> = new Set(FULL_MCP_ADVERTISE_TOOLS)
-
 /**
- * Canonical definitions reachable through the immutable gateway-v1 profile.
- * Membership comes from the frozen full-v1 snapshot rather than the live
- * catalogue, so adding a future TaskWraith tool cannot silently expand an
- * already-observed gateway session.
+ * Canonical definitions reachable through this run's immutable gateway
+ * generation. Missing profile identity resolves conservatively to v1.
  */
-function gatewayV1CatalogDefinitions() {
-  return mcpToolDefinitions().filter((definition) =>
-    GATEWAY_V1_FULL_TOOL_SET.has(definition.name)
+function gatewayCatalogDefinitions(context: GeminiToolContext) {
+  const hidden = new Set(
+    taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId)
   )
+  return mcpToolDefinitions().filter((definition) => hidden.has(definition.name))
 }
 
 /**
@@ -26130,8 +26172,11 @@ function gatewayV1CatalogDefinitions() {
  */
 function gatewayEligibleHiddenToolNames(context: GeminiToolContext): TaskWraithMcpToolName[] {
   const posture = context.effectivePermissions
+  const hiddenToolNames = taskWraithGatewayHiddenToolNamesForProfile(
+    context.taskWraithMcpProfileId
+  )
   return selectGatewayHiddenToolNames({
-    fullToolNames: FULL_MCP_ADVERTISE_TOOLS,
+    fullToolNames: hiddenToolNames,
     directToolNames: GATEWAY_MCP_DIRECT_TOOLS,
     ...(posture?.readOnly
       ? {
@@ -26229,7 +26274,7 @@ async function executeGeminiMcpTool(
     }
 
     const eligibleHiddenToolNames = gatewayEligibleHiddenToolNames(context)
-    const definitions = gatewayV1CatalogDefinitions()
+    const definitions = gatewayCatalogDefinitions(context)
     if (toolName === 'capability_search') {
       const searchResult = searchGatewayCapabilities({
         query: args.query,
@@ -26656,6 +26701,15 @@ async function executeGeminiMcpTool(
       if (!toolIsError && toolName === 'workspace_board_apply_plan') {
         emitWorkspaceBoardsChanged()
       }
+    } else if (isProjectReferenceMcpToolName(toolName)) {
+      const result = await projectReferenceToolExecutors.executeProjectReferenceMcpTool(
+        toolName,
+        args,
+        context,
+        { provider: parentProvider, toolCallId: toolId }
+      )
+      toolIsError = result.isError
+      text = mcpJson(result.result)
     } else if (isEvidenceMcpToolName(toolName)) {
       const result = await evidenceToolExecutors.executeEvidenceMcpTool(
         toolName,
@@ -28655,6 +28709,7 @@ function installGeminiToolContextForRun(
     sessionTrust: Boolean(options.runPayload?.sessionTrust ?? sessionTrust),
     externalPathGrants: options.runPayload?.externalPathGrants,
     runtimeProfileId: options.runPayload?.runtimeProfileId,
+    taskWraithMcpProfileId: options.runPayload?.taskWraithMcpProfileId,
     effectivePermissions: options.runPayload?.effectivePermissions,
     ensembleRun: options.runPayload?.ensembleRun,
     providerSessionId: options.providerSessionId ?? options.runPayload?.providerSessionId,
@@ -35844,6 +35899,8 @@ if (isGeminiMcpBridgeProcess) {
       getLegacyImportMarker: () => AppStore.getProjectsLegacyImportMarker(),
       applyProjectOp: (op) => AppStore.applyProjectOp(op),
       applyReferenceOp: (op) => AppStore.applyProjectReferenceOp(op),
+      referenceProposalService: projectReferenceProposalService,
+      notifyReferenceProposalsChanged: emitProjectReferenceProposalsChanged,
       setProjectHomeChat: (projectId, chatId) => AppStore.setProjectHomeChat(projectId, chatId),
       chatExists: (chatId) => Boolean(AppStore.getChat(chatId)),
       probeReferenceLocator: (_kind, locator) => {
@@ -37388,11 +37445,25 @@ if (isGeminiMcpBridgeProcess) {
       canonicalWorkspacePath: canonicalPath,
       getSettings: () => AppStore.getSettings()
     }
+    const projectReferenceContextAuditService = new ProjectReferenceContextAuditService({
+      getChat: (chatId) => AppStore.getChat(chatId),
+      getProjects: () => AppStore.getProjects(),
+      getReferences: () => AppStore.getProjectReferences(),
+      appendRunEvent: (input) => getRunRepository().appendRunEvent(input),
+      artifactStore: new ProjectReferenceArtifactStore(
+        join(app.getPath('userData'), 'project-reference-context-artifacts')
+      )
+    })
+    projectReferenceContextAuditServiceRef = projectReferenceContextAuditService
     const runCoordinator = new RunCoordinator({
       normalizePayload: (raw) => normalizeAgentRunPayload(raw, agentRunNormalizerDeps),
       routeWithRunId,
       applyRuntimeProfileToPayload,
       ensureProviderRunPreflight,
+      prepareReferenceContext: (payload) =>
+        projectReferenceContextAuditService.prepare(payload),
+      captureReferenceContext: (payload) =>
+        projectReferenceContextAuditService.capture(payload),
       getAdapter: (provider) => providerAdapters.require(provider),
       sendError: sendAgentCompatError,
       sendExit: sendAgentCompatExit
@@ -37841,7 +37912,7 @@ if (isGeminiMcpBridgeProcess) {
         throw new Error('Renderer orchestration identities are MAIN-owned.')
       }
       const authorityBoundPayload = deriveRendererRunPayload(event, payload)
-      await dispatchWithAuthorizedAttachmentPaths(
+      return dispatchWithAuthorizedAttachmentPaths(
         authorityBoundPayload,
         (paths) => resolveRendererAttachmentPaths(event, paths),
         (authorizedPayload) => dispatchAgentRun(authorizedPayload, event)

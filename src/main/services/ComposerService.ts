@@ -14,6 +14,7 @@ import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   approvalModeRank,
   coerceApprovalMode,
+  hashProjectReferenceContext,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import {
@@ -41,6 +42,15 @@ import type {
   ProviderRunReroute,
   ProviderId
 } from '../store/types'
+import type { Project, ProjectReference } from '../../shared/projects'
+import type {
+  ProjectReferenceContextSelection,
+  ResolvedProjectReferenceContext
+} from '../../shared/projectReferenceContext'
+import {
+  formatProjectReferenceContextPromptAppendix,
+  resolveProjectReferenceContext
+} from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import {
   isCursorGrok45ModelId,
@@ -90,6 +100,7 @@ export interface ComposerInput {
   attachments?: ComposerImageAttachment[]
   imageAttachments?: ComposerImageAttachment[]
   externalPathGrants?: ExternalPathGrant[]
+  projectReferenceContextSelection?: ProjectReferenceContextSelection
   geminiWorktree?: GeminiWorktreeLaunchOption
   codexReasoningEffort?: string | null
   codexServiceTier?: string | null
@@ -127,6 +138,7 @@ export interface ComposerRunMetadata {
   uiNoticeMessage?: string
   imagePaths: string[]
   discordContextReads?: DiscordContextReadMetadata[]
+  projectReferenceContext?: ResolvedProjectReferenceContext
   planModeParsed?: boolean
   /**
    * 1.0.4-AF — set when the user prefixed the prompt with `/discuss`
@@ -144,6 +156,8 @@ export type ComposerRunPayload = AgentRunPayload & {
 
 export interface ComposerServiceStore {
   getChat: (chatId: string) => ChatRecord | null
+  getProjects?: () => Project[]
+  getProjectReferences?: () => ProjectReference[]
 }
 
 export interface ComposerServiceDeps {
@@ -331,8 +345,23 @@ export class ComposerService {
       scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
         : []
+    const projectReferenceContext = effectiveInput.projectReferenceContextSelection
+      ? resolveProjectReferenceContext({
+          selection: effectiveInput.projectReferenceContextSelection,
+          chatId,
+          provider,
+          workspacePath:
+            scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
+          projects:
+            this.deps.appStore.getProjects?.() ?? missingProjectReferenceContextAuthority(),
+          references:
+            this.deps.appStore.getProjectReferences?.() ??
+            missingProjectReferenceContextAuthority(),
+          externalPathGrants
+        })
+      : undefined
     const discordContextSnapshots = normalizeDiscordContextSnapshots(input.discordContextSnapshots)
-    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}`
+    const finalPrompt = `${basePrompt}${attachmentPromptAppendix(imagePaths)}${externalPathGrantPromptAppendix(externalPathGrants)}${formatProjectReferenceContextPromptAppendix(projectReferenceContext)}`
     const contextualFinalPrompt = `${finalPrompt}${formatDiscordContextPromptAppendix(discordContextSnapshots)}`
     const geminiAuthProfileId =
       provider === 'gemini'
@@ -601,7 +630,8 @@ export class ComposerService {
                   ? { resumeFallbackPrompt }
                   : {}),
                 workflowMode,
-                runtimeProfileId
+                runtimeProfileId,
+                projectReferenceContextHash: hashProjectReferenceContext(projectReferenceContext)
               }
             )
           }
@@ -609,6 +639,7 @@ export class ComposerService {
       imagePaths,
       providerSessionId: resumeDecision.sessionId || null,
       externalPathGrants,
+      ...(projectReferenceContext ? { projectReferenceContext } : {}),
       sessionTrust: provider === 'gemini' ? Boolean(effectiveInput.sessionTrust) : false,
       geminiWorktree:
         scope !== 'global' && provider === 'gemini' ? effectiveInput.geminiWorktree : null,
@@ -632,6 +663,7 @@ export class ComposerService {
         codexHandoffApplied: composed.codexHandoffApplied,
         uiNoticeMessage: composed.uiNoticeMessage,
         imagePaths,
+        ...(projectReferenceContext ? { projectReferenceContext } : {}),
         ...(discordContextSnapshots.length > 0
           ? {
               discordContextReads: discordContextSnapshots.map((snapshot) =>
@@ -646,6 +678,10 @@ export class ComposerService {
 
     return payload
   }
+}
+
+function missingProjectReferenceContextAuthority(): never {
+  throw new Error('Project reference context is unavailable in this runtime.')
 }
 
 function applyComposerReroutePlan(

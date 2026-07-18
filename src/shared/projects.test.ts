@@ -20,7 +20,6 @@ import {
   sortProjectsForDisplay,
   type Project,
   type ProjectOp,
-  type ProjectReference,
   type ProjectReferenceOp
 } from './projects'
 

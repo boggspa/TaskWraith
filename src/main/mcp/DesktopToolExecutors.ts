@@ -58,6 +58,7 @@ import type {
   GeminiAuthStatus,
   HandoffCard,
   ProviderId,
+  RunEventArtifactRef,
   RunEventFilter,
   RunEventRecord,
   RunEventReplay
@@ -192,6 +193,26 @@ export interface DesktopToolExecutorDeps {
   providerAuth?: DesktopProviderAuthDeps
   notifyRenderer?: (channel: string, payload: unknown) => void
   logger?: Pick<Console, 'warn'>
+}
+
+type AgentVisibleRunEventArtifactRef = Omit<RunEventArtifactRef, 'path'>
+
+/**
+ * Artifact paths are main-owned implementation details. In particular, a
+ * Project reference snapshot lives outside the agent's workspace and must not
+ * be re-disclosed through run-history tools.
+ */
+function redactRunEventArtifactPaths(
+  artifacts: RunEventArtifactRef[] | undefined
+): AgentVisibleRunEventArtifactRef[] | undefined {
+  return artifacts?.map((artifact) => ({
+    id: artifact.id,
+    kind: artifact.kind,
+    sha256: artifact.sha256,
+    sizeBytes: artifact.sizeBytes,
+    ...(artifact.sequence === undefined ? {} : { sequence: artifact.sequence }),
+    ...(artifact.metadata ? { metadata: { ...artifact.metadata } } : {})
+  }))
 }
 
 export const DESKTOP_MCP_TOOL_NAMES = [
@@ -2064,9 +2085,38 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     }
   }
 
+  /**
+   * A run id is not an authority token. Agents may inspect their current run
+   * while it is still being persisted, or an earlier run recorded on their
+   * current chat, but never use this surface to sweep other chats' ledgers.
+   */
+  function assertRunIsInActiveContext(
+    runId: string,
+    context: DesktopToolContext,
+    toolName: 'run_timeline' | 'raw_provider_events'
+  ): void {
+    if (runId === context.appRunId) return
+
+    const chatId = context.appChatId
+    const chat = chatId ? deps.store.getChat(chatId) : null
+    if (chat?.runs.some((run) => run.runId === runId)) return
+
+    throw new Error(`${toolName} can only inspect the active run or a run from the active chat.`)
+  }
+
+  function assertChatIsActiveContext(
+    chatId: string,
+    context: DesktopToolContext,
+    toolName: 'raw_provider_events'
+  ): void {
+    if (chatId === context.appChatId) return
+    throw new Error(`${toolName} can only inspect the active chat.`)
+  }
+
   function executeRunTimeline(args: Record<string, unknown>, context: DesktopToolContext) {
     const runId = optionalString(args.runId) || context.appRunId
     if (!runId) throw new Error('run_timeline requires runId or an active run context.')
+    assertRunIsInActiveContext(runId, context, 'run_timeline')
     const replay = deps.runRepository.getRunEventReplay(runId)
     const limit = clampInteger(args.limit, 100, 1, 1000)
     return {
@@ -2098,7 +2148,7 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
               approvalId: event.approvalId,
               commitSha: event.commitSha,
               externalUrl: event.externalUrl,
-              artifacts: event.artifacts,
+              artifacts: redactRunEventArtifactPaths(event.artifacts),
               payload: args.includePayload === true ? event.payload : undefined
             }))
           : undefined
@@ -2111,6 +2161,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
     if (!runId && !chatId) {
       throw new Error('raw_provider_events requires runId, chatId, or an active run context.')
     }
+    if (runId) assertRunIsInActiveContext(runId, context, 'raw_provider_events')
+    if (chatId) assertChatIsActiveContext(chatId, context, 'raw_provider_events')
     const limit = clampInteger(args.limit, 100, 1, 1000)
     const filter = {
       ...(runId ? { runId } : {}),
@@ -2139,7 +2191,8 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
         parentSpanId: event.parentSpanId,
         toolCallId: event.toolCallId,
         payload: event.payload,
-        artifacts: args.includeArtifacts === false ? undefined : event.artifacts,
+        artifacts:
+          args.includeArtifacts === false ? undefined : redactRunEventArtifactPaths(event.artifacts),
         hash: event.hash
       }))
     }

@@ -36,6 +36,10 @@ export const TASKWRAITH_MCP_TOOLS = [
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',
+  // Propose-only Project library inbox. This writes bounded untrusted metadata
+  // to the current run ledger; only the human review surface can materialize a
+  // normal ProjectReference, and proposal never reads/fetches/grants access.
+  'project_reference_propose',
   'test_result_summary',
   'prompt_task_normalize',
   'scope_radar',

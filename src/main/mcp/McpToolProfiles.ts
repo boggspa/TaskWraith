@@ -338,18 +338,63 @@ export const GATEWAY_MCP_ADVERTISE_TOOLS = Object.freeze([
 ] as const satisfies readonly TaskWraithMcpAdvertisedToolName[])
 
 const GATEWAY_MCP_TOOL_SET: ReadonlySet<string> = new Set(GATEWAY_MCP_ADVERTISE_TOOLS)
+const GATEWAY_MCP_DIRECT_TOOL_SET: ReadonlySet<string> = new Set(GATEWAY_MCP_DIRECT_TOOLS)
+
+/**
+ * Exact hidden universe observed by receipted gateway-v1 sessions.
+ *
+ * This is derived only from the two immutable v1 literals above. Never append a
+ * future tool here: a provider-native session may resume this exact catalogue.
+ */
+export const GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES = Object.freeze(
+  FULL_MCP_ADVERTISE_TOOLS.filter((name) => !GATEWAY_MCP_DIRECT_TOOL_SET.has(name))
+)
+
+/** First capability intentionally available only to fresh gateway-v2 sessions. */
+export const PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME =
+  'project_reference_propose' as const satisfies TaskWraithMcpToolName
+
+/**
+ * Gateway-v2 keeps the v1 direct surface but receives its own hidden universe.
+ * Its one addition is also pinned against the canonical tool-name union.
+ */
+export const GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
+  PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+] as const satisfies readonly string[])
 
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
 
+/**
+ * Resolve the hidden catalogue pinned to a gateway session. Missing, malformed,
+ * and non-v2 ids deliberately fall back to v1 so an unfenced call cannot see a
+ * capability that its provider session may never have observed.
+ */
+export function taskWraithGatewayHiddenToolNamesForProfile(
+  profileId: TaskWraithMcpProfileId | null | undefined
+): readonly string[] {
+  return profileId === 'taskwraith-gateway-v2'
+    ? GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
+    : GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+}
+
+const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
+  'taskwraith-full-v1': FULL_MCP_ADVERTISE_TOOLS,
+  'taskwraith-core-v1': CORE_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v1': GATEWAY_MCP_ADVERTISE_TOOLS,
+  'taskwraith-gateway-v2': GATEWAY_MCP_ADVERTISE_TOOLS
+} as const satisfies Record<
+  TaskWraithMcpProfileId,
+  readonly TaskWraithMcpAdvertisedToolName[]
+>
+
 /** Exact immutable membership for each receiptable profile id. */
 export function taskWraithMcpAdvertisedToolNamesForProfile(
   profileId: TaskWraithMcpProfileId
 ): readonly TaskWraithMcpAdvertisedToolName[] {
-  if (profileId === 'taskwraith-gateway-v1') return GATEWAY_MCP_ADVERTISE_TOOLS
-  if (profileId === 'taskwraith-core-v1') return CORE_MCP_ADVERTISE_TOOLS
-  return FULL_MCP_ADVERTISE_TOOLS
+  return MCP_ADVERTISE_TOOLS_BY_PROFILE[profileId]
 }
 
 /** Keep the workaround model-aware so Cursor Composer 2.5 retains the full MCP surface. */

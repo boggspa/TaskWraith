@@ -91,6 +91,23 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('cancel-scheduled-task', [''])).toThrow(/non-empty/)
   })
 
+  it('registers the Project reference-proposal review boundary', () => {
+    expect(() =>
+      validateIpcArgs('projects:list-reference-proposals', ['project-a'])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('projects:list-reference-proposals', ['   '])).toThrow(
+      /non-empty/
+    )
+    expect(() =>
+      validateIpcArgs('projects:review-reference-proposal', [
+        { projectId: 'project-a', proposalId: 'proposal-a', decision: 'approve' }
+      ])
+    ).not.toThrow()
+    expect(() => validateIpcArgs('projects:review-reference-proposal', ['nope'])).toThrow(
+      /object/
+    )
+  })
+
   it('validates Canvas open payloads and embedded bounds deeply', () => {
     expect(() =>
       validateIpcArgs('canvas:open-window', [

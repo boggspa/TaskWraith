@@ -198,6 +198,17 @@ describe('ProviderLaunchAuthorityDigest', () => {
     }
   })
 
+  it('accepts gateway-v2 as a distinct signed tool-surface identity', () => {
+    const gatewayV2 = {
+      ...codex,
+      tools: { ...codex.tools, taskWraithMcpProfileId: 'taskwraith-gateway-v2' as const }
+    }
+    expect(buildProviderLaunchAuthority(gatewayV2).tools.taskWraithMcpProfileId).toBe(
+      'taskwraith-gateway-v2'
+    )
+    expect(providerLaunchAuthorityDigest(gatewayV2)).not.toBe(providerLaunchAuthorityDigest(codex))
+  })
+
   it('is deterministic across object insertion order', () => {
     const reordered = {
       controls: { ...codex.controls },

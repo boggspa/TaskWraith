@@ -100,6 +100,7 @@ type MainAppLayoutSidebarProps = {
   handleSidebarPrimarySurfaceSelect: NonNullable<SidebarProps['onPrimarySurfaceSelect']>
   handleSidebarQuickUpdate: NonNullable<SidebarProps['onQuickUpdate']>
   handleStartProjectHome: NonNullable<SidebarProps['onStartProjectHome']>
+  handleSelectedProjectChange: NonNullable<SidebarProps['onSelectedProjectChange']>
   handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
   handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>
   handleTogglePinChat: NonNullable<SidebarProps['onTogglePinChat']>
@@ -392,6 +393,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isMultiviewSplit: any
   isOldVersion: any
   isPinnedMessagesPanelOpen: any
+  isProjectReferencesPanelOpen: any
+  activeWorkProjectId: string | null
   isSideChatProviderLocked: any
   isSideChatRunning: any
   isSideComposerLocked: any

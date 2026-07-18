@@ -1,5 +1,6 @@
 import { randomUUID } from 'crypto'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus, RunQueueRequestSnapshot } from '../store/types'
+import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
 
 interface PromoteQueuedJobForSteerRequest {
   runId: string
@@ -552,6 +553,8 @@ export class RunLifecycleCoordinator {
             .filter((entry): entry is RunQueueRequestSnapshot['imageAttachments'][number] => Boolean(entry))
         : [],
       discordContextSelection: this.normalizeDiscordSelection(request?.discordContextSelection),
+      projectReferenceContextSelection:
+        parseProjectReferenceContextSelection(request?.projectReferenceContextSelection) ?? undefined,
       externalPathGrants: request?.externalPathGrants,
       geminiWorktree: request?.geminiWorktree,
       codexNativeReview: request?.codexNativeReview,

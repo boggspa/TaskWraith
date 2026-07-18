@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 156 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 157 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -338,6 +338,15 @@ Apply a declarative Workspace Board plan by creating/updating a board and cards 
 - Required args: none
 - Optional args: boardId, name, description, sourceKind, sourceId, sourceTitle, note, cards, plan
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"workspace_board_apply_plan","arguments":{"boardId":"text"}}}}`
+
+## project_reference_propose
+
+Propose a file, folder, or website for a Project reference library. This creates an untrusted suggestion for human review only: it does not add the reference, read/stat/fetch the locator, or grant provider access.
+
+- Access: governed by your run permission role
+- Required args: referenceKind, locator, reason
+- Optional args: projectId, title
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"project_reference_propose","arguments":{"referenceKind":"text","locator":"text","reason":"text"}}}}`
 
 ## test_result_summary
 

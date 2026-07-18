@@ -468,6 +468,43 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'project_reference_propose',
+      description:
+        'Propose a file, folder, or website for a Project reference library. This creates an untrusted suggestion for human review only: it does not add the reference, read/stat/fetch the locator, or grant provider access.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          projectId: {
+            type: 'string',
+            maxLength: 256,
+            description:
+              'Required when the active chat belongs to more than one Project; otherwise inferred from exact chat membership.'
+          },
+          referenceKind: { type: 'string', enum: ['file', 'folder', 'url'] },
+          locator: {
+            type: 'string',
+            maxLength: 4096,
+            description:
+              'Absolute local path for file/folder, or an http(s) URL. Recorded as untrusted catalogue metadata only.'
+          },
+          title: { type: 'string', maxLength: 512 },
+          reason: {
+            type: 'string',
+            maxLength: 2000,
+            description: 'Why this source would be useful to the Project.'
+          }
+        },
+        required: ['referenceKind', 'locator', 'reason']
+      }
+    },
+    {
       name: 'git_stage',
       description: 'Stage selected files or all changes in the active workspace.',
       annotations: {

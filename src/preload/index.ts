@@ -1142,6 +1142,13 @@ const api = {
     ipcRenderer.invoke('projects:pick-reference-path', mode),
   importLegacyProjects: (rawJson: string | null) =>
     ipcRenderer.invoke('projects:import-legacy', rawJson),
+  listProjectReferenceProposals: (projectId: string) =>
+    ipcRenderer.invoke('projects:list-reference-proposals', projectId),
+  reviewProjectReferenceProposal: (input: {
+    projectId: string
+    proposalId: string
+    decision: 'approve' | 'reject'
+  }) => ipcRenderer.invoke('projects:review-reference-proposal', input),
   getChats: (workspaceId?: string) => ipcRenderer.invoke('get-chats', workspaceId),
   getChatList: (workspaceId?: string) => ipcRenderer.invoke('get-chat-list', workspaceId),
   getPinnedMessages: (workspaceId?: string) =>
@@ -1766,6 +1773,11 @@ const api = {
     const wrapped = (_event: unknown, projects: unknown): void => callback(projects)
     ipcRenderer.on('projects-changed', wrapped)
     return () => ipcRenderer.removeListener('projects-changed', wrapped)
+  },
+  onProjectReferenceProposalsChanged: (callback: (payload: { projectId: string }) => void) => {
+    const wrapped = (_event: unknown, payload: { projectId: string }): void => callback(payload)
+    ipcRenderer.on('project-reference-proposals-changed', wrapped)
+    return () => ipcRenderer.removeListener('project-reference-proposals-changed', wrapped)
   },
   onContextCompactionProgress: (callback: (event: ContextCompactionProgressEvent) => void) => {
     const wrapped = (_event: unknown, event: ContextCompactionProgressEvent): void =>

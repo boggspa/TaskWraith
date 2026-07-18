@@ -848,7 +848,7 @@ function nullableMcpProfileId(value: unknown): TaskWraithMcpProfileId | null {
   if (value === null) return null
   return oneOf(
     value,
-    ['taskwraith-full-v1', 'taskwraith-core-v1', 'taskwraith-gateway-v1'],
+    ['taskwraith-full-v1', 'taskwraith-core-v1', 'taskwraith-gateway-v1', 'taskwraith-gateway-v2'],
     'TaskWraith MCP profile'
   )
 }

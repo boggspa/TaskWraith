@@ -162,7 +162,7 @@ describe('sideChatComposer', () => {
     )
 
     expect(appSource).toMatch(
-      /const handleSideRun = \([\s\S]*?runRequestHasContent\([\s\S]*?imageAttachments: sideRunAttachments/
+      /const handleSideRun = \([\s\S]*?imageAttachments: sideRunAttachments,[\s\S]*?claimProjectReferenceContext: true[\s\S]*?runRequestHasContent\(request\)/
     )
     expect(appSource).toContain(
       'if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId'

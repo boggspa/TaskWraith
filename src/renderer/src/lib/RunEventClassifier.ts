@@ -345,6 +345,7 @@ export function classifyForInspector(event: RunEventRecord): InspectorRow {
       return { kind: 'reply', length: text ? text.length : undefined, raw: event }
     }
     case 'lifecycle':
+    case 'reference_context':
       return { kind: 'lifecycle', raw: event }
     // Audit-orchestration events are surfaced by the bespoke audit run card,
     // not this generic inspector — classify them as lifecycle so the timeline

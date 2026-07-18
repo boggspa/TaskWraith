@@ -18,6 +18,7 @@ const allClosed: RightDockTabAvailabilityInput = {
   showFileEditor: false,
   hasWorkspaceContext: false,
   isChatMediaPanelOpen: false,
+  isProjectReferencesPanelOpen: false,
   isPinnedMessagesPanelOpen: false,
   isTerminalDockAvailable: false
 }
@@ -35,6 +36,7 @@ describe('rightDockState', () => {
           showFileEditor: true,
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
+          isProjectReferencesPanelOpen: true,
           isPinnedMessagesPanelOpen: true,
           isTerminalDockAvailable: true
         })
@@ -45,6 +47,7 @@ describe('rightDockState', () => {
         { id: 'inspector', label: 'Inspect' },
         { id: 'files', label: 'Files' },
         { id: 'media', label: 'Media' },
+        { id: 'references', label: 'Refs' },
         { id: 'pins', label: 'Notes' },
         { id: 'terminal', label: 'Term' }
       ])
@@ -165,6 +168,7 @@ describe('rightDockState', () => {
         'chat',
         'run',
         'media',
+        'references',
         'pins',
         'files',
         'inspector',

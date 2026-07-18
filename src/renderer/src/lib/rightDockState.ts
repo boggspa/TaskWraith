@@ -5,6 +5,7 @@ export type RightDockTab =
   | 'inspector'
   | 'files'
   | 'media'
+  | 'references'
   | 'pins'
   | 'terminal'
 
@@ -17,6 +18,7 @@ export interface RightDockTabAvailabilityInput {
   showFileEditor: boolean
   hasWorkspaceContext: boolean
   isChatMediaPanelOpen: boolean
+  isProjectReferencesPanelOpen: boolean
   isPinnedMessagesPanelOpen: boolean
   isTerminalDockAvailable: boolean
 }
@@ -31,6 +33,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'chat',
   'run',
   'media',
+  'references',
   'pins',
   'files',
   'inspector',
@@ -53,6 +56,11 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       available: input.showFileEditor && input.hasWorkspaceContext
     },
     { id: 'media' as const, label: 'Media', available: input.isChatMediaPanelOpen },
+    {
+      id: 'references' as const,
+      label: 'Refs',
+      available: input.isProjectReferencesPanelOpen
+    },
     { id: 'pins' as const, label: 'Notes', available: input.isPinnedMessagesPanelOpen },
     { id: 'terminal' as const, label: 'Term', available: input.isTerminalDockAvailable }
   ]

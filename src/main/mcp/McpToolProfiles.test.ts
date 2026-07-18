@@ -11,8 +11,12 @@ import {
   FULL_MCP_ADVERTISE_TOOLS,
   GATEWAY_MCP_ADVERTISE_TOOLS,
   GATEWAY_MCP_DIRECT_TOOLS,
+  GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+  PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
+  taskWraithGatewayHiddenToolNamesForProfile,
   taskWraithMcpAdvertisedToolNamesForProfile,
   shouldUseCoreMcpProfile
 } from './McpToolProfiles'
@@ -27,7 +31,9 @@ describe('immutable v1 MCP profile snapshots', () => {
       FULL_MCP_ADVERTISE_TOOLS,
       CORE_MCP_ADVERTISE_TOOLS,
       GATEWAY_MCP_DIRECT_TOOLS,
-      GATEWAY_MCP_ADVERTISE_TOOLS
+      GATEWAY_MCP_ADVERTISE_TOOLS,
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -58,12 +64,56 @@ describe('immutable v1 MCP profile snapshots', () => {
 describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
   it('exposes 39 common tools plus only the two virtual gateway tools', () => {
     expect(GATEWAY_MCP_DIRECT_TOOLS).toHaveLength(39)
+    expect(nameHash(GATEWAY_MCP_DIRECT_TOOLS)).toBe(
+      '9fcc14ad8ec46f80eb041e0be0383f00b5894336a349bc9bb6dc4742ea53bcb9'
+    )
     expect(GATEWAY_MCP_ADVERTISE_TOOLS).toHaveLength(41)
     expect(new Set(GATEWAY_MCP_ADVERTISE_TOOLS).size).toBe(GATEWAY_MCP_ADVERTISE_TOOLS.length)
     for (const tool of GATEWAY_MCP_DIRECT_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(GATEWAY_MCP_ADVERTISE_TOOLS.slice(-2)).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v1')).toBe(
       GATEWAY_MCP_ADVERTISE_TOOLS
+    )
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v2')).toBe(
+      GATEWAY_MCP_ADVERTISE_TOOLS
+    )
+  })
+
+  it('keeps gateway-v1 hidden membership exact while v2 adds only the proposal tool', () => {
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).toHaveLength(117)
+    expect(nameHash(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)).toBe(
+      'bd9d9e82bb1da79b1c1c8ae4613548d92310e294e9fa28d55c628e7f3db01c52'
+    )
+    expect(new Set(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).size).toBe(
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES.length
+    )
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).not.toContain(
+      PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+    )
+    expect(GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
+      PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+    ])
+    expect(
+      createTaskWraithMcpToolDefinitions().filter(
+        (definition) => definition.name === PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+      )
+    ).toHaveLength(1)
+  })
+
+  it('resolves an absent gateway generation conservatively to v1', () => {
+    expect(taskWraithGatewayHiddenToolNamesForProfile(undefined)).toBe(
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
+    expect(taskWraithGatewayHiddenToolNamesForProfile('unknown-profile' as never)).toBe(
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v1')).toBe(
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v2')).toBe(
+      GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
     )
   })
 

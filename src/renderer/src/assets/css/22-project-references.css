@@ -1,0 +1,330 @@
+.project-references-dock {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  flex-direction: column;
+  color: var(--text-primary);
+}
+
+.project-references-dock-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 15px 16px 12px;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.project-references-dock-header h3 {
+  margin: 2px 0 0;
+  font-size: 15px;
+}
+
+.project-references-dock-eyebrow {
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.project-references-dock-close,
+.project-references-dock-add button,
+.project-references-dock-actions button {
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-references-dock-close,
+.project-references-dock-actions button {
+  padding: 4px 7px;
+  font-size: 10px;
+}
+
+.project-references-dock-boundary {
+  margin: 0;
+  padding: 10px 16px;
+  color: var(--text-tertiary);
+  font-size: 11px;
+  line-height: 1.45;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.project-references-dock-context-note {
+  margin: 0;
+  padding: 8px 16px 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.4;
+}
+
+.project-references-dock-selection {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 9px 16px 0;
+  padding: 7px 9px;
+  border: 1px solid color-mix(in srgb, var(--accent) 38%, var(--border-subtle));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+}
+
+.project-references-dock-selection button {
+  border: 0;
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  cursor: pointer;
+}
+
+.project-references-dock-add {
+  display: flex;
+  gap: 6px;
+  padding: 10px 16px;
+}
+
+.project-references-dock-add button {
+  padding: 6px 9px;
+  font-size: 11px;
+}
+
+.project-references-dock-list {
+  min-height: 0;
+  overflow: auto;
+  padding: 4px 10px 14px;
+}
+
+.project-reference-suggestions {
+  margin: 5px 0 13px;
+  padding: 10px;
+  border: 1px solid color-mix(in srgb, var(--accent) 30%, var(--border-subtle));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 5%, var(--surface-1));
+}
+
+.project-reference-suggestions-heading {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.project-reference-suggestions-heading h4 {
+  margin: 2px 0 0;
+  font-size: 12px;
+}
+
+.project-reference-suggestions-count {
+  min-width: 17px;
+  padding: 2px 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 17%, transparent);
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 700;
+  text-align: center;
+}
+
+.project-reference-suggestions-boundary,
+.project-reference-suggestions-empty,
+.project-reference-suggestions-error {
+  margin: 8px 0 0;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  line-height: 1.45;
+}
+
+.project-reference-suggestions-boundary strong {
+  color: var(--text-secondary);
+}
+
+.project-reference-suggestions-error {
+  color: var(--danger-text, #ef7b7b);
+}
+
+.project-reference-suggestions-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 9px;
+}
+
+.project-reference-suggestion {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr);
+  align-items: start;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-1) 88%, transparent);
+}
+
+.project-reference-suggestion-kind {
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.project-reference-suggestion-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-reference-suggestion-copy strong,
+.project-reference-suggestion-locator,
+.project-reference-suggestion-provider,
+.project-reference-suggestion-reason {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-reference-suggestion-copy strong {
+  font-size: 11px;
+}
+
+.project-reference-suggestion-locator,
+.project-reference-suggestion-provider,
+.project-reference-suggestion-reason {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.project-reference-suggestion-reason {
+  color: var(--text-secondary);
+}
+
+.project-reference-suggestion-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.project-reference-suggestion-actions button {
+  padding: 4px 7px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--surface-2) 82%, transparent);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 10px;
+  cursor: pointer;
+}
+
+.project-reference-suggestion-actions .danger {
+  color: var(--danger-text, #ef7b7b);
+}
+
+.project-reference-suggestion-actions button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+.project-references-dock-empty {
+  padding: 22px 8px;
+  color: var(--text-tertiary);
+  font-size: 12px;
+  line-height: 1.5;
+  text-align: center;
+}
+
+.project-references-dock-row {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding: 9px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--surface-1) 86%, transparent);
+}
+
+.project-references-dock-row.is-off {
+  opacity: 0.58;
+}
+
+.project-references-dock-kind {
+  padding: 3px 5px;
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--accent) 13%, transparent);
+  color: var(--text-secondary);
+  font-size: 9px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.project-references-dock-copy {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.project-references-dock-copy strong,
+.project-references-dock-copy span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-references-dock-copy strong {
+  font-size: 12px;
+}
+
+.project-references-dock-copy span {
+  color: var(--text-tertiary);
+  font-size: 10px;
+}
+
+.project-references-dock-status {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--text-tertiary);
+}
+
+.project-references-dock-status.ok {
+  background: #4fc47a;
+}
+
+.project-references-dock-status.missing {
+  background: #ef6c6c;
+}
+
+.project-references-dock-actions {
+  display: flex;
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.project-references-dock-actions .danger {
+  color: var(--danger-text, #ef7b7b);
+}
+
+.project-references-dock-actions button[aria-pressed='true'] {
+  border-color: color-mix(in srgb, var(--accent) 52%, var(--border-subtle));
+  background: color-mix(in srgb, var(--accent) 15%, transparent);
+  color: var(--accent);
+}
+
+.project-references-dock button:disabled {
+  cursor: default;
+  opacity: 0.5;
+}

@@ -95,6 +95,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'repo_convention_scan',
   'coherence_gate_check',
   'evidence_pack_write',
+  // Proposals persist bounded untrusted run evidence only. Human review is the
+  // sole path that mutates the Project library; proposing performs no I/O,
+  // fetch, grant, or workspace write.
+  'project_reference_propose',
   'completion_claim_check',
   // 1.0.71+ — workspace READ tools (see header). Read-only + host-gate-safe:
   // writes/shell are NOT here, so they still hit the gate and are denied under
