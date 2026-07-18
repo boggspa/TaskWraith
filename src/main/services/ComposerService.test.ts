@@ -568,10 +568,7 @@ describe('ComposerService', () => {
   })
 
   it('keeps explicit normal workflow separate from read-only plan permissions', () => {
-    const payload = compose(
-      { provider: 'codex' },
-      { approvalMode: 'plan', workflowMode: 'normal' }
-    )
+    const payload = compose({ provider: 'codex' }, { approvalMode: 'plan', workflowMode: 'normal' })
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('normal')
     expect(payload.composer.workflowMode).toBe('normal')
@@ -584,14 +581,20 @@ describe('ComposerService', () => {
   })
 
   it('uses persisted plan workflow to force plan approval mode', () => {
-    const payload = compose({ provider: 'claude', workflowMode: 'plan' }, { approvalMode: 'default' })
+    const payload = compose(
+      { provider: 'claude', workflowMode: 'plan' },
+      { approvalMode: 'default' }
+    )
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.composer.workflowMode).toBe('plan')
   })
 
   it('posture split: a Plan-workflow solo run resolves the plan instrument tier', () => {
-    const payload = compose({ provider: 'claude', workflowMode: 'plan' }, { approvalMode: 'default' })
+    const payload = compose(
+      { provider: 'claude', workflowMode: 'plan' },
+      { approvalMode: 'default' }
+    )
     expect(payload.approvalMode).toBe('plan')
     expect(payload.workflowMode).toBe('plan')
     expect(payload.effectivePermissions?.readOnly).toBe(true)
@@ -932,7 +935,9 @@ describe('ComposerService', () => {
       { selectedModelType: 'gpt-5.5' }
     )
     expect(payload.prompt).not.toContain('Conversation context')
-    expect(payload.composer.providerMetadataPatch).not.toHaveProperty('codexModelContextAppliedKeys')
+    expect(payload.composer.providerMetadataPatch).not.toHaveProperty(
+      'codexModelContextAppliedKeys'
+    )
   })
 
   it('builds Claude payloads without generic context and includes Claude reasoning/fast settings', () => {
@@ -1182,6 +1187,156 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('workspace')
     expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('ask')
     expect(payload.effectivePermissions?.networkAccess).toBe('allow')
+  })
+})
+
+describe('composeRun frozen execution-graph permission posture', () => {
+  const frozenGrant = makeGrant({
+    id: 'graph-grant',
+    path: '/outside/graph-input.txt'
+  })
+  const frozenWorkspaceWrite: EffectiveRunPermissions = {
+    presetId: 'workspace_write',
+    approvalMode: 'auto_edit',
+    agenticServices: {
+      shellCommands: 'workspace',
+      fileChanges: 'workspace',
+      externalPublish: 'deny',
+      mcpTools: 'ask',
+      subThreadDelegation: 'ask',
+      canvasInteraction: 'ask',
+      crossThreadRead: 'ask',
+      mediaEditing: 'deny',
+      mediaRecording: 'deny',
+      canvasEval: 'ask'
+    },
+    networkAccess: 'deny',
+    externalPathGrants: [frozenGrant],
+    workspaceGrantServiceIds: [],
+    readOnly: false
+  }
+
+  it('uses the exact main-resolved posture for a graph-owned appRunId', () => {
+    const chat = makeChat({ provider: 'codex' })
+    const { deps } = makeDeps(chat)
+    const resolveFrozenPermissionPosture = vi.fn(() => ({
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal' as const,
+      effectivePermissions: frozenWorkspaceWrite
+    }))
+    const isTrustedSessionGranted = vi.fn(() => true)
+    const service = new ComposerService({
+      ...deps,
+      resolveFrozenPermissionPosture,
+      isTrustedSessionGranted
+    })
+
+    const payload = service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'graph-run-1',
+      provider: 'codex',
+      workspace: '/repo',
+      userInput: 'Run the graph step',
+      selectedModelType: 'gpt-5.5',
+      runtimeProfileId: 'profile-1',
+      approvalMode: 'plan',
+      workflowMode: 'plan',
+      permissionPresetId: 'full_access',
+      externalPathGrants: [makeGrant({ id: 'renderer-grant', path: '/outside/untrusted.txt' })]
+    })
+
+    expect(resolveFrozenPermissionPosture).toHaveBeenCalledTimes(1)
+    expect(resolveFrozenPermissionPosture).toHaveBeenCalledWith({
+      appRunId: 'graph-run-1',
+      provider: 'codex',
+      scope: 'workspace',
+      chatId: chat.appChatId,
+      workspacePath: '/repo',
+      runtimeProfileId: 'profile-1'
+    })
+    expect(payload.approvalMode).toBe('auto_edit')
+    expect(payload.workflowMode).toBe('normal')
+    expect(payload.effectivePermissions).toBe(frozenWorkspaceWrite)
+    expect(payload.externalPathGrants).toEqual([frozenGrant])
+    expect(payload.prompt).toContain('/outside/graph-input.txt')
+    expect(payload.prompt).not.toContain('/outside/untrusted.txt')
+    expect(isTrustedSessionGranted).not.toHaveBeenCalled()
+  })
+
+  it('does not consult the graph resolver for an ordinary run without an appRunId', () => {
+    const chat = makeChat({ provider: 'codex' })
+    const { deps } = makeDeps(chat)
+    const resolveFrozenPermissionPosture = vi.fn(() => ({
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal' as const,
+      effectivePermissions: frozenWorkspaceWrite
+    }))
+    const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
+
+    const payload = service.composeRun({
+      chatId: chat.appChatId,
+      provider: 'codex',
+      workspace: '/repo',
+      userInput: 'Run normally',
+      selectedModelType: 'gpt-5.5',
+      approvalMode: 'default'
+    })
+
+    expect(resolveFrozenPermissionPosture).not.toHaveBeenCalled()
+    expect(payload.approvalMode).toBe('default')
+    expect(payload.effectivePermissions?.presetId).toBe('default')
+    expect(payload.effectivePermissions).not.toBe(frozenWorkspaceWrite)
+  })
+
+  it('keeps scheduled runs on the unattended path even when they carry an appRunId', () => {
+    const chat = makeChat({ provider: 'codex', providerMetadata: { approvalMode: 'auto_edit' } })
+    const { deps } = makeDeps(chat)
+    const resolveFrozenPermissionPosture = vi.fn(() => ({
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal' as const,
+      effectivePermissions: frozenWorkspaceWrite
+    }))
+    const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
+
+    const payload = service.composeRun({
+      chatId: chat.appChatId,
+      appRunId: 'scheduled-run-1',
+      scheduledTaskId: 'scheduled-task-1',
+      provider: 'codex',
+      workspace: '/repo',
+      userInput: 'Run unattended',
+      selectedModelType: 'gpt-5.5',
+      approvalMode: 'auto_edit'
+    })
+
+    expect(resolveFrozenPermissionPosture).not.toHaveBeenCalled()
+    expect(payload.approvalMode).toBe('plan')
+    expect(payload.effectivePermissions?.readOnly).toBe(true)
+  })
+
+  it('rejects a writable frozen posture if the selected model is preview-risk', () => {
+    const chat = makeChat({ provider: 'claude' })
+    const { deps } = makeDeps(chat)
+    const resolveFrozenPermissionPosture = vi.fn(() => ({
+      approvalMode: 'auto_edit',
+      workflowMode: 'normal' as const,
+      effectivePermissions: frozenWorkspaceWrite
+    }))
+    const service = new ComposerService({ ...deps, resolveFrozenPermissionPosture })
+
+    expect(() =>
+      service.composeRun({
+        chatId: chat.appChatId,
+        appRunId: 'graph-preview-run',
+        provider: 'claude',
+        workspace: '/repo',
+        userInput: 'Run the graph step',
+        selectedModelType: 'preview:anthropic:claude-fable-5',
+        approvalMode: 'auto_edit'
+      })
+    ).toThrow(
+      'Execution graph permission posture cannot be applied after the model became preview-risk.'
+    )
   })
 })
 

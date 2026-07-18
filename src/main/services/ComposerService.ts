@@ -52,10 +52,7 @@ import {
   resolveProjectReferenceContext
 } from './ProjectReferenceContextService'
 import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
-import {
-  isCursorGrok45ModelId,
-  isGrok45ReasoningModelId
-} from '../../shared/grok45Models'
+import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import {
   isTaskWraithMcpProfileReceiptForSession,
   resolveTaskWraithMcpProfile,
@@ -63,13 +60,18 @@ import {
 } from '../mcp/McpSessionProfileFence'
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
-import {
-  isKimiK3Model,
-  normalizeKimiReasoningEffort
-} from '../providers/StaticProviderModels'
+import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
 
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
 
 export interface ComposerImageAttachment {
   id?: string
@@ -176,6 +178,23 @@ export interface ComposerServiceDeps {
     context?: RunPermissionPostureContext | null
   ) => string
   /**
+   * Returns a previously signed, main-owned graph posture for this exact run,
+   * or null for ordinary composer runs. The resolver must verify persisted
+   * provenance before returning; renderer input is never authority here.
+   */
+  resolveFrozenPermissionPosture?: (input: {
+    appRunId: string
+    provider: ProviderId
+    scope: ChatScope
+    chatId: string
+    workspacePath?: string
+    runtimeProfileId?: string
+  }) => {
+    approvalMode: string
+    workflowMode: ChatWorkflowMode
+    effectivePermissions: EffectiveRunPermissions
+  } | null
+  /**
    * P2 — resolve a VERIFIED unattended-elevation grant for a scheduled
    * occurrence. The impure caller (index.ts) finds the scheduled task, its
    * workflow, HMAC-verifies the ack AND checks isUnattendedElevationAckCurrent,
@@ -275,7 +294,7 @@ export class ComposerService {
 
     const requestedModel = resolveRequestedModel(provider, effectiveInput, chat)
     const previewRiskModel = isPreviewRiskModel(provider, requestedModel)
-    const workflowMode = resolveComposerWorkflowMode(
+    let workflowMode = resolveComposerWorkflowMode(
       effectiveInput.workflowMode,
       chat.workflowMode,
       planParsed.planMode
@@ -310,7 +329,7 @@ export class ComposerService {
     // the (already-authenticated) level.
     const unattendedElevation =
       unattended && scheduledTaskId
-        ? this.deps.resolveUnattendedElevation?.(scheduledTaskId) ?? null
+        ? (this.deps.resolveUnattendedElevation?.(scheduledTaskId) ?? null)
         : null
     if (unattended) {
       approvalMode = resolveUnattendedApprovalMode(unattendedElevation?.ack, approvalMode)
@@ -322,8 +341,36 @@ export class ComposerService {
       approvalMode = 'default'
     }
     const runtimeProfileId = optionalString(effectiveInput.runtimeProfileId)
+    const frozenPermissionPosture =
+      appRunId && !unattended
+        ? (this.deps.resolveFrozenPermissionPosture?.({
+            appRunId,
+            provider,
+            scope,
+            chatId,
+            ...(scope === 'workspace'
+              ? { workspacePath: effectiveInput.workspace || chat.workspacePath }
+              : {}),
+            ...(runtimeProfileId ? { runtimeProfileId } : {})
+          }) ?? null)
+        : null
+    if (frozenPermissionPosture) {
+      if (
+        previewRiskModel &&
+        frozenPermissionPosture.effectivePermissions.presetId !== 'read_only' &&
+        frozenPermissionPosture.effectivePermissions.presetId !== 'plan'
+      ) {
+        throw new Error(
+          'Execution graph permission posture cannot be applied after the model became preview-risk.'
+        )
+      }
+      approvalMode = frozenPermissionPosture.approvalMode
+      workflowMode = frozenPermissionPosture.workflowMode
+    }
     const requestedTrustedSession =
-      effectiveInput.permissionPresetId === 'full_access' && scope !== 'global'
+      !frozenPermissionPosture &&
+      effectiveInput.permissionPresetId === 'full_access' &&
+      scope !== 'global'
     const trustedSessionGranted =
       requestedTrustedSession &&
       this.deps.isTrustedSessionGranted?.({
@@ -332,17 +379,17 @@ export class ComposerService {
         workspacePath: effectiveInput.workspace || chat.workspacePath,
         runtimeProfileId
       }) === true
-    const interactivePermissionPresetId =
-      unattended
-        ? undefined
-        : resolveInteractivePermissionPresetId(
-            approvalMode,
-            workflowMode,
-            effectiveInput.permissionPresetId,
-            trustedSessionGranted
-          )
-    const externalPathGrants =
-      scope !== 'global' && !(unattended && approvalMode === 'plan')
+    const interactivePermissionPresetId = unattended
+      ? undefined
+      : resolveInteractivePermissionPresetId(
+          approvalMode,
+          workflowMode,
+          effectiveInput.permissionPresetId,
+          trustedSessionGranted
+        )
+    const externalPathGrants = frozenPermissionPosture
+      ? [...frozenPermissionPosture.effectivePermissions.externalPathGrants]
+      : scope !== 'global' && !(unattended && approvalMode === 'plan')
         ? normalizeComposerExternalPathGrants(effectiveInput.externalPathGrants || [], provider)
         : []
     const projectReferenceContext = effectiveInput.projectReferenceContextSelection
@@ -352,8 +399,7 @@ export class ComposerService {
           provider,
           workspacePath:
             scope === 'global' ? undefined : effectiveInput.workspace || chat.workspacePath,
-          projects:
-            this.deps.appStore.getProjects?.() ?? missingProjectReferenceContextAuthority(),
+          projects: this.deps.appStore.getProjects?.() ?? missingProjectReferenceContextAuthority(),
           references:
             this.deps.appStore.getProjectReferences?.() ??
             missingProjectReferenceContextAuthority(),
@@ -429,9 +475,9 @@ export class ComposerService {
     })
     const kimiNativeSessionResume = Boolean(
       provider === 'kimi' &&
-        resumeDecision.sessionId &&
-        resumeDecision.sessionId.startsWith('session_') &&
-        metadataBoolean(chat, 'kimiAcpNativeSession') === true
+      resumeDecision.sessionId &&
+      resumeDecision.sessionId.startsWith('session_') &&
+      metadataBoolean(chat, 'kimiAcpNativeSession') === true
     )
     const promptInput = {
       provider,
@@ -497,8 +543,9 @@ export class ComposerService {
       unattended && unattendedElevation && approvalMode !== 'plan'
         ? unattendedElevationPresetId(unattendedElevation.ack.level)
         : undefined
-    const effectiveRunPermissions =
-      approvalMode === 'plan'
+    const effectiveRunPermissions = frozenPermissionPosture
+      ? frozenPermissionPosture.effectivePermissions
+      : approvalMode === 'plan'
         ? resolveEffectiveRunPermissions({
             provider,
             workspacePath:
@@ -535,15 +582,15 @@ export class ComposerService {
                 settings,
                 presetId: 'default'
               })
-          : scope === 'global'
-            ? undefined
-            : resolveEffectiveRunPermissions({
-                provider,
-                workspacePath: effectiveInput.workspace || chat.workspacePath,
-                model: requestedModel,
-                settings,
-                presetId: interactivePermissionPresetId || 'default'
-              })
+            : scope === 'global'
+              ? undefined
+              : resolveEffectiveRunPermissions({
+                  provider,
+                  workspacePath: effectiveInput.workspace || chat.workspacePath,
+                  model: requestedModel,
+                  settings,
+                  presetId: interactivePermissionPresetId || 'default'
+                })
     const payload: ComposerRunPayload = {
       provider,
       scope,
@@ -555,9 +602,7 @@ export class ComposerService {
               'Workspace'
             )
           }),
-      ...(effectiveProviderReroute
-        ? { providerReroute: effectiveProviderReroute }
-        : {}),
+      ...(effectiveProviderReroute ? { providerReroute: effectiveProviderReroute } : {}),
       // Carry the per-chat Ollama run profile onto the run payload so the
       // OllamaProvider applies the chat's runtime tuning. Absent → global default.
       ...(provider === 'ollama' && chatOllamaRunProfile
@@ -584,7 +629,7 @@ export class ComposerService {
                     optionalStringOrNull(effectiveInput.kimiReasoningEffort) ||
                       optionalStringOrNull(metadataString(chat, 'kimiReasoningEffort'))
                   )
-              : null,
+                : null,
       serviceTier:
         provider === 'codex'
           ? optionalStringOrNull(effectiveInput.codexServiceTier) || null
@@ -593,11 +638,11 @@ export class ComposerService {
               (effectiveInput.kimiFastMode ?? metadataBoolean(chat, 'kimiFastMode') ?? false)
               ? 'fast'
               : 'standard'
-          : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
-            ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
-              ? 'fast'
-              : null
-            : null,
+            : provider === 'cursor' && isCursorGrok45ModelId(requestedModel)
+              ? (effectiveInput.cursorFastMode ?? metadataBoolean(chat, 'cursorFastMode') ?? false)
+                ? 'fast'
+                : null
+              : null,
       claudeReasoningEffort:
         provider === 'claude'
           ? optionalStringOrNull(effectiveInput.claudeReasoningEffort) || null
@@ -606,8 +651,7 @@ export class ComposerService {
         provider === 'claude'
           ? (effectiveInput.claudeFastMode ?? metadataBoolean(chat, 'claudeFastMode') ?? false)
           : null,
-      kimiThinking:
-        provider === 'kimi' ? true : null,
+      kimiThinking: provider === 'kimi' ? true : null,
       approvalMode,
       workflowMode,
       ...(effectiveRunPermissions ? { effectivePermissions: effectiveRunPermissions } : {}),
@@ -703,7 +747,8 @@ function applyComposerReroutePlan(
     ...(plan.selectedModelType ? { selectedModelType: plan.selectedModelType } : {}),
     ...(plan.customModel !== undefined ? { customModel: plan.customModel } : {}),
     ...(rerouteApprovalMode ? { approvalMode: rerouteApprovalMode } : {}),
-    runtimeProfileId: plan.runtimeProfileId || (providerChanged ? undefined : input.runtimeProfileId),
+    runtimeProfileId:
+      plan.runtimeProfileId || (providerChanged ? undefined : input.runtimeProfileId),
     ...(resolution.provider === 'gemini'
       ? { geminiAuthProfileId: plan.geminiAuthProfileId ?? null }
       : {}),
