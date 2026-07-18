@@ -209,9 +209,12 @@ describe('RunManager', () => {
     manager.create({ runId: 'run-1', provider: 'kimi', status: 'running' })
     manager.requireTerminalConfirmation('run-1')
 
+    expect(manager.getTerminalJoinState('run-1').firstSignalAt).toBeUndefined()
+
     manager.finish('run-1', 'failed')
 
     expect(manager.get('run-1')?.status).toBe('running')
+    expect(manager.getTerminalJoinState('run-1').firstSignalAt).toEqual(expect.any(Number))
     expect(events).toEqual(['created:running'])
 
     manager.confirmTerminalStatus('run-1', 'failed')

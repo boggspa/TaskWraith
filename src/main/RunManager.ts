@@ -59,6 +59,7 @@ export interface RunRoute {
 export interface RunTerminalJoinState {
   readonly required: boolean
   readonly requiredAt?: number
+  readonly firstSignalAt?: number
   readonly lifecycleStatus?: TerminalRunSessionStatus
   readonly providerStatus?: TerminalRunSessionStatus
   readonly conflict: boolean
@@ -107,6 +108,7 @@ export class RunManager<TState = unknown> {
   private pendingTerminalStatuses = new Map<string, TerminalRunSessionStatus>()
   private confirmedTerminalStatuses = new Map<string, TerminalRunSessionStatus>()
   private terminalStatusConfirmationRequiredAt = new Map<string, number>()
+  private terminalStatusFirstSignalAt = new Map<string, number>()
   private terminalStatusConflicts = new Set<string>()
   private listeners = new Set<(event: RunSessionChangeEvent<TState>) => void>()
 
@@ -349,9 +351,11 @@ export class RunManager<TState = unknown> {
     const required = this.terminalStatusConfirmationsRequired.has(runId)
     const lifecycleStatus = this.pendingTerminalStatuses.get(runId)
     const providerStatus = this.confirmedTerminalStatuses.get(runId)
+    const firstSignalAt = this.terminalStatusFirstSignalAt.get(runId)
     return {
       required,
       ...(required ? { requiredAt: this.terminalStatusConfirmationRequiredAt.get(runId) } : {}),
+      ...(firstSignalAt !== undefined ? { firstSignalAt } : {}),
       ...(isTerminalRunSessionStatus(lifecycleStatus) ? { lifecycleStatus } : {}),
       ...(isTerminalRunSessionStatus(providerStatus) ? { providerStatus } : {}),
       conflict: this.terminalStatusConflicts.has(runId)
@@ -365,6 +369,7 @@ export class RunManager<TState = unknown> {
     if (!runId || !this.terminalStatusConfirmationsRequired.has(runId)) return undefined
     const session = this.sessionsByRunId.get(runId)
     if (!session || isTerminalRunSessionStatus(session.status)) return undefined
+    this.markTerminalJoinSignal(runId)
     const effectiveStatus = this.terminalStatusClaims.get(runId) ?? status
     const existing = this.confirmedTerminalStatuses.get(runId)
     if (existing && existing !== effectiveStatus) {
@@ -401,6 +406,7 @@ export class RunManager<TState = unknown> {
       isTerminalRunSessionStatus(effectiveStatus) &&
       this.terminalStatusConfirmationsRequired.has(runId)
     ) {
+      this.markTerminalJoinSignal(runId)
       const pending = this.pendingTerminalStatuses.get(runId)
       if (!pending) {
         this.pendingTerminalStatuses.set(runId, effectiveStatus)
@@ -495,6 +501,7 @@ export class RunManager<TState = unknown> {
     this.pendingTerminalStatuses.clear()
     this.confirmedTerminalStatuses.clear()
     this.terminalStatusConfirmationRequiredAt.clear()
+    this.terminalStatusFirstSignalAt.clear()
     this.terminalStatusConflicts.clear()
   }
 
@@ -511,11 +518,18 @@ export class RunManager<TState = unknown> {
     }
   }
 
+  private markTerminalJoinSignal(runId: string): void {
+    if (!this.terminalStatusFirstSignalAt.has(runId)) {
+      this.terminalStatusFirstSignalAt.set(runId, Date.now())
+    }
+  }
+
   private clearTerminalJoin(runId: string): void {
     this.terminalStatusConfirmationsRequired.delete(runId)
     this.pendingTerminalStatuses.delete(runId)
     this.confirmedTerminalStatuses.delete(runId)
     this.terminalStatusConfirmationRequiredAt.delete(runId)
+    this.terminalStatusFirstSignalAt.delete(runId)
     this.terminalStatusConflicts.delete(runId)
   }
 
