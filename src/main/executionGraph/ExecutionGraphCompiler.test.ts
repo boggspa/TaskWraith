@@ -1,11 +1,14 @@
 import { describe, expect, it } from 'vitest'
 import {
   compileExecutionGraphRevision,
+  executionGraphAuthorityDigest,
   executionGraphRevisionRef,
-  stableExecutionGraphStringify
+  stableExecutionGraphStringify,
+  validateExecutionGraphV1RuntimeAdmission
 } from './ExecutionGraphCompiler'
 import type {
   ExecutionEdge,
+  ExecutionJsonSchema,
   ExecutionGraphRevisionDraft,
   ExecutionStepCommon,
   ExecutionStepDefinition
@@ -136,7 +139,7 @@ function draft(overrides: Partial<ExecutionGraphRevisionDraft> = {}): ExecutionG
 }
 
 describe('ExecutionGraph compiler', () => {
-  it('compiles all V1 step kinds into a deeply immutable revision', () => {
+  it('compiles all generic V1 step kinds into a deeply immutable revision', () => {
     const result = compileExecutionGraphRevision(draft())
     expect(result.ok).toBe(true)
     if (!result.ok) return
@@ -200,6 +203,53 @@ describe('ExecutionGraph compiler', () => {
     if (!first.ok || !repeated.ok || !changed.ok) return
     expect(first.revision.definitionDigest).toBe(repeated.revision.definitionDigest)
     expect(changed.revision.definitionDigest).not.toBe(first.revision.definitionDigest)
+    expect(executionGraphAuthorityDigest(changed.revision)).not.toBe(
+      executionGraphAuthorityDigest(first.revision)
+    )
+  })
+
+  it('separates canonical definition integrity from presentation-neutral authority', () => {
+    const first = compileExecutionGraphRevision(draft())
+    const presentationSteps = [...graphSteps()].reverse().map((step) => {
+      const presented = {
+        ...step,
+        title: `Renamed ${step.id}`,
+        objective: `Updated display objective for ${step.id}`
+      }
+      if (presented.kind === 'human_gate') {
+        return {
+          ...presented,
+          gate: {
+            ...presented.gate,
+            approveLabel: 'Ship it',
+            declineLabel: 'Not yet'
+          }
+        } as ExecutionStepDefinition
+      }
+      if (presented.kind === 'output') {
+        return {
+          ...presented,
+          output: { ...presented.output, label: 'Renamed delivery' }
+        } as ExecutionStepDefinition
+      }
+      return presented
+    })
+    const presented = compileExecutionGraphRevision(
+      draft({
+        name: 'A different graph name',
+        description: 'Updated explanatory copy.',
+        createdAt: '2026-07-19T11:30:00.000Z',
+        steps: presentationSteps,
+        edges: [...graphEdges()].reverse()
+      })
+    )
+    expect(first.ok && presented.ok).toBe(true)
+    if (!first.ok || !presented.ok) return
+
+    expect(presented.revision.definitionDigest).not.toBe(first.revision.definitionDigest)
+    expect(executionGraphAuthorityDigest(presented.revision)).toBe(
+      executionGraphAuthorityDigest(first.revision)
+    )
   })
 
   it('rejects cycles, output successors, unsupported outcomes, and unreachable quorum', () => {
@@ -257,6 +307,60 @@ describe('ExecutionGraph compiler', () => {
     )
   })
 
+  it('rejects a data consumer without a success-control dependency on its producer', () => {
+    const steps = graphSteps().slice(0, 2)
+    const result = compileExecutionGraphRevision(
+      draft({
+        steps,
+        edges: [
+          {
+            id: 'plan-check-data',
+            kind: 'data',
+            from: { stepId: 'plan', port: 'report' },
+            to: { stepId: 'check', port: 'input' }
+          }
+        ]
+      })
+    )
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.issues).toContainEqual(
+      expect.objectContaining({ code: 'data_dependency_missing_control_path' })
+    )
+  })
+
+  it('accepts a data dependency backed by a transitive success-control path', () => {
+    const [plan, check, ensemble] = graphSteps()
+    const result = compileExecutionGraphRevision(
+      draft({
+        steps: [plan, ensemble, check],
+        edges: [
+          {
+            id: 'plan-ensemble',
+            kind: 'control',
+            fromStepId: 'plan',
+            toStepId: 'ensemble',
+            outcome: 'success'
+          },
+          {
+            id: 'ensemble-check',
+            kind: 'control',
+            fromStepId: 'ensemble',
+            toStepId: 'check',
+            outcome: 'success'
+          },
+          {
+            id: 'plan-check-data',
+            kind: 'data',
+            from: { stepId: 'plan', port: 'report' },
+            to: { stepId: 'check', port: 'input' }
+          }
+        ]
+      })
+    )
+    expect(result.ok).toBe(true)
+  })
+
   it('rejects unregistered node kinds, effectful kernel-only steps, and invalid caps', () => {
     const steps = graphSteps()
     steps[1] = { ...steps[1], effect: 'workspace_write' }
@@ -278,6 +382,180 @@ describe('ExecutionGraph compiler', () => {
   it('uses a stable encoder independent of object key insertion order', () => {
     expect(stableExecutionGraphStringify({ b: 2, a: { d: 4, c: 3 } })).toBe(
       stableExecutionGraphStringify({ a: { c: 3, d: 4 }, b: 2 })
+    )
+  })
+
+  it('validates oversized and deeply nested drafts without recursive stack overflow', () => {
+    const simpleStep = (id: string): ExecutionStepDefinition => ({
+      id,
+      title: id,
+      objective: `Execute ${id}`,
+      effect: 'read_only',
+      retry: { maxAttempts: 1 },
+      kind: 'solo_agent',
+      agent: { provider: 'codex', session: { mode: 'fresh' } }
+    })
+    const oversized = Array.from({ length: 5_000 }, (_, index) => simpleStep(`step-${index}`))
+    expect(() =>
+      compileExecutionGraphRevision(draft({ steps: oversized, edges: [] }))
+    ).not.toThrow()
+    const oversizedResult = compileExecutionGraphRevision(draft({ steps: oversized, edges: [] }))
+    expect(oversizedResult.ok).toBe(false)
+    if (!oversizedResult.ok) {
+      expect(oversizedResult.issues).toContainEqual(
+        expect.objectContaining({ code: 'step_limit_exceeded' })
+      )
+    }
+
+    const deepSteps = Array.from({ length: 1_000 }, (_, index) => simpleStep(`deep-${index}`))
+    const deepEdges: ExecutionEdge[] = deepSteps.slice(1).map((step, index) => ({
+      id: `deep-edge-${index}`,
+      kind: 'control',
+      fromStepId: deepSteps[index].id,
+      toStepId: step.id,
+      outcome: 'success'
+    }))
+    const deepResult = compileExecutionGraphRevision(
+      draft({
+        steps: deepSteps,
+        edges: deepEdges,
+        limits: { maxSteps: 1_000, maxConcurrentSteps: 1, maxAttempts: 1_000 }
+      })
+    )
+    expect(deepResult.ok).toBe(true)
+
+    let nestedSchema: ExecutionJsonSchema = { type: 'string' }
+    for (let depth = 0; depth < 2_000; depth += 1) {
+      nestedSchema = { type: 'object', properties: { next: nestedSchema } }
+    }
+    const nestedStep = simpleStep('nested')
+    const nestedResult = compileExecutionGraphRevision(
+      draft({
+        steps: [{ ...nestedStep, outputs: [{ name: 'value', schema: nestedSchema }] }],
+        edges: []
+      })
+    )
+    expect(nestedResult.ok).toBe(false)
+    if (!nestedResult.ok) {
+      expect(nestedResult.issues).toContainEqual(
+        expect.objectContaining({ code: 'invalid_port_schema' })
+      )
+    }
+  })
+
+  it('makes unsupported bound-runtime semantics explicit without narrowing generic compilation', () => {
+    const steps = graphSteps()
+    steps[0] = { ...steps[0], timeoutMs: 5_000 }
+    steps[1] = {
+      ...steps[1],
+      inputs: [{ name: 'input', schema: reportSchema, required: true }]
+    }
+    const compiled = compileExecutionGraphRevision(
+      draft({
+        steps,
+        limits: {
+          maxSteps: 20,
+          maxConcurrentSteps: 4,
+          maxAttempts: 30,
+          maxWallClockMs: 60_000,
+          maxTokens: 10_000,
+          maxCostUsd: 2
+        }
+      })
+    )
+    expect(compiled.ok).toBe(true)
+    if (!compiled.ok) return
+    expect(
+      validateExecutionGraphV1RuntimeAdmission(compiled.revision).map((entry) => entry.code)
+    ).toEqual(
+      expect.arrayContaining([
+        'runtime_concurrency_unsupported',
+        'runtime_parallel_topology_unsupported',
+        'runtime_budget_unsupported',
+        'runtime_retry_unsupported',
+        'runtime_retry_backoff_unsupported',
+        'runtime_timeout_unsupported',
+        'runtime_data_edge_unsupported',
+        'runtime_data_port_unsupported',
+        'runtime_step_kind_unsupported'
+      ])
+    )
+
+    const admitted = compileExecutionGraphRevision(
+      draft({
+        steps: [
+          {
+            ...common('execute'),
+            inputs: [],
+            outputs: [],
+            retry: { maxAttempts: 1 },
+            kind: 'solo_agent',
+            agent: { provider: 'codex', session: { mode: 'fresh' } }
+          }
+        ],
+        edges: [],
+        limits: { maxSteps: 1, maxConcurrentSteps: 1, maxAttempts: 1 }
+      })
+    )
+    expect(admitted.ok).toBe(true)
+    if (admitted.ok) expect(validateExecutionGraphV1RuntimeAdmission(admitted.revision)).toEqual([])
+  })
+
+  it('rejects data transport and output nodes from the bound V1 runtime profile', () => {
+    const compiled = compileExecutionGraphRevision(
+      draft({
+        steps: [
+          {
+            ...common('producer'),
+            inputs: [],
+            outputs: [{ name: 'result', schema: reportSchema }],
+            retry: { maxAttempts: 1 },
+            kind: 'solo_agent',
+            agent: { provider: 'codex', session: { mode: 'fresh' } }
+          },
+          {
+            ...common('result'),
+            inputs: [{ name: 'result', schema: reportSchema }],
+            outputs: [],
+            retry: { maxAttempts: 1 },
+            kind: 'output',
+            output: { label: 'Result', projectReference: 'propose' }
+          }
+        ],
+        edges: [
+          {
+            id: 'producer-result-control',
+            kind: 'control',
+            fromStepId: 'producer',
+            toStepId: 'result',
+            outcome: 'success'
+          },
+          {
+            id: 'producer-result-data',
+            kind: 'data',
+            from: { stepId: 'producer', port: 'result' },
+            to: { stepId: 'result', port: 'result' }
+          }
+        ],
+        limits: { maxSteps: 2, maxConcurrentSteps: 1, maxAttempts: 2 }
+      })
+    )
+    expect(compiled.ok).toBe(true)
+    if (!compiled.ok) return
+
+    expect(validateExecutionGraphV1RuntimeAdmission(compiled.revision)).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ code: 'runtime_data_edge_unsupported', path: 'edges[1]' }),
+        expect.objectContaining({
+          code: 'runtime_data_port_unsupported',
+          path: 'steps[0].outputs[0]'
+        }),
+        expect.objectContaining({
+          code: 'runtime_data_port_unsupported',
+          path: 'steps[1].inputs[0]'
+        }),
+        expect.objectContaining({ code: 'runtime_step_kind_unsupported', path: 'steps[1].kind' })
+      ])
     )
   })
 })

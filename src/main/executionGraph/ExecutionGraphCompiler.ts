@@ -23,6 +23,8 @@ export const DEFAULT_EXECUTION_GRAPH_LIMITS: ExecutionGraphLimits = Object.freez
 export const MAX_EXECUTION_GRAPH_STEPS = 1_000
 export const MAX_EXECUTION_GRAPH_CONCURRENCY = 64
 export const MAX_EXECUTION_GRAPH_ATTEMPTS = 10_000
+export const MAX_EXECUTION_GRAPH_JSON_DEPTH = 64
+export const MAX_EXECUTION_GRAPH_JSON_NODES = 10_000
 
 export interface ExecutionGraphCompilationIssue {
   readonly code: string
@@ -61,49 +63,135 @@ function isNonNegativeNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value) && value >= 0
 }
 
-function isJsonValue(value: unknown, seen: Set<object> = new Set()): value is JsonValue {
-  if (value === null) return true
-  if (typeof value === 'string' || typeof value === 'boolean') return true
-  if (typeof value === 'number') return Number.isFinite(value)
-  if (typeof value !== 'object') return false
-  if (seen.has(value)) return false
-  seen.add(value)
-  if (Array.isArray(value)) {
-    const valid = value.every((entry) => isJsonValue(entry, seen))
-    seen.delete(value)
-    return valid
+function isJsonValue(value: unknown): value is JsonValue {
+  type Frame =
+    | { readonly kind: 'value'; readonly value: unknown; readonly depth: number }
+    | { readonly kind: 'leave'; readonly value: object }
+
+  const active = new Set<object>()
+  const stack: Frame[] = [{ kind: 'value', value, depth: 0 }]
+  let nodeCount = 0
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!
+    if (frame.kind === 'leave') {
+      active.delete(frame.value)
+      continue
+    }
+
+    nodeCount += 1
+    if (
+      nodeCount > MAX_EXECUTION_GRAPH_JSON_NODES ||
+      frame.depth > MAX_EXECUTION_GRAPH_JSON_DEPTH
+    ) {
+      return false
+    }
+    const entry = frame.value
+    if (entry === null || typeof entry === 'string' || typeof entry === 'boolean') continue
+    if (typeof entry === 'number') {
+      if (!Number.isFinite(entry)) return false
+      continue
+    }
+    if (typeof entry !== 'object' || active.has(entry)) return false
+    if (!Array.isArray(entry)) {
+      const prototype = Object.getPrototypeOf(entry)
+      if (prototype !== Object.prototype && prototype !== null) return false
+    }
+
+    active.add(entry)
+    stack.push({ kind: 'leave', value: entry })
+    const children = Array.isArray(entry) ? entry : Object.values(entry as Record<string, unknown>)
+    for (let index = children.length - 1; index >= 0; index -= 1) {
+      stack.push({ kind: 'value', value: children[index], depth: frame.depth + 1 })
+    }
   }
-  const valid = Object.values(value as Record<string, unknown>).every((entry) =>
-    isJsonValue(entry, seen)
-  )
-  seen.delete(value)
-  return valid
+  return true
 }
 
 /** Deterministic JSON encoding used for definition identity and schema equality. */
 export function stableExecutionGraphStringify(value: unknown): string {
-  if (value === null) return 'null'
-  if (typeof value === 'number' || typeof value === 'boolean') return JSON.stringify(value)
-  if (typeof value === 'string') return JSON.stringify(value)
-  if (Array.isArray(value)) {
-    return `[${value.map((entry) => stableExecutionGraphStringify(entry)).join(',')}]`
-  }
-  if (isRecord(value)) {
-    return `{${Object.keys(value)
-      .filter((key) => value[key] !== undefined)
+  type Frame =
+    | { readonly kind: 'value'; readonly value: unknown }
+    | { readonly kind: 'text'; readonly value: string }
+    | { readonly kind: 'leave'; readonly value: object }
+
+  const active = new Set<object>()
+  const output: string[] = []
+  const stack: Frame[] = [{ kind: 'value', value }]
+
+  while (stack.length > 0) {
+    const frame = stack.pop()!
+    if (frame.kind === 'text') {
+      output.push(frame.value)
+      continue
+    }
+    if (frame.kind === 'leave') {
+      active.delete(frame.value)
+      continue
+    }
+
+    const entry = frame.value
+    if (entry === null) {
+      output.push('null')
+      continue
+    }
+    if (typeof entry === 'number' || typeof entry === 'boolean') {
+      output.push(JSON.stringify(entry))
+      continue
+    }
+    if (typeof entry === 'string') {
+      output.push(JSON.stringify(entry))
+      continue
+    }
+    if (!Array.isArray(entry) && !isRecord(entry)) {
+      output.push('null')
+      continue
+    }
+    if (active.has(entry)) {
+      throw new TypeError('Cannot stable-stringify a cyclic execution-graph value.')
+    }
+
+    active.add(entry)
+    stack.push({ kind: 'leave', value: entry })
+    if (Array.isArray(entry)) {
+      stack.push({ kind: 'text', value: ']' })
+      for (let index = entry.length - 1; index >= 0; index -= 1) {
+        stack.push({ kind: 'value', value: entry[index] })
+        if (index > 0) stack.push({ kind: 'text', value: ',' })
+      }
+      stack.push({ kind: 'text', value: '[' })
+      continue
+    }
+
+    const keys = Object.keys(entry)
+      .filter((key) => entry[key] !== undefined)
       .sort()
-      .map((key) => `${JSON.stringify(key)}:${stableExecutionGraphStringify(value[key])}`)
-      .join(',')}}`
+    stack.push({ kind: 'text', value: '}' })
+    for (let index = keys.length - 1; index >= 0; index -= 1) {
+      const key = keys[index]
+      stack.push({ kind: 'value', value: entry[key] })
+      stack.push({ kind: 'text', value: `${JSON.stringify(key)}:` })
+      if (index > 0) stack.push({ kind: 'text', value: ',' })
+    }
+    stack.push({ kind: 'text', value: '{' })
   }
-  return 'null'
+  return output.join('')
 }
 
 export function deepFreezeExecutionGraph<T>(value: T): Readonly<T> {
-  if (!value || typeof value !== 'object' || Object.isFrozen(value)) return value
-  for (const nested of Object.values(value as Record<string, unknown>)) {
-    deepFreezeExecutionGraph(nested)
+  if (!value || typeof value !== 'object') return value
+  const seen = new Set<object>()
+  const stack: object[] = [value]
+  while (stack.length > 0) {
+    const current = stack.pop()!
+    if (seen.has(current)) continue
+    seen.add(current)
+    for (const nested of Object.values(current)) {
+      if (nested && typeof nested === 'object' && !seen.has(nested)) stack.push(nested)
+    }
+    if (!Object.isFrozen(current)) Object.freeze(current)
   }
-  return Object.freeze(value)
+  return value
 }
 
 function validatePorts(
@@ -460,33 +548,60 @@ function findCycle(
     const to = stepIdForEdgeEnd(edge, 'to')
     adjacency.get(from)?.push(to)
   }
-  const visiting = new Set<string>()
-  const visited = new Set<string>()
+  const state = new Map<string, 'visiting' | 'visited'>()
   const path: string[] = []
-
-  const visit = (stepId: string): string[] | null => {
-    if (visiting.has(stepId)) {
-      const start = path.indexOf(stepId)
-      return [...path.slice(start), stepId]
-    }
-    if (visited.has(stepId)) return null
-    visiting.add(stepId)
-    path.push(stepId)
-    for (const next of adjacency.get(stepId) ?? []) {
-      const cycle = visit(next)
-      if (cycle) return cycle
-    }
-    path.pop()
-    visiting.delete(stepId)
-    visited.add(stepId)
-    return null
-  }
+  const pathIndex = new Map<string, number>()
 
   for (const step of steps) {
-    const cycle = visit(step.id)
-    if (cycle) return cycle
+    if (state.has(step.id)) continue
+    const stack: { readonly stepId: string; nextIndex: number }[] = [
+      { stepId: step.id, nextIndex: 0 }
+    ]
+    state.set(step.id, 'visiting')
+    pathIndex.set(step.id, path.length)
+    path.push(step.id)
+
+    while (stack.length > 0) {
+      const frame = stack[stack.length - 1]
+      const successors = adjacency.get(frame.stepId) ?? []
+      if (frame.nextIndex >= successors.length) {
+        stack.pop()
+        state.set(frame.stepId, 'visited')
+        pathIndex.delete(frame.stepId)
+        path.pop()
+        continue
+      }
+
+      const next = successors[frame.nextIndex]
+      frame.nextIndex += 1
+      const nextState = state.get(next)
+      if (nextState === 'visiting') {
+        const start = pathIndex.get(next) ?? 0
+        return [...path.slice(start), next]
+      }
+      if (nextState === 'visited') continue
+      state.set(next, 'visiting')
+      pathIndex.set(next, path.length)
+      path.push(next)
+      stack.push({ stepId: next, nextIndex: 0 })
+    }
   }
   return []
+}
+
+function reachableControlSteps(
+  sourceStepId: string,
+  adjacency: ReadonlyMap<string, readonly string[]>
+): ReadonlySet<string> {
+  const reachable = new Set<string>()
+  const pending = [...(adjacency.get(sourceStepId) ?? [])]
+  while (pending.length > 0) {
+    const stepId = pending.pop()!
+    if (reachable.has(stepId)) continue
+    reachable.add(stepId)
+    pending.push(...(adjacency.get(stepId) ?? []))
+  }
+  return reachable
 }
 
 export function validateExecutionTopology(
@@ -495,15 +610,17 @@ export function validateExecutionTopology(
   options: { readonly maxSteps?: number } = {}
 ): readonly ExecutionGraphCompilationIssue[] {
   const issues: ExecutionGraphCompilationIssue[] = []
+  const stepLimit = options.maxSteps ?? MAX_EXECUTION_GRAPH_STEPS
+  const stepLimitExceeded = steps.length > stepLimit
   if (steps.length === 0) {
     issues.push(issue('empty_graph', 'steps', 'A compiled revision requires at least one step.'))
   }
-  if (steps.length > (options.maxSteps ?? MAX_EXECUTION_GRAPH_STEPS)) {
+  if (stepLimitExceeded) {
     issues.push(
       issue(
         'step_limit_exceeded',
         'steps',
-        `Graph has ${steps.length} steps, above its ${options.maxSteps ?? MAX_EXECUTION_GRAPH_STEPS} step limit.`
+        `Graph has ${steps.length} steps, above its ${stepLimit} step limit.`
       )
     )
   }
@@ -525,6 +642,11 @@ export function validateExecutionTopology(
 
   const edgeIds = new Set<string>()
   const dataTargets = new Set<string>()
+  const outgoingCount = new Map<string, number>()
+  const incomingControlCount = new Map<string, number>()
+  const controlAdjacency = new Map<string, string[]>(steps.map((step) => [step.id, []]))
+  const dataDependencies: { readonly path: string; readonly from: string; readonly to: string }[] =
+    []
   edges.forEach((edge, index) => {
     const path = `edges[${index}]`
     if (!isRecord(edge)) {
@@ -557,6 +679,9 @@ export function validateExecutionTopology(
     if (fromStepId === toStepId && fromStepId) {
       issues.push(issue('self_edge', path, 'A step cannot depend on itself.'))
     }
+    if (stepById.has(fromStepId)) {
+      outgoingCount.set(fromStepId, (outgoingCount.get(fromStepId) ?? 0) + 1)
+    }
     if (edge.kind === 'control') {
       if (edge.outcome !== 'success') {
         issues.push(
@@ -566,6 +691,10 @@ export function validateExecutionTopology(
             'V1 control edges are success-only.'
           )
         )
+      }
+      if (stepById.has(fromStepId) && stepById.has(toStepId)) {
+        controlAdjacency.get(fromStepId)!.push(toStepId)
+        incomingControlCount.set(toStepId, (incomingControlCount.get(toStepId) ?? 0) + 1)
       }
       return
     }
@@ -614,6 +743,9 @@ export function validateExecutionTopology(
       )
     }
     dataTargets.add(targetKey)
+    if (stepById.has(fromStepId) && stepById.has(toStepId)) {
+      dataDependencies.push({ path, from: fromStepId, to: toStepId })
+    }
     if (
       fromPort?.schema &&
       toPort?.schema &&
@@ -631,6 +763,7 @@ export function validateExecutionTopology(
   })
 
   if (
+    !stepLimitExceeded &&
     !issues.some((entry) => ['unknown_edge_source', 'unknown_edge_target'].includes(entry.code))
   ) {
     const cycle = findCycle(steps, edges)
@@ -639,20 +772,37 @@ export function validateExecutionTopology(
         issue('cycle_not_supported', 'edges', `V1 graphs must be acyclic: ${cycle.join(' -> ')}.`)
       )
     }
+
+    if (cycle.length === 0) {
+      const reachability = new Map<string, ReadonlySet<string>>()
+      for (const dependency of dataDependencies) {
+        let reachable = reachability.get(dependency.from)
+        if (!reachable) {
+          reachable = reachableControlSteps(dependency.from, controlAdjacency)
+          reachability.set(dependency.from, reachable)
+        }
+        if (!reachable.has(dependency.to)) {
+          issues.push(
+            issue(
+              'data_dependency_missing_control_path',
+              dependency.path,
+              `Data binding ${dependency.from} -> ${dependency.to} requires a success-control path so the consumer cannot run before its producer.`
+            )
+          )
+        }
+      }
+    }
   }
 
   for (const step of steps) {
-    const outgoing = edges.filter((edge) => stepIdForEdgeEnd(edge, 'from') === step.id)
-    if (step.kind === 'output' && outgoing.length > 0) {
+    if (step.kind === 'output' && (outgoingCount.get(step.id) ?? 0) > 0) {
       issues.push(
         issue('output_not_terminal', `steps.${step.id}`, 'Output steps must be terminal in V1.')
       )
     }
     if (step.kind === 'join') {
-      const incomingControls = edges.filter(
-        (edge) => edge.kind === 'control' && edge.toStepId === step.id
-      )
-      if (incomingControls.length < 2) {
+      const controlCount = incomingControlCount.get(step.id) ?? 0
+      if (controlCount < 2) {
         issues.push(
           issue(
             'join_requires_branches',
@@ -661,12 +811,12 @@ export function validateExecutionTopology(
           )
         )
       }
-      if (step.join.mode === 'quorum' && step.join.quorum > incomingControls.length) {
+      if (step.join.mode === 'quorum' && step.join.quorum > controlCount) {
         issues.push(
           issue(
             'join_quorum_unreachable',
             `steps.${step.id}.join.quorum`,
-            `Quorum ${step.join.quorum} exceeds ${incomingControls.length} incoming branches.`
+            `Quorum ${step.join.quorum} exceeds ${controlCount} incoming branches.`
           )
         )
       }
@@ -848,6 +998,192 @@ function normalizeLimits(limits: Partial<ExecutionGraphLimits> | undefined): Exe
     ...(limits?.maxTokens !== undefined ? { maxTokens: limits.maxTokens } : {}),
     ...(limits?.maxCostUsd !== undefined ? { maxCostUsd: limits.maxCostUsd } : {})
   }
+}
+
+function authorityStep(step: ExecutionStepDefinition): Record<string, unknown> {
+  const common: Record<string, unknown> = {
+    id: step.id,
+    kind: step.kind,
+    effect: step.effect,
+    ...(step.inputs ? { inputs: step.inputs } : {}),
+    ...(step.outputs ? { outputs: step.outputs } : {}),
+    retry: step.retry,
+    ...(step.permissionRequestRef ? { permissionRequestRef: step.permissionRequestRef } : {}),
+    ...(step.timeoutMs !== undefined ? { timeoutMs: step.timeoutMs } : {})
+  }
+  switch (step.kind) {
+    case 'solo_agent':
+      return { ...common, agent: step.agent }
+    case 'deterministic_check':
+      return { ...common, check: step.check }
+    case 'human_gate':
+      return {
+        ...common,
+        gate:
+          step.gate.mode === 'approval'
+            ? { mode: step.gate.mode, prompt: step.gate.prompt }
+            : {
+                mode: step.gate.mode,
+                prompt: step.gate.prompt,
+                ...(step.gate.options ? { options: step.gate.options } : {})
+              }
+      }
+    case 'join':
+      return { ...common, join: step.join }
+    case 'ensemble_round':
+      return { ...common, ensemble: step.ensemble }
+    case 'output':
+      return {
+        ...common,
+        output: { projectReference: step.output.projectReference }
+      }
+  }
+}
+
+/**
+ * Authority identity is deliberately narrower than immutable definition
+ * identity. A revision's definitionDigest continues to cover every canonical
+ * persisted field, while this digest excludes display copy and lifecycle
+ * metadata that cannot widen what the graph is allowed to execute.
+ */
+export function executionGraphAuthorityDigest(
+  definition: Pick<ExecutionGraphRevision, 'workspaceId' | 'steps' | 'edges' | 'limits'>
+): string {
+  const steps = definition.steps
+    .map((step) => authorityStep(step))
+    .sort((left, right) => String(left.id).localeCompare(String(right.id)))
+  const edges = definition.edges
+    .map((edge) => normalizeEdge(edge))
+    .sort((left, right) => left.id.localeCompare(right.id))
+  return createHash('sha256')
+    .update(
+      stableExecutionGraphStringify({
+        schemaVersion: EXECUTION_GRAPH_SCHEMA_VERSION,
+        workspaceId: definition.workspaceId,
+        steps,
+        edges,
+        limits: definition.limits
+      })
+    )
+    .digest('hex')
+}
+
+/**
+ * Fail-closed admission profile for the currently bound desktop executor.
+ * Generic compilation stays future-compatible; callers must pass a compiled
+ * revision through this check before dispatching it with the V1 coordinator.
+ */
+export function validateExecutionGraphV1RuntimeAdmission(
+  revision: Pick<ExecutionGraphRevision, 'steps' | 'edges' | 'limits'>
+): readonly ExecutionGraphCompilationIssue[] {
+  const issues: ExecutionGraphCompilationIssue[] = []
+  if (revision.limits.maxConcurrentSteps !== 1) {
+    issues.push(
+      issue(
+        'runtime_concurrency_unsupported',
+        'limits.maxConcurrentSteps',
+        'The V1 bound executor admits only serial graphs with maxConcurrentSteps set to 1.'
+      )
+    )
+  }
+  const incomingControls = new Map<string, number>()
+  const outgoingControls = new Map<string, number>()
+  revision.edges.forEach((edge, index) => {
+    if (edge.kind === 'data') {
+      issues.push(
+        issue(
+          'runtime_data_edge_unsupported',
+          `edges[${index}]`,
+          'The V1 bound executor does not transport structured data between steps.'
+        )
+      )
+      return
+    }
+    incomingControls.set(edge.toStepId, (incomingControls.get(edge.toStepId) ?? 0) + 1)
+    outgoingControls.set(edge.fromStepId, (outgoingControls.get(edge.fromStepId) ?? 0) + 1)
+  })
+  const rootCount = revision.steps.filter((step) => !incomingControls.has(step.id)).length
+  if (rootCount !== 1 || revision.steps.some((step) => (outgoingControls.get(step.id) ?? 0) > 1)) {
+    issues.push(
+      issue(
+        'runtime_parallel_topology_unsupported',
+        'edges',
+        'The V1 bound executor admits only a single serial control chain.'
+      )
+    )
+  }
+  if (revision.limits.maxAttempts < revision.steps.length) {
+    issues.push(
+      issue(
+        'runtime_attempt_budget_unsupported',
+        'limits.maxAttempts',
+        'The V1 bound executor cannot enforce a graph attempt budget below its one-attempt-per-step maximum.'
+      )
+    )
+  }
+  for (const name of ['maxWallClockMs', 'maxTokens', 'maxCostUsd'] as const) {
+    if (revision.limits[name] !== undefined) {
+      issues.push(
+        issue(
+          'runtime_budget_unsupported',
+          `limits.${name}`,
+          `The V1 bound executor does not yet enforce ${name}.`
+        )
+      )
+    }
+  }
+
+  revision.steps.forEach((step, index) => {
+    const path = `steps[${index}]`
+    if (step.retry.maxAttempts !== 1) {
+      issues.push(
+        issue(
+          'runtime_retry_unsupported',
+          `${path}.retry.maxAttempts`,
+          'The V1 bound executor admits exactly one attempt per step.'
+        )
+      )
+    }
+    if (step.retry.backoffMs !== undefined) {
+      issues.push(
+        issue(
+          'runtime_retry_backoff_unsupported',
+          `${path}.retry.backoffMs`,
+          'The V1 bound executor does not schedule retry backoff.'
+        )
+      )
+    }
+    if (step.timeoutMs !== undefined) {
+      issues.push(
+        issue(
+          'runtime_timeout_unsupported',
+          `${path}.timeoutMs`,
+          'The V1 bound executor does not enforce step timeouts.'
+        )
+      )
+    }
+    for (const side of ['inputs', 'outputs'] as const) {
+      step[side]?.forEach((_port, portIndex) => {
+        issues.push(
+          issue(
+            'runtime_data_port_unsupported',
+            `${path}.${side}[${portIndex}]`,
+            'The V1 bound executor does not bind structured input or output ports.'
+          )
+        )
+      })
+    }
+    if (step.kind !== 'solo_agent') {
+      issues.push(
+        issue(
+          'runtime_step_kind_unsupported',
+          `${path}.kind`,
+          `The V1 bound executor cannot execute ${step.kind} steps.`
+        )
+      )
+    }
+  })
+  return issues
 }
 
 export function compileExecutionGraphRevision(
