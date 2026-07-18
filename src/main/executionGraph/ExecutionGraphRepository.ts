@@ -30,7 +30,6 @@ import {
   createExecutionRunEvent,
   foldExecutionRun,
   parseExecutionRunEventLine,
-  serializeExecutionRunEvent,
   type ExecutionCreatedEvent,
   type ExecutionRunEvent,
   type ExecutionRunEventInput,
@@ -44,6 +43,8 @@ const RUN_TEMPLATE_PREFIX = 'run-template-'
 const MAX_RUN_TEMPLATE_BYTES = 1_048_576
 const MAX_LAYOUT_BYTES = 262_144
 const MAX_LAYOUT_POSITIONS = 1_000
+const EXECUTION_LEDGER_BATCH_KIND = 'execution_event_batch' as const
+const EXECUTION_LEDGER_GENESIS_HASH = '0'.repeat(64)
 
 interface RevisionRegistry {
   readonly schemaVersion: 1
@@ -106,6 +107,7 @@ type ExecutionCreatedEventInput = Extract<
 
 interface ParsedLedger {
   readonly events: readonly ExecutionRunEvent[]
+  readonly tailHash: string
   readonly completeByteLength: number
   readonly observedByteLength: number
   readonly hasTornFinalFragment: boolean
@@ -114,9 +116,21 @@ interface ParsedLedger {
 interface CachedExecution {
   readonly events: readonly ExecutionRunEvent[]
   readonly projection: ExecutionRunProjection
+  readonly tailHash: string
   readonly completeByteLength: number
   readonly observedByteLength: number
   readonly hasTornFinalFragment: boolean
+}
+
+interface ExecutionLedgerBatchFrame {
+  readonly schemaVersion: 1
+  readonly kind: typeof EXECUTION_LEDGER_BATCH_KIND
+  readonly batchId: string
+  readonly executionId: string
+  readonly firstSequence: number
+  readonly previousHash: string
+  readonly events: readonly ExecutionRunEvent[]
+  readonly hash: string
 }
 
 export interface ExecutionGraphRepositoryDiagnostic {
@@ -301,6 +315,70 @@ function validateLayout(value: unknown, revision?: ExecutionGraphRevision): Exec
 function expectedLedgerFileName(executionId: string): string {
   assertCanonicalId(executionId, 'executionId')
   return `execution-${executionId}.jsonl`
+}
+
+function executionLedgerBatchPayload(
+  frame: Omit<ExecutionLedgerBatchFrame, 'hash'>
+): Omit<ExecutionLedgerBatchFrame, 'hash'> {
+  return {
+    schemaVersion: REPOSITORY_SCHEMA_VERSION,
+    kind: EXECUTION_LEDGER_BATCH_KIND,
+    batchId: frame.batchId,
+    executionId: frame.executionId,
+    firstSequence: frame.firstSequence,
+    previousHash: frame.previousHash,
+    events: frame.events
+  }
+}
+
+function executionLedgerBatchHash(frame: Omit<ExecutionLedgerBatchFrame, 'hash'>): string {
+  return createHash('sha256')
+    .update(stableExecutionGraphStringify(executionLedgerBatchPayload(frame)))
+    .digest('hex')
+}
+
+function executionLedgerBatchId(executionId: string, events: readonly ExecutionRunEvent[]): string {
+  const first = events[0]?.sequence
+  const last = events.at(-1)?.sequence
+  if (!first || !last) throw new Error('Execution ledger batches cannot be empty.')
+  return `${executionId}:${first}-${last}`
+}
+
+function createExecutionLedgerBatch(
+  executionId: string,
+  events: readonly ExecutionRunEvent[],
+  previousHash: string
+): ExecutionLedgerBatchFrame {
+  assertCanonicalId(executionId, 'execution ledger batch executionId')
+  assertDigest(previousHash, 'execution ledger batch previousHash')
+  if (events.length === 0) throw new Error('Execution ledger batches cannot be empty.')
+  const payload = executionLedgerBatchPayload({
+    schemaVersion: REPOSITORY_SCHEMA_VERSION,
+    kind: EXECUTION_LEDGER_BATCH_KIND,
+    batchId: executionLedgerBatchId(executionId, events),
+    executionId,
+    firstSequence: events[0].sequence,
+    previousHash,
+    events
+  })
+  return { ...payload, hash: executionLedgerBatchHash(payload) }
+}
+
+function serializeExecutionLedgerBatch(frame: ExecutionLedgerBatchFrame): string {
+  return `${JSON.stringify(frame)}\n`
+}
+
+function legacyExecutionEventTailHash(previousHash: string, event: ExecutionRunEvent): string {
+  return createHash('sha256')
+    .update(
+      stableExecutionGraphStringify({
+        schemaVersion: 1,
+        kind: 'legacy_execution_event',
+        previousHash,
+        event
+      })
+    )
+    .digest('hex')
 }
 
 function writeAll(fd: number, bytes: Buffer): void {
@@ -693,9 +771,15 @@ export class ExecutionGraphRepository {
     let fd: number | undefined
     let createdLedger = false
     try {
+      const batch = createExecutionLedgerBatch(
+        input.executionId,
+        [event],
+        EXECUTION_LEDGER_GENESIS_HASH
+      )
+      const serialized = serializeExecutionLedgerBatch(batch)
       fd = openSync(path, 'wx', 0o600)
       createdLedger = true
-      writeAll(fd, Buffer.from(serializeExecutionRunEvent(event), 'utf8'))
+      writeAll(fd, Buffer.from(serialized, 'utf8'))
       fsyncSync(fd)
       closeSync(fd)
       fd = undefined
@@ -714,10 +798,10 @@ export class ExecutionGraphRepository {
         executions: next
       } satisfies ExecutionRegistry)
       this.executions = next
-      const serialized = serializeExecutionRunEvent(event)
       this.executionCache.set(input.executionId, {
         events: Object.freeze([event]),
         projection,
+        tailHash: batch.hash,
         completeByteLength: Buffer.byteLength(serialized, 'utf8'),
         observedByteLength: Buffer.byteLength(serialized, 'utf8'),
         hasTornFinalFragment: false
@@ -792,6 +876,7 @@ export class ExecutionGraphRepository {
       cached = {
         ...cached,
         observedByteLength: reparsed.observedByteLength,
+        tailHash: reparsed.tailHash,
         hasTornFinalFragment: true
       }
       this.executionCache.set(executionId, cached)
@@ -837,7 +922,8 @@ export class ExecutionGraphRepository {
     let fd: number | undefined
     try {
       fd = openSync(path, 'a', 0o600)
-      const serialized = events.map(serializeExecutionRunEvent).join('')
+      const batch = createExecutionLedgerBatch(executionId, events, cached.tailHash)
+      const serialized = serializeExecutionLedgerBatch(batch)
       const serializedBytes = Buffer.from(serialized, 'utf8')
       writeAll(fd, serializedBytes)
       fsyncSync(fd)
@@ -845,6 +931,7 @@ export class ExecutionGraphRepository {
       this.executionCache.set(executionId, {
         events: Object.freeze(allEvents),
         projection,
+        tailHash: batch.hash,
         completeByteLength,
         observedByteLength: completeByteLength,
         hasTornFinalFragment: false
@@ -1129,14 +1216,84 @@ export class ExecutionGraphRepository {
     const completeText = bytes.subarray(0, completeByteLength).toString('utf8')
     const lines = completeText ? completeText.split('\n') : []
     if (lines.at(-1) === '') lines.pop()
-    const events = lines.map((line, index) => {
+    const events: ExecutionRunEvent[] = []
+    let tailHash = EXECUTION_LEDGER_GENESIS_HASH
+    let sawBatchFrame = false
+    for (const [lineIndex, line] of lines.entries()) {
       if (!line.trim())
-        throw new Error(`Execution ledger has a blank record at sequence ${index + 1}.`)
+        throw new Error(`Execution ledger has a blank record at line ${lineIndex + 1}.`)
+
+      let raw: unknown
+      try {
+        raw = JSON.parse(line) as unknown
+      } catch {
+        throw new Error(`Execution ledger is corrupt at line ${lineIndex + 1}.`)
+      }
+      if (isRecord(raw) && raw.kind === EXECUTION_LEDGER_BATCH_KIND) {
+        assertJsonValue(raw, `execution ledger batch at line ${lineIndex + 1}`)
+        sawBatchFrame = true
+        if (
+          raw.schemaVersion !== REPOSITORY_SCHEMA_VERSION ||
+          raw.executionId !== executionId ||
+          !Array.isArray(raw.events) ||
+          raw.events.length === 0 ||
+          !isPositiveInteger(raw.firstSequence) ||
+          raw.firstSequence !== events.length + 1 ||
+          raw.previousHash !== tailHash ||
+          typeof raw.hash !== 'string'
+        ) {
+          throw new Error(`Execution ledger batch is invalid at line ${lineIndex + 1}.`)
+        }
+        const batchEvents = raw.events.map((candidate, batchIndex) => {
+          const event = parseExecutionRunEventLine(JSON.stringify(candidate))
+          const expectedSequence = events.length + batchIndex + 1
+          if (!event) {
+            throw new Error(
+              `Execution ledger batch event is corrupt at sequence ${expectedSequence}.`
+            )
+          }
+          validateEventEnvelope(event, executionId, expectedSequence)
+          return event
+        })
+        const expectedBatchId = executionLedgerBatchId(executionId, batchEvents)
+        if (raw.batchId !== expectedBatchId) {
+          throw new Error(`Execution ledger batch identity is corrupt at line ${lineIndex + 1}.`)
+        }
+        const payload = executionLedgerBatchPayload({
+          schemaVersion: REPOSITORY_SCHEMA_VERSION,
+          kind: EXECUTION_LEDGER_BATCH_KIND,
+          batchId: expectedBatchId,
+          executionId,
+          firstSequence: batchEvents[0].sequence,
+          previousHash: tailHash,
+          events: batchEvents
+        })
+        const expectedHash = executionLedgerBatchHash(payload)
+        if (raw.hash !== expectedHash) {
+          throw new Error(`Execution ledger batch hash is corrupt at line ${lineIndex + 1}.`)
+        }
+        const canonicalFrame: ExecutionLedgerBatchFrame = { ...payload, hash: expectedHash }
+        if (stableExecutionGraphStringify(raw) !== stableExecutionGraphStringify(canonicalFrame)) {
+          throw new Error(`Execution ledger batch is not canonical at line ${lineIndex + 1}.`)
+        }
+        events.push(...batchEvents)
+        tailHash = expectedHash
+        continue
+      }
+
+      // Ledgers created by the pre-batch development build remain readable,
+      // but legacy records may only form a prefix. Every subsequent append is
+      // emitted as one batch frame chained to this deterministic legacy tail.
+      if (sawBatchFrame) {
+        throw new Error(`Legacy execution event follows a batch at line ${lineIndex + 1}.`)
+      }
       const event = parseExecutionRunEventLine(line)
-      if (!event) throw new Error(`Execution ledger is corrupt at sequence ${index + 1}.`)
-      validateEventEnvelope(event, executionId, index + 1)
-      return event
-    })
+      const expectedSequence = events.length + 1
+      if (!event) throw new Error(`Execution ledger is corrupt at sequence ${expectedSequence}.`)
+      validateEventEnvelope(event, executionId, expectedSequence)
+      events.push(event)
+      tailHash = legacyExecutionEventTailHash(tailHash, event)
+    }
     if (events.length === 0 && bytes.byteLength > 0) {
       throw new Error(`Execution ledger for "${executionId}" has no complete creation event.`)
     }
@@ -1147,6 +1304,7 @@ export class ExecutionGraphRepository {
     }
     return {
       events: Object.freeze(events),
+      tailHash,
       completeByteLength,
       observedByteLength: bytes.byteLength,
       hasTornFinalFragment
@@ -1212,6 +1370,7 @@ export class ExecutionGraphRepository {
     this.executionCache.set(entry.executionId, {
       events: parsed.events,
       projection,
+      tailHash: parsed.tailHash,
       completeByteLength: parsed.completeByteLength,
       observedByteLength: parsed.observedByteLength,
       hasTornFinalFragment: parsed.hasTornFinalFragment

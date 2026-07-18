@@ -197,6 +197,124 @@ describe('ExecutionGraphRepository revisions and registries', () => {
 })
 
 describe('ExecutionGraphRepository execution ledgers', () => {
+  it('persists each semantic append as one hash-chained batch frame', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const base = repository.saveRevision(revision())
+    createExecution(repository, base)
+
+    repository.appendExecutionEvents([
+      {
+        kind: 'activation_created',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        stepId: 'inspect',
+        timestamp: '2026-07-18T10:02:00.000Z'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'ready',
+        timestamp: '2026-07-18T10:03:00.000Z'
+      }
+    ])
+
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const frames = readFileSync(ledger, 'utf8')
+      .trimEnd()
+      .split('\n')
+      .map((line) => JSON.parse(line) as Record<string, unknown>)
+    expect(frames).toHaveLength(2)
+    expect(frames[0]).toMatchObject({
+      kind: 'execution_event_batch',
+      firstSequence: 1,
+      previousHash: '0'.repeat(64)
+    })
+    expect(frames[1]).toMatchObject({
+      kind: 'execution_event_batch',
+      firstSequence: 2,
+      previousHash: frames[0].hash
+    })
+    expect(frames[1].events).toHaveLength(2)
+    expect(frames[1].hash).toMatch(/^[a-f0-9]{64}$/)
+  })
+
+  it('ignores a semantic append torn at every byte until its frame newline is durable', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const base = repository.saveRevision(revision())
+    createExecution(repository, base)
+    repository.appendExecutionEvents([
+      {
+        kind: 'activation_created',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        stepId: 'inspect',
+        timestamp: '2026-07-18T10:02:00.000Z'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'ready',
+        timestamp: '2026-07-18T10:03:00.000Z'
+      }
+    ])
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const complete = readFileSync(ledger)
+    const firstFrameLength = complete.indexOf(0x0a) + 1
+    const firstFrame = complete.subarray(0, firstFrameLength)
+    const appendedFrame = complete.subarray(firstFrameLength)
+
+    for (let byteLength = 0; byteLength < appendedFrame.byteLength; byteLength += 1) {
+      writeFileSync(ledger, Buffer.concat([firstFrame, appendedFrame.subarray(0, byteLength)]))
+      expect(new ExecutionGraphRepository(root).getExecution('execution-one')).toMatchObject({
+        lastSequence: 1,
+        state: 'pending'
+      })
+    }
+
+    writeFileSync(ledger, complete)
+    expect(new ExecutionGraphRepository(root).getExecution('execution-one')).toMatchObject({
+      lastSequence: 3,
+      integrity: 'valid'
+    })
+  })
+
+  it('quarantines a complete batch whose hash no longer matches its events', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const base = repository.saveRevision(revision())
+    createExecution(repository, base)
+    repository.appendExecutionEvents([
+      {
+        kind: 'activation_created',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        stepId: 'inspect',
+        timestamp: '2026-07-18T10:02:00.000Z'
+      }
+    ])
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const lines = readFileSync(ledger, 'utf8').trimEnd().split('\n')
+    const tampered = JSON.parse(lines[1]) as {
+      events: Array<{ activationId?: string }>
+    }
+    tampered.events[0].activationId = 'activation-tampered'
+    writeFileSync(ledger, `${lines[0]}\n${JSON.stringify(tampered)}\n`, 'utf8')
+
+    const recovered = new ExecutionGraphRepository(root)
+    expect(recovered.getExecution('execution-one')).toBeUndefined()
+    expect(recovered.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        executionId: 'execution-one',
+        message: expect.stringMatching(/hash is corrupt/)
+      })
+    ])
+  })
+
   it('creates strict ledgers, folds with the pinned revision, and enforces compare-and-append', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
