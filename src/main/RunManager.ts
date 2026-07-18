@@ -90,6 +90,8 @@ export class RunManager<TState = unknown> {
     Extract<RunSessionStatus, 'failed' | 'cancelled'>
   >()
   private terminalStatusConfirmationsRequired = new Set<string>()
+  private pendingTerminalStatuses = new Map<string, RunSessionStatus>()
+  private confirmedTerminalStatuses = new Map<string, RunSessionStatus>()
   private listeners = new Set<(event: RunSessionChangeEvent<TState>) => void>()
 
   onChange(listener: (event: RunSessionChangeEvent<TState>) => void): () => void {
@@ -319,10 +321,36 @@ export class RunManager<TState = unknown> {
     return runId ? this.terminalStatusClaims.get(runId) : undefined
   }
 
-  confirmClaimedTerminalStatus(runId: string | undefined): RunSession<TState> | undefined {
-    if (!runId || !this.terminalStatusClaims.has(runId)) return undefined
+  requireTerminalConfirmation(runId: string): RunSession<TState> | undefined {
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || isTerminalRunSessionStatus(session.status)) return undefined
+    this.terminalStatusConfirmationsRequired.add(runId)
+    return session
+  }
+
+  confirmTerminalStatus(
+    runId: string | undefined,
+    status: Extract<RunSessionStatus, 'completed' | 'failed' | 'cancelled'>
+  ): RunSession<TState> | undefined {
+    if (!runId || !this.terminalStatusConfirmationsRequired.has(runId)) return undefined
+    const session = this.sessionsByRunId.get(runId)
+    if (!session || isTerminalRunSessionStatus(session.status)) return undefined
+    const effectiveStatus = this.terminalStatusClaims.get(runId) ?? status
+    const existing = this.confirmedTerminalStatuses.get(runId)
+    if (existing && existing !== effectiveStatus) return undefined
+    this.confirmedTerminalStatuses.set(runId, effectiveStatus)
+    const pending = this.pendingTerminalStatuses.get(runId)
+    if (!pending || pending !== effectiveStatus) return session
     this.terminalStatusConfirmationsRequired.delete(runId)
-    return this.finish(runId, this.terminalStatusClaims.get(runId)!)
+    this.pendingTerminalStatuses.delete(runId)
+    this.confirmedTerminalStatuses.delete(runId)
+    return this.finish(runId, effectiveStatus)
+  }
+
+  confirmClaimedTerminalStatus(runId: string | undefined): RunSession<TState> | undefined {
+    if (!runId) return undefined
+    const claim = this.terminalStatusClaims.get(runId)
+    return claim ? this.confirmTerminalStatus(runId, claim) : undefined
   }
 
   finish(runId: string | undefined, status: RunSessionStatus): RunSession<TState> | undefined {
@@ -338,7 +366,14 @@ export class RunManager<TState = unknown> {
       isTerminalRunSessionStatus(effectiveStatus) &&
       this.terminalStatusConfirmationsRequired.has(runId)
     ) {
-      return session
+      if (!this.pendingTerminalStatuses.has(runId)) {
+        this.pendingTerminalStatuses.set(runId, effectiveStatus)
+      }
+      const confirmed = this.confirmedTerminalStatuses.get(runId)
+      if (confirmed !== effectiveStatus) return session
+      this.terminalStatusConfirmationsRequired.delete(runId)
+      this.pendingTerminalStatuses.delete(runId)
+      this.confirmedTerminalStatuses.delete(runId)
     }
     if (
       session &&
@@ -355,6 +390,8 @@ export class RunManager<TState = unknown> {
       session.sessionGrants.clear()
       this.terminalStatusClaims.delete(runId)
       this.terminalStatusConfirmationsRequired.delete(runId)
+      this.pendingTerminalStatuses.delete(runId)
+      this.confirmedTerminalStatuses.delete(runId)
     }
     return this.update(runId, {
       status: effectiveStatus,
@@ -370,6 +407,8 @@ export class RunManager<TState = unknown> {
     this.sessionsByRunId.delete(runId)
     this.terminalStatusClaims.delete(runId)
     this.terminalStatusConfirmationsRequired.delete(runId)
+    this.pendingTerminalStatuses.delete(runId)
+    this.confirmedTerminalStatuses.delete(runId)
     this.runIdsByProvider.get(session.provider)?.delete(runId)
     if (session.providerSessionId) {
       this.runIdByProviderSession.delete(
@@ -398,6 +437,8 @@ export class RunManager<TState = unknown> {
     this.approvalIdToRunId.clear()
     this.terminalStatusClaims.clear()
     this.terminalStatusConfirmationsRequired.clear()
+    this.pendingTerminalStatuses.clear()
+    this.confirmedTerminalStatuses.clear()
   }
 
   private emit(event: RunSessionChangeEvent<TState>): void {

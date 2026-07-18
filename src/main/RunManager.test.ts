@@ -202,6 +202,56 @@ describe('RunManager', () => {
     expect(events).toEqual(['created:running', 'updated:cancelled'])
   })
 
+  it('joins an ordinary terminal request with later provider confirmation', () => {
+    const manager = new RunManager()
+    const events: string[] = []
+    manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
+    manager.create({ runId: 'run-1', provider: 'kimi', status: 'running' })
+    manager.requireTerminalConfirmation('run-1')
+
+    manager.finish('run-1', 'failed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(events).toEqual(['created:running'])
+
+    manager.confirmTerminalStatus('run-1', 'failed')
+
+    expect(manager.get('run-1')?.status).toBe('failed')
+    expect(events).toEqual(['created:running', 'updated:failed'])
+  })
+
+  it('joins a provider confirmation with a later lifecycle terminal request', () => {
+    const manager = new RunManager()
+    const events: string[] = []
+    manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
+    manager.create({ runId: 'run-1', provider: 'ollama', status: 'running' })
+    manager.requireTerminalConfirmation('run-1')
+
+    manager.confirmTerminalStatus('run-1', 'completed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(events).toEqual(['created:running'])
+
+    manager.finish('run-1', 'completed')
+
+    expect(manager.get('run-1')?.status).toBe('completed')
+    expect(events).toEqual(['created:running', 'updated:completed'])
+  })
+
+  it('does not join conflicting provider and lifecycle terminal statuses', () => {
+    const manager = new RunManager()
+    const events: string[] = []
+    manager.onChange((event) => events.push(`${event.type}:${event.session.status}`))
+    manager.create({ runId: 'run-1', provider: 'grok', status: 'running' })
+    manager.requireTerminalConfirmation('run-1')
+
+    manager.confirmTerminalStatus('run-1', 'completed')
+    manager.finish('run-1', 'failed')
+
+    expect(manager.get('run-1')?.status).toBe('running')
+    expect(events).toEqual(['created:running'])
+  })
+
   it.each(['completed', 'failed', 'cancelled'] as const)(
     'makes %s sessions absorbing and contains late resources',
     (terminalStatus) => {
