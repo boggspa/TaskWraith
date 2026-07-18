@@ -53,7 +53,8 @@ function queueJob(input: {
 
 function terminalEvent(
   runId: string,
-  status: 'completed' | 'failed' | 'cancelled'
+  status: 'completed' | 'failed' | 'cancelled',
+  overrides: Partial<RunSessionChangeEvent['session']> = {}
 ): RunSessionChangeEvent {
   return {
     type: 'updated',
@@ -66,7 +67,8 @@ function terminalEvent(
       startedAt: 1,
       updatedAt: 2,
       approvalIds: new Set(),
-      sessionGrants: new Set()
+      sessionGrants: new Set(),
+      ...overrides
     }
   }
 }
@@ -119,7 +121,7 @@ function harness(
     jobs.set(runId, next)
     return next
   })
-  const cancelActiveRun = vi.fn()
+  const cancelActiveRun = vi.fn(() => true)
   const anchorStatuses = new Map<string, ExecutionGraphAnchorRunStatus>()
   const materializePausedQueueJob = vi.fn(
     ({
@@ -407,6 +409,90 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(h.coordinator.getExecution(first.executionId)?.state).toBe('succeeded')
   })
 
+  it('asserts exact graph authority at the queue dispatch boundary', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    expect(h.coordinator.assertQueueJobDispatchable(runId)).toBe(h.jobs.get(runId))
+
+    const job = h.jobs.get(runId)!
+    h.jobs.set(runId, {
+      ...job,
+      executionGraph: { ...job.executionGraph!, executionId: 'another-execution' }
+    })
+    expect(() => h.coordinator.assertQueueJobDispatchable(runId)).toThrow(/not dispatchable/i)
+  })
+
+  it('rejects provider dispatch once the graph attempt is terminal', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+
+    expect(() => h.coordinator.assertQueueJobDispatchable(runId)).toThrow(/not dispatchable/i)
+  })
+
+  it('attention-gates an exact pre-session dispatch failure after containing its queue row', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'starting' })
+    h.transitions.mockClear()
+
+    const attention = h.coordinator.recordPreSessionDispatchFailure(
+      runId,
+      'Composer rejected the frozen graph request.'
+    )
+
+    expect(h.jobs.get(runId)).toMatchObject({ status: 'failed' })
+    expect(h.transitions).toHaveBeenCalledWith(
+      runId,
+      'failed',
+      expect.objectContaining({
+        lastError: 'Composer rejected the frozen graph request.'
+      })
+    )
+    expect(attention.state).toBe('requires_action')
+    expect(Object.values(attention.activations)[0].state).toBe('requires_action')
+    expect(Object.values(attention.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/did not create a RunManager session/i)
+    })
+  })
+
+  it('persists graph attention when pre-session queue containment cannot be confirmed', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'starting' })
+    h.transitions.mockImplementationOnce(() => null)
+
+    expect(() =>
+      h.coordinator.recordPreSessionDispatchFailure(runId, 'Dispatch failed before RunManager.')
+    ).toThrow(/containment could not be confirmed/i)
+
+    const attention = h.coordinator.getExecution(started.executionId)!
+    expect(attention.state).toBe('requires_action')
+    expect(Object.values(attention.attempts)[0].state).toBe('interrupted')
+  })
+
+  it('rejects pre-session failure reconciliation for a mismatched queue binding', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const job = h.jobs.get(runId)!
+    h.jobs.set(runId, {
+      ...job,
+      executionGraph: { ...job.executionGraph!, activationId: 'another-activation' }
+    })
+
+    expect(() =>
+      h.coordinator.recordPreSessionDispatchFailure(runId, 'Must not cross authority.')
+    ).toThrow(/cannot record a verified/i)
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('running')
+  })
+
   it('treats the current provider run as an anchor dependency', () => {
     const h = harness()
     const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
@@ -442,6 +528,59 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       'skipped'
     ])
     expect(h.jobs.size).toBe(1)
+  })
+
+  it.each([
+    ['provider', { provider: 'claude' as const }],
+    ['chat', { appChatId: 'chat-two' }],
+    ['workspace', { workspacePath: '/another-workspace' }]
+  ])('rejects a RunManager terminal event whose %s identity differs', (_label, overrides) => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed', overrides))
+
+    const rejected = h.coordinator.getExecution(started.executionId)!
+    expect(rejected.state).toBe('requires_action')
+    expect(Object.values(rejected.activations)[0].state).toBe('requires_action')
+    expect(Object.values(rejected.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/RunManager event rejected/i)
+    })
+  })
+
+  it('rejects a RunManager event when the exact queue graph binding differs', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const job = h.jobs.get(runId)!
+    h.jobs.set(runId, {
+      ...job,
+      executionGraph: { ...job.executionGraph!, attemptId: 'another-attempt' }
+    })
+
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+
+    const rejected = h.coordinator.getExecution(started.executionId)!
+    expect(rejected.state).toBe('requires_action')
+    expect(Object.values(rejected.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/queue graph binding/i)
+    })
+  })
+
+  it('rejects a RunManager event when its exact queue row is missing', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.delete(runId)
+
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+
+    const rejected = h.coordinator.getExecution(started.executionId)!
+    expect(rejected.state).toBe('requires_action')
+    expect(Object.values(rejected.attempts)[0].state).toBe('interrupted')
   })
 
   it('rejects an append that replaces the run permission ceiling', () => {
@@ -608,6 +747,27 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       expect(recovered.state).toBe('requires_action')
       expect(Object.values(recovered.activations)[0].state).toBe('requires_action')
       expect(Object.values(recovered.attempts)[0].state).toBe('interrupted')
+      expect(h.transitions).not.toHaveBeenCalled()
+    }
+  )
+
+  it.each(['completed', 'failed', 'cancelled'] as const)(
+    'does not trust a plain terminal queue status %s as provider evidence',
+    (terminalStatus) => {
+      const h = harness()
+      const started = h.coordinator.appendStackStep(h.input())
+      const runId = providerRunId(started)
+      h.jobs.set(runId, { ...h.jobs.get(runId)!, status: terminalStatus })
+      h.transitions.mockClear()
+
+      h.coordinator.recover()
+
+      const recovered = h.coordinator.getExecution(started.executionId)!
+      expect(recovered.state).toBe('requires_action')
+      expect(Object.values(recovered.attempts)[0]).toMatchObject({
+        state: 'interrupted',
+        error: expect.stringMatching(/not authoritative provider terminal evidence/i)
+      })
       expect(h.transitions).not.toHaveBeenCalled()
     }
   )
@@ -791,6 +951,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const runId = providerRunId(started)
     h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
     h.coordinator.onRunSessionChange(runningEvent(runId))
+    h.transitions.mockClear()
     h.cancelActiveRun.mockImplementation((cancelledRunId: string) => {
       h.coordinator.onRunSessionChange(terminalEvent(cancelledRunId, 'cancelled'))
     })
@@ -803,6 +964,143 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(cancelled.attempts)[0].state).toBe('cancelled')
     expect(h.cancelActiveRun).toHaveBeenCalledWith(runId)
     expect(h.jobs.get(runId)?.status).toBe('cancelled')
+    expect(h.transitions.mock.calls.map((call) => call[1])).toEqual(['cancelling', 'cancelled'])
+  })
+
+  it('terminally contains a queued row without touching a provider transport', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    h.transitions.mockClear()
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    expect(h.cancelActiveRun).not.toHaveBeenCalled()
+    expect(h.transitions.mock.calls.map((call) => call[1])).toEqual(['cancelled'])
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('cancelled')
+  })
+
+  it('terminally contains a paused graph claim without an invalid cancelling transition', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'paused' })
+    h.transitions.mockClear()
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    expect(h.cancelActiveRun).not.toHaveBeenCalled()
+    expect(h.transitions.mock.calls.map((call) => call[1])).toEqual(['cancelled'])
+    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('cancelled')
+  })
+
+  it('requires action and leaves the lease blocked when provider cleanup throws', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.coordinator.onRunSessionChange(runningEvent(runId))
+    h.transitions.mockClear()
+    h.cancelActiveRun.mockRejectedValueOnce(new Error('transport unavailable'))
+
+    await expect(h.coordinator.cancelExecution(started.executionId)).resolves.toBeUndefined()
+
+    const attention = h.coordinator.getExecution(started.executionId)!
+    expect(attention.state).toBe('requires_action')
+    expect(Object.values(attention.activations)[0].state).toBe('requires_action')
+    expect(Object.values(attention.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/transport unavailable/i)
+    })
+    expect(h.jobs.get(runId)).toMatchObject({
+      status: 'cancelling'
+    })
+    expect(h.transitions).not.toHaveBeenCalledWith(runId, 'cancelled', expect.anything())
+  })
+
+  it('requires action when exact provider cleanup cannot be confirmed', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'starting' })
+    h.cancelActiveRun.mockReturnValueOnce(false)
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    const attention = h.coordinator.getExecution(started.executionId)!
+    expect(attention.state).toBe('requires_action')
+    expect(Object.values(attention.attempts)[0]).toMatchObject({
+      state: 'interrupted',
+      error: expect.stringMatching(/could not confirm exact cleanup/i)
+    })
+    expect(h.jobs.get(runId)?.status).toBe('cancelling')
+  })
+
+  it('does not accept a mismatched synchronous cancellation callback as cleanup evidence', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.cancelActiveRun.mockImplementationOnce((cancelledRunId: string) => {
+      h.coordinator.onRunSessionChange(
+        terminalEvent(cancelledRunId, 'cancelled', { workspacePath: '/wrong-workspace' })
+      )
+      return true
+    })
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    const attention = h.coordinator.getExecution(started.executionId)!
+    expect(attention.state).toBe('requires_action')
+    expect(Object.values(attention.attempts)[0].state).toBe('interrupted')
+    expect(h.jobs.get(runId)?.status).toBe('cancelling')
+  })
+
+  it('does not dispatch a successor when completion synchronously races cancellation', async () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.coordinator.appendStackStep(
+      h.input({
+        executionId: started.executionId,
+        stepTitle: 'Must remain undispatched',
+        objective: 'Cancellation owns this frontier.'
+      })
+    )
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'active' })
+    h.cancelActiveRun.mockImplementationOnce((cancelledRunId: string) => {
+      h.coordinator.onRunSessionChange(terminalEvent(cancelledRunId, 'completed'))
+      return true
+    })
+
+    await h.coordinator.cancelExecution(started.executionId)
+
+    const cancelled = h.coordinator.getExecution(started.executionId)!
+    expect(cancelled.state).toBe('cancelled')
+    expect(Object.values(cancelled.activations).map((activation) => activation.state)).toEqual([
+      'succeeded',
+      'cancelled'
+    ])
+    expect(h.jobs.size).toBe(1)
+  })
+
+  it('contains a stale queued row when its graph execution is already terminal', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+    expect(h.jobs.get(runId)?.status).toBe('queued')
+    h.transitions.mockClear()
+
+    h.coordinator.recover()
+
+    expect(h.jobs.get(runId)?.status).toBe('cancelled')
+    expect(h.transitions).toHaveBeenCalledWith(
+      runId,
+      'cancelled',
+      expect.objectContaining({ statusReason: expect.stringMatching(/terminal execution/i) })
+    )
   })
 
   it('cancels the whole remaining Stack only from its dormant frontier', async () => {

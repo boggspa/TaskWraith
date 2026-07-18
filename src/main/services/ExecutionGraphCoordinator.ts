@@ -104,7 +104,13 @@ export interface ExecutionGraphCoordinatorDeps {
     partial?: Pick<Partial<RunQueueJob>, 'statusReason' | 'lastError'>
   ) => RunQueueJob | null
   resolveAnchorRunStatus: (runId: string) => ExecutionGraphAnchorRunStatus
-  cancelActiveRun: (runId: string) => Promise<void> | void
+  /**
+   * Stop the exact provider transport. `true` means cleanup was confirmed;
+   * `false` means no exact transport could be stopped. A matching terminal
+   * RunManager event emitted synchronously while this call runs is also
+   * authoritative confirmation.
+   */
+  cancelActiveRun: (runId: string) => Promise<boolean> | boolean
   onChanged?: (notice: ExecutionGraphChangedNotice) => void
   now?: () => string
   createId?: () => string
@@ -246,6 +252,14 @@ export class ExecutionGraphCoordinator {
   private readonly now: () => string
   private readonly createId: () => string
   private readonly draining = new Set<string>()
+  private readonly cancellationOperations = new Map<string, Promise<void>>()
+  private readonly cancellationContexts = new Map<
+    string,
+    {
+      readonly terminalOutcomes: Map<string, 'completed' | 'failed' | 'cancelled'>
+      readonly invalidRunIds: Set<string>
+    }
+  >()
 
   constructor(private readonly deps: ExecutionGraphCoordinatorDeps) {
     this.repository = deps.repository
@@ -276,6 +290,106 @@ export class ExecutionGraphCoordinator {
 
   getExecution(executionId: string): ExecutionRunProjection | undefined {
     return this.repository.getExecution(executionId)
+  }
+
+  /**
+   * Fail-closed main-boundary check for the lease and provider-start seams.
+   * Call this immediately before either boundary for graph-owned queue rows.
+   */
+  assertQueueJobDispatchable(runId: string): RunQueueJob {
+    const job = this.deps.getQueueJob(runId)
+    const binding = job?.executionGraph
+    if (!job || job.runId !== runId || !binding) {
+      throw new Error(`Queue run "${runId}" is not an exact execution-graph job.`)
+    }
+    const projection = this.repository.getExecution(binding.executionId)
+    const attempt = projection?.attempts[binding.attemptId]
+    const activation = attempt ? projection?.activations[attempt.activationId] : undefined
+    if (
+      !projection ||
+      projection.integrity !== 'valid' ||
+      projection.baseRevisionMissing ||
+      isExecutionRunTerminal(projection.state) ||
+      projection.state === 'waiting' ||
+      projection.state === 'requires_action' ||
+      !attempt ||
+      !activation ||
+      (attempt.state !== 'claimed' && attempt.state !== 'queued') ||
+      (activation.state !== 'claimed' && activation.state !== 'queued') ||
+      (job.status !== 'queued' && job.status !== 'starting') ||
+      this.cancellationContexts.has(projection.executionId) ||
+      !this.queueJobOwnsAttempt(projection, attempt, job)
+    ) {
+      throw new Error(
+        `Queue run "${runId}" is not dispatchable under its execution-graph authority.`
+      )
+    }
+    return job
+  }
+
+  /**
+   * Reconcile a main-owned failure that occurred before RunManager could emit
+   * authoritative provider evidence. The exact queue row is terminalized
+   * first, then the graph is attention-gated rather than inventing a provider
+   * success/failure result.
+   */
+  recordPreSessionDispatchFailure(runId: string, reason: string): ExecutionRunProjection {
+    const detail = reason.trim()
+    if (!detail) throw new Error('Pre-session dispatch failure requires a reason.')
+    const job = this.deps.getQueueJob(runId)
+    const binding = job?.executionGraph
+    if (!job || job.runId !== runId || !binding) {
+      throw new Error(`Queue run "${runId}" is not an exact execution-graph job.`)
+    }
+    let projection = this.requireExecution(binding.executionId)
+    const attempt = projection.attempts[binding.attemptId]
+    if (
+      isExecutionRunTerminal(projection.state) ||
+      !attempt ||
+      isStepAttemptTerminal(attempt.state) ||
+      !this.queueJobOwnsAttempt(projection, attempt, job) ||
+      (job.status !== 'queued' &&
+        job.status !== 'paused' &&
+        job.status !== 'starting' &&
+        job.status !== 'failed')
+    ) {
+      throw new Error(`Queue run "${runId}" cannot record a verified pre-session dispatch failure.`)
+    }
+
+    let contained: RunQueueJob | null = null
+    let containmentError: unknown
+    try {
+      contained = this.deps.transitionQueueJob(runId, 'failed', {
+        statusReason: 'Execution graph dispatch failed before provider session creation.',
+        lastError: detail
+      })
+    } catch (error) {
+      containmentError = error
+    }
+    projection = this.requireExecution(binding.executionId)
+    const currentAttempt = projection.attempts[binding.attemptId]
+    const containmentConfirmed = Boolean(
+      contained &&
+      contained.status === 'failed' &&
+      currentAttempt &&
+      this.queueJobOwnsAttempt(projection, currentAttempt, contained)
+    )
+    const attentionReason = containmentConfirmed
+      ? `Provider dispatch did not create a RunManager session: ${detail}`
+      : `Provider dispatch failed and queue containment could not be confirmed: ${
+          containmentError instanceof Error
+            ? containmentError.message
+            : containmentError
+              ? String(containmentError)
+              : detail
+        }`
+    if (currentAttempt && !isStepAttemptTerminal(currentAttempt.state)) {
+      this.requireAction(projection, currentAttempt, attentionReason)
+    }
+    if (!containmentConfirmed) {
+      throw new Error(attentionReason)
+    }
+    return this.requireExecution(binding.executionId)
   }
 
   appendStackStep(input: AppendExecutionStackStepInput): ExecutionRunProjection {
@@ -431,37 +545,201 @@ export class ExecutionGraphCoordinator {
         (candidate) => candidate.providerRunRef === runId
       )
       if (!attempt || isStepAttemptTerminal(attempt.state)) continue
+      if (!this.runSessionOwnsAttempt(projection, attempt, event)) {
+        this.cancellationContexts.get(projection.executionId)?.invalidRunIds.add(runId)
+        continue
+      }
       if (event.session.status === 'starting' || event.session.status === 'running') {
         this.markAttemptRunning(projection, attempt)
       } else if (terminalSession(event.session.status)) {
-        this.settleAttempt(projection, attempt, event.session.status)
+        const cancellation = this.cancellationContexts.get(projection.executionId)
+        if (cancellation) {
+          cancellation.terminalOutcomes.set(runId, event.session.status)
+        } else {
+          this.settleAttempt(projection, attempt, event.session.status)
+        }
       }
     }
   }
 
-  async cancelExecution(executionId: string, reason = 'Cancelled by user.'): Promise<void> {
+  cancelExecution(executionId: string, reason = 'Cancelled by user.'): Promise<void> {
+    const existing = this.cancellationOperations.get(executionId)
+    if (existing) return existing
+    const operation = this.cancelExecutionOnce(executionId, reason).finally(() => {
+      this.cancellationOperations.delete(executionId)
+      this.cancellationContexts.delete(executionId)
+    })
+    this.cancellationOperations.set(executionId, operation)
+    return operation
+  }
+
+  private async cancelExecutionOnce(executionId: string, reason: string): Promise<void> {
     let projection = this.requireExecution(executionId)
     if (isExecutionRunTerminal(projection.state)) return
-    const events: ExecutionRunEventInput[] = []
-    const queueRuns: Array<{ runId: string; cancelActive: boolean }> = []
+    const context = {
+      terminalOutcomes: new Map<string, 'completed' | 'failed' | 'cancelled'>(),
+      invalidRunIds: new Set<string>()
+    }
+    this.cancellationContexts.set(executionId, context)
+    const queueRuns: Array<{
+      runId: string
+      attemptId: string
+    }> = []
+    let cleanupFailed = false
+
+    // First revoke every exact queue lease. Queued/paused work is terminally
+    // contained because no provider boundary was crossed; starting/active
+    // work moves to `cancelling` before any transport cleanup begins.
     for (const activation of Object.values(projection.activations)) {
       if (isStepActivationTerminal(activation.state)) continue
       const attempt = latestAttemptForActivation(projection, activation)
       if (attempt && !isStepAttemptTerminal(attempt.state)) {
-        if (attempt.providerRunRef) {
-          const job = this.deps.getQueueJob(attempt.providerRunRef)
-          if (
-            job &&
-            this.queueJobOwnsAttempt(projection, attempt, job) &&
-            !TERMINAL_QUEUE_STATUSES.has(job.status)
-          ) {
-            queueRuns.push({
-              runId: attempt.providerRunRef,
-              cancelActive:
-                job.status === 'starting' || job.status === 'active' || job.status === 'cancelling'
-            })
-          }
+        const runId = attempt.providerRunRef
+        const job = runId ? this.deps.getQueueJob(runId) : null
+        if (!runId || !job || !this.queueJobOwnsAttempt(projection, attempt, job)) {
+          this.requireAction(
+            this.requireExecution(executionId),
+            this.requireExecution(executionId).attempts[attempt.id],
+            'Cancellation cleanup could not prove the exact graph-owned queue job.'
+          )
+          cleanupFailed = true
+          continue
         }
+        if (TERMINAL_QUEUE_STATUSES.has(job.status)) {
+          this.requireAction(
+            this.requireExecution(executionId),
+            this.requireExecution(executionId).attempts[attempt.id],
+            'Cancellation found a terminal queue row without authoritative RunManager cleanup evidence.'
+          )
+          cleanupFailed = true
+          continue
+        }
+        const beforeProviderStart = job.status === 'queued' || job.status === 'paused'
+        const containmentState: RunQueueJobStatus = beforeProviderStart ? 'cancelled' : 'cancelling'
+        let blocked: RunQueueJob | null = null
+        try {
+          blocked = this.deps.transitionQueueJob(runId, containmentState, {
+            statusReason: beforeProviderStart
+              ? 'Execution graph cancelled this exact queue row before provider start.'
+              : 'Execution graph cancellation is blocking this exact queue lease.'
+          })
+        } catch (error) {
+          this.recordCancellationCleanupFailure(
+            executionId,
+            attempt.id,
+            runId,
+            `Queue lease could not be blocked: ${error instanceof Error ? error.message : String(error)}`
+          )
+          cleanupFailed = true
+          continue
+        }
+        projection = this.requireExecution(executionId)
+        const currentAttempt = projection.attempts[attempt.id]
+        if (
+          !blocked ||
+          blocked.status !== containmentState ||
+          !currentAttempt ||
+          !this.queueJobOwnsAttempt(projection, currentAttempt, blocked)
+        ) {
+          this.recordCancellationCleanupFailure(
+            executionId,
+            attempt.id,
+            runId,
+            'Queue lease did not enter the exact graph-owned cancelling state.'
+          )
+          cleanupFailed = true
+          continue
+        }
+        if (!beforeProviderStart) queueRuns.push({ runId, attemptId: attempt.id })
+      }
+    }
+
+    // Clean up each blocked run independently. RunManager may synchronously
+    // re-enter this coordinator; terminal events are captured in the context
+    // above and folded only after this cancellation call regains control.
+    for (const queueRun of queueRuns) {
+      let transportConfirmed = false
+      let transportError: unknown
+      try {
+        transportConfirmed = await this.deps.cancelActiveRun(queueRun.runId)
+      } catch (error) {
+        transportError = error
+      }
+
+      const authoritativeOutcome = context.terminalOutcomes.get(queueRun.runId)
+      if (authoritativeOutcome === 'completed' || authoritativeOutcome === 'failed') {
+        const current = this.requireExecution(executionId)
+        const currentAttempt = current.attempts[queueRun.attemptId]
+        if (currentAttempt && !isStepAttemptTerminal(currentAttempt.state)) {
+          this.settleAttempt(current, currentAttempt, authoritativeOutcome)
+        }
+        continue
+      }
+      if (authoritativeOutcome === 'cancelled') transportConfirmed = true
+
+      if (!transportConfirmed || transportError || context.invalidRunIds.has(queueRun.runId)) {
+        this.recordCancellationCleanupFailure(
+          executionId,
+          queueRun.attemptId,
+          queueRun.runId,
+          transportError
+            ? `Provider transport cancellation failed: ${transportError instanceof Error ? transportError.message : String(transportError)}`
+            : context.invalidRunIds.has(queueRun.runId)
+              ? 'Provider cancellation emitted a RunManager event with mismatched graph identity.'
+              : 'Provider transport cancellation could not confirm exact cleanup.'
+        )
+        cleanupFailed = true
+        continue
+      }
+
+      let cancelledJob: RunQueueJob | null = null
+      try {
+        cancelledJob = this.deps.transitionQueueJob(queueRun.runId, 'cancelled', {
+          statusReason: reason
+        })
+      } catch (error) {
+        this.recordCancellationCleanupFailure(
+          executionId,
+          queueRun.attemptId,
+          queueRun.runId,
+          `Cancelled queue state could not be persisted: ${error instanceof Error ? error.message : String(error)}`
+        )
+        cleanupFailed = true
+        continue
+      }
+      projection = this.requireExecution(executionId)
+      const currentAttempt = projection.attempts[queueRun.attemptId]
+      if (
+        !cancelledJob ||
+        cancelledJob.status !== 'cancelled' ||
+        !currentAttempt ||
+        !this.queueJobOwnsAttempt(projection, currentAttempt, cancelledJob)
+      ) {
+        this.recordCancellationCleanupFailure(
+          executionId,
+          queueRun.attemptId,
+          queueRun.runId,
+          'Exact queue cleanup could not be durably confirmed.'
+        )
+        cleanupFailed = true
+      }
+    }
+
+    projection = this.requireExecution(executionId)
+    if (cleanupFailed || projection.state === 'requires_action') {
+      this.cancellationContexts.delete(executionId)
+      return
+    }
+    if (isExecutionRunTerminal(projection.state)) {
+      this.cancellationContexts.delete(executionId)
+      return
+    }
+
+    const events: ExecutionRunEventInput[] = []
+    for (const activation of Object.values(projection.activations)) {
+      if (isStepActivationTerminal(activation.state)) continue
+      const attempt = latestAttemptForActivation(projection, activation)
+      if (attempt && !isStepAttemptTerminal(attempt.state)) {
         events.push({
           executionId,
           kind: 'attempt_state_changed',
@@ -490,17 +768,7 @@ export class ExecutionGraphCoordinator {
     this.append(projection, events)
     projection = this.requireExecution(executionId)
     this.changed(projection, 'execution-terminal')
-    // Persist the graph cancellation before touching provider transports. A
-    // provider cancellation may synchronously finish RunManager and re-enter
-    // onRunSessionChange; the terminal ledger makes that callback a safe no-op.
-    for (const queueRun of queueRuns) {
-      if (queueRun.cancelActive) {
-        await this.deps.cancelActiveRun(queueRun.runId)
-      }
-      this.deps.transitionQueueJob(queueRun.runId, 'cancelled', {
-        statusReason: reason
-      })
-    }
+    this.cancellationContexts.delete(executionId)
   }
 
   async cancelDormantStep(
@@ -523,6 +791,14 @@ export class ExecutionGraphCoordinator {
   }
 
   recover(): void {
+    // The graph ledger is authoritative. If it is already terminal, no stale
+    // queued/paused transport row may remain leaseable after restart.
+    for (const projection of this.listExecutions({ includeTerminal: true }).filter((candidate) =>
+      isExecutionRunTerminal(candidate.state)
+    )) {
+      this.containTerminalExecutionQueueRows(projection)
+    }
+
     for (const projection of this.listExecutions({ includeTerminal: false })) {
       if (projection.integrity !== 'valid' || projection.baseRevisionMissing) continue
 
@@ -612,13 +888,12 @@ export class ExecutionGraphCoordinator {
           changed = true
           break
         }
-        if (job.status === 'completed') {
-          this.settleAttempt(projection, attempt, 'completed')
-          changed = true
-          break
-        }
-        if (job.status === 'failed' || job.status === 'cancelled') {
-          this.settleAttempt(projection, attempt, job.status)
+        if (TERMINAL_QUEUE_STATUSES.has(job.status)) {
+          this.requireAction(
+            projection,
+            attempt,
+            `Queue status "${job.status}" is not authoritative provider terminal evidence after restart.`
+          )
           changed = true
           break
         }
@@ -922,6 +1197,104 @@ export class ExecutionGraphCoordinator {
     )
   }
 
+  private runSessionOwnsAttempt(
+    projection: ExecutionRunProjection,
+    attempt: StepAttempt,
+    event: Exclude<RunSessionChangeEvent, { type: 'removed' }>
+  ): boolean {
+    const runId = event.session.runId
+    const job = this.deps.getQueueJob(runId)
+    const exactQueueBinding = Boolean(job && this.queueJobOwnsAttempt(projection, attempt, job))
+    const exactSessionIdentity = Boolean(
+      job &&
+      event.session.provider === job.provider &&
+      event.session.appChatId &&
+      event.session.appChatId === job.chatId &&
+      event.session.workspacePath &&
+      event.session.workspacePath === job.workspacePath
+    )
+    if (exactQueueBinding && exactSessionIdentity) return true
+
+    const reasons: string[] = []
+    if (!job) reasons.push('the exact queue row is missing')
+    else {
+      if (!exactQueueBinding) reasons.push('the queue graph binding does not own this attempt')
+      if (event.session.provider !== job.provider) reasons.push('provider identity differs')
+      if (!event.session.appChatId || event.session.appChatId !== job.chatId) {
+        reasons.push('chat identity differs or is absent')
+      }
+      if (!event.session.workspacePath || event.session.workspacePath !== job.workspacePath) {
+        reasons.push('workspace identity differs or is absent')
+      }
+    }
+    this.requireAction(
+      projection,
+      attempt,
+      `RunManager event rejected for graph attempt: ${reasons.join('; ')}.`
+    )
+    return false
+  }
+
+  private recordCancellationCleanupFailure(
+    executionId: string,
+    attemptId: string,
+    runId: string,
+    detail: string
+  ): void {
+    let projection = this.requireExecution(executionId)
+    const attempt = projection.attempts[attemptId]
+    const job = this.deps.getQueueJob(runId)
+    if (attempt && job && this.queueJobOwnsAttempt(projection, attempt, job)) {
+      try {
+        this.deps.transitionQueueJob(runId, 'cancelling', {
+          statusReason: 'Execution graph cancellation requires operator cleanup.',
+          lastError: detail
+        })
+      } catch {
+        // The graph ledger below remains the durable attention signal even if
+        // the queue store cannot accept a same-state evidence update.
+      }
+    }
+    projection = this.requireExecution(executionId)
+    const currentAttempt = projection.attempts[attemptId]
+    if (
+      currentAttempt &&
+      !isStepAttemptTerminal(currentAttempt.state) &&
+      !isExecutionRunTerminal(projection.state)
+    ) {
+      this.requireAction(
+        projection,
+        currentAttempt,
+        `Cancellation cleanup failed for queue run "${runId}": ${detail}`
+      )
+    }
+  }
+
+  private containTerminalExecutionQueueRows(projection: ExecutionRunProjection): void {
+    if (projection.integrity !== 'valid' || projection.baseRevisionMissing) return
+    for (const attempt of Object.values(projection.attempts)) {
+      const runId = attempt.providerRunRef
+      if (!runId) continue
+      const job = this.deps.getQueueJob(runId)
+      if (
+        !job ||
+        (job.status !== 'queued' && job.status !== 'paused') ||
+        !this.queueJobOwnsAttempt(projection, attempt, job)
+      ) {
+        continue
+      }
+      try {
+        this.deps.transitionQueueJob(runId, 'cancelled', {
+          statusReason: `Contained stale queue row for terminal execution ${projection.executionId}.`
+        })
+      } catch {
+        // Recovery remains fail-closed at the graph layer. The next recovery
+        // pass retries containment if the queue store was temporarily unable
+        // to persist the terminal status.
+      }
+    }
+  }
+
   private markAttemptRunning(projection: ExecutionRunProjection, attempt: StepAttempt): void {
     const activation = projection.activations[attempt.activationId]
     const events: ExecutionRunEventInput[] = []
@@ -987,7 +1360,9 @@ export class ExecutionGraphCoordinator {
       this.changed(this.requireExecution(projection.executionId), 'execution-progressed', [
         attempt.stepId
       ])
-      this.drain(projection.executionId)
+      if (!this.cancellationContexts.has(projection.executionId)) {
+        this.drain(projection.executionId)
+      }
       return
     }
     const failedState = status === 'failed' ? 'failed' : 'cancelled'
