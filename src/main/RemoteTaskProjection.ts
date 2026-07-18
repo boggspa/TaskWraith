@@ -50,6 +50,7 @@ export type RemoteProjectionKind =
   | 'ensembleState'
   | 'shellAppearance'
   | 'workflows'
+  | 'executionRuns'
   | 'workspaceBoards'
   | 'ensemblePresets'
   | 'pluginCapabilityCards'
