@@ -237,6 +237,9 @@ function prepareStackTemplate(
 ): PreparedStackTemplate {
   if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
   const runtimeProfileId = optionalString(input.request.runtimeProfileId)
+  if (runtimeProfileId) {
+    throw new Error('V1 Stack steps do not support mutable runtime profiles.')
+  }
   // Attachment staging and external-grant normalization can bind to runId.
   // Deriving the probe from the durable mutation nonce makes an exact retry
   // reproduce the same sanitized template instead of minting false variance.

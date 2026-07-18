@@ -233,8 +233,7 @@ describe('registerExecutionGraphHandlers', () => {
         stepTitle: 'Inspect the change',
         objective: 'Inspect this change carefully.',
         request: {
-          prompt: 'Untrusted renderer snapshot',
-          runtimeProfileId: 'runtime-codex-one'
+          prompt: 'Untrusted renderer snapshot'
         }
       }
     )
@@ -250,8 +249,7 @@ describe('registerExecutionGraphHandlers', () => {
         workspaceId: 'workspace-one',
         workspacePath: '/workspace',
         chatId: 'chat-one',
-        status: 'paused',
-        runtimeProfileId: 'runtime-codex-one'
+        status: 'paused'
       }),
       { authorizedFilePaths: ['/authorized/image.png'] }
     )
@@ -259,10 +257,8 @@ describe('registerExecutionGraphHandlers', () => {
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: 'Inspect this change.',
-          sessionTrust: false,
-          runtimeProfileId: 'runtime-codex-one'
+          sessionTrust: false
         }),
-        runtimeProfileId: 'runtime-codex-one',
         permissionPosture: expect.objectContaining({
           presetId: 'workspace_write',
           postureHash: 'c'.repeat(64),
@@ -275,7 +271,6 @@ describe('registerExecutionGraphHandlers', () => {
         provider: 'codex',
         workspacePath: '/workspace',
         rootChatId: 'chat-one',
-        runtimeProfileId: 'runtime-codex-one',
         request: expect.objectContaining({ sessionTrust: false })
       })
     )
@@ -397,7 +392,7 @@ describe('registerExecutionGraphHandlers', () => {
     expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })
 
-  it('rejects a prepared runtime profile that diverges from the request context', () => {
+  it('rejects mutable runtime profiles before queue preparation', () => {
     const deps = createDeps()
     deps.prepareQueueJob = vi.fn(
       (
@@ -443,7 +438,8 @@ describe('registerExecutionGraphHandlers', () => {
           }
         }
       )
-    ).toThrow(/runtime profile did not preserve/i)
+    ).toThrow(/do not support mutable runtime profiles/i)
+    expect(deps.prepareQueueJob).not.toHaveBeenCalled()
     expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
   })
