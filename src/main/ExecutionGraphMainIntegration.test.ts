@@ -217,4 +217,27 @@ describe('execution graph main integration', () => {
     expect(resolver).toContain('buildExecutionGraphPermissionPosture')
     expect(resolver).toContain('assertExecutionGraphPermissionPostureStillCurrent')
   })
+
+  it('freezes and revalidates the immutable built-in runtime profile', () => {
+    const initialization = between(
+      'const resolveStackRuntimeProfile =',
+      '// Phase C5 scaffold: APNs wake-on-approval.'
+    )
+    const resolver = between(
+      'const resolveExecutionGraphQueueAuthority =',
+      'const graphOwnedComposerInput ='
+    )
+
+    expect(initialization).toContain('profile.builtin !== true')
+    expect(initialization).toContain("profile.scope !== 'workspace'")
+    expect(initialization).toContain("profile.workspaceMode !== 'local'")
+    expect(initialization).toContain('buildRuntimeProfileAuthority(profile)')
+    expect(initialization).toContain('resolveFrozenStackRuntimeProfile(')
+    expect(initialization).toContain('runtimeSettings(AppStore.getSettings(), runtimeProfile)')
+    expect(initialization).not.toContain(
+      'V1 Stack execution does not support mutable runtime profiles.'
+    )
+    expect(resolver).toContain('resolveFrozenStackRuntimeProfile(')
+    expect(resolver).toContain('runtimeSettings(AppStore.getSettings(), runtimeProfile)')
+  })
 })

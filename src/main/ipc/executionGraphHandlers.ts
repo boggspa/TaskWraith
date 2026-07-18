@@ -96,6 +96,10 @@ export interface ExecutionGraphHandlersDeps {
     input: unknown,
     options: { authorizedFilePaths?: string[] }
   ) => Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
+  resolveRuntimeProfileAuthority: (input: {
+    provider: ProviderId
+    runtimeProfileId: string
+  }) => JsonObject
   resolvePermissionPosture: (input: {
     provider: ProviderId
     workspaceId: string
@@ -218,7 +222,8 @@ function effectForPreparedTemplate(content: JsonObject): ExecutionEffect {
 
 function runTemplateContent(
   prepared: Partial<RunQueueJob>,
-  permissionPosture: RunPermissionPostureSnapshot
+  permissionPosture: RunPermissionPostureSnapshot,
+  runtimeProfileAuthority?: JsonObject
 ): JsonObject {
   const request = prepared.request
     ? {
@@ -238,6 +243,7 @@ function runTemplateContent(
     request,
     permissionPosture,
     runtimeProfileId: prepared.runtimeProfileId,
+    runtimeProfileAuthority,
     handoffSourceRunId: prepared.handoffSourceRunId
   })
 }
@@ -294,8 +300,18 @@ function prepareStackTemplate(
 ): PreparedStackTemplate {
   if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
   const runtimeProfileId = optionalString(input.request.runtimeProfileId)
-  if (runtimeProfileId) {
-    throw new Error('V1 Stack steps do not support mutable runtime profiles.')
+  const runtimeProfileAuthority = runtimeProfileId
+    ? jsonObject(deps.resolveRuntimeProfileAuthority({ provider, runtimeProfileId }))
+    : undefined
+  if (
+    runtimeProfileAuthority &&
+    (runtimeProfileAuthority.id !== runtimeProfileId ||
+      runtimeProfileAuthority.provider !== provider ||
+      runtimeProfileAuthority.scope !== 'workspace' ||
+      runtimeProfileAuthority.workspaceMode !== 'local' ||
+      runtimeProfileAuthority.builtin !== true)
+  ) {
+    throw new Error('Stack steps require an immutable built-in workspace runtime profile.')
   }
   // Attachment staging and external-grant normalization can bind to runId.
   // Deriving the probe from the durable mutation nonce makes an exact retry
@@ -359,7 +375,11 @@ function prepareStackTemplate(
   if (!permissionPosture.signaturePresent || !permissionPosture.signature) {
     throw new Error('Stack step permission posture is not signed.')
   }
-  const content = runTemplateContent({ ...prepared, request: frozenRequest }, permissionPosture)
+  const content = runTemplateContent(
+    { ...prepared, request: frozenRequest },
+    permissionPosture,
+    runtimeProfileAuthority
+  )
   const record = deps.repository.saveRunTemplate(content)
   const authorityDigest = executionGraphRunTemplatePermissionCeilingDigest(content)
   const ceiling: ExecutionPermissionCeilingRef = {

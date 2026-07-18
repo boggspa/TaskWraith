@@ -135,6 +135,24 @@ function createDeps(): ExecutionGraphHandlersDeps {
         }
       )
     }),
+    resolveRuntimeProfileAuthority: vi.fn(({ provider, runtimeProfileId }) => ({
+      schemaVersion: 1,
+      id: runtimeProfileId,
+      provider,
+      scope: 'workspace',
+      workspaceMode: 'local',
+      binaryPath: null,
+      env: {},
+      secretRefs: null,
+      mcpProfileId: null,
+      approvalMode: 'default',
+      agenticServices: null,
+      networkPolicy: 'inherit',
+      persistence: 'reusable',
+      containerConfig: null,
+      builtin: true,
+      pluginProvenance: null
+    })),
     resolvePermissionPosture: vi.fn(
       (): RunPermissionPostureSnapshot => ({
         schemaVersion: 1,
@@ -514,34 +532,8 @@ describe('registerExecutionGraphHandlers', () => {
     expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })
 
-  it('rejects mutable runtime profiles before queue preparation', () => {
+  it('freezes the built-in workspace runtime profile into a Stack template', () => {
     const deps = createDeps()
-    deps.prepareQueueJob = vi.fn(
-      (
-        input: unknown
-      ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> => ({
-        id: String((input as Record<string, unknown>).id),
-        runId: String((input as Record<string, unknown>).runId),
-        provider: 'codex',
-        scope: 'workspace',
-        workspaceId: 'workspace-one',
-        workspacePath: '/workspace',
-        chatId: 'chat-one',
-        source: 'system',
-        status: 'paused',
-        runtimeProfileId: 'runtime-codex-one',
-        request: {
-          prompt: 'Inspect this change.',
-          selectedModelType: 'default',
-          customModel: '',
-          approvalMode: 'default',
-          permissionPresetId: 'workspace_write',
-          sessionTrust: false,
-          imageAttachments: [],
-          runtimeProfileId: 'runtime-codex-two'
-        }
-      })
-    )
     registerExecutionGraphHandlers(deps)
 
     expect(() =>
@@ -553,14 +545,56 @@ describe('registerExecutionGraphHandlers', () => {
           rootChatId: 'chat-one',
           provider: 'codex',
           stepTitle: 'Inspect the change',
-          objective: 'Inspect this change carefully.',
+          objective: 'Inspect this change.',
           request: {
-            prompt: 'Inspect with a runtime profile.',
-            runtimeProfileId: 'runtime-codex-one'
+            prompt: 'Inspect this change.',
+            runtimeProfileId: 'builtin:codex:local'
           }
         }
       )
-    ).toThrow(/do not support mutable runtime profiles/i)
+    ).not.toThrow()
+    expect(deps.prepareQueueJob).toHaveBeenCalledOnce()
+    expect(deps.resolvePermissionPosture).toHaveBeenCalledWith(
+      expect.objectContaining({ runtimeProfileId: 'builtin:codex:local' })
+    )
+    expect(deps.repository.saveRunTemplate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runtimeProfileId: 'builtin:codex:local',
+        runtimeProfileAuthority: expect.objectContaining({
+          id: 'builtin:codex:local',
+          provider: 'codex',
+          scope: 'workspace',
+          builtin: true
+        })
+      })
+    )
+    expect(deps.coordinator.appendStackStep).toHaveBeenCalledOnce()
+  })
+
+  it('rejects mutable runtime profiles before queue preparation', () => {
+    const deps = createDeps()
+    deps.resolveRuntimeProfileAuthority = vi.fn(() => {
+      throw new Error('Stack steps require an immutable built-in workspace runtime profile.')
+    })
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          clientRequestId: 'runtime-profile-custom',
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'codex',
+          stepTitle: 'Inspect the change',
+          objective: 'Inspect this change.',
+          request: {
+            prompt: 'Inspect this change.',
+            runtimeProfileId: 'runtime-codex-custom'
+          }
+        }
+      )
+    ).toThrow(/immutable built-in workspace runtime profile/i)
     expect(deps.prepareQueueJob).not.toHaveBeenCalled()
     expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()

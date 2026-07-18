@@ -579,6 +579,7 @@ import {
 import type { JsonObject, StepAttempt } from './executionGraph/ExecutionGraphModel'
 import { stableExecutionGraphStringify } from './executionGraph/ExecutionGraphCompiler'
 import { executionGraphRunTemplatePermissionCeilingDigest } from './executionGraph/ExecutionGraphRunTemplateAuthority'
+import { buildRuntimeProfileAuthority } from './ScheduledOccurrenceSeal'
 import { buildRemoteExecutionRunList } from './executionGraph/ExecutionGraphRemoteProjection'
 import {
   canonicalExecutionGraphRunId,
@@ -30875,6 +30876,52 @@ if (isGeminiMcpBridgeProcess) {
         }
       })
     }
+    const resolveStackRuntimeProfile = (
+      provider: ProviderId,
+      runtimeProfileId: string
+    ): RuntimeProfile => {
+      const matches = AppStore.getRuntimeProfiles(provider).filter(
+        (profile) => profile.id === runtimeProfileId
+      )
+      if (matches.length !== 1) {
+        throw new Error('Stack runtime profile is unavailable or ambiguous.')
+      }
+      const profile = matches[0]
+      if (
+        profile.provider !== provider ||
+        profile.scope !== 'workspace' ||
+        profile.workspaceMode !== 'local' ||
+        profile.builtin !== true
+      ) {
+        throw new Error('Stack steps require an immutable built-in workspace runtime profile.')
+      }
+      return profile
+    }
+    const stackRuntimeProfileAuthority = (profile: RuntimeProfile): JsonObject =>
+      buildRuntimeProfileAuthority(profile) as unknown as JsonObject
+    const resolveFrozenStackRuntimeProfile = (
+      content: Record<string, unknown>,
+      provider: ProviderId,
+      runtimeProfileId: string | undefined
+    ): RuntimeProfile | undefined => {
+      if (!runtimeProfileId) {
+        if (content.runtimeProfileAuthority !== undefined) {
+          throw new Error('Persisted graph runtime profile authority is inconsistent.')
+        }
+        return undefined
+      }
+      if (!isRecord(content.runtimeProfileAuthority)) {
+        throw new Error('Persisted graph runtime profile authority is unavailable.')
+      }
+      const profile = resolveStackRuntimeProfile(provider, runtimeProfileId)
+      if (
+        stableExecutionGraphStringify(content.runtimeProfileAuthority as JsonObject) !==
+        stableExecutionGraphStringify(stackRuntimeProfileAuthority(profile))
+      ) {
+        throw new Error('Persisted graph runtime profile authority changed.')
+      }
+      return profile
+    }
     try {
       const executionGraphRepository = new ExecutionGraphRepository(
         join(app.getPath('userData'), 'execution-graph')
@@ -31115,9 +31162,11 @@ if (isGeminiMcpBridgeProcess) {
           if ((request.runtimeProfileId?.trim() || undefined) !== runtimeProfileId) {
             throw new Error('Persisted graph runtime profile authority is inconsistent.')
           }
-          if (runtimeProfileId) {
-            throw new Error('V1 Stack execution does not support mutable runtime profiles.')
-          }
+          const runtimeProfile = resolveFrozenStackRuntimeProfile(
+            content,
+            input.provider,
+            runtimeProfileId
+          )
           const templatePermissionPosture =
             content.permissionPosture as unknown as RunPermissionPostureSnapshot
           const currentPermissionPosture = buildExecutionGraphPermissionPosture({
@@ -31125,7 +31174,8 @@ if (isGeminiMcpBridgeProcess) {
             workspacePath,
             chatId: input.rootChatId,
             request,
-            settings: AppStore.getSettings(),
+            ...(runtimeProfileId ? { runtimeProfileId } : {}),
+            settings: runtimeSettings(AppStore.getSettings(), runtimeProfile),
             sign: signRunPosture
           })
           assertExecutionGraphPermissionPostureStillCurrent(
@@ -31232,17 +31282,21 @@ if (isGeminiMcpBridgeProcess) {
         resolveStackTarget,
         resolveAuthorizedAttachmentPaths: rendererAttachmentCapabilityPaths,
         prepareQueueJob: (input, options) => runQueueService.prepareJob(input, options),
+        resolveRuntimeProfileAuthority: (input) =>
+          stackRuntimeProfileAuthority(
+            resolveStackRuntimeProfile(input.provider, input.runtimeProfileId)
+          ),
         resolvePermissionPosture: (input) => {
-          if (input.runtimeProfileId) {
-            throw new Error('V1 Stack steps do not support mutable runtime profiles.')
-          }
+          const runtimeProfile = input.runtimeProfileId
+            ? resolveStackRuntimeProfile(input.provider, input.runtimeProfileId)
+            : undefined
           return buildExecutionGraphPermissionPosture({
             provider: input.provider,
             workspacePath: input.workspacePath,
             chatId: input.rootChatId,
             request: input.request,
             ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
-            settings: AppStore.getSettings(),
+            settings: runtimeSettings(AppStore.getSettings(), runtimeProfile),
             sign: signRunPosture
           })
         },
@@ -36904,12 +36958,28 @@ if (isGeminiMcpBridgeProcess) {
       ) {
         throw new Error('Execution graph queue request no longer matches its complete template.')
       }
+      const runtimeProfileId =
+        typeof content.runtimeProfileId === 'string' && content.runtimeProfileId.trim()
+          ? content.runtimeProfileId.trim()
+          : undefined
+      if (
+        (job.runtimeProfileId?.trim() || undefined) !== runtimeProfileId ||
+        (job.request.runtimeProfileId?.trim() || undefined) !== runtimeProfileId
+      ) {
+        throw new Error('Execution graph queue runtime profile authority is inconsistent.')
+      }
+      const runtimeProfile = resolveFrozenStackRuntimeProfile(
+        content,
+        job.provider,
+        runtimeProfileId
+      )
       const currentPermissionPosture = buildExecutionGraphPermissionPosture({
         provider: job.provider,
         workspacePath: job.workspacePath,
         chatId: job.chatId,
         request: job.request,
-        settings: AppStore.getSettings(),
+        ...(runtimeProfileId ? { runtimeProfileId } : {}),
+        settings: runtimeSettings(AppStore.getSettings(), runtimeProfile),
         sign: signRunPosture
       })
       assertExecutionGraphPermissionPostureStillCurrent(
