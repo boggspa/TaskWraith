@@ -88,9 +88,94 @@ export type ProjectWorkProfile = {
   updatedAt: number
 }
 
-export type ProjectReferenceKind = 'file' | 'folder' | 'url'
+export type ProjectReferenceKind = 'file' | 'folder' | 'url' | 'connector'
 export type ProjectReferenceContextPolicy = 'available' | 'off'
 export type ProjectReferenceAvailability = 'ok' | 'missing'
+
+export const MAX_PROJECT_REFERENCE_REVISION_LENGTH = 128
+
+/**
+ * The one read-only cloud connector of this phase: GitHub resources addressed
+ * as `github://owner/repo[/path][@ref]`. Auth is delegated ENTIRELY to the
+ * user's own `gh` CLI (with an anonymous public-API fallback) — the app never
+ * stores or sees connector credentials, mirroring how provider CLIs own their
+ * own auth. Verification is a single metadata request (latest commit touching
+ * the resource — the stable revision); content is NEVER fetched, and in
+ * explicit run context a connector reference is permanently catalogue-only
+ * until a future phase adds disclosed, bounded retrieval.
+ */
+export interface GitHubReferenceLocator {
+  owner: string
+  repo: string
+  path?: string
+  ref?: string
+}
+
+const GITHUB_NAME_PATTERN = /^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/
+const GITHUB_REPO_PATTERN = /^[A-Za-z0-9._-]+$/
+
+export function parseGitHubReferenceLocator(locator: string): GitHubReferenceLocator | null {
+  const trimmed = locator.trim()
+  if (!trimmed.startsWith('github://')) return null
+  let rest = trimmed.slice('github://'.length)
+  let ref: string | undefined
+  const atIndex = rest.lastIndexOf('@')
+  if (atIndex > 0) {
+    ref = rest.slice(atIndex + 1)
+    rest = rest.slice(0, atIndex)
+    if (!ref || ref.length > MAX_PROJECT_REFERENCE_REVISION_LENGTH || ref.includes('/')) {
+      return null
+    }
+  }
+  const segments = rest.split('/').filter(Boolean)
+  if (segments.length < 2) return null
+  const [owner, repo, ...pathSegments] = segments
+  if (!GITHUB_NAME_PATTERN.test(owner) || !GITHUB_REPO_PATTERN.test(repo)) return null
+  if (pathSegments.some((segment) => segment === '.' || segment === '..')) return null
+  return {
+    owner,
+    repo,
+    ...(pathSegments.length > 0 ? { path: pathSegments.join('/') } : {}),
+    ...(ref ? { ref } : {})
+  }
+}
+
+/**
+ * Normalize user input into the canonical `github://` form. Accepts the
+ * canonical form, `owner/repo[/path]`, and pasted github.com URLs
+ * (`/blob/<ref>/path`, `/tree/<ref>/path`, or a bare repo). Returns null for
+ * anything else — the caller surfaces the format hint.
+ */
+export function normalizeGitHubReferenceInput(input: string): string | null {
+  const trimmed = input.trim()
+  if (!trimmed) return null
+  if (trimmed.startsWith('github://')) {
+    return parseGitHubReferenceLocator(trimmed) ? trimmed : null
+  }
+  if (/^https?:\/\//i.test(trimmed)) {
+    let url: URL
+    try {
+      url = new URL(trimmed)
+    } catch {
+      return null
+    }
+    if (url.hostname !== 'github.com' && url.hostname !== 'www.github.com') return null
+    const segments = url.pathname.split('/').filter(Boolean)
+    if (segments.length < 2) return null
+    const [owner, repo, marker, ref, ...pathSegments] = segments
+    const repoName = repo.endsWith('.git') ? repo.slice(0, -4) : repo
+    let candidate: string
+    if ((marker === 'blob' || marker === 'tree') && ref) {
+      const path = pathSegments.join('/')
+      candidate = `github://${owner}/${repoName}${path ? `/${path}` : ''}@${ref}`
+    } else {
+      candidate = `github://${owner}/${repoName}`
+    }
+    return parseGitHubReferenceLocator(candidate) ? candidate : null
+  }
+  const candidate = `github://${trimmed.replace(/^\/+/, '')}`
+  return parseGitHubReferenceLocator(candidate) ? candidate : null
+}
 
 /**
  * A Project's durable library entry: "this source matters to the Project."
@@ -116,7 +201,10 @@ export type ProjectReference = {
   /** 'available': listed for future explicit context selection. 'off':
    * retained for the user but excluded from any agent-facing surface. */
   contextPolicy: ProjectReferenceContextPolicy
-  lastVerified?: { at: number; status: ProjectReferenceAvailability }
+  /** Last explicit availability probe. `revision` is the connector-stable
+   * version identifier seen at that probe (GitHub: the latest commit sha
+   * touching the resource) — the audit anchor for cloud references. */
+  lastVerified?: { at: number; status: ProjectReferenceAvailability; revision?: string }
   updatedAt: number
 }
 
@@ -894,7 +982,7 @@ export function applyProjectOp(
 }
 
 function isProjectReferenceKind(value: unknown): value is ProjectReferenceKind {
-  return value === 'file' || value === 'folder' || value === 'url'
+  return value === 'file' || value === 'folder' || value === 'url' || value === 'connector'
 }
 
 function isProjectReferenceContextPolicy(
@@ -922,6 +1010,12 @@ export function defaultProjectReferenceTitle(
   locator: string
 ): string {
   const trimmed = locator.trim()
+  if (kind === 'connector') {
+    const parsed = parseGitHubReferenceLocator(trimmed)
+    if (!parsed) return trimmed
+    const leaf = parsed.path?.split('/').filter(Boolean).pop()
+    return `${parsed.owner}/${parsed.repo}${leaf ? ` · ${leaf}` : ''}`
+  }
   if (kind === 'url') {
     try {
       const parsed = new URL(trimmed)
@@ -955,6 +1049,9 @@ export function migrateProjectReferences(
     if (!isProjectReferenceKind(entry.kind)) continue
     if (typeof entry.locator !== 'string' || !entry.locator.trim()) continue
     const locator = entry.locator.trim()
+    // Read-time integrity matches add-time validation: a connector entry
+    // whose locator no longer parses cannot be verified or disclosed.
+    if (entry.kind === 'connector' && !parseGitHubReferenceLocator(locator)) continue
     const provenanceAddedAt =
       entry.provenance &&
       typeof entry.provenance === 'object' &&
@@ -968,7 +1065,15 @@ export function migrateProjectReferences(
       typeof entry.lastVerified.at === 'number' &&
       Number.isFinite(entry.lastVerified.at) &&
       isProjectReferenceAvailability(entry.lastVerified.status)
-        ? { at: entry.lastVerified.at, status: entry.lastVerified.status }
+        ? {
+            at: entry.lastVerified.at,
+            status: entry.lastVerified.status,
+            ...(typeof entry.lastVerified.revision === 'string' &&
+            entry.lastVerified.revision.trim() &&
+            entry.lastVerified.revision.length <= MAX_PROJECT_REFERENCE_REVISION_LENGTH
+              ? { revision: entry.lastVerified.revision }
+              : {})
+          }
         : undefined
     seen.add(entry.id)
     references.push({
@@ -1022,6 +1127,7 @@ export type ProjectReferenceOp =
       kind: 'record-reference-verification'
       id: string
       status: ProjectReferenceAvailability
+      revision?: string
       now: number
     }
 
@@ -1073,7 +1179,21 @@ export function parseProjectReferenceOp(value: unknown): ProjectReferenceOp | nu
     case 'record-reference-verification': {
       if (!isNonEmptyString(op.id) || !isFiniteNumber(op.now)) return null
       if (!isProjectReferenceAvailability(op.status)) return null
-      return { kind: 'record-reference-verification', id: op.id, status: op.status, now: op.now }
+      if (
+        op.revision !== undefined &&
+        (typeof op.revision !== 'string' ||
+          !op.revision.trim() ||
+          op.revision.length > MAX_PROJECT_REFERENCE_REVISION_LENGTH)
+      ) {
+        return null
+      }
+      return {
+        kind: 'record-reference-verification',
+        id: op.id,
+        status: op.status,
+        revision: op.revision as string | undefined,
+        now: op.now
+      }
     }
     default:
       return null
@@ -1096,6 +1216,9 @@ export function applyProjectReferenceOp(
       if (!projectById(projects, op.projectId)) throw new Error('Project not found.')
       const locator = op.locator.trim()
       if (!locator) throw new Error('Reference locator is required.')
+      if (op.referenceKind === 'connector' && !parseGitHubReferenceLocator(locator)) {
+        throw new Error('Connector locator must be github://owner/repo[/path][@ref].')
+      }
       const existing = references.find(
         (reference) =>
           reference.projectId === op.projectId &&
@@ -1144,7 +1267,11 @@ export function applyProjectReferenceOp(
       if (!current) throw new Error('Reference not found.')
       const next: ProjectReference = {
         ...current,
-        lastVerified: { at: op.now, status: op.status },
+        lastVerified: {
+          at: op.now,
+          status: op.status,
+          ...(op.revision ? { revision: op.revision } : {})
+        },
         updatedAt: op.now
       }
       return {

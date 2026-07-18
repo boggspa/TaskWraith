@@ -83,9 +83,15 @@ export interface ProjectHandlerDeps {
   /** One existence stat for a local locator — NEVER content. URLs are not
    * probed in this phase (no network on behalf of the library). */
   probeReferenceLocator: (
-    kind: Exclude<ProjectReferenceKind, 'url'>,
+    kind: Exclude<ProjectReferenceKind, 'url' | 'connector'>,
     locator: string
   ) => ProjectReferenceAvailability
+  /** One metadata request for a connector locator (GitHub: latest commit sha
+   * as the stable revision) — NEVER content. Rejections surface verbatim so
+   * auth loss reads as an error, not as silently-missing. */
+  probeConnectorReference: (
+    locator: string
+  ) => Promise<{ status: ProjectReferenceAvailability; revision?: string }>
   /** Plain OS picker for reference locators. Deliberately DISTINCT from the
    * external-path grant pickers: choosing a reference catalogues it and
    * grants NOTHING — reference ≠ access is the safety boundary. */
@@ -209,13 +215,23 @@ export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
     return deps.applyReferenceOp(parsed)
   })
 
-  ipcMain.handle('projects:verify-reference', (event, id: unknown) => {
+  ipcMain.handle('projects:verify-reference', async (event, id: unknown) => {
     deps.assertSenderCanManageProjects(event)
     if (typeof id !== 'string' || !id.trim()) throw new Error('Reference id is required.')
     const reference = deps.getReferences().find((entry) => entry.id === id.trim())
     if (!reference) throw new Error('Reference not found.')
     if (reference.kind === 'url') {
       throw new Error('URL references cannot be verified automatically.')
+    }
+    if (reference.kind === 'connector') {
+      const probed = await deps.probeConnectorReference(reference.locator)
+      return deps.applyReferenceOp({
+        kind: 'record-reference-verification',
+        id: reference.id,
+        status: probed.status,
+        ...(probed.revision ? { revision: probed.revision } : {}),
+        now: Date.now()
+      })
     }
     const status = deps.probeReferenceLocator(reference.kind, reference.locator)
     return deps.applyReferenceOp({

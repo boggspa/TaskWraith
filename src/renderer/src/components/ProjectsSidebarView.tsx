@@ -39,6 +39,7 @@ import {
   type ProjectWorkProfile
 } from '../lib/projectsStore'
 import { getProviderLabel } from '../lib/providerLabels'
+import { normalizeGitHubReferenceInput } from '../../../shared/projects'
 import { projectReferencePresentation } from '../lib/projectReferencePresentation'
 import { SidebarRunningGhost } from './AppChromeSymbols'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
@@ -387,6 +388,20 @@ export function ProjectsSidebarView({
     const trimmed = url?.trim()
     if (!trimmed) return
     runReferenceAction(() => addProjectReference({ projectId, kind: 'url', locator: trimmed }))
+  }
+
+  const addConnectorReference = (projectId: string): void => {
+    const input = window.prompt(
+      'GitHub resource (owner/repo, a github.com URL, or github://owner/repo/path@ref)'
+    )
+    const trimmed = input?.trim()
+    if (!trimmed) return
+    const locator = normalizeGitHubReferenceInput(trimmed)
+    if (!locator) {
+      window.alert('Use owner/repo, a github.com URL, or github://owner/repo[/path][@ref].')
+      return
+    }
+    runReferenceAction(() => addProjectReference({ projectId, kind: 'connector', locator }))
   }
 
   /** Profile edits share the async alert-on-reject surface; the adoption
@@ -978,6 +993,15 @@ export function ProjectsSidebarView({
                   >
                     + Link
                   </button>
+                  <button
+                    type="button"
+                    className="sidebar-project-icon-button"
+                    onClick={() => addConnectorReference(project.id)}
+                    title="Add GitHub reference"
+                    aria-label={`Add GitHub reference to ${project.name}`}
+                  >
+                    + GitHub
+                  </button>
                 </span>
               </div>
               {referencesForProject.length === 0 ? (
@@ -1005,7 +1029,11 @@ export function ProjectsSidebarView({
                         className={`sidebar-project-reference-dot ${reference.lastVerified.status}`}
                         title={`${
                           reference.lastVerified.status === 'ok' ? 'Available' : 'Missing'
-                        } when last verified`}
+                        } when last verified${
+                          reference.lastVerified.revision
+                            ? ` · revision ${reference.lastVerified.revision.slice(0, 12)}`
+                            : ''
+                        }`}
                       />
                     )}
                     <span className="sidebar-project-reference-actions">

@@ -31,3 +31,11 @@ describe('projectReferencePresentation', () => {
     })
   })
 })
+
+describe('connector presentation', () => {
+  it('labels connector references as GitHub without locator-derived overrides', () => {
+    expect(
+      projectReferencePresentation({ kind: 'connector', locator: 'github://a/b/docs/spec.md' })
+    ).toEqual({ kind: 'connector', label: 'GitHub' })
+  })
+})

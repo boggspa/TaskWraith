@@ -200,6 +200,39 @@ describe('ProjectsSidebarView references', () => {
     expect(html).toContain('aria-label="Open Alpha reference library"')
   })
 
+  it('renders connector references with revision-carrying dots and the GitHub add action', () => {
+    seedStore([projectRecord('project-a', 'Alpha', [])], [])
+    fake.broadcast.cb?.({
+      projects: [projectRecord('project-a', 'Alpha', [])],
+      workProfiles: [],
+      references: [
+        {
+          ...referenceRecord,
+          id: 'ref-gh',
+          kind: 'connector' as const,
+          locator: 'github://electron/electron/README.md@main',
+          title: 'electron/electron · README.md',
+          lastVerified: { at: 9, status: 'ok' as const, revision: 'abc123def456789' }
+        }
+      ]
+    })
+    const html = renderToStaticMarkup(
+      <ProjectsSidebarView
+        chats={[]}
+        currentChat={null}
+        searchQuery=""
+        isSearchActive={false}
+        onSelectChat={() => undefined}
+        initialSelectedProjectId="project-a"
+      />
+    )
+    expect(html).toContain('title="Add GitHub reference"')
+    expect(html).toContain('electron/electron · README.md')
+    expect(html).toContain('Available when last verified · revision abc123def456')
+    // Connector rows keep the explicit Verify affordance (unlike URLs).
+    expect(html).toContain('aria-label="Verify electron/electron · README.md"')
+  })
+
   it('shows the no-access empty state for a library-less project', () => {
     seedStore([projectRecord('project-a', 'Alpha', [])], [])
     const html = renderToStaticMarkup(

@@ -49,7 +49,7 @@ function boundedString(value: unknown, maxLength: number): string | null {
 }
 
 function isProjectReferenceKind(value: unknown): value is ProjectReferenceKind {
-  return value === 'file' || value === 'folder' || value === 'url'
+  return value === 'file' || value === 'folder' || value === 'url' || value === 'connector'
 }
 
 function isContextAccess(value: unknown): value is ProjectReferenceContextAccess {
@@ -122,7 +122,9 @@ export function parseResolvedProjectReferenceContext(
     ) {
       return null
     }
-    if (item.kind === 'url' && item.access !== 'catalogue-only') return null
+    if ((item.kind === 'url' || item.kind === 'connector') && item.access !== 'catalogue-only') {
+      return null
+    }
     seen.add(id)
     references.push({ id, kind: item.kind, title, locator, access: item.access })
   }

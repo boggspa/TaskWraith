@@ -97,8 +97,10 @@ export function resolveProjectReferenceContext(
       kind: reference.kind,
       title: reference.title,
       locator: reference.locator,
+      // URLs and cloud connector resources are permanently label-only in run
+      // context this phase: no fetch path exists, so no access to classify.
       access:
-        reference.kind === 'url'
+        reference.kind === 'url' || reference.kind === 'connector'
           ? 'catalogue-only'
           : resolveLocalAccess({
               locator: reference.locator,

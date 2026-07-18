@@ -11,6 +11,7 @@ export type ProjectReferencePresentationKind =
   | 'video'
   | 'folder'
   | 'website'
+  | 'connector'
   | 'file'
 
 export interface ProjectReferencePresentation {
@@ -126,6 +127,7 @@ export function projectReferencePresentation(
 ): ProjectReferencePresentation {
   if (reference.kind === 'folder') return { kind: 'folder', label: 'Folder' }
   if (reference.kind === 'url') return { kind: 'website', label: 'Website' }
+  if (reference.kind === 'connector') return { kind: 'connector', label: 'GitHub' }
 
   const filename = reference.locator.split(/[\\/]/).pop()?.toLowerCase() ?? ''
   if (CODE_FILENAMES.has(filename)) return { kind: 'code', label: 'Code' }

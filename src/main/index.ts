@@ -1187,6 +1187,7 @@ import { registerChatHandlers } from './ipc/chatHandlers'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerProjectHandlers } from './ipc/projectHandlers'
+import { createGitHubConnectorService } from './services/GitHubConnectorService'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
 import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiDiscoveryHandlers'
@@ -35892,6 +35893,7 @@ if (isGeminiMcpBridgeProcess) {
         return { kind: 'workspace', workspaceId: workspace.id }
       }
     })
+    const gitHubConnectorService = createGitHubConnectorService()
     registerProjectHandlers({
       getProjects: () => AppStore.getProjects(),
       getWorkProfiles: () => AppStore.getProjectWorkProfiles(),
@@ -35914,6 +35916,7 @@ if (isGeminiMcpBridgeProcess) {
           return 'missing'
         }
       },
+      probeConnectorReference: (locator) => gitHubConnectorService.probeReference(locator),
       pickReferencePath: async (mode) => {
         const options = {
           title: mode === 'folder' ? 'Add Folder Reference' : 'Add File Reference',

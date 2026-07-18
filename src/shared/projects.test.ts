@@ -15,6 +15,8 @@ import {
   migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
+  normalizeGitHubReferenceInput,
+  parseGitHubReferenceLocator,
   parseProjectOp,
   parseProjectReferenceOp,
   sortProjectsForDisplay,
@@ -362,9 +364,7 @@ describe('project references', () => {
       expect(parseProjectReferenceOp(JSON.parse(JSON.stringify(op)))).toEqual(op)
     }
     expect(parseProjectReferenceOp({ kind: 'add-reference', id: 'x' })).toBeNull()
-    expect(
-      parseProjectReferenceOp({ ...addOp(), referenceKind: 'connector' })
-    ).toBeNull()
+    expect(parseProjectReferenceOp({ ...addOp(), referenceKind: 'media' })).toBeNull()
     expect(
       parseProjectReferenceOp({ kind: 'update-reference', id: 'x', patch: { contextPolicy: 'pinned' }, now: 1 })
     ).toBeNull()
@@ -391,6 +391,93 @@ describe('project references', () => {
       contextPolicy: 'off',
       lastVerified: { at: 5, status: 'ok' }
     })
+  })
+})
+
+describe('GitHub connector locators', () => {
+  it('parses canonical locators with optional path and ref', () => {
+    expect(parseGitHubReferenceLocator('github://electron/electron')).toEqual({
+      owner: 'electron',
+      repo: 'electron'
+    })
+    expect(parseGitHubReferenceLocator('github://a/b/docs/spec.md@main')).toEqual({
+      owner: 'a',
+      repo: 'b',
+      path: 'docs/spec.md',
+      ref: 'main'
+    })
+    expect(parseGitHubReferenceLocator('github://a')).toBeNull()
+    expect(parseGitHubReferenceLocator('github://a/b/../secrets')).toBeNull()
+    expect(parseGitHubReferenceLocator('gitlab://a/b')).toBeNull()
+  })
+
+  it('normalizes shorthand and pasted github.com URLs into canonical form', () => {
+    expect(normalizeGitHubReferenceInput('electron/electron')).toBe('github://electron/electron')
+    expect(normalizeGitHubReferenceInput('https://github.com/a/b.git')).toBe('github://a/b')
+    expect(
+      normalizeGitHubReferenceInput('https://github.com/a/b/blob/main/docs/spec.md')
+    ).toBe('github://a/b/docs/spec.md@main')
+    expect(normalizeGitHubReferenceInput('https://github.com/a/b/tree/dev/src')).toBe(
+      'github://a/b/src@dev'
+    )
+    expect(normalizeGitHubReferenceInput('https://example.com/a/b')).toBeNull()
+    expect(normalizeGitHubReferenceInput('not a repo at all !!')).toBeNull()
+  })
+
+  it('titles connector references as owner/repo with the resource leaf', () => {
+    expect(defaultProjectReferenceTitle('connector', 'github://a/b')).toBe('a/b')
+    expect(defaultProjectReferenceTitle('connector', 'github://a/b/docs/spec.md@main')).toBe(
+      'a/b · spec.md'
+    )
+  })
+
+  it('validates connector locators at add time and records revisions at verify time', () => {
+    const projects = buildThreeRoots()
+    expect(() =>
+      applyProjectReferenceOp([], projects, {
+        kind: 'add-reference',
+        id: 'ref-c',
+        projectId: 'project-a',
+        referenceKind: 'connector',
+        locator: 'not-a-locator',
+        now: 1
+      })
+    ).toThrow('Connector locator must be github://owner/repo[/path][@ref].')
+
+    const added = applyProjectReferenceOp([], projects, {
+      kind: 'add-reference',
+      id: 'ref-c',
+      projectId: 'project-a',
+      referenceKind: 'connector',
+      locator: 'github://a/b/docs/spec.md',
+      now: 1
+    }).references
+    const verified = applyProjectReferenceOp(added, projects, {
+      kind: 'record-reference-verification',
+      id: 'ref-c',
+      status: 'ok',
+      revision: 'abc123',
+      now: 2
+    }).references
+    expect(verified[0].lastVerified).toEqual({ at: 2, status: 'ok', revision: 'abc123' })
+
+    const parsed = parseProjectReferenceOp({
+      kind: 'record-reference-verification',
+      id: 'ref-c',
+      status: 'ok',
+      revision: 'abc123',
+      now: 2
+    })
+    expect(parsed).toMatchObject({ revision: 'abc123' })
+    expect(
+      parseProjectReferenceOp({
+        kind: 'record-reference-verification',
+        id: 'ref-c',
+        status: 'ok',
+        revision: 'x'.repeat(200),
+        now: 2
+      })
+    ).toBeNull()
   })
 })
 

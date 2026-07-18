@@ -94,6 +94,7 @@ function createDeps() {
       changed: true
     })),
     probeReferenceLocator: vi.fn(() => 'ok' as const),
+    probeConnectorReference: vi.fn(async () => ({ status: 'ok' as const, revision: 'sha-1' })),
     pickReferencePath: vi.fn(async () => '/picked/path'),
     getLegacyImportMarker: vi.fn(() => marker),
     applyProjectOp: vi.fn((op: ProjectOp) => ({
@@ -219,12 +220,12 @@ describe('registerProjectHandlers', () => {
     expect(deps.applyReferenceOp).toHaveBeenCalledTimes(1)
   })
 
-  it('verifies local references with a main-side probe and rejects URL kinds', () => {
+  it('verifies local references with a main-side probe and rejects URL kinds', async () => {
     const { deps } = createDeps()
     registerProjectHandlers(deps)
     const handler = handlerFor('projects:verify-reference')
 
-    handler({}, 'ref-1')
+    await handler({}, 'ref-1')
     expect(deps.probeReferenceLocator).toHaveBeenCalledWith('file', '/repo/spec.md')
     expect(deps.applyReferenceOp).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -234,9 +235,42 @@ describe('registerProjectHandlers', () => {
       })
     )
 
-    expect(() => handler({}, 'ref-url')).toThrow('URL references cannot be verified automatically.')
-    expect(() => handler({}, 'ref-missing')).toThrow('Reference not found.')
-    expect(() => handler({}, '  ')).toThrow('Reference id is required.')
+    await expect(handler({}, 'ref-url')).rejects.toThrow(
+      'URL references cannot be verified automatically.'
+    )
+    await expect(handler({}, 'ref-missing')).rejects.toThrow('Reference not found.')
+    await expect(handler({}, '  ')).rejects.toThrow('Reference id is required.')
+  })
+
+  it('verifies connector references through the connector probe and records the revision', async () => {
+    const { deps } = createDeps()
+    ;(deps.getReferences as ReturnType<typeof vi.fn>).mockReturnValue([
+      {
+        ...sampleReference,
+        id: 'ref-gh',
+        kind: 'connector' as const,
+        locator: 'github://a/b/docs/spec.md'
+      }
+    ])
+    registerProjectHandlers(deps)
+    const handler = handlerFor('projects:verify-reference')
+
+    await handler({}, 'ref-gh')
+    expect(deps.probeConnectorReference).toHaveBeenCalledWith('github://a/b/docs/spec.md')
+    expect(deps.applyReferenceOp).toHaveBeenCalledWith(
+      expect.objectContaining({
+        kind: 'record-reference-verification',
+        id: 'ref-gh',
+        status: 'ok',
+        revision: 'sha-1'
+      })
+    )
+    expect(deps.probeReferenceLocator).not.toHaveBeenCalled()
+
+    ;(deps.probeConnectorReference as ReturnType<typeof vi.fn>).mockRejectedValueOnce(
+      new Error('Could not verify with GitHub credentials (gh: HTTP 401); the resource is not publicly visible.')
+    )
+    await expect(handler({}, 'ref-gh')).rejects.toThrow(/Could not verify with GitHub credentials/)
   })
 
   it('passes picker modes through and rejects malformed ones', async () => {
