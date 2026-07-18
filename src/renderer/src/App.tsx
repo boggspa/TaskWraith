@@ -11859,7 +11859,10 @@ function App(): React.JSX.Element {
     )
     const chatRecord = chatList.find((chat) => chat.appChatId === job.chatId)
     if (!chatRecord) return null
-    const hasQueuedProviderChange = Boolean(chatRecord && hasPendingProviderChange(chatRecord))
+    const isExecutionGraphJob = Boolean(job.executionGraph)
+    const hasQueuedProviderChange = Boolean(
+      !isExecutionGraphJob && chatRecord && hasPendingProviderChange(chatRecord)
+    )
     const queuedProviderBaseChat =
       hasQueuedProviderChange
         ? applyProviderChange(chatRecord, readPendingProviderChange(chatRecord)!)
@@ -11875,11 +11878,13 @@ function App(): React.JSX.Element {
         : 'workspace'
     if (scope !== 'global' && !workspaceRecord) return null
     const request = job.request
-    const selectedModel = queuedProviderSelection
-      ? queuedProviderSelection.selectedModelType
-      : isValidModelForProvider(job.provider, request.selectedModelType)
-        ? request.selectedModelType
-        : getDefaultModelForProvider(job.provider)
+    const selectedModel = isExecutionGraphJob
+      ? request.selectedModelType
+      : queuedProviderSelection
+        ? queuedProviderSelection.selectedModelType
+        : isValidModelForProvider(job.provider, request.selectedModelType)
+          ? request.selectedModelType
+          : getDefaultModelForProvider(job.provider)
     return {
       appRunId: job.runId,
       scope,
@@ -11978,6 +11983,9 @@ function App(): React.JSX.Element {
 
   const resolveQueuedDesktopRunRequest = (job: RunQueueJob): QueuedRunRequest | null => {
     if (!isQueuedDesktopRunQueueJob(job)) return null
+    if (job.executionGraph) {
+      return queuedRunRequestFromJob(job, workspaces, Array.from(chatByIdRef.current.values()))
+    }
     const cached = queuedRunsRef.current.find((request) => request.appRunId === job.runId)
     if (cached) {
       const cachedChatId = cached.chatRecord?.appChatId || job.chatId
@@ -18002,8 +18010,10 @@ function App(): React.JSX.Element {
         if (!leased) {
           return
         }
+        const isExecutionGraphDispatch = Boolean(leased.executionGraph)
         let dispatchChat = nextRun.chatRecord
         if (
+          !isExecutionGraphDispatch &&
           dispatchChat &&
           (hasPendingProviderChange(dispatchChat) ||
             hasPendingEnsembleRosterPresetApply(dispatchChat))
@@ -18021,16 +18031,19 @@ function App(): React.JSX.Element {
             }
           }
         }
+        const dispatchProvider = isExecutionGraphDispatch
+          ? leased.provider
+          : getChatProvider(dispatchChat || nextRun.chatRecord)
         appEventHandlersRef.current.appendThreadRawLog(nextRun.chatRecord?.appChatId, {
           type: 'info',
           content: `Starting ${nextRun.scheduledRunAt ? 'scheduled ' : 'queued '}${getProviderLabel(
-            getChatProvider(dispatchChat || nextRun.chatRecord)
+            dispatchProvider
           )} run. ${remainingRuns.length} queued task${remainingRuns.length === 1 ? '' : 's'} remain.`
         })
         void executeRunRef.current({
           ...nextRun,
           appRunId: leased.runId,
-          provider: getChatProvider(dispatchChat || nextRun.chatRecord),
+          provider: dispatchProvider,
           chatRecord: dispatchChat || nextRun.chatRecord
         })
       })
