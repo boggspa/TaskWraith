@@ -167,6 +167,41 @@ function makeDeps(overrides: Partial<RunQueueServiceDeps> = {}): {
 }
 
 describe('RunQueueService', () => {
+  it('prepares a validated request snapshot without publishing a queue job', () => {
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+
+    const prepared = service.prepareJob({
+      runId: 'graph-template-probe',
+      provider: 'codex',
+      workspacePath: '/repo',
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      source: 'system',
+      status: 'paused',
+      request: {
+        prompt: 'Continue with the next Stack step',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      }
+    })
+
+    expect(prepared).toMatchObject({
+      runId: 'graph-template-probe',
+      provider: 'codex',
+      source: 'system',
+      status: 'paused',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      request: { prompt: 'Continue with the next Stack step' }
+    })
+    expect(prepared.dispatchReceipt?.receiptHash).toBeTruthy()
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+  })
+
   it('forwards getJobs filters to the run repository', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)

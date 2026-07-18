@@ -185,7 +185,19 @@ export class RunQueueService {
   requestJob(input: unknown, options: { authorizedFilePaths?: string[] } = {}): RunQueueJob {
     return this.deps
       .getRunRepository()
-      .saveRunQueueJob(this.normalizeJobRequest(input, options.authorizedFilePaths))
+      .saveRunQueueJob(this.prepareJob(input, options))
+  }
+
+  /**
+   * Main-owned normalization without queue publication. Execution-graph
+   * templates use this to snapshot the same validated request that an ordinary
+   * queue job would receive, while leaving readiness to the graph coordinator.
+   */
+  prepareJob(
+    input: unknown,
+    options: { authorizedFilePaths?: string[] } = {}
+  ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
+    return this.normalizeJobRequest(input, options.authorizedFilePaths)
   }
 
   leaseJob(
