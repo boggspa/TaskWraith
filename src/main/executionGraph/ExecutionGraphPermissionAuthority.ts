@@ -1,6 +1,10 @@
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   buildRunPermissionPostureSnapshot,
+  EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN,
+  EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX,
+  EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN,
+  EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
 import type {
@@ -43,6 +47,31 @@ export interface VerifyExecutionGraphPermissionPostureInput {
   ) => boolean
 }
 
+export interface MintExecutionGraphAttemptPermissionPostureInput {
+  readonly appRunId: string
+  readonly provider: ProviderId
+  /** Canonical primary workspace path resolved by main. */
+  readonly workspacePath: string
+  readonly chatId: string
+  readonly request: RunQueueRequestSnapshot
+  readonly runtimeProfileId?: string
+  readonly templatePosture: RunPermissionPostureSnapshot
+  readonly sign: BuildExecutionGraphPermissionPostureInput['sign']
+  readonly verifyTemplate: VerifyExecutionGraphPermissionPostureInput['verify']
+}
+
+export interface VerifyExecutionGraphAttemptPermissionPostureInput {
+  readonly appRunId: string
+  readonly provider: ProviderId
+  /** Canonical primary workspace path resolved by main. */
+  readonly workspacePath: string
+  readonly chatId: string
+  readonly request: RunQueueRequestSnapshot
+  readonly runtimeProfileId?: string
+  readonly posture: RunPermissionPostureSnapshot
+  readonly verify: VerifyExecutionGraphPermissionPostureInput['verify']
+}
+
 export interface FrozenExecutionGraphPermissionPosture {
   readonly approvalMode: string
   readonly workflowMode: 'normal' | 'plan'
@@ -50,6 +79,8 @@ export interface FrozenExecutionGraphPermissionPosture {
 }
 
 export interface ExecutionGraphComposerIdentity {
+  /** Required at runtime; optional in the type only for fail-closed legacy callers. */
+  readonly appRunId?: string
   readonly provider: ProviderId
   readonly scope: ChatScope
   readonly chatId: string
@@ -90,18 +121,50 @@ function boundedPreset(request: RunQueueRequestSnapshot): PermissionPresetId {
 
 function postureContext(input: {
   provider: ProviderId
+  workspacePath: string
   chatId: string
   request: RunQueueRequestSnapshot
+  appRunId?: string
   runtimeProfileId?: string
+  authorityDomain: string
 }): RunPermissionPostureContext {
   return {
     provider: input.provider,
     scope: 'workspace',
+    workspacePath: input.workspacePath,
+    ...(input.appRunId ? { appRunId: input.appRunId } : {}),
     appChatId: input.chatId,
     prompt: input.request.prompt,
     workflowMode: workflowMode(input.request),
-    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {})
+    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
+    authorityDomain: input.authorityDomain
   }
+}
+
+function taggedSignature(prefix: string, signature: string): string {
+  if (!/^[0-9a-f]{64}$/i.test(signature)) {
+    throw new Error('Execution graph permission posture signer returned an invalid proof.')
+  }
+  return `${prefix}${signature}`
+}
+
+function untaggedSignature(prefix: string, signature: string): string {
+  if (!signature.startsWith(prefix)) {
+    throw new Error('Execution graph permission posture has the wrong authority domain.')
+  }
+  const proof = signature.slice(prefix.length)
+  if (!/^[0-9a-f]{64}$/i.test(proof)) {
+    throw new Error('Execution graph permission posture proof is malformed.')
+  }
+  return proof
+}
+
+function exactRunId(value: string): string {
+  const normalized = value.trim()
+  if (!normalized || normalized.length > 160) {
+    throw new Error('Execution graph app run id is invalid.')
+  }
+  return normalized
 }
 
 export function buildExecutionGraphPermissionPosture(
@@ -116,9 +179,14 @@ export function buildExecutionGraphPermissionPosture(
     presetId: boundedPreset(input.request),
     explicitExternalPathGrants: input.request.externalPathGrants ?? []
   })
-  const context = postureContext(input)
-  const signature = input.sign(effectivePermissions.approvalMode, effectivePermissions, context)
-  if (!signature) throw new Error('Execution graph permission posture could not be signed.')
+  const context = postureContext({
+    ...input,
+    authorityDomain: EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN
+  })
+  const signature = taggedSignature(
+    EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX,
+    input.sign(effectivePermissions.approvalMode, effectivePermissions, context)
+  )
   return buildRunPermissionPostureSnapshot({
     approvalMode: effectivePermissions.approvalMode,
     workflowMode: workflowMode(input.request),
@@ -155,14 +223,90 @@ function effectivePermissionsFromSnapshot(
 export function verifyExecutionGraphPermissionPosture(
   input: VerifyExecutionGraphPermissionPostureInput
 ): FrozenExecutionGraphPermissionPosture {
-  const signature = input.posture.signature
-  if (!input.posture.signaturePresent || !signature) {
+  const tagged = input.posture.signature
+  if (!input.posture.signaturePresent || !tagged) {
     throw new Error('Execution graph permission posture is unsigned.')
   }
+  const signature = untaggedSignature(EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX, tagged)
   const effectivePermissions = effectivePermissionsFromSnapshot(input.posture, input.request)
-  const context = postureContext(input)
+  const context = postureContext({
+    ...input,
+    authorityDomain: EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN
+  })
   if (!input.verify(input.posture.approvalMode!, effectivePermissions, signature, context)) {
     throw new Error('Execution graph permission posture is invalid or stale.')
+  }
+  return {
+    approvalMode: input.posture.approvalMode!,
+    workflowMode: workflowMode(input.request),
+    effectivePermissions
+  }
+}
+
+/**
+ * Convert a reusable, domain-separated template posture into one exact queue
+ * attempt capability. Template verification and attempt minting stay distinct
+ * from the reusable permission-ceiling digest: callers must compare that
+ * content digest before invoking this helper.
+ */
+export function mintExecutionGraphAttemptPermissionPosture(
+  input: MintExecutionGraphAttemptPermissionPostureInput
+): RunPermissionPostureSnapshot {
+  const frozen = verifyExecutionGraphPermissionPosture({
+    provider: input.provider,
+    workspacePath: input.workspacePath,
+    chatId: input.chatId,
+    request: input.request,
+    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
+    posture: input.templatePosture,
+    verify: input.verifyTemplate
+  })
+  const appRunId = exactRunId(input.appRunId)
+  const context = postureContext({
+    provider: input.provider,
+    workspacePath: input.workspacePath,
+    chatId: input.chatId,
+    request: input.request,
+    appRunId,
+    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
+    authorityDomain: EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN
+  })
+  const signature = taggedSignature(
+    EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX,
+    input.sign(frozen.approvalMode, frozen.effectivePermissions, context)
+  )
+  return buildRunPermissionPostureSnapshot({
+    approvalMode: frozen.approvalMode,
+    workflowMode: frozen.workflowMode,
+    effectivePermissions: frozen.effectivePermissions,
+    signature,
+    context
+  })
+}
+
+export function verifyExecutionGraphAttemptPermissionPosture(
+  input: VerifyExecutionGraphAttemptPermissionPostureInput
+): FrozenExecutionGraphPermissionPosture {
+  const signature = input.posture.signature
+  if (!input.posture.signaturePresent || !signature) {
+    throw new Error('Execution graph attempt permission posture is unsigned.')
+  }
+  // Validate the tag before handing the complete capability to the generic
+  // verifier, which understands this one dispatch-safe graph domain.
+  untaggedSignature(EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX, signature)
+  const appRunId = exactRunId(input.appRunId)
+  const effectivePermissions = effectivePermissionsFromSnapshot(input.posture, input.request)
+  const context = postureContext({
+    provider: input.provider,
+    workspacePath: input.workspacePath,
+    chatId: input.chatId,
+    request: input.request,
+    appRunId,
+    ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
+    authorityDomain: EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN
+  })
+  if (!input.verify(input.posture.approvalMode!, effectivePermissions, signature, context)) {
+    throw new Error('Execution graph attempt permission posture is invalid or stale.')
   }
   return {
     approvalMode: input.posture.approvalMode!,
@@ -184,6 +328,10 @@ export function resolveExecutionGraphQueuePermissionPosture(
   if (!job?.executionGraph) return null
 
   const { expected } = input
+  const expectedAppRunId = exactRunId(expected.appRunId ?? '')
+  if (job.runId !== expectedAppRunId) {
+    throw new Error('Execution graph queue job run does not match the composer.')
+  }
   if (expected.scope !== 'workspace' || job.scope !== expected.scope) {
     throw new Error('Execution graph queue job scope does not match the composer.')
   }
@@ -218,6 +366,7 @@ export function resolveExecutionGraphQueuePermissionPosture(
     !context ||
     context.provider !== expected.provider ||
     context.scope !== expected.scope ||
+    context.appRunId !== expectedAppRunId ||
     context.appChatId !== expected.chatId ||
     context.workflowMode !== expectedWorkflowMode ||
     context.runtimeProfileId !== expected.runtimeProfileId ||
@@ -226,7 +375,8 @@ export function resolveExecutionGraphQueuePermissionPosture(
     throw new Error('Execution graph queue permission authority does not match the composer.')
   }
 
-  return verifyExecutionGraphPermissionPosture({
+  return verifyExecutionGraphAttemptPermissionPosture({
+    appRunId: expectedAppRunId,
     provider: expected.provider,
     workspacePath: expected.workspacePath,
     chatId: expected.chatId,

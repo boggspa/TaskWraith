@@ -121,6 +121,38 @@ export function signRunPermissionPosture(
     .digest('hex')
 }
 
+/**
+ * Execution-graph templates are durable permission ceilings, not runnable
+ * capabilities. Their tagged signatures are verified only by the graph
+ * authority helper and are deliberately rejected by the generic dispatch
+ * verifier below.
+ *
+ * A claimed graph attempt receives a different tag. The generic dispatch
+ * verifier accepts that tag only after binding the HMAC to the exact attempt
+ * context, including its canonical workspace path and appRunId.
+ */
+export const EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX = 'tw-eg-template-v1:'
+export const EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX = 'tw-eg-attempt-v1:'
+export const EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN =
+  'taskwraith.execution-graph.template-permission.v1'
+export const EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN =
+  'taskwraith.execution-graph.attempt-permission.v1'
+
+function taggedSignatureHex(signature: string, prefix: string): string | undefined {
+  if (!signature.startsWith(prefix)) return undefined
+  const value = signature.slice(prefix.length)
+  return /^[0-9a-f]{64}$/i.test(value) ? value : undefined
+}
+
+export function isExecutionGraphAttemptPermissionPostureSignature(
+  signature: string | null | undefined
+): boolean {
+  return (
+    typeof signature === 'string' &&
+    taggedSignatureHex(signature, EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX) !== undefined
+  )
+}
+
 /** Constant-time verification of a posture signature. */
 export function verifyRunPermissionPosture(
   secret: Buffer | string,
@@ -129,13 +161,46 @@ export function verifyRunPermissionPosture(
   signature: string | null | undefined,
   context?: RunPermissionPostureContext | null
 ): boolean {
-  if (typeof signature !== 'string' || !/^[0-9a-f]+$/i.test(signature)) return false
+  if (typeof signature !== 'string') return false
+
+  // A template proof must never double as a dispatch bearer token, even if an
+  // untrusted caller can reproduce every public field from its snapshot.
+  if (signature.startsWith(EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX)) return false
+
+  const graphAttemptHex = taggedSignatureHex(
+    signature,
+    EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX
+  )
+  const signatureHex = graphAttemptHex ?? signature
+  if (!/^[0-9a-f]+$/i.test(signatureHex)) return false
+
+  let verificationContext = context
+  if (graphAttemptHex) {
+    const normalized = normalizeRunPermissionPostureContext(context)
+    // These fields are the minimum exact-attempt identity. In particular, an
+    // absent appRunId must not recreate the reusable-template vulnerability.
+    if (
+      !normalized?.provider ||
+      normalized.scope !== 'workspace' ||
+      !normalized.workspacePath ||
+      !normalized.appRunId ||
+      !normalized.appChatId ||
+      !normalized.prompt ||
+      !normalized.workflowMode
+    ) {
+      return false
+    }
+    verificationContext = {
+      ...normalized,
+      authorityDomain: EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN
+    }
+  }
   try {
     const expected = Buffer.from(
-      signRunPermissionPosture(secret, approvalMode, effectivePermissions, context),
+      signRunPermissionPosture(secret, approvalMode, effectivePermissions, verificationContext),
       'hex'
     )
-    const actual = Buffer.from(signature, 'hex')
+    const actual = Buffer.from(signatureHex, 'hex')
     return expected.length === actual.length && timingSafeEqual(expected, actual)
   } catch {
     return false
@@ -147,6 +212,8 @@ export type RunPostureScope = 'global' | 'workspace'
 export interface RunPermissionPostureContext {
   provider?: string | null
   scope?: string | null
+  /** Canonical path; populated only for domain-separated graph attempts. */
+  workspacePath?: string | null
   appRunId?: string | null
   appChatId?: string | null
   prompt?: string | null
@@ -156,6 +223,8 @@ export interface RunPermissionPostureContext {
   ensembleParticipantId?: string | null
   ensembleLaneId?: string | null
   projectReferenceContextHash?: string | null
+  /** Main-owned HMAC domain; never copied from a raw renderer payload. */
+  authorityDomain?: string | null
 }
 
 /**
@@ -174,6 +243,7 @@ export function runPostureContextFromPayload(payload: {
   resumeFallbackPrompt?: unknown
   workflowMode?: unknown
   runtimeProfileId?: unknown
+  workspacePath?: unknown
   ensembleRun?: unknown
   projectReferenceContext?: unknown
 }): RunPermissionPostureContext {
@@ -183,6 +253,7 @@ export function runPostureContextFromPayload(payload: {
   return {
     provider: optionalString(payload.provider),
     scope: optionalString(payload.scope),
+    workspacePath: optionalString(payload.workspacePath),
     appRunId: optionalString(payload.appRunId),
     appChatId: optionalString(payload.appChatId),
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
@@ -268,9 +339,7 @@ export function buildRunPermissionPostureSnapshot(
   )
   const signature = normalizeContextString(input.signature)
   const grants = input.effectivePermissions?.externalPathGrants ?? []
-  const externalPathGrantHash = grants.length
-    ? sha256Hex(stableStringify(grants))
-    : undefined
+  const externalPathGrantHash = grants.length ? sha256Hex(stableStringify(grants)) : undefined
   const context = snapshotContext(normalizedContext)
 
   return {
@@ -302,9 +371,12 @@ function normalizeRunPermissionPostureContext(
 ): RunPermissionPostureContext | null {
   if (!context) return null
   const resumeFallbackPrompt = normalizeContextString(context.resumeFallbackPrompt)
+  const workspacePath = normalizeContextString(context.workspacePath)
+  const authorityDomain = normalizeContextString(context.authorityDomain)
   return {
     provider: normalizeContextString(context.provider),
     scope: normalizeContextString(context.scope),
+    ...(workspacePath ? { workspacePath } : {}),
     appRunId: normalizeContextString(context.appRunId),
     appChatId: normalizeContextString(context.appChatId),
     prompt: normalizeContextString(context.prompt),
@@ -313,7 +385,8 @@ function normalizeRunPermissionPostureContext(
     runtimeProfileId: normalizeContextString(context.runtimeProfileId),
     ensembleParticipantId: normalizeContextString(context.ensembleParticipantId),
     ensembleLaneId: normalizeContextString(context.ensembleLaneId),
-    projectReferenceContextHash: normalizeContextString(context.projectReferenceContextHash)
+    projectReferenceContextHash: normalizeContextString(context.projectReferenceContextHash),
+    ...(authorityDomain ? { authorityDomain } : {})
   }
 }
 
@@ -382,7 +455,9 @@ export function clampUntrustedRunPosture(
   const hasSignature = typeof input.signature === 'string' && input.signature.length > 0
 
   if (hasSignature) {
-    if (deps.verify(input.approvalMode, input.effectivePermissions, input.signature, input.context)) {
+    if (
+      deps.verify(input.approvalMode, input.effectivePermissions, input.signature, input.context)
+    ) {
       // Trusted main-issued posture. Pass through unchanged, except the
       // global-scope cap (identity for a legitimate global posture).
       const approvalMode = coerceScopedApprovalMode(input.scope, input.approvalMode)
@@ -426,10 +501,7 @@ export function clampUntrustedRunPosture(
   if (approvalMode === 'plan') {
     return forceReadOnly(input.scope, deps, 'missing-readonly-effective-permissions')
   }
-  if (
-    input.scope === 'workspace' &&
-    approvalModeRank(approvalMode) > approvalModeRank('default')
-  ) {
+  if (input.scope === 'workspace' && approvalModeRank(approvalMode) > approvalModeRank('default')) {
     return {
       approvalMode: 'default',
       effectivePermissions: undefined,
@@ -460,7 +532,9 @@ function isEffectiveRunPermissions(value: unknown): value is EffectiveRunPermiss
   return true
 }
 
-function isAgenticServicesRecord(value: unknown): value is EffectiveRunPermissions['agenticServices'] {
+function isAgenticServicesRecord(
+  value: unknown
+): value is EffectiveRunPermissions['agenticServices'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
   return (

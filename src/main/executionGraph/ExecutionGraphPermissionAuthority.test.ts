@@ -1,9 +1,16 @@
 import { describe, expect, it, vi } from 'vitest'
-import { signRunPermissionPosture, verifyRunPermissionPosture } from '../RunPermissionPosture'
+import {
+  EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX,
+  EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX,
+  signRunPermissionPosture,
+  verifyRunPermissionPosture
+} from '../RunPermissionPosture'
 import type { AppSettings, RunQueueJob, RunQueueRequestSnapshot } from '../store/types'
 import {
   buildExecutionGraphPermissionPosture,
+  mintExecutionGraphAttemptPermissionPosture,
   resolveExecutionGraphQueuePermissionPosture,
+  verifyExecutionGraphAttemptPermissionPosture,
   verifyExecutionGraphPermissionPosture
 } from './ExecutionGraphPermissionAuthority'
 
@@ -63,6 +70,46 @@ function verify(posture: ReturnType<typeof build>, input = request()) {
   })
 }
 
+function mint(
+  templatePosture: ReturnType<typeof build>,
+  input = request(),
+  appRunId = 'graph-run-one',
+  runtimeProfileId?: string
+) {
+  return mintExecutionGraphAttemptPermissionPosture({
+    appRunId,
+    provider: 'codex',
+    workspacePath: '/workspace',
+    chatId: 'chat-one',
+    request: input,
+    ...(runtimeProfileId ? { runtimeProfileId } : {}),
+    templatePosture,
+    sign: (approvalMode, permissions, context) =>
+      signRunPermissionPosture(secret, approvalMode, permissions, context),
+    verifyTemplate: (approvalMode, permissions, signature, context) =>
+      verifyRunPermissionPosture(secret, approvalMode, permissions, signature, context)
+  })
+}
+
+function verifyAttempt(
+  posture: ReturnType<typeof mint>,
+  input = request(),
+  appRunId = 'graph-run-one',
+  runtimeProfileId?: string
+) {
+  return verifyExecutionGraphAttemptPermissionPosture({
+    appRunId,
+    provider: 'codex',
+    workspacePath: '/workspace',
+    chatId: 'chat-one',
+    request: input,
+    ...(runtimeProfileId ? { runtimeProfileId } : {}),
+    posture,
+    verify: (approvalMode, permissions, signature, context) =>
+      verifyRunPermissionPosture(secret, approvalMode, permissions, signature, context)
+  })
+}
+
 function graphJob(
   overrides: Partial<RunQueueJob> = {},
   requestOverrides: Partial<RunQueueRequestSnapshot> = {}
@@ -81,7 +128,12 @@ function graphJob(
     priority: 0,
     attempt: 0,
     request: storedRequest,
-    permissionPosture: build(storedRequest, storedRequest.runtimeProfileId),
+    permissionPosture: mint(
+      build(storedRequest, storedRequest.runtimeProfileId),
+      storedRequest,
+      'graph-run-one',
+      storedRequest.runtimeProfileId
+    ),
     executionGraph: {
       schemaVersion: 1,
       executionId: 'execution-one',
@@ -97,6 +149,7 @@ function graphJob(
 }
 
 const expectedComposerIdentity = {
+  appRunId: 'graph-run-one',
   provider: 'codex' as const,
   scope: 'workspace' as const,
   chatId: 'chat-one',
@@ -118,10 +171,73 @@ describe('ExecutionGraphPermissionAuthority', () => {
         appChatId: 'chat-one'
       }
     })
+    expect(posture.signature).toMatch(
+      new RegExp(`^${EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX}`)
+    )
     expect(verify(posture)).toMatchObject({
       approvalMode: 'auto_edit',
       effectivePermissions: { presetId: 'workspace_write' }
     })
+  })
+
+  it('keeps a reusable template proof outside the generic dispatch signature domain', () => {
+    const posture = build()
+    const permissions = verify(posture).effectivePermissions
+    const genericContext = {
+      provider: 'codex',
+      scope: 'workspace',
+      workspacePath: '/workspace',
+      appChatId: 'chat-one',
+      prompt: request().prompt,
+      workflowMode: 'normal'
+    }
+
+    expect(
+      verifyRunPermissionPosture(
+        secret,
+        posture.approvalMode,
+        permissions,
+        posture.signature,
+        genericContext
+      )
+    ).toBe(false)
+    expect(
+      verifyRunPermissionPosture(secret, posture.approvalMode, permissions, posture.signature, {
+        ...genericContext,
+        appRunId: 'graph-run-one'
+      })
+    ).toBe(false)
+  })
+
+  it('mints a fresh permission posture that is valid only for one exact graph attempt', () => {
+    const posture = mint(build())
+
+    expect(posture.signature).toMatch(
+      new RegExp(`^${EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX}`)
+    )
+    expect(posture.context).toMatchObject({
+      provider: 'codex',
+      scope: 'workspace',
+      appRunId: 'graph-run-one',
+      appChatId: 'chat-one'
+    })
+    expect(verifyAttempt(posture)).toMatchObject({
+      approvalMode: 'auto_edit',
+      effectivePermissions: { presetId: 'workspace_write' }
+    })
+    expect(() => verifyAttempt(posture, request(), 'graph-run-two')).toThrow(/invalid or stale/i)
+    expect(() =>
+      verifyExecutionGraphAttemptPermissionPosture({
+        appRunId: 'graph-run-one',
+        provider: 'codex',
+        workspacePath: '/other-workspace',
+        chatId: 'chat-one',
+        request: request(),
+        posture,
+        verify: (approvalMode, permissions, signature, context) =>
+          verifyRunPermissionPosture(secret, approvalMode, permissions, signature, context)
+      })
+    ).toThrow(/invalid or stale/i)
   })
 
   it('downgrades non-durable Full Access to workspace write', () => {

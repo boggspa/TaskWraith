@@ -12,6 +12,7 @@ import type {
 } from '../store/types'
 import {
   clampUntrustedRunPosture,
+  isExecutionGraphAttemptPermissionPostureSignature,
   runPostureContextFromPayload,
   type RunPermissionPostureContext
 } from '../RunPermissionPosture'
@@ -167,6 +168,11 @@ export function normalizeAgentRunPayload(
       typeof payload.resumeFallbackPrompt === 'string' ? payload.resumeFallbackPrompt : undefined,
     workflowMode: requestedWorkflowMode,
     runtimeProfileId: optionalString(payload.runtimeProfileId),
+    ...(isExecutionGraphAttemptPermissionPostureSignature(
+      optionalString(payload.effectivePermissionsSignature)
+    )
+      ? { workspacePath: workspace }
+      : {}),
     ensembleRun: payload.ensembleRun,
     projectReferenceContext
   })
@@ -299,9 +305,7 @@ function normalizeProviderRunReroute(
     from,
     to,
     reason: value.reason,
-    ...(typeof value.savedAsDefault === 'boolean'
-      ? { savedAsDefault: value.savedAsDefault }
-      : {})
+    ...(typeof value.savedAsDefault === 'boolean' ? { savedAsDefault: value.savedAsDefault } : {})
   }
 }
 
@@ -388,8 +392,9 @@ function normalizeGoalRuntimeLedger(value: unknown): ActiveGoal['runtimeLedger']
       if (!isRecord(entry)) return null
       const status = optionalString(entry.status)
       if (status !== 'active' && status !== 'paused' && status !== 'blocked') return null
-      const intervalStatus: NonNullable<ActiveGoal['runtimeLedger']>['intervals'][number]['status'] =
-        status
+      const intervalStatus: NonNullable<
+        ActiveGoal['runtimeLedger']
+      >['intervals'][number]['status'] = status
       const intervalStartedAt = optionalString(entry.startedAt)
       if (!intervalStartedAt) return null
       return {
