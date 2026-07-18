@@ -39,10 +39,40 @@ export interface RunQueueTargetScope {
   targetId: string
 }
 
+export type RendererRunQueueMutation =
+  | { operation: 'request'; job: unknown }
+  | {
+      operation: 'lease'
+      request: { runId?: string; provider?: ProviderId; statusReason?: string }
+    }
+  | {
+      /** Includes status writes and queued-message edit/delete cancellation. */
+      operation: 'transition'
+      runIdOrId: string
+      status: RunQueueJobStatus
+      partial: Partial<RunQueueJob>
+    }
+  | { operation: 'promote-steer'; input: PromoteQueuedJobForSteerInput }
+  | { operation: 'lease-promoted-steer'; input: LeasePromotedSteerInput }
+  | { operation: 'fallback-promoted-steer'; input: FallbackPromotedSteerInput }
+
+export interface RendererRunQueueMutationContext {
+  event: IpcMainInvokeEvent
+  scope: RunQueueSenderScope
+}
+
 export interface RunQueueHandlersDeps {
   resolveSenderRunQueueScope: (event: IpcMainInvokeEvent) => RunQueueSenderScope
   resolveSenderAttachmentFilePaths: (event: IpcMainInvokeEvent) => string[]
   resolveRunQueueTargetChatId: (target: RunQueueTargetScope) => string | undefined
+  /**
+   * Main-owned policy hook for renderer-originated queue mutations. Throw to
+   * reject before the queue store or lifecycle coordinator is touched.
+   */
+  authorizeRendererRunQueueMutation?: (
+    mutation: RendererRunQueueMutation,
+    context: RendererRunQueueMutationContext
+  ) => void
   getRunQueueJobs: (filter?: RunQueueJobFilter) => RunQueueJob[]
   getRunRecoveryRecords: (filter?: RunRecoveryFilter) => RunRecoveryRecord[]
   requestRunQueueJob: (
@@ -122,6 +152,15 @@ function requestedJobChatId(value: unknown): string | undefined {
   return typeof chatId === 'string' && chatId.trim() ? chatId.trim() : undefined
 }
 
+function authorizeRendererMutation(
+  deps: RunQueueHandlersDeps,
+  event: IpcMainInvokeEvent,
+  scope: RunQueueSenderScope,
+  mutation: RendererRunQueueMutation
+): void {
+  deps.authorizeRendererRunQueueMutation?.(mutation, { event, scope })
+}
+
 export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   ipcMain.handle('get-run-queue-jobs', (event, filter?: RunQueueJobFilter) => {
     const scope = deps.resolveSenderRunQueueScope(event)
@@ -138,6 +177,7 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     if (scope.kind === 'chat' && requestedJobChatId(job) !== scope.chatId) {
       throw new Error('Renderer cannot create run state for another chat.')
     }
+    authorizeRendererMutation(deps, event, scope, { operation: 'request', job })
     return deps.requestRunQueueJob(job, {
       authorizedFilePaths: deps.resolveSenderAttachmentFilePaths(event)
     })
@@ -153,6 +193,7 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
       if (request.runId) {
         assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: request.runId })
       }
+      authorizeRendererMutation(deps, event, scope, { operation: 'lease', request })
       return deps.leaseRunQueueJob(request)
     }
   )
@@ -162,6 +203,12 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     (event, runIdOrId: string, status: RunQueueJobStatus, partial: Partial<RunQueueJob> = {}) => {
       const scope = deps.resolveSenderRunQueueScope(event)
       assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: runIdOrId })
+      authorizeRendererMutation(deps, event, scope, {
+        operation: 'transition',
+        runIdOrId,
+        status,
+        partial
+      })
       return deps.transitionRunQueueJob(runIdOrId, status, partial)
     }
   )
@@ -175,6 +222,7 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
     if (input?.cancelRunId) {
       assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input.cancelRunId })
     }
+    authorizeRendererMutation(deps, event, scope, { operation: 'promote-steer', input })
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {
@@ -194,6 +242,7 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   ipcMain.handle('lease-promoted-steer-job', async (event, input: LeasePromotedSteerInput) => {
     const scope = deps.resolveSenderRunQueueScope(event)
     assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
+    authorizeRendererMutation(deps, event, scope, { operation: 'lease-promoted-steer', input })
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {
@@ -210,6 +259,10 @@ export function registerRunQueueHandlers(deps: RunQueueHandlersDeps): void {
   ipcMain.handle('fallback-promoted-steer-job', async (event, input: FallbackPromotedSteerInput) => {
     const scope = deps.resolveSenderRunQueueScope(event)
     assertScopedTarget(deps, scope, { kind: 'run-or-job', targetId: input?.runId || '' })
+    authorizeRendererMutation(deps, event, scope, {
+      operation: 'fallback-promoted-steer',
+      input
+    })
     const coordinator = deps.getRunLifecycleCoordinator()
     if (!coordinator) {
       return {

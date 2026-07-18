@@ -327,6 +327,146 @@ describe('registerRunQueueHandlers', () => {
     expect(deps.transitionRunQueueJob).toHaveBeenCalledWith('run-1', 'queued', {})
   })
 
+  it('offers main authority every renderer queue mutation before its side effect', async () => {
+    const deps = createDeps()
+    const authorize = vi.fn()
+    deps.authorizeRendererRunQueueMutation = authorize
+    registerRunQueueHandlers(deps)
+    const event = { sender: { id: 42 } }
+
+    handlerFor('request-run-queue-job')(event, { runId: 'run-1', chatId: 'chat-1' })
+    handlerFor('lease-run-queue-job')(event, {
+      runId: 'run-1',
+      provider: 'gemini',
+      statusReason: 'dispatch'
+    })
+    handlerFor('transition-run-queue-job')(event, 'run-1', 'cancelled', {
+      statusReason: 'Edited; returned to composer for revision.'
+    })
+    await handlerFor('promote-queued-job-for-steer')(event, {
+      runId: 'run-1',
+      cancelRunId: 'run-2',
+      provider: 'gemini'
+    })
+    await handlerFor('lease-promoted-steer-job')(event, {
+      runId: 'run-1',
+      ownerToken: 'owner'
+    })
+    await handlerFor('fallback-promoted-steer-job')(event, {
+      runId: 'run-1',
+      ownerToken: 'owner',
+      reason: 'fallback'
+    })
+
+    expect(authorize.mock.calls.map(([mutation]) => mutation)).toEqual([
+      {
+        operation: 'request',
+        job: { runId: 'run-1', chatId: 'chat-1' }
+      },
+      {
+        operation: 'lease',
+        request: { runId: 'run-1', provider: 'gemini', statusReason: 'dispatch' }
+      },
+      {
+        operation: 'transition',
+        runIdOrId: 'run-1',
+        status: 'cancelled',
+        partial: { statusReason: 'Edited; returned to composer for revision.' }
+      },
+      {
+        operation: 'promote-steer',
+        input: { runId: 'run-1', cancelRunId: 'run-2', provider: 'gemini' }
+      },
+      {
+        operation: 'lease-promoted-steer',
+        input: { runId: 'run-1', ownerToken: 'owner' }
+      },
+      {
+        operation: 'fallback-promoted-steer',
+        input: { runId: 'run-1', ownerToken: 'owner', reason: 'fallback' }
+      }
+    ])
+    expect(authorize).toHaveBeenCalledWith(expect.anything(), {
+      event,
+      scope: { kind: 'main' }
+    })
+  })
+
+  it('lets main authority reject graph-owned mutations before queue or steer services run', async () => {
+    const deps = createDeps()
+    deps.authorizeRendererRunQueueMutation = vi.fn((mutation) => {
+      const targetIds =
+        mutation.operation === 'request'
+          ? [
+              (mutation.job as { runId?: string }).runId,
+              (mutation.job as { executionGraph?: unknown }).executionGraph
+                ? 'graph-owned'
+                : undefined
+            ]
+          : mutation.operation === 'lease'
+            ? [mutation.request.runId]
+            : mutation.operation === 'transition'
+              ? [mutation.runIdOrId]
+              : mutation.operation === 'promote-steer'
+                ? [mutation.input.runId, mutation.input.cancelRunId]
+                : [mutation.input.runId]
+      if (targetIds.some((targetId) => targetId === 'graph-run' || targetId === 'graph-owned')) {
+        throw new Error('Execution graph queue mutations require main authority.')
+      }
+    })
+    registerRunQueueHandlers(deps)
+    const event = { sender: { id: 42 } }
+
+    expect(() =>
+      handlerFor('request-run-queue-job')(event, {
+        runId: 'graph-run',
+        executionGraph: { executionId: 'execution-1' }
+      })
+    ).toThrow(/main authority/)
+    expect(() => handlerFor('lease-run-queue-job')(event, { runId: 'graph-run' })).toThrow(
+      /main authority/
+    )
+    expect(() =>
+      handlerFor('transition-run-queue-job')(event, 'graph-run', 'cancelled', {
+        statusReason: 'Edited; returned to composer for revision.'
+      })
+    ).toThrow(/main authority/)
+    expect(() =>
+      handlerFor('transition-run-queue-job')(event, 'graph-run', 'cancelled', {
+        statusReason: 'Cancelled from the queued-messages above-row.'
+      })
+    ).toThrow(/main authority/)
+    await expect(
+      handlerFor('promote-queued-job-for-steer')(event, {
+        runId: 'run-1',
+        cancelRunId: 'graph-run'
+      })
+    ).rejects.toThrow(/main authority/)
+    await expect(
+      handlerFor('lease-promoted-steer-job')(event, {
+        runId: 'graph-run',
+        ownerToken: 'owner'
+      })
+    ).rejects.toThrow(/main authority/)
+    await expect(
+      handlerFor('fallback-promoted-steer-job')(event, {
+        runId: 'graph-run',
+        ownerToken: 'owner',
+        reason: 'fallback'
+      })
+    ).rejects.toThrow(/main authority/)
+
+    expect(deps.requestRunQueueJob).not.toHaveBeenCalled()
+    expect(deps.leaseRunQueueJob).not.toHaveBeenCalled()
+    expect(deps.transitionRunQueueJob).not.toHaveBeenCalled()
+    expect(deps.getRunLifecycleCoordinator).not.toHaveBeenCalled()
+
+    expect(handlerFor('lease-run-queue-job')(event, { runId: 'run-1' })).toMatchObject({
+      runId: 'run-1'
+    })
+    expect(deps.leaseRunQueueJob).toHaveBeenCalledTimes(1)
+  })
+
   it('falls back when the run lifecycle coordinator is not initialized', async () => {
     const deps = createDeps()
     registerRunQueueHandlers(deps)
