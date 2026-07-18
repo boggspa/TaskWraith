@@ -4,7 +4,8 @@ import {
   WELCOME_FIT_FULL,
   WELCOME_FIT_HEATMAP_HIDDEN,
   WELCOME_FIT_NOTIFICATION_HIDDEN,
-  resolveWelcomeFitLevel
+  resolveWelcomeFitLevel,
+  resolveWelcomeFitStackBounds
 } from './welcomeFit'
 
 const requirements = {
@@ -88,5 +89,28 @@ describe('resolveWelcomeFitLevel', () => {
         currentLevel: WELCOME_FIT_HEATMAP_HIDDEN
       })
     ).toBe(WELCOME_FIT_DASHBOARD_HIDDEN)
+  })
+})
+
+describe('resolveWelcomeFitStackBounds', () => {
+  it('keeps a wrapper’s own bounds when it generates a layout box', () => {
+    const bounds = { top: 100, bottom: 240, height: 140 }
+
+    expect(resolveWelcomeFitStackBounds(bounds, [{ top: 120, bottom: 200, height: 80 }])).toBe(
+      bounds
+    )
+  })
+
+  it('unions direct child boxes when display contents leaves the wrapper boxless', () => {
+    expect(
+      resolveWelcomeFitStackBounds({ top: 0, bottom: 0, height: 0 }, [
+        { top: 538, bottom: 570, height: 32 },
+        { top: 618, bottom: 670, height: 52 }
+      ])
+    ).toEqual({ top: 538, bottom: 670, height: 132 })
+  })
+
+  it('returns no bounds when neither the wrapper nor its children render', () => {
+    expect(resolveWelcomeFitStackBounds({ top: 0, bottom: 0, height: 0 }, [])).toBeNull()
   })
 })

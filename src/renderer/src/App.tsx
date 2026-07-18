@@ -605,6 +605,7 @@ import {
 import {
   WELCOME_FIT_FULL,
   resolveWelcomeFitLevel,
+  resolveWelcomeFitStackBounds,
   type WelcomeFitLevel
 } from './lib/welcomeFit'
 import { isChatSummaryRecord, mergeChatRecord } from './lib/chatRecordMerge'
@@ -22966,6 +22967,11 @@ function App(): React.JSX.Element {
       }
       return null
     }
+    const primaryStackBounds = (stack: HTMLElement) =>
+      resolveWelcomeFitStackBounds(
+        stack.getBoundingClientRect(),
+        Array.from(stack.children, (child) => child.getBoundingClientRect())
+      )
 
     let frame: number | null = null
     const measure = () => {
@@ -22977,17 +22983,18 @@ function App(): React.JSX.Element {
       const heatmap = directComposerChild('welcome-standalone-heatmaps')
       const notification = directComposerChild('notification-zone')
       if (!primaryStack) return
+      const primaryBounds = primaryStackBounds(primaryStack)
+      if (!primaryBounds) return
 
       const dashboardStyle = dashboard ? window.getComputedStyle(dashboard) : null
       const dashboardHeight = dashboard
         ? readPx(dashboardStyle?.getPropertyValue('--welcome-usage-dashboard-visual-height')) ||
           dashboard.getBoundingClientRect().height
         : 0
-      const primaryHeight = primaryStack.getBoundingClientRect().height
+      const primaryHeight = primaryBounds.height
       const heatmapRect = heatmap?.getBoundingClientRect() || null
       const notificationRect = notification?.getBoundingClientRect() || null
       const heatmapHeight = heatmapRect?.height || 0
-      if (primaryHeight <= 0) return
 
       const composerStyle = window.getComputedStyle(composer)
       const composerPadding =
@@ -23009,7 +23016,7 @@ function App(): React.JSX.Element {
       // user continues resizing in either direction.
       const fullHeight = notificationRect
         ? availableHeight +
-          ((heatmapRect || primaryStack.getBoundingClientRect()).bottom +
+          ((heatmapRect || primaryBounds).bottom +
             clampPx(12, 0.018, 24) -
             notificationRect.top)
         : fullTranscriptPadding + dashboardHeight + flexComposerHeight

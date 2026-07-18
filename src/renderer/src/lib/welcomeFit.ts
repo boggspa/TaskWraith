@@ -20,6 +20,34 @@ export interface ResolveWelcomeFitLevelInput extends WelcomeFitRequirements {
   restoreSlack?: number
 }
 
+/**
+ * The vertical bounds needed by the welcome fit observer.
+ *
+ * A welcome composer stack may use `display: contents` so its children can
+ * participate directly in the surrounding flex/grid layout. Such an element
+ * has no box of its own, even though its rendered children do. This small,
+ * DOM-free helper falls back to the union of those direct child boxes.
+ */
+export interface WelcomeFitStackBounds {
+  top: number
+  bottom: number
+  height: number
+}
+
+export function resolveWelcomeFitStackBounds(
+  ownBounds: WelcomeFitStackBounds,
+  childBounds: readonly WelcomeFitStackBounds[]
+): WelcomeFitStackBounds | null {
+  if (ownBounds.height > 0) return ownBounds
+
+  const renderedChildren = childBounds.filter((bounds) => bounds.height > 0)
+  if (renderedChildren.length === 0) return null
+
+  const top = Math.min(...renderedChildren.map((bounds) => bounds.top))
+  const bottom = Math.max(...renderedChildren.map((bounds) => bounds.bottom))
+  return { top, bottom, height: bottom - top }
+}
+
 const requiredLevelAtTolerance = (
   requirements: WelcomeFitRequirements,
   overflowTolerance: number
