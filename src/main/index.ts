@@ -1100,6 +1100,8 @@ import {
 import {
   decideKimiContentFilterRetry,
   decideKimiWireClose,
+  mergeKimiWireTerminalEvidence,
+  resolveKimiWireTerminalStatus,
   type KimiContentFilterRetryPass
 } from './KimiWireExitDecision'
 import { RunRepository } from './RunRepository'
@@ -8930,8 +8932,11 @@ function recordExecutionGraphProviderTerminalCandidate(
 ): void {
   if (state.owner !== 'execution_graph') return
   const claimedStatus = runManager.getClaimedTerminalStatus(state.runId)
-  const lifecycleStatus = runManager.getTerminalJoinState(state.runId).lifecycleStatus
-  const effectiveCandidate = claimedStatus ?? lifecycleStatus ?? candidate
+  // An explicit failed/cancelled claim reserves cancellation semantics before
+  // abort/kill can synchronously emit a misleading exit. Ordinary lifecycle
+  // evidence must never rewrite a provider-native result: disagreement is the
+  // exact condition the two-sided RunManager join is meant to expose.
+  const effectiveCandidate = claimedStatus ?? candidate
   const merged = mergeExecutionGraphProviderTerminalCandidate(
     {
       ...(state.providerTerminalCandidate
@@ -14998,12 +15003,23 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
     state.completed = true
     const terminalStatus = event?.status || event?.result?.status || event?.subtype || 'success'
     if (state.deferTerminalResult) {
-      state.terminalResultFailed = state.terminalResultFailed || bridgeResultFailed({
-        status: terminalStatus,
-        error: event?.error,
-        is_error: event?.is_error,
-        subtype: event?.subtype
-      })
+      const merged = mergeKimiWireTerminalEvidence(
+        {
+          ...(state.deferredTerminalStatus
+            ? { status: state.deferredTerminalStatus }
+            : {}),
+          conflict: state.deferredTerminalConflict ?? false
+        },
+        bridgeResultTerminalStatus({
+          status: terminalStatus,
+          error: event?.error,
+          is_error: event?.is_error,
+          subtype: event?.subtype
+        })
+      )
+      state.deferredTerminalStatus = merged.status
+      state.deferredTerminalConflict = merged.conflict
+      state.terminalResultFailed = merged.status === 'failed' || merged.conflict
       return
     }
     sendAgentCompatLine(
@@ -17619,7 +17635,6 @@ async function runKimiWireProvider(
     let promptSequence = 0
     let activePromptId = ''
     let currentKimiPrompt = payload.prompt
-    let provisionalTerminalStatus: 'completed' | 'failed' | 'cancelled' | undefined
     const kimiRetryPasses: KimiContentFilterRetryPass[] = []
     // Bug fix: every Kimi exit path MUST publish an `agent-exit` IPC
     // event, otherwise the renderer never invokes `clearActiveRunContext`
@@ -17805,13 +17820,22 @@ async function runKimiWireProvider(
             }
             updateCliProviderSession(state, extractProviderSessionId(message), false)
             state.completed = true
-            provisionalTerminalStatus =
-              message.result?.status === 'cancelled'
-                ? 'cancelled'
-                : message.error
-                  ? 'failed'
-                  : 'completed'
-            state.terminalResultFailed = provisionalTerminalStatus === 'failed'
+            const merged = mergeKimiWireTerminalEvidence(
+              {
+                ...(state.deferredTerminalStatus
+                  ? { status: state.deferredTerminalStatus }
+                  : {}),
+                conflict: state.deferredTerminalConflict ?? false
+              },
+              bridgeResultTerminalStatus({
+                status: message.result?.status || 'success',
+                error: promptErrorMessage || undefined,
+                is_error: Boolean(message.error)
+              })
+            )
+            state.deferredTerminalStatus = merged.status
+            state.deferredTerminalConflict = merged.conflict
+            state.terminalResultFailed = merged.status === 'failed' || merged.conflict
             // The JSON-RPC response is provisional until the transport closes.
             // A later non-zero close must be able to override apparent success.
             child.kill()
@@ -18172,15 +18196,25 @@ async function runKimiWireProvider(
       if (decision.ignore) return
       clearTimeout(timeout)
       if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      const terminalStatus = decision.terminalStatus
-        ? provisionalTerminalStatus === 'cancelled'
-          ? 'cancelled'
-          : state.terminalResultFailed || decision.terminalStatus === 'failed'
-            ? 'failed'
-            : 'completed'
-        : undefined
+      const terminalStatus = resolveKimiWireTerminalStatus(
+        decision.terminalStatus,
+        {
+          ...(state.deferredTerminalStatus
+            ? { status: state.deferredTerminalStatus }
+            : {}),
+          conflict: state.deferredTerminalConflict ?? false
+        }
+      )
       if (terminalStatus) {
         state.completed = true
+        if (state.deferredTerminalConflict) {
+          sendAgentCompatError(
+            event.sender,
+            'kimi',
+            'Kimi reported conflicting terminal statuses before the Wire transport closed.',
+            state
+          )
+        }
         sendAgentCompatLine(
           event.sender,
           'kimi',

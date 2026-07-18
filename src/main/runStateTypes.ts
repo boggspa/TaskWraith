@@ -145,6 +145,10 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   terminalResultFailed?: boolean
   /** Wire transports may report a provisional result before process close. */
   deferTerminalResult?: boolean
+  /** Typed provisional status retained until the Wire process actually closes. */
+  deferredTerminalStatus?: 'completed' | 'failed' | 'cancelled'
+  /** Sticky marker for conflicting provisional result/response statuses. */
+  deferredTerminalConflict?: boolean
   assistantText: string
   /** Token-sized Kimi ACP thinking deltas awaiting their next UI/ledger batch. */
   kimiThinkingPendingText?: string

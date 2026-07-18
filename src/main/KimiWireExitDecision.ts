@@ -59,6 +59,15 @@ export function mergeKimiWireTerminalEvidence(
   return { status: 'failed', conflict: true }
 }
 
+export function resolveKimiWireTerminalStatus(
+  closeStatus: 'completed' | 'failed' | undefined,
+  evidence: KimiWireTerminalEvidence
+): KimiWireTerminalStatus | undefined {
+  if (!closeStatus) return undefined
+  if (closeStatus === 'failed' || evidence.conflict) return 'failed'
+  return evidence.status ?? 'completed'
+}
+
 export type KimiContentFilterRetryPass = 'keyword' | 'classifier'
 
 export interface KimiContentFilterRetryInputs {

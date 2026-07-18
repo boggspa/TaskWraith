@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import {
   decideKimiContentFilterRetry,
   decideKimiWireClose,
-  mergeKimiWireTerminalEvidence
+  mergeKimiWireTerminalEvidence,
+  resolveKimiWireTerminalStatus
 } from './KimiWireExitDecision'
 
 describe('decideKimiWireClose', () => {
@@ -137,6 +138,41 @@ describe('mergeKimiWireTerminalEvidence', () => {
   it('keeps conflict sticky after it has been observed', () => {
     const conflicted = { status: 'failed' as const, conflict: true }
     expect(mergeKimiWireTerminalEvidence(conflicted, 'failed')).toBe(conflicted)
+  })
+})
+
+describe('resolveKimiWireTerminalStatus', () => {
+  it('preserves provisional cancellation after a clean transport close', () => {
+    expect(
+      resolveKimiWireTerminalStatus('completed', {
+        status: 'cancelled',
+        conflict: false
+      })
+    ).toBe('cancelled')
+  })
+
+  it('preserves a provider failure that arrived without a JSON-RPC error', () => {
+    expect(
+      resolveKimiWireTerminalStatus('completed', {
+        status: 'failed',
+        conflict: false
+      })
+    ).toBe('failed')
+  })
+
+  it('lets transport failure and conflicting evidence fail closed', () => {
+    expect(
+      resolveKimiWireTerminalStatus('failed', {
+        status: 'completed',
+        conflict: false
+      })
+    ).toBe('failed')
+    expect(
+      resolveKimiWireTerminalStatus('completed', {
+        status: 'completed',
+        conflict: true
+      })
+    ).toBe('failed')
   })
 })
 
