@@ -89,6 +89,36 @@ describe('execution graph main integration', () => {
     expect(cancellation).toContain('setTimeout(() => finish(false), 15_000)')
   })
 
+  it('bounds unresolved two-sided terminal joins without timing ordinary provider work', () => {
+    const watchdog = between(
+      'function armExecutionGraphTerminalJoinWatchdog',
+      'function isExecutionGraphIsolatedPayload'
+    )
+    const containment = between(
+      'async function containExecutionGraphTerminalJoin',
+      'function hasCommittedExecutionGraphTerminalReceipt'
+    )
+    const registration = between('function registerRunSession(', 'function getRuntimeSession(')
+
+    expect(watchdog).toContain('decideExecutionGraphTerminalJoinWatchdog')
+    expect(watchdog).toContain('runManager.getTerminalJoinState(runId)')
+    expect(registration).toContain('armExecutionGraphTerminalJoinWatchdog')
+    expect(containment).toContain('terminateExactProviderSession')
+    expect(containment).toContain("runManager.containTerminalJoin(runId, 'failed')")
+  })
+
+  it('contains adapter rejection after an exact provider session was registered', () => {
+    const dispatcher = between(
+      'const dispatchMainOwnedExecutionGraphAttempt =',
+      'executionGraphAttemptDispatcher = dispatchMainOwnedExecutionGraphAttempt'
+    )
+
+    expect(dispatcher).toContain('const registeredSession = runManager.get(appRunId)')
+    expect(dispatcher).toContain('terminateExactProviderSession')
+    expect(dispatcher).toContain("runManager.finish(appRunId, 'failed')")
+    expect(dispatcher).toContain('armExecutionGraphTerminalJoinWatchdog(appRunId)')
+  })
+
   it('rejects renderer composition, dispatch, and queue leases for graph attempts', () => {
     expect(source).toContain(
       "throw new Error('Execution graph attempts are composed and dispatched by MAIN only.')"

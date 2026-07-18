@@ -560,6 +560,7 @@ import { ProjectReferenceProposalService } from './services/ProjectReferenceProp
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
 import { ExecutionGraphRepository } from './executionGraph/ExecutionGraphRepository'
+import { decideExecutionGraphTerminalJoinWatchdog } from './executionGraph/ExecutionGraphTerminalJoinWatchdog'
 import {
   clearExecutionGraphHistory,
   deleteExecutionGraphHistoryForChat
@@ -5967,6 +5968,7 @@ interface ExecutionGraphComposedPayloadEntry {
 const executionGraphComposedPayloads = new Map<string, ExecutionGraphComposedPayloadEntry>()
 const executionGraphDispatchesInFlight = new Set<string>()
 const executionGraphAdapterAdmissions = new Map<string, ExecutionGraphComposedPayloadEntry>()
+const executionGraphTerminalJoinWatchdogs = new Map<string, NodeJS.Timeout>()
 const executionGraphAdapterContext = new AsyncLocalStorage<{
   readonly appRunId: string
   readonly token: object
@@ -6001,6 +6003,47 @@ function executionGraphOwnsAttemptRunId(runId: string | undefined): boolean {
         )
       )
   )
+}
+
+function clearExecutionGraphTerminalJoinWatchdog(runId: string): void {
+  const timer = executionGraphTerminalJoinWatchdogs.get(runId)
+  if (timer) clearTimeout(timer)
+  executionGraphTerminalJoinWatchdogs.delete(runId)
+}
+
+function armExecutionGraphTerminalJoinWatchdog(runId: string): void {
+  if (executionGraphTerminalJoinWatchdogs.has(runId)) return
+
+  const schedule = (delayMs: number): void => {
+    const timer = setTimeout(() => {
+      executionGraphTerminalJoinWatchdogs.delete(runId)
+      const session = runManager.get(runId)
+      const decision = decideExecutionGraphTerminalJoinWatchdog({
+        active: Boolean(
+          session &&
+            isActiveRunSessionStatus(session.status) &&
+            executionGraphOwnsAttemptRunId(runId)
+        ),
+        nowMs: Date.now(),
+        state: runManager.getTerminalJoinState(runId)
+      })
+      if (decision.kind === 'stop') return
+      if (decision.kind === 'wait') {
+        schedule(decision.delayMs)
+        return
+      }
+      void containExecutionGraphTerminalJoin(runId, decision.reason).catch((error) => {
+        console.error(
+          `[ExecutionGraph] terminal join containment failed for runId=${runId}:`,
+          error
+        )
+      })
+    }, delayMs)
+    timer.unref?.()
+    executionGraphTerminalJoinWatchdogs.set(runId, timer)
+  }
+
+  schedule(0)
 }
 
 function isExecutionGraphIsolatedPayload(payload: AgentRunPayload): boolean {
@@ -6263,6 +6306,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 
 runManager.onChange((event) => {
   if (event.type === 'removed') {
+    clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
     executionGraphComposedPayloads.delete(event.session.runId)
     executionGraphDispatchesInFlight.delete(event.session.runId)
     executionGraphAdapterAdmissions.delete(event.session.runId)
@@ -6357,6 +6401,7 @@ runManager.onChange((event) => {
       event.session.status === 'failed' ||
       event.session.status === 'cancelled')
   ) {
+    clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
     executionGraphComposedPayloads.delete(event.session.runId)
     executionGraphDispatchesInFlight.delete(event.session.runId)
     executionGraphAdapterAdmissions.delete(event.session.runId)
@@ -19259,7 +19304,10 @@ function registerRunSession(
       state,
       status: 'running'
     })
-    if (graphOwnedRegistration) runManager.requireTerminalConfirmation(existing.runId)
+    if (graphOwnedRegistration) {
+      runManager.requireTerminalConfirmation(existing.runId)
+      armExecutionGraphTerminalJoinWatchdog(existing.runId)
+    }
     return runManager.get(existing.runId)!
   }
   if (requireExistingRun) return undefined
@@ -19273,7 +19321,10 @@ function registerRunSession(
     state,
     status: 'running'
   })
-  if (graphOwnedRegistration) runManager.requireTerminalConfirmation(created.runId)
+  if (graphOwnedRegistration) {
+    runManager.requireTerminalConfirmation(created.runId)
+    armExecutionGraphTerminalJoinWatchdog(created.runId)
+  }
   return created
 }
 
@@ -24617,7 +24668,7 @@ async function terminateExactProviderSession(
   }
 
   const codexState = provider === 'codex' ? getCodexStateFromSession(session) : undefined
-  const graphOwnedAttempt = Boolean(AppStore.getRunQueueJob(runId)?.executionGraph)
+  const graphOwnedAttempt = executionGraphOwnsAttemptRunId(runId)
   const exactAbortController = session.abortController
   const exactProcess = session.process
   if (
@@ -24673,6 +24724,45 @@ async function terminateExactProviderSession(
     activeGeminiToolContext = latestGemini?.sender ? latestGemini : null
   }
   return true
+}
+
+async function containExecutionGraphTerminalJoin(
+  runId: string,
+  reason: string
+): Promise<void> {
+  clearExecutionGraphTerminalJoinWatchdog(runId)
+  const session = runManager.get(runId)
+  if (
+    !session ||
+    !isActiveRunSessionStatus(session.status) ||
+    !executionGraphOwnsAttemptRunId(runId)
+  ) {
+    return
+  }
+
+  const boundedReason =
+    boundedExecutionGraphTranscriptError(reason) ??
+    'Provider terminal confirmation did not converge.'
+  const transcript = bridgeRunTranscripts.get(runId)
+  if (transcript?.owner === 'execution_graph') {
+    transcript.errorMessage = boundedReason
+    try {
+      projectAndPersistExecutionGraphRunTranscript(transcript, 'running', boundedReason)
+    } catch (error) {
+      console.error(
+        `[ExecutionGraph] terminal join evidence could not be projected for runId=${runId}:`,
+        error
+      )
+    }
+  }
+
+  const claimedStatus = runManager.getClaimedTerminalStatus(runId) ?? 'failed'
+  await terminateExactProviderSession(session.provider, runId, claimedStatus)
+  const current = runManager.get(runId)
+  if (!current || isTerminalRunSessionStatus(current.status)) return
+  if (!runManager.containTerminalJoin(runId, 'failed')) {
+    throw new Error('RunManager rejected bounded execution graph terminal containment.')
+  }
 }
 
 function hasCommittedExecutionGraphTerminalReceipt(
@@ -39424,7 +39514,8 @@ if (isGeminiMcpBridgeProcess) {
         }
       } catch (error) {
         const reason = `Graph-owned provider dispatch failed: ${error instanceof Error ? error.message : String(error)}`
-        if (!runManager.get(appRunId)) {
+        const registeredSession = runManager.get(appRunId)
+        if (!registeredSession) {
           try {
             sealExecutionGraphRunTranscript(appRunId, 'failed', reason)
           } catch (transcriptError) {
@@ -39443,6 +39534,24 @@ if (isGeminiMcpBridgeProcess) {
               containmentError
             )
           }
+        } else if (isActiveRunSessionStatus(registeredSession.status)) {
+          const transcript = bridgeRunTranscripts.get(appRunId)
+          if (transcript?.owner === 'execution_graph') {
+            transcript.errorMessage = boundedExecutionGraphTranscriptError(reason)
+          }
+          try {
+            await terminateExactProviderSession(registeredSession.provider, appRunId, 'failed')
+          } catch (terminationError) {
+            console.error(
+              `[ExecutionGraph] registered provider stop failed for runId=${appRunId}:`,
+              terminationError
+            )
+          }
+          // The adapter rejection is the lifecycle side of the terminal join.
+          // A real provider result/exit supplies the other side; the watchdog
+          // contains the exact run if that acknowledgement never arrives.
+          runManager.finish(appRunId, 'failed')
+          armExecutionGraphTerminalJoinWatchdog(appRunId)
         }
         throw error
       } finally {
