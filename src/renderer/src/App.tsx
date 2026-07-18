@@ -14503,12 +14503,25 @@ function App(): React.JSX.Element {
       })
       .catch((error) => {
         settleProjectReferenceContextForRequest(graphRequest, 'rejected')
+        const message = `Could not add this message to the Stack: ${redactLog(
+          stripElectronInvokeErrorFraming(error)
+        )}`
         appendThreadRawLog(targetChatId, {
           type: 'stderr',
-          content: `Could not add this message to the Stack: ${redactLog(
-            stripElectronInvokeErrorFraming(error)
-          )}`
+          content: message
         })
+        updateChatById(targetChatId, (source) => ({
+          ...source,
+          messages: [
+            ...source.messages,
+            {
+              id: createMessageId(),
+              role: 'error',
+              content: message,
+              timestamp: new Date().toISOString()
+            }
+          ]
+        }))
       })
       .finally(() => {
         if (executionAppendInFlightRef.current.get(targetChatId) === appendFingerprint) {

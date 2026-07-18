@@ -112,6 +112,8 @@ describe('live execution graph integration', () => {
     expect(accepted).toContain('window.localStorage.removeItem(pendingStorageKey)')
     const rejected = slice(append, '.catch((error) => {', '.finally(() => {')
     expect(rejected).not.toContain('window.localStorage.removeItem')
+    expect(rejected).toContain('updateChatById(targetChatId')
+    expect(rejected).toContain("role: 'error'")
 
     const contextClear = slice(
       appSource,
