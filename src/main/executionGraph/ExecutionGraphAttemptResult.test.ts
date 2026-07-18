@@ -6,6 +6,7 @@ import {
   MAX_EXECUTION_GRAPH_RESULT_REFERENCE_BYTES,
   MAX_EXECUTION_GRAPH_RESULT_REFS,
   MAX_EXECUTION_GRAPH_RESULT_TEXT_BYTES,
+  boundExecutionGraphAttemptError,
   buildExecutionGraphAttemptTerminalReceipt,
   formatExecutionGraphPredecessorResults,
   mergeExecutionGraphProviderTerminalCandidate,
@@ -166,6 +167,11 @@ describe('ExecutionGraphAttemptResult', () => {
   })
 
   it('bounds evidence, provider/thread references, errors, and artifact provenance', () => {
+    const boundedEmojiError = boundExecutionGraphAttemptError('🔥'.repeat(2_000))
+    expect(boundedEmojiError).toBeTruthy()
+    expect(Buffer.byteLength(boundedEmojiError!, 'utf8')).toBeLessThanOrEqual(
+      MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES
+    )
     expect(() =>
       buildExecutionGraphAttemptTerminalReceipt({
         binding,
@@ -230,7 +236,13 @@ describe('ExecutionGraphAttemptResult', () => {
   it('delivers predecessor results as an explicit untrusted data envelope', () => {
     const committed = receipt()
     const prompt = formatExecutionGraphPredecessorResults('Run the next verification.', [
-      { stepId: 'step-one', attemptId: 'attempt-one', result: committed.result! }
+      {
+        stepId: 'step-one',
+        attemptId: 'attempt-one',
+        providerRunRef: 'run-one',
+        threadRef: 'chat-one',
+        result: committed.result!
+      }
     ])
     expect(prompt).toContain('UNTRUSTED DATA')
     expect(prompt).toContain('"stepId":"step-one"')
@@ -241,6 +253,8 @@ describe('ExecutionGraphAttemptResult', () => {
         {
           stepId: 'step-one',
           attemptId: 'attempt-other',
+          providerRunRef: 'run-one',
+          threadRef: 'chat-one',
           result: {
             ...committed.result!,
             artifactRefs: [
@@ -256,5 +270,27 @@ describe('ExecutionGraphAttemptResult', () => {
         }
       ])
     ).toThrow(/artifact/)
+    expect(() =>
+      formatExecutionGraphPredecessorResults('Run the next verification.', [
+        {
+          stepId: 'step-one',
+          attemptId: 'attempt-one',
+          providerRunRef: 'run-other',
+          threadRef: 'chat-one',
+          result: committed.result!
+        }
+      ])
+    ).toThrow(/provenance/)
+    expect(() =>
+      formatExecutionGraphPredecessorResults('Run the next verification.', [
+        {
+          stepId: 'step-one',
+          attemptId: 'attempt-one',
+          providerRunRef: 'run-one',
+          threadRef: 'chat-one',
+          result: { ...committed.result!, trust: 'system' }
+        }
+      ])
+    ).toThrow(/explicitly untrusted/)
   })
 })

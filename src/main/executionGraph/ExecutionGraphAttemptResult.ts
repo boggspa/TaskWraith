@@ -81,6 +81,7 @@ export interface ExecutionGraphAttemptTerminalReceipt {
   readonly status: 'completed' | 'failed' | 'cancelled'
   readonly committedAt: string
   readonly contentDigest: string
+  readonly evidenceRefs: readonly string[]
   readonly result?: ExecutionStepResult
   readonly error?: string
   readonly receiptDigest: string
@@ -352,6 +353,14 @@ export function isBoundedExecutionGraphAttemptError(value: unknown): value is st
   return isBoundedNonEmptyString(value, MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES)
 }
 
+export function boundExecutionGraphAttemptError(
+  value: string | undefined
+): string | undefined {
+  const normalized = value?.trim()
+  if (!normalized) return undefined
+  return truncateUtf8(normalized, MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES)
+}
+
 export function isBoundedExecutionGraphResultReference(value: unknown): value is string {
   return isBoundedNonEmptyString(value, MAX_EXECUTION_GRAPH_RESULT_REFERENCE_BYTES)
 }
@@ -415,6 +424,7 @@ export function buildExecutionGraphAttemptTerminalReceipt(input: {
     status: input.status,
     committedAt: exact(input.committedAt, 'Result commit timestamp', 128),
     contentDigest: createHash('sha256').update(content).digest('hex'),
+    evidenceRefs,
     ...(result ? { result } : {}),
     ...(overflowError || missingOutputError || inputError
       ? { error: overflowError || missingOutputError || inputError }
@@ -483,6 +493,18 @@ export function resolveExecutionGraphTerminalBarrier(input: {
   } else if (receipt.result) {
     return { ok: false, reason: 'A non-success terminal receipt cannot contain a result.' }
   }
+  try {
+    if (
+      uniqueEvidenceRefs(receipt.evidenceRefs).length !== receipt.evidenceRefs.length ||
+      (receipt.result &&
+        stableExecutionGraphStringify(receipt.result.evidenceRefs ?? []) !==
+          stableExecutionGraphStringify(receipt.evidenceRefs))
+    ) {
+      return { ok: false, reason: 'The attempt result receipt evidence is invalid.' }
+    }
+  } catch {
+    return { ok: false, reason: 'The attempt result receipt evidence is invalid.' }
+  }
   if (receipt.error && !isBoundedExecutionGraphAttemptError(receipt.error)) {
     return { ok: false, reason: 'The attempt result receipt contains an invalid error.' }
   }
@@ -500,15 +522,22 @@ export function formatExecutionGraphPredecessorResults(
   predecessors: readonly {
     readonly stepId: string
     readonly attemptId: string
+    readonly providerRunRef: string
+    readonly threadRef: string
     readonly result: ExecutionStepResult
   }[]
 ): string {
   if (predecessors.length === 0) return currentPrompt
   for (const predecessor of predecessors) {
     const validation = validateExecutionGraphAttemptResult(predecessor.result, {
-      attemptId: predecessor.attemptId
+      attemptId: predecessor.attemptId,
+      providerRunRef: predecessor.providerRunRef,
+      threadRef: predecessor.threadRef
     })
     if (!validation.ok) throw new Error(validation.reason)
+    if (predecessor.result.trust !== 'untrusted_agent_output') {
+      throw new Error('A predecessor agent result must remain explicitly untrusted.')
+    }
   }
   const envelope = stableExecutionGraphStringify({
     schemaVersion: 1,
@@ -518,6 +547,8 @@ export function formatExecutionGraphPredecessorResults(
     predecessors: predecessors.map((predecessor) => ({
       stepId: predecessor.stepId,
       attemptId: predecessor.attemptId,
+      providerRunRef: predecessor.providerRunRef,
+      threadRef: predecessor.threadRef,
       result: predecessor.result
     }))
   })

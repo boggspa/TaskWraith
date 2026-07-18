@@ -111,6 +111,17 @@ describe('ExecutionGraphAttemptTranscript', () => {
         receipt
       )
     ).toBe(false)
+    expect(
+      verifyExecutionGraphAttemptReceiptOnChat(
+        {
+          ...committed,
+          messages: committed.messages.map((message) =>
+            message.role === 'assistant' ? { ...message, content: 'Mutated output.' } : message
+          )
+        },
+        receipt
+      )
+    ).toBe(false)
   })
 
   it('rejects projection after the root chat or run binding changes', () => {

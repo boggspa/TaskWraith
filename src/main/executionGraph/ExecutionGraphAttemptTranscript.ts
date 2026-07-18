@@ -1,3 +1,4 @@
+import { createHash } from 'node:crypto'
 import type {
   ChatMessage,
   ChatRecord,
@@ -322,12 +323,57 @@ export function verifyExecutionGraphAttemptReceiptOnChat(
     ) {
       return false
     }
-    return (receipt.result?.evidenceRefs ?? []).every((messageId) =>
-      chat.messages.some(
-        (message) => message.id === messageId && message.runId === receipt.binding.providerRunRef
-      )
+    const evidence = executionGraphAttemptEvidenceContent(
+      chat,
+      receipt.binding,
+      receipt.evidenceRefs
     )
+    if (!evidence) return false
+    if (
+      createHash('sha256').update(evidence.assistantContent).digest('hex') !==
+      receipt.contentDigest
+    ) {
+      return false
+    }
+    return receipt.status !== 'completed' || evidence.assistantContent.trim().length > 0
   } catch {
     return false
   }
+}
+
+export function executionGraphAttemptEvidenceContent(
+  chat: ChatRecord,
+  binding: ExecutionGraphAttemptResultBinding,
+  evidenceRefs: readonly string[]
+): { readonly assistantContent: string } | undefined {
+  exactChatForBinding(chat, binding)
+  const expectedBinding = stableExecutionGraphStringify(bindingMetadata(binding))
+  const seen = new Set<string>()
+  const assistantParts: string[] = []
+  for (const messageId of evidenceRefs) {
+    if (seen.has(messageId)) return undefined
+    seen.add(messageId)
+    const matches = chat.messages.filter((message) => message.id === messageId)
+    if (matches.length !== 1) return undefined
+    const message = matches[0]
+    if (
+      message.runId !== binding.providerRunRef ||
+      (message.role !== 'assistant' && message.role !== 'tool' && message.role !== 'error') ||
+      message.metadata?.kind !== 'executionGraphAttemptOutput' ||
+      stableExecutionGraphStringify({
+        schemaVersion: message.metadata.schemaVersion,
+        executionId: message.metadata.executionId,
+        activationId: message.metadata.activationId,
+        attemptId: message.metadata.attemptId,
+        providerRunRef: message.metadata.providerRunRef,
+        workspaceId: message.metadata.workspaceId,
+        rootChatId: message.metadata.rootChatId,
+        provider: message.metadata.provider
+      }) !== expectedBinding
+    ) {
+      return undefined
+    }
+    if (message.role === 'assistant') assistantParts.push(message.content)
+  }
+  return { assistantContent: assistantParts.join('') }
 }
