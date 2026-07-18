@@ -1,12 +1,58 @@
 # Windows Parity QA
 
-Use this matrix before promoting a Windows release build.
+Use this reusable template before promoting a Windows release build. A blank,
+`Pending`, or `Not run` field is not a pass. Copy the template for each release;
+do not carry results or evidence forward from an earlier version.
+
+## Release Record
+
+- Version: `TBD`
+- Candidate commit/tag: `TBD`
+- Test cycle started (UTC): `TBD`
+- Test cycle completed (UTC): `TBD`
+- QA owner: `TBD`
+- Overall result: `Not run` (`Pass` / `Fail` / `Blocked` / `Not run`)
+- Evidence location: `TBD`
+- Blocking issues or release notes: `TBD`
+
+## Artifact And Signing Record
+
+Record the exact candidate bytes tested. Verify checksums independently rather
+than copying an unverified value from the build output.
+
+| Architecture | Artifact filename | SHA-256 | File size | Signing identity | Signature result | Update-feed URL/build | Result |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows x64 | `TBD` | `TBD` | `TBD` | `TBD` | `Not checked` | `TBD` | `Not run` |
+| Windows ARM64 | `TBD` | `TBD` | `TBD` | `TBD` | `Not checked` | `TBD` | `Not run` |
+
+For intentionally unsigned preview artifacts, record `Unsigned preview` under
+Signing identity and confirm that both the filename and release notes disclose
+that status.
+
+## Runner Matrix
+
+Use one row per tested environment. The runner field should name the person or
+automation job that produced the evidence.
+
+| Environment | Host / hypervisor | OS build | Architecture | Display scales | Runner | Date (UTC) | Result | Evidence / issue |
+| --- | --- | --- | --- | --- | --- | --- | --- | --- |
+| Windows 11 | `TBD` | `TBD` | ARM64 | 100–200% | `TBD` | `TBD` | `Not run` | `TBD` |
+| Windows 11 | `TBD` | `TBD` | x64 | 100–200% | `TBD` | `TBD` | `Not run` | `TBD` |
+| Windows 10 | `TBD` | `TBD` | x64 | 100–200% | `TBD` | `TBD` | `Not run` | `TBD` |
+
+Allowed results are `Pass`, `Fail`, `Blocked`, and `Not run`. A release passes
+this template only when every required environment and checklist item has a
+named runner, dated evidence, and a passing result or a documented release
+exception approved by the release owner.
 
 ## Install And Update
 
-- Windows 11 ARM64 in Parallels: install `TaskWraith-*-win-arm64-setup.exe`, launch, uninstall, reinstall.
-- Windows 11 x64: install `TaskWraith-*-win-x64-setup.exe`, launch, uninstall, reinstall.
-- Windows 10 x64: install `TaskWraith-*-win-x64-setup.exe`, launch, uninstall, reinstall.
+- Windows 11 ARM64 in Parallels: install the recorded ARM64 artifact, launch,
+  uninstall, and reinstall. Result/evidence: `Not run` / `TBD`.
+- Windows 11 x64: install the recorded x64 artifact, launch, uninstall, and
+  reinstall. Result/evidence: `Not run` / `TBD`.
+- Windows 10 x64: install the recorded x64 artifact, launch, uninstall, and
+  reinstall. Result/evidence: `Not run` / `TBD`.
 - Run `pwsh -NoProfile -ExecutionPolicy Bypass -File scripts/smoke-win-installer.ps1 -InstallerPath <installer>`.
 - For signed builds, confirm installer, installed `TaskWraith.exe`, and
   uninstaller Authenticode signatures are valid. For intentionally unsigned
@@ -46,3 +92,15 @@ Capture each at 100%, 125%, 150%, and 200% scale where the OS supports it:
 - Appwatch/Appshots MCP calls return structured unsupported results without approval prompts.
 - File-based creative parsing remains visible and usable when the underlying file/runtime exists.
 - AppleEvents, Final Cut Pro, Logic Pro, and live native bridge controls are hidden or explicitly annotated as macOS-only.
+
+## Sign-Off
+
+- Required environments complete: `No`
+- Artifact checksums verified: `No`
+- Signing state verified and documented: `No`
+- Update architecture routing verified: `No`
+- Accessibility and visual evidence reviewed: `No`
+- Open blockers: `TBD`
+- Release owner: `TBD`
+- Final decision: `Not run`
+- Decision date (UTC): `TBD`

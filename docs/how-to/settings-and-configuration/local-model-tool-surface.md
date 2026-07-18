@@ -3,26 +3,30 @@
 **Platform:** Electron + iOS (behavior applies to any local Ollama-backed participant)
 
 ## What it is
-Local models run through Ollama get the *same* full TaskWraith tool catalog as every cloud provider, but they are **shown** a much smaller, curated set. Small local models degrade badly when handed 140+ tool names at once ("too many tools"), so TaskWraith advertises a curated **~22-tool working set** and keeps the rest reachable on demand. This is a presentation choice only — the executable surface and the security gate are unchanged.
+Local models run through Ollama use the same TaskWraith capability catalog and permission gates as cloud providers, but the top-level tool list stays compact. The current gateway profile advertises **39 direct tools** plus `capability_search` and `capability_invoke`. Specialized tools remain available behind the gateway instead of inflating the model's function list.
+
+<!-- screenshot-pending: Provider Tools view showing Ollama's gateway profile and compact direct tool surface -->
 
 ## How the surface is shaped
-1. **Advertised working set (~22 tools).** The system preamble and the native function definitions list only the common tools (read/search, edit, shell, web, todos, `goal_read`, `ask_user_question`). This is what the model sees.
-2. **`tool_help` for the tail.** Every other tool stays discoverable: the model calls `tool_help` (empty name to list everything, or a name for that tool's exact arguments). `tool_help` reads from the same generated `resources/Tools.md` catalog.
-3. **Full catalog stays executable.** When the model names *any* real tool — advertised or not — it runs, gated by the run's permission role at the approval seam (`executeOllamaLocalTool`). Curation never blocks execution.
-4. **Constrained decoding.** On the text (JSON) protocol, TaskWraith constrains Ollama's decoding grammar to the full callable catalog, so the model can only emit a *valid* tool name — including a tail tool it just discovered via `tool_help`.
+1. **Direct surface (39 tools).** Common workspace reads and edits, shell and Git actions, user decisions, goals/todos, delegation, and Ensemble coordination are callable by their own names.
+2. **Discovery gateway.** For a specialized capability, the model calls `capability_search` with a short description. The result includes exact names and schemas that are eligible for that run.
+3. **Hidden-tool invocation.** The model passes a discovered name and arguments to `capability_invoke`. The target keeps its original approval policy, workspace and network guards, write locks, budgets, media handling, and audit identity.
+4. **Legacy lookup.** Ollama still accepts `tool_help` for backwards-compatible schema lookup, but new prompts teach `capability_search` followed by `capability_invoke`.
+5. **Constrained decoding.** On the text/JSON protocol, the top-level grammar contains the direct tools, the two gateway tools, and legacy `tool_help`. Hidden tool names travel as `capability_invoke` arguments; they do not expand the top-level grammar.
 
 ## What the run's permission role changes
-- **Network denied** (global kill switch or a preview-risk model): `web_search` / `web_fetch` are dropped from the advertisement *and* the grammar, matching the gate.
-- **Read-only / plan run:** file-edit and shell tools (`write_file`, `replace`, `apply_patch`, `run_shell_command`, …) are hard-denied by the gate, so they are also dropped from the advertisement. The model is told plainly that the run is read-only instead of being shown tools it could only get denied.
-- **Default / workspace-write / full-access:** the full advertised set is shown; edits and shell either prompt for approval or auto-allow per your policy.
+- **Network denied:** network targets such as `web_search` and `web_fetch` are not eligible through the gateway, matching the run's network gate.
+- **Read-only / plan run:** the 39-tool baseline is intersected with the shared read-only profile; edit and shell actions are not directly advertised, and mutating hidden targets remain ineligible.
+- **Default / workspace-write / trusted postures:** the full direct profile is available; edits and shell either prompt or run according to the effective permission policy.
 
 ## If a local model misbehaves
-- **It "forgets" a tool exists** → that's expected; the tail is intentionally hidden. It can always `tool_help` to find it.
+- **It "forgets" a tool exists** → the specialized tail is intentionally hidden. Ask it to use `capability_search`, then `capability_invoke` with the returned schema.
 - **It loops on empty/garbled turns** → a retry ceiling stops it after a few non-productive turns rather than nudging forever.
-- **It names a tool that doesn't exist** → the call is rejected with a specific "that isn't a tool, use `tool_help`" repair, not a silent drop.
+- **It calls a hidden tool directly** → the runtime rejects the direct call and tells the model to use the capability gateway.
+- **It names a tool that doesn't exist** → discovery or invocation returns a specific validation error rather than silently dropping the call.
 
 ## Tips & related
 - [Provider tools tab](provider-tools-tab.md) — audit the full TaskWraith tool catalog and per-provider bridge status.
 - [Providers tab](providers-tab.md) — sign in and check runtime health for Ollama and the cloud providers.
-- [Safety and privacy tab](safety-and-privacy-tab.md) — set the approval policies (read-only / plan / default / …) that gate every tool above.
-- [Local servers tab](local-servers-tab.md) — configure the local Ollama endpoint and models.
+- [Provider, model, and permissions pickers](../composer/provider-model-permissions-pickers.md) — choose the run's Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session posture.
+- [Providers tab](providers-tab.md) — configure the Ollama endpoint and default local model.

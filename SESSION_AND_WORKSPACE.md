@@ -9,9 +9,9 @@ where a provider or CLI does not expose native controls.
 ## Prompt caching (BYOK and API paths)
 
 TaskWraith tracks **cache read** and **cache creation** tokens in Model Usage
-when a provider reports them. This release adds a **guarantee tier** per
-provider transport so you can see what TaskWraith can enforce versus what is
-best-effort or opaque.
+when a provider reports them. Each provider transport has a **guarantee tier**
+so you can see what TaskWraith can enforce versus what is best-effort or
+opaque.
 
 ### Guarantee tiers
 
@@ -28,7 +28,7 @@ an owned API request can.
 
 ### Settings
 
-Open **Settings → Providers** and scroll to **Prompt caching**:
+Open **Settings → AI & Providers → Providers** and scroll to **Prompt caching**:
 
 - Global enable/disable for cache policy.
 - Per live provider **mode** (`off`, `auto`, `explicit`) where mode control is
@@ -98,8 +98,8 @@ merge provider-native session state the provider never exposed.
 ## Worktree and branch orchestration
 
 The composer **above row** (Create PR strip) shows workspace, branch, commits
-ahead, diff stats, and changed files. This release adds interactive branch and
-worktree controls.
+ahead, diff stats, and changed files, with interactive branch and worktree
+controls.
 
 ### Branch popover
 
@@ -139,8 +139,8 @@ does not silently remove worktrees that still have uncommitted changes.
 
 ## Related surfaces
 
-- **Sub-threads** — cross-provider delegation; not the same as fork (see
-  `AGENTS.md`).
+- **Sub-threads** — same- or cross-provider isolated delegation; not the same
+  as fork (see `AGENTS.md`).
 - **Ensemble mode** — shared transcript; per-participant worktree isolation is
   optional and policy-dependent, not automatic for every seat.
 - **Create PR** — shares git snapshot sources with the branch popover.

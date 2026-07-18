@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Sub-thread delegation spawns a new, context-isolated chat under a parent chat and hands part of the work to a different provider. It can be started manually from the sidebar, or an agent can trigger it itself via the `delegate_to_subthread` tool. When the sub-thread finishes, its result can be returned and auto-appended to the parent transcript as a return card.
+Sub-thread delegation spawns a new, context-isolated chat under a parent chat and hands part of the work to a fresh provider seat. The child may use the same provider as its parent or a different one. Delegation can be started manually from the sidebar, or an agent can trigger it itself via the `delegate_to_subthread` tool. When the sub-thread finishes, its result can be returned and auto-appended to the parent transcript as a return card.
 
 ## Where to find it
 Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread**. An agent running in the chat can also call delegation as a tool during its turn, which prompts you for approval before anything is created.

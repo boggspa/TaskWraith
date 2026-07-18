@@ -18,6 +18,6 @@ Pin a message from its hover action chip or right-click context menu in any tran
 
 ## Tips & related
 - [Message context menu](../transcript-and-search/message-context-menu.md) — where the Pin/Unpin action lives alongside Copy, Side Chat, and Delete.
-- [Right dock rim](../transcript-and-search/right-dock-rim.md) — the toolbar of tabs (Run/Media/Notes/Files/Inspect) that the Notes panel belongs to.
+- [Right dock rim](../transcript-and-search/right-dock-rim.md) — the contextual Home/Chat/Run/Media/Notes/Files/Inspect/Term toolbar that the Notes panel belongs to.
 - [Workspace Boards](../workflows-and-boards/workspace-boards.md) — pinned messages can be added directly to a board from their card.
 - [Side Chat](side-chat.md) — another action available from the same message context menu.

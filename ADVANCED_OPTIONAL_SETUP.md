@@ -17,7 +17,7 @@ review, Diff Studio, or TaskWraith-owned tool parity.
 | Feature | External setup | Maturity |
 | --- | --- | --- |
 | Ollama local models | Install Ollama and pull at least one supported model. | Supported optional path |
-| Kimi | Paste a Moonshot API key. | Supported optional provider |
+| Kimi | Sign in with `kimi login` (device-code OAuth). A saved Moonshot key is retained for legacy non-ACP paths; it does not authenticate Kimi Code ACP. | Supported optional provider |
 | Claude API-key mode | Paste an Anthropic API key instead of using Claude Code login. | Supported optional auth mode |
 | Image generation | Enable the tool and paste an OpenAI or xAI image API key. | Optional, off by default |
 | iOS Remote | Install the companion app, pair it with the Mac, optionally add Tailscale for off-LAN access. | Working beta / TestFlight phased |
@@ -73,32 +73,38 @@ not a separate safety-tier ladder.
 ## API Keys
 
 Some optional providers and tools use API keys instead of, or in addition to,
-CLI login.
+CLI login. Kimi Code ACP uses the credential file created by `kimi login`.
 
-- **Kimi:** paste a Moonshot API key in Settings -> Providers -> Kimi.
-- **Claude API-key mode:** paste an Anthropic API key in Settings -> Providers
-  -> Claude. This takes priority over the Claude Code login session and uses
+- **Kimi:** run `kimi login` and complete the device-code OAuth flow. Settings
+  can retain a Moonshot API key for legacy Wire/print transports, but that key
+  is not an authentication alternative for the current Kimi Code ACP path.
+- **Claude API-key mode:** paste an Anthropic API key in **Settings → AI &
+  Providers → Providers → Claude**. This takes priority over the Claude Code login session and uses
   API/PAYG billing.
-- **Image generation:** open Settings -> MCP servers and TaskWraith tools,
+- **Image generation:** open Settings -> Integrations -> Provider Tools,
   enable `image_generate`, choose OpenAI or xAI Grok, and save the matching API
   key.
 
-TaskWraith stores these keys through platform secure storage on the Mac. If
+TaskWraith stores these keys through platform secure storage on the computer. If
 secure storage is unavailable, API-key save controls refuse to store new keys.
 
-### Prompt caching (BYOK)
+### Prompt caching
 
-When you use **Claude API-key mode** or **Kimi API-key mode**, TaskWraith can
-apply a **prompt caching policy** on API/BYOK transports it controls. Open
-**Settings → Providers → Prompt caching** to review guarantee badges
-(Guaranteed / Automatic / Best effort / Unsupported), per-provider modes
-(`off` / `auto` / `explicit`), and recent cache diagnostics when reported.
+Open **Settings → AI & Providers → Providers → Prompt caching** to review guarantee badges
+(Guaranteed / Automatic / Best effort / Unsupported), any transport-supported
+mode controls, and recent cache diagnostics when reported. In the current
+source, the live Claude and Kimi runtime paths are classified as opaque CLI/SDK
+transports: **Best effort**, with no TaskWraith-controlled cache mode. Saving an
+API key does not by itself make either path Guaranteed.
 
 Important limits:
 
 - **CLI login paths** (Codex, Claude Code, Kimi CLI, Cursor, Grok) are **best
   effort** — TaskWraith cannot force provider-side caching inside a closed CLI;
   it only displays cache stats when the CLI emits them.
+- A **Guaranteed** badge is reserved for a transport where TaskWraith actually
+  owns and controls the API request; the current Claude/Kimi paths do not meet
+  that boundary.
 - **Automatic** tiers reflect provider-managed implicit caching observed in
   usage metadata, not TaskWraith-managed breakpoints.
 - Caching affects cost/latency on repeated stable prefixes; it does not replace
@@ -241,7 +247,7 @@ For cautious users, enable optional surfaces in this order:
 
 1. Core provider CLI/API setup in a scratch workspace.
 2. Local Ollama testing in Read-only/Recon or Plan workflow.
-3. Optional API-key tools such as Kimi or image generation.
+3. Optional provider sign-ins and API-key tools such as Kimi or image generation.
 4. iOS Remote on the same LAN.
 5. Tailscale for off-LAN iOS Remote.
 6. Screen Watch on a non-sensitive window.

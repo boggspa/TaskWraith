@@ -1,15 +1,18 @@
 # How-To Manual — Screenshot Shot List
 
-83 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below.
-Once captured (all at once or per section), tell Claude and it will wire the `![]()` image tags into the pages in one pass.
+85 screenshots, one per guide page. Save each PNG to `docs/how-to/images/` with the exact **Save as** filename below, then replace the matching `screenshot-pending` comment with the image tag.
+
+Current inventory after the 2026-07-18 latest-source capture pass: **63 captured, 22 pending**. See [`REMAINING.md`](REMAINING.md) for the unresolved set.
+
+The current refresh uses latest-source development apps, not an installed release build. Existing captures can be replaced in place without changing the inventory count.
 
 ## Capture settings
 
-- **Format:** PNG, Retina/2x (macOS `Cmd+Shift+4` then Space to grab a window gives 2x automatically on a Retina display).
-- **Theme:** default (light) theme unless the page is about Appearance/dark mode. Keep it consistent across shots.
-- **Scope:** capture just the relevant panel/control described, not the whole 1440px window, so the detail is legible. A tight crop around the feature is better than a full-window shot.
+- **Format:** PNG at native display resolution. Do not upscale a small capture.
+- **Theme:** use a consistent current theme unless the page specifically documents Appearance or dark mode.
+- **Scope:** capture or crop to the relevant panel/control so the detail remains legible. Include surrounding chrome only when it explains where the feature lives.
 - **State:** put the UI in the state the caption describes (e.g. a popover open, a chip active, an ensemble running).
-- **Privacy:** avoid real workspace paths / private chat content where possible — use a demo workspace.
+- **Privacy:** use only the authorized `Test 1` through `Test 4` workspaces for live examples. Workspace names, agent/task metrics, usage telemetry, and live demo transcripts are acceptable; full private file paths, secrets, pairing QR codes, and unrelated personal content are not. Crop or redact before committing when necessary.
 
 ## Shots
 
@@ -21,7 +24,7 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | `approvals-and-permissions__approval-ledger.png` | Electron | Approval Ledger panel with filter and export controls | **Settings → Automation → Approvals & Grants.** |
 | `approvals-and-permissions__approval-timeouts.png` | Electron | Settings panel showing approval timeout fields per provider | Settings → **Behavior** tab → **Timeout windows** section. |
 | `approvals-and-permissions__pending-approval-modal.png` | Electron | Pending approval modal showing Accept / Decline options with countdown | Appears automatically above the composer for the chat that triggered the request, whenever an agent's action needs your approval. |
-| `approvals-and-permissions__permission-elevation-sheet.png` | Electron | Permission elevation sheet showing posture options | Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Default Approval or Full Workspace Access. |
+| `approvals-and-permissions__permission-elevation-sheet.png` | Electron | Permission elevation sheet showing posture options | Appears automatically over the current chat when you raise the **permissions chip** in the composer (or the side-chat composer) to Default Approval, Workspace Write, or Trusted Session. |
 | `approvals-and-permissions__provider-agentic-policies.png` | Electron | Provider settings showing agentic policy matrix | **Settings → AI & Providers → Providers → Agentic services.** A read-only summary ("Policy posture") also appears on **Settings → Data → Safety & Privacy**, with an **Edit policies** button that jumps back here. |
 
 ### canvas-and-previews
@@ -36,8 +39,8 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `chats-and-threads__chat-types.png` | Electron | Sidebar showing various chat types (workspace, ensemble, shared, workflow) | The sidebar groups chats into sections: **Pinned**, **Recents**, **Ensembles**, **Workspaces** (each with its own chat list and Workflows/Workspace Boards), **Chats** (General chats not tied to a workspace), and **Shared**. |
-| `chats-and-threads__in-chat-search.png` | Electron | In-chat search bar with highlighted results in the transcript | In any chat, press **⌘F** to open the search bar above the transcript. |
+| `chats-and-threads__chat-types.png` | Electron | Chat surface with the Chat / Code / Work switcher and chat, Shared, and Ensemble sections | Use **Chat** for General chats, **Code** for workspace-scoped threads/workflows/boards, and **Work** for Projects; Pinned, Recents, Ensembles, and Shared are scoped to the active Chat or Code surface. |
+| `chats-and-threads__in-chat-search.png` | Electron | In-chat search bar with highlighted results in the transcript | In any chat, press **⌘F** on macOS or **Ctrl+F** on Windows/Linux to open the search bar above the transcript. |
 | `chats-and-threads__pinned-messages.png` | Electron | Pinned messages panel in the right dock | Pin a message from its hover action chip or right-click context menu in any transcript. |
 | `chats-and-threads__side-chat.png` | Electron | Side chat panel docked on the right | Open the **linked chat menu** (the split-pane icon with a chevron, in the chat header next to the other corner buttons) and choose how to open it: - **Open isolated side split** — docks a sidecar pane beside the current chat with a copied parent snapshot. |
 | `chats-and-threads__sub-thread-delegation.png` | Electron | Sub-thread delegation card and return card in a chat transcript | Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread**. |
@@ -58,12 +61,12 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous / Work Session mode picker, whenever Continuous mode is active for the current round. |
-| `ensemble-mode__create-ensemble-chat.png` | Electron | New draft composer with the Ensemble button highlighted in the bottom row | Create a new draft, then use the **Ensemble** button in the composer's bottom row before first send, or use the **+** button in the sidebar's **Ensembles** section header. |
+| `ensemble-mode__create-ensemble-chat.png` | Electron | Active new Ensemble draft with roster controls and participant chips | Create a new draft, turn **Ensemble** on before first send, and capture the active Ensemble composer plus its roster controls. |
 | `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous / Work Session orchestration mode picker in the composer's action row. |
 | `ensemble-mode__ios-ensemble-ui.png` | iOS | iOS companion showing ensemble strip and roster sheet | Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. |
 | `ensemble-mode__mention-yield-routing.png` | Electron | Composer showing an @-mention being typed with role autocomplete | Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. |
 | `ensemble-mode__participant-chip-strip.png` | Electron | Participant chip strip above composer with multiple provider chips | In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. |
-| `ensemble-mode__round-cards.png` | Electron | Ensemble transcript showing collapsed round cards | Round cards appear automatically in the transcript of any Ensemble chat. |
+| `ensemble-mode__round-cards.png` | Electron | Manually expanded completed Ensemble round with participant activity and close-out card | Expand a completed round after its close-out appears; live rounds stay flat, while close-out-backed completed rounds collapse by default. |
 | `ensemble-mode__saved-roster-presets.png` | Electron | Ensemble roster settings panel with saved presets | Settings → **AI & Providers → Ensemble roster** for the full editor (create, duplicate, rename, delete, and edit every participant). |
 
 ### footer-control-row
@@ -78,10 +81,10 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `getting-started__add-workspace.png` | Electron | Sidebar masthead + button or Settings Workspaces tab | Click the **+** button in the **sidebar masthead**, or go to **Settings → Workspaces**. |
-| `getting-started__first-launch-sheet.png` | Electron | First Launch Sheet showing welcome, theme preview, and provider auth cards | It appears automatically the first time you launch TaskWraith. |
+| `getting-started__add-workspace.png` | Electron | Workspaces section header with its Add workspace plus button | Select **Code**, then click the **+** button on the **Workspaces** section header, or go to **Settings → Workspaces → Workspaces**. |
+| `getting-started__first-launch-sheet.png` | Electron | Top of the First Launch Sheet showing provider status and authentication actions | It appears automatically the first time you launch TaskWraith. |
 | `getting-started__sidebar-onboarding-hint.png` | Electron | Sidebar onboarding hint card under the + button | In the **Sidebar**, directly under the **+** (Add workspace) button, when no workspaces are loaded. |
-| `getting-started__welcome-screen.png` | Electron | Welcome screen with greeting, starter prompts, and usage dashboard | Appears automatically in the **center stage** when no chat is selected (e.g. |
+| `getting-started__welcome-screen.png` | Electron | General welcome draft with greeting, composer, and Weather/Sky backdrop | Appears in the **center stage** when a selected General draft is pristine and idle; workspace drafts can additionally show usage and activity dashboards. |
 
 ### goals-todos-and-scheduling
 
@@ -105,10 +108,10 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `notifications-and-status__notification-zone.png` | Electron | Notification zone showing a sample toast/alert banner | It appears on the welcome / new-thread screen (the center stage shown when no chat is selected) and on the First Launch Sheet shown on your first run. |
+| `notifications-and-status__notification-zone.png` | Electron | Notification zone showing a sample toast/alert banner | It appears on the welcome / new-thread screen for a selected pristine, idle draft and on the First Launch Sheet shown on your first run. |
 | `notifications-and-status__participant-health.png` | Electron | ParticipantHealthCard showing ok/warning states for multiple providers | Participant health cards appear automatically, inline in the transcript, in any Ensemble chat — they're inserted just before a round dispatches, as the orchestrator's pre-flight check on each participant. |
 | `notifications-and-status__provider-health-chips.png` | Electron | OllamaHealthChip showing green/connected state next to provider picker | Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. |
-| `notifications-and-status__push-notifications.png` | Electron | iOS push notification from TaskWraith on the lock screen | Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. |
+| `notifications-and-status__push-notifications.png` | iOS | iOS push notification from TaskWraith on the lock screen | Push notifications arrive as system notifications on the paired iPhone/iPad — there's no in-app notification list to open. |
 | `notifications-and-status__sub-thread-status-ticker.png` | Electron | SubThreadStatusTicker showing running/completed sub-thread states | It renders inline above the transcript of the parent chat, and only appears while at least one of that chat's sub-threads is running — it disappears again once all sub-threads finish or stop. |
 
 ### settings-and-configuration
@@ -120,6 +123,7 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | `settings-and-configuration__general-tab.png` | Electron | General tab showing behavior settings, context turns slider, and product ops section | Open **Settings → App → General**. |
 | `settings-and-configuration__keyboard-shortcuts-tab.png` | Electron | Keyboard shortcuts tab showing editable keybinding list | Open the sidebar footer **Settings** entry, then choose **Keyboard shortcuts** under the App group in the Settings sidebar rail. |
 | `settings-and-configuration__local-servers-tab.png` | Electron | Local servers tab showing dev server list with workspace associations | **Settings → Integrations → Local servers** |
+| `settings-and-configuration__local-model-tool-surface.png` | Electron | Provider Tools view showing Ollama's gateway profile and compact direct tool surface | **Settings → Integrations → Provider Tools**; select or filter for Ollama and show the 39 direct tools plus the capability gateway. |
 | `settings-and-configuration__mcp-servers-tab.png` | Electron | MCP servers tab showing server list with add/edit/import controls | **Settings → Integrations → MCP Servers** |
 | `settings-and-configuration__model-usage-tab.png` | Electron | Model usage tab showing usage dashboard, API rates table, and context lengths table | Open **Settings → Data → Model usage**. |
 | `settings-and-configuration__plugins-tab.png` | Electron | Plugins tab showing marketplace and installed plugin list | **Settings → Integrations → Plugins** |
@@ -134,11 +138,12 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
 | `sidebar-navigation__overflow-menus.png` | Electron | Sidebar overflow menu expanded on a workspace or chat item | In the **Sidebar**, on any workspace or chat item — click the **⋯** (overflow) button or right-click the item. |
+| `sidebar-navigation__project-reference-library.png` | Electron | Selected Project detail showing the metadata-only file, folder, and link References controls | Select **Work**, then select a Project; the References controls appear in its expanded detail panel. |
 | `sidebar-navigation__settings-entry.png` | Electron | Sidebar footer with Settings button highlighted | In the **Sidebar footer** — click the **Settings** (gear) button. |
-| `sidebar-navigation__sidebar-search.png` | Electron | Sidebar search bar focused with results | In the **Sidebar** — press **⌘⇧F** to focus the search field, or click the search icon. |
-| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing all hierarchical sections | In the **left sidebar panel** of the TaskWraith main window. |
+| `sidebar-navigation__sidebar-search.png` | Electron | Surface-scoped sidebar search focused with results | Select **Chat**, **Code**, or **Work**, then focus the search field below the switcher; capture text/results appropriate to that surface. |
+| `sidebar-navigation__sidebar-sections.png` | Electron | Sidebar showing the Chat / Code / Work switcher and current Chat hierarchy | In the **left sidebar panel** of the TaskWraith main window, with **Chat** selected and its hierarchy visible. |
 | `sidebar-navigation__update-pill.png` | Electron | Sidebar update pill above the masthead | In the **Sidebar**, directly above the masthead (workspace name / + button area), for as long as an update is available, downloading, downloaded, or has hit an error. |
-| `sidebar-navigation__workspace-and-chat-tree.png` | Electron | Sidebar workspace tree with expanded chats and sub-thread indents | In the **Sidebar**, under the **Workspaces** and **Chats** sections. |
+| `sidebar-navigation__workspace-and-chat-tree.png` | Electron | Tight crop of an expanded authorized test workspace with a parent and linked child | Select **Code**, expand a workspace in **Workspaces**, then expand a thread with a linked side chat or sub-thread. Keep full filesystem paths and unrelated workspace names out of frame. |
 
 ### transcript-and-search
 
@@ -161,8 +166,8 @@ Once captured (all at once or per section), tell Claude and it will wire the `![
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `workflows-and-boards__board-overflow-actions.png` | Electron | Board overflow menu showing pin, rename, duplicate, archive options | In the sidebar's **Workspace Boards** section, hover a board row and click its **⋯** button, or right-click the row directly. |
-| `workflows-and-boards__workflow-compose-controls.png` | Electron | Workflow compose controls showing cadence and interval pickers | Open the **Workflows** section in the sidebar and click the **+** (New workflow) button. |
-| `workflows-and-boards__workflow-creator.png` | Electron | Workflow creator modal with name, prompt, and cadence fields | In the sidebar's **Workflows** section, click the **+** ("New workflow") button. |
-| `workflows-and-boards__workflows-sidebar-section.png` | Electron | Sidebar showing Workflows section with workflow list | In the sidebar's hierarchy list, below Active Runs and Local Servers, and above Workspace Boards. |
-| `workflows-and-boards__workspace-boards.png` | Electron | Workspace board view with kanban columns and cards | Sidebar → **Workspace Boards** section. |
+| `workflows-and-boards__board-overflow-actions.png` | Electron | Board overflow menu showing pin, rename, duplicate, archive options | Select **Code**, then in **Workspace Boards** hover a board row and click its **⋯** button, or right-click the row. |
+| `workflows-and-boards__workflow-compose-controls.png` | Electron | Workflow compose controls showing cadence and interval pickers | Select **Code**, open **Workflows**, and click the **+** (New workflow) button. |
+| `workflows-and-boards__workflow-creator.png` | Electron | New workflow draft with inline workflow and Ensemble controls | Select **Code**, then click the **+** ("New workflow") button in **Workflows**. |
+| `workflows-and-boards__workflows-sidebar-section.png` | Electron | Expanded Workflows section in its empty state with the New workflow button | Select **Code**, then find **Workflows** in the sidebar hierarchy. |
+| `workflows-and-boards__workspace-boards.png` | Electron | Workspace board view with kanban columns and cards | Select **Code**, then open the **Workspace Boards** section. |

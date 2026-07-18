@@ -19,6 +19,6 @@ Click the **Run** tab on the right-dock rim (or use the "Open Run rail" toggle) 
 6. Scroll down to the embedded timeline for the selected run's recorded events, and to **Handoffs** to dispatch or archive any draft handoff cards.
 
 ## Tips & related
-- [Right dock rim](right-dock-rim.md) — the tab strip (Run/Media/Notes/Files/Inspect) that the Run tab lives on.
+- [Right dock rim](right-dock-rim.md) — the contextual Home/Chat/Run/Media/Notes/Files/Inspect/Term strip that the Run tab lives on.
 - [Inspector panel](inspector-panel.md) — open the Inspect tab for the full diff/raw/delegation/timeline/safety view of a run.
 - [Activity stack](activity-stack.md) — the inline tool-call trace for a run, shown in the transcript itself.

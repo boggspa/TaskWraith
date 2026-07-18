@@ -1,8 +1,73 @@
 # Changelog
 
-Notable changes to TaskWraith, the local-first macOS desktop workbench for running
-and reviewing AI coding agents. Entries are user-facing highlights; execution,
-history, and workspace state stay on your machine throughout.
+Notable changes to TaskWraith, the local-first desktop workbench for running and
+reviewing AI coding agents. Entries are user-facing highlights; TaskWraith's
+orchestration, local history, and workspace authority stay on your machine,
+while selected cloud providers still receive the prompt and run context needed
+to answer.
+
+## Unreleased — source-ahead
+
+This entry tracks the checkout currently ahead of v1.8.4. It describes the
+source tree only; it does not assign a release version or imply that artifacts
+have been built or published. The exact candidate SHA and divergence count live
+in the internal pre-release ledger because the source-ahead boundary can move.
+
+### Added
+- **Kimi ACP sessions can resume as durable, isolated seats.** Native ACP
+  continuity now survives TaskWraith run boundaries, with seat checkpoints,
+  resumable provider sessions, and bounded prompt compaction for longer-lived
+  work.
+- **Kimi K3 exposes selectable thinking and plan-aware context.** K3 offers
+  Low, High, and Max reasoning controls, while the usable context limit follows
+  the detected Moonshot plan from 256K through as much as 1M rather than
+  advertising one fixed window to every account.
+- **The host sky follows local conditions.** Weather, solar and lunar state,
+  and the starfield can now shape the optional sky effects. When those effects
+  are enabled, TaskWraith resolves the host's approximate location through
+  `ipapi.co` with `ipwho.is` as fallback, rounds coordinates to 0.1 degrees
+  (about 11 km) before requesting Open-Meteo data, and stores the result in the
+  local `host-weather-cache.json`. No workspace or task content is sent as part
+  of that lookup.
+- **Projects have a guarded reference library.** A selected project now exposes
+  a References section for cataloguing relevant files, folders, and links. Each
+  row can be excluded from or restored to the library, removed, and—when it is
+  a file or folder—checked for last-known availability. The main-owned Projects
+  registry persists the metadata through main-renderer-only IPC and the
+  renderer facade. Its file/folder picker remains deliberately separate from
+  access-grant pickers, verification performs one main-side existence check
+  without reading content, and URL verification is rejected rather than
+  fetching the network. A reference grants no file or network access and is
+  never indexed or injected into agent context.
+
+### Changed
+- **Primary navigation is organized as Chat, Code, and Work.** The surface
+  split makes conversation, workspace activity, and projects/workflows easier
+  to distinguish. Switching or choosing a workspace from a pristine draft now
+  preserves its selected provider, model, reasoning, permission posture, and
+  unsent composer text.
+- **Projects now use a main-backed optimistic registry.** Shared pure registry
+  operations, a main-owned `projects.json`, snapshot/apply/import IPC, change
+  broadcasts, one-shot legacy import, and explicit main-renderer channel
+  classification establish the durable boundary. The renderer store now uses
+  that boundary through an optimistic facade. Main-owned Project Work profiles
+  also establish an atomic home-chat claim for each project, with Work-surface
+  controls to set, clear, and open the claimed home. View-only preferences such
+  as the active surface and expanded state remain in renderer storage, while
+  per-surface search queries stay session-only. An unhomed project can also
+  **Start Project Home**: TaskWraith opens an ordinary pristine General draft
+  and claims it for that project on the first committed message or run, while
+  an abandoned draft remains reusable/reapable like any other pristine draft.
+- **The right dock remembers the surface for the current context.** Chat and
+  Code keep the last-selected dock destination per chat for the current app
+  session. In Work, a chat that belongs unambiguously to one project uses that
+  project's dock memory, so moving among the project's member threads retains
+  the same destination; ambiguous membership safely falls back to the chat.
+
+### Fixed
+- **Provider and orchestration edges are more resilient.** Source-ahead fixes
+  cover Kimi transport and usage hardening, Ensemble roster imports, Cursor MCP
+  configuration, stale broker sockets, and related run-lifecycle cleanup.
 
 ## 1.8.4 - 2026-07-16
 
@@ -1102,9 +1167,10 @@ history, and workspace state stay on your machine throughout.
   24h run, proposal review (approve/reject), evidence citations, and a daily
   **Enable** toggle for read-only scheduled packs. Distinct from per-run
   Evidence Packs and ensemble Blackboard. See `THREAD_INTROSPECTION.md`.
-- **Thread Introspection — apply phase 1 (repo conventions).** After explicit
-  approve in Settings, eligible `repo_convention` and `do_not_repeat` proposals
-  can be applied to the workspace **RepoConventionIndex** via
+- **Thread Introspection — apply phase 1 (repo conventions).** After approval
+  through Settings or the gated MCP review tool, eligible `repo_convention` and
+  `do_not_repeat` proposals can be applied through Settings/IPC to the workspace
+  **RepoConventionIndex** via
   `applyMemoryProposal` (stable `intro-{proposalId}` entries, apply receipt on
   the proposal). **Blocked in phase 1:** skill/instruction file writes,
   `skill_patch`, `bug`, `preference`, `provider_hint`, and `failure_mode`.
@@ -1117,9 +1183,9 @@ history, and workspace state stay on your machine throughout.
   proposals remains gated through the Settings/API flow.
 - **Thread Introspection — decay and supersede lifecycle.** Store-level helpers
   can now supersede one memory proposal with another, expire past-due proposed
-  items, and preserve bidirectional provenance links. Lifecycle controls are
-  internal for now; no Settings, IPC, MCP, or automatic lifecycle policy is
-  exposed yet.
+  items, and preserve bidirectional provenance links. Review surfaces can set
+  expiry status/metadata, but supersede and automatic due-expiry callers remain
+  internal and no automatic lifecycle policy is exposed yet.
 - **Ensemble roster import/export.** Settings → Ensemble Roster can now save,
   import, and export full roster presets as portable JSON so teams can swap
   task-specific ensembles between installs. Imported/exported rosters preserve

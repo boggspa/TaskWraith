@@ -42,13 +42,15 @@ boundaries.
 
 ---
 
-## Sub-Threads (Phase F1) — multi-provider delegation
+## Sub-Threads (Phase F1) — isolated delegation
 
 TaskWraith supports **sub-threads**: a thread can spawn child threads
-that run on a *different* provider while remaining topologically linked
-under the parent in the workspace tree.
+that run on the same or a different provider while remaining topologically
+linked under the parent in the workspace tree.
 
-The intent is cross-provider orchestration. Common patterns:
+Cross-provider orchestration is a common use, but a same-provider child is also
+useful when parallel work needs a fresh context and an independently resumable
+session. Common patterns:
 
 - A long-context **Claude** thread hands the noisy CLI work off to a
   **Codex** sub-thread, then continues planning while Codex runs.
@@ -56,6 +58,8 @@ The intent is cross-provider orchestration. Common patterns:
   a **Claude** sub-thread.
 - A **Codex** runtime delegates "research this codebase" reading work
   to a **Claude**, **Kimi**, or **Cursor** sub-thread.
+- A **Codex** parent opens a second **Codex** seat for an independent review
+  without sharing the parent's provider context.
 
 ### How it appears in the UI
 
@@ -285,7 +289,7 @@ outside the workspace, MCP elicitations):
    User-visible policy remains tunable in Settings.
 3. The first responder wins — desktop modal or timer.
 4. A decision is written to the durable Approval Ledger (Settings →
-   Approval Ledger) including `decisionSource` (`'user'` vs
+   Automation → Approvals & Grants) including `decisionSource` (`'user'` vs
    `'system'` for timer auto-deny) and timestamp metadata.
 
 Agents should expect timeouts as a normal outcome. If a tool call
@@ -300,7 +304,8 @@ uniform provider-side caching on opaque CLI paths. When documenting or verifying
 cache behavior:
 
 - **Guaranteed (API-managed):** only where TaskWraith owns a controllable API/BYOK
-  request (for example Claude or Kimi API-key mode with caching enabled).
+  request. Current live Claude and Kimi paths are classified as opaque,
+  best-effort transports; a saved API key alone does not make them Guaranteed.
 - **Automatic (observed):** provider-managed implicit caching — record stats when
   usage metadata includes them; do not claim breakpoint control.
 - **Best-effort (opaque CLI):** Codex/Claude Code/Kimi/Cursor/Grok CLI — record
@@ -414,7 +419,8 @@ demands):**
 
       → if declined: "Sub-thread delegation to Codex was declined by
       TaskWraith policy. The parent turn continues without delegating; the user
-      can change the policy in Settings → Behavior → Agentic Services
+      can change the policy in Settings → AI & Providers → Providers →
+      Agentic services
       → Sub-thread delegation."
 
       Agent then continues the parent turn with non-CLI work; the
@@ -455,13 +461,20 @@ demands):**
       the composer surface is not exposed as delegation tool args.
     - Async delegated runs can never become Trusted Session, even when the
       invoking parent currently has a Trusted Session grant.
-    - Codex, Claude, and Kimi register the full TaskWraith MCP surface with
-      their native runtimes where available. Cursor and Grok receive a brokered
-      `taskwraith` MCP surface alongside their native shell/file tooling. On the
-      Kimi Code (ACP) transport, that surface is the gateway subset served over a
-      per-run localhost HTTP MCP bridge inside a sandboxed `KIMI_CODE_HOME` — see
+    - Fresh tool-capable seats use TaskWraith's progressive gateway MCP profile:
+      a small directly advertised surface plus `capability_search` /
+      `capability_invoke` for the remaining eligible catalogue. A resumable
+      native session keeps the exact MCP profile it observed at birth; legacy
+      Claude sessions may retain the full profile for compatibility. Cursor and
+      Grok receive a brokered `taskwraith` surface alongside their native
+      shell/file tooling.
+    - On the Kimi Code (ACP) transport, Electron main serves a per-run localhost
+      HTTP MCP bridge. The native Kimi session files—not the bridge server—live
+      in a durable, seat-isolated `KIMI_CODE_HOME`. Solo chats, delegated
+      children, and ensemble participants resume their native ACP session from
+      that seat; legacy/non-chat probes may still use a per-run home. See
       [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
-      Ollama runs through TaskWraith's local tool loop with full tool-surface
+    - Ollama runs through TaskWraith's local tool loop with full tool-surface
       parity where local capability exists; the standard signed run permission
       posture and per-call approval gate decide what executes. Gemini is
       retained for historical decoding but is retired for new runs.
@@ -529,8 +542,9 @@ evidence citations — then apply lessons only after human review.
 
 **Agents must not** implement ad-hoc nightly edits to `.codex/skills`,
 `~/.cursor/skills`, or workspace rule files from old thread content. Thread
-history is **untrusted evidence**; only distilled, reviewed proposals may be
-promoted.
+history is **untrusted evidence**. Generated proposal title/lesson fields are
+bounded but may preserve wording from that evidence; review them before any
+eligible promotion.
 
 Current MVP boundary (see `THREAD_INTROSPECTION.md`):
 
@@ -547,15 +561,21 @@ Current MVP boundary (see `THREAD_INTROSPECTION.md`):
   `tw_introspection_list`, `tw_introspection_read`, and
   `tw_introspection_review` for safe trigger/list/read/review workflows.
   There is intentionally **no MCP apply tool**.
-- **Later (gated):** Skill Patch Manager (diff/rollback), other apply targets,
-  decay/supersede.
-- **Operational in dev:** Settings → Thread introspection → Run introspection
-  (24h) → approve/reject → Apply (conventions only). Skill patches: review-only.
+- **Partially landed:** decay/supersede store helpers exist, and review surfaces
+  can set expiry status/metadata. There is no public supersede caller or
+  automatic due-expiry policy, and apply-layer lifecycle integration remains
+  gated.
+- **Later (gated):** Skill Patch Manager (diff/rollback) and other apply
+  targets.
+- **Operational in dev:** Settings → Automation → Thread introspection → Run
+  introspection (24h) → approve/reject → Apply (conventions only). Skill
+  patches: review-only.
 - **Daily toggle:** wired for read-only scheduled generation.
 
-Do not claim the full Ryan Brewer loop is complete until **decay/supersede,
-Skill Patch Manager, and skill/instruction apply with rollback** ship. Do not
-edit skills from thread history outside this pipeline.
+Do not claim the full Ryan Brewer loop is complete until the
+**decay/supersede integration, Skill Patch Manager, and skill/instruction apply
+with rollback** ship. Do not edit skills from thread history outside this
+pipeline.
 
 ---
 
@@ -564,19 +584,23 @@ edit skills from thread history outside this pipeline.
 - **Approvals are per-action, not per-session.** A grant given for one
   command doesn't carry to the next unless the user explicitly chose
   "Allow for session" or "Allow for workspace".
-- **The runtime profile** (binary path, env, MCP profile) is per-thread
-  state set at thread creation. If a user wants to change runtime, they
-  spawn a new thread or sub-thread.
-- **Durable storage is on.** Settings → Behavior controls whether chat
-  history is persisted to disk; if it is, the run events, approval
-  ledger, and chats survive restarts.
+- **Runtime configuration** (provider, model, binary/env refs, and MCP profile)
+  is recorded per thread or seat. Compatible changes can apply immediately or
+  queue until the current run is idle; resumable sessions retain their pinned
+  MCP profile. A new thread/sub-thread is needed only when the requested change
+  cannot safely preserve the existing session.
+- **Durable storage is on by default.** When local chat-history persistence is
+  enabled, run events, the approval ledger, and chats survive restarts.
+  **Settings → General → Delete all chat history** removes the local chat and
+  run history; it is not a persistence on/off switch.
 
 ---
 
 ## Versioning
 
-This document is updated as features ship. Sections currently documented (as of
-**1.7.0**):
+This document uses **v1.8.4** as its released baseline and also describes the
+current source-ahead checkout. Treat behavior newer than the tagged baseline as
+unshipped until it appears in the next release notes:
 
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
@@ -589,13 +613,17 @@ This document is updated as features ship. Sections currently documented (as of
   `src/main/TaskWraithMcpTools.ts`; key tools documented above.
 - **Thread Introspection** — memory promotion layer (proposal packs, review
   gates); see `THREAD_INTROSPECTION.md`.
-- Codex / Claude / Kimi share the full brokered MCP tool surface. Cursor and
-  Grok get a brokered `taskwraith` MCP server but keep their native shell/file
-  tools. (Kimi Code reaches the gateway over ACP via a per-run HTTP bridge, since
-  its ACP `session/new` rejects stdio MCP servers.) Ollama runs a TaskWraith-controlled local tool loop with full
-  tool-surface parity where local capability exists, governed by the same signed
-  permission posture and approval gates rather than a safety-tier subset. Gemini
-  is retained for historical chats and decode paths only. See
-  `ProviderCapabilities.ts`.
+- Fresh tool-capable seats default to the progressive TaskWraith gateway;
+  resumable native seats retain their pinned MCP profile, and legacy Claude
+  sessions may retain the full profile. Cursor and Grok keep their native
+  shell/file tools alongside the brokered `taskwraith` surface. Kimi Code
+  reaches the gateway over ACP through a per-run Electron-main local HTTP
+  bridge because ACP `session/new` rejects stdio MCP servers; its native
+  session files persist separately in the durable isolated seat. Ollama
+  runs a TaskWraith-controlled local tool loop with parity where local
+  capability exists, governed by the same signed permission posture and
+  approval gates. Gemini is retained for historical chats and decode paths
+  only. See `src/main/ProviderCapabilities.ts` and
+  `src/main/mcp/McpSessionProfileFence.ts`.
 
 Internal roadmap notes are intentionally kept outside the public source tree.

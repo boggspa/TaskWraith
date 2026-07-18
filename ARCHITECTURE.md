@@ -23,7 +23,7 @@ Responsible for the UI:
 
 - React components (standard CSS, with specialized components like `ActivityStack` and `DiffViewer`).
 - **Terminal UI**: Uses `xterm.js` for the embedded Trust Assistant terminal.
-- Communicates exclusively via `window.electron` IPC APIs defined in preload.
+- Communicates exclusively via `window.api` IPC APIs defined in preload.
 - Stream parsing adapters normalize provider events into shared activity, diff, usage, and approval records.
 
 ## Data Flow (Provider Runtime)
@@ -35,8 +35,11 @@ Responsible for the UI:
    app-server, or Ollama harness. Live selectable providers are Codex, Claude,
    Kimi, Grok, Cursor, and local Ollama; Gemini is retained for historical
    chats and decode paths only. Kimi Code runs over its `kimi acp` (Agent Client
-   Protocol) transport inside a per-run sandboxed `KIMI_CODE_HOME`, default-ON
-   behind the `TASKWRAITH_KIMI_ACP` flag (set `=0` to force it off) — see
+   Protocol) transport inside a seat-isolated `KIMI_CODE_HOME`. Chats,
+   delegated sub-threads, and ensemble participants use durable seat homes and
+   native ACP session resume; legacy probes may still use a per-run home. ACP
+   is default-ON behind the `TASKWRAITH_KIMI_ACP` flag (set `=0` to force it
+   off) — see
    [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Sensitive actions route through TaskWraith policy, approval ledgers, and
@@ -53,8 +56,9 @@ Responsible for the UI:
 - **Audit runs** coordinate provider-backed review passes with structured phases,
   findings, verdicts, and synthesis.
 - **Workflows** are first-class chat/run definitions with scheduling,
-  restart recovery, read-only iOS projection, and optional ensemble execution
-  where enabled.
+  restart recovery, iOS projection plus authorized pause/resume/run-now
+  controls, and optional ensemble execution where enabled. Workflow deletion
+  remains desktop-only.
 - **Thread goals** store a persistent objective and stopping condition separate
   from `todo_write`; Codex can mirror native goal state when the installed
   app-server exposes it, while other providers use TaskWraith-managed goal
@@ -155,7 +159,8 @@ User-facing behavior and guarantee language: `SESSION_AND_WORKSPACE.md`.
   transports. CLI/subscription paths remain best-effort: usage is recorded when
   providers emit cache token fields (`cache_read_input_tokens`,
   `cache_creation_input_tokens`).
-- Renderer: `PromptCacheSettingsSection` in Settings → Providers; helpers in
+- Renderer: `PromptCacheSettingsSection` in Settings → AI & Providers →
+  Providers; helpers in
   `promptCacheUi.ts`. Diagnostics via `prompt-cache:get-diagnostics`.
 
 ### Universal fork service
@@ -195,19 +200,26 @@ User-facing behavior and guarantee language: `SESSION_AND_WORKSPACE.md`.
 
 - **Header**: draggable chrome area with workspace/chat title and run status indicator.
 - **Sidebar** (`src/renderer/src/components/Sidebar.tsx`): glass navigation
-  surface with a **Threads | Projects** tab strip. **Threads** keeps the
-  existing grouped layout (workspaces, recents, ensembles, pinned, and related
-  sections). **Projects** renders `ProjectsSidebarView.tsx`, wired to
-  `projectsStore.ts` for user-defined hierarchies, membership, and reorder.
-  Project icon + hue editing reuses the shared `IdentityIconPicker.tsx`
-  extracted from Agent Pool customization (`AgentPoolContainer.tsx`). Chat
-  rows can be dropped onto projects via the sidebar chat drag MIME type.
-  Search query state is isolated per tab; the active tab and project expand
-  state persist in renderer `localStorage`.
+  surface with **Chat | Code | Work** primary modes. **Chat** contains general
+  chats, **Code** contains workspace-scoped threads and workspace tooling, and
+  **Work** renders `ProjectsSidebarView.tsx` for user-defined hierarchies,
+  membership, and reorder. Project icon + hue editing reuses the shared
+  `IdentityIconPicker.tsx` extracted from Agent Pool customization
+  (`AgentPoolContainer.tsx`). Chat rows can be dropped onto projects via the
+  sidebar chat drag MIME type. Search query state is isolated per mode; active
+  mode, section collapse, and project expansion preferences remain renderer UI
+  state in `localStorage`.
 - **Transcript / Multiview** (`src/renderer/src/components/` via `App.tsx`):
   one or more live panes with message bubbles, floating composer, per-pane run
   routing, and status chips.
-- **Inspector** (`src/renderer/src/components/Inspector.tsx`): right-side panel with tabs for Diff Studio, Raw Events, and Safety.
+- **Right dock**: a resizable contextual panel with Home, Run, Chat, Media,
+  Notes, Files, Inspect, and an optional workspace terminal surface. Its
+  selected destination is stored in renderer `sessionStorage`: Chat/Code key by
+  chat, while Work keys by project when the focused chat belongs to exactly one
+  project and otherwise falls back to the chat key. Visibility remains
+  ephemeral and a relaunch clears this memory.
+- **Inspector** (`src/renderer/src/components/Inspector.tsx`): the right dock's
+  Inspect surface for diffs, raw events, delegation, timeline, and safety.
 
 ### Components
 
@@ -222,13 +234,42 @@ User-facing behavior and guarantee language: `SESSION_AND_WORKSPACE.md`.
 - App settings are saved to the OS user data directory.
 - Chats, run events, approval records, audit run state, usage summaries, and
   active goals are stored locally.
-- **Sidebar Projects** (`projectsStore.ts`, key `taskwraith-sidebar-projects`)
-  persist in renderer `localStorage` and are **profile-global** (not
-  workspace-scoped) so a project can reference chats from any workspace.
-  Membership is stored as chat id lists on each project record. When a chat is
-  deleted (`App.tsx` → `removeChatFromAllProjects`), its id is stripped from
-  every project; archived chats are **not** pruned from membership so unarchive
-  can restore visibility without re-adding the chat manually.
+- **Projects registry** is a profile-global, main-owned
+  `userData/projects.json` authority. The renderer's synchronous
+  `projectsStore.ts` facade applies shared pure project operations optimistically,
+  dispatches them through snapshot/apply/import IPC, and reconciles from invoke
+  results plus the `projects-changed` broadcast. A one-shot import moves legacy
+  `taskwraith-sidebar-projects` records out of `localStorage`; sidebar mode,
+  section-collapse, and project-expansion preferences remain there as
+  persistent UI state, while per-mode search queries are renderer-session
+  state.
+  Main-owned `ProjectWorkProfile` companion records keep durable Work-surface
+  semantics separate from the V1 project shape; their atomic home-chat claim
+  also adds project membership and enforces at most one project home per chat.
+  The Work view exposes this boundary through Set/Clear Project Home actions,
+  a Home badge, and an Open Project Home shortcut. For an unhomed project,
+  **Start Project Home** creates an ordinary pristine General draft and records
+  only an ephemeral renderer pending claim; the main-authoritative claim fires
+  on the first committed message or run. Abandoned drafts gain no durable flag
+  and remain eligible for the normal pristine-draft reuse/reaper behavior.
+  Claims are intentionally main-authoritative rather than optimistic renderer
+  mutations.
+  Main-owned `ProjectReference` records add project-scoped file, folder, and URL
+  catalogue metadata plus explicit context-policy and last-known verification
+  fields. Main-renderer-only reference-op, verify, and path-picker IPC feed the
+  renderer facade without an optimistic twin. Choosing a file/folder catalogues
+  metadata but grants nothing; explicit verification performs a single
+  main-side existence stat, rejects URL verification, and never reads content.
+  The registry cascades references when a project is deleted, but it never
+  fetches, indexes, or injects a reference and never turns one into an
+  external-path grant; agent access still requires the existing per-chat/per-run
+  authority flow. Selecting a project in Work exposes the reference library in
+  its detail panel: users can add file, folder, or link records; verify the
+  last-known existence of files/folders; toggle a record between Available and
+  Off; or remove it. Those controls mutate catalogue metadata only.
+  Projects are not workspace-scoped, so one project may reference chats from
+  multiple workspaces. Archived chats remain members; deleting a chat removes
+  its id from project membership.
 - Paired-device records, remote bridge settings, APNs token routing data, and
   first-launch/readiness projections are local to the Mac unless explicitly
   transported over the paired E2EE bridge.

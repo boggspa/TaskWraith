@@ -42,7 +42,7 @@ control plane.
 
 ## Trust Model
 
-TaskWraith's authority is centered on the Mac app:
+TaskWraith's authority is centered on the desktop app:
 
 - The desktop main process owns workspace selection, transcript writes, approval
   prompts, run state, local history, remote-pairing records, and provider
@@ -74,7 +74,7 @@ Use this path when evaluating TaskWraith for the first time:
    you expected.
 7. Ask for a small edit in a throwaway file. Review the Diff Studio result before
    committing anything.
-8. Open Settings and inspect the Approval Ledger after the run.
+8. Open Settings → Automation → Approvals & Grants after the run.
 9. Only then try a real project, still avoiding broad grants until the workflow
    has earned your trust.
 
@@ -94,7 +94,7 @@ apps, and custom MCP servers.
 
 ## Capability Matrix
 
-| Surface | Default posture | What it can access | What may leave your Mac | Approval and audit |
+| Surface | Default posture | What it can access | What may leave your computer | Approval and audit |
 | --- | --- | --- | --- | --- |
 | Provider runs | User starts a run in a selected chat/workspace. | Prompt text, selected workspace context, and provider-visible tool results. | Anything sent to the chosen provider CLI/API according to that provider's behavior. | Provider/tool approval cards and run events are stored locally. |
 | Workspace reads/search | Scoped to the selected workspace where the adapter can enforce it. | File names and file contents in the selected workspace. | File snippets may be sent to the active provider as context. | Activity rows and raw provider events are retained. |
@@ -104,7 +104,8 @@ apps, and custom MCP servers.
 | Local Ollama tools | Same permission presets as other providers; run profiles tune local prompting/runtime behavior. | The TaskWraith tool surface where local capability exists, limited by permission posture and network policy. | Local model prompts stay local unless you use Ollama-hosted/cloud models or other network tools. | Standard run permission posture and approvals apply; there is no separate safety-tier ladder. |
 | Ensembles, sub-threads, audits | User-created or explicitly delegated. | The transcript and workspace context available to each participant/provider. | Each cloud participant may receive transcript/context needed for its turn. | Participant runs, audit findings, and delegation events are recorded locally. |
 | Workflows and scheduled runs | User-defined. Unattended elevation requires explicit acknowledgement. | The workspace and tools allowed by the workflow template. | Same provider exposure as a normal run, repeated by schedule. | Workflow history, approvals, and run state are persisted. |
-| iOS remote bridge | Disabled until paired. | Read-only projections by default; selected actions only through Mac policy. | Relay/APNs should see routing metadata, not plaintext prompts, commands, diffs, or model output. | Pairing, allowlists, approvals, expiry, and replay checks are enforced on the Mac. |
+| Transcript sky and weather visuals | Network lookup runs only while sky visual FX are enabled; disabling the FX stops weather polling. | The host's public-IP-derived approximate location and current weather conditions. No task, transcript, or workspace content is used. | The public IP is visible to `ipapi.co`, with `ipwho.is` as fallback. Open-Meteo receives the rounded coordinates (0.1°, about 11 km) and, like any direct web service, the request's source IP. | The last coarse location and weather snapshot are cached locally in `host-weather-cache.json`; this automatic visual lookup does not use the agent approval flow. |
+| iOS remote bridge | Disabled until paired. | Read-only projections by default; selected actions only through Mac policy. | Relay/APNs should see routing/status metadata, which may include aggregate added/deleted line counts, but not plaintext prompts, commands, diff contents or hunks, or model output. | Pairing, allowlists, approvals, expiry, and replay checks are enforced on the Mac. |
 | Human collaborators | Host-created invite per shared chat. | Least-privilege projection of one shared chat; collaborator comments when allowed. | Projection/comment frames travel over the collaboration transport, encrypted end to end. | Host remains authority for transcript writes; comments are external/untrusted rows. |
 | Screen Watch / attached windows | Off until the user attaches a window. | Frames from the chosen window, one frame at a time. | Captured frames may be sent to the active provider as visual context. | Attachment and downstream tool actions are surfaced in the run. |
 | Canvas/browser-like tools | Optional advanced surface. | The page or preview surface you expose to the agent. | URLs, page content, screenshots, and actions may reach the provider depending on the tool. | High-risk actions are policy-gated and should be treated as code/data execution. |
@@ -129,6 +130,10 @@ Common local state includes:
 - `run-events/` durable run-event logs.
 - Usage summaries, approval ledger records, workflow state, goals, and audit
   state.
+- `host-weather-cache.json`, containing the last coarse location and weather
+  snapshot used by the optional transcript sky visuals.
+- `kimi-acp-seats-v1/`, containing durable native Kimi Code ACP seat
+  checkpoints used for provider-session continuity and recovery.
 - `bridge/` pairing records, remote workspace allowlists, and APNs routing token
   records.
 - `human-collaboration.json` and the local collaboration identity record when
@@ -146,7 +151,7 @@ it. Provider CLI credentials may remain in the provider's own config locations.
 
 ## What Can Leave the Machine
 
-Local-first does not mean air-gapped. Data can leave your Mac when you choose a
+Local-first does not mean air-gapped. Data can leave your computer when you choose a
 feature that necessarily talks to another system:
 
 - Cloud provider runs send prompts, selected context, tool outputs, and sometimes
@@ -155,6 +160,12 @@ feature that necessarily talks to another system:
   sessions outside TaskWraith.
 - Web search/fetch, browser, Canvas, image-generation, and media-analysis tools
   can contact external services depending on configuration.
+- While transcript sky visual FX are enabled, TaskWraith requests approximate
+  location from `ipapi.co` and falls back to `ipwho.is`; those services can see
+  the host's public IP. TaskWraith rounds the returned coordinates to 0.1°
+  (about 11 km) before requesting current conditions from Open-Meteo.
+  Open-Meteo receives those rounded coordinates and the request's source IP.
+  No task, transcript, file, or workspace content is sent in this flow.
 - Discord context reads from Discord through your configured bot token.
 - iOS bridge and collaborator transports use relay/routing infrastructure, but
   are designed so relay/APNs payloads do not carry plaintext prompts, commands,

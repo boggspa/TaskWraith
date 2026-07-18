@@ -3,22 +3,23 @@
 **Platform:** Electron
 
 ## What it is
-TaskWraith organizes work into several chat types: workspace chats and General chats (scoped to a project folder or not), single-provider chats and Ensembles (multiple agents in one thread), Workflows (scheduled, multi-stage chats), and linked child chats — sub-threads (agent-delegated) and side chats (user-opened) — plus Shared chats that a host can share with collaborators.
+TaskWraith supports General chats and workspace-scoped threads, either with one provider or as an Ensemble with multiple participants. It also supports scheduled Workflows, linked children — agent-delegated sub-threads and user-opened side chats — and Shared chats for human collaboration. A Project is an organizer rather than a separate chat type: it can group top-level chats and threads from either scope.
 
 ## Where to find it
-The sidebar groups chats into sections: **Pinned**, **Recents**, **Ensembles**, **Workspaces** (each with its own chat list and Workflows/Workspace Boards), **Chats** (General chats not tied to a workspace), and **Shared**. Use the **+ New** button in the sidebar masthead to create a chat of a specific type.
+Use the sidebar's **Chat** surface for General chats, **Code** for workspace-scoped threads and workspace tools, and **Work** for the **Projects** organizer. Pinned, Recents, Ensembles, and Shared sections are scoped to the active Chat or Code surface. Use **+ New** from Chat or Code to start work in that scope.
 
-![Sidebar showing various chat types (workspace, ensemble, shared, workflow)](../images/chats-and-threads__chat-types.png)
+![Chat surface showing the Chat, Code, and Work switcher plus chat, shared, and Ensemble sections](../images/chats-and-threads__chat-types.png)
 
 ## How to use it
-1. Click **+ New** in the sidebar masthead, then pick a type: **New Chat** (workspace or General, depending on context), **New Workflow**, **New Workspace Board**, or one of the **Shared** variants (General, Workspace, or Ensemble). To start an Ensemble, create a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, use the **+** button in the sidebar's **Ensembles** section, or convert an existing top-level idle chat in place from the same composer control.
-2. Workspace chats appear under that workspace in the **Workspaces** section; chats not tied to a workspace appear under **Chats** as General chats.
-3. Ensembles (chats running more than one agent) get their own row in the **Ensembles** section — they don't appear in the workspace or **Chats** (General) lists, but a pinned or recently active ensemble also surfaces in **Pinned** or **Recents**.
+1. Choose **Chat** for a General chat or **Code** for a workspace thread, then click **+ New**. Code also exposes workspace Workflows and Workspace Boards.
+2. To start an Ensemble, create a draft and enable **Ensemble** before the first send, use the **+** button in the Ensembles section, or convert an eligible idle top-level chat from the composer.
+3. Ensembles appear in the Ensembles section for their Chat or Code scope; pinned and recently active ensembles can also appear in Pinned or Recents.
 4. To branch off an existing chat without losing context, open a side chat from the message context menu, or let an agent delegate part of its work to a sub-thread — both appear nested under their parent chat and are limited to one level deep.
-5. To collaborate with others, create a Shared chat from the **+ New** menu, or use **Join Shared Chat** to follow along on one someone else shared with you; shared chats live in the **Shared** sidebar section.
+5. To collaborate with others, create a Shared chat from **+ New**, or use **Join Shared Chat** to follow one someone else shared with you; shared chats appear in the matching Chat or Code scope.
+6. Switch to **Work** when you want to create nested Projects and group existing top-level chats or threads without changing their original scope.
 
 ## Tips & related
-- [Sidebar sections](../sidebar-navigation/sidebar-sections.md) — how Pinned, Recents, Ensembles, Workspaces, Chats, and Shared are organized.
+- [Sidebar sections](../sidebar-navigation/sidebar-sections.md) — how Chat, Code, Work, and their sections are organized.
 - [Workspace and chat tree](../sidebar-navigation/workspace-and-chat-tree.md) — how chats nest under workspaces.
 - [Create an Ensemble chat](../ensemble-mode/create-ensemble-chat.md) — running multiple agents in one chat.
 - [Sub-thread delegation](sub-thread-delegation.md) and [Side chat](side-chat.md) — linked child chats branched off a parent.

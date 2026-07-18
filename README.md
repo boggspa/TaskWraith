@@ -9,16 +9,19 @@
 ![License](https://img.shields.io/github/license/boggspa/TaskWraith)
 
 TaskWraith is a local-first desktop workbench for running and reviewing AI coding
-agents against developer workspaces. It provides a macOS-focused Electron UI for
-provider CLIs and SDK-backed workflows while keeping execution, history, and
-workspace state on the user's machine.
+agents against developer workspaces. Its Electron app ships for macOS, Windows,
+and Linux; macOS has the deepest native integrations and hosts the optional iOS
+companion. TaskWraith keeps its orchestration, local history, and workspace
+authority on the user's machine; prompts and run context still go to whichever
+cloud provider the user selects.
 
 > **iOS companion status:** TaskWraith for iPhone/iPad is in **TestFlight beta**.
 > It is a **Mac companion** — it pairs with TaskWraith on macOS over an
 > end-to-end-encrypted connection to monitor runs, approve actions, and reply
 > from the phone; it is not a standalone AI app. Remote actions are governed by
 > the Mac's workspace allowlists and approval policy. Relay/APNs infrastructure
-> may see routing metadata, not plaintext prompts, commands, diffs, or model
+> may see routing/status metadata (including aggregate added/deleted line
+> counts), not plaintext prompts, commands, diff contents or hunks, or model
 > output. Testers can also build it from this repository with their own Apple
 > Developer team. Push notifications are opt-in after pairing and require APNs
 > credentials on the Mac (see
@@ -110,15 +113,15 @@ baseline.
   </tr>
   <tr>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="Pop-Out Chat Windows" src="https://github.com/user-attachments/assets/e50e5f5d-eb7b-4a34-9fe1-50eb8d54a5d1" /><br />
-      <sub><b>Pop-Out Chat Windows</b></sub>
+      <img width="100%" alt="Pop-Out Chat" src="design-assets/readme-screenshots/pop-out-chat.png" /><br />
+      <sub><b>Pop-Out Chat</b></sub>
     </td>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="Diff Studio" src="https://github.com/user-attachments/assets/b671a8a0-a81a-44b9-8383-37a8d47da478" /><br />
+      <img width="100%" alt="Diff Studio" src="design-assets/readme-screenshots/diff-studio.png" /><br />
       <sub><b>Diff Studio</b></sub>
     </td>
     <td align="center" valign="top" width="33%">
-      <img width="100%" alt="File Editor" src="https://github.com/user-attachments/assets/fcb6cfce-e65d-41d5-a466-95ccf7b9cfb8" /><br />
+      <img width="100%" alt="File Editor" src="design-assets/readme-screenshots/file-editor.png" /><br />
       <sub><b>File Editor</b></sub>
     </td>
   </tr>
@@ -139,11 +142,13 @@ baseline.
 - **Multiview and Workflows**: Split the workbench into live panes, and run
   Workflows as first-class chat/run objects with scheduled recovery, dedicated
   sidebar space, and optional ensemble execution where enabled.
-- **Sidebar Projects**: Switch the sidebar between **Threads** (workspaces,
-  recents, ensembles, and the existing grouped layout) and **Projects** to
-  build your own cross-workspace folder trees, assign icon + hue per project
-  (same picker as Agent Pool customization), and organize chats by drag-and-drop
-  or add-menu actions.
+- **Chat / Code / Work navigation**: Use **Chat** for general conversations,
+  **Code** for workspace-scoped threads, workflows, boards, and local servers,
+  and **Work** for Projects. Projects build cross-workspace folder trees with
+  customizable icons and hues, plus drag-and-drop and add-menu organization.
+  Each project can designate, open, or start a Project Home thread, and keep a
+  metadata-only library of relevant files, folders, and links. Library entries
+  do not grant agent access or inject content into a run.
 - **Thread Goals**: Set a persistent objective with `/goal <objective>` or the
   composer goal control. Codex uses native goal state when the installed runtime
   exposes it; every provider gets a TaskWraith-managed fallback with explicit
@@ -197,11 +202,11 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Latest tagged public release: **v1.7.9**. See [CHANGELOG.md](CHANGELOG.md) for
-release notes. The changelog's **Unreleased - source-ahead** section, when
-populated, describes repository changes only. The checkout may be ahead of that
-tag; newer commits should not be treated as shipped until those source-ahead notes
-are curated and matching artifacts are published.
+Latest tagged public release: **v1.8.4**. See [CHANGELOG.md](CHANGELOG.md) for
+release notes. This checkout currently contains additional repository work;
+the changelog's **Unreleased — source-ahead** section describes those changes
+only. They are not shipped until a new tag and matching artifacts are
+published.
 
 ## Managed Enterprise Boundary
 

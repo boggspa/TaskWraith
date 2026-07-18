@@ -8,7 +8,7 @@ The participant health card is a compact status summary that appears in an Ensem
 ## Where to find it
 Participant health cards appear automatically, inline in the transcript, in any Ensemble chat — they're inserted just before a round dispatches, as the orchestrator's pre-flight check on each participant. You don't open them from a menu; they show up as part of the conversation flow alongside round cards and other ensemble messages.
 
-<!-- screenshot-pending: ParticipantHealthCard showing ok/warning states for multiple providers -->
+![Participant health card showing two reachable providers during a live Ensemble round](../images/notifications-and-status__participant-health.png)
 
 ## How to use it
 1. Watch for the card's header at the top of each round: "Participants reachable" with a green check if everyone in the round responded to the probe, or "Participant health" with a warning triangle if one or more didn't. The header also shows an `okCount/totalCount` tally.

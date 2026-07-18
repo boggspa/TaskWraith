@@ -6,12 +6,12 @@
 A Workspace Board is a kanban-style view scoped to one workspace, with columns like Inbox, Ready, Running, Needs Input, Blocked, Review Ready, and Done. Cards can stand alone or link to a chat, workflow, scheduled task, run-queue job, or local server, and linked cards automatically inherit a live status (running, needs input, blocked, review-ready, done, or stale) from whatever they're linked to.
 
 ## Where to find it
-Sidebar → **Workspace Boards** section. Click a board to open it in the center stage; create a new one from the sidebar's "+" / New menu (**New Workspace Board**), which requires at least one workspace to exist.
+Select **Code**, then open the sidebar's **Workspace Boards** section. Click a board to open it in the center stage; create a new one from the sidebar's "+" / New menu (**New Workspace Board**), which requires at least one workspace to exist.
 
 ![Workspace board view with kanban columns and cards](../images/workflows-and-boards__workspace-boards.png)
 
 ## How to use it
-1. Open a board from the **Workspace Boards** section in the sidebar.
+1. Select **Code**, then open a board from the **Workspace Boards** section in the sidebar.
 2. If the board shows "N untracked workspace items," click **Create N cards** to seed it with cards for the workspace's existing threads, workflows, scheduled tasks, run-queue jobs, and local servers.
 3. Add a card manually with the **Add board card** form (title, optional note, optional link to a chat/workflow/task/job/server); new cards land in the Inbox column.
 4. Move a card by dragging it to another column, using its column dropdown, or the **Up**/**Down** buttons to reorder within a column.

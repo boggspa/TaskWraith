@@ -1,14 +1,14 @@
 # Thread Introspection
 
 TaskWraith can turn everyday agent interaction history into **reviewable,
-durable lessons** — preferences, failure patterns, repo conventions, and
-skill updates — without letting a nightly cron silently rewrite instruction
-files.
+evidence-derived lesson candidates** — preferences, failure patterns, repo
+conventions, and skill updates — without letting a nightly cron silently
+rewrite instruction files.
 
 This page describes the **memory promotion** layer: how recent threads and runs
 become **Memory Proposal Packs**, how each proposal is scoped and cited, and
-why thread content stays **untrusted evidence** until a human approves a
-distilled lesson.
+why thread content stays **untrusted evidence** even after it is copied into a
+bounded proposal field, until that candidate is reviewed.
 
 Inspired by the daily "Thread Introspection" automation described by Ryan
 Brewer: scan recent chats, infer preferences and struggle patterns, propose
@@ -49,8 +49,9 @@ TaskWraith ships **read-only introspection + reviewable artifacts**, with a
 1. Collect recent run/thread evidence (harvester — **landed**, `0fd22e9a0`).
 2. Classify patterns into proposal candidates (generator — **landed**).
 3. Persist **Memory Proposal Packs** for review (**landed**).
-4. Review proposals in Settings → Thread introspection (**landed** — IPC + mount wired).
-5. **Apply phase 1 (landed):** user-approved `repo_convention` and
+4. Review proposals in Settings → Automation → Thread introspection
+   (**landed** — IPC + mount wired).
+5. **Apply phase 1 (landed):** review-approved `repo_convention` and
    `do_not_repeat` proposals can be applied to the workspace
    **RepoConventionIndex** via Settings (see [Apply phase 1](#apply-phase-1-repo-conventions-only)).
 6. **Still blocked:** skill/instruction file writes, preferences, provider hints,
@@ -105,7 +106,7 @@ Persisted under `userData/memory-proposal-packs.json` (history capped).
 
 ### MemoryProposal
 
-One distilled lesson candidate.
+One bounded, evidence-derived lesson candidate.
 
 **Kinds** (`MemoryProposalKind`):
 
@@ -127,14 +128,17 @@ One distilled lesson candidate.
 
 Each proposal includes:
 
-- `lesson` — distilled text (**not** raw thread prose)
+- `lesson` — bounded candidate text (currently up to 500 characters); it may
+  preserve wording copied from harvested evidence and is not a sanitization
+  boundary
 - `confidence` — 0..1
 - `evidenceRefs` — `{ chatId, runId?, messageId?, eventId?, timestamp, summary, citationToken?, quote? }`
 - `dedupKey` — merges repeated signals across the window
 - `requiresReview` — derived from kind + confidence (see below)
 - `suggestedApplyTarget` — e.g. `RepoConventionIndex`, `user_rules`, `skill_file`
 - `skillPatchDiff` — only when `kind === 'skill_patch'`
-- `supersedesId` / `supersededById` / `expiresAt` — decay/conflict (**apply layer pending**)
+- `supersedesId` / `supersededById` / `expiresAt` — decay/conflict (store
+  helpers landed; end-to-end lifecycle wiring pending)
 
 ### Evidence signals (generator)
 
@@ -167,7 +171,9 @@ and emits normalized `IntrospectionEvidenceItem` records. Sources:
 | **Chat messages** | User corrections after assistant replies, repo-convention phrases, skill-candidate heuristics |
 
 Each item carries bounded summaries and optional `⟦recall:…⟧` citation tokens.
-Raw thread prose is never copied into proposals verbatim.
+Harvester `detail` can include bounded user-message text, and the generator can
+copy that detail into a proposal lesson. Treat the result as untrusted evidence,
+not as a fully distilled or injection-safe instruction.
 
 ### Manual run service
 
@@ -182,8 +188,9 @@ load chats/events/approvals/feedback for window
 ```
 
 Callable from IPC (`run-manual-introspection`) and tests. Scheduled daily
-generation is the next slice. Apply is a separate explicit action (phase 1:
-repo conventions only — see [Apply phase 1](#apply-phase-1-repo-conventions-only)).
+generation uses the same run service with a scheduled trigger. Apply remains a
+separate explicit action (phase 1: repo conventions only — see
+[Apply phase 1](#apply-phase-1-repo-conventions-only)).
 
 ## Using Thread Introspection in Settings
 
@@ -191,15 +198,17 @@ Open **Settings → Automation → Thread introspection**.
 
 1. **Run introspection (24h)** — harvests the last 24 hours of persisted
    threads/runs for the active workspace, generates a **Memory Proposal Pack**,
-   and leaves proposals in `proposed` / `review_pending` state.
+   and leaves each proposal in `proposed` status while the run moves to
+   `review_pending`.
 2. **Review proposals** — expand rows to see evidence citations, confidence,
-   and (for `skill_patch`) a diff preview. **Approve** or **Reject** records
-   review intent only. **Apply** (when shown) writes eligible approved
+   and (for `skill_patch`) a diff preview. Settings can **Approve** or **Reject**;
+   the gated `tw_introspection_review` MCP tool can also set review status.
+   **Apply** (when shown) writes eligible approved
    `repo_convention` / `do_not_repeat` lessons to **RepoConventionIndex**;
    skill patches and other kinds stay review-only in phase 1.
-3. **Enable daily run** — toggle in Settings (renderer scaffolded). When the
-   schedule IPC is wired, turning this on creates a **read-only** proposal pack
-   each day for review. It does **not** auto-apply lessons or edit skills.
+3. **Enable daily run** — the Settings toggle enables the landed scheduler and
+   schedule IPC. It creates a **read-only** proposal pack each day for review;
+   it does **not** auto-apply lessons or edit skills.
 
 IPC channels (read/review/apply + manual run):
 
@@ -211,7 +220,7 @@ IPC channels (read/review/apply + manual run):
 | `applyMemoryProposal(packId, proposalId)` | Phase-1 apply to `RepoConventionIndex` (eligible kinds only) |
 | `runManualIntrospection({ windowStart, windowEnd, workspaceId?, workspacePath? })` | Manual harvest + generate |
 
-Schedule IPC (**in progress** — `@WriteMain` scheduler slice):
+Schedule IPC:
 
 | Preload API | Purpose |
 | --- | --- |
@@ -241,21 +250,21 @@ approve/reject, evidence expansion, and skill-patch diff preview. For
 Other kinds remain review-only in phase 1 (no Apply button; blocked if invoked
 via IPC). Mounted in Settings via `ThreadIntrospectionSettingsPanel`.
 
-## Scheduled daily generation (active slice)
+## Scheduled daily generation
 
-Product ordering (blackboard `thread-introspection-next-ordering`): **scheduled
-read-only generation before any apply layer**.
+Scheduled generation is a landed, read-only collection path. It shares the
+manual run service and leaves application as a separate reviewed action.
 
-### What it will do (read-only)
+### What it does (read-only)
 
 - Once per day (24h interval or calendar-day idempotency), harvest the last 24h
   of persisted threads/runs and create a new **Memory Proposal Pack**.
-- Call `runManualIntrospection` with `trigger: 'scheduled'` (optional
-  `workflowId` when tied to a workflow record).
-- Leave all proposals in `proposed` / `review_pending` — **no auto-approve**,
+- Call the run service with `trigger: 'scheduled'`; the daily scheduler is
+  separate from workflow definitions and does not attach a workflow id.
+- Leave proposals `proposed` while the run becomes `review_pending` — **no auto-approve**,
   **no skill/rule/repo mutation**.
 
-### What it will not do
+### What it does not do
 
 - Auto-apply lessons (scheduled runs create packs only; apply stays a separate
   explicit user action in Settings).
@@ -263,37 +272,28 @@ read-only generation before any apply layer**.
   files (skill patches stay review-only until Skill Patch Manager ships).
 - Apply non-convention proposal kinds in phase 1 (`preference`, `failure_mode`,
   `provider_hint`, `bug`, `skill_patch`).
-- Replace human review — daily packs still require Settings approve/reject before
-  any apply.
+- Replace review — daily packs still require approval in Settings or through
+  the gated `tw_introspection_review` tool before any apply.
 - Use agent provider dispatch (introspection is a system action, not a Codex
   prompt in a chat thread).
 
 ### Implementation notes
 
-`WorkflowDefinition` templates today require a live chat, provider, and
-prompt — introspection is not an agent turn. Expected approach:
-
-- **Preferred MVP:** dedicated `IntrospectionScheduler` + settings record,
-  piggybacking `emitDueScheduledTasks` / task timer infra (mirror headless loop
-  bypass in `index.ts`).
-- **Alternative:** extend workflows with a system action kind
-  `thread_introspection` and headless dispatch.
-
-Cron triggers are not yet supported on workflow definitions; use
-`intervalMs: 86_400_000` or dedicated scheduler settings.
-
-**Renderer:** `ThreadIntrospectionSettingsPanel` already exposes an **Enable
-daily run** toggle and expects the schedule IPC contract above. Until Main
-lands handlers, the UI shows a graceful “not wired yet” hint.
-
-**Status:** backend scheduler + schedule IPC — **in progress** (`@WriteMain`).
-Docs updated in fan-out lane B; commit with scheduler slice via `@CheckCommit`.
+`WorkflowDefinition` templates require a live chat, provider, and prompt;
+introspection is a system action rather than an agent turn. The landed
+`IntrospectionScheduler` therefore uses its own settings record and headless
+dispatch path, with schedule IPC and the **Enable daily run** control in
+`ThreadIntrospectionSettingsPanel`. It suppresses duplicate scheduled packs for
+the same daily window. Workflow cron support is not required for this path.
 
 ## Trust and prompt-injection boundary
 
 - Thread and run content arriving at introspection is **untrusted evidence**.
-- Only **`MemoryProposal.lesson`** (distilled, bounded text) may be promoted.
-- **`quote`** on evidence refs is bounded and never copied verbatim into skills.
+- Phase-1 apply promotes the reviewed proposal **title and lesson** into
+  `RepoConventionIndex`. Both are bounded evidence-derived fields and may
+  preserve source wording; review is the trust boundary.
+- **`quote`** on evidence refs is bounded and is not promoted as a separate
+  phase-1 convention field.
 - **`citationToken`** follows recall honesty (`⟦recall:…⟧`) when served via
   `tw_recall_*`.
 - Agents must **not** edit `.codex/skills`, `~/.cursor/skills`, or workspace
@@ -311,7 +311,7 @@ Docs updated in fan-out lane B; commit with scheduler slice via `@CheckCommit`.
 | Per-run claims | `EvidencePackRecord` (input signals, not output store) |
 | Repo do-not-repeat | `RepoConventionIndex` |
 | Ensemble scratchpad | Blackboard categories (ephemeral, not registry) |
-| Scheduled daily run | `WorkflowDefinition` + `WorkflowScheduler` |
+| Scheduled daily run | `IntrospectionScheduleSettings` + `IntrospectionScheduler` |
 | Multi-phase orchestration pattern | `AuditRunRecord` / `AuditOrchestrator` |
 
 ## Implementation status
@@ -341,7 +341,7 @@ Commits:
 | Apply UI (phase 1) | **Landed** | Apply affordance for approved `repo_convention` / `do_not_repeat` proposals |
 | Scheduled daily generation | **Landed** | `IntrospectionScheduler.ts` + schedule IPC/toggle |
 | MCP tools | **Landed** | `tw_introspection_run`, `tw_introspection_list`, `tw_introspection_read`, `tw_introspection_review`; no MCP apply tool |
-| Decay / supersede | **Landed** | `IntrospectionLifecycleService.ts` store helpers; no IPC/MCP/renderer controls yet |
+| Decay / supersede | **Partial** | Store helpers landed; IPC/MCP review can set expiry status/metadata, but no public supersede caller or automatic due-expiry policy exists |
 | Apply layer (skills, prefs, bugs) | **Pending** | Skill Patch Manager + rollback; other kinds blocked in phase 1 |
 | Distillation policy | **Pending** | Auto-approve rules per scope/kind |
 
@@ -349,17 +349,17 @@ Commits:
 run service, scheduler, apply service, lifecycle service, MCP executors,
 Settings panel, and review panel.
 
-**Operational in dev:** Settings → Thread introspection → manual 24h run →
-approve/reject → **Apply** (repo convention / do-not-repeat only). Daily
-read-only generation can create reviewable packs, and MCP agents can
-run/list/read/review packs through `tw_introspection_*`. **Not yet:**
-skill/instruction file apply, MCP apply, full memory registry UI.
+**Operational in dev:** Settings → Automation → Thread introspection → manual
+24h run → approve/reject → **Apply** (repo convention / do-not-repeat only).
+Daily read-only generation can create reviewable packs, and MCP agents can
+run/list/read/review packs through `tw_introspection_*`. **Not yet:** skill or
+instruction-file apply, MCP apply, full memory registry UI.
 
 ### Pipeline checklist
 
 ```text
 Collect → Classify → Persist → Review → Scheduled → Apply (phase 1) → MCP → Decay/supersede
-  ✅        ✅         ✅         ✅        ✅             ✅ conventions   ✅      ✅ store helpers
+  ✅        ✅         ✅         ✅        ✅             ✅ conventions   ✅      ⚠ store helpers only
 ```
 
 Scheduled generation creates **reviewable packs only** (no auto-apply). Phase-1
@@ -378,13 +378,18 @@ helpers:
 - `expireDueMemoryProposals()` marks past-due `proposed` proposals as
   `expired` while leaving approved/applied records untouched.
 
-These helpers are internal/store-level today. There are no Settings, IPC, MCP,
-or automatic policy controls for lifecycle management yet.
+The helpers themselves are internal/store-level today. Raw IPC review and
+`tw_introspection_review` can directly set `expired` status and `expiresAt`, but
+the Settings review UI exposes only Approve and Reject. There is no public
+caller for `supersedeMemoryProposal()`, no automatic caller
+for `expireDueMemoryProposals()`, and no integrated lifecycle policy yet.
 
 ## Apply phase 1 (repo conventions only)
 
 Phase 1 is intentionally narrow: **controlled TaskWraith storage only**, after
-explicit human approval in Settings. Implementation:
+the proposal reaches `approved` through review. Settings provides the human
+review surface; the gated MCP review tool may also approve. Application itself
+remains Settings/IPC-only—there is no MCP apply tool. Implementation:
 `IntrospectionApplyService.applyMemoryProposal()` (`apply-memory-proposal` IPC).
 
 ### Eligible proposals

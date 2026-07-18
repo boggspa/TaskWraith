@@ -151,9 +151,11 @@ MCP the seat sees, and MCP tool calls are gated by `session/request_permission`
 
 ## Auth & usage
 
-- **Sign-in:** `kimi login` (device-code OAuth) or a Moonshot API key. Settings
-  copy and `providerTerminalHandlers` use the Kimi Code subcommands (`login`,
-  `upgrade`; no `logout` subcommand). `get-kimi-auth-status` and
+- **Sign-in:** the current Kimi Code ACP transport authenticates through
+  `kimi login` (device-code OAuth). Settings may retain a Moonshot API key for
+  legacy Wire/print paths, but that key does not authenticate an ACP seat.
+  Settings copy and `providerTerminalHandlers` use the Kimi Code subcommands
+  (`login`, `upgrade`; no `logout` subcommand). `get-kimi-auth-status` and
   `detectConfiguredProviders` are OAuth-aware (an OAuth-only install with no API
   key still reads configured / `oauth`).
 - **Usage:** the live `api.kimi.com/coding/v1/usages` endpoint is authoritative;
