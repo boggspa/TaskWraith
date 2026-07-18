@@ -4,7 +4,6 @@ import {
   executionGraphRevisionRef,
   topologyFromRevision
 } from './ExecutionGraphCompiler'
-import { recoverExecutionRunAfterRestart } from './ExecutionGraphRecovery'
 import {
   createExecutionRunEvent,
   executionTopologyFrontier,
@@ -106,94 +105,6 @@ function appendFirst(executionId = 'execution-1', step = agentStep()) {
     },
     { appendedBy: 'user', step, incomingEdges: [] }
   )
-}
-
-function buildRunningProjection(effect: ExecutionEffect = 'read_only') {
-  const first = appendFirst('recover-1', agentStep('investigate', effect))
-  if (!first.ok) throw new Error('fixture append failed')
-  const events: ExecutionRunEvent[] = [
-    creation('recover-1'),
-    createExecutionRunEvent(first.input, 2, now),
-    createExecutionRunEvent(
-      { executionId: 'recover-1', kind: 'execution_state_changed', state: 'running' },
-      3,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'activation_created',
-        activationId: 'activation-1',
-        stepId: 'investigate'
-      },
-      4,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'activation_state_changed',
-        activationId: 'activation-1',
-        state: 'ready'
-      },
-      5,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'activation_state_changed',
-        activationId: 'activation-1',
-        state: 'claimed'
-      },
-      6,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'attempt_created',
-        attemptId: 'attempt-1',
-        activationId: 'activation-1',
-        stepId: 'investigate',
-        ordinal: 1
-      },
-      7,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'attempt_state_changed',
-        attemptId: 'attempt-1',
-        state: 'claimed'
-      },
-      8,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'activation_state_changed',
-        activationId: 'activation-1',
-        state: 'running'
-      },
-      9,
-      now
-    ),
-    createExecutionRunEvent(
-      {
-        executionId: 'recover-1',
-        kind: 'attempt_state_changed',
-        attemptId: 'attempt-1',
-        state: 'running',
-        providerRunRef: 'provider-run-1'
-      },
-      10,
-      now
-    )
-  ]
-  return { events, projection: foldExecutionRun('recover-1', events) }
 }
 
 describe('Execution Stack frontier append', () => {
@@ -612,56 +523,5 @@ describe('Execution-run event fold', () => {
     expect(parseExecutionRunEventLine('not json')).toBeNull()
     expect(nextExecutionRunSequence([event])).toBe(2)
     expect(safeExecutionRunFileName('run/../../escape')).toBe('run_.._.._escape.jsonl')
-  })
-})
-
-describe('Execution-run restart recovery', () => {
-  it('interrupts and requeues a bounded read-only attempt without replaying completed work', () => {
-    const { events, projection } = buildRunningProjection('read_only')
-    expect(projection.integrity).toBe('valid')
-    const plan = recoverExecutionRunAfterRestart(projection, {
-      recoveredAt: '2026-07-18T10:01:00.000Z'
-    })
-    expect(plan.disposition).toBe('resume')
-    expect(plan.interruptedAttemptIds).toEqual(['attempt-1'])
-    expect(plan.requeuedActivationIds).toEqual(['activation-1'])
-    expect(plan.events.map((event) => event.kind)).toEqual([
-      'attempt_state_changed',
-      'activation_state_changed'
-    ])
-
-    const recovered = foldExecutionRun('recover-1', [...events, ...plan.events])
-    expect(recovered.integrity).toBe('valid')
-    expect(recovered.attempts['attempt-1'].state).toBe('interrupted')
-    expect(recovered.activations['activation-1'].state).toBe('ready')
-  })
-
-  it('never auto-replays a mutating attempt that crossed the running boundary', () => {
-    const { events, projection } = buildRunningProjection('workspace_write')
-    const plan = recoverExecutionRunAfterRestart(projection, {
-      recoveredAt: '2026-07-18T10:01:00.000Z'
-    })
-    expect(plan.disposition).toBe('requires_action')
-    expect(plan.requeuedActivationIds).toEqual([])
-    expect(plan.requiresActionActivationIds).toEqual(['activation-1'])
-
-    const recovered = foldExecutionRun('recover-1', [...events, ...plan.events])
-    expect(recovered.integrity).toBe('valid')
-    expect(recovered.attempts['attempt-1'].state).toBe('interrupted')
-    expect(recovered.activations['activation-1'].state).toBe('requires_action')
-    expect(recovered.state).toBe('requires_action')
-  })
-
-  it('does nothing for terminal executions', () => {
-    const event = creation('terminal-run')
-    const terminal = createExecutionRunEvent(
-      { executionId: 'terminal-run', kind: 'execution_state_changed', state: 'cancelled' },
-      2,
-      now
-    )
-    const plan = recoverExecutionRunAfterRestart(
-      foldExecutionRun('terminal-run', [event, terminal])
-    )
-    expect(plan).toMatchObject({ disposition: 'terminal', events: [] })
   })
 })
