@@ -1,7 +1,8 @@
 import { renderToStaticMarkup } from 'react-dom/server'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
 import {
+  buildMediaCardActions,
   ChatMediaDockPanel,
   ChatMediaPreviewOverlay,
   ChatMessageMediaStrip,
@@ -792,5 +793,42 @@ describe('ChatMediaPanel attachment rendering', () => {
     // ...and the file ref renders as its own copy-path card.
     expect(html).toContain('README.md')
     expect(html).toContain('is-file')
+  })
+})
+
+describe('buildMediaCardActions project-library promotion', () => {
+  const pathRef = {
+    id: 'ref-1',
+    kind: 'file' as const,
+    source: 'upload' as const,
+    name: 'report.md',
+    path: '/repo/out/report.md'
+  }
+
+  it('offers promotion only for path-backed refs when the host wires a target', () => {
+    const onPromote = vi.fn()
+    const actions = buildMediaCardActions(pathRef, () => {}, undefined, {
+      projectName: 'Alpha',
+      onPromote
+    })
+    const promotion = actions.find((action) => action.id === 'promote-to-project-library')
+    expect(promotion?.label).toBe('Add to Alpha library')
+    promotion?.onSelect()
+    expect(onPromote).toHaveBeenCalledWith(pathRef)
+  })
+
+  it('omits promotion without a target or for sha-only transcript assets', () => {
+    expect(
+      buildMediaCardActions(pathRef, () => {}).some(
+        (action) => action.id === 'promote-to-project-library'
+      )
+    ).toBe(false)
+    const shaOnly = { ...pathRef, path: '', sha256: 'abc', mimeType: 'text/markdown' }
+    expect(
+      buildMediaCardActions(shaOnly, () => {}, undefined, {
+        projectName: 'Alpha',
+        onPromote: () => {}
+      }).some((action) => action.id === 'promote-to-project-library')
+    ).toBe(false)
   })
 })

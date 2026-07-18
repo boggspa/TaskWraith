@@ -213,6 +213,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   currentChatHumanCollaborationShare: any
   currentChatIdRef: any
   currentChatMediaRefs: any
+  chatMediaPromoteTarget:
+    | { projectName: string; onPromote: (ref: { path?: string }) => void }
+    | undefined
   currentGeminiWorktree: any
   currentPinnedMessages: any
   currentPreviewMenuOpen: any

@@ -152,6 +152,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   currentChatHumanCollaborationShare,
   currentChatIdRef,
   currentChatMediaRefs,
+  chatMediaPromoteTarget,
   currentGeminiWorktree,
   currentPinnedMessages,
   currentPreviewMenuOpen,
@@ -2429,6 +2430,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     onClose={() => setChatMediaPanelOpenPreservingTranscript(false)}
                     onPreviewImage={setPreviewChatMediaRef}
                     onDetachToPane={openMediaPane}
+                    promoteToProjectLibrary={chatMediaPromoteTarget}
                   />
                 )}
 

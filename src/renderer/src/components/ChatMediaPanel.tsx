@@ -349,10 +349,19 @@ function MediaActionMenu({
  * NOT a hook (no React state) despite acting on a `copy` callback — kept a
  * plain builder so it can be called after an early return in the overlay.
  */
-function buildMediaCardActions(
+/** Host wiring for "promote this output into the Project library". Offered
+ * only for path-backed refs: a promotion catalogues a locator (metadata only,
+ * no access change), and sha-only transcript assets have no stable locator. */
+export interface MediaPromoteToProjectLibrary {
+  projectName: string
+  onPromote: (ref: ChatMediaRef) => void
+}
+
+export function buildMediaCardActions(
   mediaRef: ChatMediaRef,
   copy: (id: string, text: string) => void,
-  onDetachToPane?: (ref: ChatMediaRef) => void
+  onDetachToPane?: (ref: ChatMediaRef) => void,
+  promote?: MediaPromoteToProjectLibrary
 ): MediaActionMenuItem[] {
   const sha256 = mediaRef.sha256
   const mimeType = mediaRef.mimeType
@@ -410,7 +419,16 @@ function buildMediaCardActions(
         if (typeof window === 'undefined' || !sha256 || !mimeType) return
         void window.api?.saveMediaAssetAs?.(sha256, mimeType, mediaRef.name)
       }
-    }
+    },
+    ...(promote && mediaRef.path
+      ? [
+          {
+            id: 'promote-to-project-library',
+            label: `Add to ${promote.projectName} library`,
+            onSelect: () => promote.onPromote(mediaRef)
+          } as MediaActionMenuItem
+        ]
+      : [])
   ]
 }
 
@@ -1390,19 +1408,21 @@ function ChatMediaDockPreview({
   workspacePath,
   onPreviewImage,
   onDetachToPane,
+  promoteToProjectLibrary,
   copy
 }: {
   mediaRef: ChatMediaRef
   workspacePath?: string
   onPreviewImage?: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
+  promoteToProjectLibrary?: MediaPromoteToProjectLibrary
   copy: (id: string, text: string) => void
 }) {
   const isAv = isAvMediaKind(mediaRef.kind)
   const avSrc = isAv ? chatMediaTwUrl(mediaRef) : ''
   const previewSrc = chatMediaPreviewSrc(mediaRef)
   const location = formatChatMediaLocation(mediaRef.path, workspacePath)
-  const actions = buildMediaCardActions(mediaRef, copy, onDetachToPane)
+  const actions = buildMediaCardActions(mediaRef, copy, onDetachToPane, promoteToProjectLibrary)
 
   return (
     <section className={`right-dock-media-preview kind-${mediaRef.kind}`} aria-label="Selected media">
@@ -1505,13 +1525,15 @@ export function ChatMediaDockPanel({
   workspacePath,
   onClose,
   onPreviewImage,
-  onDetachToPane
+  onDetachToPane,
+  promoteToProjectLibrary
 }: {
   refs: ChatMediaRef[]
   workspacePath?: string
   onClose: () => void
   onPreviewImage?: (ref: ChatMediaRef) => void
   onDetachToPane?: (ref: ChatMediaRef) => void
+  promoteToProjectLibrary?: MediaPromoteToProjectLibrary
 }) {
   const { copiedId, copy } = useCopyFeedback()
   const [selectedId, setSelectedId] = useState(() => defaultDockMediaRef(refs)?.id || '')
@@ -1552,6 +1574,7 @@ export function ChatMediaDockPanel({
             workspacePath={workspacePath}
             onPreviewImage={onPreviewImage}
             onDetachToPane={onDetachToPane}
+            promoteToProjectLibrary={promoteToProjectLibrary}
             copy={copy}
           />
           <div className="right-dock-media-list" aria-label="Chat media items">

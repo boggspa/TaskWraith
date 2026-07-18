@@ -642,7 +642,13 @@ import {
   type ProjectReferenceContextSelection
 } from './lib/projectReferenceContextSelection'
 import { projectReferenceContextDisclosure } from '../../shared/projectReferenceContext'
-import { getProjectWorkProfile, listProjects, setProjectHomeChat } from './lib/projectsStore'
+import {
+  addProjectReference,
+  getProjectWorkProfile,
+  listProjects,
+  setProjectHomeChat,
+  subscribeProjects
+} from './lib/projectsStore'
 import { planPendingHomeClaims, resolveStartProjectHomeTarget } from './lib/projectHomeClaims'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
@@ -1409,6 +1415,10 @@ function App(): React.JSX.Element {
   const [activeWorkProjectId, setActiveWorkProjectId] = useState<string | null>(null)
   const activeWorkProjectIdRef = useRef(activeWorkProjectId)
   activeWorkProjectIdRef.current = activeWorkProjectId
+  // Bumped on every projects-store change so memos over listProjects() (the
+  // media promote target below, membership-derived chrome) recompute.
+  const [projectsRevision, setProjectsRevision] = useState(0)
+  useEffect(() => subscribeProjects(() => setProjectsRevision((tick) => tick + 1)), [])
   // Legacy process-wide YOLO visibility. New Trusted Session is lane-scoped;
   // this state only lets the composer show/stop an old global auto-approval
   // switch if one is active inside the current process.
@@ -3692,6 +3702,32 @@ function App(): React.JSX.Element {
     () => collectChatMediaRefs(currentChat, imageAttachments, externalPathGrants),
     [currentChat, imageAttachments, externalPathGrants]
   )
+  // "Add to <project> library" on Media rows: offered only when the focused
+  // chat belongs to exactly ONE project (ambiguous membership would be a
+  // guess) and the row is path-backed. Promotion catalogues a locator through
+  // the ordinary reference add — metadata only, no access change.
+  const chatMediaPromoteTarget = useMemo(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return undefined
+    const owners = listProjects().filter((project) => project.memberChatIds.includes(chatId))
+    if (owners.length !== 1) return undefined
+    const project = owners[0]
+    return {
+      projectName: project.name,
+      onPromote: (ref: { path?: string }) => {
+        const locator = ref.path?.trim()
+        if (!locator) return
+        void addProjectReference({ projectId: project.id, kind: 'file', locator }).catch(
+          (error) => {
+            window.alert(
+              error instanceof Error ? error.message : 'Could not add to the Project library.'
+            )
+          }
+        )
+      }
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentChat?.appChatId, projectsRevision])
   const projectReferenceContextSummary = (
     selection: ProjectReferenceContextSelection | null | undefined
   ): string =>
@@ -27782,6 +27818,7 @@ function App(): React.JSX.Element {
     currentChatHumanCollaborationShare,
     currentChatIdRef,
     currentChatMediaRefs,
+    chatMediaPromoteTarget,
     currentGeminiWorktree,
     currentPinnedMessages,
     currentPreviewMenuOpen,
