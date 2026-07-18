@@ -50,14 +50,18 @@ function revision(objective = 'Inspect the workspace'): ExecutionGraphRevision {
 
 function createExecution(
   repository: ExecutionGraphRepository,
-  base?: ExecutionGraphRevision
+  base?: ExecutionGraphRevision,
+  executionId = 'execution-one'
 ): void {
   repository.createExecution({
     kind: 'execution_created',
-    executionId: 'execution-one',
-    title: 'Stack execution',
+    executionId,
+    title: executionId === 'execution-one' ? 'Stack execution' : `Stack execution ${executionId}`,
     workspaceId: 'workspace-one',
-    tenant: { kind: 'stack', tenantId: 'stack-one' },
+    tenant: {
+      kind: 'stack',
+      tenantId: executionId === 'execution-one' ? 'stack-one' : `stack-${executionId}`
+    },
     ...(base ? { baseRevision: executionGraphRevisionRef(base) } : {}),
     permissionCeilingRef: {
       schemaVersion: 1,
@@ -133,6 +137,33 @@ describe('ExecutionGraphRepository revisions and registries', () => {
     expect(reloaded.getRevisionByRef(executionGraphRevisionRef(saved))).toEqual(saved)
     expect(reloaded.getRunTemplate(firstTemplate.templateId)).toEqual(firstTemplate)
     expect(reloaded.getLayout('graph-one', 1)?.positions.inspect).toEqual({ x: 40, y: 80 })
+  })
+
+  it('caps layout position count and serialized storage size', () => {
+    const repository = new ExecutionGraphRepository(storageRoot())
+    const saved = repository.saveRevision(revision())
+
+    expect(() =>
+      repository.saveLayout({
+        schemaVersion: 1,
+        graphId: saved.graphId,
+        revision: saved.revision,
+        positions: {
+          inspect: { x: 0, y: 0 },
+          excess: { x: 1, y: 1 }
+        }
+      })
+    ).toThrow(/above its 1-position limit/)
+
+    expect(() =>
+      repository.saveLayout({
+        schemaVersion: 1,
+        graphId: saved.graphId,
+        revision: saved.revision,
+        positions: {},
+        collapsedGroupIds: Array.from({ length: 3_000 }, () => `g${'x'.repeat(127)}`)
+      })
+    ).toThrow(/256 KiB storage limit/)
   })
 
   it('rejects a revision whose immutable run-template authority is missing', () => {
@@ -211,6 +242,34 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     expect(repository.readExecutionEvents('execution-one')).toHaveLength(3)
   })
 
+  it('serves stable cached projections and events, then replaces both caches after append', () => {
+    const repository = new ExecutionGraphRepository(storageRoot())
+    createExecution(repository)
+
+    const initialProjection = repository.getExecution('execution-one')
+    const initialEvents = repository.readExecutionEvents('execution-one')
+    expect(repository.getExecution('execution-one')).toBe(initialProjection)
+    expect(repository.listExecutions()[0]).toBe(initialProjection)
+    expect(repository.readExecutionEvents('execution-one')).toBe(initialEvents)
+    expect(repository.listExecutionEvents()[0].events).toBe(initialEvents)
+
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'running',
+      timestamp: '2026-07-18T10:02:00.000Z'
+    })
+
+    const updatedProjection = repository.getExecution('execution-one')
+    const updatedEvents = repository.readExecutionEvents('execution-one')
+    expect(updatedProjection).not.toBe(initialProjection)
+    expect(updatedEvents).not.toBe(initialEvents)
+    expect(updatedProjection).toMatchObject({ state: 'running', lastSequence: 2 })
+    expect(updatedEvents).toHaveLength(2)
+    expect(repository.getExecution('execution-one')).toBe(updatedProjection)
+    expect(repository.readExecutionEvents('execution-one')).toBe(updatedEvents)
+  })
+
   it('ignores and repairs only an unterminated final fragment before the next append', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
@@ -240,13 +299,52 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     })
   })
 
-  it('rejects a corrupt complete ledger record and a non-canonical registry identity', () => {
+  it('quarantines one corrupt ledger without hiding healthy executions', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
     createExecution(repository)
-    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    createExecution(repository, undefined, 'execution-two')
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-two.jsonl')
     appendFileSync(ledger, '{"corrupt":true}\n', 'utf8')
-    expect(() => new ExecutionGraphRepository(root)).toThrow(/ledger is corrupt/)
+
+    const recovered = new ExecutionGraphRepository(root)
+    expect(recovered.listExecutions().map((execution) => execution.executionId)).toEqual([
+      'execution-one'
+    ])
+    expect(recovered.getExecution('execution-two')).toBeUndefined()
+    expect(recovered.readExecutionEvents('execution-two')).toEqual([])
+    expect(recovered.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        executionId: 'execution-two',
+        fileName: 'execution-execution-two.jsonl'
+      })
+    ])
+    expect(() =>
+      recovered.appendExecutionEvent({
+        kind: 'execution_state_changed',
+        executionId: 'execution-two',
+        state: 'running'
+      })
+    ).toThrow(/quarantined/)
+    expect(() => createExecution(recovered, undefined, 'execution-two')).toThrow(/already exists/)
+  })
+
+  it('quarantines a missing ledger but still fails closed on corrupt registry identity', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    createExecution(repository, undefined, 'execution-two')
+    rmSync(join(root, 'execution-graph-ledgers-v1', 'execution-execution-two.jsonl'))
+
+    const recovered = new ExecutionGraphRepository(root)
+    expect(recovered.listExecutions()).toHaveLength(1)
+    expect(recovered.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_missing',
+        executionId: 'execution-two'
+      })
+    ])
 
     const secondRoot = storageRoot()
     const secondRepository = new ExecutionGraphRepository(secondRoot)

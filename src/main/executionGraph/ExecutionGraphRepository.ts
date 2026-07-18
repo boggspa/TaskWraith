@@ -42,6 +42,8 @@ const CANONICAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const RUN_TEMPLATE_PREFIX = 'run-template-'
 const MAX_RUN_TEMPLATE_BYTES = 1_048_576
+const MAX_LAYOUT_BYTES = 262_144
+const MAX_LAYOUT_POSITIONS = 1_000
 
 interface RevisionRegistry {
   readonly schemaVersion: 1
@@ -105,7 +107,23 @@ type ExecutionCreatedEventInput = Extract<
 interface ParsedLedger {
   readonly events: readonly ExecutionRunEvent[]
   readonly completeByteLength: number
+  readonly observedByteLength: number
   readonly hasTornFinalFragment: boolean
+}
+
+interface CachedExecution {
+  readonly events: readonly ExecutionRunEvent[]
+  readonly projection: ExecutionRunProjection
+  readonly completeByteLength: number
+  readonly observedByteLength: number
+  readonly hasTornFinalFragment: boolean
+}
+
+export interface ExecutionGraphRepositoryDiagnostic {
+  readonly code: 'execution_ledger_missing' | 'execution_ledger_corrupt'
+  readonly executionId: string
+  readonly fileName: string
+  readonly message: string
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -223,11 +241,27 @@ function validateRevision(value: unknown): ExecutionGraphRevision {
 function validateLayout(value: unknown, revision?: ExecutionGraphRevision): ExecutionGraphLayout {
   if (!isRecord(value) || value.schemaVersion !== 1)
     throw new Error('Execution graph layout is invalid.')
+  let serialized: string
+  try {
+    serialized = JSON.stringify(value)
+  } catch {
+    throw new Error('Execution graph layout must be JSON serializable.')
+  }
+  if (Buffer.byteLength(serialized, 'utf8') > MAX_LAYOUT_BYTES) {
+    throw new Error('Execution graph layout exceeds the 256 KiB storage limit.')
+  }
   assertCanonicalId(value.graphId, 'layout.graphId')
   if (!isPositiveInteger(value.revision)) throw new Error('layout.revision must be positive.')
   if (!isRecord(value.positions)) throw new Error('layout.positions must be an object.')
   const stepIds = revision ? new Set(revision.steps.map((step) => step.id)) : undefined
-  for (const [stepId, position] of Object.entries(value.positions)) {
+  const positions = Object.entries(value.positions)
+  const positionLimit = Math.min(MAX_LAYOUT_POSITIONS, stepIds?.size ?? MAX_LAYOUT_POSITIONS)
+  if (positions.length > positionLimit) {
+    throw new Error(
+      `Execution graph layout has ${positions.length} positions, above its ${positionLimit}-position limit.`
+    )
+  }
+  for (const [stepId, position] of positions) {
     assertCanonicalId(stepId, 'layout position step id')
     if (stepIds && !stepIds.has(stepId))
       throw new Error(`Layout references unknown step "${stepId}".`)
@@ -490,6 +524,8 @@ export class ExecutionGraphRepository {
   private executions: ExecutionRegistryEntry[]
   private layouts: ExecutionGraphLayout[]
   private templates: ExecutionGraphRunTemplate[]
+  private readonly executionCache = new Map<string, CachedExecution>()
+  private readonly repositoryDiagnostics = new Map<string, ExecutionGraphRepositoryDiagnostic>()
 
   constructor(storageRoot: string) {
     if (!isNonEmptyString(storageRoot)) throw new Error('Execution graph storage root is required.')
@@ -506,7 +542,6 @@ export class ExecutionGraphRepository {
     this.assertRevisionRunTemplates(this.revisions)
     this.executions = this.loadExecutionRegistry()
     this.layouts = this.loadLayoutRegistry()
-    this.assertPersistedExecutionRunTemplates()
   }
 
   saveRevision(revision: ExecutionGraphRevision): ExecutionGraphRevision {
@@ -679,6 +714,15 @@ export class ExecutionGraphRepository {
         executions: next
       } satisfies ExecutionRegistry)
       this.executions = next
+      const serialized = serializeExecutionRunEvent(event)
+      this.executionCache.set(input.executionId, {
+        events: Object.freeze([event]),
+        projection,
+        completeByteLength: Buffer.byteLength(serialized, 'utf8'),
+        observedByteLength: Buffer.byteLength(serialized, 'utf8'),
+        hasTornFinalFragment: false
+      })
+      this.repositoryDiagnostics.delete(input.executionId)
       return projection
     } catch (error) {
       if (fd !== undefined) closeSync(fd)
@@ -712,9 +756,47 @@ export class ExecutionGraphRepository {
     }
     const entry = this.executions.find((candidate) => candidate.executionId === executionId)
     if (!entry) throw new Error(`Unknown execution "${executionId}".`)
-    const path = this.ledgerPath(entry)
-    const parsed = this.parseLedger(path, executionId)
-    const actualLastSequence = parsed.events.at(-1)?.sequence ?? 0
+    let cached = this.executionCache.get(executionId)
+    if (!cached) {
+      throw new Error(`Execution "${executionId}" is quarantined and cannot accept events.`)
+    }
+    let path: string
+    try {
+      path = this.ledgerPath(entry)
+    } catch (error) {
+      this.quarantineExecution(
+        entry,
+        'execution_ledger_missing',
+        error instanceof Error ? error.message : String(error)
+      )
+      throw error
+    }
+    const observedSize = lstatSync(path).size
+    if (observedSize !== cached.observedByteLength) {
+      let reparsed: ParsedLedger | undefined
+      try {
+        reparsed = this.parseLedger(path, executionId)
+      } catch {
+        // Report the stable repository diagnostic below rather than exposing parser details here.
+      }
+      const unchangedCompletePrefix =
+        reparsed?.hasTornFinalFragment === true &&
+        reparsed.completeByteLength === cached.completeByteLength &&
+        stableExecutionGraphStringify(reparsed.events) ===
+          stableExecutionGraphStringify(cached.events)
+      if (!reparsed || !unchangedCompletePrefix) {
+        const message = `Execution ledger changed outside the repository for "${executionId}".`
+        this.quarantineExecution(entry, 'execution_ledger_corrupt', message)
+        throw new Error(message)
+      }
+      cached = {
+        ...cached,
+        observedByteLength: reparsed.observedByteLength,
+        hasTornFinalFragment: true
+      }
+      this.executionCache.set(executionId, cached)
+    }
+    const actualLastSequence = cached.projection.lastSequence
     if (
       options.expectedLastSequence !== undefined &&
       (!isNonNegativeInteger(options.expectedLastSequence) ||
@@ -726,7 +808,15 @@ export class ExecutionGraphRepository {
         actualLastSequence
       )
     }
-    if (parsed.hasTornFinalFragment) this.truncateTornFinalFragment(path, parsed.completeByteLength)
+    if (cached.hasTornFinalFragment) {
+      this.truncateTornFinalFragment(path, cached.completeByteLength)
+      cached = {
+        ...cached,
+        observedByteLength: cached.completeByteLength,
+        hasTornFinalFragment: false
+      }
+      this.executionCache.set(executionId, cached)
+    }
 
     const events = inputs.map((input, index) => {
       const event = createExecutionRunEvent(input, actualLastSequence + index + 1)
@@ -734,7 +824,7 @@ export class ExecutionGraphRepository {
       if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
       return event
     })
-    const allEvents = [...parsed.events, ...events]
+    const allEvents = [...cached.events, ...events]
     const baseRevision = this.resolveBaseRevision(allEvents)
     const projection = foldExecutionRun(executionId, allEvents, { baseRevision })
     if (projection.integrity !== 'valid') {
@@ -747,8 +837,18 @@ export class ExecutionGraphRepository {
     let fd: number | undefined
     try {
       fd = openSync(path, 'a', 0o600)
-      writeAll(fd, Buffer.from(events.map(serializeExecutionRunEvent).join(''), 'utf8'))
+      const serialized = events.map(serializeExecutionRunEvent).join('')
+      const serializedBytes = Buffer.from(serialized, 'utf8')
+      writeAll(fd, serializedBytes)
       fsyncSync(fd)
+      const completeByteLength = cached.completeByteLength + serializedBytes.byteLength
+      this.executionCache.set(executionId, {
+        events: Object.freeze(allEvents),
+        projection,
+        completeByteLength,
+        observedByteLength: completeByteLength,
+        hasTornFinalFragment: false
+      })
       return events
     } finally {
       if (fd !== undefined) closeSync(fd)
@@ -757,32 +857,23 @@ export class ExecutionGraphRepository {
 
   readExecutionEvents(executionId: string): readonly ExecutionRunEvent[] {
     assertCanonicalId(executionId, 'executionId')
-    const entry = this.executions.find((candidate) => candidate.executionId === executionId)
-    if (!entry) return []
-    return this.parseLedger(this.ledgerPath(entry), executionId).events
+    return this.executionCache.get(executionId)?.events ?? []
   }
 
   hasExecution(executionId: string): boolean {
     assertCanonicalId(executionId, 'executionId')
-    return this.executions.some((entry) => entry.executionId === executionId)
+    return this.executionCache.has(executionId)
   }
 
   getExecution(executionId: string): ExecutionRunProjection | undefined {
     assertCanonicalId(executionId, 'executionId')
-    if (!this.hasExecution(executionId)) return undefined
-    const events = this.readExecutionEvents(executionId)
-    if (events.length === 0 || events[0].kind !== 'execution_created') {
-      throw new Error(`Execution "${executionId}" is missing its authoritative creation event.`)
-    }
-    return foldExecutionRun(executionId, events, { baseRevision: this.resolveBaseRevision(events) })
+    return this.executionCache.get(executionId)?.projection
   }
 
   listExecutions(): readonly ExecutionRunProjection[] {
-    return this.executions.map((entry) => {
-      const projection = this.getExecution(entry.executionId)
-      if (!projection)
-        throw new Error(`Execution registry entry "${entry.executionId}" is missing.`)
-      return projection
+    return this.executions.flatMap((entry) => {
+      const projection = this.executionCache.get(entry.executionId)?.projection
+      return projection ? [projection] : []
     })
   }
 
@@ -790,10 +881,14 @@ export class ExecutionGraphRepository {
     readonly executionId: string
     readonly events: readonly ExecutionRunEvent[]
   }[] {
-    return this.executions.map((entry) => ({
-      executionId: entry.executionId,
-      events: this.readExecutionEvents(entry.executionId)
-    }))
+    return this.executions.flatMap((entry) => {
+      const events = this.executionCache.get(entry.executionId)?.events
+      return events ? [{ executionId: entry.executionId, events }] : []
+    })
+  }
+
+  listRepositoryDiagnostics(): readonly ExecutionGraphRepositoryDiagnostic[] {
+    return [...this.repositoryDiagnostics.values()]
   }
 
   private loadRevisionRegistry(): ExecutionGraphRevision[] {
@@ -823,7 +918,8 @@ export class ExecutionGraphRepository {
       rawExecutions = raw.executions
     }
     const seen = new Set<string>()
-    const registered = rawExecutions.map((candidate) => {
+    const registered: ExecutionRegistryEntry[] = []
+    for (const candidate of rawExecutions) {
       if (!isRecord(candidate) || candidate.schemaVersion !== 1) {
         throw new Error('Execution registry entry is invalid.')
       }
@@ -836,20 +932,49 @@ export class ExecutionGraphRepository {
         throw new Error(`Duplicate execution "${candidate.executionId}".`)
       seen.add(candidate.executionId)
       const entry = cloneAndFreeze(candidate as unknown as ExecutionRegistryEntry)
+      registered.push(entry)
       const path = join(this.ledgersDirectory, entry.fileName)
-      if (!existsSync(path))
-        throw new Error(`Execution ledger is missing for "${entry.executionId}".`)
-      const parsed = this.parseLedger(path, entry.executionId)
-      if (parsed.events.length === 0) {
-        throw new Error(
-          `Execution "${entry.executionId}" is missing its authoritative creation event.`
+      if (!existsSync(path)) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_missing',
+          `Execution ledger is missing for "${entry.executionId}".`
+        )
+        continue
+      }
+      const stat = lstatSync(path)
+      if (!stat.isFile() || stat.isSymbolicLink()) {
+        throw new Error(`Execution ledger is not a regular file for "${entry.executionId}".`)
+      }
+      let parsed: ParsedLedger
+      try {
+        parsed = this.parseLedger(path, entry.executionId)
+      } catch (error) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          error instanceof Error ? error.message : String(error)
+        )
+        continue
+      }
+      if (parsed.events[0]?.timestamp !== entry.createdAt) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          `Execution registry createdAt does not match the ledger for "${entry.executionId}".`
+        )
+        continue
+      }
+      try {
+        this.cacheParsedExecution(entry, parsed)
+      } catch (error) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          error instanceof Error ? error.message : String(error)
         )
       }
-      if (parsed.events[0].timestamp !== entry.createdAt) {
-        throw new Error(`Execution registry createdAt is corrupt for "${entry.executionId}".`)
-      }
-      return entry
-    })
+    }
 
     let repaired = false
     for (const fileName of readdirSync(this.ledgersDirectory)) {
@@ -865,19 +990,49 @@ export class ExecutionGraphRepository {
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error(`Execution ledger is not a regular file for "${executionId}".`)
       }
-      const parsed = this.parseLedger(path, executionId)
+      let parsed: ParsedLedger
+      try {
+        parsed = this.parseLedger(path, executionId)
+      } catch (error) {
+        this.quarantineExecution(
+          {
+            executionId,
+            fileName
+          },
+          'execution_ledger_corrupt',
+          error instanceof Error ? error.message : String(error)
+        )
+        continue
+      }
       const created = parsed.events[0]
       if (!created || created.kind !== 'execution_created') {
-        throw new Error(`Execution "${executionId}" is missing its authoritative creation event.`)
+        this.quarantineExecution(
+          {
+            executionId,
+            fileName
+          },
+          'execution_ledger_corrupt',
+          `Execution "${executionId}" is missing its authoritative creation event.`
+        )
+        continue
       }
-      registered.push(
-        cloneAndFreeze({
-          schemaVersion: REPOSITORY_SCHEMA_VERSION,
-          executionId,
-          fileName,
-          createdAt: created.timestamp
-        } satisfies ExecutionRegistryEntry)
-      )
+      const entry = cloneAndFreeze({
+        schemaVersion: REPOSITORY_SCHEMA_VERSION,
+        executionId,
+        fileName,
+        createdAt: created.timestamp
+      } satisfies ExecutionRegistryEntry)
+      try {
+        this.cacheParsedExecution(entry, parsed)
+      } catch (error) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          error instanceof Error ? error.message : String(error)
+        )
+        continue
+      }
+      registered.push(entry)
       seen.add(executionId)
       repaired = true
     }
@@ -990,7 +1145,12 @@ export class ExecutionGraphRepository {
         `Execution ledger for "${executionId}" does not begin with execution_created.`
       )
     }
-    return { events, completeByteLength, hasTornFinalFragment }
+    return {
+      events: Object.freeze(events),
+      completeByteLength,
+      observedByteLength: bytes.byteLength,
+      hasTornFinalFragment
+    }
   }
 
   private truncateTornFinalFragment(path: string, completeByteLength: number): void {
@@ -1035,11 +1195,44 @@ export class ExecutionGraphRepository {
     }
   }
 
-  private assertPersistedExecutionRunTemplates(): void {
-    for (const entry of this.executions) {
-      for (const event of this.readExecutionEvents(entry.executionId)) {
-        if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
-      }
+  private cacheParsedExecution(entry: ExecutionRegistryEntry, parsed: ParsedLedger): void {
+    for (const event of parsed.events) {
+      if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
     }
+    const projection = foldExecutionRun(entry.executionId, parsed.events, {
+      baseRevision: this.resolveBaseRevision(parsed.events)
+    })
+    if (projection.integrity !== 'valid') {
+      throw new Error(
+        `Execution ledger fold is invalid: ${projection.diagnostics
+          .map((diagnostic) => diagnostic.code)
+          .join(', ')}.`
+      )
+    }
+    this.executionCache.set(entry.executionId, {
+      events: parsed.events,
+      projection,
+      completeByteLength: parsed.completeByteLength,
+      observedByteLength: parsed.observedByteLength,
+      hasTornFinalFragment: parsed.hasTornFinalFragment
+    })
+    this.repositoryDiagnostics.delete(entry.executionId)
+  }
+
+  private quarantineExecution(
+    entry: Pick<ExecutionRegistryEntry, 'executionId' | 'fileName'>,
+    code: ExecutionGraphRepositoryDiagnostic['code'],
+    message: string
+  ): void {
+    this.executionCache.delete(entry.executionId)
+    this.repositoryDiagnostics.set(
+      entry.executionId,
+      cloneAndFreeze({
+        code,
+        executionId: entry.executionId,
+        fileName: entry.fileName,
+        message
+      } satisfies ExecutionGraphRepositoryDiagnostic)
+    )
   }
 }
