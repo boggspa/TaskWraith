@@ -195,6 +195,33 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('Do the thing')
   })
 
+  it('isolates execution-graph Ollama attempts from root-chat memory and metadata', () => {
+    const payload = compose(
+      {
+        provider: 'ollama',
+        ollamaSessionMemory: {
+          modelId: 'llama3.2',
+          updatedAt: 1_767_225_600_000,
+          workingMemory: 'Secret prior-thread instruction.',
+          toolTurnCount: 4
+        },
+        providerMetadata: {
+          ollamaRunProfile: 'deep',
+          taskWraithRuntimePreambleVersion: 'stale-version'
+        }
+      },
+      {
+        provider: 'ollama',
+        selectedModelType: 'llama3.2',
+        contextIsolation: 'execution_graph'
+      }
+    )
+
+    expect(payload.prompt).not.toContain('Secret prior-thread instruction.')
+    expect(payload.ollamaRunProfile).toBeUndefined()
+    expect(payload.composer.providerMetadataPatch).toBeUndefined()
+  })
+
   it('defaults fresh Claude sessions to gateway even when the deprecated core flag is set', () => {
     const previous = process.env.TASKWRAITH_CORE_MCP_PROFILE
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'

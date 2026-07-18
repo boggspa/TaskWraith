@@ -235,7 +235,10 @@ export class ComposerService {
           linkedGeminiSessionId: undefined,
           taskWraithMcpProfileReceipt: undefined,
           activeGoal: undefined,
-          contextCompactionSummary: undefined
+          contextCompactionSummary: undefined,
+          providerMetadata: {},
+          ollamaSessionMemory: undefined,
+          ollamaSessionMemories: undefined
         }
       : sourceChat
     const trustedApprovalChat: ChatRecord = storedChat || {
