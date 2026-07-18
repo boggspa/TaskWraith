@@ -70,6 +70,31 @@ function input(overrides: Partial<ComposerInput> = {}): ComposerInput {
   }
 }
 
+function graphInput(overrides: Partial<ComposerInput> = {}): ComposerInput {
+  return {
+    chatId: 'chat-test-1',
+    appRunId: 'run-graph-1',
+    scope: 'workspace',
+    workspace: '/Test 1',
+    userInput: 'Main-owned graph prompt.',
+    provider: 'claude',
+    selectedModelType: 'claude-sonnet-4-7',
+    customModel: 'main-model',
+    overrideModel: 'main-override',
+    claudeReasoningEffort: 'high',
+    imageAttachments: [{ id: 'main-image', path: '/main-cas/graph.png', name: 'graph.png' }],
+    attachments: [{ id: 'main-attachment', path: '/main-cas/graph.txt', name: 'graph.txt' }],
+    sessionTrust: false,
+    projectReferenceContextSelection: {
+      schemaVersion: 1,
+      projectId: 'project-main',
+      referenceIds: ['reference-main']
+    },
+    handoffSourceRunId: 'run-main-handoff',
+    ...overrides
+  }
+}
+
 describe('resolveComposerRunAuthority', () => {
   it('replaces an interactive renderer snapshot and workspace with the durable chat', () => {
     const durable = chat()
@@ -83,6 +108,134 @@ describe('resolveComposerRunAuthority', () => {
     expect(result.input.workspace).toBe('/Test 1')
     expect(result.input.chatSnapshot).toBe(durable)
     expect(result.input.scope).toBe('workspace')
+  })
+
+  it('uses only the complete main-owned input for a graph-owned appRunId', () => {
+    const durable = chat()
+    const result = resolveComposerRunAuthority({
+      input: input({
+        appRunId: 'run-graph-1',
+        userInput: 'Forged renderer user input.',
+        prompt: 'Forged renderer prompt.',
+        provider: 'grok',
+        selectedModelType: 'grok-4',
+        customModel: 'renderer-model',
+        overrideModel: 'renderer-override',
+        codexReasoningEffort: 'xhigh',
+        claudeReasoningEffort: 'low',
+        imageAttachments: [
+          { id: 'renderer-image', path: '/renderer/secret.png', name: 'secret.png' }
+        ],
+        attachments: [
+          { id: 'renderer-attachment', path: '/renderer/secret.txt', name: 'secret.txt' }
+        ],
+        sessionTrust: true,
+        projectReferenceContextSelection: {
+          schemaVersion: 1,
+          projectId: 'project-renderer',
+          referenceIds: ['reference-renderer']
+        },
+        handoffSourceRunId: 'run-renderer-handoff'
+      }),
+      chat: durable,
+      isMainRenderer: true,
+      resolveGraphOwnedComposerInput: (appRunId) => ({
+        input: graphInput({
+          appRunId,
+          workspace: '/Test 1/',
+          chatSnapshot: chat({
+            workspaceId: 'stale-workspace',
+            workspacePath: '/stale-workspace'
+          })
+        }),
+        mainOwnedAttachments: true
+      }),
+      canonicalizePath
+    })
+
+    expect(result.mainOwnedAttachments).toBe(true)
+    expect(result.input).toMatchObject({
+      appRunId: 'run-graph-1',
+      chatId: 'chat-test-1',
+      scope: 'workspace',
+      workspace: '/Test 1',
+      userInput: 'Main-owned graph prompt.',
+      provider: 'claude',
+      selectedModelType: 'claude-sonnet-4-7',
+      customModel: 'main-model',
+      overrideModel: 'main-override',
+      claudeReasoningEffort: 'high',
+      imageAttachments: [{ id: 'main-image', path: '/main-cas/graph.png', name: 'graph.png' }],
+      attachments: [{ id: 'main-attachment', path: '/main-cas/graph.txt', name: 'graph.txt' }],
+      sessionTrust: false,
+      projectReferenceContextSelection: {
+        schemaVersion: 1,
+        projectId: 'project-main',
+        referenceIds: ['reference-main']
+      },
+      handoffSourceRunId: 'run-main-handoff',
+      chatSnapshot: durable
+    })
+    expect(result.input.prompt).toBeUndefined()
+    expect(result.input.codexReasoningEffort).toBeUndefined()
+  })
+
+  it('leaves an ordinary run unchanged when the graph resolver returns null', () => {
+    const rendererInput = input({
+      provider: 'grok',
+      selectedModelType: 'grok-renderer-model',
+      sessionTrust: true,
+      handoffSourceRunId: 'renderer-handoff'
+    })
+    let resolvedRunId: string | undefined
+    const result = resolveComposerRunAuthority({
+      input: rendererInput,
+      chat: chat(),
+      isMainRenderer: true,
+      resolveGraphOwnedComposerInput: (appRunId) => {
+        resolvedRunId = appRunId
+        return null
+      },
+      canonicalizePath
+    })
+
+    expect(resolvedRunId).toBe('run-interactive')
+    expect(result.mainOwnedAttachments).toBeUndefined()
+    expect(result.input).toMatchObject({
+      provider: 'grok',
+      selectedModelType: 'grok-renderer-model',
+      userInput: 'Renderer prompt.',
+      sessionTrust: true,
+      handoffSourceRunId: 'renderer-handoff'
+    })
+  })
+
+  it('rejects graph authority that does not match the exact run and durable target', () => {
+    const resolve = (overrides: Partial<ComposerInput>) =>
+      resolveComposerRunAuthority({
+        input: input({ appRunId: 'run-graph-1' }),
+        chat: chat(),
+        isMainRenderer: true,
+        resolveGraphOwnedComposerInput: () => ({
+          input: graphInput(overrides),
+          mainOwnedAttachments: true
+        }),
+        canonicalizePath
+      })
+
+    expect(() => resolve({ appRunId: 'run-other' })).toThrow(
+      'Execution graph compose authority is stale'
+    )
+    expect(() => resolve({ chatId: 'chat-other' })).toThrow(
+      'Execution graph compose authority is stale'
+    )
+    expect(() => resolve({ workspace: '/Other' })).toThrow(
+      'Execution graph compose authority is stale'
+    )
+    expect(() => resolve({ scope: 'global' })).toThrow('Execution graph compose authority is stale')
+    expect(() => resolve({ scheduledTaskId: 'scheduled-other' })).toThrow(
+      'Execution graph compose authority is stale'
+    )
   })
 
   it('requires a secondary renderer frozen to the same chat workspace', () => {
@@ -134,6 +287,7 @@ describe('resolveComposerRunAuthority', () => {
   it('rebuilds a scheduled compose from the exact durable occurrence', () => {
     const durable = chat()
     const task = scheduledTask()
+    let graphResolverCalled = false
     const result = resolveComposerRunAuthority({
       input: input({
         appRunId: 'run-test-1',
@@ -145,9 +299,14 @@ describe('resolveComposerRunAuthority', () => {
       chat: durable,
       isMainRenderer: true,
       scheduledTask: task,
+      resolveGraphOwnedComposerInput: () => {
+        graphResolverCalled = true
+        return { input: graphInput(), mainOwnedAttachments: true }
+      },
       canonicalizePath
     })
 
+    expect(graphResolverCalled).toBe(false)
     expect(result.mainOwnedAttachments).toBe(true)
     expect(result.input).toMatchObject({
       appRunId: 'run-test-1',

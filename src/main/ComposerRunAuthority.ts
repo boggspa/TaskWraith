@@ -9,6 +9,13 @@ export interface ComposerRunAuthorityInput {
   isMainRenderer: boolean
   owner?: WorkspacePopoutAuthority
   scheduledTask?: ScheduledTask | null
+  /**
+   * Resolve an appRunId owned by the durable execution-graph queue. A null
+   * result means this is an ordinary interactive run. A graph hit must return
+   * the complete main-owned compose input; renderer fields are never merged
+   * into it.
+   */
+  resolveGraphOwnedComposerInput?: (appRunId: string) => GraphOwnedComposerInputResolution | null
   canonicalizePath: (value: string) => string
 }
 
@@ -17,7 +24,13 @@ export interface ComposerRunAuthorityResult {
   mainOwnedAttachments?: boolean
 }
 
+export interface GraphOwnedComposerInputResolution {
+  input: ComposerInput
+  mainOwnedAttachments: true
+}
+
 const COMPOSER_AUTHORITY_ERROR = 'Renderer compose authority is stale or unavailable.'
+const GRAPH_COMPOSER_AUTHORITY_ERROR = 'Execution graph compose authority is stale or unavailable.'
 
 function assertFrozenChatOwner(
   chat: ChatRecord,
@@ -85,6 +98,56 @@ function scheduledComposerInput(chat: ChatRecord, task: ScheduledTask): Composer
   }
 }
 
+function graphOwnedComposerInput(
+  chat: ChatRecord,
+  appRunId: string,
+  resolved: GraphOwnedComposerInputResolution,
+  canonicalizePath: (value: string) => string
+): ComposerRunAuthorityResult {
+  if (
+    !resolved ||
+    resolved.mainOwnedAttachments !== true ||
+    !resolved.input ||
+    typeof resolved.input !== 'object' ||
+    resolved.input.appRunId !== appRunId ||
+    resolved.input.chatId !== chat.appChatId ||
+    resolved.input.scheduledTaskId
+  ) {
+    throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+  }
+
+  const scope = chat.scope === 'global' ? 'global' : 'workspace'
+  if (resolved.input.scope !== scope) throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+
+  const authoritativeInput: ComposerInput = {
+    ...resolved.input,
+    appRunId,
+    chatId: chat.appChatId,
+    chatSnapshot: chat,
+    scope
+  }
+  if (scope === 'global') {
+    if (resolved.input.workspace?.trim()) throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+    delete authoritativeInput.workspace
+  } else {
+    const durableWorkspace = chat.workspacePath?.trim()
+    const resolvedWorkspace = resolved.input.workspace?.trim()
+    if (!durableWorkspace || !resolvedWorkspace) {
+      throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+    }
+    try {
+      if (canonicalizePath(resolvedWorkspace) !== canonicalizePath(durableWorkspace)) {
+        throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+      }
+    } catch {
+      throw new Error(GRAPH_COMPOSER_AUTHORITY_ERROR)
+    }
+    authoritativeInput.workspace = chat.workspacePath
+  }
+
+  return { input: authoritativeInput, mainOwnedAttachments: true }
+}
+
 /**
  * Replace renderer-authored compose authority with the durable chat (and, for
  * unattended work, the exact current ScheduledTask occurrence).
@@ -112,6 +175,14 @@ export function resolveComposerRunAuthority(
     return {
       input: scheduledComposerInput(chat, task),
       mainOwnedAttachments: true
+    }
+  }
+
+  const appRunId = input.input.appRunId?.trim()
+  if (appRunId && input.resolveGraphOwnedComposerInput) {
+    const graphOwned = input.resolveGraphOwnedComposerInput(appRunId)
+    if (graphOwned) {
+      return graphOwnedComposerInput(chat, appRunId, graphOwned, input.canonicalizePath)
     }
   }
 
