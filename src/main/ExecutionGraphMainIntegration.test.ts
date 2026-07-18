@@ -240,4 +240,16 @@ describe('execution graph main integration', () => {
     expect(resolver).toContain('resolveFrozenStackRuntimeProfile(')
     expect(resolver).toContain('runtimeSettings(AppStore.getSettings(), runtimeProfile)')
   })
+
+  it('admits the exact main-owned MCP profile prompt normalization', () => {
+    const admission = between(
+      'authorizeBeforeAdapterRun: (payload) => {',
+      'runAdapter: async (adapter, event, payload) => {'
+    )
+
+    expect(admission).toContain(
+      'sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt'
+    )
+    expect(admission).not.toContain('payload.prompt !== admission.payload.prompt')
+  })
 })

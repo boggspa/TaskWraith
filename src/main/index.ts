@@ -39462,6 +39462,14 @@ if (isGeminiMcpBridgeProcess) {
         }
         const { job } = resolveExecutionGraphQueueAuthority(appRunId)
         const binding = job.executionGraph!
+        const admittedPrompt = sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt, {
+          advertised: payload.taskWraithMcpAdvertised === true,
+          coreProfile: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          gatewayProfile: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+          injectCoreNote: payload.provider !== 'claude' || !payload.providerSessionId,
+          injectGatewayNote: payload.provider !== 'claude' || !payload.providerSessionId,
+          targetProvider: payload.provider
+        })
         if (
           job.status !== 'starting' ||
           admission.executionId !== binding.executionId ||
@@ -39476,7 +39484,7 @@ if (isGeminiMcpBridgeProcess) {
           !payload.workspace ||
           !admission.payload.workspace ||
           canonicalPath(payload.workspace) !== canonicalPath(admission.payload.workspace) ||
-          payload.prompt !== admission.payload.prompt ||
+          payload.prompt !== admittedPrompt ||
           runManager.get(appRunId)
         ) {
           throw new Error('Execution graph adapter dispatch identity changed before launch.')
