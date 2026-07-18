@@ -247,10 +247,7 @@ export interface PromptCacheCapabilitySummary {
 }
 
 export type ProviderSeatCacheImpact = 'none' | 'partial' | 'full' | 'unknown' | 'unsupported'
-export type ProviderSeatCacheEvidenceState =
-  | 'observed_hit'
-  | 'observed_write'
-  | 'observed_miss'
+export type ProviderSeatCacheEvidenceState = 'observed_hit' | 'observed_write' | 'observed_miss'
 
 export interface ProviderSeatGenerationConfig {
   provider: ProviderId
@@ -4153,10 +4150,7 @@ export interface ScheduledOccurrenceSealV1 {
   readonly sealSignature: string
 }
 
-export type ScheduledOccurrenceRootOwner =
-  | 'solo'
-  | 'loop-root'
-  | 'ensemble-root'
+export type ScheduledOccurrenceRootOwner = 'solo' | 'loop-root' | 'ensemble-root'
 
 /**
  * Main-issued defensive preflight metadata showing that one exact,
@@ -4189,9 +4183,7 @@ export interface ScheduledOccurrenceSealV2 {
   readonly sealMac: string
 }
 
-export type ScheduledOccurrenceSeal =
-  | ScheduledOccurrenceSealV1
-  | ScheduledOccurrenceSealV2
+export type ScheduledOccurrenceSeal = ScheduledOccurrenceSealV1 | ScheduledOccurrenceSealV2
 
 export interface ScheduledTask {
   id: string
@@ -4807,11 +4799,7 @@ export interface CompletionClaimSupportAnnotation {
   assessedAt: string
 }
 
-export type ScopeRadarSliceKind =
-  | 'prerequisite'
-  | 'known'
-  | 'unknown'
-  | 'speculative'
+export type ScopeRadarSliceKind = 'prerequisite' | 'known' | 'unknown' | 'speculative'
 
 export interface ScopeRadarSlopBudget {
   maxNewFiles: number
@@ -5326,6 +5314,16 @@ export interface RunQueueDispatchReceipt {
   }
 }
 
+/** Main-minted correlation for one concrete execution-graph attempt. */
+export interface ExecutionGraphQueueBinding {
+  schemaVersion: 1
+  executionId: string
+  activationId: string
+  attemptId: string
+  runTemplateRef: string
+  permissionCeilingAuthorityDigest: string
+}
+
 export type RunRecoveryProcessAction = 'left_running' | 'not_found' | 'inaccessible' | 'unknown'
 
 export interface RunRecoveryProcessSnapshot {
@@ -5365,6 +5363,7 @@ export interface RunQueueJob {
   request?: RunQueueRequestSnapshot
   permissionPosture?: RunPermissionPostureSnapshot
   dispatchReceipt?: RunQueueDispatchReceipt
+  executionGraph?: ExecutionGraphQueueBinding
   providerSessionId?: string
   providerRunId?: string
   processPid?: number

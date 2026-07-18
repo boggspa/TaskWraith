@@ -11,6 +11,7 @@ import type {
   ChatWorkflowMode,
   ChatRecord,
   ChatScope,
+  ExecutionGraphQueueBinding,
   ExternalPathGrant,
   PermissionPresetId,
   PersistedAttachmentRef,
@@ -49,7 +50,15 @@ const RUN_QUEUE_SOURCES = new Set<RunQueueJobSource>([
   'system'
 ])
 // Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama'
+])
 const PERMISSION_PRESET_IDS = new Set<PermissionPresetId>([
   'read_only',
   'plan',
@@ -70,7 +79,12 @@ const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'mediaEditing',
   'mediaRecording'
 ])
-const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>(['ask', 'workspace', 'allow', 'deny'])
+const AGENTIC_SERVICE_POLICIES = new Set<AgenticServicePolicy>([
+  'ask',
+  'workspace',
+  'allow',
+  'deny'
+])
 
 export interface RunQueueStore {
   getChat: (chatId: string) => ChatRecord | null
@@ -150,6 +164,12 @@ export interface RunQueueAttachmentStageInput {
   attachments: PersistedOrLegacyAttachmentRef[]
 }
 
+export interface RunQueuePrepareOptions {
+  readonly authorizedFilePaths?: string[]
+  /** Main-only graph correlation; never read from renderer input. */
+  readonly executionGraph?: ExecutionGraphQueueBinding
+}
+
 export type RunQueueAttachmentStageResult =
   | { ok: true; attachments: PersistedAttachmentRef[] }
   | { ok: false; reason: string }
@@ -182,10 +202,8 @@ export class RunQueueService {
     return jobs
   }
 
-  requestJob(input: unknown, options: { authorizedFilePaths?: string[] } = {}): RunQueueJob {
-    return this.deps
-      .getRunRepository()
-      .saveRunQueueJob(this.prepareJob(input, options))
+  requestJob(input: unknown, options: RunQueuePrepareOptions = {}): RunQueueJob {
+    return this.deps.getRunRepository().saveRunQueueJob(this.prepareJob(input, options))
   }
 
   /**
@@ -195,9 +213,9 @@ export class RunQueueService {
    */
   prepareJob(
     input: unknown,
-    options: { authorizedFilePaths?: string[] } = {}
+    options: RunQueuePrepareOptions = {}
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
-    return this.normalizeJobRequest(input, options.authorizedFilePaths)
+    return this.normalizeJobRequest(input, options.authorizedFilePaths, options.executionGraph)
   }
 
   leaseJob(
@@ -210,9 +228,7 @@ export class RunQueueService {
       : this.deps.appStore
           .getRunQueueJobs({ provider, statuses: ['queued'] })
           .find((job) => this.deps.canLeaseJob(job))
-    const safeCandidate = candidate
-      ? this.quarantineUnsafePersistedAttachments(candidate)
-      : null
+    const safeCandidate = candidate ? this.quarantineUnsafePersistedAttachments(candidate) : null
     if (!safeCandidate || safeCandidate.status !== 'queued') {
       return null
     }
@@ -240,9 +256,7 @@ export class RunQueueService {
       : this.deps.appStore
           .getRunQueueJobs({ provider, chatId, statuses: ['queued'] })
           .find((job) => this.deps.canLeaseJob(job))
-    const safeCandidate = candidate
-      ? this.quarantineUnsafePersistedAttachments(candidate)
-      : null
+    const safeCandidate = candidate ? this.quarantineUnsafePersistedAttachments(candidate) : null
     if (!safeCandidate || safeCandidate.status !== 'queued') {
       return null
     }
@@ -297,9 +311,7 @@ export class RunQueueService {
     const ownerToken = optionalString(input?.ownerToken)
     if (!runId || !ownerToken) return null
     const candidate = this.deps.appStore.getRunQueueJob(runId)
-    const safeCandidate = candidate
-      ? this.quarantineUnsafePersistedAttachments(candidate)
-      : null
+    const safeCandidate = candidate ? this.quarantineUnsafePersistedAttachments(candidate) : null
     if (!safeCandidate || safeCandidate.status !== 'steer_promoting') return null
     if (!this.deps.canLeaseJob(safeCandidate)) return null
     return this.deps.getRunRepository().leasePromotedSteerJob({
@@ -337,12 +349,10 @@ export class RunQueueService {
   ): RunQueueJob | null {
     const nextStatus = sanitizeRunQueueStatus(status)
     if (nextStatus === 'steer_promoting') return null
-    return this.deps
-      .getRunRepository()
-      .transitionRunQueueJob(runIdOrId, nextStatus, {
-        statusReason: optionalString(partial?.statusReason),
-        lastError: optionalString(partial?.lastError)
-      })
+    return this.deps.getRunRepository().transitionRunQueueJob(runIdOrId, nextStatus, {
+      statusReason: optionalString(partial?.statusReason),
+      lastError: optionalString(partial?.lastError)
+    })
   }
 
   persistSessionQueueState(session: RunSession | undefined): void {
@@ -351,7 +361,8 @@ export class RunQueueService {
 
   private normalizeJobRequest(
     value: unknown,
-    authorizedFilePaths?: string[]
+    authorizedFilePaths?: string[],
+    executionGraph?: ExecutionGraphQueueBinding
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
     const record = requireRecord(value, 'Run queue request')
     const provider = assertProviderId(record.provider)
@@ -413,13 +424,15 @@ export class RunQueueService {
       promptPreview: optionalString(record.promptPreview),
       request,
       ...(permissionPosture ? { permissionPosture } : {}),
+      ...(executionGraph
+        ? { executionGraph: validateExecutionGraphQueueBinding(executionGraph) }
+        : {}),
       providerSessionId: optionalString(record.providerSessionId),
       providerRunId: optionalString(record.providerRunId),
       parentRunId: optionalString(record.parentRunId),
       runtimeProfileId: optionalString(record.runtimeProfileId),
       handoffSourceRunId: optionalString(record.handoffSourceRunId),
-      statusReason:
-        requestResult?.attachmentError || optionalString(record.statusReason),
+      statusReason: requestResult?.attachmentError || optionalString(record.statusReason),
       lastError: requestResult?.attachmentError || optionalString(record.lastError)
     }
     normalized.dispatchReceipt = buildRunQueueDispatchReceipt(normalized)
@@ -442,8 +455,7 @@ export class RunQueueService {
     const rawImageAttachmentValues = Array.isArray(value.imageAttachments)
       ? value.imageAttachments
       : []
-    const tooManyImageAttachments =
-      rawImageAttachmentValues.length > MAX_DURABLE_ATTACHMENT_REFS
+    const tooManyImageAttachments = rawImageAttachmentValues.length > MAX_DURABLE_ATTACHMENT_REFS
     const rawImageAttachments = !tooManyImageAttachments
       ? rawImageAttachmentValues.filter(isRecord).map((attachment) => ({
           id: optionalString(attachment.id),
@@ -476,7 +488,9 @@ export class RunQueueService {
       rawExternalPathGrants.length &&
       externalPathGrants.length !== rawExternalPathGrants.length
     ) {
-      throw new Error('Queued external path grants must be issued by TaskWraith in this app session.')
+      throw new Error(
+        'Queued external path grants must be issued by TaskWraith in this app session.'
+      )
     }
     let imageAttachments: PersistedAttachmentRef[] = []
     let attachmentError: string | undefined = tooManyImageAttachments
@@ -503,47 +517,52 @@ export class RunQueueService {
       }
     }
     const workflowMode = sanitizeWorkflowMode(value.workflowMode)
-    return { request: {
-      scope: value.scope === 'global' ? 'global' : 'workspace',
-      prompt: typeof value.prompt === 'string' ? value.prompt : '',
-      displayPrompt: optionalString(value.displayPrompt),
-      dmTargetParticipantId: optionalString(value.dmTargetParticipantId),
-      selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
-      customModel: typeof value.customModel === 'string' ? value.customModel : '',
-      approvalMode: optionalString(value.approvalMode) || 'default',
-      permissionPresetId: sanitizePermissionPresetId(value.permissionPresetId),
-      ...(workflowMode ? { workflowMode } : {}),
-      sessionTrust: Boolean(value.sessionTrust),
-      imageAttachments,
-      ...(discordContextSelection ? { discordContextSelection } : {}),
-      ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
-      externalPathGrants: externalPathGrants.length ? externalPathGrants : undefined,
-      geminiWorktree: sanitizeWorkspaceGeminiWorktree(value.geminiWorktree),
-      codexNativeReview: Boolean(value.codexNativeReview) || undefined,
-      codexReasoningEffort: optionalStringOrNull(value.codexReasoningEffort),
-      claudeReasoningEffort: optionalStringOrNull(value.claudeReasoningEffort),
-      grokReasoningEffort: optionalStringOrNull(value.grokReasoningEffort),
-      cursorReasoningEffort: optionalStringOrNull(value.cursorReasoningEffort),
-      codexServiceTier: optionalStringOrNull(value.codexServiceTier),
-      geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
-      guestParentChatId: optionalString(value.guestParentChatId),
-      guestRole: optionalString(value.guestRole),
-      remoteComposer: isRecord(value.remoteComposer)
-        ? sanitizeRemoteComposer(value.remoteComposer)
-        : undefined,
-      claudeFastMode: typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
-      kimiFastMode: typeof value.kimiFastMode === 'boolean' ? value.kimiFastMode : undefined,
-      kimiReasoningEffort: optionalStringOrNull(value.kimiReasoningEffort),
-      cursorFastMode: typeof value.cursorFastMode === 'boolean' ? value.cursorFastMode : undefined,
-      kimiThinkingEnabled:
-        typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
-      scheduledTaskId: optionalString(value.scheduledTaskId),
-      scheduledRunAt: optionalString(value.scheduledRunAt),
-      effectiveWorkspacePath: optionalString(value.effectiveWorkspacePath),
-      preserveComposer: Boolean(value.preserveComposer) || undefined,
-      runtimeProfileId: optionalString(value.runtimeProfileId),
-      handoffSourceRunId: optionalString(value.handoffSourceRunId)
-    }, ...(attachmentError ? { attachmentError } : {}) }
+    return {
+      request: {
+        scope: value.scope === 'global' ? 'global' : 'workspace',
+        prompt: typeof value.prompt === 'string' ? value.prompt : '',
+        displayPrompt: optionalString(value.displayPrompt),
+        dmTargetParticipantId: optionalString(value.dmTargetParticipantId),
+        selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
+        customModel: typeof value.customModel === 'string' ? value.customModel : '',
+        approvalMode: optionalString(value.approvalMode) || 'default',
+        permissionPresetId: sanitizePermissionPresetId(value.permissionPresetId),
+        ...(workflowMode ? { workflowMode } : {}),
+        sessionTrust: Boolean(value.sessionTrust),
+        imageAttachments,
+        ...(discordContextSelection ? { discordContextSelection } : {}),
+        ...(projectReferenceContextSelection ? { projectReferenceContextSelection } : {}),
+        externalPathGrants: externalPathGrants.length ? externalPathGrants : undefined,
+        geminiWorktree: sanitizeWorkspaceGeminiWorktree(value.geminiWorktree),
+        codexNativeReview: Boolean(value.codexNativeReview) || undefined,
+        codexReasoningEffort: optionalStringOrNull(value.codexReasoningEffort),
+        claudeReasoningEffort: optionalStringOrNull(value.claudeReasoningEffort),
+        grokReasoningEffort: optionalStringOrNull(value.grokReasoningEffort),
+        cursorReasoningEffort: optionalStringOrNull(value.cursorReasoningEffort),
+        codexServiceTier: optionalStringOrNull(value.codexServiceTier),
+        geminiAuthProfileId: optionalStringOrNull(value.geminiAuthProfileId),
+        guestParentChatId: optionalString(value.guestParentChatId),
+        guestRole: optionalString(value.guestRole),
+        remoteComposer: isRecord(value.remoteComposer)
+          ? sanitizeRemoteComposer(value.remoteComposer)
+          : undefined,
+        claudeFastMode:
+          typeof value.claudeFastMode === 'boolean' ? value.claudeFastMode : undefined,
+        kimiFastMode: typeof value.kimiFastMode === 'boolean' ? value.kimiFastMode : undefined,
+        kimiReasoningEffort: optionalStringOrNull(value.kimiReasoningEffort),
+        cursorFastMode:
+          typeof value.cursorFastMode === 'boolean' ? value.cursorFastMode : undefined,
+        kimiThinkingEnabled:
+          typeof value.kimiThinkingEnabled === 'boolean' ? value.kimiThinkingEnabled : undefined,
+        scheduledTaskId: optionalString(value.scheduledTaskId),
+        scheduledRunAt: optionalString(value.scheduledRunAt),
+        effectiveWorkspacePath: optionalString(value.effectiveWorkspacePath),
+        preserveComposer: Boolean(value.preserveComposer) || undefined,
+        runtimeProfileId: optionalString(value.runtimeProfileId),
+        handoffSourceRunId: optionalString(value.handoffSourceRunId)
+      },
+      ...(attachmentError ? { attachmentError } : {})
+    }
   }
 
   private quarantineUnsafePersistedAttachments(job: RunQueueJob): RunQueueJob {
@@ -574,6 +593,26 @@ export class RunQueueService {
       request
     }
   }
+}
+
+const EXECUTION_GRAPH_BINDING_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const EXECUTION_GRAPH_TEMPLATE_REF = /^run-template-[a-f0-9]{64}$/
+const SHA256_DIGEST = /^[a-f0-9]{64}$/
+
+function validateExecutionGraphQueueBinding(
+  value: ExecutionGraphQueueBinding
+): ExecutionGraphQueueBinding {
+  if (
+    value?.schemaVersion !== 1 ||
+    !EXECUTION_GRAPH_BINDING_ID.test(value.executionId) ||
+    !EXECUTION_GRAPH_BINDING_ID.test(value.activationId) ||
+    !EXECUTION_GRAPH_BINDING_ID.test(value.attemptId) ||
+    !EXECUTION_GRAPH_TEMPLATE_REF.test(value.runTemplateRef) ||
+    !SHA256_DIGEST.test(value.permissionCeilingAuthorityDigest)
+  ) {
+    throw new Error('Execution graph queue binding is invalid.')
+  }
+  return { ...value }
 }
 
 function copyPersistedAttachmentRef(value: PersistedAttachmentRef): PersistedAttachmentRef {
@@ -737,7 +776,9 @@ function sanitizeWorkspaceGeminiWorktree(
   return sanitized
 }
 
-function sanitizeRemoteComposer(value: unknown): RunQueueRequestSnapshot['remoteComposer'] | undefined {
+function sanitizeRemoteComposer(
+  value: unknown
+): RunQueueRequestSnapshot['remoteComposer'] | undefined {
   if (!isRecord(value)) return undefined
   const approvalMode = optionalString(value.approvalMode)
   const workflowMode = sanitizeWorkflowMode(value.workflowMode)

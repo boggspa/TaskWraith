@@ -202,6 +202,52 @@ describe('RunQueueService', () => {
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
+  it('accepts execution-graph correlation only through the main-owned options channel', () => {
+    const { deps } = makeDeps()
+    const service = new RunQueueService(deps)
+    const input = {
+      runId: 'graph-run-one',
+      provider: 'codex',
+      workspacePath: '/repo',
+      workspaceId: 'workspace-1',
+      chatId: 'chat-1',
+      source: 'system',
+      status: 'paused',
+      request: {
+        prompt: 'Run the claimed graph step.',
+        selectedModelType: 'default',
+        customModel: '',
+        approvalMode: 'default',
+        sessionTrust: false,
+        imageAttachments: []
+      },
+      executionGraph: {
+        schemaVersion: 1,
+        executionId: 'forged-execution',
+        activationId: 'forged-activation',
+        attemptId: 'forged-attempt',
+        runTemplateRef: `run-template-${'f'.repeat(64)}`,
+        permissionCeilingAuthorityDigest: 'f'.repeat(64)
+      }
+    }
+    const binding = {
+      schemaVersion: 1 as const,
+      executionId: 'execution-one',
+      activationId: 'activation-one',
+      attemptId: 'attempt-one',
+      runTemplateRef: `run-template-${'a'.repeat(64)}`,
+      permissionCeilingAuthorityDigest: 'b'.repeat(64)
+    }
+
+    expect(service.prepareJob(input).executionGraph).toBeUndefined()
+    expect(service.prepareJob(input, { executionGraph: binding }).executionGraph).toEqual(binding)
+    expect(() =>
+      service.prepareJob(input, {
+        executionGraph: { ...binding, permissionCeilingAuthorityDigest: 'not-a-digest' }
+      })
+    ).toThrow(/queue binding is invalid/i)
+  })
+
   it('forwards getJobs filters to the run repository', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
@@ -916,7 +962,11 @@ describe('RunQueueService', () => {
     })
 
     expect(
-      service.fallbackPromotedSteerJob({ runId: 'run-1', ownerToken: 'owner-1', reason: 'retry-queued' })
+      service.fallbackPromotedSteerJob({
+        runId: 'run-1',
+        ownerToken: 'owner-1',
+        reason: 'retry-queued'
+      })
     ).toEqual(makeJob({ status: 'queued', runId: 'run-1', statusReason: 'retry-queued' }))
     expect(repository.fallbackPromotedSteerJob).toHaveBeenCalledWith({
       runId: 'run-1',
