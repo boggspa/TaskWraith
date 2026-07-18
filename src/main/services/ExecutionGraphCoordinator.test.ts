@@ -269,6 +269,12 @@ function providerRunId(projection: ReturnType<ExecutionGraphCoordinator['getExec
   return attempt.providerRunRef
 }
 
+function markQueueStarting(h: Harness, runId: string): void {
+  const job = h.jobs.get(runId)
+  if (!job) throw new Error('Fixture has no queue job.')
+  h.jobs.set(runId, { ...job, status: 'starting' })
+}
+
 describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
   it('returns the committed projection when the same client mutation is retried', () => {
     const h = harness()
@@ -342,7 +348,9 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const h = harness()
     const command = h.input({ clientRequestId: 'renderer-run-terminal-retry' })
     const started = h.coordinator.appendStackStep(command)
-    h.coordinator.onRunSessionChange(terminalEvent(providerRunId(started), 'completed'))
+    const runId = providerRunId(started)
+    markQueueStarting(h, runId)
+    h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
 
     const retried = h.coordinator.appendStackStep(command)
@@ -392,6 +400,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     ])
     expect(h.jobs.size).toBe(1)
 
+    markQueueStarting(h, firstRunId)
     h.coordinator.onRunSessionChange(runningEvent(firstRunId))
     expect(h.jobs.size).toBe(1)
     h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'completed'))
@@ -405,6 +414,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       (attempt) => attempt.providerRunRef !== firstRunId
     )?.providerRunRef
     if (!secondRunId) throw new Error('Second attempt did not materialize.')
+    markQueueStarting(h, secondRunId)
     h.coordinator.onRunSessionChange(terminalEvent(secondRunId, 'completed'))
     expect(h.coordinator.getExecution(first.executionId)?.state).toBe('succeeded')
   })
@@ -501,6 +511,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     expect(Object.values(waiting.activations)[0].state).toBe('dormant')
     expect(h.jobs.size).toBe(0)
 
+    h.anchorStatuses.set('anchor-run', 'completed')
     h.coordinator.onRunSessionChange(terminalEvent('anchor-run', 'completed'))
     const released = h.coordinator.getExecution(waiting.executionId)!
     expect(released.state).toBe('running')
@@ -520,6 +531,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    markQueueStarting(h, firstRunId)
     h.coordinator.onRunSessionChange(terminalEvent(firstRunId, 'failed'))
     const failed = h.coordinator.getExecution(first.executionId)!
     expect(failed.state).toBe('failed')
@@ -568,6 +580,36 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       state: 'interrupted',
       error: expect.stringMatching(/queue graph binding/i)
     })
+  })
+
+  it('rejects a RunManager event when the queue workspace differs from its template', () => {
+    const h = harness()
+    const started = h.coordinator.appendStackStep(h.input())
+    const runId = providerRunId(started)
+    const job = h.jobs.get(runId)!
+    h.jobs.set(runId, { ...job, workspacePath: '/another-workspace' })
+
+    h.coordinator.onRunSessionChange(
+      terminalEvent(runId, 'completed', { workspacePath: '/another-workspace' })
+    )
+
+    const rejected = h.coordinator.getExecution(started.executionId)!
+    expect(rejected.state).toBe('requires_action')
+    expect(Object.values(rejected.attempts)[0].error).toMatch(/queue graph binding/i)
+  })
+
+  it('does not settle an anchor from a mismatched terminal event', () => {
+    const h = harness()
+    const waiting = h.coordinator.appendStackStep(h.input({ anchorRunRef: 'anchor-run' }))
+    h.anchorStatuses.set('anchor-run', 'completed')
+
+    h.coordinator.onRunSessionChange(
+      terminalEvent('anchor-run', 'completed', { appChatId: 'another-chat' })
+    )
+
+    const rejected = h.coordinator.getExecution(waiting.executionId)!
+    expect(rejected.state).toBe('requires_action')
+    expect(h.jobs.size).toBe(0)
   })
 
   it('rejects a RunManager event when its exact queue row is missing', () => {
@@ -1088,8 +1130,10 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const h = harness()
     const started = h.coordinator.appendStackStep(h.input())
     const runId = providerRunId(started)
+    markQueueStarting(h, runId)
     h.coordinator.onRunSessionChange(terminalEvent(runId, 'completed'))
     expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+    h.jobs.set(runId, { ...h.jobs.get(runId)!, status: 'queued' })
     expect(h.jobs.get(runId)?.status).toBe('queued')
     h.transitions.mockClear()
 
@@ -1163,6 +1207,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       })
     )
 
+    h.anchorStatuses.set('anchor-run', 'failed')
     h.coordinator.onRunSessionChange(terminalEvent('anchor-run', 'failed'))
 
     const failed = h.coordinator.getExecution(first.executionId)!

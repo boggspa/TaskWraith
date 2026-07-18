@@ -85,6 +85,8 @@ export type ExecutionGraphAnchorRunStatus =
   | 'missing'
   | 'ambiguous'
 
+export type ExecutionGraphRunSessionDisposition = 'accepted' | 'rejected' | 'unclaimed'
+
 export interface ExecutionGraphCoordinatorRepository {
   createExecution: ExecutionGraphRepository['createExecution']
   appendExecutionEvents: ExecutionGraphRepository['appendExecutionEvents']
@@ -103,7 +105,10 @@ export interface ExecutionGraphCoordinatorDeps {
     status: RunQueueJobStatus,
     partial?: Pick<Partial<RunQueueJob>, 'statusReason' | 'lastError'>
   ) => RunQueueJob | null
-  resolveAnchorRunStatus: (runId: string) => ExecutionGraphAnchorRunStatus
+  resolveAnchorRunStatus: (
+    runId: string,
+    expected?: { readonly workspaceId: string; readonly rootChatId?: string }
+  ) => ExecutionGraphAnchorRunStatus
   /**
    * Stop the exact provider transport. `true` means cleanup was confirmed;
    * `false` means no exact transport could be stopped. A matching terminal
@@ -532,13 +537,45 @@ export class ExecutionGraphCoordinator {
     for (const id of ids) this.drainOne(id)
   }
 
-  onRunSessionChange(event: RunSessionChangeEvent): void {
-    if (event.type === 'removed') return
+  onRunSessionChange(event: RunSessionChangeEvent): ExecutionGraphRunSessionDisposition {
+    if (event.type === 'removed') return 'unclaimed'
     const runId = event.session.runId
     const projections = this.listExecutions({ includeTerminal: false })
+    let disposition: ExecutionGraphRunSessionDisposition = 'unclaimed'
     for (const projection of projections) {
       if (projection.anchorRunRef === runId && terminalSession(event.session.status)) {
+        if (!projection.workspaceId) {
+          this.requireAnchorAction(projection, 'Anchor execution has no durable workspace identity.')
+          disposition = 'rejected'
+          continue
+        }
+        let status: ExecutionGraphAnchorRunStatus
+        try {
+          status = this.deps.resolveAnchorRunStatus(runId, {
+            workspaceId: projection.workspaceId,
+            ...(projection.rootChatId ? { rootChatId: projection.rootChatId } : {})
+          })
+        } catch (error) {
+          this.requireAnchorAction(
+            projection,
+            `Anchor terminal event could not be verified: ${error instanceof Error ? error.message : String(error)}`
+          )
+          disposition = 'rejected'
+          continue
+        }
+        if (
+          event.session.appChatId !== projection.rootChatId ||
+          status !== event.session.status
+        ) {
+          this.requireAnchorAction(
+            projection,
+            'Anchor terminal event did not match the exact durable chat, workspace, and queue lifecycle.'
+          )
+          disposition = 'rejected'
+          continue
+        }
         this.settleAnchor(projection, event.session.status)
+        if (disposition !== 'rejected') disposition = 'accepted'
         continue
       }
       const attempt = Object.values(projection.attempts).find(
@@ -547,8 +584,10 @@ export class ExecutionGraphCoordinator {
       if (!attempt || isStepAttemptTerminal(attempt.state)) continue
       if (!this.runSessionOwnsAttempt(projection, attempt, event)) {
         this.cancellationContexts.get(projection.executionId)?.invalidRunIds.add(runId)
+        disposition = 'rejected'
         continue
       }
+      if (disposition !== 'rejected') disposition = 'accepted'
       if (event.session.status === 'starting' || event.session.status === 'running') {
         this.markAttemptRunning(projection, attempt)
       } else if (terminalSession(event.session.status)) {
@@ -560,6 +599,7 @@ export class ExecutionGraphCoordinator {
         }
       }
     }
+    return disposition
   }
 
   cancelExecution(executionId: string, reason = 'Cancelled by user.'): Promise<void> {
@@ -1177,6 +1217,10 @@ export class ExecutionGraphCoordinator {
     const activation = projection.activations[attempt.activationId]
     const step = projection.topology.steps.find((candidate) => candidate.id === attempt.stepId)
     const binding = job.executionGraph
+    const template = binding?.runTemplateRef
+      ? this.repository.getRunTemplate(binding.runTemplateRef)
+      : undefined
+    const templateContent = template?.content as Record<string, unknown> | undefined
     return Boolean(
       activation &&
       step?.kind === 'solo_agent' &&
@@ -1186,6 +1230,12 @@ export class ExecutionGraphCoordinator {
       job.runId === attempt.providerRunRef &&
       job.scope === 'workspace' &&
       job.workspaceId === projection.workspaceId &&
+      typeof job.workspacePath === 'string' &&
+      templateContent &&
+      templateContent.workspaceId === projection.workspaceId &&
+      templateContent.workspacePath === job.workspacePath &&
+      templateContent.chatId === projection.rootChatId &&
+      templateContent.provider === job.provider &&
       job.chatId === projection.rootChatId &&
       job.provider === step.agent.provider &&
       binding?.schemaVersion === 1 &&
@@ -1213,7 +1263,17 @@ export class ExecutionGraphCoordinator {
       event.session.workspacePath &&
       event.session.workspacePath === job.workspacePath
     )
-    if (exactQueueBinding && exactSessionIdentity) return true
+    const exactQueueLifecycle = Boolean(
+      job &&
+      (event.session.status === 'starting'
+        ? job.status === 'starting'
+        : event.session.status === 'running'
+          ? job.status === 'starting' || job.status === 'active'
+          : job.status === 'starting' ||
+            job.status === 'active' ||
+            job.status === 'cancelling')
+    )
+    if (exactQueueBinding && exactSessionIdentity && exactQueueLifecycle) return true
 
     const reasons: string[] = []
     if (!job) reasons.push('the exact queue row is missing')
@@ -1226,6 +1286,7 @@ export class ExecutionGraphCoordinator {
       if (!event.session.workspacePath || event.session.workspacePath !== job.workspacePath) {
         reasons.push('workspace identity differs or is absent')
       }
+      if (!exactQueueLifecycle) reasons.push('queue lifecycle does not admit this session event')
     }
     this.requireAction(
       projection,
@@ -1453,9 +1514,16 @@ export class ExecutionGraphCoordinator {
 
   private recoverAnchor(projection: ExecutionRunProjection): void {
     const anchorRunRef = projection.anchorRunRef!
+    if (!projection.workspaceId) {
+      this.requireAnchorAction(projection, 'Anchor execution has no durable workspace identity.')
+      return
+    }
     let status: ExecutionGraphAnchorRunStatus
     try {
-      status = this.deps.resolveAnchorRunStatus(anchorRunRef)
+      status = this.deps.resolveAnchorRunStatus(anchorRunRef, {
+        workspaceId: projection.workspaceId,
+        ...(projection.rootChatId ? { rootChatId: projection.rootChatId } : {})
+      })
     } catch (error) {
       this.requireAnchorAction(
         projection,
