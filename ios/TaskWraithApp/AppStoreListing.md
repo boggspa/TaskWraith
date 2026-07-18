@@ -1,7 +1,7 @@
 # App Store listing — draft copy + reviewer notes
 
 Working draft for the App Store Connect listing (public release). Everything
-here is engineering-accurate as of 2026-07-14; items marked `[USER]` need an
+here is engineering-accurate as of 2026-07-18; items marked `[USER]` need an
 owner decision before submission. Companion docs: `AppStorePrivacyNotes.md`
 (privacy questionnaire answers), `PrivacyPolicy-DRAFT.md` (hostable policy
 text), README "App Store screenshots" (regenerating the screenshot set).
@@ -34,9 +34,9 @@ turns from anywhere.
 - **Live task feed** — running agents, streaming answers with the same
   type-out feel as the desktop, tool activity, file changes, and run
   summaries.
-- **Approvals on your lock screen** — approve or deny an agent's request
-  from the notification (Face ID / passcode required), or from the app with
-  full context.
+- **Approvals on your lock screen, when push is configured** — approve or deny
+  an agent's request from the notification (Face ID / passcode required), or
+  from the app with full context.
 - **Answer questions mid-run** — agents that need a decision surface it as
   a card; reply from the phone and the run continues.
 - **Ensembles** — watch multi-agent rounds, edit the roster, steer
@@ -64,8 +64,9 @@ agent,coding,claude,codex,ai,developer,pair,remote,approve,diff,terminal,e2ee
 > TaskWraith Companion is a paired remote control for a Mac app. For review
 > WITHOUT a Mac: on the pairing screen, tap **"Try the demo"**. Demo mode is
 > fully offline (canned sample data, no account, no network, no sign-in) and
-> exercises every surface: the home list, thread transcripts, approvals,
-> ensembles, diffs, and settings. Exit demo from the banner at any time.
+> covers the core review surfaces: the home list, thread transcripts,
+> approvals, ensembles, diffs, and settings. Exit demo from the banner at any
+> time.
 >
 > Live pairing (not required for review): the user scans a QR shown by the
 > TaskWraith Mac app and confirms a 6-digit code on both devices. After
@@ -93,12 +94,19 @@ the raw captures are also acceptable as-is.
 1. Host the privacy policy (`PrivacyPolicy-DRAFT.md` → owner review → your
    domain) and put the URL in ASC → App Privacy.
 2. Fill the App Privacy questionnaire from `AppStorePrivacyNotes.md`
-   (data-not-collected posture EXCEPT device token + routing metadata under
-   push, if push is enabled for the distribution).
+   (data-not-collected posture except relay-visible routing metadata during
+   paired operation, plus the device token and APNs routing metadata if push is
+   enabled for the distribution).
 3. Export compliance: `ITSAppUsesNonExemptEncryption=false` is set; answer
    the questionnaire accordingly per build (decision recorded 2026-06-16).
 4. Support URL + marketing URL `[USER]`.
-5. Upload the archived build (`scripts/bump-build.sh` +
-   `TASKWRAITH_APPLE_TEAM_ID=… scripts/archive-testflight.sh`), verify the
-   exported IPA shows `aps-environment=production`, `get-task-allow=false`.
-6. Attach screenshots, paste the review notes above, submit.
+5. Complete and record the external human cryptography review required before
+   App Store or other general-public distribution.
+6. Bump, archive, and export the build (`scripts/bump-build.sh` followed by
+   `scripts/archive-testflight.sh` with `TASKWRAITH_APPLE_TEAM_ID`,
+   `ASC_API_KEY_ID`, `ASC_API_ISSUER_ID`, and `ASC_API_KEY_PATH` set). Verify the
+   exported IPA shows `aps-environment=production` and `get-task-allow=false`.
+7. Upload that IPA separately with Transporter or the `xcrun altool` command in
+   the tracked [TaskWraithApp README](README.md#testflight--app-store-archive-path),
+   then confirm processing in App Store Connect.
+8. Attach screenshots, paste the review notes above, submit.

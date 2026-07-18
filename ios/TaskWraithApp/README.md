@@ -8,7 +8,8 @@ The app target is a thin wrapper; the substance lives in the `TaskWraithKit`
 Swift package next door (the companion itself is feature-rich — pairing,
 approvals/questions, global + side chats, ensemble roster, diff/file views,
 token streaming, composer shells, first-launch guide, full-screen settings,
-offline Demo Mode, Workflows visibility, inline images, APNs actions):
+offline Demo Mode, workflow pause/resume/run-now controls, inline images, APNs
+actions):
 
 - **`TaskWraithKit`** — the CryptoKit port of `src/shared/e2ee` + the
   `RelayTransportClient` and Codable domain models. Validated byte-for-byte
@@ -86,9 +87,17 @@ options stay reproducible:
 
 ```sh
 cd ios/TaskWraithApp
-./scripts/bump-build.sh              # or ./scripts/bump-build.sh 42
-TASKWRAITH_APPLE_TEAM_ID=ABCDE12345 ./scripts/archive-testflight.sh
+./scripts/bump-build.sh              # increments the current build number
+TASKWRAITH_APPLE_TEAM_ID=ABCDE12345 \
+ASC_API_KEY_ID=ABC123DEFG \
+ASC_API_ISSUER_ID=00000000-0000-0000-0000-000000000000 \
+ASC_API_KEY_PATH="/absolute/path/to/AuthKey_ABC123DEFG.p8" \
+./scripts/archive-testflight.sh
 ```
+
+The App Store Connect API key variables are passed to Xcode for automatic
+provisioning. Set all three together; `ASC_API_KEY_PATH` must name the `.p8`
+file on disk.
 
 Before upload:
 
@@ -101,6 +110,19 @@ Before upload:
    standard algorithms that qualify for the export-compliance exemption.
 3. Read `AppStorePrivacyNotes.md` and make the App Store privacy answers match
    the selected distribution model.
+
+Archive/export and upload are separate. After verifying the exported IPA, use
+Transporter or upload it with the same App Store Connect API credentials:
+
+```sh
+xcrun altool --upload-app \
+  -f "/absolute/path/to/TaskWraith.ipa" \
+  --api-key "$ASC_API_KEY_ID" \
+  --api-issuer "$ASC_API_ISSUER_ID" \
+  --p8-file-path "$ASC_API_KEY_PATH" \
+  --output-format json \
+  --show-progress
+```
 
 ## App Store screenshots (automated)
 
@@ -160,8 +182,9 @@ pre-configured — see `AppStorePrivacyNotes.md`.
 
 ## Security
 
-The E2EE core is security-sensitive. An independent crypto review of
-`TaskWraithKit` (and the shared `src/shared/e2ee`) was completed 2026-06;
-CRITICAL/HIGH findings were fixed. The prior residual MED for silent identity
-regeneration is closed: the Mac refuses unreadable or unprotectable identities,
-and iOS only generates a new seed after a positive "not found" Keychain result.
+The E2EE core is security-sensitive. Independent internal fresh-context reviews
+of `TaskWraithKit` (and the shared `src/shared/e2ee`) were completed in 2026-06;
+CRITICAL/HIGH findings were fixed. External human cryptography review remains a
+public-release gate. The prior residual MED for silent identity regeneration is
+closed: the Mac refuses unreadable or unprotectable identities, and iOS only
+generates a new seed after a positive "not found" Keychain result.

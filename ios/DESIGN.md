@@ -37,16 +37,17 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   allowlist add-form preselects every provider + both approval modes (one-tap
   grant). The gate still exists for users who want it.
 
-## Current state (1.6.0)
+## Current state (iOS 0.1.0 build 79; desktop 1.8.4 baseline)
 
 - App icon: current variants are regular, WWDC26, monoline, and glass, backed by
   the checked-in `AppIcon-*` asset sets.
 - Pairing: QR/paste pairing, confirm-code verification, persisted paired Mac,
   trusted reconnect, local-network preflight, and Tailscale-oriented off-LAN
   setup. Demo Mode works without a paired Mac and uses local canned data.
-- Home: Mac/device header, Workflows section, global/side chat visibility,
-  collapsed iPad sidebar headers, usage/readiness surfaces, and a rebuilt
-  Pair-with-Mac screen in TaskWraith chrome.
+- Home: Mac/device header, Workflows section with pause/resume and run-now
+  controls, global/side chat visibility, collapsed iPad sidebar headers,
+  usage/readiness surfaces, and a rebuilt Pair-with-Mac screen in TaskWraith
+  chrome.
 - Thread: speaker-labelled rows, token streaming, inline image attachments,
   "still working" anchor during tool calls, proposal/question/approval cards,
   file editor, Diff Studio, usage tab, notes, side chats, and provider-skinned
@@ -876,7 +877,7 @@ Five boss asks, each fixed at the data source rather than patched in UI:
   top safe-area-inset banner (content-hugging, self-scrolls past 340pt,
   attention-tinted border). Timeout parity: scheduler records each armed
   deadline; projectApprovalCard stamps it as expiresAt, so the new ticking
-  "auto-denies in Ns" countdown matches Settings → Providers exactly.
+  "auto-denies in Ns" countdown matches Settings → App → General exactly.
 - **Codex burst separation** (T63d): desktop already inserted
   \n\n---\n\n on agentMessage itemId transitions; the bridge-run
   persistence path and the iOS live bubble both ignored itemId and jammed
@@ -977,8 +978,8 @@ gaps are now closed:
   widths — quantize GeometryReader→@State feedback to whole points), and the
   simctl App Store screenshot harness (`scripts/appstore-screenshots.sh`).
 
-Open on the audit: only the `src/shared` ContextWindows drift-guard test
-(desktop-side file; parked until the active desktop session clears).
+At the v0.42 audit boundary, only the `src/shared` ContextWindows drift-guard
+test remained open. It landed in the v0.43 reconciliation recorded below.
 
 Verified: 407 Swift tests, simulator app build, screenshot-harness renders
 on both ASC device classes.
@@ -999,15 +1000,17 @@ contracts rather than comment-level parity assumptions:
   run-now through the signed scheduled-task path. The final acknowledgement and
   security contract is recorded in `ios/WORKFLOW-WRITE-ACTIONS.md`.
 
-Still open on iOS: Swift workflow-row controls (pause/resume and run-now swipe
-actions/context menu, with standard bridge-ack reconciliation). No Mac contract
-work remains before that UI slice can proceed.
+The Swift follow-up landed in `a175ff111` and was integrated by `bee0e467e` for
+TaskWraith 1.8.2: workflow rows now expose pause/resume and run-now swipe and
+context-menu controls with standard bridge-ack reconciliation. Destructive
+`workflowDelete` remains intentionally deferred.
 
 ## Current follow-ups
 
-1. Add the now-unblocked Swift workflow-row controls and ack reconciliation.
+1. Define the confirmation and elevation contract for `workflowDelete` before
+   adding any destructive workflow control on iOS.
 2. Keep the first-launch, settings, usage, and provider-readiness surfaces in
-   sync with the Mac projection schema as 1.6.0 hardens.
+   sync with the current Mac projection schema.
 3. Tighten iPad-exclusive density: sub-thread tree, side-by-side transcript +
    diff review, and larger workflow/ensemble controls.
 4. Continue device QA across offline Demo Mode, paired LAN, paired Tailscale,

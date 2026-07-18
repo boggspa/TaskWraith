@@ -9,14 +9,21 @@ does not operate a plaintext task-content backend in the current architecture.
 
 The encrypted Mac-to-phone projection can include provider readiness labels,
 workspace counts and capability flags, setup-command labels, usage/quota
-windows, welcome-dashboard statistics, workflow/read-only chat summaries, and
-local UI preferences. These are shown to orient the user on the companion; they
-are not sent to a TaskWraith plaintext backend.
+windows, welcome-dashboard statistics, workflow/chat/board summaries, run and
+provider status, aggregate file-change/diff counts, and local UI preferences.
+These are shown to orient the user on the companion; they are not sent to a
+TaskWraith plaintext backend.
 
-Metadata is not the same as task content. The relay and APNs can see routing
-metadata such as a pair identifier, coarse reason, thread/run identifiers, and
-timestamps. APNs payloads must not include prompts, commands, diffs, file
-paths, filenames, workspace names, model output, or user messages.
+Metadata is not the same as task content. The relay forwards encrypted frames
+but can observe transport metadata such as the session identifier, endpoint
+role, source IP, timing, and frame sizes. When push is enabled, APNs receives a
+device token and a routing/status payload that can include opaque pair,
+workspace, thread, run, tool-call, approval, question, wakeup, task, or
+projection identifiers; a coarse reason or failure class; timestamps; and
+aggregate diff-addition/deletion counts. An optional richer notification blob
+is encrypted per device before it reaches APNs. APNs payloads must not include
+prompts, commands, diff contents or hunks, file paths, filenames, workspace
+names, model output, or user messages.
 
 Selected photos/images are transmitted only when the user attaches them to a
 prompt, and they travel over the same paired encrypted channel to the user's
@@ -45,9 +52,13 @@ delivered**. If a project-operated APNs gateway is enabled for a distribution,
 App Store answers and privacy copy must disclose APNs device tokens and routing
 triggers handled by that gateway.
 
-APNs payloads carry routing metadata only (pair identifier, coarse reason,
-thread/run identifiers, timestamps) — never prompts, commands, diffs, file
-paths, filenames, workspace names, model output, or user messages.
+APNs payloads carry routing/status metadata only: opaque pair, workspace,
+thread, run, tool-call, approval, question, wakeup, task, and projection
+identifiers; a coarse reason or failure class; timestamps; and aggregate added
+or deleted line counts that a completion alert may display. They never include
+prompts, commands, diff contents or hunks, file paths, filenames, workspace
+names, model output, or user messages; optional richer content is encrypted per
+device before delivery.
 
 App Store Connect: declare push notifications; the data is the device token +
 routing metadata. For a consumer launch, do **not** feature push as a hero
