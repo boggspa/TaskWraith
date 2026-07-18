@@ -8,6 +8,7 @@ import {
   createExecutionRunEvent,
   executionTopologyFrontier,
   foldExecutionRun,
+  MAX_EXECUTION_STACK_STEPS,
   nextExecutionRunSequence,
   parseExecutionRunEventLine,
   prepareUserFrontierAppend,
@@ -17,6 +18,7 @@ import {
   type ExecutionRunEvent
 } from './ExecutionGraphRun'
 import type {
+  EffectiveExecutionTopology,
   ExecutionEffect,
   ExecutionGraphRevision,
   ExecutionPermissionCeilingRef,
@@ -108,6 +110,95 @@ function appendFirst(executionId = 'execution-1', step = agentStep()) {
 }
 
 describe('Execution Stack frontier append', () => {
+  it('accepts exactly 64 V1 Stack steps and rejects attempts to widen the cap', () => {
+    let topology: EffectiveExecutionTopology = { steps: [], edges: [] }
+    for (let index = 0; index < MAX_EXECUTION_STACK_STEPS; index += 1) {
+      const stepId = `step-${index + 1}`
+      const prepared = prepareUserFrontierAppend(
+        {
+          executionId: 'execution-1',
+          topology,
+          runState: index === 0 ? 'pending' : 'running',
+          permissionCeilingRef: ceiling,
+          maxSteps: 1_000
+        },
+        {
+          appendedBy: 'user',
+          step: agentStep(stepId),
+          incomingEdges:
+            index === 0
+              ? []
+              : [
+                  {
+                    id: `edge-${index}`,
+                    kind: 'control',
+                    fromStepId: `step-${index}`,
+                    toStepId: stepId,
+                    outcome: 'success'
+                  }
+                ]
+        }
+      )
+      expect(prepared.ok).toBe(true)
+      if (!prepared.ok) throw new Error(`fixture append ${index + 1} failed`)
+      topology = prepared.topology
+    }
+
+    const overflow = prepareUserFrontierAppend(
+      {
+        executionId: 'execution-1',
+        topology,
+        runState: 'running',
+        permissionCeilingRef: ceiling,
+        maxSteps: 1_000
+      },
+      {
+        appendedBy: 'user',
+        step: agentStep('step-65'),
+        incomingEdges: [
+          {
+            id: 'edge-64',
+            kind: 'control',
+            fromStepId: 'step-64',
+            toStepId: 'step-65',
+            outcome: 'success'
+          }
+        ]
+      }
+    )
+    expect(overflow).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ code: 'step_limit_exceeded' })]
+    })
+
+    const smaller = prepareUserFrontierAppend(
+      {
+        executionId: 'execution-small',
+        topology: { steps: [agentStep('only')], edges: [] },
+        runState: 'running',
+        permissionCeilingRef: ceiling,
+        maxSteps: 1
+      },
+      {
+        appendedBy: 'user',
+        step: agentStep('too-many'),
+        incomingEdges: [
+          {
+            id: 'only-too-many',
+            kind: 'control',
+            fromStepId: 'only',
+            toStepId: 'too-many',
+            outcome: 'success'
+          }
+        ]
+      }
+    )
+    expect(smaller).toMatchObject({
+      ok: false,
+      issues: [expect.objectContaining({ code: 'step_limit_exceeded' })]
+    })
+  })
+
   it('materializes base-less Stack topology from monotonic step_appended events', () => {
     const first = appendFirst()
     expect(first.ok).toBe(true)

@@ -1,6 +1,5 @@
 import { createHash } from 'node:crypto'
 import {
-  MAX_EXECUTION_GRAPH_STEPS,
   deepFreezeExecutionGraph,
   executionGraphRevisionRef,
   stableExecutionGraphStringify,
@@ -29,6 +28,9 @@ import {
   type StepAttemptState,
   type UserFrontierAppend
 } from './ExecutionGraphModel'
+
+/** V1 ad-hoc Stacks stay deliberately small even when the generic graph kernel allows more. */
+export const MAX_EXECUTION_STACK_STEPS = 64
 
 export type ExecutionRunEventKind =
   | 'execution_created'
@@ -507,6 +509,10 @@ export function validateUserFrontierAppend(
   append: UserFrontierAppend
 ): readonly FrontierAppendIssue[] {
   const issues: FrontierAppendIssue[] = []
+  const effectiveMaxSteps = Math.min(
+    context.maxSteps ?? MAX_EXECUTION_STACK_STEPS,
+    MAX_EXECUTION_STACK_STEPS
+  )
   if (append.appendedBy !== 'user') {
     issues.push({
       code: 'agent_append_not_supported',
@@ -534,7 +540,7 @@ export function validateUserFrontierAppend(
       message: `Step "${append.step.id}" already exists.`
     })
   }
-  if (context.topology.steps.length + 1 > (context.maxSteps ?? MAX_EXECUTION_GRAPH_STEPS)) {
+  if (context.topology.steps.length + 1 > effectiveMaxSteps) {
     issues.push({
       code: 'step_limit_exceeded',
       path: 'append.step',
@@ -611,7 +617,7 @@ export function validateUserFrontierAppend(
     const combinedSteps = [...context.topology.steps, append.step]
     const combinedEdges = [...context.topology.edges, ...append.incomingEdges]
     for (const entry of validateExecutionTopology(combinedSteps, combinedEdges, {
-      maxSteps: context.maxSteps
+      maxSteps: effectiveMaxSteps
     })) {
       issues.push(entry)
     }
