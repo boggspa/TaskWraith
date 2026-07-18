@@ -7,6 +7,7 @@ import {
 } from '../RunPermissionPosture'
 import type { AppSettings, RunQueueJob, RunQueueRequestSnapshot } from '../store/types'
 import {
+  assertExecutionGraphPermissionPostureStillCurrent,
   buildExecutionGraphPermissionPosture,
   mintExecutionGraphAttemptPermissionPosture,
   resolveExecutionGraphQueuePermissionPosture,
@@ -244,6 +245,41 @@ describe('ExecutionGraphPermissionAuthority', () => {
     const posture = build(request({ permissionPresetId: 'full_access', sessionTrust: true }))
     expect(posture.presetId).toBe('workspace_write')
     expect(posture.agenticServices?.shellCommands).toBe('workspace')
+  })
+
+  it('requires review when a workspace grant is revoked before a later attempt', () => {
+    const grantSettings = {
+      ...settings,
+      agenticWorkspaceGrants: [
+        {
+          id: 'workspace-grant-one',
+          provider: 'codex' as const,
+          workspacePath: '/workspace',
+          service: 'shellCommands' as const,
+          createdAt: '2026-07-18T00:00:00.000Z',
+          updatedAt: '2026-07-18T00:00:00.000Z'
+        }
+      ]
+    }
+    const defaultRequest = request({ permissionPresetId: 'default' })
+    const buildWith = (
+      currentSettings: Pick<AppSettings, 'agenticServices' | 'agenticWorkspaceGrants'>
+    ) =>
+      buildExecutionGraphPermissionPosture({
+        provider: 'codex',
+        workspacePath: '/workspace',
+        chatId: 'chat-one',
+        request: defaultRequest,
+        settings: currentSettings,
+        sign: (approvalMode, permissions, context) =>
+          signRunPermissionPosture(secret, approvalMode, permissions, context)
+      })
+    const frozen = buildWith(grantSettings)
+
+    expect(() => assertExecutionGraphPermissionPostureStillCurrent(frozen, buildWith(grantSettings)))
+      .not.toThrow()
+    expect(() => assertExecutionGraphPermissionPostureStillCurrent(frozen, buildWith(settings)))
+      .toThrow(/permission policy changed/i)
   })
 
   it('rejects prompt, provider, and grant mutations after signing', () => {

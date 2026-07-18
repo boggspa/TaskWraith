@@ -1,4 +1,5 @@
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
+import { stableExecutionGraphStringify } from './ExecutionGraphCompiler'
 import {
   buildRunPermissionPostureSnapshot,
   EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN,
@@ -194,6 +195,37 @@ export function buildExecutionGraphPermissionPosture(
     signature,
     context
   })
+}
+
+/**
+ * A frozen Stack ceiling is not a durable grant. Before each not-yet-started
+ * attempt, current workspace policy must still resolve to the same effective
+ * authority; revocation or policy drift pauses the graph for review.
+ */
+export function assertExecutionGraphPermissionPostureStillCurrent(
+  frozen: RunPermissionPostureSnapshot,
+  current: RunPermissionPostureSnapshot
+): void {
+  const semantics = (posture: RunPermissionPostureSnapshot) => ({
+    approvalMode: posture.approvalMode,
+    workflowMode: posture.workflowMode,
+    presetId: posture.presetId,
+    readOnly: posture.readOnly,
+    agenticServices: posture.agenticServices,
+    networkAccess: posture.networkAccess,
+    externalPathGrantCount: posture.externalPathGrantCount ?? 0,
+    workspaceGrantServiceIds: [...(posture.workspaceGrantServiceIds ?? [])].sort()
+  })
+  if (
+    !frozen.signaturePresent ||
+    !current.signaturePresent ||
+    stableExecutionGraphStringify(semantics(frozen)) !==
+      stableExecutionGraphStringify(semantics(current))
+  ) {
+    throw new Error(
+      'Execution graph permission policy changed after this Stack step was captured; review is required.'
+    )
+  }
 }
 
 function effectivePermissionsFromSnapshot(
