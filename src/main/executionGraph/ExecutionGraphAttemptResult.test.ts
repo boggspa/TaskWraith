@@ -31,6 +31,7 @@ function receipt(content = 'Implemented the requested change.') {
     binding,
     status: 'completed',
     committedAt: '2026-07-18T12:00:00.000Z',
+    prompt: 'Perform the step.',
     content,
     evidenceRefs: ['assistant-one', 'tool-one', 'assistant-one']
   })
@@ -177,6 +178,7 @@ describe('ExecutionGraphAttemptResult', () => {
         binding,
         status: 'completed',
         committedAt: '2026-07-18T12:00:00.000Z',
+        prompt: 'Perform the step.',
         content: 'done',
         evidenceRefs: Array.from(
           { length: MAX_EXECUTION_GRAPH_RESULT_REFS + 1 },
@@ -192,6 +194,7 @@ describe('ExecutionGraphAttemptResult', () => {
         },
         status: 'completed',
         committedAt: '2026-07-18T12:00:00.000Z',
+        prompt: 'Perform the step.',
         content: 'done',
         evidenceRefs: []
       })
@@ -201,6 +204,7 @@ describe('ExecutionGraphAttemptResult', () => {
         binding,
         status: 'failed',
         committedAt: '2026-07-18T12:00:00.000Z',
+        prompt: 'Perform the step.',
         content: '',
         evidenceRefs: [],
         error: '🔥'.repeat(Math.ceil(MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES / 4) + 1)

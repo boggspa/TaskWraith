@@ -300,6 +300,7 @@ function terminalReceipt(
     },
     status,
     committedAt: '2026-07-18T11:00:02.000Z',
+    prompt: 'Do the work.',
     content: status === 'completed' ? `Result from ${runId}` : '',
     evidenceRefs: [`assistant-${runId}`],
     ...(status === 'failed' ? { error: 'Provider run failed.' } : {})

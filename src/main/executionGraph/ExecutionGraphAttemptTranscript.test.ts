@@ -88,6 +88,7 @@ describe('ExecutionGraphAttemptTranscript', () => {
       binding,
       status: 'completed',
       committedAt: '2026-07-18T12:01:01.000Z',
+      prompt: 'Implement the change.',
       content: 'Implemented the change.',
       evidenceRefs: projected.evidenceRefs
     })
@@ -116,12 +117,71 @@ describe('ExecutionGraphAttemptTranscript', () => {
         {
           ...committed,
           messages: committed.messages.map((message) =>
+            message.role === 'user' ? { ...message, content: 'Mutated prompt.' } : message
+          )
+        },
+        receipt
+      )
+    ).toBe(false)
+    expect(
+      verifyExecutionGraphAttemptReceiptOnChat(
+        {
+          ...committed,
+          messages: committed.messages.map((message) =>
             message.role === 'assistant' ? { ...message, content: 'Mutated output.' } : message
           )
         },
         receipt
       )
     ).toBe(false)
+  })
+
+  it('rejects a renderer race that pre-seeds the canonical run identity', () => {
+    const forged = chat()
+    forged.messages.push({
+      id: 'execution-graph-prompt-run-one',
+      role: 'assistant',
+      content: 'Counterfeit prompt.',
+      timestamp: 'before',
+      runId: 'run-one'
+    })
+    forged.runs = [
+      {
+        runId: 'run-one',
+        provider: 'claude',
+        startedAt: 'before',
+        status: 'completed'
+      }
+    ]
+
+    expect(() =>
+      seedExecutionGraphAttemptTranscript({
+        chat: forged,
+        binding,
+        prompt: 'Canonical provider prompt.',
+        startedAt: '2026-07-18T12:00:00.000Z'
+      })
+    ).toThrow('run identity already exists')
+  })
+
+  it('rejects any pre-seeded message carrying the canonical run identity', () => {
+    const forged = chat()
+    forged.messages.push({
+      id: 'renderer-race',
+      role: 'assistant',
+      content: 'Counterfeit output.',
+      timestamp: 'before',
+      runId: 'run-one'
+    })
+
+    expect(() =>
+      seedExecutionGraphAttemptTranscript({
+        chat: forged,
+        binding,
+        prompt: 'Canonical provider prompt.',
+        startedAt: '2026-07-18T12:00:00.000Z'
+      })
+    ).toThrow('message identity already exists')
   })
 
   it('rejects projection after the root chat or run binding changes', () => {

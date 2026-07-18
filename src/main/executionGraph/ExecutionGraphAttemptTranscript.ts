@@ -101,19 +101,16 @@ export function seedExecutionGraphAttemptTranscript(
   exactChatForBinding(input.chat, input.binding)
   const runId = input.binding.providerRunRef
   const existingRuns = (input.chat.runs ?? []).filter((run) => run.runId === runId)
-  if (existingRuns.length > 1) {
-    throw new Error('Execution graph transcript run identity is duplicated in the root chat.')
+  if (existingRuns.length > 0) {
+    throw new Error('Execution graph transcript run identity already exists in the root chat.')
   }
-  const existing = existingRuns[0]
-  if (existing?.providerMetadata?.executionGraphAttempt) {
-    if (
-      stableExecutionGraphStringify(existing.providerMetadata.executionGraphAttempt) !==
-      stableExecutionGraphStringify(bindingMetadata(input.binding))
-    ) {
-      throw new Error('Execution graph transcript run identity was previously rebound.')
-    }
+  if (input.chat.messages.some((message) => message.runId === runId)) {
+    throw new Error('Execution graph transcript message identity already exists in the root chat.')
   }
   const promptId = promptMessageId(runId)
+  if (input.chat.messages.some((message) => message.id === promptId)) {
+    throw new Error('Execution graph transcript prompt identity already exists in the root chat.')
+  }
   const prompt: ChatMessage = {
     id: promptId,
     role: 'user',
@@ -125,17 +122,12 @@ export function seedExecutionGraphAttemptTranscript(
       ...bindingMetadata(input.binding)
     }
   }
-  const messages = input.chat.messages.some((message) => message.id === promptId)
-    ? input.chat.messages
-    : [...input.chat.messages, prompt]
+  const messages = [...input.chat.messages, prompt]
   const run: ChatRun = {
-    ...(existing || {
-      runId,
-      provider: input.binding.provider,
-      startedAt: input.startedAt,
-      promptMessageId: promptId
-    }),
+    runId,
     provider: input.binding.provider,
+    startedAt: input.startedAt,
+    promptMessageId: promptId,
     status: 'running',
     ...(input.requestedModel ? { requestedModel: input.requestedModel } : {}),
     ...(input.approvalMode ? { approvalMode: input.approvalMode } : {}),
@@ -143,14 +135,10 @@ export function seedExecutionGraphAttemptTranscript(
     ...(input.permissionPosture ? { permissionPosture: input.permissionPosture } : {}),
     ...(input.runtimeProfileId ? { runtimeProfileId: input.runtimeProfileId } : {}),
     providerMetadata: {
-      ...(existing?.providerMetadata || {}),
       executionGraphAttempt: bindingMetadata(input.binding)
     }
   }
-  const runs = [...(input.chat.runs ?? [])]
-  const runIndex = runs.findIndex((candidate) => candidate.runId === runId)
-  if (runIndex >= 0) runs[runIndex] = run
-  else runs.push(run)
+  const runs = [...(input.chat.runs ?? []), run]
   return {
     chat: { ...input.chat, messages, runs, updatedAt: Date.now() },
     promptMessageId: promptId,
@@ -323,6 +311,13 @@ export function verifyExecutionGraphAttemptReceiptOnChat(
     ) {
       return false
     }
+    const prompt = executionGraphAttemptPromptContent(chat, receipt.binding)
+    if (
+      prompt === undefined ||
+      createHash('sha256').update(prompt).digest('hex') !== receipt.promptDigest
+    ) {
+      return false
+    }
     const evidence = executionGraphAttemptEvidenceContent(
       chat,
       receipt.binding,
@@ -339,6 +334,37 @@ export function verifyExecutionGraphAttemptReceiptOnChat(
   } catch {
     return false
   }
+}
+
+export function executionGraphAttemptPromptContent(
+  chat: ChatRecord,
+  binding: ExecutionGraphAttemptResultBinding
+): string | undefined {
+  exactChatForBinding(chat, binding)
+  const expectedBinding = stableExecutionGraphStringify(bindingMetadata(binding))
+  const matches = chat.messages.filter(
+    (message) => message.id === promptMessageId(binding.providerRunRef)
+  )
+  if (matches.length !== 1) return undefined
+  const message = matches[0]
+  if (
+    message.role !== 'user' ||
+    message.runId !== binding.providerRunRef ||
+    message.metadata?.kind !== 'executionGraphAttempt' ||
+    stableExecutionGraphStringify({
+      schemaVersion: message.metadata.schemaVersion,
+      executionId: message.metadata.executionId,
+      activationId: message.metadata.activationId,
+      attemptId: message.metadata.attemptId,
+      providerRunRef: message.metadata.providerRunRef,
+      workspaceId: message.metadata.workspaceId,
+      rootChatId: message.metadata.rootChatId,
+      provider: message.metadata.provider
+    }) !== expectedBinding
+  ) {
+    return undefined
+  }
+  return message.content
 }
 
 export function executionGraphAttemptEvidenceContent(

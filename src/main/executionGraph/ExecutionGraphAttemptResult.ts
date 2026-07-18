@@ -80,6 +80,7 @@ export interface ExecutionGraphAttemptTerminalReceipt {
   readonly binding: ExecutionGraphAttemptResultBinding
   readonly status: 'completed' | 'failed' | 'cancelled'
   readonly committedAt: string
+  readonly promptDigest: string
   readonly contentDigest: string
   readonly evidenceRefs: readonly string[]
   readonly result?: ExecutionStepResult
@@ -369,6 +370,7 @@ export function buildExecutionGraphAttemptTerminalReceipt(input: {
   readonly binding: ExecutionGraphAttemptResultBinding
   readonly status: 'completed' | 'failed' | 'cancelled'
   readonly committedAt: string
+  readonly prompt: string
   readonly content: string
   readonly evidenceRefs: readonly string[]
   readonly error?: string
@@ -423,6 +425,7 @@ export function buildExecutionGraphAttemptTerminalReceipt(input: {
     binding,
     status: input.status,
     committedAt: exact(input.committedAt, 'Result commit timestamp', 128),
+    promptDigest: createHash('sha256').update(input.prompt).digest('hex'),
     contentDigest: createHash('sha256').update(content).digest('hex'),
     evidenceRefs,
     ...(result ? { result } : {}),
@@ -469,6 +472,9 @@ export function resolveExecutionGraphTerminalBarrier(input: {
   }
   if (receipt.status !== input.providerStatus) {
     return { ok: false, reason: 'Provider terminal status and result receipt status disagree.' }
+  }
+  if (!/^[a-f0-9]{64}$/.test(receipt.promptDigest)) {
+    return { ok: false, reason: 'The attempt result receipt prompt digest is invalid.' }
   }
   if (receipt.status === 'completed') {
     if (!receipt.result) {
