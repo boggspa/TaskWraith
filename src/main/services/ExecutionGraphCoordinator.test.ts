@@ -234,6 +234,12 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     const first = h.coordinator.appendStackStep(h.input())
     const firstRunId = providerRunId(first)
     expect(h.jobs.get(firstRunId)?.status).toBe('queued')
+    expect(h.materializePausedQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({
+        executionId: first.executionId,
+        permissionCeilingAuthorityDigest: h.ceiling.authorityDigest
+      })
+    )
 
     const withSecond = h.coordinator.appendStackStep(
       h.input({

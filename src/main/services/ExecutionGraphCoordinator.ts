@@ -63,6 +63,8 @@ export interface MaterializeExecutionQueueJobInput {
   readonly rootChatId: string
   readonly provider: ProviderId
   readonly runTemplate: ExecutionGraphRunTemplate
+  /** Main-minted authority root inherited from the execution creation event. */
+  readonly permissionCeilingAuthorityDigest: string
 }
 
 /**
@@ -694,7 +696,8 @@ export class ExecutionGraphCoordinator {
         workspaceId: projection.workspaceId!,
         rootChatId: projection.rootChatId!,
         provider: step.agent.provider as ProviderId,
-        runTemplate: template
+        runTemplate: template,
+        permissionCeilingAuthorityDigest: projection.permissionCeilingRef!.authorityDigest
       })
     } catch (error) {
       this.requireAction(
