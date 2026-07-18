@@ -537,6 +537,19 @@ function validateEventEnvelope(
       assertCanonicalId(event.append.step.id, 'step_appended.step.id')
       assertDigest(event.previousTopologyDigest, 'step_appended.previousTopologyDigest')
       assertDigest(event.topologyDigest, 'step_appended.topologyDigest')
+      if (event.clientRequestReceipt !== undefined) {
+        if (!isRecord(event.clientRequestReceipt)) {
+          throw new Error('step_appended.clientRequestReceipt is invalid.')
+        }
+        assertCanonicalId(
+          event.clientRequestReceipt.clientRequestId,
+          'step_appended.clientRequestReceipt.clientRequestId'
+        )
+        assertDigest(
+          event.clientRequestReceipt.clientRequestDigest,
+          'step_appended.clientRequestReceipt.clientRequestDigest'
+        )
+      }
       break
     case 'activation_created':
       assertCanonicalId(event.activationId, 'activation_created.activationId')

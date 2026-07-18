@@ -157,6 +157,7 @@ function harness(
     }
   )
   let id = 0
+  let clientRequest = 0
   const deps: ExecutionGraphCoordinatorDeps = {
     repository,
     materializePausedQueueJob,
@@ -185,17 +186,21 @@ function harness(
     anchorStatuses,
     templateRef: template.templateId,
     ceiling,
-    input: (overrides = {}) => ({
-      workspaceId: 'workspace-one',
-      rootChatId: 'chat-one',
-      stepTitle: 'Inspect the change',
-      objective: 'Inspect the requested change carefully.',
-      provider: 'codex',
-      effect: 'read_only',
-      runTemplateRef: template.templateId,
-      permissionCeilingRef: ceiling,
-      ...overrides
-    })
+    input: (overrides = {}) => {
+      const clientRequestId = overrides.clientRequestId ?? `client-request-${++clientRequest}`
+      return {
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        stepTitle: 'Inspect the change',
+        objective: 'Inspect the requested change carefully.',
+        provider: 'codex',
+        effect: 'read_only',
+        runTemplateRef: template.templateId,
+        permissionCeilingRef: ceiling,
+        ...overrides,
+        clientRequestId
+      }
+    }
   }
 }
 
@@ -263,6 +268,101 @@ function providerRunId(projection: ReturnType<ExecutionGraphCoordinator['getExec
 }
 
 describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
+  it('returns the committed projection when the same client mutation is retried', () => {
+    const h = harness()
+    const command = h.input({
+      clientRequestId: 'renderer-run-retry-one',
+      stepTitle: '  Inspect the change  ',
+      objective: '  Inspect the requested change carefully.  '
+    })
+
+    const first = h.coordinator.appendStackStep(command)
+    const firstEventCount = first.eventCount
+    const firstJobCount = h.jobs.size
+    const retried = h.coordinator.appendStackStep({
+      ...command,
+      executionId: first.executionId,
+      stepTitle: 'Inspect the change',
+      objective: 'Inspect the requested change carefully.'
+    })
+
+    expect(retried.executionId).toBe(first.executionId)
+    expect(retried.eventCount).toBe(firstEventCount)
+    expect(retried.topology.steps).toHaveLength(1)
+    expect(h.jobs.size).toBe(firstJobCount)
+    const append = h.repository
+      .readExecutionEvents(first.executionId)
+      .find((event) => event.kind === 'step_appended')
+    expect(append).toMatchObject({
+      clientRequestReceipt: {
+        clientRequestId: 'renderer-run-retry-one',
+        clientRequestDigest: expect.stringMatching(/^[a-f0-9]{64}$/)
+      }
+    })
+  })
+
+  it('rejects client request id reuse with a different semantic payload', () => {
+    const h = harness()
+    const command = h.input({ clientRequestId: 'renderer-run-reused' })
+    const first = h.coordinator.appendStackStep(command)
+
+    expect(() =>
+      h.coordinator.appendStackStep({
+        ...command,
+        executionId: first.executionId,
+        objective: 'A different operation must not inherit the prior receipt.'
+      })
+    ).toThrow(/already used with a different payload or target/i)
+    expect(h.coordinator.getExecution(first.executionId)?.topology.steps).toHaveLength(1)
+  })
+
+  it('does not deduplicate intentionally identical prompts with distinct request ids', () => {
+    const h = harness()
+    const first = h.coordinator.appendStackStep(
+      h.input({ clientRequestId: 'renderer-run-identical-one' })
+    )
+    const second = h.coordinator.appendStackStep(
+      h.input({
+        clientRequestId: 'renderer-run-identical-two',
+        executionId: first.executionId
+      })
+    )
+
+    expect(second.topology.steps).toHaveLength(2)
+    expect(
+      h.repository
+        .readExecutionEvents(first.executionId)
+        .filter((event) => event.kind === 'step_appended')
+    ).toHaveLength(2)
+  })
+
+  it('finds a committed client receipt after its execution becomes terminal', () => {
+    const h = harness()
+    const command = h.input({ clientRequestId: 'renderer-run-terminal-retry' })
+    const started = h.coordinator.appendStackStep(command)
+    h.coordinator.onRunSessionChange(terminalEvent(providerRunId(started), 'completed'))
+    expect(h.coordinator.getExecution(started.executionId)?.state).toBe('succeeded')
+
+    const retried = h.coordinator.appendStackStep(command)
+
+    expect(retried.executionId).toBe(started.executionId)
+    expect(retried.state).toBe('succeeded')
+    expect(retried.topology.steps).toHaveLength(1)
+  })
+
+  it('rejects a received request id when its retry points at another target', () => {
+    const h = harness()
+    const command = h.input({ clientRequestId: 'renderer-run-target-reuse' })
+    h.coordinator.appendStackStep(command)
+
+    expect(() =>
+      h.coordinator.appendStackStep({
+        ...command,
+        rootChatId: 'chat-two'
+      })
+    ).toThrow(/does not belong to this workspace and chat/i)
+  })
+
   it('holds appended successors until their real predecessor succeeds', () => {
     const h = harness()
     const first = h.coordinator.appendStackStep(h.input())

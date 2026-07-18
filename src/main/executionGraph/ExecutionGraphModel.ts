@@ -333,6 +333,16 @@ export interface EffectiveExecutionTopology {
   readonly edges: readonly ExecutionEdge[]
 }
 
+/**
+ * Durable receipt for a renderer-authored mutation command. The request id is
+ * an opaque, canonical nonce; the digest is recomputed by main from the
+ * sanitized semantic command and is never accepted from the renderer.
+ */
+export interface ExecutionClientRequestReceipt {
+  readonly clientRequestId: string
+  readonly clientRequestDigest: string
+}
+
 export interface UserFrontierAppend {
   readonly appendedBy: 'user'
   readonly step: ExecutionStepDefinition

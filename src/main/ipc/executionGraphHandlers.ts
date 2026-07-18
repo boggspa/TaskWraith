@@ -1,4 +1,4 @@
-import { createHash, randomUUID } from 'node:crypto'
+import { createHash } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { compileExecutionGraphRevision } from '../executionGraph/ExecutionGraphCompiler'
 import type {
@@ -32,6 +32,7 @@ export interface ExecutionRunListFilter {
 }
 
 export interface ExecutionStackAppendCommand {
+  readonly clientRequestId: string
   readonly executionId?: string
   readonly workspaceId: string
   readonly rootChatId: string
@@ -95,7 +96,6 @@ export interface ExecutionGraphHandlersDeps {
     'listExecutions' | 'getExecution' | 'appendStackStep' | 'cancelExecution' | 'cancelDormantStep'
   >
   now?: () => string
-  createId?: () => string
 }
 
 interface PreparedStackTemplate {
@@ -130,6 +130,12 @@ function optionalString(value: unknown, max = 512): string | undefined {
 function executionId(value: unknown): string {
   const id = nonEmpty(value, 'Execution id', 128)
   if (!EXECUTION_ID.test(id)) throw new Error('Execution id is not canonical.')
+  return id
+}
+
+function clientRequestId(value: unknown): string {
+  const id = nonEmpty(value, 'Stack append client request id', 128)
+  if (!EXECUTION_ID.test(id)) throw new Error('Stack append client request id is not canonical.')
   return id
 }
 
@@ -188,11 +194,18 @@ function prepareStackTemplate(
   event: IpcMainInvokeEvent,
   input: Record<string, unknown>,
   target: ExecutionStackTarget,
-  provider: ProviderId
+  provider: ProviderId,
+  clientRequestId: string
 ): PreparedStackTemplate {
   if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
   const runtimeProfileId = optionalString(input.request.runtimeProfileId)
-  const probeRunId = `graph-template-probe-${(deps.createId ?? randomUUID)()}`
+  // Attachment staging and external-grant normalization can bind to runId.
+  // Deriving the probe from the durable mutation nonce makes an exact retry
+  // reproduce the same sanitized template instead of minting false variance.
+  const probeRunId = `graph-template-probe-${createHash('sha256')
+    .update(clientRequestId)
+    .digest('hex')
+    .slice(0, 32)}`
   const prepared = deps.prepareQueueJob(
     {
       id: probeRunId,
@@ -379,6 +392,7 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
   ipcMain.handle('execution-runs:append-stack-step', (event, raw: unknown) => {
     deps.assertMainRendererSender(event)
     if (!isRecord(raw)) throw new Error('Stack append command is invalid.')
+    const canonicalClientRequestId = clientRequestId(raw.clientRequestId)
     const requestedExecutionId = optionalString(raw.executionId, 128)
     const canonicalExecutionId = requestedExecutionId
       ? executionId(requestedExecutionId)
@@ -396,8 +410,16 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
       rootChatId,
       ...(requestedAnchor ? { anchorRunRef: requestedAnchor } : {})
     })
-    const template = prepareStackTemplate(deps, event, raw, target, provider)
+    const template = prepareStackTemplate(
+      deps,
+      event,
+      raw,
+      target,
+      provider,
+      canonicalClientRequestId
+    )
     const command: AppendExecutionStackStepInput = {
+      clientRequestId: canonicalClientRequestId,
       ...(canonicalExecutionId ? { executionId: canonicalExecutionId } : {}),
       workspaceId: target.workspaceId,
       rootChatId: target.rootChatId,

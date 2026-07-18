@@ -11,6 +11,7 @@ import {
   EXECUTION_RUN_EVENT_SCHEMA_VERSION,
   type EffectiveExecutionTopology,
   type ExecutionArtifactRef,
+  type ExecutionClientRequestReceipt,
   type ExecutionEdge,
   type ExecutionGraphRevision,
   type ExecutionGraphRevisionRef,
@@ -58,6 +59,8 @@ export interface StepAppendedEvent extends ExecutionRunEventCommon {
   readonly append: UserFrontierAppend
   readonly previousTopologyDigest: string
   readonly topologyDigest: string
+  /** Absent on pre-idempotency ledgers, which remain valid and readable. */
+  readonly clientRequestReceipt?: ExecutionClientRequestReceipt
 }
 
 export interface ActivationCreatedEvent extends ExecutionRunEventCommon {
@@ -306,6 +309,19 @@ function isValidAppendEdge(value: unknown): boolean {
   return false
 }
 
+const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+const SHA256_PATTERN = /^[a-f0-9]{64}$/
+
+function isValidClientRequestReceipt(value: unknown): boolean {
+  return (
+    isRecord(value) &&
+    typeof value.clientRequestId === 'string' &&
+    CLIENT_REQUEST_ID_PATTERN.test(value.clientRequestId) &&
+    typeof value.clientRequestDigest === 'string' &&
+    SHA256_PATTERN.test(value.clientRequestDigest)
+  )
+}
+
 function hasValidEventPayload(value: Record<string, unknown>): boolean {
   switch (value.kind) {
     case 'execution_created':
@@ -323,7 +339,9 @@ function hasValidEventPayload(value: Record<string, unknown>): boolean {
         Array.isArray(value.append.incomingEdges) &&
         value.append.incomingEdges.every(isValidAppendEdge) &&
         isNonEmptyString(value.previousTopologyDigest) &&
-        isNonEmptyString(value.topologyDigest)
+        isNonEmptyString(value.topologyDigest) &&
+        (value.clientRequestReceipt === undefined ||
+          isValidClientRequestReceipt(value.clientRequestReceipt))
       )
     case 'activation_created':
       return isNonEmptyString(value.activationId) && isNonEmptyString(value.stepId)

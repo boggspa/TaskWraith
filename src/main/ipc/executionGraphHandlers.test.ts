@@ -134,8 +134,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
       cancelExecution: vi.fn(async () => {}),
       cancelDormantStep: vi.fn(async () => current)
     },
-    now: () => '2026-07-18T12:00:00.000Z',
-    createId: () => 'id-one'
+    now: () => '2026-07-18T12:00:00.000Z'
   }
 }
 
@@ -184,6 +183,7 @@ describe('registerExecutionGraphHandlers', () => {
     handlerFor('execution-runs:append-stack-step')(
       {},
       {
+        clientRequestId: 'renderer-run-one',
         workspaceId: 'workspace-one',
         rootChatId: 'chat-one',
         anchorRunRef: 'anchor-one',
@@ -239,6 +239,7 @@ describe('registerExecutionGraphHandlers', () => {
     )
     expect(deps.coordinator.appendStackStep).toHaveBeenCalledWith(
       expect.objectContaining({
+        clientRequestId: 'renderer-run-one',
         workspaceId: 'workspace-one',
         rootChatId: 'chat-one',
         anchorRunRef: 'anchor-one',
@@ -270,6 +271,7 @@ describe('registerExecutionGraphHandlers', () => {
       handlerFor('execution-runs:append-stack-step')(
         {},
         {
+          clientRequestId: 'renderer-run-malformed',
           workspaceId: 'workspace-one',
           rootChatId: 'chat-one',
           provider: 'codex',
@@ -278,6 +280,29 @@ describe('registerExecutionGraphHandlers', () => {
         }
       )
     ).toThrow('Step objective is required')
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('rejects a non-canonical client request id before preparing a template', () => {
+    const deps = createDeps()
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          clientRequestId: 'not/a/canonical/id',
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'codex',
+          stepTitle: 'Inspect the change',
+          objective: 'Inspect this change carefully.',
+          request: { prompt: 'No mutation should happen.' }
+        }
+      )
+    ).toThrow(/client request id is not canonical/i)
+    expect(deps.prepareQueueJob).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
     expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })
@@ -315,6 +340,7 @@ describe('registerExecutionGraphHandlers', () => {
       handlerFor('execution-runs:append-stack-step')(
         {},
         {
+          clientRequestId: 'renderer-run-attachment',
           workspaceId: 'workspace-one',
           rootChatId: 'chat-one',
           provider: 'codex',
@@ -363,6 +389,7 @@ describe('registerExecutionGraphHandlers', () => {
       handlerFor('execution-runs:append-stack-step')(
         {},
         {
+          clientRequestId: 'renderer-run-profile',
           workspaceId: 'workspace-one',
           rootChatId: 'chat-one',
           provider: 'codex',

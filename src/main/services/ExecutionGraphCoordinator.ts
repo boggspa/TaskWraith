@@ -1,4 +1,4 @@
-import { randomUUID } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import type { RunSessionChangeEvent, RunSessionStatus } from '../RunManager'
 import type { ProviderId, RunQueueJob, RunQueueJobStatus } from '../store/types'
 import type {
@@ -9,12 +9,14 @@ import type {
   StepActivation,
   StepAttempt
 } from '../executionGraph/ExecutionGraphModel'
+import { stableExecutionGraphStringify } from '../executionGraph/ExecutionGraphCompiler'
 import {
   executionTopologyFrontier,
   isExecutionRunTerminal,
   isStepActivationTerminal,
   isStepAttemptTerminal,
   prepareUserFrontierAppend,
+  type StepAppendedEvent,
   type ExecutionRunEventInput,
   type ExecutionRunProjection
 } from '../executionGraph/ExecutionGraphRun'
@@ -39,6 +41,8 @@ export interface ExecutionGraphChangedNotice {
 }
 
 export interface AppendExecutionStackStepInput {
+  /** Canonical renderer nonce used only for durable mutation idempotency. */
+  readonly clientRequestId: string
   readonly executionId?: string
   readonly workspaceId: string
   readonly rootChatId: string
@@ -84,6 +88,7 @@ export type ExecutionGraphAnchorRunStatus =
 export interface ExecutionGraphCoordinatorRepository {
   createExecution: ExecutionGraphRepository['createExecution']
   appendExecutionEvents: ExecutionGraphRepository['appendExecutionEvents']
+  readExecutionEvents: ExecutionGraphRepository['readExecutionEvents']
   getExecution: ExecutionGraphRepository['getExecution']
   listExecutions: ExecutionGraphRepository['listExecutions']
   getRunTemplate: ExecutionGraphRepository['getRunTemplate']
@@ -106,6 +111,7 @@ export interface ExecutionGraphCoordinatorDeps {
 }
 
 const TERMINAL_QUEUE_STATUSES = new Set<RunQueueJobStatus>(['completed', 'failed', 'cancelled'])
+const CLIENT_REQUEST_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 /**
  * RunQueue's generic startup recovery cannot know whether a provider crossed
@@ -148,6 +154,51 @@ function canonicalPart(value: string): string {
     .replace(/^-+/, '')
     .slice(0, 80)
   return normalized || randomUUID()
+}
+
+function canonicalClientRequestId(value: string): string {
+  const normalized = String(value || '').trim()
+  if (!CLIENT_REQUEST_ID_PATTERN.test(normalized)) {
+    throw new Error(
+      'Stack append client request id must be a canonical id (1-128 ASCII letters, numbers, period, underscore, or hyphen).'
+    )
+  }
+  return normalized
+}
+
+function appendClientRequestDigest(
+  projection: ExecutionRunProjection,
+  input: AppendExecutionStackStepInput
+): string {
+  const normalizedModel = input.model?.trim()
+  return createHash('sha256')
+    .update(
+      stableExecutionGraphStringify({
+        schemaVersion: 1,
+        target: {
+          executionId: projection.executionId,
+          workspaceId: input.workspaceId,
+          rootChatId: input.rootChatId,
+          anchorRunRef: projection.anchorRunRef ?? null
+        },
+        requestedExecutionTitle: input.title?.trim() || 'Task Stack',
+        step: {
+          title: input.stepTitle.trim(),
+          objective: input.objective.trim(),
+          provider: input.provider,
+          model: normalizedModel || null,
+          effect: input.effect,
+          runTemplateRef: input.runTemplateRef.trim(),
+          permissionCeilingRef: {
+            schemaVersion: input.permissionCeilingRef.schemaVersion,
+            referenceId: input.permissionCeilingRef.referenceId,
+            authorityDigest: input.permissionCeilingRef.authorityDigest,
+            workspaceId: input.permissionCeilingRef.workspaceId ?? null
+          }
+        }
+      })
+    )
+    .digest('hex')
 }
 
 function latestActivationForStep(
@@ -228,6 +279,25 @@ export class ExecutionGraphCoordinator {
   }
 
   appendStackStep(input: AppendExecutionStackStepInput): ExecutionRunProjection {
+    const clientRequestId = canonicalClientRequestId(input.clientRequestId)
+    const existingReceipt = this.findClientRequestReceipt(clientRequestId)
+    if (existingReceipt) {
+      const projection = this.requireExecution(existingReceipt.event.executionId)
+      if (input.executionId && input.executionId !== projection.executionId) {
+        throw new Error(
+          `Stack append client request id "${clientRequestId}" was already used for a different execution.`
+        )
+      }
+      this.assertAppendAuthority(projection, input)
+      const retryDigest = appendClientRequestDigest(projection, input)
+      if (retryDigest !== existingReceipt.event.clientRequestReceipt!.clientRequestDigest) {
+        throw new Error(
+          `Stack append client request id "${clientRequestId}" was already used with a different payload or target.`
+        )
+      }
+      return projection
+    }
+
     let projection = input.executionId
       ? this.requireExecution(input.executionId)
       : this.findOpenStack(input.workspaceId, input.rootChatId)
@@ -259,6 +329,7 @@ export class ExecutionGraphCoordinator {
 
     const stepId = this.id('step')
     const activationId = this.id('activation')
+    const normalizedModel = input.model?.trim()
     const step: ExecutionStepDefinition = {
       id: stepId,
       kind: 'solo_agent',
@@ -274,8 +345,8 @@ export class ExecutionGraphCoordinator {
       },
       agent: {
         provider: input.provider,
-        ...(input.model ? { model: input.model } : {}),
-        runTemplateRef: input.runTemplateRef,
+        ...(normalizedModel ? { model: normalizedModel } : {}),
+        runTemplateRef: input.runTemplateRef.trim(),
         session: { mode: 'bound', sessionRef: input.rootChatId }
       }
     }
@@ -306,7 +377,14 @@ export class ExecutionGraphCoordinator {
     }
 
     const events: ExecutionRunEventInput[] = [
-      { ...prepared.input, timestamp: this.now() },
+      {
+        ...prepared.input,
+        clientRequestReceipt: {
+          clientRequestId,
+          clientRequestDigest: appendClientRequestDigest(projection, input)
+        },
+        timestamp: this.now()
+      },
       {
         executionId: projection.executionId,
         kind: 'activation_created',
@@ -1274,6 +1352,30 @@ export class ExecutionGraphCoordinator {
     return this.listExecutions({ workspaceId, rootChatId, includeTerminal: false }).find(
       (projection) => projection.tenant?.kind === 'stack'
     )
+  }
+
+  private findClientRequestReceipt(clientRequestId: string):
+    | {
+        readonly event: StepAppendedEvent
+      }
+    | undefined {
+    const matches: StepAppendedEvent[] = []
+    for (const projection of this.repository.listExecutions()) {
+      for (const event of this.repository.readExecutionEvents(projection.executionId)) {
+        if (
+          event.kind === 'step_appended' &&
+          event.clientRequestReceipt?.clientRequestId === clientRequestId
+        ) {
+          matches.push(event)
+        }
+      }
+    }
+    if (matches.length > 1) {
+      throw new Error(
+        `Stack append client request id "${clientRequestId}" appears more than once in the execution ledger.`
+      )
+    }
+    return matches[0] ? { event: matches[0] } : undefined
   }
 
   private requireExecution(executionId: string): ExecutionRunProjection {
