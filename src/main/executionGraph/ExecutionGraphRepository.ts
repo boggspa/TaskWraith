@@ -41,6 +41,7 @@ const REPOSITORY_SCHEMA_VERSION = 1 as const
 const CANONICAL_ID_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 const SHA256_PATTERN = /^[a-f0-9]{64}$/
 const RUN_TEMPLATE_PREFIX = 'run-template-'
+const MAX_RUN_TEMPLATE_BYTES = 1_048_576
 
 interface RevisionRegistry {
   readonly schemaVersion: 1
@@ -452,6 +453,20 @@ function validateEventEnvelope(
         ) {
           throw new Error('Invalid attempt result.')
         }
+        if (event.result.output !== undefined) {
+          assertJsonValue(event.result.output, 'attempt result output')
+        }
+        for (const artifact of event.result.artifactRefs) {
+          if (
+            !isRecord(artifact) ||
+            artifact.schemaVersion !== 1 ||
+            !isNonEmptyString(artifact.id) ||
+            !isNonEmptyString(artifact.createdByAttemptId) ||
+            !isNonEmptyString(artifact.trust)
+          ) {
+            throw new Error('Invalid attempt result artifact reference.')
+          }
+        }
       }
       break
     case 'execution_state_changed':
@@ -486,14 +501,17 @@ export class ExecutionGraphRepository {
     this.templatesPath = join(this.root, 'execution-graph-templates-v1.json')
     mkdirSync(this.root, { recursive: true, mode: 0o700 })
     mkdirSync(this.ledgersDirectory, { recursive: true, mode: 0o700 })
+    this.templates = this.loadTemplateRegistry()
     this.revisions = this.loadRevisionRegistry()
+    this.assertRevisionRunTemplates(this.revisions)
     this.executions = this.loadExecutionRegistry()
     this.layouts = this.loadLayoutRegistry()
-    this.templates = this.loadTemplateRegistry()
+    this.assertPersistedExecutionRunTemplates()
   }
 
   saveRevision(revision: ExecutionGraphRevision): ExecutionGraphRevision {
     const validated = validateRevision(revision)
+    this.assertRevisionRunTemplates([validated])
     const existing = this.revisions.find(
       (entry) => entry.graphId === validated.graphId && entry.revision === validated.revision
     )
@@ -548,9 +566,11 @@ export class ExecutionGraphRepository {
     if (Array.isArray(content) || content === null)
       throw new Error('Run template content must be a JSON object.')
     const canonicalContent = cloneAndFreeze(content)
-    const contentDigest = createHash('sha256')
-      .update(stableExecutionGraphStringify(canonicalContent))
-      .digest('hex')
+    const canonical = stableExecutionGraphStringify(canonicalContent)
+    if (Buffer.byteLength(canonical, 'utf8') > MAX_RUN_TEMPLATE_BYTES) {
+      throw new Error('Run template content exceeds the 1 MiB authority-record limit.')
+    }
+    const contentDigest = createHash('sha256').update(canonical).digest('hex')
     const templateId = `${RUN_TEMPLATE_PREFIX}${contentDigest}`
     const existing = this.templates.find((entry) => entry.templateId === templateId)
     if (existing) return existing
@@ -711,6 +731,7 @@ export class ExecutionGraphRepository {
     const events = inputs.map((input, index) => {
       const event = createExecutionRunEvent(input, actualLastSequence + index + 1)
       validateEventEnvelope(event, executionId, actualLastSequence + index + 1)
+      if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
       return event
     })
     const allEvents = [...parsed.events, ...events]
@@ -765,6 +786,16 @@ export class ExecutionGraphRepository {
     })
   }
 
+  listExecutionEvents(): readonly {
+    readonly executionId: string
+    readonly events: readonly ExecutionRunEvent[]
+  }[] {
+    return this.executions.map((entry) => ({
+      executionId: entry.executionId,
+      events: this.readExecutionEvents(entry.executionId)
+    }))
+  }
+
   private loadRevisionRegistry(): ExecutionGraphRevision[] {
     const raw = readJson(this.revisionsPath)
     if (raw === undefined) return []
@@ -813,6 +844,9 @@ export class ExecutionGraphRepository {
         throw new Error(
           `Execution "${entry.executionId}" is missing its authoritative creation event.`
         )
+      }
+      if (parsed.events[0].timestamp !== entry.createdAt) {
+        throw new Error(`Execution registry createdAt is corrupt for "${entry.executionId}".`)
       }
       return entry
     })
@@ -938,8 +972,11 @@ export class ExecutionGraphRepository {
     const finalNewline = bytes.lastIndexOf(0x0a)
     const completeByteLength = hasTornFinalFragment ? finalNewline + 1 : bytes.byteLength
     const completeText = bytes.subarray(0, completeByteLength).toString('utf8')
-    const lines = completeText.split('\n').filter((line) => line.trim().length > 0)
+    const lines = completeText ? completeText.split('\n') : []
+    if (lines.at(-1) === '') lines.pop()
     const events = lines.map((line, index) => {
+      if (!line.trim())
+        throw new Error(`Execution ledger has a blank record at sequence ${index + 1}.`)
       const event = parseExecutionRunEventLine(line)
       if (!event) throw new Error(`Execution ledger is corrupt at sequence ${index + 1}.`)
       validateEventEnvelope(event, executionId, index + 1)
@@ -981,5 +1018,28 @@ export class ExecutionGraphRepository {
     const revision = this.getRevisionByRef(ref)
     if (!revision) throw new Error(`Pinned execution graph revision ${ref.revisionId} is missing.`)
     return revision
+  }
+
+  private assertStepRunTemplate(step: unknown): void {
+    if (!isRecord(step) || step.kind !== 'solo_agent' || !isRecord(step.agent)) return
+    const templateRef = step.agent.runTemplateRef
+    if (templateRef === undefined) return
+    if (typeof templateRef !== 'string' || !this.getRunTemplate(templateRef)) {
+      throw new Error(`Solo-agent step references unknown run template "${String(templateRef)}".`)
+    }
+  }
+
+  private assertRevisionRunTemplates(revisions: readonly ExecutionGraphRevision[]): void {
+    for (const revision of revisions) {
+      for (const step of revision.steps) this.assertStepRunTemplate(step)
+    }
+  }
+
+  private assertPersistedExecutionRunTemplates(): void {
+    for (const entry of this.executions) {
+      for (const event of this.readExecutionEvents(entry.executionId)) {
+        if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
+      }
+    }
   }
 }

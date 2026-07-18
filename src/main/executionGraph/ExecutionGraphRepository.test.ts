@@ -38,7 +38,6 @@ function revision(objective = 'Inspect the workspace'): ExecutionGraphRevision {
         retry: { maxAttempts: 1 },
         agent: {
           provider: 'codex',
-          runTemplateRef: 'run-template-fixture',
           session: { mode: 'fresh' }
         }
       }
@@ -94,6 +93,34 @@ describe('ExecutionGraphRepository revisions and registries', () => {
     expect(sameTemplate.templateId).toBe(firstTemplate.templateId)
     expect(firstTemplate.contentDigest).toMatch(/^[a-f0-9]{64}$/)
 
+    const withTemplate = compileExecutionGraphRevision({
+      graphId: 'graph-with-template',
+      revision: 1,
+      workspaceId: 'workspace-one',
+      name: 'Template-bound graph',
+      createdAt: '2026-07-18T10:00:00.000Z',
+      steps: [
+        {
+          id: 'bound-agent',
+          kind: 'solo_agent',
+          title: 'Bound agent',
+          objective: 'Use the immutable request snapshot',
+          effect: 'read_only',
+          retry: { maxAttempts: 1 },
+          agent: {
+            provider: 'codex',
+            runTemplateRef: firstTemplate.templateId,
+            session: { mode: 'fresh' }
+          }
+        }
+      ],
+      edges: []
+    })
+    if (!withTemplate.ok) throw new Error('Template-bound fixture did not compile.')
+    expect(repository.saveRevision(withTemplate.revision).steps[0]).toMatchObject({
+      agent: { runTemplateRef: firstTemplate.templateId }
+    })
+
     repository.saveLayout({
       schemaVersion: 1,
       graphId: saved.graphId,
@@ -106,6 +133,35 @@ describe('ExecutionGraphRepository revisions and registries', () => {
     expect(reloaded.getRevisionByRef(executionGraphRevisionRef(saved))).toEqual(saved)
     expect(reloaded.getRunTemplate(firstTemplate.templateId)).toEqual(firstTemplate)
     expect(reloaded.getLayout('graph-one', 1)?.positions.inspect).toEqual({ x: 40, y: 80 })
+  })
+
+  it('rejects a revision whose immutable run-template authority is missing', () => {
+    const repository = new ExecutionGraphRepository(storageRoot())
+    const compiled = compileExecutionGraphRevision({
+      graphId: 'graph-missing-template',
+      revision: 1,
+      workspaceId: 'workspace-one',
+      name: 'Missing template',
+      createdAt: '2026-07-18T10:00:00.000Z',
+      steps: [
+        {
+          id: 'agent',
+          kind: 'solo_agent',
+          title: 'Agent',
+          objective: 'Cannot run without its request snapshot',
+          effect: 'read_only',
+          retry: { maxAttempts: 1 },
+          agent: {
+            provider: 'codex',
+            runTemplateRef: `run-template-${'0'.repeat(64)}`,
+            session: { mode: 'fresh' }
+          }
+        }
+      ],
+      edges: []
+    })
+    if (!compiled.ok) throw new Error('Missing-template fixture did not compile.')
+    expect(() => repository.saveRevision(compiled.revision)).toThrow(/unknown run template/)
   })
 })
 
