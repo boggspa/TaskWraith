@@ -1,8 +1,20 @@
-import { appendFileSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import {
+  appendFileSync,
+  existsSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync
+} from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it } from 'vitest'
 import { compileExecutionGraphRevision, executionGraphRevisionRef } from './ExecutionGraphCompiler'
+import {
+  MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES,
+  MAX_EXECUTION_GRAPH_RESULT_OUTPUT_BYTES,
+  MAX_EXECUTION_GRAPH_RESULT_REFERENCE_BYTES
+} from './ExecutionGraphAttemptResult'
 import {
   ExecutionGraphRepository,
   ExecutionGraphSequenceConflictError
@@ -68,6 +80,29 @@ function createExecution(
       referenceId: 'authority-one',
       authorityDigest: 'signed-authority-digest',
       workspaceId: 'workspace-one'
+    },
+    timestamp: '2026-07-18T10:01:00.000Z'
+  })
+}
+
+function createChatExecution(
+  repository: ExecutionGraphRepository,
+  executionId: string,
+  rootChatId: string,
+  workspaceId = 'workspace-one'
+): void {
+  repository.createExecution({
+    kind: 'execution_created',
+    executionId,
+    title: `Stack ${rootChatId}`,
+    workspaceId,
+    rootChatId,
+    tenant: { kind: 'stack', tenantId: rootChatId },
+    permissionCeilingRef: {
+      schemaVersion: 1,
+      referenceId: `authority-${executionId}`,
+      authorityDigest: `digest-${executionId}`,
+      workspaceId
     },
     timestamp: '2026-07-18T10:01:00.000Z'
   })
@@ -197,6 +232,55 @@ describe('ExecutionGraphRepository revisions and registries', () => {
 })
 
 describe('ExecutionGraphRepository execution ledgers', () => {
+  it('creates an execution and its initial semantic events in one durable batch', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const base = repository.saveRevision(revision())
+    const projection = repository.createExecution(
+      {
+        kind: 'execution_created',
+        executionId: 'execution-atomic',
+        title: 'Atomic execution',
+        workspaceId: 'workspace-one',
+        tenant: { kind: 'stack', tenantId: 'stack-atomic' },
+        baseRevision: executionGraphRevisionRef(base),
+        permissionCeilingRef: {
+          schemaVersion: 1,
+          referenceId: 'authority-one',
+          authorityDigest: 'signed-authority-digest',
+          workspaceId: 'workspace-one'
+        },
+        timestamp: '2026-07-18T10:01:00.000Z'
+      },
+      [
+        {
+          kind: 'activation_created',
+          executionId: 'execution-atomic',
+          activationId: 'activation-one',
+          stepId: 'inspect',
+          timestamp: '2026-07-18T10:02:00.000Z'
+        },
+        {
+          kind: 'activation_state_changed',
+          executionId: 'execution-atomic',
+          activationId: 'activation-one',
+          state: 'ready',
+          timestamp: '2026-07-18T10:03:00.000Z'
+        }
+      ]
+    )
+
+    expect(projection.lastSequence).toBe(3)
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-atomic.jsonl')
+    const frames = readFileSync(ledger, 'utf8').trimEnd().split('\n')
+    expect(frames).toHaveLength(1)
+    expect(JSON.parse(frames[0])).toMatchObject({
+      firstSequence: 1,
+      events: [{ kind: 'execution_created' }, { kind: 'activation_created' }, { kind: 'activation_state_changed' }]
+    })
+    expect(new ExecutionGraphRepository(root).getExecution('execution-atomic')?.lastSequence).toBe(3)
+  })
+
   it('persists each semantic append as one hash-chained batch frame', () => {
     const root = storageRoot()
     const repository = new ExecutionGraphRepository(root)
@@ -485,6 +569,119 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     expect(repository.readExecutionEvents('execution-one')).toHaveLength(3)
   })
 
+  it('rejects invalid or oversized result-bearing events before they enter the ledger', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const base = repository.saveRevision(revision())
+    createExecution(repository, base)
+    repository.appendExecutionEvents([
+      {
+        kind: 'activation_created',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        stepId: 'inspect'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'ready'
+      },
+      {
+        kind: 'attempt_created',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        attemptId: 'attempt-one',
+        stepId: 'inspect',
+        ordinal: 1
+      },
+      {
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'claimed'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'claimed'
+      },
+      {
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'queued',
+        providerRunRef: 'run-one'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'queued'
+      },
+      {
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'running',
+        providerRunRef: 'run-one'
+      },
+      {
+        kind: 'activation_state_changed',
+        executionId: 'execution-one',
+        activationId: 'activation-one',
+        state: 'running'
+      }
+    ])
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const before = readFileSync(ledger)
+
+    expect(() =>
+      repository.appendExecutionEvent({
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'succeeded',
+        providerRunRef: 'run-one',
+        result: {
+          schemaVersion: 1,
+          output: 'x'.repeat(MAX_EXECUTION_GRAPH_RESULT_OUTPUT_BYTES + 1),
+          artifactRefs: [],
+          trust: 'untrusted_agent_output',
+          providerRunRef: 'run-one'
+        }
+      })
+    ).toThrow(/invalid_result_payload/)
+    expect(() =>
+      repository.appendExecutionEvent({
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'failed',
+        providerRunRef: 'run-one',
+        error: 'x'.repeat(MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES + 1)
+      })
+    ).toThrow(/invalid_attempt_error/)
+    expect(() =>
+      repository.appendExecutionEvent({
+        kind: 'attempt_state_changed',
+        executionId: 'execution-one',
+        attemptId: 'attempt-one',
+        state: 'failed',
+        providerRunRef: 'x'.repeat(MAX_EXECUTION_GRAPH_RESULT_REFERENCE_BYTES + 1),
+        error: 'Provider failed.'
+      })
+    ).toThrow(/invalid_provider_run_ref/)
+
+    expect(readFileSync(ledger)).toEqual(before)
+    expect(repository.getExecution('execution-one')).toMatchObject({
+      integrity: 'valid',
+      lastSequence: 10,
+      attempts: { 'attempt-one': { state: 'running', providerRunRef: 'run-one' } }
+    })
+  })
+
   it('serves stable cached projections and events, then replaces both caches after append', () => {
     const repository = new ExecutionGraphRepository(storageRoot())
     createExecution(repository)
@@ -640,5 +837,149 @@ describe('ExecutionGraphRepository execution ledgers', () => {
         state: 'running'
       })
     ).toThrow(/quarantined/)
+  })
+
+  it('deletes one terminal chat-rooted history, its ledger, and orphaned private templates', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const privateTemplate = repository.saveRunTemplate({
+      request: { prompt: 'private prompt for chat-a' }
+    })
+    createChatExecution(repository, 'execution-chat-a', 'chat-a')
+    createChatExecution(repository, 'execution-chat-b', 'chat-b')
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-chat-a',
+      state: 'cancelled'
+    })
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-chat-b',
+      state: 'cancelled'
+    })
+
+    const report = repository.deleteExecutionsForRootChat('chat-a')
+
+    expect(report).toEqual({
+      deletedExecutionIds: ['execution-chat-a'],
+      deletedRunTemplateIds: [privateTemplate.templateId],
+      unscopedQuarantinedExecutionIds: []
+    })
+    expect(repository.getExecution('execution-chat-a')).toBeUndefined()
+    expect(repository.getExecution('execution-chat-b')).toMatchObject({ rootChatId: 'chat-b' })
+    expect(repository.listRunTemplates()).toEqual([])
+    expect(
+      existsSync(
+        join(root, 'execution-graph-ledgers-v1', 'execution-execution-chat-a.jsonl')
+      )
+    ).toBe(false)
+    expect(
+      existsSync(
+        join(root, 'execution-graph-ledgers-v1', 'execution-execution-chat-b.jsonl')
+      )
+    ).toBe(true)
+    expect(new ExecutionGraphRepository(root).listExecutions()).toEqual([
+      expect.objectContaining({ executionId: 'execution-chat-b', rootChatId: 'chat-b' })
+    ])
+  })
+
+  it('fails closed before deleting an active or unattributable quarantined execution', () => {
+    const activeRoot = storageRoot()
+    const active = new ExecutionGraphRepository(activeRoot)
+    createChatExecution(active, 'execution-active', 'chat-active')
+    expect(() => active.deleteExecutionsForRootChat('chat-active')).toThrow(/active/)
+    expect(active.getExecution('execution-active')).toBeDefined()
+
+    const quarantinedRoot = storageRoot()
+    const repository = new ExecutionGraphRepository(quarantinedRoot)
+    createChatExecution(repository, 'execution-legacy', 'chat-legacy')
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-legacy',
+      state: 'cancelled'
+    })
+    const registryPath = join(quarantinedRoot, 'execution-graph-executions-v1.json')
+    const registry = JSON.parse(readFileSync(registryPath, 'utf8')) as {
+      executions: Array<{ workspaceId?: string; rootChatId?: string }>
+    }
+    delete registry.executions[0].workspaceId
+    delete registry.executions[0].rootChatId
+    writeFileSync(registryPath, JSON.stringify(registry), 'utf8')
+    appendFileSync(
+      join(
+        quarantinedRoot,
+        'execution-graph-ledgers-v1',
+        'execution-execution-legacy.jsonl'
+      ),
+      '{"torn":true',
+      'utf8'
+    )
+    const recovered = new ExecutionGraphRepository(quarantinedRoot)
+
+    expect(() => recovered.deleteExecutionsForRootChat('chat-legacy')).toThrow(
+      /cannot attribute quarantined ledgers/
+    )
+    expect(
+      existsSync(
+        join(
+          quarantinedRoot,
+          'execution-graph-ledgers-v1',
+          'execution-execution-legacy.jsonl'
+        )
+      )
+    ).toBe(true)
+  })
+
+  it('clears definitions, layouts, templates, ledgers, registries, and live caches together', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    const savedRevision = repository.saveRevision(revision())
+    repository.saveLayout({
+      schemaVersion: 1,
+      graphId: savedRevision.graphId,
+      revision: savedRevision.revision,
+      positions: { inspect: { x: 0, y: 0 } }
+    })
+    const template = repository.saveRunTemplate({
+      request: { prompt: 'private global-clear prompt' }
+    })
+    createChatExecution(repository, 'execution-clear', 'chat-clear')
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-clear',
+      state: 'cancelled'
+    })
+
+    expect(repository.clearAllHistory()).toEqual({
+      deletedExecutionIds: ['execution-clear'],
+      deletedRunTemplateIds: [template.templateId],
+      deletedRevisionIds: [savedRevision.revisionId],
+      deletedLayoutIds: [savedRevision.revisionId],
+      unscopedQuarantinedExecutionIds: []
+    })
+    expect(repository.listExecutions()).toEqual([])
+    expect(repository.listRevisions()).toEqual([])
+    expect(repository.listLayouts()).toEqual([])
+    expect(repository.listRunTemplates()).toEqual([])
+    expect(repository.listRepositoryDiagnostics()).toEqual([])
+    expect(existsSync(join(root, 'execution-graph-executions-v1.json'))).toBe(false)
+    expect(existsSync(join(root, 'execution-graph-revisions-v1.json'))).toBe(false)
+    expect(existsSync(join(root, 'execution-graph-layouts-v1.json'))).toBe(false)
+    expect(existsSync(join(root, 'execution-graph-templates-v1.json'))).toBe(false)
+    expect(new ExecutionGraphRepository(root).listExecutions()).toEqual([])
+
+    // The same live instance remains usable after the privacy reset.
+    createChatExecution(repository, 'execution-after-clear', 'chat-after-clear')
+    expect(repository.getExecution('execution-after-clear')).toBeDefined()
+  })
+
+  it('can globally erase a corrupt storage root that cannot be opened', () => {
+    const root = storageRoot()
+    writeFileSync(join(root, 'execution-graph-revisions-v1.json'), '{private corrupt history', 'utf8')
+    expect(() => new ExecutionGraphRepository(root)).toThrow(/registry is corrupt/)
+
+    ExecutionGraphRepository.clearStorageRootHistory(root)
+
+    expect(existsSync(root)).toBe(false)
   })
 })

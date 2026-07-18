@@ -28,6 +28,7 @@ import {
 import {
   createExecutionRunEvent,
   foldExecutionRun,
+  isExecutionRunTerminal,
   parseExecutionRunEventLine,
   type ExecutionCreatedEvent,
   type ExecutionRunEvent,
@@ -55,6 +56,12 @@ interface ExecutionRegistryEntry {
   readonly executionId: string
   readonly fileName: string
   readonly createdAt: string
+  /**
+   * Registry-owned deletion hints. They let privacy deletion identify a
+   * quarantined ledger without trusting or reparsing its payload.
+   */
+  readonly workspaceId?: string
+  readonly rootChatId?: string
   readonly ledgerCheckpoint: ExecutionLedgerCheckpoint
 }
 
@@ -63,6 +70,8 @@ interface LegacyExecutionRegistryEntry {
   readonly executionId: string
   readonly fileName: string
   readonly createdAt: string
+  readonly workspaceId?: string
+  readonly rootChatId?: string
 }
 
 interface ExecutionLedgerCheckpoint {
@@ -116,7 +125,7 @@ export class ExecutionGraphSequenceConflictError extends Error {
   }
 }
 
-type ExecutionCreatedEventInput = Extract<
+export type ExecutionCreatedEventInput = Extract<
   ExecutionRunEventInput,
   { readonly kind: 'execution_created' }
 >
@@ -152,6 +161,21 @@ export interface ExecutionGraphRepositoryDiagnostic {
   readonly executionId: string
   readonly fileName: string
   readonly message: string
+}
+
+export interface ExecutionGraphHistoryDeletionReport {
+  readonly deletedExecutionIds: readonly string[]
+  readonly deletedRunTemplateIds: readonly string[]
+  /**
+   * A pre-hint quarantined ledger cannot be attributed to one chat or
+   * workspace safely. Scoped deletion fails closed when this list is nonempty.
+   */
+  readonly unscopedQuarantinedExecutionIds: readonly string[]
+}
+
+export interface ExecutionGraphHistoryClearReport extends ExecutionGraphHistoryDeletionReport {
+  readonly deletedRevisionIds: readonly string[]
+  readonly deletedLayoutIds: readonly string[]
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -450,6 +474,17 @@ function readJson(path: string): unknown | undefined {
   }
 }
 
+function assertSafeRepositoryRootForPurge(root: string): void {
+  if (dirname(root) === root) {
+    throw new Error('Refusing to purge a filesystem root as execution-graph history.')
+  }
+  if (!existsSync(root)) return
+  const stat = lstatSync(root)
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error('Execution-graph repository root is not a safe directory to purge.')
+  }
+}
+
 function validatePermissionCeilingRef(value: unknown): void {
   if (!isRecord(value) || value.schemaVersion !== 1) {
     throw new Error('execution_created.permissionCeilingRef is invalid.')
@@ -566,6 +601,10 @@ function validateEventEnvelope(
           event.clientRequestReceipt.clientRequestDigest,
           'step_appended.clientRequestReceipt.clientRequestDigest'
         )
+        assertDigest(
+          event.clientRequestReceipt.clientSubmissionDigest,
+          'step_appended.clientRequestReceipt.clientSubmissionDigest'
+        )
       }
       break
     case 'activation_created':
@@ -634,6 +673,17 @@ export class ExecutionGraphRepository {
   private templates: ExecutionGraphRunTemplate[]
   private readonly executionCache = new Map<string, CachedExecution>()
   private readonly repositoryDiagnostics = new Map<string, ExecutionGraphRepositoryDiagnostic>()
+
+  /** Emergency global privacy reset when a corrupt repository cannot be constructed. */
+  static clearStorageRootHistory(storageRoot: string): void {
+    if (!isNonEmptyString(storageRoot)) {
+      throw new Error('Execution graph storage root is required.')
+    }
+    const root = resolve(storageRoot)
+    assertSafeRepositoryRootForPurge(root)
+    rmSync(root, { recursive: true, force: true })
+    fsyncDirectory(dirname(root))
+  }
 
   constructor(storageRoot: string) {
     if (!isNonEmptyString(storageRoot)) throw new Error('Execution graph storage root is required.')
@@ -775,7 +825,10 @@ export class ExecutionGraphRepository {
     return this.layouts.filter((entry) => graphId === undefined || entry.graphId === graphId)
   }
 
-  createExecution(input: ExecutionCreatedEventInput): ExecutionRunProjection {
+  createExecution(
+    input: ExecutionCreatedEventInput,
+    initialInputs: readonly ExecutionRunEventInput[] = []
+  ): ExecutionRunProjection {
     if (input.kind !== 'execution_created')
       throw new Error('createExecution requires execution_created.')
     assertCanonicalId(input.executionId, 'executionId')
@@ -786,12 +839,29 @@ export class ExecutionGraphRepository {
     const path = join(this.ledgersDirectory, fileName)
     if (existsSync(path))
       throw new Error(`Execution ledger already exists for "${input.executionId}".`)
-    const event = createExecutionRunEvent(input, 1) as ExecutionCreatedEvent
-    validateEventEnvelope(event, input.executionId, 1)
-    const baseRevision = event.baseRevision
-      ? this.requireRevisionByRef(event.baseRevision)
+    if (
+      initialInputs.some(
+        (candidate) =>
+          candidate.executionId !== input.executionId || candidate.kind === 'execution_created'
+      )
+    ) {
+      throw new Error('Initial execution events must target the new execution exactly once.')
+    }
+    const createdEvent = createExecutionRunEvent(input, 1) as ExecutionCreatedEvent
+    const events = [
+      createdEvent,
+      ...initialInputs.map((candidate, index) =>
+        createExecutionRunEvent(candidate, index + 2)
+      )
+    ]
+    for (const [index, event] of events.entries()) {
+      validateEventEnvelope(event, input.executionId, index + 1)
+      if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
+    }
+    const baseRevision = createdEvent.baseRevision
+      ? this.requireRevisionByRef(createdEvent.baseRevision)
       : undefined
-    const projection = foldExecutionRun(input.executionId, [event], { baseRevision })
+    const projection = foldExecutionRun(input.executionId, events, { baseRevision })
     if (projection.integrity !== 'valid') {
       throw new Error(
         `Cannot create invalid execution: ${projection.diagnostics.map((entry) => entry.code).join(', ')}.`
@@ -804,7 +874,7 @@ export class ExecutionGraphRepository {
     try {
       const batch = createExecutionLedgerBatch(
         input.executionId,
-        [event],
+        events,
         EXECUTION_LEDGER_GENESIS_HASH
       )
       const serialized = serializeExecutionLedgerBatch(batch)
@@ -820,10 +890,12 @@ export class ExecutionGraphRepository {
         schemaVersion: REPOSITORY_SCHEMA_VERSION,
         executionId: input.executionId,
         fileName,
-        createdAt: event.timestamp,
+        createdAt: createdEvent.timestamp,
+        workspaceId: createdEvent.workspaceId,
+        ...(createdEvent.rootChatId ? { rootChatId: createdEvent.rootChatId } : {}),
         ledgerCheckpoint: {
           schemaVersion: REPOSITORY_SCHEMA_VERSION,
-          lastSequence: event.sequence,
+          lastSequence: projection.lastSequence,
           tailHash: batch.hash,
           completeByteLength
         }
@@ -838,7 +910,7 @@ export class ExecutionGraphRepository {
       checkpointCommitted = true
       this.executions = next
       this.executionCache.set(input.executionId, {
-        events: Object.freeze([event]),
+        events: Object.freeze(events),
         projection,
         tailHash: batch.hash,
         completeByteLength
@@ -945,6 +1017,8 @@ export class ExecutionGraphRepository {
         executionId: entry.executionId,
         fileName: entry.fileName,
         createdAt: entry.createdAt,
+        workspaceId: projection.workspaceId!,
+        ...(projection.rootChatId ? { rootChatId: projection.rootChatId } : {}),
         ledgerCheckpoint: {
           schemaVersion: REPOSITORY_SCHEMA_VERSION,
           lastSequence: projection.lastSequence,
@@ -1017,6 +1091,180 @@ export class ExecutionGraphRepository {
     return [...this.repositoryDiagnostics.values()]
   }
 
+  /**
+   * Permanently removes every execution whose durable identity is rooted in
+   * one exact chat. Active executions are never erased: their provider/queue
+   * authority must be settled by the coordinator first.
+   */
+  deleteExecutionsForRootChat(rootChatId: string): ExecutionGraphHistoryDeletionReport {
+    this.assertDeletionIdentity(rootChatId, 'rootChatId')
+    const unscopedQuarantinedExecutionIds = this.unscopedQuarantinedExecutionIds(
+      (entry) => entry.rootChatId
+    )
+    if (unscopedQuarantinedExecutionIds.length > 0) {
+      throw new Error(
+        `Scoped execution-graph deletion cannot attribute quarantined ledgers without chat identity: ${unscopedQuarantinedExecutionIds.join(', ')}.`
+      )
+    }
+    return this.deleteExecutionEntries(
+      this.executions.filter((entry) => {
+        const projection = this.executionCache.get(entry.executionId)?.projection
+        return (entry.rootChatId ?? projection?.rootChatId) === rootChatId
+      })
+    )
+  }
+
+  /** Workspace-scoped counterpart used by the existing scoped clear-chats path. */
+  deleteExecutionsForWorkspace(workspaceId: string): ExecutionGraphHistoryDeletionReport {
+    this.assertDeletionIdentity(workspaceId, 'workspaceId')
+    const unscopedQuarantinedExecutionIds = this.unscopedQuarantinedExecutionIds(
+      (entry) => entry.workspaceId
+    )
+    if (unscopedQuarantinedExecutionIds.length > 0) {
+      throw new Error(
+        `Scoped execution-graph deletion cannot attribute quarantined ledgers without workspace identity: ${unscopedQuarantinedExecutionIds.join(', ')}.`
+      )
+    }
+    return this.deleteExecutionEntries(
+      this.executions.filter((entry) => {
+        const projection = this.executionCache.get(entry.executionId)?.projection
+        return (entry.workspaceId ?? projection?.workspaceId) === workspaceId
+      })
+    )
+  }
+
+  /**
+   * Privacy boundary for Settings -> Delete all chat history. This erases the
+   * complete repository, including definitions/layouts/templates as well as
+   * execution ledgers, then resets this live instance to an empty repository.
+   */
+  clearAllHistory(): ExecutionGraphHistoryClearReport {
+    const activeExecutionIds = [...this.executionCache.values()]
+      .map((cached) => cached.projection)
+      .filter((projection) => !isExecutionRunTerminal(projection.state))
+      .map((projection) => projection.executionId)
+      .sort()
+    if (activeExecutionIds.length > 0) {
+      throw new Error(
+        `Execution-graph history cannot be cleared while executions are active: ${activeExecutionIds.join(', ')}.`
+      )
+    }
+
+    assertSafeRepositoryRootForPurge(this.root)
+    const report: ExecutionGraphHistoryClearReport = {
+      deletedExecutionIds: this.executions.map((entry) => entry.executionId).sort(),
+      deletedRunTemplateIds: this.templates.map((entry) => entry.templateId).sort(),
+      deletedRevisionIds: this.revisions.map((entry) => entry.revisionId).sort(),
+      deletedLayoutIds: this.layouts
+        .map((entry) => `${entry.graphId}@${entry.revision}`)
+        .sort(),
+      unscopedQuarantinedExecutionIds: []
+    }
+
+    ExecutionGraphRepository.clearStorageRootHistory(this.root)
+    this.revisions = []
+    this.executions = []
+    this.layouts = []
+    this.templates = []
+    this.executionCache.clear()
+    this.repositoryDiagnostics.clear()
+    mkdirSync(this.root, { recursive: true, mode: 0o700 })
+    mkdirSync(this.ledgersDirectory, { recursive: true, mode: 0o700 })
+    fsyncDirectory(dirname(this.root))
+    fsyncDirectory(this.root)
+    return report
+  }
+
+  private deleteExecutionEntries(
+    entries: readonly StoredExecutionRegistryEntry[]
+  ): ExecutionGraphHistoryDeletionReport {
+    const targets = [...entries].sort((a, b) => a.executionId.localeCompare(b.executionId))
+    const activeExecutionIds = targets
+      .flatMap((entry) => {
+        const projection = this.executionCache.get(entry.executionId)?.projection
+        return projection && !isExecutionRunTerminal(projection.state)
+          ? [projection.executionId]
+          : []
+      })
+      .sort()
+    if (activeExecutionIds.length > 0) {
+      throw new Error(
+        `Execution-graph history cannot be deleted while executions are active: ${activeExecutionIds.join(', ')}.`
+      )
+    }
+
+    for (const entry of targets) {
+      const ledgerPath = join(this.ledgersDirectory, expectedLedgerFileName(entry.executionId))
+      rmSync(ledgerPath, { force: true })
+    }
+    if (targets.length > 0) fsyncDirectory(this.ledgersDirectory)
+
+    const targetIds = new Set(targets.map((entry) => entry.executionId))
+    const nextExecutions = this.executions.filter((entry) => !targetIds.has(entry.executionId))
+    if (targets.length > 0) {
+      atomicWriteJson(this.executionsPath, {
+        schemaVersion: REPOSITORY_SCHEMA_VERSION,
+        executions: nextExecutions
+      } satisfies ExecutionRegistry)
+      this.executions = nextExecutions
+      for (const executionId of targetIds) {
+        this.executionCache.delete(executionId)
+        this.repositoryDiagnostics.delete(executionId)
+      }
+    }
+
+    const deletedRunTemplateIds = this.removeUnreferencedRunTemplates()
+    return {
+      deletedExecutionIds: [...targetIds].sort(),
+      deletedRunTemplateIds,
+      unscopedQuarantinedExecutionIds: []
+    }
+  }
+
+  private removeUnreferencedRunTemplates(): readonly string[] {
+    const referenced = new Set<string>()
+    const collect = (steps: readonly ExecutionGraphRevision['steps'][number][]): void => {
+      for (const step of steps) {
+        if (step.kind === 'solo_agent' && step.agent.runTemplateRef) {
+          referenced.add(step.agent.runTemplateRef)
+        }
+      }
+    }
+    for (const revision of this.revisions) collect(revision.steps)
+    for (const cached of this.executionCache.values()) collect(cached.projection.topology.steps)
+
+    const deleted = this.templates
+      .filter((template) => !referenced.has(template.templateId))
+      .map((template) => template.templateId)
+      .sort()
+    if (deleted.length === 0) return []
+    const next = this.templates.filter((template) => referenced.has(template.templateId))
+    atomicWriteJson(this.templatesPath, {
+      schemaVersion: REPOSITORY_SCHEMA_VERSION,
+      templates: next
+    } satisfies RunTemplateRegistry)
+    this.templates = next
+    return deleted
+  }
+
+  private unscopedQuarantinedExecutionIds(
+    identity: (entry: StoredExecutionRegistryEntry) => string | undefined
+  ): readonly string[] {
+    return this.executions
+      .filter(
+        (entry) =>
+          this.repositoryDiagnostics.has(entry.executionId) && identity(entry) === undefined
+      )
+      .map((entry) => entry.executionId)
+      .sort()
+  }
+
+  private assertDeletionIdentity(value: string, label: string): void {
+    if (!isNonEmptyString(value) || value !== value.trim()) {
+      throw new Error(`Execution-graph deletion ${label} must be an exact non-empty string.`)
+    }
+  }
+
   private loadRevisionRegistry(): ExecutionGraphRevision[] {
     const raw = readJson(this.revisionsPath)
     if (raw === undefined) return []
@@ -1057,11 +1305,23 @@ export class ExecutionGraphRepository {
       if (seen.has(candidate.executionId))
         throw new Error(`Duplicate execution "${candidate.executionId}".`)
       seen.add(candidate.executionId)
+      if (candidate.workspaceId !== undefined && !isNonEmptyString(candidate.workspaceId)) {
+        throw new Error(
+          `Execution registry workspace identity is corrupt for "${candidate.executionId}".`
+        )
+      }
+      if (candidate.rootChatId !== undefined && !isNonEmptyString(candidate.rootChatId)) {
+        throw new Error(
+          `Execution registry chat identity is corrupt for "${candidate.executionId}".`
+        )
+      }
       const identity = cloneAndFreeze({
         schemaVersion: REPOSITORY_SCHEMA_VERSION,
         executionId: candidate.executionId,
         fileName,
-        createdAt: candidate.createdAt
+        createdAt: candidate.createdAt,
+        ...(candidate.workspaceId ? { workspaceId: candidate.workspaceId } : {}),
+        ...(candidate.rootChatId ? { rootChatId: candidate.rootChatId } : {})
       } satisfies LegacyExecutionRegistryEntry)
       if (candidate.ledgerCheckpoint === undefined) {
         // Pre-checkpoint development ledgers cannot prove that a complete suffix was not
@@ -1114,6 +1374,18 @@ export class ExecutionGraphRepository {
           entry,
           'execution_ledger_corrupt',
           `Execution registry createdAt does not match the ledger for "${entry.executionId}".`
+        )
+        continue
+      }
+      const createdEvent = parsed.events[0] as ExecutionCreatedEvent
+      if (
+        (entry.workspaceId !== undefined && entry.workspaceId !== createdEvent.workspaceId) ||
+        (entry.rootChatId !== undefined && entry.rootChatId !== createdEvent.rootChatId)
+      ) {
+        this.quarantineExecution(
+          entry,
+          'execution_ledger_corrupt',
+          `Execution registry deletion identity does not match the ledger for "${entry.executionId}".`
         )
         continue
       }

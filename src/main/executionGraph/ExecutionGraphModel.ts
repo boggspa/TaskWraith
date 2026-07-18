@@ -341,6 +341,13 @@ export interface EffectiveExecutionTopology {
 export interface ExecutionClientRequestReceipt {
   readonly clientRequestId: string
   readonly clientRequestDigest: string
+  /**
+   * Digest of the canonical renderer command before volatile target and
+   * attachment authority are resolved. Main computes this value; it lets an
+   * exact uncertain retry return its committed receipt even when the original
+   * live anchor has since become terminal.
+   */
+  readonly clientSubmissionDigest: string
 }
 
 export interface UserFrontierAppend {
