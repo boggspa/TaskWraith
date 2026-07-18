@@ -8,6 +8,7 @@ import type {
 } from './store/types'
 import { toolingControlRows } from './ProviderCapabilities'
 import { isRetiredProvider } from '../shared/retiredProviders'
+import { codexModelRetiresAt, isCodexModelRetired } from '../shared/codexModelLifecycle'
 import {
   isPreviewModelPlaceholder,
   isPreviewRiskModel,
@@ -79,6 +80,23 @@ export class ProviderPreflightService {
         fallbackAvailable: false,
         contract,
         chips: [warning(`${input.provider}-retired`, 'error', `${label} retired`, reason), ...chips]
+      }
+    }
+
+    const requestedModel = input.model?.trim()
+    if (input.provider === 'codex' && requestedModel && isCodexModelRetired(requestedModel)) {
+      const retiredAt = codexModelRetiresAt(requestedModel)
+      const reason = retiredAt
+        ? `${requestedModel} was retired on ${retiredAt}. Choose an active Codex model to continue.`
+        : `${requestedModel} has been retired. Choose an active Codex model to continue.`
+      return {
+        provider: input.provider,
+        state: 'blocked',
+        reason,
+        repairAction: 'none',
+        fallbackAvailable: false,
+        contract,
+        chips: [warning('codex-model-retired', 'error', 'Codex model retired', reason), ...chips]
       }
     }
 

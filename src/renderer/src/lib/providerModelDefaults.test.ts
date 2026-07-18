@@ -57,6 +57,12 @@ describe('Codex provider model defaults', () => {
     // The default must NOT follow the reorder to position 0 — it stays 5.5.
     expect(CODEX_DEFAULT_MODEL).toBe('gpt-5.5')
   })
+
+  it('keeps active GPT-5.4 fallbacks without a retirement warning', () => {
+    const byId = new Map(CODEX_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('gpt-5.4')?.retiresAt).toBeUndefined()
+    expect(byId.get('gpt-5.4-mini')?.retiresAt).toBeUndefined()
+  })
 })
 
 describe('Claude provider model defaults', () => {

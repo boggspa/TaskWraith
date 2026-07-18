@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import {
+  CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS,
   CODEX_STAGED_ROLLOUT_MODEL_IDS,
   CODEX_WIRE_REASONING_EFFORTS,
   codexReasoningEffortsForModel,
@@ -285,6 +286,10 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
+  it('keeps explicitly runnable GPT-5.4 rows available when CLI discovery omits them', () => {
+    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS).toEqual(new Set(['gpt-5.4', 'gpt-5.4-mini']))
+  })
+
   it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
     const base = [
       { reasoningEffort: 'medium' },
@@ -389,7 +394,7 @@ describe('mergeCodexLiveModelRows', () => {
     expect(mergeCodexLiveModelRows([], staticFallback, { includePreviewAppends: false })).toBeNull()
   })
 
-  it('appends the staged-rollout trio when the live list omits them (preview flag OFF too)', () => {
+  it('appends staged and explicitly runnable rows omitted from live discovery', () => {
     const live = [{ id: 'gpt-5.5', isDefault: true }]
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: false
@@ -398,7 +403,9 @@ describe('mergeCodexLiveModelRows', () => {
       'gpt-5.5',
       'gpt-5.6-sol',
       'gpt-5.6-terra',
-      'gpt-5.6-luna'
+      'gpt-5.6-luna',
+      'gpt-5.4',
+      'gpt-5.4-mini'
     ])
     // The live row object itself is preserved (not replaced by a static row).
     expect(merged?.[0]).toBe(live[0])
@@ -418,22 +425,26 @@ describe('mergeCodexLiveModelRows', () => {
     )
   })
 
-  it('appends nothing extra once the live list carries the whole trio', () => {
+  it('appends nothing extra once live discovery carries every managed row', () => {
     const live = [
       { id: 'gpt-5.6-sol' },
       { id: 'gpt-5.6-terra' },
       { id: 'gpt-5.6-luna' },
-      { id: 'gpt-5.5', isDefault: true }
+      { id: 'gpt-5.5', isDefault: true },
+      { id: 'gpt-5.4' },
+      { id: 'gpt-5.4-mini' }
     ]
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(4)
+    expect(merged).toHaveLength(6)
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
-      'gpt-5.5'
+      'gpt-5.5',
+      'gpt-5.4',
+      'gpt-5.4-mini'
     ])
   })
 })

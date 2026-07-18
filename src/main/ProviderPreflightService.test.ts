@@ -212,6 +212,35 @@ describe('ProviderPreflightService', () => {
     expect(result.state).toBe('ready')
   })
 
+  it('keeps GPT-5.4 and GPT-5.4 mini runnable without an official sunset', () => {
+    for (const model of ['gpt-5.4', 'gpt-5.4-mini']) {
+      const result = service.evaluate(
+        { provider: 'codex', workspacePath: '/repo', model },
+        contract(),
+        defaultProviderDescriptor('codex')
+      )
+
+      expect(result.state).toBe('ready')
+    }
+  })
+
+  it('blocks a retired Codex model at the common preflight boundary', () => {
+    const result = service.evaluate(
+      { provider: 'codex', workspacePath: '/repo', model: 'gpt-5.2' },
+      contract(),
+      defaultProviderDescriptor('codex')
+    )
+
+    expect(result.state).toBe('blocked')
+    expect(result.repairAction).toBe('none')
+    expect(result.fallbackAvailable).toBe(false)
+    expect(result.reason).toContain('retired on 2026-06-02')
+    expect(result.chips[0]).toMatchObject({
+      id: 'codex-model-retired',
+      title: 'Codex model retired'
+    })
+  })
+
   it('adds honest Ollama model guidance when a model is selected', () => {
     const result = service.evaluate(
       {

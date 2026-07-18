@@ -765,10 +765,9 @@ import {
 } from './settings/MainSanitizers'
 import type { CliProviderRuntimeDependencies } from './providers/CliProviderRuntime'
 import {
+  activeCodexModelRows,
   appendKimiModelArgs,
   appendKimiThinkingArgs,
-  CODEX_MODEL_RETIREMENTS,
-  CODEX_RETIRED_MODEL_IDS,
   claudePermissionModeForApproval,
   codexReasoningEffortsForModel,
   getStaticProviderModels,
@@ -5845,12 +5844,20 @@ async function previewModelAccessProvenForPayload(payload: AgentRunPayload): Pro
   }
 }
 
-// Codex picker ordering: the GPT-5.6 trio (Sol → Terra → Luna) leads the list,
-// then GPT-5.5 (which stays the DEFAULT), then everything else in its incoming
-// order. Anything off this list sorts after 5.5 (stable, so the CLI's relative
-// order is preserved). This is the single choke point the renderer picker AND
-// the iOS broadcast both read, so ordering it here fixes both platforms.
-const CODEX_PICKER_LEAD_ORDER = ['gpt-5.6-sol', 'gpt-5.6-terra', 'gpt-5.6-luna', 'gpt-5.5']
+// Codex picker ordering: keep TaskWraith-restored discovery-hidden rows in
+// their generational position instead of letting the CLI's remaining Spark row
+// precede them. GPT-5.5 stays the DEFAULT independently of array position.
+// This is the single choke point the renderer picker AND the iOS broadcast
+// both read, so ordering it here fixes both platforms.
+const CODEX_PICKER_LEAD_ORDER = [
+  'gpt-5.6-sol',
+  'gpt-5.6-terra',
+  'gpt-5.6-luna',
+  'gpt-5.5',
+  'gpt-5.4',
+  'gpt-5.4-mini',
+  'gpt-5.3-codex-spark'
+]
 function codexModelPickerRank(id?: string): number {
   const index = id ? CODEX_PICKER_LEAD_ORDER.indexOf(id) : -1
   return index >= 0 ? index : CODEX_PICKER_LEAD_ORDER.length
@@ -37276,52 +37283,42 @@ if (isGeminiMcpBridgeProcess) {
         })
       }
 
-      // Strip HARD-retired ids from any list before it reaches the renderer.
-      // The live CLI `model/list` can still return retired models until it's
-      // updated, so this guards both the live path and the static fallbacks.
+      // Apply the shared lifecycle schedule to static and live catalogs. This
+      // adds a warning date before sunset, then removes the row automatically
+      // on the date (including stale rows a CLI may continue returning).
       const codexStaticFallback = getStaticProviderModels('codex', {
         includePreviewModels: previewModelCatalogEnabledForProvider('codex', process.env)
-      }).filter(
-        (model) => !CODEX_RETIRED_MODEL_IDS.has(model.id)
-      )
+      })
       try {
         const client = getCodexClient()
         await client.ensureStarted(app.getVersion())
         const response: any = await client.request('model/list', {}, 15_000)
         const models = Array.isArray(response?.data) ? response.data : []
-        const normalized = models
-          .filter(
-            (model: any) =>
-              model &&
-              typeof model.id === 'string' &&
-              !model.hidden &&
-              !CODEX_RETIRED_MODEL_IDS.has(model.id)
-          )
-          .map((model: any) => ({
-            id: model.id,
-            label: model.displayName || model.model || model.id,
-            description: model.description,
-            isDefault: Boolean(model.isDefault),
-            supportedReasoningEfforts: codexReasoningEffortsForModel(
-              model.id,
-              Array.isArray(model.supportedReasoningEfforts)
-                ? model.supportedReasoningEfforts
-                : []
-            ),
-            defaultReasoningEffort: model.defaultReasoningEffort || null,
-            additionalSpeedTiers: model.additionalSpeedTiers || [],
-            // Inject retirement metadata the CLI doesn't carry. Without this
-            // the renderer never sees `retiresAt` on the normal (CLI-backed)
-            // path and the picker retirement pill silently never renders.
-            ...(CODEX_MODEL_RETIREMENTS[model.id]
-              ? { retiresAt: CODEX_MODEL_RETIREMENTS[model.id] }
-              : {})
-          }))
+        const normalized = activeCodexModelRows(
+          models
+            .filter(
+              (model: any) => model && typeof model.id === 'string' && !model.hidden
+            )
+            .map((model: any) => ({
+              id: model.id,
+              label: model.displayName || model.model || model.id,
+              description: model.description,
+              isDefault: Boolean(model.isDefault),
+              supportedReasoningEfforts: codexReasoningEffortsForModel(
+                model.id,
+                Array.isArray(model.supportedReasoningEfforts)
+                  ? model.supportedReasoningEfforts
+                  : []
+              ),
+              defaultReasoningEffort: model.defaultReasoningEffort || null,
+              additionalSpeedTiers: model.additionalSpeedTiers || []
+            }))
+        )
         // Merge TaskWraith-appended rows into the live list (staged-rollout GA
-        // models always; preview-catalog rows behind the preview flag; the
-        // CLI's own row wins the id-dedupe the day it appears). An EMPTY live
-        // list returns null so we fall back to the FULL static catalog —
-        // never an append-only list missing gpt-5.5 / a default.
+        // models, explicitly runnable discovery-hidden rows, and preview rows
+        // behind the preview flag; the CLI's own row wins the id-dedupe). An
+        // EMPTY live list returns null so we fall back to the FULL static
+        // catalog — never an append-only list missing gpt-5.5 / a default.
         const mergedCodexModels = mergeCodexLiveModelRows(normalized, codexStaticFallback, {
           includePreviewAppends: previewModelCatalogEnabledForProvider('codex', process.env)
         })

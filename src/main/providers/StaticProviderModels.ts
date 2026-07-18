@@ -13,39 +13,20 @@ import {
   GROK_45_REASONING_EFFORTS,
   isCursorGrok45ModelId
 } from '../../shared/grok45Models'
+import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+
+export {
+  activeCodexModelRows,
+  codexModelRetiresAt,
+  CODEX_MODEL_RETIREMENTS,
+  CODEX_RETIRED_MODEL_IDS,
+  hasReachedCodexRetirementDate,
+  isCodexModelRetired
+} from '../../shared/codexModelLifecycle'
 
 export interface StaticProviderModelOptions {
   includePreviewModels?: boolean
 }
-
-// Codex models the provider has announced for SOFT retirement, keyed by
-// canonical model id. Surfaced to the renderer as `retiresAt` (ISO yyyy-mm-dd)
-// so the composer model picker can render a retirement pill — the model is
-// still selectable/runnable until the date passes. THIS is the single source
-// of truth and it is applied in TWO places:
-//   1. the static fallback list below, and
-//   2. the live `model/list` normalize step in the `get-agent-models` handler.
-// Both are required: on the normal path the renderer's `codexModels` is built
-// from the CLI's `model/list` response (see `get-agent-models`), which copies
-// only an explicit allow-list of fields — so a literal on the fallback list
-// alone never reaches the renderer when the CLI is reachable. That gap is
-// exactly what hid the retirement pill on the live dev build.
-//
-// NOTE: this is distinct from CODEX_RETIRED_MODEL_IDS below (HARD retirement).
-// A soft-retired model still works; a hard-retired one is filtered out of the
-// picker entirely because the API now rejects requests for it.
-export const CODEX_MODEL_RETIREMENTS: Record<string, string> = {}
-
-// Codex models that are HARD-retired: the upstream API no longer accepts
-// requests for these ids, so they must never appear in the model/reasoning
-// picker (selecting one would only produce a failed run). This is applied in
-// the live `get-agent-models` handler (the normal path — the CLI's
-// `model/list` can still return retired ids until it's updated) AND to the
-// CODEX_STATIC_MODELS fallback below, so a retired id can't slip through on
-// either path. Unlike CODEX_MODEL_RETIREMENTS (soft, date-driven pill) these
-// are removed outright. Historical lookups (display name, context window,
-// billing rates) intentionally keep their entries so past runs still render.
-export const CODEX_RETIRED_MODEL_IDS: ReadonlySet<string> = new Set(['gpt-5.2', 'gpt-5.3-codex'])
 
 export interface CodexModelContextConfig {
   model_context_window: number
@@ -280,6 +261,15 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
   'gpt-5.6-luna'
 ])
 
+// Codex CLI 0.144.0 stopped returning these rows from `model/list`, but direct
+// read-only requests to both ids still completed on 2026-07-18 and OpenAI's
+// current model cards still list them as active. Keep them discoverable in
+// TaskWraith until the shared lifecycle schedule reaches a verified sunset.
+export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set([
+  'gpt-5.4',
+  'gpt-5.4-mini'
+])
+
 // Fallback default when a persisted/unknown id can't be resolved. Deliberately
 // NOT the newest family: gpt-5.6 is still ramping account-by-account (see
 // CODEX_STAGED_ROLLOUT_MODEL_IDS), so an unramped account falling back to Sol
@@ -289,8 +279,9 @@ export const CODEX_DEFAULT_MODEL_ID = 'gpt-5.5'
 
 /**
  * Merge the live Codex `model/list` rows with TaskWraith-appended rows:
- * staged-rollout GA models (always) and preview-catalog rows (behind the
- * preview flag). The CLI's own row wins the id-dedupe the day it appears.
+ * staged-rollout GA models, explicitly runnable discovery-hidden models, and
+ * preview-catalog rows (behind the preview flag). The CLI's own row wins the
+ * id-dedupe the day it appears.
  *
  * Returns `null` when the live list is EMPTY — an empty/malformed model/list
  * response (transient hiccup, CLI warm-up race, zero-entitled account) must
@@ -308,8 +299,10 @@ export function mergeCodexLiveModelRows<
   if (liveRows.length === 0) return null
   const appendRows = staticFallback.filter(
     (model) =>
-      CODEX_STAGED_ROLLOUT_MODEL_IDS.has(model.id) ||
-      (options.includePreviewAppends && isPreviewCatalogModelId(model.id))
+      !isCodexModelRetired(model.id) &&
+      (CODEX_STAGED_ROLLOUT_MODEL_IDS.has(model.id) ||
+        CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS.has(model.id) ||
+        (options.includePreviewAppends && isPreviewCatalogModelId(model.id)))
   )
   return [
     ...liveRows,
@@ -727,7 +720,7 @@ export function getStaticProviderModels(
 ) {
   const models =
     provider === 'codex'
-      ? CODEX_STATIC_MODELS
+      ? activeCodexModelRows(CODEX_STATIC_MODELS)
       : provider === 'claude'
         ? CLAUDE_STATIC_MODELS
         : provider === 'kimi'

@@ -1,4 +1,5 @@
 import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
+import { activeCodexModelRows } from '../../../shared/codexModelLifecycle'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
@@ -31,7 +32,7 @@ interface CodexModelOption {
   retiresAt?: string
 }
 
-const CODEX_DEFAULT_MODELS = [
+const CODEX_DEFAULT_MODELS = activeCodexModelRows([
   // GPT-5.6 trio leads the picker (above 5.5); 5.5 below stays the default.
   // GA rows with OFFICIAL metadata (2026-07-09, upstream Codex catalog +
   // developers.openai.com): hyphenated display names, Sol defaults to LOW,
@@ -126,11 +127,10 @@ const CODEX_DEFAULT_MODELS = [
     // Fast tier removed alongside 5.3 — see note above.
   }
   // gpt-5.2 and gpt-5.3-codex were HARD-retired (the API rejects requests for
-  // them) and removed from the picker. The authoritative removal lives in the
-  // main process (CODEX_RETIRED_MODEL_IDS, applied in the get-agent-models
-  // handler); this renderer fallback list is only shown on mount before IPC
-  // resolves / on IPC failure, so it's kept in sync by deletion here.
-] satisfies CodexModelOption[]
+  // them) and removed from the picker. The shared lifecycle policy filters this
+  // renderer fallback as well as the main-process catalog; this list is only
+  // shown on mount before IPC resolves / on IPC failure.
+] satisfies CodexModelOption[])
 // The 5.6 trio now leads CODEX_DEFAULT_MODELS, so the default can't be [0] any
 // more — pin it to GPT-5.5 (falling back to the first row only if 5.5 is gone).
 const CODEX_DEFAULT_MODEL =
