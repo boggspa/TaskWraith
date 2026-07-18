@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
+import type { RunPermissionPostureSnapshot, RunQueueJob } from '../store/types'
 import type { ExecutionGraphHandlersDeps } from './executionGraphHandlers'
 import { registerExecutionGraphHandlers } from './executionGraphHandlers'
 
@@ -77,6 +78,33 @@ function createDeps(): ExecutionGraphHandlersDeps {
         }
       }
     }),
+    resolvePermissionPosture: vi.fn(
+      (): RunPermissionPostureSnapshot => ({
+        schemaVersion: 1,
+        approvalMode: 'auto_edit',
+        workflowMode: 'normal',
+        presetId: 'workspace_write',
+        readOnly: false,
+        agenticServices: {
+          shellCommands: 'workspace',
+          fileChanges: 'workspace',
+          externalPublish: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          crossThreadRead: 'ask',
+          mediaEditing: 'workspace',
+          mediaRecording: 'deny',
+          canvasEval: 'ask'
+        },
+        networkAccess: 'allow',
+        externalPathGrantCount: 0,
+        workspaceGrantServiceIds: [],
+        postureHash: 'c'.repeat(64),
+        signature: 'signed-posture',
+        signaturePresent: true
+      })
+    ),
     repository: {
       saveRunTemplate: vi.fn((content) => ({
         schemaVersion: 1 as const,
@@ -178,7 +206,20 @@ describe('registerExecutionGraphHandlers', () => {
         request: expect.objectContaining({
           prompt: 'Inspect this change.',
           sessionTrust: false
+        }),
+        permissionPosture: expect.objectContaining({
+          presetId: 'workspace_write',
+          postureHash: 'c'.repeat(64),
+          signaturePresent: true
         })
+      })
+    )
+    expect(deps.resolvePermissionPosture).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'codex',
+        workspacePath: '/workspace',
+        rootChatId: 'chat-one',
+        request: expect.objectContaining({ sessionTrust: false })
       })
     )
     expect(deps.coordinator.appendStackStep).toHaveBeenCalledWith(
@@ -213,6 +254,53 @@ describe('registerExecutionGraphHandlers', () => {
         }
       )
     ).toThrow('Step objective is required')
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('rejects quarantined attachments instead of running without them', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(
+      (
+        input: unknown
+      ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> => ({
+        id: String((input as Record<string, unknown>).id),
+        runId: String((input as Record<string, unknown>).runId),
+        provider: 'codex',
+        scope: 'workspace',
+        workspaceId: 'workspace-one',
+        workspacePath: '/workspace',
+        chatId: 'chat-one',
+        source: 'system',
+        status: 'failed',
+        lastError: 'Queued attachments could not be recovered safely.',
+        request: {
+          prompt: 'Inspect this change.',
+          selectedModelType: 'default',
+          customModel: '',
+          approvalMode: 'default',
+          permissionPresetId: 'workspace_write',
+          sessionTrust: false,
+          imageAttachments: []
+        }
+      })
+    )
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'codex',
+          stepTitle: 'Inspect the change',
+          objective: 'Inspect this change carefully.',
+          request: { prompt: 'Inspect with the attachment.' }
+        }
+      )
+    ).toThrow(/attachments could not be recovered safely/i)
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
     expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })

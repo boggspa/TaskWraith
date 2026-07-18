@@ -20,7 +20,12 @@ import type {
   AppendExecutionStackStepInput,
   ExecutionGraphCoordinator
 } from '../services/ExecutionGraphCoordinator'
-import type { ProviderId, RunQueueJob, RunQueueRequestSnapshot } from '../store/types'
+import type {
+  ProviderId,
+  RunPermissionPostureSnapshot,
+  RunQueueJob,
+  RunQueueRequestSnapshot
+} from '../store/types'
 
 export interface ExecutionRunListFilter {
   readonly workspaceId?: string
@@ -69,6 +74,14 @@ export interface ExecutionGraphHandlersDeps {
     input: unknown,
     options: { authorizedFilePaths?: string[] }
   ) => Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
+  resolvePermissionPosture: (input: {
+    provider: ProviderId
+    workspaceId: string
+    workspacePath: string
+    rootChatId: string
+    request: RunQueueRequestSnapshot
+    runtimeProfileId?: string
+  }) => RunPermissionPostureSnapshot
   repository: Pick<
     ExecutionGraphRepository,
     | 'saveRunTemplate'
@@ -137,6 +150,7 @@ function jsonObject(value: unknown): JsonObject {
 
 function authorityEnvelope(content: JsonObject): JsonObject {
   const request = isRecord(content.request) ? content.request : {}
+  const posture = isRecord(content.permissionPosture) ? content.permissionPosture : {}
   const grants = Array.isArray(request.externalPathGrants)
     ? request.externalPathGrants.map((grant) => {
         if (!isRecord(grant)) return null
@@ -158,10 +172,15 @@ function authorityEnvelope(content: JsonObject): JsonObject {
     workspaceId: content.workspaceId,
     workspacePath: content.workspacePath,
     chatId: content.chatId,
+    runtimeProfileId: content.runtimeProfileId,
+    selectedModelType: request.selectedModelType,
+    customModel: request.customModel,
+    effectiveWorkspacePath: request.effectiveWorkspacePath,
     approvalMode: request.approvalMode,
     permissionPresetId: request.permissionPresetId,
     workflowMode: request.workflowMode,
     sessionTrust: false,
+    permissionPostureHash: posture.postureHash,
     externalPathGrants: grants,
     projectReferenceContextSelection: request.projectReferenceContextSelection
   })
@@ -178,7 +197,10 @@ function effectForPreparedTemplate(content: JsonObject): ExecutionEffect {
   return 'workspace_write'
 }
 
-function runTemplateContent(prepared: Partial<RunQueueJob>): JsonObject {
+function runTemplateContent(
+  prepared: Partial<RunQueueJob>,
+  permissionPosture: RunPermissionPostureSnapshot
+): JsonObject {
   const request = prepared.request
     ? {
         ...prepared.request,
@@ -195,6 +217,7 @@ function runTemplateContent(prepared: Partial<RunQueueJob>): JsonObject {
     workspacePath: prepared.workspacePath,
     chatId: prepared.chatId,
     request,
+    permissionPosture,
     runtimeProfileId: prepared.runtimeProfileId,
     handoffSourceRunId: prepared.handoffSourceRunId
   })
@@ -233,7 +256,38 @@ function prepareStackTemplate(
   ) {
     throw new Error('Prepared Stack request did not preserve its authoritative target.')
   }
-  const content = runTemplateContent(prepared)
+  if (prepared.status !== 'paused' || prepared.lastError) {
+    throw new Error(
+      prepared.lastError || 'Stack request could not be durably prepared in a paused state.'
+    )
+  }
+  if (!prepared.request.prompt.trim()) throw new Error('Stack step prompt is required.')
+  if (
+    prepared.request.scheduledTaskId ||
+    prepared.request.scheduledRunAt ||
+    prepared.request.remoteComposer ||
+    prepared.request.guestParentChatId ||
+    prepared.request.guestRole ||
+    prepared.request.dmTargetParticipantId
+  ) {
+    throw new Error('Stack steps cannot reuse scheduled, remote, guest, or Ensemble provenance.')
+  }
+  const frozenRequest: RunQueueRequestSnapshot = {
+    ...prepared.request,
+    sessionTrust: false
+  }
+  const permissionPosture = deps.resolvePermissionPosture({
+    provider,
+    workspaceId: target.workspaceId,
+    workspacePath: target.workspacePath,
+    rootChatId: target.rootChatId,
+    request: frozenRequest,
+    ...(prepared.runtimeProfileId ? { runtimeProfileId: prepared.runtimeProfileId } : {})
+  })
+  if (!permissionPosture.signaturePresent || !permissionPosture.signature) {
+    throw new Error('Stack step permission posture is not signed.')
+  }
+  const content = runTemplateContent({ ...prepared, request: frozenRequest }, permissionPosture)
   const record = deps.repository.saveRunTemplate(content)
   const envelope = authorityEnvelope(content)
   const authorityDigest = createHash('sha256')
