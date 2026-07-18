@@ -52,6 +52,12 @@ function depsWith(initial: ExecutionRunProjection[]) {
     })
   }
   const repository = {
+    hasHistoryForRootChat: vi.fn((rootChatId: string) =>
+      projections.some((entry) => entry.rootChatId === rootChatId)
+    ),
+    hasHistoryForWorkspace: vi.fn((workspaceId: string) =>
+      projections.some((entry) => entry.workspaceId === workspaceId)
+    ),
     deleteExecutionsForRootChat: vi.fn((rootChatId: string) => {
       order.push(`delete-chat:${rootChatId}`)
       return {
@@ -133,5 +139,21 @@ describe('execution-graph chat-history retention', () => {
     expect(scoped.order).toEqual(['delete-workspace:workspace-one'])
     expect(scoped.repository.deleteExecutionsForWorkspace).toHaveBeenCalledWith('workspace-one')
     expect(scoped.repository.clearAllHistory).not.toHaveBeenCalled()
+  })
+
+  it('does not make unrelated chat deletion depend on graph cleanup health', async () => {
+    const harness = depsWith([projection('execution-other', 'running', 'chat-other')])
+    harness.coordinator.cancelExecution.mockRejectedValue(new Error('graph cleanup unavailable'))
+
+    await expect(
+      deleteExecutionGraphHistoryForChat(harness.deps, 'chat-unrelated')
+    ).resolves.toEqual({
+      deletedExecutionIds: [],
+      deletedRunTemplateIds: [],
+      unscopedQuarantinedExecutionIds: []
+    })
+    expect(harness.coordinator.listExecutions).not.toHaveBeenCalled()
+    expect(harness.coordinator.cancelExecution).not.toHaveBeenCalled()
+    expect(harness.repository.deleteExecutionsForRootChat).not.toHaveBeenCalled()
   })
 })

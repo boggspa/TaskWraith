@@ -1046,4 +1046,23 @@ describe('ExecutionGraphRepository execution ledgers', () => {
 
     expect(existsSync(root)).toBe(false)
   })
+
+  it('checks registry target mentions without parsing quarantined ledgers', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createChatExecution(repository, 'execution-mentioned', 'chat-mentioned')
+
+    expect(repository.hasHistoryForRootChat('chat-mentioned')).toBe(true)
+    expect(repository.hasHistoryForRootChat('chat-unrelated')).toBe(false)
+    expect(repository.hasHistoryForWorkspace('workspace-one')).toBe(true)
+    expect(repository.hasHistoryForWorkspace('workspace-unrelated')).toBe(false)
+    expect(ExecutionGraphRepository.storageRootMentionsRootChat(root, 'chat-mentioned')).toBe(true)
+    expect(ExecutionGraphRepository.storageRootMentionsRootChat(root, 'chat-unrelated')).toBe(false)
+
+    const registryPath = join(root, 'execution-graph-executions-v1.json')
+    const raw = readFileSync(registryPath, 'utf8')
+    writeFileSync(registryPath, `${raw.slice(0, -1)},`, 'utf8')
+    expect(ExecutionGraphRepository.storageRootMentionsRootChat(root, 'chat-mentioned')).toBe(true)
+    expect(ExecutionGraphRepository.storageRootMentionsRootChat(root, 'chat-unrelated')).toBe(false)
+  })
 })

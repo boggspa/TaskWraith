@@ -719,6 +719,46 @@ export class ExecutionGraphRepository {
     fsyncDirectory(dirname(root))
   }
 
+  private static storageRegistryMentions(
+    storageRoot: string,
+    key: 'rootChatId' | 'workspaceId',
+    value: string
+  ): boolean {
+    if (!isNonEmptyString(storageRoot)) {
+      throw new Error('Execution graph storage root is required.')
+    }
+    assertCanonicalId(value, key)
+    const path = join(resolve(storageRoot), 'execution-graph-executions-v1.json')
+    if (!existsSync(path)) return false
+    try {
+      const raw = readFileSync(path, 'utf8')
+      try {
+        const parsed = JSON.parse(raw) as unknown
+        if (isRecord(parsed) && Array.isArray(parsed.executions)) {
+          return parsed.executions.some(
+            (entry) => isRecord(entry) && entry[key] === value
+          )
+        }
+      } catch {
+        // A partially corrupt registry can still prove a target is mentioned
+        // by its exact canonical JSON string. This is an availability check,
+        // never authority to delete graph data.
+      }
+      return raw.includes(JSON.stringify(value))
+    } catch {
+      // Failure to read is not proof of absence.
+      return true
+    }
+  }
+
+  static storageRootMentionsRootChat(storageRoot: string, rootChatId: string): boolean {
+    return this.storageRegistryMentions(storageRoot, 'rootChatId', rootChatId)
+  }
+
+  static storageRootMentionsWorkspace(storageRoot: string, workspaceId: string): boolean {
+    return this.storageRegistryMentions(storageRoot, 'workspaceId', workspaceId)
+  }
+
   constructor(storageRoot: string) {
     if (!isNonEmptyString(storageRoot)) throw new Error('Execution graph storage root is required.')
     this.root = resolve(storageRoot)
@@ -1132,6 +1172,23 @@ export class ExecutionGraphRepository {
 
   listRepositoryDiagnostics(): readonly ExecutionGraphRepositoryDiagnostic[] {
     return [...this.repositoryDiagnostics.values()]
+  }
+
+  /** Registry-only presence checks; they never parse or bless a ledger. */
+  hasHistoryForRootChat(rootChatId: string): boolean {
+    this.assertDeletionIdentity(rootChatId, 'rootChatId')
+    return this.executions.some((entry) => {
+      const projection = this.executionCache.get(entry.executionId)?.projection
+      return (entry.rootChatId ?? projection?.rootChatId) === rootChatId
+    })
+  }
+
+  hasHistoryForWorkspace(workspaceId: string): boolean {
+    this.assertDeletionIdentity(workspaceId, 'workspaceId')
+    return this.executions.some((entry) => {
+      const projection = this.executionCache.get(entry.executionId)?.projection
+      return (entry.workspaceId ?? projection?.workspaceId) === workspaceId
+    })
   }
 
   /**

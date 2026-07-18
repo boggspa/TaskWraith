@@ -23,11 +23,19 @@ export interface ExecutionGraphHistoryRetentionDeps {
     | 'deleteExecutionsForRootChat'
     | 'deleteExecutionsForWorkspace'
     | 'clearAllHistory'
+    | 'hasHistoryForRootChat'
+    | 'hasHistoryForWorkspace'
   >
   readonly coordinator: ExecutionGraphHistoryRetentionCoordinator
 }
 
 const HISTORY_DELETION_REASON = 'Execution history is being permanently deleted by the user.'
+
+const EMPTY_DELETION_REPORT: ExecutionGraphHistoryDeletionReport = Object.freeze({
+  deletedExecutionIds: Object.freeze([]),
+  deletedRunTemplateIds: Object.freeze([]),
+  unscopedQuarantinedExecutionIds: Object.freeze([])
+})
 
 function unresolvedExecutionIds(
   projections: readonly ExecutionRunProjection[]
@@ -61,6 +69,7 @@ export async function deleteExecutionGraphHistoryForChat(
   deps: ExecutionGraphHistoryRetentionDeps,
   rootChatId: string
 ): Promise<ExecutionGraphHistoryDeletionReport> {
+  if (!deps.repository.hasHistoryForRootChat(rootChatId)) return EMPTY_DELETION_REPORT
   await settleExecutions(deps, { rootChatId })
   return deps.repository.deleteExecutionsForRootChat(rootChatId)
 }
@@ -74,6 +83,9 @@ export async function clearExecutionGraphHistory(
   deps: ExecutionGraphHistoryRetentionDeps,
   workspaceId?: string
 ): Promise<ExecutionGraphHistoryDeletionReport | ExecutionGraphHistoryClearReport> {
+  if (workspaceId && !deps.repository.hasHistoryForWorkspace(workspaceId)) {
+    return EMPTY_DELETION_REPORT
+  }
   await settleExecutions(deps, workspaceId ? { workspaceId } : {})
   return workspaceId
     ? deps.repository.deleteExecutionsForWorkspace(workspaceId)
