@@ -623,8 +623,12 @@ import {
   shouldShowRightDock,
   type RightDockTab
 } from './lib/rightDockState'
-import { readDockSurface, writeDockSurface } from './lib/rightDockPersistence'
-import { setProjectHomeChat } from './lib/projectsStore'
+import {
+  readDockSurface,
+  resolveDockSurfaceContext,
+  writeDockSurface
+} from './lib/rightDockPersistence'
+import { listProjects, setProjectHomeChat } from './lib/projectsStore'
 import { planPendingHomeClaims } from './lib/projectHomeClaims'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
@@ -1381,6 +1385,13 @@ function App(): React.JSX.Element {
     return grouped
   }, [contextCompactionProgressByKey])
   const [activeSidebarChatId, setActiveSidebarChatId] = useState<string | null>(null)
+  // Mirror of the Sidebar's active tab (reported via onActiveSidebarTabChange)
+  // for surface-scoped host state — today the contextual dock memory. The ref
+  // exists for write-time reads inside effects that must not re-run on tab
+  // changes (the dock persist effect).
+  const [sidebarActiveTab, setSidebarActiveTab] = useState<'chat' | 'threads' | 'projects'>('chat')
+  const sidebarActiveTabRef = useRef(sidebarActiveTab)
+  sidebarActiveTabRef.current = sidebarActiveTab
   // Legacy process-wide YOLO visibility. New Trusted Session is lane-scoped;
   // this state only lets the composer show/stop an old global auto-approval
   // switch if one is active inside the current process.
@@ -22706,10 +22717,19 @@ function App(): React.JSX.Element {
   // switch to the remembered surface. Saved tabs are validated against the
   // DEFINED + ENABLED surfaces (dockTabDefs), not the currently-open set.
   useEffect(() => {
-    const chatId = currentChat?.appChatId
-    if (!chatId) return
+    // Contextual keying: on the Work tab an unambiguous project member keys
+    // by its project, so hopping between a project's threads keeps the
+    // project's dock surface, and leaving Work reveals the chat's own memory.
+    // Membership edits alone don't re-run this — the context is re-resolved
+    // on the next chat or tab switch.
+    const context = resolveDockSurfaceContext({
+      activeSidebarTab: sidebarActiveTab,
+      chatId: currentChat?.appChatId,
+      projects: listProjects()
+    })
+    if (!context) return
     const restore = resolveRightDockRestore({
-      savedTab: readDockSurface(chatId),
+      savedTab: readDockSurface(context),
       selectedTab: rightDockTab,
       enabledTabs: dockTabDefs.filter((tab) => tab.enabled).map((tab) => tab.id),
       dockIsOpen: rightDockTabs.length > 0
@@ -22718,7 +22738,7 @@ function App(): React.JSX.Element {
     if (restore.shouldOpen) activateRightDockTab(restore.tab)
     else setRightDockTab(restore.tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [currentChat?.appChatId])
+  }, [currentChat?.appChatId, sidebarActiveTab])
   // Persist EVERY surface change — the switcher, ⌘K, and the imperative
   // feature-jumps that call setRightDockTab directly (openInspectorTab, run
   // finish, etc.) — so switching away and back restores the TRUE last surface
@@ -22726,7 +22746,16 @@ function App(): React.JSX.Element {
   // alone doesn't change rightDockTab, so it never writes the old chat's surface
   // to the new chat's key.
   useEffect(() => {
-    writeDockSurface(currentChat?.appChatId, rightDockTab)
+    // Context resolved from refs at write time: a chat or tab switch alone
+    // never writes the old context's surface under the new context's key.
+    writeDockSurface(
+      resolveDockSurfaceContext({
+        activeSidebarTab: sidebarActiveTabRef.current,
+        chatId: currentChatIdRef.current,
+        projects: listProjects()
+      }),
+      rightDockTab
+    )
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [rightDockTab])
   // The stored `inspectorWidth` is an absolute px preference. Applied
@@ -27600,6 +27629,7 @@ function App(): React.JSX.Element {
     handleSideReasoningChange,
     handleSideRun,
     handleSideToggleFastMode,
+    handleActiveSidebarTabChange: setSidebarActiveTab,
     handleSidebarPrimarySurfaceSelect,
     handleStartProjectHome,
     handleSidebarQuickUpdate,

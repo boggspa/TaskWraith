@@ -193,6 +193,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleAddChatToWorkspaceBoard,
   handleAddLocalServerToWorkspaceBoard,
   handleAddPinnedMessageToWorkspaceBoard,
+  handleActiveSidebarTabChange,
   handleAddRunQueueJobToWorkspaceBoard,
   handleAddTranscriptMessageToPrompt,
   handleAddWorkflowToWorkspaceBoard,
@@ -1179,6 +1180,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onNewEnsemble={handleNewEnsemble}
                 ensembleModeEnabled={isEnsembleModeEnabled}
                 onPrimarySurfaceSelect={handleSidebarPrimarySurfaceSelect}
+                onActiveSidebarTabChange={handleActiveSidebarTabChange}
                 onSelectChat={handleSelectChat}
                 onStartProjectHome={handleStartProjectHome}
                 onOpenChatInSidePanel={(chat, presentation) =>

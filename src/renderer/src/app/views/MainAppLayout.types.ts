@@ -60,6 +60,7 @@ type MainAppLayoutSidebarProps = {
   currentChat: SidebarProps['currentChat']
   currentWorkspace: SidebarProps['currentWorkspace']
   displayCurrency: SidebarDisplayCurrency
+  handleActiveSidebarTabChange: NonNullable<SidebarProps['onActiveSidebarTabChange']>
   handleAddChatToWorkspaceBoard: NonNullable<SidebarProps['onAddChatToWorkspaceBoard']>
   handleAddLocalServerToWorkspaceBoard: NonNullable<SidebarProps['onAddLocalServerToWorkspaceBoard']>
   handleAddRunQueueJobToWorkspaceBoard: NonNullable<SidebarProps['onAddRunQueueJobToWorkspaceBoard']>

@@ -192,6 +192,11 @@ interface SidebarProps {
    * pristine welcome draft to the selected surface.
    */
   onPrimarySurfaceSelect?: (surface: SidebarPrimarySurface) => void
+  /** Reports the active sidebar tab (initial mount value included) so the
+   * host can key surface-scoped state — e.g. the contextual dock memory.
+   * Fires for EVERY tab change regardless of source (click, arrow keys, the
+   * tab-follows-chat effect), unlike onPrimarySurfaceSelect. */
+  onActiveSidebarTabChange?: (tab: 'chat' | 'threads' | 'projects') => void
   onSelectChat: (chat: ChatRecord) => void
   /** Start Project Home for an unhomed project (Work panel pass-through). */
   onStartProjectHome?: (projectId: string) => void
@@ -2594,6 +2599,7 @@ export function Sidebar({
   onNewEnsemble,
   ensembleModeEnabled = true,
   onPrimarySurfaceSelect,
+  onActiveSidebarTabChange,
   onSelectChat,
   onStartProjectHome,
   onOpenChatInSidePanel,
@@ -3219,6 +3225,13 @@ export function Sidebar({
     if (activeSidebarTabRef.current === 'projects') return
     setActiveSidebarTab(getChatSidebarTab(selectedChat))
   }, [selectedChat, selectedChatSurfaceKey])
+  // Report EVERY active-tab value (mount included) to the host — unlike the
+  // user-initiated onPrimarySurfaceSelect below, this is a passive mirror for
+  // surface-scoped host state (contextual dock memory).
+  useEffect(() => {
+    onActiveSidebarTabChange?.(activeSidebarTab)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeSidebarTab])
   // Single entry point for USER-initiated tab selection (segment click +
   // arrow-key roving). A genuine Chat/Code change is reported to the host so
   // it can re-scope a pristine welcome draft onto the selected surface. The
