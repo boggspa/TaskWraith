@@ -323,6 +323,7 @@ function hasValidEventPayload(value: Record<string, unknown>): boolean {
     case 'activation_state_changed':
       return (
         isNonEmptyString(value.activationId) &&
+        isNonEmptyString(value.state) &&
         Object.prototype.hasOwnProperty.call(ACTIVATION_TRANSITIONS, value.state)
       )
     case 'attempt_created':
@@ -335,10 +336,14 @@ function hasValidEventPayload(value: Record<string, unknown>): boolean {
     case 'attempt_state_changed':
       return (
         isNonEmptyString(value.attemptId) &&
+        isNonEmptyString(value.state) &&
         Object.prototype.hasOwnProperty.call(ATTEMPT_TRANSITIONS, value.state)
       )
     case 'execution_state_changed':
-      return Object.prototype.hasOwnProperty.call(EXECUTION_TRANSITIONS, value.state)
+      return (
+        isNonEmptyString(value.state) &&
+        Object.prototype.hasOwnProperty.call(EXECUTION_TRANSITIONS, value.state)
+      )
     default:
       return false
   }
@@ -402,7 +407,7 @@ export function parseExecutionRunEventLine(line: string): ExecutionRunEvent | nu
     ) {
       return null
     }
-    return deepFreezeExecutionGraph(parsed) as ExecutionRunEvent
+    return deepFreezeExecutionGraph(parsed) as unknown as ExecutionRunEvent
   } catch {
     return null
   }
