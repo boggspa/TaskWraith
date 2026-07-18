@@ -4,11 +4,12 @@ import {
   mkdtempSync,
   readFileSync,
   rmSync,
+  utimesSync,
   writeFileSync
 } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { compileExecutionGraphRevision, executionGraphRevisionRef } from './ExecutionGraphCompiler'
 import {
   MAX_EXECUTION_GRAPH_RESULT_ERROR_BYTES,
@@ -708,6 +709,69 @@ describe('ExecutionGraphRepository execution ledgers', () => {
     expect(updatedEvents).toHaveLength(2)
     expect(repository.getExecution('execution-one')).toBe(updatedProjection)
     expect(repository.readExecutionEvents('execution-one')).toBe(updatedEvents)
+  })
+
+  it('revalidates only when the ledger stamp changes and preserves verified identities', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    const parseLedger = vi.spyOn(
+      repository as unknown as {
+        parseLedger(path: string, executionId: string): unknown
+      },
+      'parseLedger'
+    )
+
+    const initialProjection = repository.getExecution('execution-one')
+    const initialEvents = repository.readExecutionEvents('execution-one')
+    repository.listExecutions()
+    repository.listExecutionEvents()
+    repository.appendExecutionEvent({
+      kind: 'execution_state_changed',
+      executionId: 'execution-one',
+      state: 'running'
+    })
+    expect(parseLedger).not.toHaveBeenCalled()
+
+    const projection = repository.getExecution('execution-one')
+    const events = repository.readExecutionEvents('execution-one')
+    expect(projection).not.toBe(initialProjection)
+    expect(events).not.toBe(initialEvents)
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const future = new Date(Date.now() + 60_000)
+    utimesSync(ledger, future, future)
+
+    expect(repository.getExecution('execution-one')).toBe(projection)
+    expect(repository.readExecutionEvents('execution-one')).toBe(events)
+    expect(parseLedger).toHaveBeenCalledTimes(1)
+    repository.listExecutions()
+    repository.listExecutionEvents()
+    expect(parseLedger).toHaveBeenCalledTimes(1)
+  })
+
+  it('quarantines same-length ledger tampering after its file stamp changes', () => {
+    const root = storageRoot()
+    const repository = new ExecutionGraphRepository(root)
+    createExecution(repository)
+    const ledger = join(root, 'execution-graph-ledgers-v1', 'execution-execution-one.jsonl')
+    const original = readFileSync(ledger, 'utf8')
+    const tampered = original.replace(/"hash":"([a-f0-9])/, (_match, character: string) =>
+      `"hash":"${character === 'a' ? 'b' : 'a'}`
+    )
+    expect(Buffer.byteLength(tampered, 'utf8')).toBe(Buffer.byteLength(original, 'utf8'))
+    expect(tampered).not.toBe(original)
+    writeFileSync(ledger, tampered, 'utf8')
+    const future = new Date(Date.now() + 60_000)
+    utimesSync(ledger, future, future)
+
+    expect(repository.getExecution('execution-one')).toBeUndefined()
+    expect(repository.listRepositoryDiagnostics()).toEqual([
+      expect.objectContaining({
+        code: 'execution_ledger_corrupt',
+        executionId: 'execution-one',
+        message: expect.stringMatching(/hash is corrupt/)
+      })
+    ])
   })
 
   it('fails closed when an unterminated fragment appears beyond the durable checkpoint', () => {

@@ -1,6 +1,7 @@
 import {
   closeSync,
   existsSync,
+  fstatSync,
   fsyncSync,
   lstatSync,
   mkdirSync,
@@ -11,6 +12,7 @@ import {
   rmSync,
   writeSync
 } from 'node:fs'
+import type { Stats } from 'node:fs'
 import { dirname, join, resolve } from 'node:path'
 import { createHash } from 'node:crypto'
 import {
@@ -143,6 +145,15 @@ interface CachedExecution {
   readonly projection: ExecutionRunProjection
   readonly tailHash: string
   readonly completeByteLength: number
+  readonly fileStamp: ExecutionLedgerFileStamp
+}
+
+interface ExecutionLedgerFileStamp {
+  readonly dev: number
+  readonly ino: number
+  readonly size: number
+  readonly mtimeMs: number
+  readonly ctimeMs: number
 }
 
 interface ExecutionLedgerBatchFrame {
@@ -215,6 +226,29 @@ function assertDigest(value: unknown, label: string): asserts value is string {
 function cloneAndFreeze<T>(value: T): T {
   const cloned = JSON.parse(JSON.stringify(value)) as T
   return deepFreezeExecutionGraph(cloned) as T
+}
+
+function executionLedgerFileStamp(stat: Stats): ExecutionLedgerFileStamp {
+  return Object.freeze({
+    dev: stat.dev,
+    ino: stat.ino,
+    size: stat.size,
+    mtimeMs: stat.mtimeMs,
+    ctimeMs: stat.ctimeMs
+  })
+}
+
+function sameExecutionLedgerFileStamp(
+  left: ExecutionLedgerFileStamp,
+  right: ExecutionLedgerFileStamp
+): boolean {
+  return (
+    left.dev === right.dev &&
+    left.ino === right.ino &&
+    left.size === right.size &&
+    left.mtimeMs === right.mtimeMs &&
+    left.ctimeMs === right.ctimeMs
+  )
 }
 
 function assertJsonValue(value: unknown, path = 'content', depth = 0): asserts value is JsonValue {
@@ -871,6 +905,7 @@ export class ExecutionGraphRepository {
     let fd: number | undefined
     let createdLedger = false
     let checkpointCommitted = false
+    let fileStamp: ExecutionLedgerFileStamp | undefined
     try {
       const batch = createExecutionLedgerBatch(
         input.executionId,
@@ -882,6 +917,7 @@ export class ExecutionGraphRepository {
       createdLedger = true
       writeAll(fd, Buffer.from(serialized, 'utf8'))
       fsyncSync(fd)
+      fileStamp = executionLedgerFileStamp(fstatSync(fd))
       closeSync(fd)
       fd = undefined
       fsyncDirectory(this.ledgersDirectory)
@@ -909,11 +945,13 @@ export class ExecutionGraphRepository {
       } satisfies ExecutionRegistry)
       checkpointCommitted = true
       this.executions = next
+      if (!fileStamp) throw new Error('Execution ledger file stamp was not captured.')
       this.executionCache.set(input.executionId, {
         events: Object.freeze(events),
         projection,
         tailHash: batch.hash,
-        completeByteLength
+        completeByteLength,
+        fileStamp
       })
       this.repositoryDiagnostics.delete(input.executionId)
       return projection
@@ -949,13 +987,17 @@ export class ExecutionGraphRepository {
     }
     const entry = this.executions.find((candidate) => candidate.executionId === executionId)
     if (!entry) throw new Error(`Unknown execution "${executionId}".`)
-    const cached = this.executionCache.get(executionId)
+    let cached = this.executionCache.get(executionId)
     if (!cached) {
       throw new Error(`Execution "${executionId}" is quarantined and cannot accept events.`)
     }
     let path: string
+    let verifiedFileStamp: ExecutionLedgerFileStamp
     try {
-      path = this.ledgerPath(entry)
+      const verified = this.verifyCachedLedger(entry, cached)
+      path = verified.path
+      verifiedFileStamp = verified.fileStamp
+      cached = verified.cached
     } catch (error) {
       this.quarantineExecution(
         entry,
@@ -963,13 +1005,6 @@ export class ExecutionGraphRepository {
         error instanceof Error ? error.message : String(error)
       )
       throw error
-    }
-    try {
-      this.assertCheckpointedLedger(entry, this.parseLedger(path, executionId), cached)
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.quarantineExecution(entry, 'execution_ledger_corrupt', message)
-      throw new Error(message)
     }
     const actualLastSequence = cached.projection.lastSequence
     if (
@@ -1001,13 +1036,19 @@ export class ExecutionGraphRepository {
     }
     let fd: number | undefined
     let ledgerAppended = false
+    let appendedFileStamp: ExecutionLedgerFileStamp | undefined
     try {
       fd = openSync(path, 'a', 0o600)
+      const openedFileStamp = executionLedgerFileStamp(fstatSync(fd))
+      if (!sameExecutionLedgerFileStamp(openedFileStamp, verifiedFileStamp)) {
+        throw new Error(`Execution ledger changed before append for "${executionId}".`)
+      }
       const batch = createExecutionLedgerBatch(executionId, events, cached.tailHash)
       const serialized = serializeExecutionLedgerBatch(batch)
       const serializedBytes = Buffer.from(serialized, 'utf8')
       writeAll(fd, serializedBytes)
       fsyncSync(fd)
+      appendedFileStamp = executionLedgerFileStamp(fstatSync(fd))
       closeSync(fd)
       fd = undefined
       ledgerAppended = true
@@ -1034,11 +1075,13 @@ export class ExecutionGraphRepository {
         executions: next
       } satisfies ExecutionRegistry)
       this.executions = next
+      if (!appendedFileStamp) throw new Error('Execution ledger file stamp was not captured.')
       this.executionCache.set(executionId, {
         events: Object.freeze(allEvents),
         projection,
         tailHash: batch.hash,
-        completeByteLength
+        completeByteLength,
+        fileStamp: appendedFileStamp
       })
       return events
     } catch (error) {
@@ -1357,9 +1400,15 @@ export class ExecutionGraphRepository {
       if (!stat.isFile() || stat.isSymbolicLink()) {
         throw new Error(`Execution ledger is not a regular file for "${entry.executionId}".`)
       }
+      const beforeParseStamp = executionLedgerFileStamp(stat)
       let parsed: ParsedLedger
+      let parsedFileStamp: ExecutionLedgerFileStamp
       try {
         parsed = this.parseLedger(path, entry.executionId)
+        parsedFileStamp = this.readLedgerFileStamp(path, entry.executionId)
+        if (!sameExecutionLedgerFileStamp(beforeParseStamp, parsedFileStamp)) {
+          throw new Error(`Execution ledger changed while verifying "${entry.executionId}".`)
+        }
         this.assertCheckpointedLedger(entry, parsed)
       } catch (error) {
         this.quarantineExecution(
@@ -1390,7 +1439,7 @@ export class ExecutionGraphRepository {
         continue
       }
       try {
-        this.cacheParsedExecution(entry, parsed)
+        this.cacheParsedExecution(entry, parsed, parsedFileStamp)
       } catch (error) {
         this.quarantineExecution(
           entry,
@@ -1486,16 +1535,23 @@ export class ExecutionGraphRepository {
     }
   }
 
-  private ledgerPath(entry: StoredExecutionRegistryEntry): string {
+  private ledgerFile(entry: StoredExecutionRegistryEntry): {
+    readonly path: string
+    readonly fileStamp: ExecutionLedgerFileStamp
+  } {
     const expected = expectedLedgerFileName(entry.executionId)
     if (entry.fileName !== expected)
       throw new Error('Execution registry contains a non-canonical path.')
     const path = join(this.ledgersDirectory, expected)
+    return { path, fileStamp: this.readLedgerFileStamp(path, entry.executionId) }
+  }
+
+  private readLedgerFileStamp(path: string, executionId: string): ExecutionLedgerFileStamp {
     const stat = lstatSync(path)
     if (!stat.isFile() || stat.isSymbolicLink()) {
-      throw new Error(`Execution ledger is not a regular file for "${entry.executionId}".`)
+      throw new Error(`Execution ledger is not a regular file for "${executionId}".`)
     }
-    return path
+    return executionLedgerFileStamp(stat)
   }
 
   private parseLedger(path: string, executionId: string): ParsedLedger {
@@ -1632,7 +1688,11 @@ export class ExecutionGraphRepository {
     }
   }
 
-  private cacheParsedExecution(entry: ExecutionRegistryEntry, parsed: ParsedLedger): void {
+  private cacheParsedExecution(
+    entry: ExecutionRegistryEntry,
+    parsed: ParsedLedger,
+    fileStamp: ExecutionLedgerFileStamp
+  ): void {
     for (const event of parsed.events) {
       if (event.kind === 'step_appended') this.assertStepRunTemplate(event.append.step)
     }
@@ -1650,7 +1710,8 @@ export class ExecutionGraphRepository {
       events: parsed.events,
       projection,
       tailHash: parsed.tailHash,
-      completeByteLength: parsed.completeByteLength
+      completeByteLength: parsed.completeByteLength,
+      fileStamp
     })
     this.repositoryDiagnostics.delete(entry.executionId)
   }
@@ -1707,6 +1768,51 @@ export class ExecutionGraphRepository {
     }
   }
 
+  private assertCachedCheckpoint(
+    entry: StoredExecutionRegistryEntry,
+    cached: CachedExecution
+  ): asserts entry is ExecutionRegistryEntry {
+    if (!('ledgerCheckpoint' in entry)) {
+      throw new Error(`Execution "${entry.executionId}" has no durable ledger checkpoint.`)
+    }
+    if (
+      cached.completeByteLength !== entry.ledgerCheckpoint.completeByteLength ||
+      cached.projection.lastSequence !== entry.ledgerCheckpoint.lastSequence ||
+      cached.tailHash !== entry.ledgerCheckpoint.tailHash
+    ) {
+      throw new Error(
+        `Execution cache does not match its durable checkpoint for "${entry.executionId}".`
+      )
+    }
+  }
+
+  private verifyCachedLedger(
+    entry: StoredExecutionRegistryEntry,
+    cached: CachedExecution
+  ): {
+    readonly path: string
+    readonly fileStamp: ExecutionLedgerFileStamp
+    readonly cached: CachedExecution
+  } {
+    this.assertCachedCheckpoint(entry, cached)
+    const { path, fileStamp: beforeParseStamp } = this.ledgerFile(entry)
+    if (sameExecutionLedgerFileStamp(beforeParseStamp, cached.fileStamp)) {
+      return { path, fileStamp: beforeParseStamp, cached }
+    }
+    const parsed = this.parseLedger(path, entry.executionId)
+    const afterParseStamp = this.readLedgerFileStamp(path, entry.executionId)
+    if (!sameExecutionLedgerFileStamp(beforeParseStamp, afterParseStamp)) {
+      throw new Error(`Execution ledger changed while verifying "${entry.executionId}".`)
+    }
+    this.assertCheckpointedLedger(entry, parsed, cached)
+    const refreshed: CachedExecution = {
+      ...cached,
+      fileStamp: afterParseStamp
+    }
+    this.executionCache.set(entry.executionId, refreshed)
+    return { path, fileStamp: afterParseStamp, cached: refreshed }
+  }
+
   private verifyCachedExecution(executionId: string): CachedExecution | undefined {
     const cached = this.executionCache.get(executionId)
     if (!cached) return undefined
@@ -1716,9 +1822,7 @@ export class ExecutionGraphRepository {
       return undefined
     }
     try {
-      const path = this.ledgerPath(entry)
-      this.assertCheckpointedLedger(entry, this.parseLedger(path, executionId), cached)
-      return cached
+      return this.verifyCachedLedger(entry, cached).cached
     } catch (error) {
       this.quarantineExecution(
         entry,
