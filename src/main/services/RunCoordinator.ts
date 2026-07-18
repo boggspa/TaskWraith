@@ -55,6 +55,12 @@ export interface RunCoordinatorDeps {
   /** Register context identity without reading it so approvals raised by
    * preflight can be linked after materialization. */
   prepareReferenceContext?: (payload: AgentRunPayload) => void
+  /**
+   * Last main-owned admission gate before an adapter can observe the payload.
+   * Execution-graph runs use this to re-check their exact durable lease after
+   * normalization, runtime-profile application, preflight, and context capture.
+   */
+  authorizeBeforeAdapterRun?: (payload: AgentRunPayload) => void | Promise<void>
   /** Adapter lookup. Throws when the provider isn't registered.
    * Currently `providerAdapters.require`. */
   getAdapter: (provider: ProviderId) => ProviderAdapter
@@ -157,6 +163,7 @@ export class RunCoordinator {
       this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
       return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
     }
+    await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload)
     await adapter.run({ event, payload: normalizedPayload })
     return { dispatched: true, appRunId: normalizedPayload.appRunId ?? '' }
   }

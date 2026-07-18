@@ -155,6 +155,45 @@ describe('RunCoordinator', () => {
     expect(order).toEqual(['prepare', 'preflight', 'capture', 'adapter'])
   })
 
+  it('runs the final main admission gate immediately before adapter dispatch', async () => {
+    const order: string[] = []
+    const authorizeBeforeAdapterRun = vi.fn(() => {
+      order.push('authorize')
+    })
+    const { deps, adapter, spies } = makeDeps({
+      captureReferenceContext: vi.fn(() => {
+        order.push('capture')
+      }),
+      authorizeBeforeAdapterRun
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      return true
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('adapter')
+    })
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(order).toEqual(['preflight', 'capture', 'authorize', 'adapter'])
+    expect(authorizeBeforeAdapterRun).toHaveBeenCalledWith(
+      expect.objectContaining({ appRunId: 'run-fixed', provider: 'gemini' })
+    )
+  })
+
+  it('does not invoke the adapter when final main admission rejects', async () => {
+    const { deps, adapter } = makeDeps({
+      authorizeBeforeAdapterRun: () => {
+        throw new Error('lease changed')
+      }
+    })
+
+    await expect(new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())).rejects.toThrow(
+      'lease changed'
+    )
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
   it('does not capture reference context when preflight rejects', async () => {
     const captureReferenceContext = vi.fn()
     const { deps, spies } = makeDeps({ captureReferenceContext })
