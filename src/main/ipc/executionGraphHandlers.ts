@@ -1,0 +1,393 @@
+import { createHash, randomUUID } from 'node:crypto'
+import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import {
+  compileExecutionGraphRevision,
+  stableExecutionGraphStringify
+} from '../executionGraph/ExecutionGraphCompiler'
+import type {
+  ExecutionEffect,
+  ExecutionGraphLayout,
+  ExecutionGraphRevision,
+  ExecutionPermissionCeilingRef,
+  JsonObject
+} from '../executionGraph/ExecutionGraphModel'
+import type {
+  ExecutionGraphRepository,
+  ExecutionGraphRunTemplate
+} from '../executionGraph/ExecutionGraphRepository'
+import type { ExecutionRunEvent, ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
+import type {
+  AppendExecutionStackStepInput,
+  ExecutionGraphCoordinator
+} from '../services/ExecutionGraphCoordinator'
+import type { ProviderId, RunQueueJob } from '../store/types'
+
+export interface ExecutionStackTarget {
+  readonly workspaceId: string
+  readonly workspacePath: string
+  readonly rootChatId: string
+  readonly anchorRunRef?: string
+}
+
+export interface ExecutionGraphHandlersDeps {
+  assertMainRendererSender: (event: IpcMainInvokeEvent) => void
+  resolveStackTarget: (input: {
+    workspaceId: string
+    rootChatId: string
+    anchorRunRef?: string
+  }) => ExecutionStackTarget
+  resolveAuthorizedAttachmentPaths: (event: IpcMainInvokeEvent) => string[]
+  prepareQueueJob: (
+    input: unknown,
+    options: { authorizedFilePaths?: string[] }
+  ) => Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'>
+  repository: Pick<
+    ExecutionGraphRepository,
+    | 'saveRunTemplate'
+    | 'listRevisions'
+    | 'getRevision'
+    | 'saveRevision'
+    | 'saveLayout'
+    | 'getLayout'
+    | 'readExecutionEvents'
+  >
+  coordinator: Pick<
+    ExecutionGraphCoordinator,
+    'listExecutions' | 'getExecution' | 'appendStackStep' | 'cancelExecution' | 'cancelDormantStep'
+  >
+  now?: () => string
+  createId?: () => string
+}
+
+interface PreparedStackTemplate {
+  readonly record: ExecutionGraphRunTemplate
+  readonly provider: ProviderId
+  readonly effect: ExecutionEffect
+  readonly model?: string
+  readonly ceiling: ExecutionPermissionCeilingRef
+}
+
+const PROVIDERS = new Set<ProviderId>(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const EXECUTION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function nonEmpty(value: unknown, label: string, max = 512): string {
+  if (typeof value !== 'string' || !value.trim()) throw new Error(`${label} is required.`)
+  const normalized = value.trim()
+  if (normalized.length > max) throw new Error(`${label} is too long.`)
+  return normalized
+}
+
+function optionalString(value: unknown, max = 512): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const normalized = value.trim()
+  if (normalized.length > max) throw new Error('Optional execution value is too long.')
+  return normalized
+}
+
+function executionId(value: unknown): string {
+  const id = nonEmpty(value, 'Execution id', 128)
+  if (!EXECUTION_ID.test(id)) throw new Error('Execution id is not canonical.')
+  return id
+}
+
+function providerId(value: unknown): ProviderId {
+  if (typeof value !== 'string' || !PROVIDERS.has(value as ProviderId)) {
+    throw new Error('Execution provider is invalid or retired.')
+  }
+  return value as ProviderId
+}
+
+function jsonObject(value: unknown): JsonObject {
+  const cloned = JSON.parse(JSON.stringify(value)) as unknown
+  if (!isRecord(cloned)) throw new Error('Prepared run template is not a JSON object.')
+  return cloned as JsonObject
+}
+
+function authorityEnvelope(content: JsonObject): JsonObject {
+  const request = isRecord(content.request) ? content.request : {}
+  const grants = Array.isArray(request.externalPathGrants)
+    ? request.externalPathGrants.map((grant) => {
+        if (!isRecord(grant)) return null
+        return {
+          provider: grant.provider,
+          path: grant.path,
+          kind: grant.kind,
+          access: grant.access,
+          duration: grant.duration,
+          issuedBy: grant.issuedBy,
+          signature: grant.signature
+        }
+      })
+    : []
+  return jsonObject({
+    schemaVersion: 1,
+    provider: content.provider,
+    scope: content.scope,
+    workspaceId: content.workspaceId,
+    workspacePath: content.workspacePath,
+    chatId: content.chatId,
+    approvalMode: request.approvalMode,
+    permissionPresetId: request.permissionPresetId,
+    workflowMode: request.workflowMode,
+    sessionTrust: false,
+    externalPathGrants: grants,
+    projectReferenceContextSelection: request.projectReferenceContextSelection
+  })
+}
+
+function effectForPreparedTemplate(content: JsonObject): ExecutionEffect {
+  const request = isRecord(content.request) ? content.request : {}
+  const preset = request.permissionPresetId
+  if (preset === 'read_only' || preset === 'plan') return 'read_only'
+  if (preset === 'full_access' || preset === 'custom') return 'external_side_effect'
+  if (Array.isArray(request.externalPathGrants) && request.externalPathGrants.length > 0) {
+    return 'external_side_effect'
+  }
+  return 'workspace_write'
+}
+
+function runTemplateContent(prepared: Partial<RunQueueJob>): JsonObject {
+  const request = prepared.request
+    ? {
+        ...prepared.request,
+        // A durable graph step may execute after the originating renderer turn
+        // and must never inherit the composer's ephemeral Trusted Session.
+        sessionTrust: false
+      }
+    : undefined
+  return jsonObject({
+    schemaVersion: 1,
+    provider: prepared.provider,
+    scope: prepared.scope,
+    workspaceId: prepared.workspaceId,
+    workspacePath: prepared.workspacePath,
+    chatId: prepared.chatId,
+    request,
+    runtimeProfileId: prepared.runtimeProfileId,
+    handoffSourceRunId: prepared.handoffSourceRunId
+  })
+}
+
+function prepareStackTemplate(
+  deps: ExecutionGraphHandlersDeps,
+  event: IpcMainInvokeEvent,
+  input: Record<string, unknown>,
+  target: ExecutionStackTarget,
+  provider: ProviderId
+): PreparedStackTemplate {
+  if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
+  const probeRunId = `graph-template-probe-${(deps.createId ?? randomUUID)()}`
+  const prepared = deps.prepareQueueJob(
+    {
+      id: probeRunId,
+      runId: probeRunId,
+      provider,
+      scope: 'workspace',
+      workspaceId: target.workspaceId,
+      workspacePath: target.workspacePath,
+      chatId: target.rootChatId,
+      source: 'system',
+      status: 'paused',
+      request: input.request
+    },
+    { authorizedFilePaths: deps.resolveAuthorizedAttachmentPaths(event) }
+  )
+  if (
+    prepared.provider !== provider ||
+    prepared.workspaceId !== target.workspaceId ||
+    prepared.workspacePath !== target.workspacePath ||
+    prepared.chatId !== target.rootChatId ||
+    !prepared.request
+  ) {
+    throw new Error('Prepared Stack request did not preserve its authoritative target.')
+  }
+  const content = runTemplateContent(prepared)
+  const record = deps.repository.saveRunTemplate(content)
+  const envelope = authorityEnvelope(content)
+  const authorityDigest = createHash('sha256')
+    .update(stableExecutionGraphStringify(envelope))
+    .digest('hex')
+  const ceiling: ExecutionPermissionCeilingRef = {
+    schemaVersion: 1,
+    referenceId: `execution-ceiling-${authorityDigest}`,
+    authorityDigest,
+    workspaceId: target.workspaceId
+  }
+  const request = prepared.request
+  const model = request.customModel?.trim() || request.selectedModelType?.trim() || undefined
+  return {
+    record,
+    provider,
+    effect: effectForPreparedTemplate(content),
+    ...(model ? { model } : {}),
+    ceiling
+  }
+}
+
+function requireOwnedExecution(
+  deps: ExecutionGraphHandlersDeps,
+  id: string
+): ExecutionRunProjection {
+  const projection = deps.coordinator.getExecution(id)
+  if (!projection) throw new Error('Execution is unavailable.')
+  return projection
+}
+
+function formalizeExecution(
+  deps: ExecutionGraphHandlersDeps,
+  input: Record<string, unknown>
+): ExecutionGraphRevision {
+  const projection = requireOwnedExecution(deps, executionId(input.executionId))
+  if (projection.integrity !== 'valid' || projection.baseRevisionMissing) {
+    throw new Error('Only a verified effective topology can be saved.')
+  }
+  if (!projection.workspaceId || projection.topology.steps.length === 0) {
+    throw new Error('Execution has no saveable topology.')
+  }
+  const readableGraphId = `stack-${projection.executionId}`
+  const graphId = EXECUTION_ID.test(readableGraphId)
+    ? readableGraphId
+    : `stack-${createHash('sha256').update(projection.executionId).digest('hex')}`
+  const nextRevision =
+    Math.max(0, ...deps.repository.listRevisions(graphId).map((revision) => revision.revision)) + 1
+  const compiled = compileExecutionGraphRevision({
+    graphId,
+    revision: nextRevision,
+    workspaceId: projection.workspaceId,
+    name: optionalString(input.name, 160) || projection.title || 'Saved Stack workflow',
+    createdAt: (deps.now ?? (() => new Date().toISOString()))(),
+    steps: projection.topology.steps,
+    edges: projection.topology.edges
+  })
+  if (!compiled.ok) {
+    throw new Error(
+      `Effective topology could not be saved: ${compiled.issues.map((issue) => issue.code).join(', ')}.`
+    )
+  }
+  return deps.repository.saveRevision(compiled.revision)
+}
+
+/** Register the main-window command/query surface for execution graphs. */
+export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps): void {
+  ipcMain.handle('execution-graphs:list', (event, workspaceId?: string) => {
+    deps.assertMainRendererSender(event)
+    const workspace = optionalString(workspaceId, 128)
+    return deps.repository
+      .listRevisions()
+      .filter((revision) => !workspace || revision.workspaceId === workspace)
+  })
+
+  ipcMain.handle(
+    'execution-graphs:get',
+    (event, input: { graphId?: unknown; revision?: unknown }) => {
+      deps.assertMainRendererSender(event)
+      if (!isRecord(input)) throw new Error('Graph lookup is invalid.')
+      const graphId = nonEmpty(input.graphId, 'Graph id', 128)
+      if (!Number.isInteger(input.revision) || Number(input.revision) < 1) {
+        throw new Error('Graph revision is invalid.')
+      }
+      return deps.repository.getRevision(graphId, Number(input.revision)) ?? null
+    }
+  )
+
+  ipcMain.handle('execution-runs:list', (event, filter?: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (filter !== undefined && filter !== null && !isRecord(filter)) {
+      throw new Error('Execution run filter is invalid.')
+    }
+    const record = isRecord(filter) ? filter : {}
+    return deps.coordinator.listExecutions({
+      workspaceId: optionalString(record.workspaceId, 128),
+      rootChatId: optionalString(record.rootChatId, 128),
+      includeTerminal: record.includeTerminal !== false
+    })
+  })
+
+  ipcMain.handle('execution-runs:get', (event, id: unknown) => {
+    deps.assertMainRendererSender(event)
+    return deps.coordinator.getExecution(executionId(id)) ?? null
+  })
+
+  ipcMain.handle('execution-runs:events', (event, id: unknown): readonly ExecutionRunEvent[] => {
+    deps.assertMainRendererSender(event)
+    const canonicalId = executionId(id)
+    requireOwnedExecution(deps, canonicalId)
+    return deps.repository.readExecutionEvents(canonicalId)
+  })
+
+  ipcMain.handle('execution-runs:append-stack-step', (event, raw: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (!isRecord(raw)) throw new Error('Stack append command is invalid.')
+    const requestedExecutionId = optionalString(raw.executionId, 128)
+    const canonicalExecutionId = requestedExecutionId
+      ? executionId(requestedExecutionId)
+      : undefined
+    const workspaceId = nonEmpty(raw.workspaceId, 'Workspace id', 128)
+    const rootChatId = nonEmpty(raw.rootChatId, 'Root chat id', 128)
+    const requestedAnchor = optionalString(raw.anchorRunRef, 128)
+    const title = optionalString(raw.title, 160)
+    const stepTitle = nonEmpty(raw.stepTitle, 'Step title', 160)
+    const objective = nonEmpty(raw.objective, 'Step objective', 32_000)
+    const provider = providerId(raw.provider)
+    if (!isRecord(raw.request)) throw new Error('Stack step request snapshot is required.')
+    const target = deps.resolveStackTarget({
+      workspaceId,
+      rootChatId,
+      ...(requestedAnchor ? { anchorRunRef: requestedAnchor } : {})
+    })
+    const template = prepareStackTemplate(deps, event, raw, target, provider)
+    const command: AppendExecutionStackStepInput = {
+      ...(canonicalExecutionId ? { executionId: canonicalExecutionId } : {}),
+      workspaceId: target.workspaceId,
+      rootChatId: target.rootChatId,
+      ...(target.anchorRunRef ? { anchorRunRef: target.anchorRunRef } : {}),
+      ...(title ? { title } : {}),
+      stepTitle,
+      objective,
+      provider,
+      ...(template.model ? { model: template.model } : {}),
+      effect: template.effect,
+      runTemplateRef: template.record.templateId,
+      permissionCeilingRef: template.ceiling
+    }
+    return deps.coordinator.appendStackStep(command)
+  })
+
+  ipcMain.handle('execution-runs:cancel', async (event, id: unknown, reason?: unknown) => {
+    deps.assertMainRendererSender(event)
+    const canonicalId = executionId(id)
+    requireOwnedExecution(deps, canonicalId)
+    await deps.coordinator.cancelExecution(
+      canonicalId,
+      optionalString(reason, 512) || 'Cancelled by user.'
+    )
+    return deps.coordinator.getExecution(canonicalId) ?? null
+  })
+
+  ipcMain.handle('execution-runs:cancel-step', (event, raw: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (!isRecord(raw)) throw new Error('Step cancellation command is invalid.')
+    const canonicalId = executionId(raw.executionId)
+    requireOwnedExecution(deps, canonicalId)
+    return deps.coordinator.cancelDormantStep(
+      canonicalId,
+      nonEmpty(raw.activationId, 'Activation id', 128)
+    )
+  })
+
+  ipcMain.handle('execution-runs:formalize', (event, raw: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (!isRecord(raw)) throw new Error('Formalize command is invalid.')
+    return formalizeExecution(deps, raw)
+  })
+
+  ipcMain.handle('execution-graphs:save-layout', (event, raw: unknown) => {
+    deps.assertMainRendererSender(event)
+    if (!isRecord(raw)) throw new Error('Execution layout is invalid.')
+    return deps.repository.saveLayout(raw as unknown as ExecutionGraphLayout)
+  })
+}
