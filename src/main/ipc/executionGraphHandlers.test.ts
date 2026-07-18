@@ -57,6 +57,8 @@ function createDeps(): ExecutionGraphHandlersDeps {
     resolveAuthorizedAttachmentPaths: vi.fn(() => ['/authorized/image.png']),
     prepareQueueJob: vi.fn((input: unknown) => {
       const record = input as Record<string, unknown>
+      const runtimeProfileId =
+        typeof record.runtimeProfileId === 'string' ? record.runtimeProfileId : undefined
       return {
         id: String(record.id),
         runId: record.runId as string,
@@ -67,6 +69,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
         chatId: 'chat-one',
         source: 'system' as const,
         status: 'paused' as const,
+        ...(runtimeProfileId ? { runtimeProfileId } : {}),
         request: {
           prompt: 'Inspect this change.',
           selectedModelType: 'default',
@@ -74,7 +77,8 @@ function createDeps(): ExecutionGraphHandlersDeps {
           approvalMode: 'auto',
           permissionPresetId: 'workspace_write' as const,
           sessionTrust: true,
-          imageAttachments: []
+          imageAttachments: [],
+          ...(runtimeProfileId ? { runtimeProfileId } : {})
         }
       }
     }),
@@ -182,7 +186,10 @@ describe('registerExecutionGraphHandlers', () => {
         provider: 'codex',
         stepTitle: 'Inspect the change',
         objective: 'Inspect this change carefully.',
-        request: { prompt: 'Untrusted renderer snapshot' }
+        request: {
+          prompt: 'Untrusted renderer snapshot',
+          runtimeProfileId: 'runtime-codex-one'
+        }
       }
     )
 
@@ -197,7 +204,8 @@ describe('registerExecutionGraphHandlers', () => {
         workspaceId: 'workspace-one',
         workspacePath: '/workspace',
         chatId: 'chat-one',
-        status: 'paused'
+        status: 'paused',
+        runtimeProfileId: 'runtime-codex-one'
       }),
       { authorizedFilePaths: ['/authorized/image.png'] }
     )
@@ -205,8 +213,10 @@ describe('registerExecutionGraphHandlers', () => {
       expect.objectContaining({
         request: expect.objectContaining({
           prompt: 'Inspect this change.',
-          sessionTrust: false
+          sessionTrust: false,
+          runtimeProfileId: 'runtime-codex-one'
         }),
+        runtimeProfileId: 'runtime-codex-one',
         permissionPosture: expect.objectContaining({
           presetId: 'workspace_write',
           postureHash: 'c'.repeat(64),
@@ -219,6 +229,7 @@ describe('registerExecutionGraphHandlers', () => {
         provider: 'codex',
         workspacePath: '/workspace',
         rootChatId: 'chat-one',
+        runtimeProfileId: 'runtime-codex-one',
         request: expect.objectContaining({ sessionTrust: false })
       })
     )
@@ -303,6 +314,56 @@ describe('registerExecutionGraphHandlers', () => {
     expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
     expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
     expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('rejects a prepared runtime profile that diverges from the request context', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(
+      (
+        input: unknown
+      ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> => ({
+        id: String((input as Record<string, unknown>).id),
+        runId: String((input as Record<string, unknown>).runId),
+        provider: 'codex',
+        scope: 'workspace',
+        workspaceId: 'workspace-one',
+        workspacePath: '/workspace',
+        chatId: 'chat-one',
+        source: 'system',
+        status: 'paused',
+        runtimeProfileId: 'runtime-codex-one',
+        request: {
+          prompt: 'Inspect this change.',
+          selectedModelType: 'default',
+          customModel: '',
+          approvalMode: 'default',
+          permissionPresetId: 'workspace_write',
+          sessionTrust: false,
+          imageAttachments: [],
+          runtimeProfileId: 'runtime-codex-two'
+        }
+      })
+    )
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'codex',
+          stepTitle: 'Inspect the change',
+          objective: 'Inspect this change carefully.',
+          request: {
+            prompt: 'Inspect with a runtime profile.',
+            runtimeProfileId: 'runtime-codex-one'
+          }
+        }
+      )
+    ).toThrow(/runtime profile did not preserve/i)
+    expect(deps.resolvePermissionPosture).not.toHaveBeenCalled()
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
   })
 
   it('formalizes only the verified effective topology as a new immutable revision', () => {

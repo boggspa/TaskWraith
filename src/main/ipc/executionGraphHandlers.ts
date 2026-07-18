@@ -1,9 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import {
-  compileExecutionGraphRevision,
-  stableExecutionGraphStringify
-} from '../executionGraph/ExecutionGraphCompiler'
+import { compileExecutionGraphRevision } from '../executionGraph/ExecutionGraphCompiler'
 import type {
   ExecutionEffect,
   ExecutionGraphLayout,
@@ -16,6 +13,7 @@ import type {
   ExecutionGraphRunTemplate
 } from '../executionGraph/ExecutionGraphRepository'
 import type { ExecutionRunEvent, ExecutionRunProjection } from '../executionGraph/ExecutionGraphRun'
+import { executionGraphRunTemplateAuthorityDigest } from '../executionGraph/ExecutionGraphRunTemplateAuthority'
 import type {
   AppendExecutionStackStepInput,
   ExecutionGraphCoordinator
@@ -148,44 +146,6 @@ function jsonObject(value: unknown): JsonObject {
   return cloned as JsonObject
 }
 
-function authorityEnvelope(content: JsonObject): JsonObject {
-  const request = isRecord(content.request) ? content.request : {}
-  const posture = isRecord(content.permissionPosture) ? content.permissionPosture : {}
-  const grants = Array.isArray(request.externalPathGrants)
-    ? request.externalPathGrants.map((grant) => {
-        if (!isRecord(grant)) return null
-        return {
-          provider: grant.provider,
-          path: grant.path,
-          kind: grant.kind,
-          access: grant.access,
-          duration: grant.duration,
-          issuedBy: grant.issuedBy,
-          signature: grant.signature
-        }
-      })
-    : []
-  return jsonObject({
-    schemaVersion: 1,
-    provider: content.provider,
-    scope: content.scope,
-    workspaceId: content.workspaceId,
-    workspacePath: content.workspacePath,
-    chatId: content.chatId,
-    runtimeProfileId: content.runtimeProfileId,
-    selectedModelType: request.selectedModelType,
-    customModel: request.customModel,
-    effectiveWorkspacePath: request.effectiveWorkspacePath,
-    approvalMode: request.approvalMode,
-    permissionPresetId: request.permissionPresetId,
-    workflowMode: request.workflowMode,
-    sessionTrust: false,
-    permissionPostureHash: posture.postureHash,
-    externalPathGrants: grants,
-    projectReferenceContextSelection: request.projectReferenceContextSelection
-  })
-}
-
 function effectForPreparedTemplate(content: JsonObject): ExecutionEffect {
   const request = isRecord(content.request) ? content.request : {}
   const preset = request.permissionPresetId
@@ -231,6 +191,7 @@ function prepareStackTemplate(
   provider: ProviderId
 ): PreparedStackTemplate {
   if (!isRecord(input.request)) throw new Error('Stack step request snapshot is required.')
+  const runtimeProfileId = optionalString(input.request.runtimeProfileId)
   const probeRunId = `graph-template-probe-${(deps.createId ?? randomUUID)()}`
   const prepared = deps.prepareQueueJob(
     {
@@ -243,6 +204,7 @@ function prepareStackTemplate(
       chatId: target.rootChatId,
       source: 'system',
       status: 'paused',
+      ...(runtimeProfileId ? { runtimeProfileId } : {}),
       request: input.request
     },
     { authorizedFilePaths: deps.resolveAuthorizedAttachmentPaths(event) }
@@ -260,6 +222,9 @@ function prepareStackTemplate(
     throw new Error(
       prepared.lastError || 'Stack request could not be durably prepared in a paused state.'
     )
+  }
+  if (prepared.runtimeProfileId !== prepared.request.runtimeProfileId) {
+    throw new Error('Prepared Stack runtime profile did not preserve its signed request context.')
   }
   if (!prepared.request.prompt.trim()) throw new Error('Stack step prompt is required.')
   if (
@@ -289,10 +254,7 @@ function prepareStackTemplate(
   }
   const content = runTemplateContent({ ...prepared, request: frozenRequest }, permissionPosture)
   const record = deps.repository.saveRunTemplate(content)
-  const envelope = authorityEnvelope(content)
-  const authorityDigest = createHash('sha256')
-    .update(stableExecutionGraphStringify(envelope))
-    .digest('hex')
+  const authorityDigest = executionGraphRunTemplateAuthorityDigest(content)
   const ceiling: ExecutionPermissionCeilingRef = {
     schemaVersion: 1,
     referenceId: `execution-ceiling-${authorityDigest}`,
