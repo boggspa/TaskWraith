@@ -8,9 +8,13 @@ import {
   validateExecutionTopology
 } from './ExecutionGraphCompiler'
 import {
+  isBoundedExecutionGraphAttemptError,
+  isBoundedExecutionGraphResultReference,
+  validateExecutionGraphAttemptResult
+} from './ExecutionGraphAttemptResult'
+import {
   EXECUTION_RUN_EVENT_SCHEMA_VERSION,
   type EffectiveExecutionTopology,
-  type ExecutionArtifactRef,
   type ExecutionClientRequestReceipt,
   type ExecutionEdge,
   type ExecutionGraphRevision,
@@ -318,7 +322,9 @@ function isValidClientRequestReceipt(value: unknown): boolean {
     typeof value.clientRequestId === 'string' &&
     CLIENT_REQUEST_ID_PATTERN.test(value.clientRequestId) &&
     typeof value.clientRequestDigest === 'string' &&
-    SHA256_PATTERN.test(value.clientRequestDigest)
+    SHA256_PATTERN.test(value.clientRequestDigest) &&
+    typeof value.clientSubmissionDigest === 'string' &&
+    SHA256_PATTERN.test(value.clientSubmissionDigest)
   )
 }
 
@@ -359,11 +365,28 @@ function hasValidEventPayload(value: Record<string, unknown>): boolean {
         isPositiveInteger(value.ordinal)
       )
     case 'attempt_state_changed':
-      return (
-        isNonEmptyString(value.attemptId) &&
-        isNonEmptyString(value.state) &&
-        Object.prototype.hasOwnProperty.call(ATTEMPT_TRANSITIONS, value.state)
-      )
+      if (
+        !isNonEmptyString(value.attemptId) ||
+        !isNonEmptyString(value.state) ||
+        !Object.prototype.hasOwnProperty.call(ATTEMPT_TRANSITIONS, value.state) ||
+        (value.providerRunRef !== undefined &&
+          !isBoundedExecutionGraphResultReference(value.providerRunRef)) ||
+        (value.error !== undefined && !isBoundedExecutionGraphAttemptError(value.error)) ||
+        (value.result !== undefined && value.state !== 'succeeded') ||
+        (value.state === 'succeeded' && value.error !== undefined) ||
+        (value.state === 'succeeded' && value.result === undefined)
+      ) {
+        return false
+      }
+      if (value.result !== undefined) {
+        return validateExecutionGraphAttemptResult(value.result, {
+          attemptId: value.attemptId,
+          ...(typeof value.providerRunRef === 'string'
+            ? { providerRunRef: value.providerRunRef }
+            : {})
+        }).ok
+      }
+      return true
     case 'execution_state_changed':
       return (
         isNonEmptyString(value.state) &&
@@ -650,16 +673,6 @@ function completedAtForAttempt(state: StepAttemptState, timestamp: string): stri
   return TERMINAL_ATTEMPT_STATES.has(state) ? timestamp : undefined
 }
 
-function validateArtifacts(attemptId: string, artifacts: readonly ExecutionArtifactRef[]): boolean {
-  return artifacts.every(
-    (artifact) =>
-      artifact.schemaVersion === 1 &&
-      isNonEmptyString(artifact.id) &&
-      artifact.createdByAttemptId === attemptId &&
-      isNonEmptyString(artifact.trust)
-  )
-}
-
 /**
  * Reconstructs one execution from its append-only event log. Invalid or stale
  * events are retained as diagnostics and do not mutate the effective state.
@@ -912,6 +925,25 @@ export function foldExecutionRun(
           )
           break
         }
+        if (
+          event.providerRunRef !== undefined &&
+          !isBoundedExecutionGraphResultReference(event.providerRunRef)
+        ) {
+          diagnostic(
+            event,
+            'invalid_provider_run_ref',
+            'Attempt provider run reference is invalid or oversized.'
+          )
+          break
+        }
+        if (event.error !== undefined && !isBoundedExecutionGraphAttemptError(event.error)) {
+          diagnostic(event, 'invalid_attempt_error', 'Attempt error is invalid or oversized.')
+          break
+        }
+        if (event.state === 'succeeded' && event.error !== undefined) {
+          diagnostic(event, 'success_with_error', 'A succeeded attempt cannot commit an error.')
+          break
+        }
         if (event.result && event.state !== 'succeeded') {
           diagnostic(
             event,
@@ -920,13 +952,25 @@ export function foldExecutionRun(
           )
           break
         }
-        if (event.result && !validateArtifacts(event.attemptId, event.result.artifactRefs)) {
+        if (event.state === 'succeeded' && !event.result) {
           diagnostic(
             event,
-            'invalid_result_artifacts',
-            'Result contains an invalid artifact reference.'
+            'succeeded_attempt_missing_result',
+            'A succeeded attempt must commit a structured result.'
           )
           break
+        }
+        if (event.result) {
+          const validation = validateExecutionGraphAttemptResult(event.result, {
+            attemptId: event.attemptId,
+            ...(event.providerRunRef || attempt.providerRunRef
+              ? { providerRunRef: event.providerRunRef || attempt.providerRunRef }
+              : {})
+          })
+          if (!validation.ok) {
+            diagnostic(event, 'invalid_result_payload', validation.reason)
+            break
+          }
         }
         attempts.set(event.attemptId, {
           ...attempt,
