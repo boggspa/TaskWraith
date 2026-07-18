@@ -31,6 +31,7 @@ import { getProviderLabel } from '../../lib/providerLabels'
 import { isGlobalChat } from '../../lib/chatScope'
 import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader'
 import { RunRailPanel } from '../../components/RunRailPanel'
+import { ProjectHomeHeader } from '../../components/ProjectHomeHeader'
 import { DigitOdometer } from '../../components/DigitOdometer'
 import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
@@ -257,6 +258,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleOpenSideChatFromRunResult,
   handleOpenPluginWorkflowTemplate,
   handleOpenProjectReferencesLibrary,
+  workProjectHeader,
   handleOpenWorkflowCompose,
   handleOpenWorkspaceBoard,
   handlePersistRunAnalysis,
@@ -1631,6 +1633,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               className={`app-transcript provider-${currentProvider} ${isCurrentEnsembleChat ? 'chat-kind-ensemble' : ''} ${isCurrentGlobalChat ? 'chat-scope-global' : ''} ${isWelcomeChat ? 'welcome-mode' : ''} ${welcomeFitLevel >= 1 ? 'welcome-notification-hidden-by-fit' : ''} ${welcomeFitLevel >= 2 ? 'welcome-dashboard-hidden-by-fit' : ''} ${welcomeFitLevel >= 3 ? 'welcome-heatmaps-hidden-by-fit' : ''} ${isAdvancedFxActive ? `fx-labs-active fx-intensity-${advancedFxIntensity}` : ''} ${showSettings ? 'transcript-hidden-for-settings' : ''}`}
               style={transcriptStyle}
             >
+          {workProjectHeader && !showSettings && (
+            <ProjectHomeHeader
+              {...workProjectHeader}
+              onOpenLibrary={() =>
+                handleOpenProjectReferencesLibrary(workProjectHeader.project.id)
+              }
+            />
+          )}
           {chatContextNotice && (
             <div className="chat-context-application-pill" role="status">
               <span>{chatContextNotice.message}</span>

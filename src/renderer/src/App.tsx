@@ -645,10 +645,12 @@ import { projectReferenceContextDisclosure } from '../../shared/projectReference
 import {
   addProjectReference,
   getProjectWorkProfile,
+  listProjectReferences,
   listProjects,
   setProjectHomeChat,
   subscribeProjects
 } from './lib/projectsStore'
+import { summarizeReferenceAttention } from './lib/projectReferencePresentation'
 import { planPendingHomeClaims, resolveStartProjectHomeTarget } from './lib/projectHomeClaims'
 import {
   shouldRebindCurrentChatOnWorkspaceSelect,
@@ -22993,6 +22995,34 @@ function App(): React.JSX.Element {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
   }
+  // The "project desk" strip above the transcript: Work surface active, not
+  // multiview, and the focused chat a member of the active (live) project.
+  // Route-scoped by construction — leaving Work removes the chrome.
+  const workProjectHeader = useMemo(() => {
+    if (sidebarActiveTab !== 'projects' || isMultiviewSplit) return null
+    const chatId = currentChat?.appChatId
+    if (!chatId || !activeWorkProjectId) return null
+    const project = listProjects().find(
+      (candidate) => candidate.id === activeWorkProjectId && !candidate.archived
+    )
+    if (!project || !project.memberChatIds.includes(chatId)) return null
+    const profile = getProjectWorkProfile(project.id)
+    const references = listProjectReferences(project.id)
+    return {
+      project,
+      isHome: profile?.homeChatId === chatId,
+      brief: profile?.brief,
+      referenceCount: references.length,
+      attentionCount: summarizeReferenceAttention(references).actionable.length
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [
+    sidebarActiveTab,
+    isMultiviewSplit,
+    currentChat?.appChatId,
+    activeWorkProjectId,
+    projectsRevision
+  ])
   // Per-chat memory of the selected dock surface. RESTORE is declared before
   // PERSIST on purpose: on mount the saved value must be read into memory before
   // the persist effect can write the initial 'run' over it.
@@ -27978,6 +28008,7 @@ function App(): React.JSX.Element {
     },
     handleOpenProjectReferencesLibrary,
     handleSelectedProjectChange: setActiveWorkProjectId,
+    workProjectHeader,
     handleSidebarPrimarySurfaceSelect,
     handleStartProjectHome,
     handleSidebarQuickUpdate,

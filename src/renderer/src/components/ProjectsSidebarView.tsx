@@ -193,7 +193,7 @@ function projectMatchesSearch(project: Project, memberChats: ChatRecord[], query
   return memberChats.some((chat) => chatMatchesSearch(chat, query))
 }
 
-function projectIdentity(project: Project): PooledAgentIdentitySnapshot {
+export function projectIdentity(project: Project): PooledAgentIdentitySnapshot {
   return {
     schemaVersion: 1,
     agentId: project.id,

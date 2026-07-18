@@ -87,6 +87,10 @@ type MainAppLayoutSidebarProps = {
   handleOpenLinkedChatInSidePanelFromSidebar: NonNullable<SidebarProps['onOpenChatInSidePanel']>
   handleOpenPluginWorkflowTemplate: NonNullable<SidebarProps['onCreateWorkflowFromPluginTemplate']>
   handleOpenProjectReferencesLibrary: NonNullable<SidebarProps['onOpenReferencesLibrary']>
+  workProjectHeader: Omit<
+    import('../../components/ProjectHomeHeader').ProjectHomeHeaderProps,
+    'onOpenLibrary'
+  > | null
   handleOpenWorkflowCompose: NonNullable<SidebarProps['onCreateWorkflow']>
   handleOpenWorkspaceBoard: NonNullable<SidebarProps['onOpenWorkspaceBoard']>
   handleRemoveWorkspace: SidebarProps['onRemoveWorkspace']
