@@ -1,6 +1,14 @@
 // @vitest-environment node
 import { describe, it, expect, vi } from 'vitest'
 import { normalizeAgentRunPayload, type AgentRunNormalizerDeps } from './AgentRunNormalizer'
+import {
+  EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN,
+  EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX,
+  EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN,
+  EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX,
+  signRunPermissionPosture,
+  verifyRunPermissionPosture
+} from '../RunPermissionPosture'
 import type {
   AppSettings,
   ChatRecord,
@@ -35,6 +43,8 @@ const FAKE_SETTINGS = {
   },
   agenticWorkspaceGrants: []
 } as unknown as AppSettings
+
+const POSTURE_SECRET = 'agent-run-normalizer-graph-posture-secret'
 
 // A shape-valid signed posture (passes isEffectiveRunPermissions in the clamp).
 const VALID_PERMS: EffectiveRunPermissions = {
@@ -242,6 +252,98 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
       'deadbeef',
       expect.objectContaining({ provider: 'codex', scope: 'workspace' })
     )
+  })
+
+  it('never accepts a reusable execution-graph template proof as a run signature', () => {
+    const templateContext = {
+      provider: 'codex',
+      scope: 'workspace',
+      workspacePath: '/repo',
+      appChatId: 'chat-one',
+      prompt: 'do graph work',
+      workflowMode: 'normal',
+      authorityDomain: EXECUTION_GRAPH_TEMPLATE_POSTURE_DOMAIN
+    }
+    const signature = `${EXECUTION_GRAPH_TEMPLATE_POSTURE_SIGNATURE_PREFIX}${signRunPermissionPosture(
+      POSTURE_SECRET,
+      'auto_edit',
+      VALID_PERMS,
+      templateContext
+    )}`
+    const deps = makeDeps({
+      canonicalWorkspacePath: vi.fn((value: string) => value),
+      verifyRunPosture: (mode, permissions, proof, context) =>
+        verifyRunPermissionPosture(POSTURE_SECRET, mode, permissions, proof, context)
+    })
+    const normalize = (appRunId?: string) =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo',
+          appChatId: 'chat-one',
+          ...(appRunId ? { appRunId } : {}),
+          prompt: 'do graph work',
+          workflowMode: 'normal',
+          approvalMode: 'auto_edit',
+          effectivePermissions: VALID_PERMS,
+          effectivePermissionsSignature: signature
+        },
+        deps
+      )
+
+    expect(normalize().effectivePermissions?.readOnly).toBe(true)
+    expect(normalize('graph-run-one').effectivePermissions?.readOnly).toBe(true)
+  })
+
+  it('accepts an execution-graph attempt proof only for its exact canonical run context', () => {
+    const attemptContext = {
+      provider: 'codex',
+      scope: 'workspace',
+      workspacePath: '/repo',
+      appRunId: 'graph-run-one',
+      appChatId: 'chat-one',
+      prompt: 'do graph work',
+      workflowMode: 'normal',
+      authorityDomain: EXECUTION_GRAPH_ATTEMPT_POSTURE_DOMAIN
+    }
+    const signature = `${EXECUTION_GRAPH_ATTEMPT_POSTURE_SIGNATURE_PREFIX}${signRunPermissionPosture(
+      POSTURE_SECRET,
+      'auto_edit',
+      VALID_PERMS,
+      attemptContext
+    )}`
+    const deps = makeDeps({
+      canonicalWorkspacePath: vi.fn((value: string) => value),
+      verifyRunPosture: (mode, permissions, proof, context) =>
+        verifyRunPermissionPosture(POSTURE_SECRET, mode, permissions, proof, context)
+    })
+    const normalize = (overrides: Record<string, unknown> = {}) =>
+      normalizeAgentRunPayload(
+        {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: '/repo',
+          appRunId: 'graph-run-one',
+          appChatId: 'chat-one',
+          prompt: 'do graph work',
+          workflowMode: 'normal',
+          approvalMode: 'auto_edit',
+          effectivePermissions: VALID_PERMS,
+          effectivePermissionsSignature: signature,
+          ...overrides
+        },
+        deps
+      )
+
+    expect(normalize()).toMatchObject({
+      appRunId: 'graph-run-one',
+      approvalMode: 'auto_edit',
+      effectivePermissions: { presetId: 'full_access', readOnly: false }
+    })
+    expect(normalize({ appRunId: 'graph-run-two' }).effectivePermissions?.readOnly).toBe(true)
+    expect(normalize({ appRunId: undefined }).effectivePermissions?.readOnly).toBe(true)
+    expect(normalize({ workspace: '/other' }).effectivePermissions?.readOnly).toBe(true)
   })
 
   // Invariant 3: external path grants flow through the injected
