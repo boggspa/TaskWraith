@@ -777,14 +777,15 @@
   overflow: hidden;
   pointer-events: none;
   opacity: var(--fx-sky-layer-opacity, 0.9);
-  mix-blend-mode: var(--fx-sky-blend-mode, screen);
-  filter: var(--fx-sky-filter, saturate(1.144) brightness(1.108));
+  /* Keep the animated children out of one giant filtered/blended texture.
+   * A filter or screen blend on this root forces Chromium to re-rasterize the
+   * whole sky whenever a cloud, star, or weather particle moves. The static
+   * base gradient owns the colour treatment below instead. */
+  mix-blend-mode: normal;
+  filter: none;
   contain: strict;
   container-type: size;
   isolation: isolate;
-  transform: translateZ(0);
-  backface-visibility: hidden;
-  will-change: transform, opacity;
   /* Long eased dissolve (smoothstep-shaped stops) — the old 4-stop ramp read
    * as a hard band where the bright dusk horizon met the fast tail. Composes
    * with .sky-gradient's own internal alpha tail for a doubly-soft fade. */
@@ -1061,6 +1062,11 @@
     transparent 100%
   );
   opacity: 0.94;
+  /* The broad palette keeps the same saturation/brightness treatment as the
+   * former root filter, while independently animated overlays stay composited
+   * rather than being re-filtered as a full-pane bitmap every frame. */
+  mix-blend-mode: var(--fx-sky-blend-mode, screen);
+  filter: var(--fx-sky-filter, saturate(1.144) brightness(1.108));
 }
 
 /* Warm bloom that tracks the sun along the horizon — sunrise/sunset body. */
@@ -1262,8 +1268,9 @@
   opacity: calc(var(--sky-sun-opacity, 0) * 0.08);
 }
 
-/* Star field — 64 deterministic stars (seeded in FxLayers so all panes match)
- * fading in with real darkness and thinning under cloud via --sky-stars. */
+/* Star field — deterministic stars (seeded in FxLayers so all panes match)
+ * fade in with real darkness and thin under cloud via --sky-stars. FxLayers
+ * does not mount the field at all when its astronomical opacity is zero. */
 .sky-starfield {
   position: absolute;
   inset: 0;
@@ -1284,12 +1291,14 @@
   border-radius: 50%;
   background: rgba(239, 247, 255, 0.98);
   box-shadow:
-    0 0 8px rgba(172, 211, 255, 0.8),
-    0 0 18px rgba(120, 178, 255, 0.35);
+    0 0 5px rgba(172, 211, 255, 0.72),
+    0 0 12px rgba(120, 178, 255, 0.28);
   animation: skyStarTwinkle var(--st-dur, 7.4s) ease-in-out infinite;
   animation-delay: var(--st-delay, 0s);
   backface-visibility: hidden;
-  will-change: transform, opacity;
+  /* Do not pin a compositing layer for every 2px star. The containing sky
+   * field is already isolated; these tiny twinkles are cheaper as a batch. */
+  will-change: auto;
 }
 
 .sky-real-star.is-soft {
@@ -1325,17 +1334,17 @@
   border-radius: 50%;
   background: rgba(246, 250, 255, 0.98);
   box-shadow:
-    0 0 6px rgba(186, 218, 255, 0.72),
-    0 0 13px rgba(126, 182, 255, 0.3);
+    0 0 4px rgba(186, 218, 255, 0.68),
+    0 0 10px rgba(126, 182, 255, 0.24);
   animation: skyCatalogTwinkle var(--st-dur, 7s) ease-in-out infinite;
   animation-delay: var(--st-delay, 0s);
 }
 
 .sky-cat-star.is-major {
   box-shadow:
-    0 0 9px rgba(206, 230, 255, 0.95),
-    0 0 20px rgba(150, 198, 255, 0.55),
-    0 0 34px rgba(110, 168, 255, 0.28);
+    0 0 7px rgba(206, 230, 255, 0.9),
+    0 0 15px rgba(150, 198, 255, 0.46),
+    0 0 25px rgba(110, 168, 255, 0.22);
 }
 
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
@@ -1364,8 +1373,8 @@
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
   .sky-real-star {
   box-shadow:
-    0 0 14px rgba(172, 211, 255, 1),
-    0 0 26px rgba(120, 178, 255, 0.62);
+    0 0 8px rgba(172, 211, 255, 0.92),
+    0 0 16px rgba(120, 178, 255, 0.48);
 }
 
 :is([data-theme="light"], [data-theme="citrus"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])
@@ -1457,7 +1466,9 @@
   width: 178px;
   height: 62px;
   border-radius: 50% 48% 46% 54% / 58% 64% 36% 42%;
-  filter: blur(7px);
+  /* A smaller static blur preserves the soft weather silhouettes without
+   * allocating five large filtered textures while they drift. */
+  filter: blur(4px);
   background:
     radial-gradient(ellipse at 12% 68%, color-mix(in srgb, var(--sky-cloud-lit) 34%, transparent) 0 15%, transparent 16%),
     radial-gradient(ellipse at 25% 48%, color-mix(in srgb, var(--sky-cloud-lit) 56%, transparent) 0 23%, transparent 24%),
@@ -1466,9 +1477,9 @@
     radial-gradient(ellipse at 80% 58%, color-mix(in srgb, var(--sky-cloud-lit) 38%, transparent) 0 20%, transparent 21%),
     linear-gradient(180deg, color-mix(in srgb, var(--sky-cloud-lit) 50%, transparent), color-mix(in srgb, var(--sky-cloud-shade) 24%, transparent) 68%, color-mix(in srgb, var(--sky-cloud-shade) 8%, transparent));
   box-shadow:
-    inset 0 -10px 20px color-mix(in srgb, var(--sky-cloud-shade) 12%, transparent),
-    inset 0 8px 18px color-mix(in srgb, var(--sky-cloud-lit) 20%, transparent),
-    0 12px 34px color-mix(in srgb, var(--sky-cloud-lit) 5%, transparent);
+    inset 0 -7px 14px color-mix(in srgb, var(--sky-cloud-shade) 12%, transparent),
+    inset 0 6px 12px color-mix(in srgb, var(--sky-cloud-lit) 20%, transparent),
+    0 8px 20px color-mix(in srgb, var(--sky-cloud-lit) 5%, transparent);
   opacity: calc(0.85 * var(--sky-cloud-self, 1) * var(--sky-cloud-density, 0.5) * var(--fx-sky-cloud-opacity-scale, 1));
   animation: skyCloudDrift 138s linear infinite;
   backface-visibility: hidden;
@@ -1520,6 +1531,9 @@
 .sky-cover-1 .sky-cloud-5,
 .sky-cover-2 .sky-cloud-5 {
   opacity: 0;
+  /* Invisible clouds otherwise kept their transform animation and filtered
+   * paint alive for the lifetime of the transcript. */
+  animation-play-state: paused;
 }
 
 .sky-cloud-1 {

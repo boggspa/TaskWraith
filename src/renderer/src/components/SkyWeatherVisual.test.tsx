@@ -6,6 +6,8 @@ import {
   getNextSkyDiffCloudTiming,
   getNextSkyMegaDeleteDiffCloudTiming,
   getNextSkyUfoTiming,
+  LivingWorkspaceLayer,
+  RunDataVizLayer,
   SkyWeatherVisual,
   type HostWeatherVisualState
 } from './FxLayers'
@@ -30,13 +32,13 @@ const MIDNIGHT_UTC = Date.UTC(2026, 5, 30, 0, 30)
 const LATE_EVENING_SUN_UTC = Date.UTC(2026, 6, 17, 19, 33)
 
 describe('SkyWeatherVisual', () => {
-  it('keeps the existing sky orb as the day sun asset', () => {
+  it('keeps the existing sky orb as the day sun asset without invisible star work', () => {
     const html = renderToStaticMarkup(<SkyWeatherVisual weather={weather(true)} nowMs={NOON_UTC} />)
 
     expect(html).toContain('sky-day')
     expect(html).toContain('sky-orb')
     expect(html).toContain('sky-gradient')
-    expect(html).toContain('sky-starfield')
+    expect(html).not.toContain('sky-starfield')
     expect(html).not.toContain('sky-moon-disc')
   })
 
@@ -135,5 +137,46 @@ describe('SkyWeatherVisual', () => {
     expect(flight.variant).toBe('mega-delete')
     expect(additions).toBeLessThanOrEqual(24)
     expect(deletions).toBeGreaterThanOrEqual(125_000)
+  })
+})
+
+describe('FX layer runtime budgets', () => {
+  const countInlineCustomProperty = (html: string, property: string): number =>
+    (html.match(new RegExp(`${property}:`, 'g')) || []).length
+
+  it('keeps Epic living workspace denser than cinematic while skipping invisible weather particles', () => {
+    const clearEpic = renderToStaticMarkup(
+      <LivingWorkspaceLayer weather={weather(true)} intensity="epic" nowMs={NOON_UTC} />
+    )
+    const clearCinematic = renderToStaticMarkup(
+      <LivingWorkspaceLayer weather={weather(true)} intensity="cinematic" nowMs={NOON_UTC} />
+    )
+    const stormEpic = renderToStaticMarkup(
+      <LivingWorkspaceLayer
+        weather={{ ...weather(false), kind: 'storm', description: 'Storm' }}
+        intensity="epic"
+        nowMs={MIDNIGHT_UTC}
+      />
+    )
+
+    expect(countInlineCustomProperty(clearEpic, '--mote-index')).toBe(12)
+    expect(countInlineCustomProperty(clearCinematic, '--mote-index')).toBe(8)
+    expect(countInlineCustomProperty(clearEpic, '--particle-index')).toBe(0)
+    expect(countInlineCustomProperty(stormEpic, '--particle-index')).toBe(10)
+  })
+
+  it('does not redraw run telemetry just because hidden raw-event progress changes', () => {
+    const baseProps = {
+      provider: 'codex' as const,
+      intensity: 'epic' as const,
+      queueCount: 3,
+      approvalWaiting: false,
+      status: 'running' as const
+    }
+    const quiet = renderToStaticMarkup(<RunDataVizLayer {...baseProps} rawEventCount={0} />)
+    const noisy = renderToStaticMarkup(<RunDataVizLayer {...baseProps} rawEventCount={999} />)
+
+    expect(noisy).toBe(quiet)
+    expect(noisy).toContain('M8 92 H 76')
   })
 })

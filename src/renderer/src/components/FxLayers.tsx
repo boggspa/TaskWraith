@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
+import { memo, useEffect, useId, useMemo, useRef, useState, type CSSProperties } from 'react'
 import type { AppSettings, ProviderId } from '../../../main/store/types'
 import { computeSkyScene, legacyTimePhase, moonShadowPath } from '../lib/skyScene'
 import { projectBrightStars } from '../lib/brightStarCatalog'
@@ -356,6 +356,10 @@ function createSkyStarfield(seed: number, count: number): SkyStar[] {
 }
 
 const SKY_STARFIELD = createSkyStarfield(0x5eb0, 64)
+// When real, projected constellations are available they carry the scene. Keep
+// a smaller procedural dust field behind them rather than needlessly animating
+// a second full 64-star constellation of synthetic points.
+const SKY_STARFIELD_WITH_CATALOG = SKY_STARFIELD.slice(0, 32)
 
 /** Re-derives the sky scene on a slow clock so the sun/moon keep creeping
  * along their arcs (and twilight palettes keep blending) between the
@@ -375,7 +379,7 @@ function useSkySceneClock(overrideNowMs?: number): number {
   return overrideNowMs ?? tickMs
 }
 
-export function SkyWeatherVisual({
+export const SkyWeatherVisual = memo(function SkyWeatherVisual({
   weather,
   nowMs
 }: {
@@ -457,13 +461,18 @@ export function SkyWeatherVisual({
     typeof weather?.longitude === 'number' && Number.isFinite(weather.longitude)
       ? weather.longitude
       : null
+  // Daytime stars are fully invisible, but their individual twinkle animations
+  // still cost compositor work if mounted. Do not build that invisible tree;
+  // the same threshold preserves the soft astronomical fade at twilight.
+  const showStars = scene.starOpacity > 0.01
   const catalogStars = useMemo(
     () =>
-      starLatitude !== null && starLongitude !== null
+      showStars && starLatitude !== null && starLongitude !== null
         ? projectBrightStars(sceneClockMs, starLatitude, starLongitude)
         : [],
-    [starLatitude, starLongitude, sceneClockMs]
+    [showStars, starLatitude, starLongitude, sceneClockMs]
   )
+  const dustStars = catalogStars.length > 0 ? SKY_STARFIELD_WITH_CATALOG : SKY_STARFIELD
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -627,25 +636,27 @@ export function SkyWeatherVisual({
        * id across the up-to-4 panes that can mount this layer at once. */}
       <div className="sky-gradient" />
       <div className="sky-glow" />
-      <div className={`sky-starfield${catalogStars.length > 0 ? ' is-dust' : ''}`}>
-        {SKY_STARFIELD.map((star, index) => (
-          <span
-            key={`star-${index}`}
-            className={`sky-real-star${star.soft ? ' is-soft' : ''}`}
-            style={
-              {
-                '--st-x': `${star.x.toFixed(2)}%`,
-                '--st-y': `${star.y.toFixed(2)}%`,
-                '--st-s': `${star.size}px`,
-                '--st-delay': `${star.delaySec.toFixed(2)}s`,
-                '--st-dur': `${star.durationSec.toFixed(2)}s`
-              } as CSSProperties
-            }
-          />
-        ))}
-        <span className="sky-shooting-star" />
-      </div>
-      {catalogStars.length > 0 && (
+      {showStars && (
+        <div className={`sky-starfield${catalogStars.length > 0 ? ' is-dust' : ''}`}>
+          {dustStars.map((star, index) => (
+            <span
+              key={`star-${index}`}
+              className={`sky-real-star${star.soft ? ' is-soft' : ''}`}
+              style={
+                {
+                  '--st-x': `${star.x.toFixed(2)}%`,
+                  '--st-y': `${star.y.toFixed(2)}%`,
+                  '--st-s': `${star.size}px`,
+                  '--st-delay': `${star.delaySec.toFixed(2)}s`,
+                  '--st-dur': `${star.durationSec.toFixed(2)}s`
+                } as CSSProperties
+              }
+            />
+          ))}
+          <span className="sky-shooting-star" />
+        </div>
+      )}
+      {showStars && catalogStars.length > 0 && (
         <div className="sky-catalog-stars">
           {catalogStars.map((star) => (
             <span
@@ -769,7 +780,7 @@ export function SkyWeatherVisual({
       </div>
     </div>
   )
-}
+})
 
 export function GhostCompanion() {
   // 1.0.6 — render the REAL brand mascot (design-assets/ghost/ghost-guy-mark.svg)
@@ -878,7 +889,7 @@ export type AgentAuraStatus =
  */
 export type AgentAuraProviderKey = ProviderId | 'ensemble'
 
-export function AgentAuraLayer({
+export const AgentAuraLayer = memo(function AgentAuraLayer({
   provider,
   status,
   intensity,
@@ -899,9 +910,18 @@ export function AgentAuraLayer({
       <div className="agent-aura-run-burst" />
     </div>
   )
-}
+})
 
-export function LivingWorkspaceLayer({
+const LIVING_WEATHER_PARTICLE_KINDS = new Set<SkyWeatherKind>([
+  'rain',
+  'heavy_rain',
+  'snow',
+  'mist',
+  'fog',
+  'storm'
+])
+
+export const LivingWorkspaceLayer = memo(function LivingWorkspaceLayer({
   weather,
   intensity,
   nowMs
@@ -916,8 +936,18 @@ export function LivingWorkspaceLayer({
   // the sky can never disagree about dawn/dusk.
   const phase: SkyTimePhase = legacyTimePhase(computeSkyScene(weather, sceneClockMs))
   const kind = weather?.kind || 'unknown'
-  const moteCount = intensity === 'epic' ? 18 : intensity === 'cinematic' ? 12 : 7
-  const weatherParticleCount = intensity === 'epic' ? 16 : intensity === 'cinematic' ? 10 : 5
+  // Epic remains visibly denser than cinematic, but keeps a bounded number of
+  // independently animated elements. Weather particles are only mounted for
+  // weather that actually renders them; previously clear/unknown skies still
+  // ran up to sixteen fully transparent animations.
+  const moteCount = intensity === 'epic' ? 12 : intensity === 'cinematic' ? 8 : 5
+  const weatherParticleCount = LIVING_WEATHER_PARTICLE_KINDS.has(kind)
+    ? intensity === 'epic'
+      ? 10
+      : intensity === 'cinematic'
+        ? 7
+        : 4
+    : 0
 
   return (
     <div
@@ -939,25 +969,44 @@ export function LivingWorkspaceLayer({
       </div>
     </div>
   )
-}
+})
 
-export function RunDataVizLayer({
-  provider,
-  intensity,
-  queueCount,
-  rawEventCount,
-  approvalWaiting,
-  status
-}: {
+type RunDataVizLayerProps = {
   provider: ProviderId
   intensity: AdvancedFxIntensity
   queueCount: number
+  /** Kept for the call-site contract; the progress path is intentionally hidden. */
   rawEventCount: number
   approvalWaiting: boolean
   status: AgentAuraStatus
-}) {
-  const queueLaneCount = Math.max(1, Math.min(queueCount || 1, intensity === 'epic' ? 5 : 3))
-  const eventLevel = Math.min(100, Math.max(8, rawEventCount * 2))
+}
+
+function runDataVizQueueLaneCount(queueCount: number, intensity: AdvancedFxIntensity): number {
+  return Math.max(1, Math.min(queueCount || 1, intensity === 'epic' ? 5 : 3))
+}
+
+function runDataVizPropsEqual(previous: RunDataVizLayerProps, next: RunDataVizLayerProps): boolean {
+  // Raw-event volume used to restamp this layer during every streaming/tool
+  // event, although its only consumer (`.run-data-viz-progress`) is hidden in
+  // CSS. Keep the live visual responsive to its actual visible inputs only.
+  return (
+    previous.provider === next.provider &&
+    previous.intensity === next.intensity &&
+    runDataVizQueueLaneCount(previous.queueCount, previous.intensity) ===
+      runDataVizQueueLaneCount(next.queueCount, next.intensity) &&
+    previous.approvalWaiting === next.approvalWaiting &&
+    previous.status === next.status
+  )
+}
+
+export const RunDataVizLayer = memo(function RunDataVizLayer({
+  provider,
+  intensity,
+  queueCount,
+  approvalWaiting,
+  status
+}: RunDataVizLayerProps) {
+  const queueLaneCount = runDataVizQueueLaneCount(queueCount, intensity)
 
   return (
     <div
@@ -973,7 +1022,7 @@ export function RunDataVizLayer({
           className="run-data-viz-flow run-data-viz-flow-b"
           d="M2 34 C 24 26, 38 42, 58 34 S 82 12, 98 28"
         />
-        <path className="run-data-viz-progress" d={`M8 92 H ${Math.min(94, 8 + eventLevel)}`} />
+        <path className="run-data-viz-progress" d="M8 92 H 76" />
       </svg>
       <div className="run-data-viz-queue">
         {Array.from({ length: queueLaneCount }).map((_, index) => (
@@ -982,4 +1031,4 @@ export function RunDataVizLayer({
       </div>
     </div>
   )
-}
+}, runDataVizPropsEqual)
