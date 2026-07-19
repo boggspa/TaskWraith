@@ -4,16 +4,19 @@ import { describe, expect, it } from 'vitest'
 import { cursorManagedRunAdmission, resolveCursorManagedRunAdmission } from './CursorManagedRunGate'
 
 describe('Cursor managed-run release gate', () => {
-  it('blocks with the empty embedded roster regardless of explicit auth (fail-closed)', () => {
+  it('reflects the qualified shipped roster and never varies with explicit auth', () => {
     for (const _env of [
       {},
       { CURSOR_AUTH_TOKEN: 'secret-token' },
       { CURSOR_API_KEY: 'secret-api-key' }
     ]) {
-      // The shipped runtime roster is empty, so admission is fail-closed and is
-      // never a function of credentials.
+      // The shipped runtime roster now holds the reviewed qualified build (minted
+      // 2026-07-19), so the coarse gate is no longer security-unavailable. It
+      // STILL never authorizes a spawn (admitCursorRuntime is the async
+      // authority) and is never a function of credentials. The empty-roster
+      // fail-closed path is covered by the resolveCursorManagedRunAdmission test.
       const admission = cursorManagedRunAdmission()
-      expect(admission).toMatchObject({ allowed: false, securityUnavailable: true })
+      expect(admission).toMatchObject({ allowed: false, securityUnavailable: false })
       expect(admission.message).toContain('No Cursor process was started')
       expect(admission.message).not.toContain('secret-token')
       expect(admission.message).not.toContain('secret-api-key')

@@ -1,8 +1,25 @@
 {
   "schemaVersion": 1,
-  "description": "Reviewed provider binary/capability fingerprints for credentialed permission-conformance canaries. Entries must include the exact qualification scope, postureVersion, attestationSource, version, capability fingerprint, binarySha256, distribution, harnessNodeVersion, authentication, backendBaseUrl, modelAlias, model, platform, and arch. Kimi's acp-synthetic-cwd-gateway-v1 scope requires postureVersion synthetic-cwd-gateway-v1 and attestationSource credentialed-live-containment-canary, emitted only by the protected production-composition lane after its exact live assertions pass: a private process/session cwd, no ACP client fs, same-id structured terminal denials for every native tool in the production deny roster, positive authenticated HTTP-gateway workspace access, legacy-resume cold start, pre-spawn gateway admission, and strict teardown. The hosted Kimi lane uses the official checksummed native single-binary distribution plus an explicit non-rotating Kimi Code API-key backend/model contract. Cursor's cursor-native-sandbox-readonly-v1 scope requires postureVersion cursor-native-sandbox-readonly-v1 and attestationSource credentialed-live-containment-canary, emitted only after the reviewed CursorStartupContainment live suite passes. It attests that the exact cursor-agent build, launched read-only with --sandbox enabled and an end-of-options prompt guard, cannot write to the user's home directory (differential in-workspace-vs-home write, live-verified) and never emits write-widening or sandbox-disabling flags; the user's real ~/.cursor login and account surfaces load bounded by that sandbox (own-account trust). Network egress is NOT sandbox-bounded and is out of scope. providers.cursor is EMPTY: fail-closed until a live pass mints the exact fingerprint. Re-enabling Cursor requires that reviewed pass, not a hand-written entry. Ranges and partial tuples are not accepted. This manifest is release evidence only; the shipped runtime consumes only the build-verified stripped projection of exact runtime identity fields.",
+  "description": "Reviewed provider binary/capability fingerprints for credentialed permission-conformance canaries. Entries must include the exact qualification scope, postureVersion, attestationSource, version, capability fingerprint, binarySha256, distribution, harnessNodeVersion, authentication, backendBaseUrl, modelAlias, model, platform, and arch. Kimi's acp-synthetic-cwd-gateway-v1 scope requires postureVersion synthetic-cwd-gateway-v1 and attestationSource credentialed-live-containment-canary, emitted only by the protected production-composition lane after its exact live assertions pass: a private process/session cwd, no ACP client fs, same-id structured terminal denials for every native tool in the production deny roster, positive authenticated HTTP-gateway workspace access, legacy-resume cold start, pre-spawn gateway admission, and strict teardown. The hosted Kimi lane uses the official checksummed native single-binary distribution plus an explicit non-rotating Kimi Code API-key backend/model contract. Cursor's cursor-native-sandbox-readonly-v1 scope requires postureVersion cursor-native-sandbox-readonly-v1 and attestationSource credentialed-live-containment-canary, emitted only after the reviewed CursorStartupContainment live suite passes. It attests that the exact cursor-agent build, launched read-only with --sandbox enabled and an end-of-options prompt guard, cannot write to the user's home directory (differential in-workspace-vs-home write, live-verified) and never emits write-widening or sandbox-disabling flags; the user's real ~/.cursor login and account surfaces load bounded by that sandbox (own-account trust). Network egress is NOT sandbox-bounded and is out of scope. providers.cursor now holds the reviewed cursor-agent 2026.07.16-899851b darwin/arm64 tuple minted from the live pass on 2026-07-19: its eight shipped runtime-identity fields are canary-derived, while the release-only backend-contract fields (authentication/backendBaseUrl/modelAlias/model) are honest posture metadata since Cursor has no TaskWraith backend/model contract (unlike Kimi). Any binary or advertised-capability change returns Cursor to UNRECOGNIZED (fail-closed); qualifying a new build requires a fresh reviewed live pass, not a hand-written entry. Ranges and partial tuples are not accepted. This manifest is release evidence only; the shipped runtime consumes only the build-verified stripped projection of exact runtime identity fields.",
   "providers": {
     "kimi": [],
-    "cursor": []
+    "cursor": [
+      {
+        "binarySha256": "sha256:eed61c5224668c9236334c4c68936a16aecc37374b592f59e31eb50433817831",
+        "platform": "darwin",
+        "arch": "arm64",
+        "scope": "cursor-native-sandbox-readonly-v1",
+        "version": "2026.07.16-899851b",
+        "capabilityFingerprint": "sha256:9ab4116a8ba015aff2cbbac7e9d91f57590abc6e42f5b8d85b00a3daf10db69a",
+        "postureVersion": "cursor-native-sandbox-readonly-v1",
+        "attestationSource": "credentialed-live-containment-canary",
+        "distribution": "disabled-cursor-inventory",
+        "harnessNodeVersion": "v25.9.0",
+        "authentication": "user-cursor-login",
+        "backendBaseUrl": "cursor-agent-managed",
+        "modelAlias": "cursor-account-default",
+        "model": "cursor-account-default"
+      }
+    ]
   }
 }

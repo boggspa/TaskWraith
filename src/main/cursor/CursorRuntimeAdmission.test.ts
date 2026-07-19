@@ -136,10 +136,13 @@ function qualification(
   }
 }
 
-describe('Cursor runtime admission — fail-closed shipped state', () => {
-  it('ships an empty embedded roster so no managed Cursor run is admissible', () => {
-    expect(EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS).toEqual([])
-    expect(cursorRuntimeQualificationsPresent()).toBe(false)
+describe('Cursor runtime admission — shipped roster + fail-closed behavior', () => {
+  it('ships the reviewed qualified roster (minted 2026-07-19) so the exact build is admissible', () => {
+    expect(EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS).toHaveLength(1)
+    expect(EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS[0].scope).toBe(CURSOR_RUNTIME_QUALIFICATION_SCOPE)
+    expect(cursorRuntimeQualificationsPresent()).toBe(true)
+    // Presence detection stays fail-closed for an explicitly empty roster.
+    expect(cursorRuntimeQualificationsPresent([])).toBe(false)
     expect(cursorRuntimeQualificationsPresent([qualification()])).toBe(true)
   })
 

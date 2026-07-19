@@ -1,1 +1,12 @@
-[]
+[
+  {
+    "binarySha256": "sha256:eed61c5224668c9236334c4c68936a16aecc37374b592f59e31eb50433817831",
+    "platform": "darwin",
+    "arch": "arm64",
+    "scope": "cursor-native-sandbox-readonly-v1",
+    "version": "2026.07.16-899851b",
+    "capabilityFingerprint": "sha256:9ab4116a8ba015aff2cbbac7e9d91f57590abc6e42f5b8d85b00a3daf10db69a",
+    "postureVersion": "cursor-native-sandbox-readonly-v1",
+    "attestationSource": "credentialed-live-containment-canary"
+  }
+]
