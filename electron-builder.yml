@@ -43,6 +43,21 @@ files:
   - '!{AGENTS.md,CLAUDE.md,ARCHITECTURE.md,WINDOWS_PARITY_QA.md,TERMS_NOTES.md}'
   - '!{electron-builder.yml,electron-builder.debug.yml,vitest.config.ts}'
   - '!**/*.tsbuildinfo'
+  # pdfjs-dist ships ~36MB, most of it dev artefacts and a browser viewer we
+  # never load. Pruning the unused trees takes it to roughly 9MB.
+  #
+  # LANDMINE: `legacy/` is the build we actually run and MUST stay. The default
+  # `build/` tree assumes browser globals and throws
+  # "ReferenceError: DOMMatrix is not defined" at import time in the Electron
+  # main process — pdfjs itself warns to use the legacy build under Node. Do not
+  # "tidy up" by swapping which of the two is excluded here.
+  # `cmaps/` (CJK encodings) and `standard_fonts/` are load-bearing for text
+  # extraction from documents that don't embed their fonts — leave them in.
+  - '!node_modules/pdfjs-dist/**/*.map'
+  - '!node_modules/pdfjs-dist/build/**'
+  - '!node_modules/pdfjs-dist/web/**'
+  - '!node_modules/pdfjs-dist/types/**'
+  - '!node_modules/pdfjs-dist/image_decoders/**'
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**
