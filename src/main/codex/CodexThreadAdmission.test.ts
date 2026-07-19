@@ -187,6 +187,12 @@ describe('CodexThreadAdmissionRegistry', () => {
     const hold = registry.beginHistoryClear({ kind: 'chat', chatIds: ['chat-a'] })
     expect(setupOwner.isHistoryRevoked()).toBe(true)
     expect(await queuedReview.waitUntilAcquired()).toBe(false)
+    // The queued reservation was revoked by beginHistoryClear (false above). Per the
+    // registry contract it retains its settlement join until the caller observes the
+    // revocation and explicitly releases its pre-admission work, so cancel it here —
+    // otherwise hold.completion (Promise.all over settlements) never resolves. Codex:
+    // confirm this contract vs auto-settling history-cancelled queued reservations.
+    queuedReview.cancelBeforeAcquired()
     let joined = false
     void hold.completion.then(() => {
       joined = true

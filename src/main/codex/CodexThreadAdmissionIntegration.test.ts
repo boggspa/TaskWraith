@@ -92,7 +92,9 @@ describe('Codex app-server thread admission integration', () => {
     expect(childRoute).toBeLessThan(exactFence)
     expect(exactFence).toBeLessThan(terminal)
 
-    const requests = between('function handleCodexServerRequest(message: any)', 'function sendCodexHostRerunRequired(')
+    // End-marker follows handleCodexServerRequest in index.ts; the function was named
+    // maybeRequestCodexHostRerun (the test's old `sendCodexHostRerunRequired` never existed).
+    const requests = between('function handleCodexServerRequest(message: any)', 'function maybeRequestCodexHostRerun(')
     expect(requests).toContain('const requestOperationId = codexProviderOperationId(message)')
     expect(requests).toContain(
       'state.admissionReservation?.matchesExactOperationId(requestOperationId)'
