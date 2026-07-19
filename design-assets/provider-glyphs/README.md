@@ -5,6 +5,8 @@ Original mnemonic glyphs for representing providers without bundling official lo
 These are deliberately simplified and slightly "wrong" visual hints. The provider label remains the actual product identifier; the glyph is only supporting iconography.
 Gemini glyphs remain in the set for historical chats and usage history even
 though Gemini is retired for new runs.
+Cursor glyphs likewise remain for configuration and historical continuity even
+though source-ahead TaskWraith starts no managed Cursor process.
 
 Design constraints:
 

@@ -2,6 +2,7 @@ node_modules
 dist
 dist-debug
 out
+/artifacts/
 .DS_Store
 .eslintcache
 *.log*
@@ -9,7 +10,9 @@ out
 
 # Local-only planning/release material kept out of the public source tree
 .local-only/
-papercuts/
+papercuts/*
+!papercuts/README.md
+!papercuts/2026-07-19-retro.md
 /PLAN-IMPORT-CODEX-BRIEF.md
 docs/
 RELEASING.md

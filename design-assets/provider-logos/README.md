@@ -23,7 +23,9 @@ catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
   transform, hash, and alpha verification in the manifest.
 - Keep official light/dark variants when supplied.
 - Include all seven canonical provider ids. Gemini is labelled historical
-  because it is retained for old chats but retired for new runs.
+  because it is retained for old chats but retired for new runs; Cursor is
+  configuration/history-only because source-ahead TaskWraith starts no managed
+  Cursor process. Canonical identity does not imply runtime availability.
 - Omit Ensemble: it is a TaskWraith orchestration concept, not an external
   provider with an official provider logo.
 
@@ -69,7 +71,7 @@ Retrieved and verified on **2026-07-18**.
 ## Trademark and repository boundary
 
 These marks remain the property of their respective owners. Their presence is
-solely to identify and compare supported providers; it does not imply
+solely to identify canonical provider records and compatible integrations; it does not imply
 affiliation, endorsement, sponsorship, or a transferable licence. Provider
 brand terms remain controlling, can change, and may require separate approval
 for public redistribution or product use.
