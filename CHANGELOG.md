@@ -41,6 +41,11 @@ in the internal pre-release ledger because the source-ahead boundary can move.
   never indexed or injected into agent context.
 
 ### Changed
+- **Fresh Ensemble panels start small and role-shaped.** Source-ahead new
+  Ensemble chats now seed at most four active seats (Boss, Captain, Specialist,
+  and an independent Outsider), while new saved roster presets begin with the
+  first three roles and room for at most five. The twenty-seat limit remains a
+  capacity ceiling rather than the default panel size.
 - **Primary navigation is organized as Chat, Code, and Work.** The surface
   split makes conversation, workspace activity, and projects/workflows easier
   to distinguish. Switching or choosing a workspace from a pristine draft now
@@ -66,8 +71,48 @@ in the internal pre-release ledger because the source-ahead boundary can move.
 
 ### Fixed
 - **Provider and orchestration edges are more resilient.** Source-ahead fixes
-  cover Kimi transport and usage hardening, Ensemble roster imports, Cursor MCP
-  configuration, stale broker sockets, and related run-lifecycle cleanup.
+  cover Kimi transport and usage hardening, Ensemble roster imports, stale
+  broker sockets, and related run-lifecycle cleanup.
+- **Cursor dispatch now fails closed before process launch.** A 2026.07.16
+  exact-build startup review showed that authenticated Cursor can preload
+  account/team hooks, managed skills/plugins, and plugin/team/bundled MCP even
+  with fresh roots, an empty synthetic workspace, disabled project configs,
+  excluded workspace context, and Plan mode. Source-ahead TaskWraith therefore
+  starts no managed `cursor-agent` process. Both Cursor Plan and tool modes are
+  unavailable/unqualified pending an exact-build containment canary or a
+  stronger sandbox; the earlier source-ahead Plan-only design is superseded.
+
+### Security
+
+- **Managed Kimi authentication and admission now fail closed.** Rotating Kimi
+  OAuth credentials use a source-home-keyed durable authority across isolated
+  ACP seats and crash recovery. Packaged source-ahead builds also require an
+  exact reviewed runtime tuple; the embedded roster is intentionally empty, so
+  packaged Kimi and sealed scheduled Kimi execution remain unavailable until
+  their respective admission/authority evidence is commissioned. A successful
+  `kimi login` or a Settings usage key does not qualify a managed run.
+- **Manual unsigned builds cannot write GitHub Release assets.** Windows and
+  Linux testing builds now upload only immutable SHA/run-labelled Actions
+  artifacts under read-only repository permission. The credentialed provider
+  canary also stays fail-closed until its protected environment has been
+  explicitly commissioned, and signed publication requires a fresh successful
+  exact-commit canary attestation plus commissioned immutable `v*` tag/release
+  controls. Both signed publishers re-resolve the remote tag and reject
+  auto-created or moved tags before uploading.
+- **Deleting chat history now clears the adjoining TaskWraith audit state.** The
+  source-ahead Settings action removes chats, run/run-queue and execution-graph
+  history, approval/feedback ledgers, sub-thread mailboxes, Canvas
+  workspaces/artifacts, Kimi seat state, and the bridge subprocess log.
+  Provider-native history and provider credentials remain separate and are not
+  removed by that control.
+- **`canvas_eval` receipts retain correlation metadata instead of executable
+  content.** Human-approved execution and Canvas-audit receipts retain the
+  joined approval id, unkeyed SHA-256 digest, lengths, and outcome rather than
+  script/result content. Auto-denial and compatibility/tool rows are
+  content-redacted but may omit that full receipt. The digest is integrity and
+  correlation metadata, not encryption; provider-authored transcript prose,
+  provider-native history, and opt-in debug capture remain outside the
+  guarantee.
 
 ## 1.8.4 - 2026-07-16
 
@@ -269,9 +314,9 @@ in the internal pre-release ledger because the source-ahead boundary can move.
 - **Review gates now follow the active goal.** Resolved or superseded gates no
   longer block a newer goal, and an eligible reviewer can record a passed or
   failed verdict for the gate it owns.
-- **Explicit Ensemble hand-offs win.** An explicit @mention now takes precedence
-  over a yield return, so an intentional next speaker is not lost to ordinary
-  round routing.
+- **Explicit Ensemble hand-offs win.** A uniquely resolved explicit @mention now
+  takes precedence over a yield return, so an intentional next speaker is not
+  lost to ordinary round routing; ambiguous aliases still fail closed.
 - **Continuous mode now respects clean pass boundaries.** When an all-yielded
   panel has no actionable assignment and cannot complete on its own, it returns
   control instead of spending another hop. A queued provider or model seat swap

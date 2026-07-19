@@ -3,18 +3,26 @@
 **Platform:** Electron
 
 ## What it is
-The sub-thread status ticker is a slim status strip that lists which of the current chat's sub-threads are actively running, so you can see delegated work in progress without leaving the parent chat.
+`SubThreadStatusTicker` is an implemented renderer component intended to list a
+parent chat's active sub-threads. It is not mounted by the current desktop UI,
+including v1.8.4 and this source-ahead checkout, so the inline ticker described
+by the component is not presently available to users.
 
 ## Where to find it
-It renders inline above the transcript of the parent chat, and only appears while at least one of that chat's sub-threads is running — it disappears again once all sub-threads finish or stop.
-
-<!-- screenshot-pending: SubThreadStatusTicker showing running/completed sub-thread states -->
+There is no mounted ticker to open today. Use the nested child row in the
+sidebar, agent-driven delegation/return cards in the parent transcript, or open
+the child chat directly to inspect its status.
 
 ## How to use it
-1. Delegate work to a sub-thread (see Sub-Thread Delegation) from a chat — once it starts running, the ticker appears above the transcript.
-2. Read the ticker: the left side shows the parent agent "orchestrating," and the right side lists a chip per active sub-thread, each labeled with its provider (Codex, Claude, Kimi, Grok, or Cursor). A local Ollama sub-thread appears as a generic "Sub-thread" chip rather than a named one.
-3. Click a sub-thread chip to jump to that sub-thread's chat.
-4. Let it run — the ticker clears on its own once every sub-thread of the current chat finishes.
+1. Delegate work from a parent chat; the child appears nested beneath it in the
+   sidebar.
+2. For an agent-driven delegation, use the transcript card to open the child
+   beside the parent or as the main chat. Manual sidebar delegation currently
+   has no parent transcript delegation card, so open the nested sidebar row.
+3. Watch the child row/chat for live state. A typed terminal return card appears
+   in the parent when result return is enabled.
+4. Treat any future inline ticker as pending product work until the component is
+   mounted and covered by an integration test.
 
 ## Tips & related
 - [Sub-Thread Delegation](../chats-and-threads/sub-thread-delegation.md) — how sub-threads get created in the first place.

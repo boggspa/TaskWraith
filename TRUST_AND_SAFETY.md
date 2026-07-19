@@ -59,6 +59,12 @@ TaskWraith's authority is centered on the desktop app:
   pairing, allowlists, end-to-end encryption, and host-side authority. They still
   expand the attack surface and should be enabled deliberately.
 
+The tagged v1.8.4 release is the current public baseline. This repository can
+also contain source-ahead hardening that is not a released guarantee until it is
+named in later release notes. In particular, main-authoritative Ensemble direct
+routing, the Cursor run-disable boundary, and content-minimised `canvas_eval`
+approval receipts described below are source-ahead changes.
+
 ## Safe First Run
 
 Use this path when evaluating TaskWraith for the first time:
@@ -92,27 +98,35 @@ When you are ready to enable optional surfaces, see
 around Ollama models, API keys, iOS/Tailscale pairing, Screen Watch, creative
 apps, and custom MCP servers.
 
+Source-ahead TaskWraith starts no managed Cursor process. Exact-build review
+found that authenticated Cursor can preload account/team hooks, managed
+skills/plugins, and plugin/team/bundled MCP even with fresh home/config roots,
+an empty synthetic workspace, `--disable-project-configs`,
+`--exclude-workspace-context`, and Plan mode. Both Cursor Plan and tool modes
+are unavailable and unqualified pending an exact-build containment canary or a
+stronger sandbox.
+
 ## Capability Matrix
 
-| Surface | Default posture | What it can access | What may leave your computer | Approval and audit |
-| --- | --- | --- | --- | --- |
-| Provider runs | User starts a run in a selected chat/workspace. | Prompt text, selected workspace context, and provider-visible tool results. | Anything sent to the chosen provider CLI/API according to that provider's behavior. | Provider/tool approval cards and run events are stored locally. |
-| Workspace reads/search | Scoped to the selected workspace where the adapter can enforce it. | File names and file contents in the selected workspace. | File snippets may be sent to the active provider as context. | Activity rows and raw provider events are retained. |
-| Plan workflow | User-selected Plan preset. | Workspace context needed to draft a plan, plus a validated markdown plan artifact path when the proposed-plan flow saves one. | Plan content may be sent to the active provider and stored locally as the plan artifact. | The markdown-plan write is product-managed; other mutating tools remain blocked until approval or a higher permission posture. |
-| File edits and Diff Studio | Mutating edits require an edit-capable mode or explicit approval. | Files in the selected workspace, plus user-approved external paths where supported. | Diffs/content may be visible to the active provider. | Diffs are reviewable before commit; approvals are ledgered. |
-| Shell and git | Approval-gated unless the selected provider mode grants more authority. | Commands run in the workspace context; git status/diff/commit surfaces. | Command output can be sent to the provider and stored in local history. | Command approvals, auto-denies, and run events are auditable. |
-| Local Ollama tools | Same permission presets as other providers; run profiles tune local prompting/runtime behavior. | The TaskWraith tool surface where local capability exists, limited by permission posture and network policy. | Local model prompts stay local unless you use Ollama-hosted/cloud models or other network tools. | Standard run permission posture and approvals apply; there is no separate safety-tier ladder. |
-| Ensembles, sub-threads, audits | User-created or explicitly delegated. | The transcript and workspace context available to each participant/provider. | Each cloud participant may receive transcript/context needed for its turn. | Participant runs, audit findings, and delegation events are recorded locally. |
-| Workflows and scheduled runs | User-defined. Unattended elevation requires explicit acknowledgement. | The workspace and tools allowed by the workflow template. | Same provider exposure as a normal run, repeated by schedule. | Workflow history, approvals, and run state are persisted. |
-| Transcript sky and weather visuals | Network lookup runs only while sky visual FX are enabled; disabling the FX stops weather polling. | The host's public-IP-derived approximate location and current weather conditions. No task, transcript, or workspace content is used. | The public IP is visible to `ipapi.co`, with `ipwho.is` as fallback. Open-Meteo receives the rounded coordinates (0.1°, about 11 km) and, like any direct web service, the request's source IP. | The last coarse location and weather snapshot are cached locally in `host-weather-cache.json`; this automatic visual lookup does not use the agent approval flow. |
-| iOS remote bridge | Disabled until paired. | Read-only projections by default; selected actions only through Mac policy. | Relay/APNs should see routing/status metadata, which may include aggregate added/deleted line counts, but not plaintext prompts, commands, diff contents or hunks, or model output. | Pairing, allowlists, approvals, expiry, and replay checks are enforced on the Mac. |
-| Human collaborators | Host-created invite per shared chat. | Least-privilege projection of one shared chat; collaborator comments when allowed. | Projection/comment frames travel over the collaboration transport, encrypted end to end. | Host remains authority for transcript writes; comments are external/untrusted rows. |
-| Screen Watch / attached windows | Off until the user attaches a window. | Frames from the chosen window, one frame at a time. | Captured frames may be sent to the active provider as visual context. | Attachment and downstream tool actions are surfaced in the run. |
-| Canvas/browser-like tools | Optional advanced surface. | The page or preview surface you expose to the agent. | URLs, page content, screenshots, and actions may reach the provider depending on the tool. | High-risk actions are policy-gated and should be treated as code/data execution. |
-| Creative-app automation | Off unless configured and approved. | Supported app state and AppleScript automation targets such as Final Cut Pro or Logic Pro. | App snapshots or command results may be sent to the provider. | AppleScript dispatch is approval-gated and logged. |
-| Discord context | Off unless a bot token/server is configured. | Recent messages from configured Discord channels the bot can read. | Channel context is attached to provider prompts as untrusted context. | Read-only; TaskWraith does not post back to Discord through this feature. |
-| Media and image tools | User/provider initiated. | Transcript media, generated images, selected audio/video files, and decoded frames. | Media-derived context may be sent to providers or external generation APIs you configure. | Media refs use trusted channels; generated artifacts remain reviewable locally. |
-| Usage and diagnostics | Local collection. | Provider usage summaries, app status, crashes, and diagnostics exports. | Diagnostics leave the machine only if you export/share them. | Stored under local app data; exports should be treated as sensitive. |
+| Surface                            | Default posture                                                                                   | What it can access                                                                                                                                                                                                                                                | What may leave your computer                                                                                                                                                                     | Approval and audit                                                                                                                                                                                                                                                                                                                                                        |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Provider runs                      | User starts a run in a selected chat/workspace.                                                   | Prompt text and any provider-visible transcript/tool context. Qualified workspace-aware seats may access selected-workspace context. Source-ahead TaskWraith does not start Cursor runs.                                                                          | Anything sent to the chosen provider CLI/API according to that provider's behavior.                                                                                                              | Provider/tool approval cards and run events are stored locally.                                                                                                                                                                                                                                                                                                           |
+| Workspace reads/search             | Scoped to the selected workspace where the adapter can enforce it.                                | File names and file contents in the selected workspace for qualified tool-capable seats.                                                                                                                                                                          | File snippets may be sent to the active provider as context.                                                                                                                                     | Activity rows and raw provider events are retained.                                                                                                                                                                                                                                                                                                                       |
+| Plan workflow                      | User-selected Plan preset.                                                                        | Workspace context needed to draft a plan, plus a validated markdown plan artifact path when the proposed-plan flow saves one.                                                                                                                                     | Plan content may be sent to the active provider and stored locally as the plan artifact.                                                                                                         | The markdown-plan write is product-managed; other mutating tools remain blocked until approval or a higher permission posture.                                                                                                                                                                                                                                            |
+| File edits and Diff Studio         | Mutating edits require an edit-capable mode or explicit approval.                                 | Files in the selected workspace, plus user-approved external paths where supported.                                                                                                                                                                               | Diffs/content may be visible to the active provider.                                                                                                                                             | Diffs are reviewable before commit; approvals are ledgered.                                                                                                                                                                                                                                                                                                               |
+| Shell and git                      | Approval-gated unless the selected provider mode grants more authority.                           | Commands run in the workspace context; git status/diff/commit surfaces.                                                                                                                                                                                           | Command output can be sent to the provider and stored in local history.                                                                                                                          | Command approvals, auto-denies, and run events are auditable.                                                                                                                                                                                                                                                                                                             |
+| Local Ollama tools                 | Same permission presets as other providers; run profiles tune local prompting/runtime behavior.   | The TaskWraith tool surface where local capability exists, limited by permission posture and network policy.                                                                                                                                                      | Local model prompts stay local unless you use Ollama-hosted/cloud models or other network tools.                                                                                                 | Standard run permission posture and approvals apply; there is no separate safety-tier ladder.                                                                                                                                                                                                                                                                             |
+| Ensembles, sub-threads, audits     | User-created or explicitly delegated.                                                             | The transcript and provider-qualified context available to each runnable participant. Source-ahead Cursor cannot be launched as a participant or child. In source-ahead builds, main validates exact picker identity and rejects ambiguous plain direct mentions. | Each cloud participant may receive transcript/context needed for its turn.                                                                                                                       | Participant runs, audit findings, and delegation events are recorded locally.                                                                                                                                                                                                                                                                                             |
+| Workflows and scheduled runs       | User-defined. Unattended elevation requires explicit acknowledgement.                             | The workspace and tools allowed by the workflow template.                                                                                                                                                                                                         | Same provider exposure as a normal run, repeated by schedule.                                                                                                                                    | Workflow history, approvals, and run state are persisted.                                                                                                                                                                                                                                                                                                                 |
+| Transcript sky and weather visuals | Network lookup runs only while sky visual FX are enabled; disabling the FX stops weather polling. | The host's public-IP-derived approximate location and current weather conditions. No task, transcript, or workspace content is used.                                                                                                                              | The public IP is visible to `ipapi.co`, with `ipwho.is` as fallback. Open-Meteo receives the rounded coordinates (0.1°, about 11 km) and, like any direct web service, the request's source IP.  | The last coarse location and weather snapshot are cached locally in `host-weather-cache.json`; this automatic visual lookup does not use the agent approval flow.                                                                                                                                                                                                         |
+| iOS remote bridge                  | Disabled until paired.                                                                            | Read-only projections by default; selected actions only through Mac policy.                                                                                                                                                                                       | Relay/APNs should see routing/status metadata, which may include aggregate added/deleted line counts, but not plaintext prompts, commands, diff contents or hunks, or model output.              | Pairing, allowlists, approvals, expiry, and replay checks are enforced on the Mac.                                                                                                                                                                                                                                                                                        |
+| Human collaborators                | Host-created invite per shared chat.                                                              | Least-privilege projection of one shared chat; collaborator comments when allowed.                                                                                                                                                                                | Projection/comment frames travel over the collaboration transport, encrypted end to end.                                                                                                         | Host remains authority for transcript writes; comments are external/untrusted rows.                                                                                                                                                                                                                                                                                       |
+| Screen Watch / attached windows    | Off until the user attaches a window.                                                             | Frames from the chosen window, one frame at a time.                                                                                                                                                                                                               | Captured frames may be sent to the active provider as visual context.                                                                                                                            | Attachment and downstream tool actions are surfaced in the run.                                                                                                                                                                                                                                                                                                           |
+| Canvas/browser-like tools          | Optional advanced surface.                                                                        | The page or preview surface you expose to the agent.                                                                                                                                                                                                              | URLs, page content, screenshots, actions, and direct tool results may reach the provider depending on the tool. Provider assistant prose may echo scripts/results into the persisted transcript. | High-risk actions are policy-gated. Source-ahead `canvas_eval` shows the exact script only in the transient desktop approval. Human-approved execution and Canvas-audit receipts retain approval id, unkeyed SHA-256, lengths, and outcome rather than script/result; auto-denial and compatibility/tool rows are content-redacted but may omit that full receipt. The digest is correlation/integrity metadata, not encryption. |
+| Creative-app automation            | Off unless configured and approved.                                                               | Supported app state and AppleScript automation targets such as Final Cut Pro or Logic Pro.                                                                                                                                                                        | App snapshots or command results may be sent to the provider.                                                                                                                                    | AppleScript dispatch is approval-gated and logged.                                                                                                                                                                                                                                                                                                                        |
+| Discord context                    | Off unless a bot token/server is configured.                                                      | Recent messages from configured Discord channels the bot can read.                                                                                                                                                                                                | Channel context is attached to provider prompts as untrusted context.                                                                                                                            | Read-only; TaskWraith does not post back to Discord through this feature.                                                                                                                                                                                                                                                                                                 |
+| Media and image tools              | User/provider initiated.                                                                          | Transcript media, generated images, selected audio/video files, and decoded frames.                                                                                                                                                                               | Media-derived context may be sent to providers or external generation APIs you configure.                                                                                                        | Media refs use trusted channels; generated artifacts remain reviewable locally.                                                                                                                                                                                                                                                                                           |
+| Usage and diagnostics              | Local collection.                                                                                 | Provider usage summaries, app status, crashes, and diagnostics exports.                                                                                                                                                                                           | Diagnostics leave the machine only if you export/share them.                                                                                                                                     | Stored under local app data; exports should be treated as sensitive.                                                                                                                                                                                                                                                                                                      |
 
 ## What Data Stays Local
 
@@ -132,7 +146,7 @@ Common local state includes:
   state.
 - `host-weather-cache.json`, containing the last coarse location and weather
   snapshot used by the optional transcript sky visuals.
-- `kimi-acp-seats-v1/`, containing durable native Kimi Code ACP seat
+- `kimi-acp-seats-v2/`, containing current durable native Kimi Code ACP seat
   checkpoints used for provider-session continuity and recovery.
 - `bridge/` pairing records, remote workspace allowlists, and APNs routing token
   records.
@@ -140,14 +154,30 @@ Common local state includes:
   collaborator features are used.
 - Transcript media assets, media staging, Canvas state, and generated artifacts.
 
+History created by v1.8.4 or an earlier source checkout can contain the exact
+`canvas_eval` script in a durable approval/run-event payload. Source-ahead
+hardening does not destructively rewrite old hash-chained history. Treat that
+existing history as sensitive. In the source-ahead checkout, **Settings →
+General → Delete all chat history** removes chats, run-event history, the
+approval and feedback ledgers, execution-graph history, sub-thread mailboxes,
+Canvas workspaces/artifacts, Kimi seat state, and the bridge subprocess log. It
+does not remove provider-native history or provider credentials. In v1.8.4, the
+same control removed chats and run events but did not remove the separate
+approval ledger. For complete removal, quit TaskWraith and move or delete its
+`userData` directory as described below; moving it aside keeps a recoverable
+backup.
+
 TaskWraith does not store provider account passwords in the repository. Provider
 CLIs and SDKs keep their own credentials wherever those tools normally store
 them. Remote bridge identity material is protected with Electron `safeStorage`
 where available.
 
-To reset TaskWraith's local state, quit the app and move or delete the
-`userData` directory above. To keep a backup, move it aside rather than deleting
-it. Provider CLI credentials may remain in the provider's own config locations.
+To reset TaskWraith's local state manually, quit the app and move or delete the
+`userData` directory above. On macOS, also remove or move
+`~/Library/Logs/TaskWraith/bridge-subprocess.log`, which lives outside
+`userData`; the source-ahead in-app history action clears this log for you. To
+keep a backup, move paths aside rather than deleting them. Provider CLI
+credentials may remain in the provider's own config locations.
 
 ## What Can Leave the Machine
 
@@ -198,6 +228,60 @@ npm run build:mac:notarized
 npm run security:sbom
 ```
 
+Run release verification on the exact commit/tag candidate that will be built
+and published, and build every artifact from that same candidate. Shipping the
+candidate tip does not replay its intermediate commits, so backlog age or commit
+chronology is not a release order. If a fix is backported or cherry-picked,
+select a dependency-closed slice and rerun the full candidate checks after the
+pick.
+
+The source-ahead provider permission-conformance canaries are an additional
+explicit lane, not a substitute for normal CI. Probe-only output records binary
+versions, digests, and capability fingerprints without model calls; it is
+inventory, not live permission evidence. A credentialed
+qualification-candidate run rejects missing/skipped required checks but may
+record an unknown binary as
+`unattested_pass`; that is evidence to review, not a trusted or releasable
+fingerprint. Strict release mode additionally rejects unknown fingerprints.
+Signed release jobs accept only an exact-commit successful release canary that
+completed within the preceding 24 hours; stale, future-dated, or malformed
+attestations fail closed. Run that canary immediately before creating the tag.
+Signed publication also stays blocked until the repository declares its `v*`
+tag ruleset and immutable-release controls commissioned. Both platform
+publishers re-resolve the remote tag to the checked-out commit immediately
+before release creation and upload; external no-bypass tag/release controls
+remain necessary to close administrator race windows.
+Publisher reruns do not trust a previously completed dependency job: immediately
+before release mutation, each platform rechecks both commissioning variables and
+repeats the exact-commit, 24-hour provider-attestation query.
+The coverage command produces a measured, non-gating baseline; there is no
+percentage threshold or PR coverage ratchet.
+
+```sh
+npm run verify:provider-compatibility
+npm run verify:provider-permissions:live
+npm run verify:provider-permissions:release
+npm run test:coverage:baseline
+```
+
+The reviewed live-test allowlist and active required release tuple currently
+contain Kimi only, while the exact-fingerprint qualification manifest is still
+empty. Cursor has no reviewed runnable suite or admissible containment
+fingerprint; both Plan and tool modes remain disabled/unqualified, and no Cursor
+credentialed or managed run process is started. Probe-only inventory may invoke
+`--version` and `--help` in an unauthenticated TaskWraith-owned root. Disabled
+Cursor is deliberately excluded from the required tuple so it does not block
+every future release. Strict release is red until a reviewed exact Kimi tuple is
+added. Signed macOS/Windows `v*` publication jobs mechanically require a
+successful protected provider release run at the exact checked-out tag commit;
+the manifest's current empty state therefore blocks those signed jobs.
+Re-enabling Cursor requires a reviewed exact-build startup-containment suite and
+fingerprint plus an explicit change adding Cursor back to the required providers.
+The workflow is explicitly credentialed and protected, not a pull-request or
+scheduled cloud lane. See
+[Provider permission conformance](PROVIDER_PERMISSION_CONFORMANCE.md). Coverage
+artifacts are written under `artifacts/coverage/` for inspection only.
+
 The release path is designed to run dependency checks, typecheck, tests, native
 bridge tests on macOS, packaged-app smoke tests, update-feed validation, secret
 bundle guards, signing, notarization, stapling, and SBOM generation where the
@@ -228,6 +312,10 @@ from the source repository alone.
 - TaskWraith is not a security boundary around all provider-native behavior.
 - Approval prompts reduce accidental or model-driven misuse, but they do not make
   arbitrary third-party CLIs safe.
+- Provider-authored transcript prose, provider-native session history, and
+  explicitly enabled debug capture can retain content omitted from
+  TaskWraith's redacted approval, Canvas-audit, and compatibility/tool-event
+  projections.
 - Display redaction is best effort. Raw transcripts, run events, provider output,
   diagnostics, media, and exported files can still be sensitive.
 - Broad grants such as full-workspace, yolo, unattended workflows, or remote

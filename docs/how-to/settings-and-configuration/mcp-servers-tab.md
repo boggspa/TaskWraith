@@ -3,7 +3,19 @@
 **Platform:** Electron
 
 ## What it is
-The MCP Servers tab is where you add, edit, import, validate, and manage your own MCP (Model Context Protocol) server definitions — stdio commands, HTTP endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and Claude launches and to contained Cursor write-mode runs; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP bridge and tool catalog, which live on the Provider Tools tab.
+The MCP Servers tab is where you add, edit, import, validate, and manage your
+own MCP (Model Context Protocol) server definitions — stdio commands, HTTP
+endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and
+Claude launches; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP
+bridge and tool catalog, which live on the Provider Tools tab.
+
+In the current source-ahead checkout, TaskWraith starts no managed Cursor
+process. Importing or exporting Cursor JSON here remains useful configuration
+interchange for Cursor outside TaskWraith; it does not attach those servers to a
+source-ahead run. This is newer than v1.8.4. On the released
+baseline, disable untrusted project-local Cursor servers or use a disposable
+workspace rather than treating Read-only as proof that those external
+namespaces are mediated.
 
 ## Where to find it
 **Settings → Integrations → MCP Servers**
@@ -21,6 +33,6 @@ The MCP Servers tab is where you add, edit, import, validate, and manage your ow
 
 ## Tips & related
 - [Provider Tools tab](provider-tools-tab.md) — TaskWraith's own built-in MCP bridge status and tool catalog, separate from your user-managed servers here.
-- [Providers tab](providers-tab.md) — sign in and configure the Codex, Claude, Kimi, Grok, Cursor, and Ollama providers that these MCP servers attach to.
+- [Providers tab](providers-tab.md) — sign in and configure providers; note that source-ahead TaskWraith starts no Cursor run to attach these MCP servers to.
 - [Local servers tab](local-servers-tab.md) — manage dev servers and watchers running under your workspaces, a different kind of "server" from MCP definitions.
 - [Plugins tab](plugins-tab.md) — another integrations surface for extending TaskWraith's capabilities.

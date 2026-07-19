@@ -19,7 +19,7 @@ Open **Settings → App → General**.
 6. Enable the **Kimi compatibility filter** to redact known Moonshot-rejected topics from prompts sent to Kimi ensemble participants only — your transcript itself is never modified; optionally turn on the classifier retry pass and add custom trigger phrases.
 7. Turn on **Auto-deny approvals after a timeout** and set the per-provider timeout windows (including Codex, Claude, and Kimi, plus Main authority) so unanswered approvals don't block a run indefinitely. Each provider's window is independent, so faster-hanging runtimes (like Codex sandbox commands) can time out sooner than long-think prompts.
 8. Under **Product operations**, enable Auto-Update and pick an update channel, then use **Refresh health**, **Export diagnostics**, or **Repair install** as needed.
-9. Use **Delete chat history** in the danger zone to permanently remove local chat transcripts and run history from this Mac — workspaces and settings are left intact.
+9. Use **Delete chat history** in the danger zone to permanently remove TaskWraith-owned local chats; run, approval, feedback, workflow/queue, execution-graph, and mailbox history; Canvas workspaces/artifacts; regenerable transcript media and derived bytes; usage/project-reference artifacts; Kimi seat state; and the bridge diagnostic log. Provider-native history, provider credentials, workspace files, and settings are left intact. See [Trust & Safety](../../../TRUST_AND_SAFETY.md#what-data-stays-local) for the source-ahead versus v1.8.4 boundary.
 
 ## Tips & related
 - [Appearance tab](appearance-tab.md) — visual/theme settings, also under Settings → App.

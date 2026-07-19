@@ -18,7 +18,11 @@ The Plugins tab is a catalog of declarative capability bundles — manifests tha
 5. Expand **Capability changes** or **Provenance JSON** on a row to inspect what a plugin update changes or how its trust/preflight data is sourced.
 6. Click **Update** when a plugin shows "update available", or **Uninstall** to remove it.
 
+Materialized plugin MCP presets attach only to compatible, tool-capable
+provider runtimes. Source-ahead TaskWraith starts no managed Cursor process, so
+an enabled plugin or materialized preset cannot attach tools to Cursor.
+
 ## Tips & related
 - [MCP servers tab](mcp-servers-tab.md) — manage the user-defined MCP servers that plugin presets get added to.
 - [Provider Tools tab](provider-tools-tab.md) — TaskWraith's own built-in MCP bridge and tool catalog, separate from plugin-provided servers.
-- [Providers tab](providers-tab.md) — sign in and configure the Codex, Claude, Kimi, Grok, Cursor, and Ollama providers that plugin-added MCP servers attach to.
+- [Providers tab](providers-tab.md) — sign in and configure providers; source-ahead TaskWraith starts no Cursor run to attach plugin-added MCP servers to.

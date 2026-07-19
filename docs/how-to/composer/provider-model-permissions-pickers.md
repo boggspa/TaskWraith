@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-These are the three chips on the composer's controls row that decide how your next message runs: which **provider** (Codex, Claude, Kimi, Grok, Cursor, or a local Ollama model) handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session).
+These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session). The selectable architecture includes Codex, Claude, Kimi, Grok, and local Ollama, but packaged source-ahead Kimi has no commissioned runtime tuple and is unavailable until its qualification roster is populated. Cursor may remain visible for configuration/history continuity but is disabled for source-ahead runs.
 
 In a normal top-level chat, these pickers stay usable even after the thread has
 history. If the chat is idle, changes apply immediately. If a turn is already
@@ -16,7 +16,7 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
 ![Composer inline pickers row with provider, model+reasoning, and permissions chips](../images/composer__provider-model-permissions-pickers.png)
 
 ## How to use it
-1. Click the **provider chip** to open a list of available providers and pick one — only providers you've enabled (and Grok/Cursor only if available) are shown, with a checkmark on the active one.
+1. Click the **provider chip** to open the provider list and pick a runnable option — enabled providers show normally, disabled/history-only entries explain why they cannot launch, and the active one has a checkmark.
 2. Click the **model chip** to open a two-column popover: **Model** on the left, **Reasoning** on the right (for Ollama, a **Provider** column appears too, since one chip covers many local models).
 3. Pick a model in the left column — disabled or retiring models show a reason or a retirement date pill.
 4. Pick a reasoning effort in the right column (e.g. Low/Medium/High/Extra High for Codex, or Extra/Max/Ultracode for Claude). For Codex and Claude models that support it, toggle **Fast mode** at the bottom of the Reasoning column for the paid fast tier.
@@ -27,6 +27,11 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
    the change applies at turn end. A same-provider model/reasoning change keeps
    the current linked session; a genuine provider switch resets provider-linked
    session state before the next turn.
+
+Source-ahead Cursor may remain visible for configuration/history continuity but
+cannot launch. TaskWraith starts no managed Cursor process; both Plan and tool
+modes are unavailable/unqualified, and selecting a higher permission preset does
+not change that boundary.
 
 ## Tips & related
 - [Model Catalogue](../../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.

@@ -5,6 +5,10 @@
 ## What it is
 An agent question card is an inline prompt that appears in the transcript when an agent calls the `ask_user_question` tool mid-run to ask you something directly — a clarifying question, or a choice between a few options — instead of guessing and continuing.
 
+Source-ahead Cursor cannot create this card or participate in a new run because
+TaskWraith starts no managed Cursor process. Historical question content remains
+readable.
+
 ## Where to find it
 The card appears automatically in the transcript, anchored next to the system message marking the question, whenever a participant asks one. You don't navigate to it — it surfaces inline in the chat you're already viewing, on both Electron and iOS.
 

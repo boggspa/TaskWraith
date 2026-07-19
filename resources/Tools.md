@@ -431,7 +431,7 @@ Read lifecycle, final result, transcript slices, and/or run events from a sub-th
 
 ## cancel_subthread
 
-Cancel an active run in a sub-thread owned by the active parent chat.
+Cancel queued recalled follow-ups and, when present, the active run in a sub-thread owned by the active parent chat.
 
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: subThreadId
@@ -920,7 +920,7 @@ Publish or update a structured goal-step checklist for the current run. Use this
 
 ## delegate_to_subthread
 
-Spawn a fresh context-isolated sub-thread on a chosen live provider, or continue an existing one by passing subThreadId. Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. Recall requires an idle, unarchived child of this parent with a resumable matching-provider session. returnResult appends the final assistant message to the parent as untrusted child output. Omit subThreadId to always spawn fresh.
+Spawn a fresh context-isolated sub-thread on a selectable provider (subject to current runtime admission), or continue an existing one by passing subThreadId. Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. An idle recall requires a resumable matching-provider session; an active recall durably queues the follow-up behind the live child turn. returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output, including assistant output when present. Omit subThreadId to always spawn fresh.
 
 - Access: governed by your run permission role
 - Required args: provider, prompt
@@ -1163,9 +1163,9 @@ Overlay numbered Set-of-Mark boxes on the Canvas to flag elements for the human 
 
 ## canvas_eval
 
-Run arbitrary JavaScript in the Canvas page and return its (size-capped) completion value. The MOST powerful canvas verb: it executes agent-supplied code in the previewed app (RCE). PREFER canvas_snapshot / canvas_inspect / canvas_click / canvas_fill — reach for eval only when a structured tool cannot express the check. Signed-elevated: it PROMPTS EVERY CALL (never auto-allowed by a grant, preset, or session-YOLO) and is denied under read-only; the human approving sees the exact script. The page network egress is best-effort cut while the script runs. The script text and its result are never written to the audit log.
+Run human-approved agent-supplied JavaScript inside the Canvas preview page and return its (size-capped) completion value. The MOST powerful canvas verb: this is a code-execution boundary inside the previewed app, not an approval bypass. PREFER canvas_snapshot / canvas_inspect / canvas_click / canvas_fill — reach for eval only when a structured tool cannot express the check. Signed-elevated: it PROMPTS EVERY CALL (never auto-allowed by a grant, preset, or Trusted Session) and is denied under Read-only/Plan. The exact script is shown only in the transient desktop task approval; compact or paired-device approval surfaces may decline but cannot accept. Human-approved execution and Canvas-audit receipts retain the approval id, unkeyed SHA-256 digest, UTF-16/UTF-8 lengths, and outcome—not the script or returned value/error. Auto-denial and compatibility/tool-event rows are content-redacted but may omit that full receipt. The digest is reproducible correlation/integrity metadata, not encryption. The direct result reaches the calling model, and provider assistant prose can echo script/result content into TaskWraith's persisted transcript; provider-authored prose, provider-native session history, and explicitly enabled debug capture are outside this projection guarantee. The page network egress is best-effort cut while the script runs.
 
-- Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
+- Access: signed-elevated — denied under Read-Only/Plan; prompts every call and requires exact desktop review
 - Required args: canvasId, script
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_eval","arguments":{"canvasId":"text","script":"text"}}}}`
 

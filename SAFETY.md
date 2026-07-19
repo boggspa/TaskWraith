@@ -80,6 +80,30 @@ false`, and a narrow preload bridge.
   attached-window capture, Screen Watch, creative-app bridges, Canvas tools, and
   `canvas_eval` should be documented, policy-gated, and tested as code- or
   data-execution boundaries.
+- Main must be authoritative for Ensemble participant dispatch. Renderer
+  projections and participant ids are advisory UI state; main re-resolves the
+  prompt against the current roster, preserves exact picker identity, and
+  rejects ambiguous aliases instead of selecting by roster order.
+- Signed-elevated `canvas_eval` approvals require an exact transient desktop
+  review. Human-approved execution and Canvas-audit receipts retain a
+  content-minimised binding (approval id, unkeyed SHA-256 digest, lengths, and
+  outcome), not the script or returned value/error. Auto-denial and
+  compatibility/tool-event rows are content-redacted but may omit the full
+  receipt. The digest is reproducible correlation/integrity metadata, not
+  encryption or confidentiality. Provider-authored transcript prose can echo
+  and persist the script/result; that prose, provider-native history, and
+  explicitly enabled debug capture remain outside the guarantee.
+- A TaskWraith-managed provider launch must not silently inherit external MCP
+  namespaces that bypass the broker's policy and ledger. Prefer fresh
+  TaskWraith-owned home/config roots and advertise only the sanctioned surface.
+  A legacy adapter that must mutate provider configuration must restore the
+  exact original bytes afterward and fail closed on unsafe config targets.
+- Source-ahead Cursor fails closed before process launch. Authenticated Cursor
+  can preload account/team hooks, managed skills/plugins, and
+  plugin/team/bundled MCP despite fresh roots, excluded workspace context,
+  disabled project configs, and Plan mode. Start no TaskWraith-managed
+  `cursor-agent` process; both Plan and tool modes remain unavailable/unqualified
+  pending an exact-build containment canary or a stronger sandbox.
 - External links and file paths should route through the safe shell-open policy;
   do not call `shell.openExternal` directly for untrusted renderer input.
 

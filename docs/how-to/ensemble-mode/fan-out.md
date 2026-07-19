@@ -16,7 +16,14 @@ In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row o
 3. Click **Read** to let read-only participants run in parallel lanes; a writer-capable participant still runs serially afterward. This requires parallel lanes to be enabled (`TASKWRAITH_CONCURRENT_LANES`, on by default) — if disabled, rounds fall back to serial dispatch.
 4. Click **Write** to allow writer-capable participants into parallel lanes too. This option is locked unless `TASKWRAITH_CONCURRENT_WRITE_LANES` is enabled, and it behaves differently depending on setup: if the chat has an assigned Boss, that Boss must call the `ensemble_fanout` tool with explicit write scopes; otherwise it's mediated by a user-enabled write-scope preflight (claim scopes, a host conflict check, then an acknowledgement) before any writer lane runs.
 5. Hover the toggle group, or the running round's status, to see a summary of the active fan-out policy (e.g. "+ Read fan-out" or "+ Writer fan-out").
-6. To keep a participant out of ordinary rotation, set its Stage to **BG**. A unique `@BG`, `@Background`, `@Role`, or `@Model` mention launches that seat asynchronously through the same lane executor. Automatic mention/yield launches are capped read-only; use the existing Boss-authorized `ensemble_fanout(mode=locked_writers, targetStage=backgrounds, writeScopes=...)` path when scoped background mutation is genuinely required.
+6. To keep a participant out of ordinary rotation, set its Stage to **BG**. A
+   unique `@BG`, `@Background`, `@Role`, or `@Model` mention attempts to launch
+   that seat asynchronously through the same lane executor. Concurrent lanes
+   must be enabled, the seat must not already be active, and admission/budget
+   checks must pass. Automatic mention/yield launches are capped read-only; use
+   the existing Boss-authorized
+   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
+   writeScopes=...)` path when scoped background mutation is genuinely required.
 
 ## Tips & related
 - [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — the adjacent Turn/Continuous/Work Session control this toggle composes with.

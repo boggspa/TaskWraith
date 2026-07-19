@@ -3,7 +3,18 @@
 **Platform:** Both
 
 ## What it is
-In an Ensemble chat, `@Role` mentions and the `ensemble_yield` tool control which participant speaks next. Typing `@Role` in the composer normally sends the message to just that participant (a DM); a participant tagging `@Role` in their own reply, or calling `ensemble_yield(target: …)`, promotes that participant to the front of the queue for the next turn. **BG** is the deliberate exception: mentioning a background-stage participant launches a detached lane while foreground rotation continues.
+In an Ensemble chat, participant mentions and the `ensemble_yield` tool control
+which participant speaks next. Directing a composer prompt to one foreground
+participant sends only that seat the round; a participant tagging peers in its
+own reply promotes every routable target in prompt order, while
+`ensemble_yield(target: …)` explicitly hands off to one target. **BG** is the
+deliberate exception: mentioning a background-stage participant attempts a
+detached launch while foreground rotation continues.
+
+The current source-ahead desktop picker preserves the selected participant's
+exact id, while Electron main remains the routing authority. Hand-typed aliases
+must identify one enabled seat; an ambiguous alias is rejected before launch
+instead of selecting by roster order. This is newer than the v1.8.4 release.
 
 ## Where to find it
 Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. Routing from a participant's own reply happens automatically whenever their response text contains an `@Role` mention or they call the `ensemble_yield` tool; there's no separate control to find for that half.
@@ -11,16 +22,46 @@ Type `@` followed by a participant's role or model name in the composer during a
 ![Composer showing an @-mention being typed with role autocomplete](../images/ensemble-mode__mention-yield-routing.png)
 
 ## How to use it
-1. In the composer, type `@` and a few letters of a participant's role, provider, or model name (e.g. `@Researcher` or `@GPT 5.5`) and pick them from the autocomplete menu, or just keep typing the plain `@Role` token yourself.
-2. Send a prompt that mentions exactly one foreground participant to DM them directly — only that participant runs for the round, instead of the whole roster. Mentioning a BG participant does not collapse the panel into a DM; it allocates background work and preserves the foreground round.
-3. During a round, a participant can tag another in their own reply text (`"@Researcher, can you fact-check this?"`) to promote that participant to speak next; if the round is in **Continuous** mode and the tagged participant already spoke this round, they get an extra handoff turn instead.
-4. A participant can also call the `ensemble_yield` tool with an optional `target` (and an optional `reason`) to explicitly hand off — this works the same as a mention but is an explicit tool call rather than text in the reply.
-5. If a tagged name matches more than one participant (e.g. two participants on the same provider), the orchestrator posts an ambiguity notice in the round status and leaves routing unchanged — use a more specific role or model name to disambiguate.
-6. A Boss participant's mentions take routing priority: if both the Boss and another participant are tagged in the same reply, only the Boss's target is promoted.
-7. A unique `@BG` or `@Background` alias launches the sole enabled BG seat. With multiple BG seats, use a unique `@Role`, `@Model`, or participant id; TaskWraith warns and launches nothing when the alias is ambiguous.
+1. In the composer, type `@` and a few letters of a participant's role,
+   provider, or model name (for example `@Researcher` or `@GPT 5.5`). On
+   desktop, choose the autocomplete result when you need one exact seat; the
+   source-ahead textarea temporarily shows its structured mention markdown and
+   the sent transcript renders it as a participant chip. A plain alias is safe
+   only when it is unique. The current iOS composer sends alias text, so use a
+   unique role/model when same-provider seats collide.
+2. Send a prompt directed to exactly one foreground participant to reach only
+   that seat for the round. Main validates the target against its current
+   roster; a stale picker target or ambiguous hand-typed alias fails before the
+   round starts. Mentioning a BG participant does not collapse the panel into a
+   DM; it allocates background work and preserves the foreground round.
+3. During a round, a participant can tag one or more peers in its reply text
+   (`"@Researcher and @Reviewer, check this"`). Every unique, unambiguous
+   participant that has not spoken is promoted in prompt order. In Continuous
+   mode, an ordinary participant that already answered/yielded is not
+   re-summoned; the active Boss—or Captain once the Boss is unavailable—is the
+   budget-bounded exception.
+4. A participant can call `ensemble_yield` with one optional `target` and
+   `reason` to make a single explicit handoff. It uses the same aliases, but an
+   unresolved or ambiguous yield target falls through to ordinary ordering;
+   ambiguous text mentions instead post a warning. Yielding to `user`, `human`,
+   or `you` explicitly returns control in Continuous mode.
+   Source-ahead Cursor cannot be a participant because TaskWraith starts no
+   managed Cursor process.
+5. If a participant's in-round tagged name matches more than one seat, the
+   orchestrator posts an ambiguity notice and leaves routing unchanged. For a
+   user/composer direct prompt, main rejects the ambiguous launch instead. Use
+   the desktop participant picker or a unique role/model alias.
+6. The active authority takes routing priority. If a reply tags the Boss and an
+   advisory participant, only the Boss route is applied; once the Boss is
+   unavailable, the active Captain receives that priority instead.
+7. A unique `@BG` or `@Background` alias attempts to launch the sole enabled BG
+   seat. Concurrent lanes must be enabled, the seat must not already be active,
+   and admission/budget checks must pass. With multiple BG seats, use a unique
+   `@Role`, `@Model`, or participant id; TaskWraith warns and launches nothing
+   when the alias is ambiguous.
 
 ## Tips & related
-- [Continuous Hops Meter](continuous-hops-meter.md) — the handoff budget that governs extra turns created by mentions and yields in Continuous mode.
+- [Continuous Hops Meter](continuous-hops-meter.md) — the continuation-turn budget consumed by explicit handoffs and autonomous Continuous passes.
 - [Participant Chip Strip](participant-chip-strip.md) — shows each participant's role/model name, which is what you type after `@`.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — set up a chat with multiple participants before routing between them.
 - [Round Cards in Transcript](round-cards.md) — see how yields and mention-promotions are noted in the round's transcript.

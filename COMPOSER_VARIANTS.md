@@ -5,6 +5,8 @@ work modes can feel distinct without changing the safety model underneath. The
 shell controls styling, density, accents, and visible workflow affordances; run
 posture, approvals, workspace scope, and tool authority still come from the same
 TaskWraith policy layer described in [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md).
+Cursor's gallery shell is retained for visual, configuration, and historical
+continuity; its presence here does not imply a runnable source-ahead seat.
 
 The screenshots below are static design exports from
 `design-assets/TaskWraith Composer Shell Electron Variants`. The iOS references

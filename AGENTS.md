@@ -54,10 +54,10 @@ session. Common patterns:
 
 - A long-context **Claude** thread hands the noisy CLI work off to a
   **Codex** sub-thread, then continues planning while Codex runs.
-- A **Kimi** or **Cursor** project-aware thread delegates a careful diff edit to
-  a **Claude** sub-thread.
-- A **Codex** runtime delegates "research this codebase" reading work
-  to a **Claude**, **Kimi**, or **Cursor** sub-thread.
+- A **Kimi** project-aware thread delegates a careful diff edit to a **Claude**
+  sub-thread.
+- A **Codex** runtime delegates "research this codebase" reading work to a
+  **Claude** or **Kimi** sub-thread.
 - A **Codex** parent opens a second **Codex** seat for an independent review
   without sharing the parent's provider context.
 
@@ -93,10 +93,9 @@ delegationContext?: {
 };
 ```
 
-Sub-threads do **not** share context with their parent — each is its
-own isolated provider session. The delegation prompt is the only thing
-that bridges across; everything beyond that is what the user (or the
-sub-thread's agent) types in.
+Sub-threads do **not** share provider context with their parent — each is its
+own isolated provider session. Only explicit delegation/recall prompts and the
+governed result-return path cross that boundary.
 
 ### Phase F1 invariants (still in force)
 
@@ -113,13 +112,17 @@ sub-thread's agent) types in.
 When `returnResultToParent: true` was selected, every terminal child outcome
 (`done`, `requires_action`, `failed`, or `cancelled`) is first persisted in the
 parent's durable mailbox. A projection-only synthetic `role: 'tool'` message is
-appended to the parent transcript for UI/audit visibility, while provider
-context receives the result exactly once through the mailbox delivery prompt.
+appended to the parent transcript for UI/audit visibility. For a solo parent,
+the mailbox delivers the result to provider context exactly once, through an
+auto-wake or the next ordinary parent turn. Ensemble parents currently retain
+the mailbox event and transcript card but do **not** automatically inject it
+into any participant seat's provider context; this limitation exists in v1.8.4
+and the current source-ahead checkout.
 
 ```
 ↩ Result from <Provider> sub-thread (<title>):
 
-<final assistant message content>
+<typed terminal result, including assistant output when present>
 ```
 
 The synthetic message carries `metadata.kind = 'subThreadReturn'`,
@@ -145,6 +148,10 @@ That request is approval-gated by the current workspace's agentic-service
 policy. Treat the tool result as fallible: if policy declines or recall fails,
 do not loop or retry; continue the parent turn and tell the user what was
 declined.
+
+This MCP route is available only to tool-capable parent seats. Source-ahead
+Cursor cannot be a parent or child because TaskWraith starts no managed Cursor
+process.
 
 `model`, `reasoningEffort`, and `kimiThinking` configure a **fresh** delegated
 seat. They are spawn-only: recalls inherit the existing seat controls and reject
@@ -203,15 +210,24 @@ target:
 If `target` doesn't resolve, the round falls through to default
 ordering. `reason` is included in the audit trail.
 
+This explicit call requires a tool-capable seat. There is no source-ahead Cursor
+seat because TaskWraith starts no managed Cursor process.
+
 ### 3. You can call another participant in-line via @-mention
 
-If your assistant message contains `@Role` / `@provider` /
-`@ModelName` (matching the same alias resolver as `ensemble_yield`),
-TaskWraith's orchestrator promotes that participant to speak next OR
-appends them an extra turn if they've already spoken this round.
-First match wins; subsequent `@-mentions` in the same message are
-ignored. Self-mentions are filtered (you can narrate "I, Codex,
-think…" without looping yourself back to the front).
+If your assistant message contains `@Role` / `@provider` / `@ModelName`
+references, TaskWraith resolves every unique mention and applies the routable
+targets in prompt order. Unambiguous participants that have not spoken are
+promoted together to the front of the remaining queue. An ambiguous alias is
+skipped with a warning, and self-mentions are filtered (you can narrate "I,
+Codex, think…" without looping yourself back to the front).
+
+In Continuous mode, mentioning an ordinary participant that already reached a
+terminal status does not re-summon it. The active authority is the exception:
+the Boss—or the Captain once the Boss is unavailable—may be re-summoned after
+answering or yielding, subject to the continuation budget. If that active
+authority appears alongside advisory participant mentions, only the authority
+route is applied.
 
 ```
 "@Reviewer can you sanity-check this diff before I commit?"
@@ -221,6 +237,16 @@ think…" without looping yourself back to the front).
 This is the lower-friction way to invite collaboration — yield is
 explicit, mention is conversational.
 
+This in-round handoff rule is distinct from directing a new user/composer
+round. In the current source-ahead checkout, Electron main is authoritative for
+new-round routing: it validates an exact participant link inserted by the
+picker, or resolves a plain alias against the current enabled roster. A
+hand-typed provider/role/model alias that matches multiple seats is rejected
+rather than selecting whichever participant happens to appear first. The
+renderer may send an advisory participant id for explicit UI gestures, but it
+cannot override a prompt routing signal. This main-authoritative change is
+newer than the v1.8.4 release baseline described under **Versioning** below.
+
 ### Stage roles and background lanes
 
 The participant Stage control has five choices: **Any**, **Scout**, **Work**,
@@ -228,9 +254,11 @@ The participant Stage control has five choices: **Any**, **Scout**, **Work**,
 participant is different: it receives no ordinary serial or review turn and
 runs only when explicitly delegated.
 
-- A unique `@BG`, `@Background`, `@Role`, or `@Model` mention launches that
-  participant in a detached lane while foreground rotation continues. Bare
-  `@BG` is rejected as ambiguous when more than one BG seat matches.
+- A unique `@BG`, `@Background`, `@Role`, or `@Model` mention attempts to launch
+  that participant in a detached lane while foreground rotation continues.
+  Concurrent lanes must be enabled, the seat must not already be active, and
+  admission/budget checks must pass. Bare `@BG` is rejected as ambiguous when
+  more than one BG seat matches.
 - Mention/yield launches are always capped to read-only posture. Scoped
   mutations must use the existing Boss-authorized
   `ensemble_fanout(mode=locked_writers, targetStage=backgrounds,
@@ -247,10 +275,12 @@ Each ensemble has a `orchestrationMode`:
 - **Turn-bound** (default) — each enabled participant speaks ONCE
   per round. After everyone speaks, the round ends and the user
   is prompted for the next user turn.
-- **Continuous** — participants can keep handing off (via yield or
-  @-mention) until either someone explicitly "returns to user"
-  (replies without a yield + without an @-mention) or the
-  `maxContinuationHops` budget is exhausted (default 6).
+- **Continuous** — after the roster drains, TaskWraith can autonomously run
+  another pass even when nobody explicitly yielded or mentioned a peer. Every
+  admitted continuation turn consumes the `maxContinuationHops` budget
+  (default 6). The loop stops on an explicit `ensemble_yield(target: 'user')`,
+  user cancellation, goal completion/block/pause, a queued user prompt or seat
+  change, no progress/administrative deadlock, or budget exhaustion.
 
 The user picks the mode via the composer's Turn / Continuous chip.
 If the round is currently running, the toggle reflects the active
@@ -262,8 +292,10 @@ Ensembles can include MULTIPLE participants of the same provider
 running DIFFERENT models — e.g. one `claude-sonnet-4-7` + one
 `claude-opus-4-7` working alongside each other. Each has a stable
 participant id, so the orchestrator can dispatch them independently.
-This is why the model-name @-tagging (above) matters: `@Sonnet 4.7`
-disambiguates from `@Opus 4.7` even though both are Claude.
+This is why the model-name @-tagging (above) matters: when those aliases are
+unique, `@Sonnet 4.7` disambiguates from `@Opus 4.7` even though both are
+Claude. Use the participant picker when aliases collide; its structured link
+preserves the exact participant id.
 
 ### Asking the user mid-round
 
@@ -272,6 +304,9 @@ decision before continuing. The modal appears, the round PAUSES on
 your turn (other participants don't get bumped forward), and the
 answer comes back as your tool result. If the user dismisses, treat
 it as "skip" and continue rather than retrying.
+
+Source-ahead Cursor cannot call this MCP tool or participate in a new run because
+TaskWraith starts no managed Cursor process.
 
 ---
 
@@ -284,8 +319,10 @@ outside the workspace, MCP elicitations):
 1. The runtime pauses the turn and emits an approval request to the
    desktop UI.
 2. An auto-deny timer arms in parallel. Current defaults are Codex 30s,
-   Kimi 60s, Claude/Gemini/Grok/Cursor/Ollama 120s, and main-authority
-   actions 60s, with special action-kind overrides such as 90s/180s.
+   Kimi 60s, Claude/Grok/Ollama 120s, and main-authority actions 60s, with
+   special action-kind overrides such as 90s/180s. Cursor and retired Gemini
+   retain 120s decode/settings compatibility values for historical records;
+   neither is selectable for a new source-ahead run.
    User-visible policy remains tunable in Settings.
 3. The first responder wins — desktop modal or timer.
 4. A decision is written to the durable Approval Ledger (Settings →
@@ -304,16 +341,20 @@ uniform provider-side caching on opaque CLI paths. When documenting or verifying
 cache behavior:
 
 - **Guaranteed (API-managed):** only where TaskWraith owns a controllable API/BYOK
-  request. Current live Claude and Kimi paths are classified as opaque,
+  request. Current Claude and runtime-admitted Kimi paths are classified as opaque,
   best-effort transports; a saved API key alone does not make them Guaranteed.
-- **Automatic (observed):** provider-managed implicit caching — record stats when
-  usage metadata includes them; do not claim breakpoint control.
-- **Best-effort (opaque CLI):** Codex/Claude Code/Kimi/Cursor/Grok CLI — record
-  cache stats only if the CLI emits them; never assert cache hits you cannot see.
+- **Automatic (observed):** Codex provider-managed caching — record cache hits
+  only when Codex reports them; TaskWraith cannot control cache breakpoints.
+- **Best-effort (opaque CLI):** Claude Code/Kimi/Grok — record cache stats only
+  if the transport emits them; never assert cache hits you cannot see.
+- **Unsupported in source-ahead:** historical Cursor usage may still decode
+  cache metadata, but TaskWraith starts no managed Cursor run. The v1.8.4
+  release classified its then-runnable opaque CLI path as Best effort.
 
 **Fork:** use `/fork` or inspector fork actions. Codex = native fork; other
-providers = **emulated fork** (linked side chat/sub-thread). Label emulated
-forks accurately in user-facing text.
+runnable providers = **emulated fork** (linked side chat/sub-thread). Label
+emulated forks accurately in user-facing text. Historical/configuration-only
+Cursor records cannot start an emulated source-ahead fork.
 
 **Worktrees:** when `workspaceMode: worktree` is active, the effective workspace
 path may differ from the sidebar checkout. Do not assume all participants share
@@ -325,8 +366,13 @@ User-facing detail: `SESSION_AND_WORKSPACE.md`.
 ## MCP
 
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
-support brokered tools. Current live run providers are Codex, Claude, Kimi,
-Grok, Cursor, and local Ollama; Gemini is historical/retired for new runs. The
+support brokered tools. Current tool-capable run providers are Codex, Claude,
+Kimi, Grok, and local Ollama when their runtime-specific admission succeeds.
+The current embedded Kimi qualification roster is empty, so packaged
+source-ahead builds reject Kimi before launch; explicit unpackaged development
+admission is labelled unattested and cannot qualify a release. Gemini is
+historical/retired for new runs. Cursor records/configuration remain decodable,
+but the source-ahead checkout starts no TaskWraith-managed Cursor process. The
 canonical list lives in
 `src/main/TaskWraithMcpTools.ts` (`TASKWRAITH_MCP_TOOLS`); the most
 relevant tools an agent reaches for during day-to-day work:
@@ -352,27 +398,29 @@ demands):**
   with **Phase J2 recall mode**.
   Inputs: `{ provider: ProviderId, prompt: string, model?: string,
   reasoningEffort?: string, kimiThinking?: boolean, returnResult?: boolean,
-  subThreadId?: string }`, constrained to live selectable providers. By default
-  (when `subThreadId` is omitted) the call spawns a fresh
-  context-isolated sub-thread under the current parent. The
+  subThreadId?: string }`, constrained to selectable providers and their current
+  runtime-admission checks. By default (when `subThreadId` is omitted) the call
+  spawns a fresh context-isolated sub-thread under the current parent. The
   tool_result includes the sub-thread id; pass that id as
   `subThreadId` on subsequent calls to **continue the same
   sub-thread** instead of spawning a new one — useful when you want
   back-and-forth conversation with a single delegated agent across
   multiple turns.
 
-  Recall validates strictly: the id must belong to a sub-thread of
-  THIS parent, match the requested `provider`, not be archived, not be
-  currently running, and have a resumable provider session. Mismatches
-  return a structured error tool_result and dispatch nothing. When
-  recall succeeds, TaskWraith injects the sub-thread's linked provider
-  session id into the dispatched run so the target provider's native
-  session resumes where that provider supports resume.
+  Recall validates strictly: the id must belong to a sub-thread of THIS parent,
+  match the requested `provider`, and not be archived. An idle child must have a
+  resumable provider session; TaskWraith injects that linked id so the native
+  session resumes where supported. If the child is already starting or running,
+  the MCP path durably queues the follow-up behind that live turn instead of
+  starting a concurrent child run. Mismatches return a structured error
+  tool_result and dispatch nothing.
 
   When `returnResult` is true (default), the sub-thread's typed terminal result
   enters the durable parent mailbox and appears as an untrusted, projection-only
-  transcript card. Join-ready results are coalesced into one parent wake; failed
-  and cancelled workers are terminal evidence rather than silent non-returns.
+  transcript card. For solo parents, join-ready results are coalesced into one
+  parent wake; failed and cancelled workers are terminal evidence rather than
+  silent non-returns. Ensemble parents currently retain the mailbox/card without
+  automatic participant-context delivery, as described under Phase F2 above.
 
   **Approval gate (Phase I1):** every call routes through TaskWraith's
   `subThreadDelegation` agentic-service policy before any sub-thread
@@ -411,7 +459,7 @@ demands):**
       })
 
       → if approved: "Spawned codex sub-thread (id=abc-123). Running
-      in the background; its final result will append to this parent
+      in the background; its typed terminal result will append to this parent
       transcript on completion.
       Reuse this id by passing subThreadId="abc-123" on the next
       delegate_to_subthread call if you want to continue the
@@ -442,8 +490,9 @@ demands):**
       })
 
       → "Continued codex sub-thread (id=abc-123). Sent your prompt as
-      a follow-up turn; the next assistant message will append to this
-      parent transcript on completion."
+      a follow-up turn; if the child is still running, TaskWraith queues
+      this turn behind it. The next typed terminal result will append to
+      this parent transcript."
 
   Use spawn when you want a fresh context-isolated sub-agent (e.g.
   parallel tasks where each sub-thread should focus on one thing).
@@ -465,9 +514,10 @@ demands):**
       a small directly advertised surface plus `capability_search` /
       `capability_invoke` for the remaining eligible catalogue. A resumable
       native session keeps the exact MCP profile it observed at birth; legacy
-      Claude sessions may retain the full profile for compatibility. Cursor and
-      Grok receive a brokered `taskwraith` surface alongside their native
-      shell/file tooling.
+      Claude sessions may retain the full profile for compatibility. Grok
+      receives a brokered `taskwraith` surface alongside its native shell/file
+      tooling. Source-ahead Cursor is excluded because TaskWraith starts no
+      managed Cursor process.
     - On the Kimi Code (ACP) transport, Electron main serves a per-run localhost
       HTTP MCP bridge. The native Kimi session files—not the bridge server—live
       in a durable, seat-isolated `KIMI_CODE_HOME`. Solo chats, delegated
@@ -487,7 +537,8 @@ demands):**
   to explicitly pass the current participant's turn to the next
   participant. `target` names a participant by id / provider /
   role / model alias. Round continues; user input is not required.
-  Universal MCP tool — every provider has access.
+  Universal within the tool-capable MCP catalogue; source-ahead Cursor has no
+  runnable seat or MCP catalogue.
 
 - `ask_user_question(question, options?, context?)` — **current
   critical surface.** Pauses the agent's turn and surfaces a modal
@@ -502,8 +553,9 @@ demands):**
   the tool returns `cancelled: true`; treat that as "skip this step"
   and continue rather than looping.
 
-- `read_subthread_result` / `list_subthreads` / `cancel_subthread` —
-  inspect + cancel sub-threads spawned via `delegate_to_subthread`.
+- `read_subthread_result` / `list_subthreads` / `cancel_subthread` — inspect
+  sub-threads spawned via `delegate_to_subthread`, cancel their queued recalled
+  follow-ups, and cancel a live child run when present.
 
 - Provider/status and editor handoff: `agent_delegation_role`,
   `create_handoff_card`, `switch_auth_profile`, `approval_status`,
@@ -590,9 +642,18 @@ pipeline.
   MCP profile. A new thread/sub-thread is needed only when the requested change
   cannot safely preserve the existing session.
 - **Durable storage is on by default.** When local chat-history persistence is
-  enabled, run events, the approval ledger, and chats survive restarts.
-  **Settings → General → Delete all chat history** removes the local chat and
-  run history; it is not a persistence on/off switch.
+  enabled, run events, the approval ledger, and chats survive restarts. In the
+  source-ahead checkout, **Settings → General → Delete all chat history**
+  removes chats, run/run-queue history, execution-graph history, the approval
+  and feedback ledgers, sub-thread mailboxes, Canvas workspaces/artifacts, Kimi
+  seat state, and the bridge subprocess log. It does not remove provider-native
+  history or provider credentials, and it is not a persistence on/off switch.
+  The v1.8.4 release did not clear the separate approval ledger.
+
+Release-sensitive code findings and bounded containment hypotheses belong in
+the tracked [Security Engineering Ledger](SECURITY_ENGINEERING_LEDGER.md), not
+only in ignored `papercuts/` or `.local-only/` notes. Preserve an entry when a
+fix lands, then add owner, status, regression evidence, and release disposition.
 
 ---
 
@@ -605,8 +666,11 @@ unshipped until it appears in the next release notes:
 - Sub-threads (Phase F1 + F2 back-propagation + F3 agent-driven
   delegation + J2 recall mode) — landed
 - **Ensemble mode** — multi-provider single-thread, with
-  ensemble_yield + @-mention auto-promotion + same-provider
-  participants + turn/continuous modes
+  ensemble_yield + unique @-mention auto-promotion + fail-closed ambiguity +
+  same-provider participants + turn/continuous modes
+- **Source-ahead routing hardening** — new-round participant selection is
+  re-resolved in Electron main; exact picker links retain participant identity
+  and ambiguous plain aliases fail closed. This is not a v1.8.4 guarantee.
 - Approval flow + timeout policy (Phase E1)
 - Approval ledger UX (Phase E2)
 - **MCP tool surface** — full canonical list in
@@ -615,15 +679,44 @@ unshipped until it appears in the next release notes:
   gates); see `THREAD_INTROSPECTION.md`.
 - Fresh tool-capable seats default to the progressive TaskWraith gateway;
   resumable native seats retain their pinned MCP profile, and legacy Claude
-  sessions may retain the full profile. Cursor and Grok keep their native
-  shell/file tools alongside the brokered `taskwraith` surface. Kimi Code
-  reaches the gateway over ACP through a per-run Electron-main local HTTP
-  bridge because ACP `session/new` rejects stdio MCP servers; its native
-  session files persist separately in the durable isolated seat. Ollama
+  sessions may retain the full profile. Managed Grok runs use the joined
+  one-shot ACP transport; `TASKWRAITH_GROK_ACP=0` now makes Grok unavailable
+  instead of reopening the retired headless path, and persistent Grok seat
+  processes remain hard-disabled. Grok keeps its native shell/file tools
+  alongside the brokered `taskwraith` surface. When its exact runtime tuple is
+  admitted, Kimi Code reaches the gateway over ACP through a per-run
+  Electron-main local HTTP bridge because ACP `session/new` rejects stdio MCP
+  servers; its native session files persist separately in the durable isolated
+  seat. The source-ahead packaged roster is currently empty. Ollama
   runs a TaskWraith-controlled local tool loop with parity where local
   capability exists, governed by the same signed permission posture and
   approval gates. Gemini is retained for historical chats and decode paths
   only. See `src/main/ProviderCapabilities.ts` and
   `src/main/mcp/McpSessionProfileFence.ts`.
+- **Source-ahead Cursor fail-closed boundary** — TaskWraith starts no managed
+  `cursor-agent` process. Exact-build review found that an authenticated CLI can
+  preload account/team hooks, managed skills/plugins, and plugin/team/bundled
+  MCP even with fresh home/config roots, an empty synthetic workspace,
+  `--disable-project-configs`, `--exclude-workspace-context`, and Plan mode.
+  Both Cursor Plan and tool modes are unavailable and unqualified pending an
+  exact-build containment canary or a stronger sandbox. Do not attribute this
+  source-ahead boundary to v1.8.4.
+- **Source-ahead `canvas_eval` audit minimisation** — the exact script is
+  transient desktop-approval data. For a human-approved execution, the durable
+  approval and Canvas-audit receipts retain a joined approval id, unkeyed
+  SHA-256 digest, lengths, and outcome, not script/result content; the digest is
+  reproducible correlation/integrity metadata, not encryption or a
+  confidentiality boundary. Auto-denial and compatibility/tool-event rows are
+  content-redacted but do not necessarily carry that full receipt. Compact and
+  paired-device surfaces cannot accept without the exact desktop review.
+  Provider assistant prose can echo the script/result into TaskWraith's
+  persisted transcript; provider-native history, provider-generated prose, and
+  opt-in debug captures are outside this guarantee, and pre-fix history is not
+  destructively rewritten.
+- **Source-ahead verification instrumentation** — provider capability probes
+  and explicitly credentialed live/release canaries are separate from normal
+  PR CI. Probe-only output is inventory, not containment proof; an unknown
+  fingerprint is not trusted. Coverage output is a manual measured baseline
+  with no threshold and is not a PR ratchet.
 
 Internal roadmap notes are intentionally kept outside the public source tree.

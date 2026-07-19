@@ -1,245 +1,218 @@
-# Kimi Code (ACP) migration — design & containment
+# Kimi Code ACP production containment
 
-Developer reference for TaskWraith's Kimi provider after the **kimi-cli → Kimi
-Code** migration (2026-07). Covers the transport change (Wire → ACP), the
-durable isolated seat, native session continuity/compaction, the HTTP MCP
-bridge, auth/usage, and the rollout gate.
+Developer reference for TaskWraith's source-ahead Kimi runtime after the
+`kimi-cli` to Kimi Code migration.
 
-> **Status:** the ACP transport is **default-ON**, gated by `TASKWRAITH_KIMI_ACP`
-> (`kimiGate.ts`; set `=0` to force it off, landing a kimi-code binary on the
-> setup-required gate). The rollout gate is **cleared** — the live containment
-> trace (see [Rollout gate](#rollout-gate)) passed every assertion against the
-> real binary: fs client-authority routing, the FetchURL/WebSearch deny wall,
-> sub-agent deny inheritance, and the B3 refusal + tripwire. A legacy Kimi CLI
-> still routes to the retained Wire path. Native `session/resume` requires a
-> Kimi Code build that advertises the ACP capability (implemented in 0.26.0);
-> older Kimi Code builds safely fall back to a fresh full-context session.
+> **Version boundary:** v1.8.4 is the released baseline. This document describes
+> the current source-ahead checkout and must not be read as a v1.8.4 guarantee.
+> The next release notes decide when this posture becomes shipped behavior.
 
-## What changed
+## Current status
 
-Moonshot replaced the Python `kimi-cli` with a TypeScript rewrite, **Kimi
-Code**. The binary keeps the name `kimi` but:
+Managed Kimi execution is ACP-only. `TASKWRAITH_KIMI_ACP` selects whether that
+transport may be considered; it is not qualification evidence. There is no
+Wire or print fallback.
 
-- moved to `~/.kimi-code/bin/kimi` (exposed only via a `~/.zshrc` PATH export —
-  invisible to a packaged launchd-PATH launch);
-- **dropped Wire mode** — the stdio server is now `kimi acp`, an
-  [Agent Client Protocol](https://agentclientprotocol.com) server;
-- moved OAuth to `~/.kimi-code`, expiring the old token;
-- renamed/removed most legacy flags (`--wire`, `--work-dir`, `--print`,
-  `--agent-file`, `--resume`, `--thinking` are all gone or renamed).
+Packaged builds additionally require an exact reviewed runtime tuple from the
+embedded qualification roster. That roster is intentionally empty today, so a
+packaged Kimi binary is blocked before capability probes or provider startup.
+An unpackaged developer may opt into explicitly labelled
+`unattested-development` admission, which is not credentialed canary evidence
+and cannot qualify a release.
 
-TaskWraith drives the new generation over ACP, riding the same neutral ACP core
-as Grok. Each durable TaskWraith seat gets its own isolated Kimi data root;
-credentials/config exist only while a process is live, while Kimi's native
-session checkpoint remains for the next turn.
+The production guarantee is deliberately scoped to TaskWraith-managed Kimi
+turns and native compaction. Explicit user-owned `kimi login` and `kimi upgrade`
+terminal handoffs are setup operations outside managed-run containment. They
+are labelled `user-owned-provider-setup` with `managedRunReady: false`; success
+does not qualify the runtime. Kimi has no bounded logout command, so TaskWraith
+does not replace it with a bare interactive Kimi session.
 
-## Generation detection (never semver)
+Managed ACP authentication is sourced only from the current `~/.kimi-code`
+home: the OAuth credential written by `kimi login`, or a provider key already
+configured in that home's `config.toml`. The encrypted Moonshot key stored in
+TaskWraith Settings is used for usage queries and is not projected into ACP.
+Legacy `~/.kimi` credentials remain usage-history compatibility only and never
+make a managed seat ready.
 
-The two generations are separate products with unrelated version sequences, so
-we **positively identify** the CLI generation from `--help`, never by semver
-(`providers/KimiFlavour.ts`):
+## OAuth refresh authority
 
-- an advertised `--wire` option → `legacy-wire` (retained Wire path);
-- otherwise an `acp` / `doctor` / `migrate` subcommand → `kimi-code` (ACP path);
-- anything else → `unsupported` (fail closed).
+Kimi Code OAuth refresh tokens are rotating and single-use. Managed OAuth seats
+therefore acquire a private, source-home keyed authority before TaskWraith
+scrubs or seeds a seat home, and hold it until the provider has closed, any
+rotated credential is committed, and runtime material is scrubbed. A second
+managed OAuth seat fails closed while that lease is live. Provider-key seats do
+not use the OAuth authority and can still run concurrently.
 
-`runKimiProvider` (`index.ts`) dispatches on this: `legacy-wire` → the Wire path;
-`kimi-code` + `kimiAcpEnabled()` → `runKimiAcpProvider`; otherwise a setup-
-required failure. It never silently falls back to a print-mode runner (Kimi
-Code's `-p/--prompt` runs under auto-approve).
+The authority snapshot and durable lease live under
+`~/.kimi-code/.taskwraith-oauth-authority-v1`. Before TaskWraith sends the first
+ACP initialize frame, it records the spawned provider PID and process-birth
+identity. After a TaskWraith crash, a new process refuses to steal the lease if
+that exact child may still be alive; otherwise it replays the durable
+`claimed`/`seeded`/`committed`/`scrubbed` state machine before ordinary isolated-
+home cleanup can remove a rotated candidate. Writeback rejects an independently
+advanced source credential, fsyncs its exact candidate digest/outcome intent,
+uses private atomic replacement, and commits the primary credential last. If
+the isolated candidate is lost after that source commit, restart can finish
+forward only when the descriptor-validated source primary matches the durable
+intent exactly. TaskWraith then scrubs and fsyncs the isolated runtime home and
+removes the durable lease only after the scrubbed marker is committed.
 
-## Transport
+This authority covers TaskWraith-managed ordinary turns and native compaction.
+User-owned `kimi login` remains outside managed-run containment and should not be
+run concurrently with a managed Kimi OAuth seat.
 
-The bidirectional JSON-RPC state machine (`initialize → session/resume` for a
-known native seat or `session/new` for a new/recovery seat, then
-`session/prompt`; `session/update` streaming, client-mediated
-`session/request_permission`, default-deny, transport keep-alive, cancellation)
-is provider-neutral and lives in `acp/AcpTurnClient.ts` — extracted from Grok's
-client so both providers share it. Grok and Kimi differ only by hooks:
+## Runtime admission
 
-| hook | Grok | Kimi |
-| --- | --- | --- |
-| `initializeParams` | fs caps **off** | fs caps **on** (client fs authority) |
-| `onInboundRequest` | — | answers `fs/read_text_file` / `fs/write_text_file` |
-| `deniedToolRecovery` | one-shot recovery prompt | none |
-| `endProcess` | `SIGINT` | **stdin EOF** (Kimi ignores SIGINT/SIGTERM) |
+`kimi/KimiRuntimeAdmission.ts` is the only production admission seam. It binds
+an executable descriptor to:
 
-On a Kimi resume, TaskWraith also re-asserts the selected model and thinking
-setting through ACP `session/set_config_option` before sending the user prompt.
-Kimi stores those choices in its native session, so process-level CLI flags
-alone are not authoritative after rehydration.
+- binary SHA-256, platform, and architecture;
+- qualification scope `acp-synthetic-cwd-gateway-v1`;
+- exact version and normalized ACP capability fingerprint;
+- posture `synthetic-cwd-gateway-v1`; and
+- reviewed attestation source.
 
-**Termination:** `kimi acp` ignores SIGINT *and* SIGTERM and exits only on stdin
-EOF. The neutral core terminates via the provider `endProcess` hook with a
-SIGKILL backstop, so no provider can hang a run — this applies on normal
-completion, cancel, *and* lifecycle errors.
+The executable is opened, hashed, and stat-bound before probing. An unknown
+packaged binary is rejected without executing `--version`, `--help`, or
+`acp --help`. A recognized tuple is probed with bounded output/time limits,
+then identity is checked again. Every managed spawn calls the branded
+`assertReadyForSpawn` callback immediately before process creation.
 
-## Containment (the A3 sandbox)
+Admission runs before ordinary managed turns, native compaction, status/auth
+inspection, and ensemble preflight. A PATH hit is not reported as a runnable
+Kimi seat. Admission proves the local executable/startup surface; it does not
+prove remote account entitlement, backend identity, or model equivalence.
 
-Kimi Code's built-in tools can't be stripped, so the seat is sandboxed instead.
-Every element is verified by the live trace (see below).
+Sealed scheduled Kimi execution is temporarily unavailable. The existing
+scheduled authority schema models the retired Wire/print controls and cannot
+bind ACP admission, synthetic cwd, and authenticated gateway posture. Mint and
+verification therefore fail closed until that signed schema is migrated.
 
-- **Isolated `KIMI_CODE_HOME`** (`kimi/KimiAcpHome.ts`, `KimiAcpContainment.ts`) —
-  a seat-scoped data root containing a per-process curated config (telemetry off,
-  migrated `[[permission.rules]] allow` stripped, empty `plugins/`+`skills/`),
-  a **deny wall** (`[[permission.rules]] deny` for the egress tools `FetchURL`,
-  `WebSearch`, `AgentSwarm` **and the server-side fs/exec escapers** `Bash`,
-  `Glob`, `Grep`), and a **0600-seeded credential** copied from the real home
-  (resolving the empty-home `-32000` auth paradox). Runtime config, credentials,
-  OAuth state, plugins, and skills are removed on every exit path (completion,
-  cancel, and synchronous setup failure); only `sessions/` and
-  `session_index.jsonl` remain. Non-chat probes still use a fully throwaway
-  per-run home. Preparation scrubs crash residue before reseeding current
-  credentials.
-- **Egress deny wall** — `FetchURL`/`WebSearch` auto-run server-side and hit
-  `api.kimi.com/coding/v1/{search,fetch}`; the static deny rule blocks them
-  before the network, survives auto/`-p` mode, and **inherits into sub-agents**.
-  (Config-omission is insufficient — `FetchURL` survives removing the moonshot
-  service; the deny rule is load-bearing.)
-- **Client fs workspace authority** (`kimi/KimiAcpClient.ts`) — the client
-  advertises fs capabilities, so built-in `Read`/`Write`/`Edit` route through
-  `fs/read_text_file` / `fs/write_text_file`, served only within the workspace
-  roots (workspace + signed external-path grants). The boundary **resolves
-  symlinks** (`realpath` of the target, or its parent for a new write, and of
-  the roots) so a workspace-internal symlink can't escape. Verified live: a
-  `Read`/`Write` of an out-of-workspace path returns `failed`.
-- **Server-side fs/exec deny wall** — the client fs authority only mediates
-  `fs/read_text_file`/`fs/write_text_file` (i.e. `Read`/`Write`/`Edit`). Kimi's
-  other file tools — `Bash`, `Glob`, `Grep` — execute INSIDE the `kimi acp`
-  process and never reach the client, so they can read **and write** absolute
-  paths outside the workspace roots (verified live: `Bash cat` leaked an outside
-  file, `Bash echo >` **wrote** one, `Glob` enumerated an outside directory —
-  each after `Read`/`Write` was correctly refused). They ride the same deny wall,
-  forcing every fs/exec operation onto an enforced door: the client fs handler
-  (`Read`/`Write`/`Edit`) or the workspace-confined TaskWraith gateway MCP
-  (`run_shell_command` / `list_directory` / `find_files` / …). Post-fix the probe
-  re-runs with every vector attempted and **denied** (`Bash`/`Glob` → `failed`).
-- **Per-tool approval policy** (`kimi/KimiToolPolicy.ts`) — matches the stdio
-  providers: read-only/safe tools auto-allow (read-only MCP + capability
-  gateway, read-only shell, native read/search), mutating tools are ledger-gated
-  on a write-capable seat and denied on a plan seat. Kimi namespaces MCP tools
-  `mcp__taskwraith__<tool>`; `isKimiSafeMcpTool` strips that prefix before the
-  membership check (a Grok-namespace classifier silently mis-classifies them).
+## Production launch composition
 
-### B3 — project config is un-sandboxable, so refuse
+`launchKimiProductionAcp` is the executable composition root. A managed launch
+must satisfy all of these conditions together:
 
-Kimi Code discovers project config from the **`session/new` cwd**, which must be
-the real workspace for the seat to work. A workspace `.kimi-code/mcp.json`
-executes arbitrary stdio servers **at session start, before any prompt or
-permission check** — outside `KIMI_CODE_HOME`, the deny wall, and the HTTP-only
-MCP surface (verified: it ran `/usr/bin/touch` at `session/new`). There is no
-CLI flag to disable project discovery, and the cwd can't be relocated. So
-`runKimiAcpProvider` **refuses the run** when the workspace carries
-`.kimi-code/mcp.json` or `.kimi-code/plugins`
-(`findUnsafeWorkspaceKimiConfig`), before building the home or spawning.
+1. An exact admitted runtime supplies the executable path.
+2. A strict seat-isolated `KIMI_CODE_HOME` is prepared under
+   `kimi-acp-seats-v2`.
+3. A fresh, private, mode-0700, empty synthetic cwd is created inside that
+   isolated home.
+4. The authenticated loopback HTTP MCP gateway starts successfully.
+5. The cwd and runtime identity are rechecked immediately before spawn.
 
-## TaskWraith MCP gateway over HTTP
+The real workspace is never the process cwd or ACP `session/new`/
+`session/resume` cwd. Project `.kimi-code` configuration in the workspace is
+therefore inert rather than something TaskWraith must scan and race before use.
+The real workspace is reachable only through TaskWraith's governed gateway.
 
-Kimi ACP's `session/new` **rejects stdio MCP servers** (it validates entries
-against an http/sse schema — `mcpCapabilities: {http, sse}`). Every other
-provider reaches the gateway over the stdio bridge, so Kimi needs an HTTP
-transport. `kimi/KimiHttpMcpBridge.ts` is a per-run localhost
-(`127.0.0.1:0`) HTTP MCP server with a random Bearer token, advertised to
-exactly one Kimi process via `session/new` or `session/resume` `mcpServers`
-(`{name, type:'http', url, headers:[{name,value}]}`). It hand-rolls JSON-RPC
-responses (no MCP SDK — the app hand-rolls MCP anyway; Kimi accepts plain
-`application/json`) and proxies every request into the existing
-`handleMcpJsonRpcMessage` gateway dispatch, so all subset filtering, tool
-guards, and broker routing are reused. The isolated home keeps this the **only**
-MCP the seat sees, and MCP tool calls are gated by `session/request_permission`
-(stronger than Grok, where MCP auto-ran).
+Production advertises `clientCapabilities: {}` and installs no ACP client
+filesystem request handler. An unsolicited `fs/*` request receives JSON-RPC
+method-not-found. This prevents a provider update from shifting workspace
+authority onto a client-fs fallback.
 
-## Auth & usage
+## Native-tool deny wall
 
-- **Sign-in:** the current Kimi Code ACP transport authenticates through
-  `kimi login` (device-code OAuth). Settings may retain a Moonshot API key for
-  legacy Wire/print paths, but that key does not authenticate an ACP seat.
-  Settings copy and `providerTerminalHandlers` use the Kimi Code subcommands
-  (`login`, `upgrade`; no `logout` subcommand). `get-kimi-auth-status` and
-  `detectConfiguredProviders` are OAuth-aware (an OAuth-only install with no API
-  key still reads configured / `oauth`).
-- **Usage:** the live `api.kimi.com/coding/v1/usages` endpoint is authoritative;
-  the credential reader tries `~/.kimi-code/credentials/kimi-code.json` first
-  (legacy `~/.kimi` fallback). Kimi Code writes **no** structured per-turn
-  `token_usage` to disk, so the on-disk activity reader is not a live source.
-- **Thinking:** rides the isolated config (`[thinking] enabled`), never the
-  dropped `--thinking` flag.
+The contained Kimi profile statically denies exactly these native tools:
 
-## Session generation fence
+| Class | Denied tools |
+| --- | --- |
+| Filesystem and execution | `Read`, `Write`, `Edit`, `Bash`, `Glob`, `Grep` |
+| Egress and fan-out | `WebSearch`, `FetchURL`, `AgentSwarm` |
 
-Wire mints bare-uuid session ids; ACP mints `session_<uuid>`. Feeding one to the
-other's resume is refused: `wireResumeSessionId` (`kimi/KimiSessionGeneration.ts`)
-only resumes a Wire-generation id on the legacy path. A Kimi Code seat is marked
-native only after ACP successfully returns its `session_<uuid>` id from
-`session/new` or `session/resume`; that marker plus the prefix gates slim prompt
-composition. Unmarked/older seats keep the legacy full-context path.
+The TOML transformer removes standing `allow` rules and rejects unsupported or
+ambiguous permission encodings. The permission mediator repeats the exact
+nine-tool deny wall as defense in depth if a provider build asks anyway. Only
+sanctioned read-only TaskWraith MCP tools auto-allow; mutating gateway tools use
+the normal signed approval/workspace-grant policy.
 
-## Native continuity and compaction
+There is no native-tool fallback when the gateway is disabled or fails to
+start. Both cases fail before provider spawn.
 
-Durable solo chats, delegated sub-threads, and each ensemble participant map to
-different stable homes under Electron `userData/kimi-acp-seats-v1/`. A normal
-continuation uses ACP `session/resume`, which rehydrates Kimi's on-disk history
-without replaying it into TaskWraith's transcript. The prompt therefore carries
-only current turn state. TaskWraith prepares a separate full-context recovery
-prompt and binds both prompts into the signed permission posture; if resume is
-unsupported or the saved checkpoint is missing, ACP opens `session/new` and
-uses only that authorized recovery prompt.
+## Authenticated HTTP MCP gateway
 
-Kimi Code's built-in `/compact` command is sent as a normal ACP
-`session/prompt` against the resumed session:
+Kimi ACP accepts HTTP/SSE MCP entries rather than TaskWraith's stdio bridge.
+`kimi/KimiHttpMcpBridge.ts` therefore creates one per-run server on
+`127.0.0.1` with a random bearer value. The exact URL and header are advertised
+only to that ACP session. Requests enter the existing TaskWraith MCP dispatch,
+so tool-catalog filtering, workspace/path checks, service policy, approvals,
+grants, and audit events remain host-authoritative.
 
-- solo chats use the visible run lane, so progress/result cards follow the
-  ordinary stream lifecycle;
-- ensemble seats use a detached, tool-denied maintenance lane and a per-seat
-  barrier, preventing the next round from racing the checkpoint rewrite;
-- compaction is resume-only and fails closed—an invalid checkpoint never turns
-  `/compact` into a fresh empty session;
-- automatic native Kimi compaction requires a classified context-overflow
-  failure. Host transcript-window and generic usage estimates are not treated
-  as native occupancy evidence.
+The Kimi process receives a positive-allowlist environment. Arbitrary runtime
+profile variables, loader/interpreter injection, and real-workspace cwd hints
+are stripped. Loopback is forced into both `NO_PROXY` and `no_proxy` so the
+bearer-bearing gateway request is not forwarded to an inherited proxy.
 
-Legacy Wire Kimi remains on host-injected context and host summary compaction.
+Opt-in ACP debug output records fixed structural metadata only: direction,
+frame kind, allowlisted method class, RPC-id presence, and numeric protocol
+error code. It never serializes params/results, bearer headers, cwd, prompts,
+or tool payloads.
 
-## Rollout gate
+## Durable continuity and posture fence
 
-The flag is default-ON; these codified live suites cleared the gate and remain the
-re-confirmation procedure (re-run after a Kimi Code upgrade or any containment
-change — both drive real `kimi acp` turns and skip in ordinary CI):
+Each solo chat, delegated child, and ensemble participant has a distinct
+seat-isolated home. Runtime credentials/config are scrubbed on every terminal
+path. Only the recursively verified continuity allowlist (`sessions/` and
+`session_index.jsonl`) may survive a strict durable cleanup.
 
-```bash
-KIMI_ACP_LIVE_TRACE=1 npx vitest run \
-  src/main/kimi/KimiAcpContainment.live.test.ts \
-  src/main/kimi/KimiAcpEscapeProbe.live.test.ts
-```
+Native resume requires all of the following:
 
-- **`KimiAcpContainment.live.test.ts`** — asserts fs-routing, the out-of-workspace
-  boundary, egress denial, sub-agent deny inheritance, and the B3 refusal +
-  unguarded-execution tripwire.
-- **`KimiAcpEscapeProbe.live.test.ts`** — the adversarial escape probe: plants
-  unique canaries OUTSIDE the workspace and drives the most-permissive realistic
-  seat to reach them via `Bash`/`Glob`/`find`/`cat` and a shell **write**;
-  asserts every vector is denied (proves the fs/exec deny wall, not just the
-  client-fs `Read`/`Write` boundary). **Liveness caveat:** an empty-completions
-  Kimi (expired/unentitled token) makes every "denied" assertion pass vacuously —
-  confirm the containment trace's assertion #1 (built-in `Read` returns the
-  canary) is green in the same run before trusting a pass.
+- a Kimi `session_...` identity;
+- the exact persisted posture marker `synthetic-cwd-gateway-v1`; and
+- the same seat-isolated durable state.
+
+Legacy/unmarked seats cold-start with full authorized context. They are never
+resumed into the new boundary. The v1 seat root is retired.
+
+Kimi's native `/compact` runs through the same admitted ACP composition. It is
+resume-only, tool-denied, synthetic-cwd based, and uses the authenticated
+gateway. Timeout handling requests graceful termination, applies a SIGKILL
+backstop, and quarantines seat resources if the process has not closed; cleanup
+and seat release occur only after the close boundary.
+
+## Terminal and cleanup semantics
+
+The neutral ACP core treats process `error` as a request to terminate, not as a
+cleanup boundary. Terminal projection happens exactly once on `close`.
+Production cleanup joins duplicate callbacks, retries strict removal once, and
+runs before transcript/usage terminal projection and run-manager finish.
+Cleanup failure produces a failed terminal result rather than silently leaving
+credential-bearing residue.
+
+The joined cleanup covers the private cwd, ephemeral home material, and HTTP
+gateway. Gateway disablement, bridge startup failure, runtime identity change,
+history-clear admission loss, normal completion, cancellation, process error,
+and native compaction all use the same fail-closed lifecycle.
+
+## Release qualification
+
+The protected provider canary runs on a fresh GitHub-hosted `macos-15` worker.
+Its reviewed Kimi scope is `acp-synthetic-cwd-gateway-v1`, and its sole
+allowlisted suite is `KimiProductionContainment.live.test.ts` with 16 exact
+assertion names. The suite proves private process/session cwd, no ACP client fs,
+and forces each of the nine native tools to produce a structured terminal denial
+with the same tool-call id. It also proves authenticated gateway-only workspace access,
+legacy-posture cold start, strict teardown, and pre-spawn gateway failure.
+
+Qualification evidence may be produced for review, but strict packaged/release
+admission remains red until the reviewed tuple is intentionally projected into
+the embedded roster. Ordinary CI and this documentation do not convert a
+skipped or unattested live run into a pass.
 
 ## Key files
 
 | Concern | Module |
 | --- | --- |
-| Generation probe | `providers/KimiFlavour.ts` |
-| Neutral ACP core | `acp/AcpTurnClient.ts`, `acp/AcpProtocol.ts` |
-| Kimi ACP client (fs authority) | `kimi/KimiAcpClient.ts` |
-| Durable isolated seat + B3 refusal | `kimi/KimiAcpSeatState.ts`, `kimi/KimiAcpHome.ts`, `kimi/KimiAcpContainment.ts` |
-| Deny wall (egress + fs/exec escapers) | `kimi/KimiAcpContainment.ts` (`KIMI_ACP_DENY_TOOLS`) |
-| Live escape probe | `kimi/KimiAcpEscapeProbe.live.test.ts` |
-| HTTP MCP bridge | `kimi/KimiHttpMcpBridge.ts` |
-| Per-tool approval policy | `kimi/KimiToolPolicy.ts` |
-| Generation fence | `kimi/KimiSessionGeneration.ts` |
-| Native prompt/fallback composition | `PromptComposition.ts`, `services/ComposerService.ts`, `services/EnsembleOrchestrator.ts` |
-| Native compaction lanes | `index.ts` (`runKimiAcpProvider`, `compactKimiProviderContext`) |
-| Credential paths | `providers/KimiCredential.ts` |
-| Flag | `kimiGate.ts` |
-| Provider dispatch + glue | `index.ts` (`runKimiProvider`, `runKimiAcpProvider`) |
-| Live containment gate | `kimi/KimiAcpContainment.live.test.ts` |
+| Runtime qualification/admission | `kimi/KimiRuntimeAdmission.ts` |
+| Executable production composition | `kimi/KimiProductionContainment.ts` |
+| Neutral ACP lifecycle | `acp/AcpTurnClient.ts`, `acp/AcpProtocol.ts` |
+| Kimi ACP adapter (no client fs) | `kimi/KimiAcpClient.ts` |
+| Strict isolated home | `kimi/KimiAcpHome.ts`, `kimi/KimiAcpSeatState.ts` |
+| OAuth lease, rotation CAS, and crash replay | `kimi/KimiOAuthCredentialLease.ts` |
+| Config transform and nine-tool deny wall | `kimi/KimiAcpContainment.ts` |
+| Permission defense in depth | `kimi/KimiToolPolicy.ts` |
+| Authenticated loopback gateway | `kimi/KimiHttpMcpBridge.ts` |
+| Managed turn and native compaction call sites | `index.ts` |
+| Posture marker | `shared/kimiAcpPosture.ts` |
+| Reviewed live evidence | `kimi/KimiProductionContainment.live.test.ts` |
+| Canary runner | `scripts/provider-containment-canary.cjs` |

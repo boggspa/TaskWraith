@@ -9,6 +9,12 @@ storage locations, and artifact verification commands, see
 [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md). This file focuses on development and
 release hygiene.
 
+Open, release-sensitive code findings and bounded containment hypotheses are
+tracked in [SECURITY_ENGINEERING_LEDGER.md](SECURITY_ENGINEERING_LEDGER.md).
+Treat its `Block` dispositions as release-candidate gates; continue to report
+new vulnerabilities privately rather than placing exploit details in the
+ledger.
+
 ## Supported Security Posture
 
 - Public builds should be traceable to a tag, changelog entry, and release
@@ -99,8 +105,9 @@ affected component and contact request.
   underlying Apple ID password.
 - macOS public artifacts should be Developer ID signed, notarized, stapled, and
   validated with Gatekeeper/update-feed checks before release upload.
-- Unsigned Windows and Linux artifacts should be produced by explicit GitHub
-  Actions workflows and labelled as unsigned in release notes.
+- Manual unsigned Windows and Linux test builds are SHA/run-labelled GitHub
+  Actions artifacts only. Those jobs have no release-write permission and must
+  never upload or replace GitHub Release assets.
 - CI release jobs should run dependency security checks before packaging or
   notarization.
 - If a supply-chain incident may have affected a machine or CI run, pause

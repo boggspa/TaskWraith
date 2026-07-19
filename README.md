@@ -15,6 +15,9 @@ companion. TaskWraith keeps its orchestration, local history, and workspace
 authority on the user's machine; prompts and run context still go to whichever
 cloud provider the user selects.
 
+Read [POSITIONING.md](POSITIONING.md) for the concise product promise, claim
+boundaries, topology decision guide, and recommended small Ensemble panels.
+
 > **iOS companion status:** TaskWraith for iPhone/iPad is in **TestFlight beta**.
 > It is a **Mac companion** — it pairs with TaskWraith on macOS over an
 > end-to-end-encrypted connection to monitor runs, approve actions, and reply
@@ -32,13 +35,24 @@ cloud provider the user selects.
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
 of living in separate tabs. A thread can include up to twenty named participants
-across Codex, Claude, Kimi, Grok, Cursor, and local Ollama, each with its own
+across Codex, Claude, Kimi, Grok, and local Ollama, each with its own
 model, role, order, and permission posture.
+
+Kimi seats additionally require exact runtime admission. The source-ahead
+packaged qualification roster is currently empty, so packaged builds reject
+Kimi before launch; an explicit unpackaged developer admission is labelled
+unattested and cannot qualify a release.
+
+Cursor records and configuration interchange remain readable, but the
+source-ahead checkout starts no TaskWraith-managed Cursor process. Both Cursor
+Plan and tool modes are unavailable/unqualified pending stronger containment
+evidence or a sandbox that excludes provider-managed startup extensions.
 
 This is not just provider switching. Ensemble participants see the same
 transcript, can build on each other's work, hand off deliberately, run
-turn-bound or continuous rounds, fan out in parallel, and use TaskWraith's
-workspace tools under the same local approval and audit model. In practice, a
+turn-bound or continuous rounds, and fan out in parallel. Qualified tool-capable
+participants can use TaskWraith's workspace tools under the same local approval
+and audit model. In practice, a
 single thread can hold a planner, implementer, adversarial reviewer, docs writer,
 and local-model scout without losing the workspace timeline or review trail.
 
@@ -134,9 +148,13 @@ baseline.
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
 - **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Grok,
-  Cursor, and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
+  and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
   presets).
-  Historical Gemini chats remain readable, but Gemini is retired for new runs.
+  Kimi's integrated surface is admission-dependent: the current source-ahead
+  packaged roster contains no commissioned runtime tuple, so credentials or a
+  visible picker row alone cannot make it runnable.
+  Historical Gemini and Cursor records remain readable, but neither provider is
+  available for a new source-ahead run.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.
@@ -152,8 +170,8 @@ baseline.
   do not grant agent access or inject content into a run.
 - **Thread Goals**: Set a persistent objective with `/goal <objective>` or the
   composer goal control. Codex uses native goal state when the installed runtime
-  exposes it; every provider gets a TaskWraith-managed fallback with explicit
-  complete/blocked lifecycle tools.
+  exposes it; qualified tool-capable providers get a TaskWraith-managed fallback
+  with explicit complete/blocked lifecycle tools.
 - **Composer Shells**: Provider-aware and task-oriented composer variants give
   each working mode its own affordances without changing the safety model. See
   [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md) for the Electron shell gallery.
@@ -165,8 +183,8 @@ baseline.
   participants, role/order control, turn-bound or continuous orchestration,
   optional parallel fan-out, cross-provider handoffs, a shared Blackboard for
   cross-agent notes (composer quick-access popover plus full add/delete in the
-  Notes pane), and TaskWraith MCP tools shared under one auditable workspace
-  policy.
+  Notes pane), and TaskWraith MCP tools shared among qualified tool-capable seats
+  under one auditable workspace policy.
 - **Agent Pool**: Save reusable agents in Settings, each with a linked
   provider/model/reasoning configuration and running contribution stats (runs,
   threads, tokens, tool calls, work time), then drag them into ensemble rosters.
@@ -179,7 +197,9 @@ baseline.
   policy gates as cloud providers.
 - **Custom MCP Servers**: User-defined MCP servers can be managed, validated,
   imported, exported, and attached to compatible provider runtimes with
-  provider-specific JSON/TOML snippets and readiness checks.
+  provider-specific JSON/TOML snippets and readiness checks. Source-ahead Cursor
+  import/export is configuration interchange only; TaskWraith starts no managed
+  Cursor process.
 - **Activity Review**: Live activity viewport for in-flight tools and thinking,
   compact timelines, durations, and raw event inspection.
 - **AI Close-Out Summaries**: Run and ensemble-round close-out cards show

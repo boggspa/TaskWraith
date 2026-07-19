@@ -32,14 +32,21 @@ Responsible for the UI:
 2. Main process verifies workspace safety, resolves the effective provider
    (including paused-provider failover and retired-provider fallback), applies
    active goal context, and starts the selected provider command, SDK,
-   app-server, or Ollama harness. Live selectable providers are Codex, Claude,
-   Kimi, Grok, Cursor, and local Ollama; Gemini is retained for historical
-   chats and decode paths only. Kimi Code runs over its `kimi acp` (Agent Client
-   Protocol) transport inside a seat-isolated `KIMI_CODE_HOME`. Chats,
+   app-server, or Ollama harness. Architecturally supported selectable provider
+   ids are Codex, Claude, Kimi, Grok, and local Ollama, but a run still requires
+   provider-specific admission. Gemini and Cursor are retained for historical
+   chats/configuration and decode paths only; source-ahead Cursor dispatch
+   returns a typed security-unavailable result without starting a process. Kimi
+   Code, when admitted, runs over its `kimi acp` (Agent Client Protocol)
+   transport inside a seat-isolated `KIMI_CODE_HOME`. Chats,
    delegated sub-threads, and ensemble participants use durable seat homes and
    native ACP session resume; legacy probes may still use a per-run home. ACP
-   is default-ON behind the `TASKWRAITH_KIMI_ACP` flag (set `=0` to force it
-   off) — see
+   is the only managed Kimi transport. `TASKWRAITH_KIMI_ACP` only decides
+   whether ACP may be considered; setting it to `0` makes Kimi unavailable and
+   never opens a Wire/print fallback. Packaged source-ahead builds currently
+   carry an empty reviewed runtime roster, so they reject Kimi before launch;
+   only unpackaged development can use the explicitly labelled, non-release-
+   qualifying admission path. See
    [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Sensitive actions route through TaskWraith policy, approval ledgers, and
@@ -66,12 +73,17 @@ Responsible for the UI:
 
 Ensemble rounds are coordinated by `EnsembleOrchestrator` in the main process.
 The orchestrator dispatches one participant at a time, supports explicit
-`ensemble_yield` handoffs and `@mention` auto-promotion, and terminates when the
-rotation queue is exhausted. A shared liveness guard (`ensembleRoundLifecycle`)
-prevents stale round records from keeping the composer busy after the actual
-work has finished. Transcript mention chips resolve through the same alias-aware
-shared tokenizer used for routing, so displayed labels match the participant
-role or model alias the user typed.
+`ensemble_yield` handoffs and uniquely resolved `@mention` auto-promotion, and
+terminates when the rotation queue is exhausted. Ambiguous in-round aliases
+emit a warning and make no promotion. A shared liveness guard
+(`ensembleRoundLifecycle`) prevents stale round records from keeping the
+composer busy after the actual work has finished. Plain mention highlighting
+and routing share the alias-aware tokenizer, but the renderer is not a dispatch
+authority. In the source-ahead
+checkout, the desktop picker writes a structured participant-id link and main
+re-resolves every desktop/remote direct prompt against the canonical roster;
+ambiguous plain aliases and stale structured ids fail before launch. This
+main-authoritative routing hardening is newer than the v1.8.4 release baseline.
 
 ## Evidence Packs and Capability Ledger
 
