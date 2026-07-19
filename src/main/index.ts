@@ -28247,6 +28247,20 @@ async function executeGeminiMcpTool(
               options: record.options,
               context: record.context
             })
+            // OS-level attention when the desktop window is not focused —
+            // complements the in-app banner/sidebar glow for users on another
+            // app (APNs already covers paired phones).
+            try {
+              if (!mainWindow.isFocused()) {
+                if (process.platform === 'darwin') {
+                  app.dock?.bounce('informational')
+                } else {
+                  mainWindow.flashFrame(true)
+                }
+              }
+            } catch {
+              // Attention is best-effort; never block the parked tool call.
+            }
           } else if (!bridgeBroadcasterRef) {
             // No renderer and no remote projection broadcaster means
             // no user surface can answer this prompt. Preserve the old
