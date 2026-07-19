@@ -1,5 +1,6 @@
 import { spawn } from 'child_process'
-import { delimiter, dirname, extname, join } from 'path'
+import { delimiter, extname, join } from 'path'
+import { cliBinaryNameCandidates, getCliSearchDirs } from './CliSearchDirs'
 import { promises as fs } from 'fs'
 import os from 'os'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from '../mcp/McpToolProfiles'
@@ -120,60 +121,11 @@ export async function fileExists(candidate: string): Promise<boolean> {
   }
 }
 
-export function getCliSearchDirs(
-  binaryPath?: string | null,
-  inheritedEnv: Readonly<Record<string, string | undefined>> = process.env
-): string[] {
-  const windowsDirs =
-    process.platform === 'win32'
-      ? [
-          inheritedEnv.APPDATA ? join(inheritedEnv.APPDATA, 'npm') : '',
-          inheritedEnv.LOCALAPPDATA
-            ? join(inheritedEnv.LOCALAPPDATA, 'Microsoft', 'WindowsApps')
-            : '',
-          inheritedEnv.LOCALAPPDATA ? join(inheritedEnv.LOCALAPPDATA, 'Programs') : '',
-          inheritedEnv.USERPROFILE ? join(inheritedEnv.USERPROFILE, 'scoop', 'shims') : '',
-          inheritedEnv.ProgramFiles ? join(inheritedEnv.ProgramFiles, 'nodejs') : '',
-          inheritedEnv.ProgramData ? join(inheritedEnv.ProgramData, 'chocolatey', 'bin') : '',
-          'C:\\Program Files\\nodejs',
-          'C:\\ProgramData\\chocolatey\\bin'
-        ]
-      : []
-  const dirs = [
-    binaryPath ? dirname(binaryPath) : '',
-    ...(inheritedEnv.PATH || '').split(delimiter),
-    ...windowsDirs,
-    join(os.homedir(), '.local', 'bin'),
-    join(os.homedir(), '.npm-global', 'bin'),
-    join(os.homedir(), '.bun', 'bin'),
-    join(os.homedir(), '.cargo', 'bin'),
-    '/opt/homebrew/opt/ripgrep/bin',
-    '/opt/homebrew/bin',
-    '/usr/local/opt/ripgrep/bin',
-    '/usr/local/bin',
-    '/usr/bin',
-    '/bin',
-    '/usr/sbin',
-    '/sbin'
-  ].filter(Boolean)
-
-  return Array.from(new Set(dirs))
-}
-
-export function cliBinaryNameCandidates(binaryName: string): string[] {
-  if (process.platform !== 'win32' || extname(binaryName)) {
-    return [binaryName]
-  }
-  const pathExts = (process.env.PATHEXT || '.COM;.EXE;.BAT;.CMD')
-    .split(';')
-    .map((entry) => entry.trim().toLowerCase())
-    .filter(Boolean)
-  const candidates = [binaryName]
-  for (const ext of pathExts) {
-    candidates.push(`${binaryName}${ext}`)
-  }
-  return Array.from(new Set(candidates))
-}
+// Extracted to ./CliSearchDirs so electron-free modules (HostToolResolver, and
+// through it NativeCapabilities) can use them without importing AppStore.
+// Imported (not just re-exported) because this module calls both internally —
+// a bare `export ... from` would not bind the names in local scope.
+export { cliBinaryNameCandidates, getCliSearchDirs }
 
 export function createCliSpawnPlan(command: string, args: string[]): CliSpawnPlan {
   const ext = extname(command).toLowerCase()
