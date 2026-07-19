@@ -231,6 +231,18 @@ public enum TWTheme {
         guard let provider else { return false }
         return retiredProviderIds.contains(provider.lowercased())
     }
+
+    /// Canonical providers that may be offered for a new remote run. Cursor
+    /// remains decodable/renderable but is excluded until its startup surfaces
+    /// can be contained by an exact-build qualification.
+    public static let liveSelectableProviderIds: Set<String> = [
+        "codex", "claude", "kimi", "grok", "ollama",
+    ]
+
+    public static func isLiveSelectableProvider(_ provider: String?) -> Bool {
+        guard let provider else { return false }
+        return liveSelectableProviderIds.contains(provider.lowercased())
+    }
 }
 
 extension Color {

@@ -165,6 +165,16 @@ struct Composer: View {
     private var canChangeProvider: Bool {
         allowsProviderChange ?? (newTaskWorkspaceId != nil)
     }
+    private var providerAdmission: ComposerProviderAdmission {
+        resolveComposerProviderAdmission(
+            selectedProvider: selectedProvider,
+            cardProvider: card.provider,
+            canChangeProvider: canChangeProvider,
+            isNewTask: newTaskWorkspaceId != nil)
+    }
+    private var providerUnavailableReason: String? {
+        providerAdmission.unavailableReason
+    }
     private var cardSelectedModelId: String? {
         guard let selected = nonEmpty(card.selectedModelType), selected != "default" else {
             return nil
@@ -251,13 +261,18 @@ struct Composer: View {
         #endif
     }
     private var canQueueCurrentPrompt: Bool {
-        isRunActive && newTaskWorkspaceId == nil && !isEmpty && !hasImageAttachments
+        providerAdmission.isLive
+            && isRunActive && newTaskWorkspaceId == nil && !isEmpty && !hasImageAttachments
     }
     private var canScheduleFromThisComposer: Bool {
-        !card.isEnsemble
+        providerAdmission.isLive
+            && !card.isEnsemble
             && ((newTaskWorkspaceId?.isEmpty == false) || !(card.workspaceId ?? "").isEmpty)
     }
     private var scheduleValidationReason: String? {
+        if let providerUnavailableReason {
+            return providerUnavailableReason
+        }
         if card.isEnsemble {
             return "Ensemble scheduling is not available on iOS yet."
         }
@@ -288,20 +303,28 @@ struct Composer: View {
                     .compactMap { $0?.lowercased() }
                     .filter { !$0.isEmpty })
         return keys
-            .filter { !TWTheme.isRetiredProvider($0) }
+            .filter { TWTheme.isLiveSelectableProvider($0) }
             .map { liveByProvider[$0] ?? ProviderModelCatalog(provider: $0, models: []) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
     private static let fallbackProviderIds = [
-        // gemini retired — never offered as a selectable provider on iOS.
-        "codex", "claude", "kimi", "grok", "cursor", "ollama",
+        // Historical/unqualified providers are never offered for new iOS runs.
+        "codex", "claude", "kimi", "grok", "ollama",
     ]
 
     var body: some View {
         // CS12: input-owning shells gap the framed input from the bare control
         // row below it (desktop flex-column gap); others stay flush (spacing 0).
         VStack(alignment: .leading, spacing: shell.layout.inputOwnsSurface ? 6 : 0) {
+            if let providerUnavailableReason {
+                Label(providerUnavailableReason, systemImage: "exclamationmark.shield")
+                    .font(.caption)
+                    .foregroundStyle(TWTheme.statusAttention)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 8)
+                    .accessibilityLabel(providerUnavailableReason)
+            }
             if shell.layout.controlsBelowTextarea {
                 // CS10: text input first, control row BELOW it (codex/claude/…
                 // desktop parity). No hairline — the controls float under the
@@ -733,7 +756,8 @@ struct Composer: View {
         .buttonStyle(.plain)
         .disabled(!canScheduleFromThisComposer)
         .accessibilityLabel("Schedule message")
-        .accessibilityHint("Opens scheduling options for this message.")
+        .accessibilityHint(
+            providerUnavailableReason ?? "Opens scheduling options for this message.")
     }
 
     /// Context-window fill for the donut left of the send button — the phone
@@ -833,6 +857,10 @@ struct Composer: View {
         }
         .disabled(isRunActive ? !canCancelRun : sendDisabled)
         .accessibilityLabel(isRunActive ? "Stop run" : "Send message")
+        .accessibilityHint(
+            isRunActive
+                ? "Stops the active run."
+                : (providerUnavailableReason ?? "Sends this message to the selected provider."))
     }
 
     private var primaryActionColor: Color {
@@ -851,7 +879,7 @@ struct Composer: View {
         if let workspaceId = newTaskWorkspaceId, workspaceId.isEmpty {
             return true
         }
-        return emptyContent
+        return emptyContent || !providerAdmission.isLive
     }
 
     private func insertMention(_ candidate: MentionCandidate) {
@@ -946,6 +974,7 @@ struct Composer: View {
     #endif
 
     private func sendCurrent() {
+        guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         #if canImport(UIKit)
             let encoded = attachments.prefix(twMaxComposerImageAttachments).compactMap {
@@ -1031,6 +1060,7 @@ struct Composer: View {
     }
 
     private func queueCurrent() {
+        guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !hasImageAttachments else { return }
         if card.isEnsemble {
@@ -1051,6 +1081,7 @@ struct Composer: View {
     }
 
     private func scheduleCurrent(runAt: Date) {
+        guard providerAdmission.isLive else { return }
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !hasImageAttachments, canScheduleFromThisComposer else { return }
         let formatter = ISO8601DateFormatter()

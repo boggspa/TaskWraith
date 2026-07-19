@@ -40,15 +40,15 @@ struct EnsembleRosterStrip: View {
 
     @ViewBuilder
     private func chip(_ participant: RemoteEnsembleState.Participant) -> some View {
-        let retired = TWTheme.isRetiredProvider(participant.provider)
+        let unavailable = !TWTheme.isLiveSelectableProvider(participant.provider)
         let modelId = modelForParticipant(participant)
         let accent =
-            retired
+            unavailable
             ? TWTheme.textMuted
             : TWTheme.providerAccent(participant.provider, modelId: modelId)
-        let isActive = !retired && participant.participantId == state.activeParticipantId
+        let isActive = !unavailable && participant.participantId == state.activeParticipantId
         HStack(spacing: 4) {
-            if retired {
+            if unavailable {
                 Image(systemName: "lock.fill").font(.system(size: 7))
             } else {
                 Circle()
@@ -63,14 +63,14 @@ struct EnsembleRosterStrip: View {
             )
             .font(.caption2.weight(isActive ? .bold : .medium))
             .lineLimit(1)
-            .strikethrough(retired, color: TWTheme.textMuted)
+            .strikethrough(unavailable, color: TWTheme.textMuted)
         }
         .padding(.horizontal, 8)
         .padding(.vertical, 3)
         .background(accent.opacity(isActive ? 0.22 : 0.10), in: Capsule())
         .overlay(Capsule().strokeBorder(accent.opacity(isActive ? 0.6 : 0.25)))
         .foregroundStyle(isActive ? accent : TWTheme.textSecondary)
-        .opacity(retired ? 0.5 : 1)
+        .opacity(unavailable ? 0.5 : 1)
     }
 
     private func statusColor(_ status: String?, accent: Color) -> Color {

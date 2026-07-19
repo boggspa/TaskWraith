@@ -5663,7 +5663,7 @@ public struct EditableRosterStrip: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
+            .filter { TWTheme.isLiveSelectableProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
@@ -5782,14 +5782,14 @@ public struct EditableRosterStrip: View {
     }
 
     private func chip(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
-        let retired = TWTheme.isRetiredProvider(entry.provider)
+        let unavailable = !TWTheme.isLiveSelectableProvider(entry.provider)
         let accent =
-            retired
+            unavailable
             ? TWTheme.textMuted
             : TWTheme.providerAccent(entry.provider, modelId: entry.model)
         let status = roundStatus(for: entry.id)
-        let isActive = !retired && (status == "running" || state?.activeParticipantId == entry.id)
-        let live = entry.enabled && !retired
+        let isActive = !unavailable && (status == "running" || state?.activeParticipantId == entry.id)
+        let live = entry.enabled && !unavailable
         let labelColor: Color = live ? accent : TWTheme.textMuted
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
@@ -5800,7 +5800,7 @@ public struct EditableRosterStrip: View {
             model.rosterPresented = true
         } label: {
             HStack(spacing: 5) {
-                if retired {
+                if unavailable {
                     Image(systemName: "lock.fill")
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(TWTheme.textMuted)
@@ -5812,7 +5812,7 @@ public struct EditableRosterStrip: View {
                     .font(.caption2.weight(isActive ? .bold : .semibold))
                     .foregroundStyle(labelColor)
                     .lineLimit(1)
-                    .strikethrough(retired, color: TWTheme.textMuted)
+                    .strikethrough(unavailable, color: TWTheme.textMuted)
                 if entry.isBossman {
                     Image(systemName: "crown.fill")
                         .font(.system(size: 9, weight: .semibold))
@@ -5856,7 +5856,7 @@ public struct EditableRosterStrip: View {
         var parts = [title]
         if entry.isBossman { parts.append("boss") }
         if entry.isSecondInCommand { parts.append("captain") }
-        if !entry.enabled || TWTheme.isRetiredProvider(entry.provider) {
+        if !entry.enabled || !TWTheme.isLiveSelectableProvider(entry.provider) {
             parts.append("disabled")
         }
         if let status, !status.isEmpty {
@@ -9185,7 +9185,7 @@ struct SideChatsPanel: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
+            .filter { TWTheme.isLiveSelectableProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
     private var createCatalog: ProviderModelCatalog? {

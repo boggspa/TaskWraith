@@ -198,7 +198,11 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   the no-space alias form ("@CodeReviewer") which the Mac's
   EnsembleMentionAlias already resolves (it registers concat variants).
   Transcript previews colorize known participant mentions with the
-  participant's provider accent (conservative exact-alias matching).
+  participant's provider accent (conservative exact-alias matching). The phone
+  currently sends alias text rather than an exact participant-id link, so
+  source-ahead Mac builds accept it only when it identifies one enabled seat;
+  an alias shared by multiple seats is rejected. Use a unique role/model alias
+  for same-provider rosters until iOS carries structured picker identity.
 
 ## v0.10 — transcript fidelity (markdown + tool cards)
 

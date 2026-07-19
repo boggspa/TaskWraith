@@ -23,7 +23,19 @@ struct FirstLaunchSheetView: View {
         let usageByProvider = Dictionary(
             uniqueKeysWithValues: (model.modelUsage?.providers ?? []).map { ($0.provider, $0) })
         return ["codex", "claude", "kimi", "cursor", "grok", "ollama"].map { provider in
-            ProviderDisplay(
+            if provider == "cursor" {
+                return ProviderDisplay(
+                    id: provider,
+                    label: TWTheme.providerLabel(provider),
+                    optional: true,
+                    statusKind: "notObservable",
+                    statusText: "Managed runs unavailable",
+                    detail: "TaskWraith starts no managed Cursor process while provider-managed startup surfaces remain unqualified.",
+                    setupHint: "Use another provider while exact-build containment qualification is pending.",
+                    usageWindows: []
+                )
+            }
+            return ProviderDisplay(
                 id: provider,
                 label: TWTheme.providerLabel(provider),
                 optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),

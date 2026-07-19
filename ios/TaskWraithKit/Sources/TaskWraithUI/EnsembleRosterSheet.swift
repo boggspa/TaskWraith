@@ -53,7 +53,7 @@ public struct EnsembleRosterSheet: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
+            .filter { TWTheme.isLiveSelectableProvider($0.provider) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
@@ -456,8 +456,8 @@ public struct EnsembleRosterSheet: View {
     }
 
     private func participantRow(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
-        let retired = TWTheme.isRetiredProvider(entry.provider)
-        let accent = retired ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
+        let unavailable = !TWTheme.isLiveSelectableProvider(entry.provider)
+        let accent = unavailable ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
         let status = roundStatus(for: entry.id)
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         let subtitle = "\(TWTheme.providerLabel(entry.provider)) · \(entry.model ?? "CLI Default")"
@@ -469,7 +469,7 @@ public struct EnsembleRosterSheet: View {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
                     .foregroundStyle(entry.enabled ? TWTheme.textPrimary : TWTheme.textMuted)
-                    .strikethrough(retired, color: TWTheme.textMuted)
+                    .strikethrough(unavailable, color: TWTheme.textMuted)
                 Text(subtitle)
                     .font(.caption2)
                     .foregroundStyle(TWTheme.textMuted)
@@ -526,7 +526,7 @@ public struct EnsembleRosterSheet: View {
         _ entry: RemoteSessionModel.RosterDraftEntry
     ) -> String {
         var parts: [String] = []
-        if !entry.enabled || TWTheme.isRetiredProvider(entry.provider) {
+        if !entry.enabled || !TWTheme.isLiveSelectableProvider(entry.provider) {
             parts.append("disabled")
         } else {
             parts.append("enabled")
