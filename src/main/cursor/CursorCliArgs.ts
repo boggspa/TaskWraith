@@ -219,8 +219,17 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  * normalization; a requested model is always coerced to a concrete Cursor id,
  * and an absent model falls back to Cursor's own account default (no `--model`).
  */
-export function buildContainedCursorReadOnlyArgv(
-  input: BuildContainedCursorReadOnlyArgvInput
+/**
+ * Shared contained-argv base. `readOnlyMode` is `'ask'`/`'plan'` for a read-only
+ * seat (adds `--mode`), or `null` for a write-capable seat (Cursor's DEFAULT mode
+ * exposes write+shell tools — no `--mode`). Containment is identical either way:
+ * `--sandbox enabled` (native OS sandbox — blocks writes to $HOME, allows the
+ * workspace), `--skip-worktree-setup`, and the end-of-options `--` prompt guard.
+ * NEVER `--force`/`--yolo`/`--approve-mcps`/`--api-key`/`--sandbox disabled`.
+ */
+function buildContainedCursorArgv(
+  input: { workspace: string; prompt: string; model?: string | null },
+  readOnlyMode: 'ask' | 'plan' | null
 ): string[] {
   return [
     '-p',
@@ -229,8 +238,7 @@ export function buildContainedCursorReadOnlyArgv(
     '--trust',
     '--sandbox',
     'enabled',
-    '--mode',
-    input.mode ?? 'ask',
+    ...(readOnlyMode ? ['--mode', readOnlyMode] : []),
     '--skip-worktree-setup',
     ...(input.model ? ['--model', normalizeCliProviderModel('cursor', input.model)] : []),
     '--workspace',
@@ -244,4 +252,29 @@ export function buildContainedCursorReadOnlyArgv(
     '--',
     input.prompt
   ]
+}
+
+export function buildContainedCursorReadOnlyArgv(
+  input: BuildContainedCursorReadOnlyArgvInput
+): string[] {
+  return buildContainedCursorArgv(input, input.mode ?? 'ask')
+}
+
+export interface BuildContainedCursorWriteArgvInput {
+  workspace: string
+  prompt: string
+  model?: string | null
+}
+
+/**
+ * Write-capable contained Cursor launch surface. Cursor's DEFAULT mode (no
+ * `--mode`) exposes its write + shell tools; the ONLY containment is the native
+ * `--sandbox enabled` (validated to block writes to $HOME while allowing the
+ * workspace) plus the `--` prompt guard. It NEVER emits `--force`/`--yolo`/
+ * `--approve-mcps`/`--api-key`/`--sandbox disabled`.
+ */
+export function buildContainedCursorWriteArgv(
+  input: BuildContainedCursorWriteArgvInput
+): string[] {
+  return buildContainedCursorArgv(input, null)
 }

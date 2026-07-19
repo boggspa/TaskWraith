@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest'
 import {
   buildContainedCursorReadOnlyArgv,
+  buildContainedCursorWriteArgv,
   buildCursorCliArgs,
   buildCursorProviderCliArgs,
   cursorWriteCapable
@@ -417,5 +418,47 @@ describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)'
       const args = buildContainedCursorReadOnlyArgv({ ...base, model })
       expect(args).not.toContain('--model')
     }
+  })
+})
+
+describe('buildContainedCursorWriteArgv (Path B contained WRITE runtime)', () => {
+  const base = { workspace: '/ws', prompt: 'edit the repo' }
+  const DANGEROUS_TOKENS = ['--force', '-f', '--yolo', '--approve-mcps', '--api-key']
+
+  it('uses default (write-capable) mode but keeps the sandbox, worktree skip, and prompt guard', () => {
+    const args = buildContainedCursorWriteArgv(base)
+    // Default mode => NO --mode flag; that is what exposes cursor's write+shell tools.
+    expect(args).not.toContain('--mode')
+    // Containment is still hard-pinned.
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
+    expect(args).toContain('--skip-worktree-setup')
+    // Prompt is the trailing positional, guarded by the end-of-options `--`.
+    expect(args[args.length - 2]).toBe('--')
+    expect(args[args.length - 1]).toBe('edit the repo')
+  })
+
+  it('never emits any write-widening / sandbox-disabling / api-key token', () => {
+    for (const input of [base, { ...base, model: 'composer-2.5' }, { ...base, model: 'gpt-5' }]) {
+      const args = buildContainedCursorWriteArgv(input)
+      for (const token of DANGEROUS_TOKENS) expect(args).not.toContain(token)
+      expect(args.join(' ')).not.toContain('--sandbox disabled')
+    }
+  })
+
+  it('guards a flag-shaped prompt behind `--` (inert) while the real sandbox stays enabled', () => {
+    for (const prompt of ['--sandbox disabled', '--force', '--yolo']) {
+      const args = buildContainedCursorWriteArgv({ workspace: '/ws', prompt })
+      const guard = args.indexOf('--')
+      expect(args.slice(guard + 1)).toEqual([prompt])
+      expect(args.indexOf('--sandbox')).toBeLessThan(guard)
+      expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
+    }
+  })
+
+  it('normalizes a requested model and omits --model when absent', () => {
+    expect(buildContainedCursorWriteArgv({ ...base, model: 'gpt-5' }).join(' ')).toContain(
+      '--model composer-2.5-fast'
+    )
+    expect(buildContainedCursorWriteArgv({ ...base, model: undefined })).not.toContain('--model')
   })
 })
