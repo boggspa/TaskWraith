@@ -40,3 +40,29 @@ export function agentQuestionQueueHasMessage(
 ): boolean {
   return Boolean(queue?.some((question) => question.messageId === messageId))
 }
+
+/** True when any question is queued for this chat (sparse map; empty arrays count as none). */
+export function chatHasPendingAgentQuestion(
+  queuesByChatId: Record<string, readonly AgentQuestionState[] | undefined> | undefined,
+  chatId: string
+): boolean {
+  const queue = queuesByChatId?.[chatId]
+  return Boolean(queue && queue.length > 0)
+}
+
+/**
+ * Flatten per-chat question queues into a single list for global attention
+ * surfaces (Approvals footer popover, collapsed pill). Map key is the filing
+ * chat id (jump target).
+ */
+export function flattenPendingAgentQuestions(
+  queuesByChatId: Record<string, readonly AgentQuestionState[] | undefined> | undefined
+): Array<{ chatId: string; question: AgentQuestionState }> {
+  if (!queuesByChatId) return []
+  const out: Array<{ chatId: string; question: AgentQuestionState }> = []
+  for (const [chatId, queue] of Object.entries(queuesByChatId)) {
+    if (!queue) continue
+    for (const question of queue) out.push({ chatId, question })
+  }
+  return out
+}

@@ -3,8 +3,10 @@ import type { AgentQuestionState } from '../components/AgentQuestionCard'
 import {
   EMPTY_AGENT_QUESTION_QUEUE,
   agentQuestionQueueHasMessage,
+  chatHasPendingAgentQuestion,
   enqueueAgentQuestion,
   findQueuedAgentQuestion,
+  flattenPendingAgentQuestions,
   removeAgentQuestionFromQueue
 } from './agentQuestionQueue'
 
@@ -65,5 +67,32 @@ describe('agent question queue helpers', () => {
       agentQuestionQueueHasMessage([question('one', { messageId: 'message-a' })], 'message-b')
     ).toBe(false)
     expect(agentQuestionQueueHasMessage(undefined, 'message-a')).toBe(false)
+  })
+
+  it('reports whether a chat has any pending question', () => {
+    const queues = {
+      chatA: [question('one')],
+      chatB: EMPTY_AGENT_QUESTION_QUEUE
+    }
+    expect(chatHasPendingAgentQuestion(queues, 'chatA')).toBe(true)
+    expect(chatHasPendingAgentQuestion(queues, 'chatB')).toBe(false)
+    expect(chatHasPendingAgentQuestion(queues, 'missing')).toBe(false)
+    expect(chatHasPendingAgentQuestion(undefined, 'chatA')).toBe(false)
+  })
+
+  it('flattens pending questions with their filing chat ids', () => {
+    const first = question('one')
+    const second = question('two')
+    expect(
+      flattenPendingAgentQuestions({
+        chatA: [first],
+        chatB: [second],
+        chatC: EMPTY_AGENT_QUESTION_QUEUE
+      })
+    ).toEqual([
+      { chatId: 'chatA', question: first },
+      { chatId: 'chatB', question: second }
+    ])
+    expect(flattenPendingAgentQuestions(undefined)).toEqual([])
   })
 })
