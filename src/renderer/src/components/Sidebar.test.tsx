@@ -1,4 +1,5 @@
 import { renderToStaticMarkup } from 'react-dom/server'
+import type { ComponentProps } from 'react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type {
   ChatRecord,
@@ -186,6 +187,7 @@ function renderSidebar(
     collaboratingChatIds?: Set<string>
     initialExpandedSubThreadParentIds?: string[]
     pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
+    pendingAgentQuestionsByChatId?: ComponentProps<typeof Sidebar>['pendingAgentQuestionsByChatId']
     hasConnectedCollaborator?: boolean
     onRenameChat?: (chatId: string, nextTitle: string) => void
     onTogglePinChat?: (chatId: string) => void
@@ -215,6 +217,7 @@ function renderSidebar(
       collaboratingChatIds={options.collaboratingChatIds}
       initialExpandedSubThreadParentIds={options.initialExpandedSubThreadParentIds}
       pendingAgentApprovalByChatId={options.pendingAgentApprovalByChatId}
+      pendingAgentQuestionsByChatId={options.pendingAgentQuestionsByChatId}
       hasConnectedCollaborator={options.hasConnectedCollaborator}
       onSelectWorkspace={() => {}}
       onRemoveWorkspace={() => {}}
@@ -543,6 +546,7 @@ describe('sidebar row memo comparators', () => {
     surfaceId: 'workspace-ws-1-a',
     isSelected: false,
     isRunning: false,
+    needsInput: false,
     isEditing: false,
     isCollaborating: false,
     subThreadCount: 0,
@@ -578,6 +582,7 @@ describe('sidebar row memo comparators', () => {
       { surfaceId: 'global-a' },
       { isSelected: true },
       { isRunning: true },
+      { needsInput: true },
       { isEditing: true },
       { isCollaborating: true },
       { subThreadCount: 1 },
@@ -596,6 +601,7 @@ describe('sidebar row memo comparators', () => {
       surfaceId: 'recent-a',
       isSelected: false,
       isRunning: false,
+      needsInput: false,
       isEditing: false,
       query: '',
       draggable: true,
@@ -616,6 +622,7 @@ describe('sidebar row memo comparators', () => {
       { variant: 'pinned' as const },
       { isSelected: true },
       { isRunning: true },
+      { needsInput: true },
       { isEditing: true },
       { draggable: false },
       { isDragging: true },
@@ -1458,6 +1465,26 @@ describe('Sidebar footer controls', () => {
     expect(pending).toContain('glow-red')
   })
 
+  it('glows the Approvals button red while an agent question is pending', () => {
+    const pending = renderSidebar([makeChat()], {
+      pendingAgentQuestionsByChatId: {
+        'parent-1': [
+          {
+            questionId: 'q-1',
+            appRunId: 'run-1',
+            messageId: 'agent-question-q-1',
+            provider: 'claude',
+            question: 'Use Postgres?',
+            options: ['Yes', 'No'],
+            askedAt: 1
+          }
+        ]
+      }
+    })
+    expect(pending).toContain('glow-red')
+    expect(pending).toContain('Needs input')
+  })
+
   it('ignores cleared (null) approval entries for the red glow', () => {
     // usePerChatState deletes keys on reset, but guard against a lingering null
     // still suppressing the glow.
@@ -1546,8 +1573,43 @@ describe('ApprovalsFooterPopover', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover pendingApprovals={[]} onOpenSettings={() => {}} />
     )
-    expect(html).toContain('No pending approvals')
+    expect(html).toContain('No pending approvals or questions')
     expect(html).toContain('Approvals &amp; Grants')
+  })
+
+  it('lists pending agent questions with answer options', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[]}
+        pendingQuestions={[
+          {
+            chatId: 'parent-1',
+            question: {
+              questionId: 'q-1',
+              appRunId: 'run-1',
+              messageId: 'agent-question-q-1',
+              provider: 'claude',
+              question: 'Use Postgres?',
+              options: ['Yes', 'No'],
+              askedAt: 1
+            }
+          }
+        ]}
+        resolveChatTitle={() => 'Auth rewrite'}
+        onJumpToChat={() => {}}
+        onAnswerQuestion={() => {}}
+        onDismissQuestion={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+    expect(html).toContain('Needs your input')
+    expect(html).toContain('Questions')
+    expect(html).toContain('Use Postgres?')
+    expect(html).toContain('Claude')
+    expect(html).toContain('Auth rewrite')
+    expect(html).toContain('Yes')
+    expect(html).toContain('No')
+    expect(html).toContain('Skip')
   })
 
   it('lists pending approvals with a pending LED, title and provider', () => {

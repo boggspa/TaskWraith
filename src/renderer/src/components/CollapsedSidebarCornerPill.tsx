@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type ComponentProps } from 'react'
 import type { ChatRecord } from '../../../main/store/types'
 import type { AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import type { AgentQuestionState } from './AgentQuestionCard'
+import { flattenPendingAgentQuestions } from '../lib/agentQuestionQueue'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import { IOS_REMOTE_ENABLED } from '../lib/featureFlags'
 import {
@@ -32,6 +34,11 @@ interface CollapsedSidebarCornerPillProps {
   /** Approvals — same per-chat head + queue maps the Sidebar receives. */
   pendingAgentApprovalByChatId?: Record<string, AgentApprovalRequest | null>
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
+  onRespondAgentApproval?: ComponentProps<typeof ApprovalsFooterPopover>['onRespondApproval']
+  /** Pending agent questions — glow + list alongside approvals. */
+  pendingAgentQuestionsByChatId?: Record<string, readonly AgentQuestionState[]>
+  onAnswerAgentQuestion?: ComponentProps<typeof ApprovalsFooterPopover>['onAnswerQuestion']
+  onDismissAgentQuestion?: ComponentProps<typeof ApprovalsFooterPopover>['onDismissQuestion']
   /** Shares. */
   collaborationShares?: HumanCollaborationShare[]
   collaboratingChatIds?: Set<string>
@@ -58,6 +65,10 @@ export function CollapsedSidebarCornerPill({
   onQuitApp,
   pendingAgentApprovalByChatId = {},
   pendingApprovalQueueByChatId = {},
+  onRespondAgentApproval,
+  pendingAgentQuestionsByChatId = {},
+  onAnswerAgentQuestion,
+  onDismissAgentQuestion,
   collaborationShares = [],
   collaboratingChatIds,
   hasConnectedCollaborator,
@@ -141,7 +152,13 @@ export function CollapsedSidebarCornerPill({
     }
     return out
   }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  const pendingQuestionsFlat = useMemo(
+    () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
+    [pendingAgentQuestionsByChatId]
+  )
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
+  const hasPendingQuestions = pendingQuestionsFlat.length > 0
+  const hasNeedsInputAttention = hasPendingApprovals || hasPendingQuestions
   const loadRecentApprovals = useCallback(
     () => window.api.getApprovalLedger({ statuses: ['approved', 'denied'], limit: 3 }),
     []
@@ -154,6 +171,10 @@ export function CollapsedSidebarCornerPill({
       if (chat) onSelectChat(chat)
     },
     [chats, onSelectChat]
+  )
+  const resolveChatTitle = useCallback(
+    (chatId: string) => chats.find((candidate) => candidate.appChatId === chatId)?.title,
+    [chats]
   )
 
   return (
@@ -176,13 +197,29 @@ export function CollapsedSidebarCornerPill({
         <GearSymbolIcon />
       </button>
       <button
-        className={`chat-corner-btn${hasPendingApprovals ? ' glow-red' : ''}${
+        className={`chat-corner-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
           openPanel === 'approvals' ? ' active' : ''
         }`}
         type="button"
         onClick={() => togglePanel('approvals')}
-        title={hasPendingApprovals ? 'Approvals — pending approval' : 'Approvals'}
-        aria-label={hasPendingApprovals ? 'Approvals, a pending approval is waiting' : 'Approvals'}
+        title={
+          hasPendingQuestions && hasPendingApprovals
+            ? 'Approvals — pending questions and approvals'
+            : hasPendingQuestions
+              ? 'Approvals — needs your input'
+              : hasPendingApprovals
+                ? 'Approvals — pending approval'
+                : 'Approvals'
+        }
+        aria-label={
+          hasPendingQuestions && hasPendingApprovals
+            ? 'Approvals, questions and approvals are waiting'
+            : hasPendingQuestions
+              ? 'Approvals, an agent question is waiting'
+              : hasPendingApprovals
+                ? 'Approvals, a pending approval is waiting'
+                : 'Approvals'
+        }
         aria-haspopup="dialog"
         aria-expanded={openPanel === 'approvals'}
       >
@@ -238,7 +275,12 @@ export function CollapsedSidebarCornerPill({
       {openPanel === 'approvals' && (
         <ApprovalsFooterPopover
           pendingApprovals={pendingApprovalsFlat}
+          pendingQuestions={pendingQuestionsFlat}
+          resolveChatTitle={resolveChatTitle}
           onJumpToChat={jumpToChat}
+          onRespondApproval={onRespondAgentApproval}
+          onAnswerQuestion={onAnswerAgentQuestion}
+          onDismissQuestion={onDismissAgentQuestion}
           loadRecent={loadRecentApprovals}
           onOpenSettings={() => {
             setOpenPanel(null)

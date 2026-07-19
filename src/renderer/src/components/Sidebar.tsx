@@ -64,6 +64,11 @@ import {
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
+import type { AgentQuestionState } from './AgentQuestionCard'
+import {
+  chatHasPendingAgentQuestion,
+  flattenPendingAgentQuestions
+} from '../lib/agentQuestionQueue'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
@@ -309,6 +314,20 @@ interface SidebarProps {
   pendingApprovalQueueByChatId?: Record<string, AgentApprovalRequest[]>
   /** Resolve an approval directly from the Approvals footer popover. */
   onRespondAgentApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  /**
+   * Per-chat pending `ask_user_question` queues. Same Approvals footer control
+   * glows and lists these as "Needs your input" rows so a blocked elicitation
+   * is visible even when the user is not in that thread.
+   */
+  pendingAgentQuestionsByChatId?: Record<string, readonly AgentQuestionState[]>
+  /** Answer a multi-choice agent question from the Approvals popover. */
+  onAnswerAgentQuestion?: (
+    questionId: string,
+    answer: string,
+    isCustom: boolean
+  ) => void | Promise<void>
+  /** Dismiss an agent question from the Approvals popover. */
+  onDismissAgentQuestion?: (questionId: string) => void | Promise<void>
   /** Enabled human-collaboration shares — populates the Shares footer popover
    * (chat + mode + active-collaborator count). */
   collaborationShares?: HumanCollaborationShare[]
@@ -1401,6 +1420,8 @@ interface SidebarCompactChatRowProps {
   surfaceId: string
   isSelected: boolean
   isRunning: boolean
+  /** True when an agent is blocked on `ask_user_question` in this chat. */
+  needsInput: boolean
   isEditing: boolean
   query: string
   /** Comparator proxies for the SSR-relevant fields of `dragHandlers`
@@ -1431,6 +1452,7 @@ function SidebarCompactChatRowInner({
   surfaceId,
   isSelected,
   isRunning,
+  needsInput,
   isEditing,
   query,
   dragHandlers,
@@ -1447,7 +1469,9 @@ function SidebarCompactChatRowInner({
     <div
       role="button"
       tabIndex={0}
-      className={`${baseClass} provider-${badgeId} ${isSelected ? 'active' : ''}`}
+      className={`${baseClass} provider-${badgeId} ${isSelected ? 'active' : ''}${
+        needsInput ? ' needs-input' : ''
+      }`}
       onClick={() => onSelect(chat)}
       onKeyDown={(event) => {
         if (event.target !== event.currentTarget) return
@@ -1456,8 +1480,15 @@ function SidebarCompactChatRowInner({
           onSelect(chat)
         }
       }}
-      title={chat.title}
+      title={needsInput ? `${chat.title} — needs your input` : chat.title}
       aria-busy={isRunning || undefined}
+      aria-label={
+        needsInput
+          ? `${chat.title}, needs input`
+          : isRunning
+            ? `${chat.title}, running`
+            : chat.title
+      }
       {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
     >
       <ProviderBrandLogoIcon provider={badgeId} />
@@ -1470,7 +1501,11 @@ function SidebarCompactChatRowInner({
         onSubmit={(next) => onSubmitRename(chat, next)}
         onCancel={onCancelRename}
       />
-      {variant === 'pinned' ? (
+      {needsInput ? (
+        <span className="sidebar-run-status tone-warning sidebar-compact-needs-input">
+          Needs input
+        </span>
+      ) : variant === 'pinned' ? (
         isRunning && <SidebarRunningGhost />
       ) : isRunning ? (
         <SidebarRunningGhost />
@@ -1492,6 +1527,7 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.surfaceId === b.surfaceId &&
     a.isSelected === b.isSelected &&
     a.isRunning === b.isRunning &&
+    a.needsInput === b.needsInput &&
     a.isEditing === b.isEditing &&
     a.draggable === b.draggable &&
     a.isDragging === b.isDragging &&
@@ -1507,6 +1543,8 @@ interface SidebarChatRowProps {
   surfaceId: string
   isSelected: boolean
   isRunning: boolean
+  /** True when an agent is blocked on `ask_user_question` in this chat. */
+  needsInput: boolean
   isEditing: boolean
   /** Workspace subline "People" badge. Always false for global/shared. */
   isCollaborating: boolean
@@ -1543,6 +1581,7 @@ function SidebarChatRowInner({
   surfaceId,
   isSelected,
   isRunning,
+  needsInput,
   isEditing,
   isCollaborating,
   subThreadCount,
@@ -1568,6 +1607,7 @@ function SidebarChatRowInner({
           provider: chat.provider,
           selected: isSelected,
           isRunning,
+          needsInput,
           lastRunStatus,
           prefix: 'Shared'
         }
@@ -1577,6 +1617,7 @@ function SidebarChatRowInner({
           provider: chat.provider,
           selected: isSelected,
           isRunning,
+          needsInput,
           lastRunStatus
         }
   )
@@ -1594,8 +1635,8 @@ function SidebarChatRowInner({
     lastRunStatus && lastRunStatus.tone !== 'success' && lastRunStatus.tone !== 'muted'
   const showSubline =
     variant === 'workspace'
-      ? isRunning || showStatus || subThreadCount > 0 || isCollaborating
-      : isRunning || showStatus
+      ? needsInput || isRunning || showStatus || subThreadCount > 0 || isCollaborating
+      : needsInput || isRunning || showStatus
   const copyTitle = variant === 'shared' ? chat.title || 'Shared chat' : chat.title
   return (
     <div
@@ -1650,7 +1691,11 @@ function SidebarChatRowInner({
         </span>
         {showSubline && (
           <span className="sidebar-chat-subline">
-            {isRunning ? (
+            {needsInput ? (
+              <span className="sidebar-run-status tone-warning" title="Agent is waiting for your answer">
+                Needs input
+              </span>
+            ) : isRunning ? (
               <span className="sidebar-run-status tone-running">Running</span>
             ) : lastRunStatus ? (
               <span className={`sidebar-run-status tone-${lastRunStatus.tone}`}>
@@ -1705,6 +1750,7 @@ export function sidebarChatRowPropsAreEqual(
     a.surfaceId === b.surfaceId &&
     a.isSelected === b.isSelected &&
     a.isRunning === b.isRunning &&
+    a.needsInput === b.needsInput &&
     a.isEditing === b.isEditing &&
     a.isCollaborating === b.isCollaborating &&
     a.subThreadCount === b.subThreadCount &&
@@ -2204,8 +2250,10 @@ function getLastRunStatus(chat: ChatRecord): SidebarRunStatusSnapshot {
 
 function sidebarChatRunStatusText(
   isRunning: boolean,
-  lastRunStatus: SidebarRunStatusSnapshot
+  lastRunStatus: SidebarRunStatusSnapshot,
+  needsInput = false
 ): string | null {
+  if (needsInput) return 'needs input'
   if (isRunning) return 'running'
   if (lastRunStatus) return lastRunStatus.label
   return null
@@ -2218,6 +2266,7 @@ function buildSidebarChatRowA11y(args: {
   providerLabel?: string
   selected: boolean
   isRunning: boolean
+  needsInput?: boolean
   lastRunStatus: SidebarRunStatusSnapshot
   prefix?: string
 }): {
@@ -2227,12 +2276,16 @@ function buildSidebarChatRowA11y(args: {
   statusDescription?: string
 } {
   const provider = args.providerLabel ?? getProviderName(args.provider)
-  const statusText = sidebarChatRunStatusText(args.isRunning, args.lastRunStatus)
+  const statusText = sidebarChatRunStatusText(
+    args.isRunning,
+    args.lastRunStatus,
+    Boolean(args.needsInput)
+  )
   const titlePart = args.prefix ? `${args.prefix}: ${args.title}` : args.title
   const parts = [titlePart, provider]
   if (statusText) parts.push(statusText)
   if (args.selected) parts.push('selected')
-  const failed = !args.isRunning && args.lastRunStatus?.tone === 'danger'
+  const failed = !args.isRunning && !args.needsInput && args.lastRunStatus?.tone === 'danger'
   return {
     ariaLabel: parts.join(', '),
     ariaCurrent: args.selected ? 'page' : undefined,
@@ -2241,7 +2294,12 @@ function buildSidebarChatRowA11y(args: {
           statusDescribedById: `sidebar-chat-status-${args.chatId}`,
           statusDescription: `Last run failed: ${args.lastRunStatus!.label}`
         }
-      : {})
+      : args.needsInput
+        ? {
+            statusDescribedById: `sidebar-chat-status-${args.chatId}`,
+            statusDescription: 'Agent is waiting for your answer'
+          }
+        : {})
   }
 }
 
@@ -2288,23 +2346,36 @@ function SidebarFooterPopover({
   )
 }
 
-// Approvals popover — pending agent approvals at the top (each a deep-link into
+// Approvals popover — pending agent questions + approvals (each a deep-link into
 // the thread that's waiting), then the most recent resolved decisions, then a
 // deep-link to Settings → Approvals & Grants. `loadRecent` is injected so the
 // pure rendering is testable without the IPC bridge.
 const APPROVALS_POPOVER_PENDING_LIMIT = 6
 export function ApprovalsFooterPopover({
   pendingApprovals,
+  pendingQuestions = [],
+  resolveChatTitle,
   onJumpToChat,
   onRespondApproval,
+  onAnswerQuestion,
+  onDismissQuestion,
   onOpenSettings,
   loadRecent
 }: {
   /** Each pending approval paired with the chatId it is filed under (the jump
    * target — see pendingApprovalsFlat). */
   pendingApprovals: Array<{ chatId: string; approval: AgentApprovalRequest }>
+  /** Pending `ask_user_question` cards across chats — same jump target shape. */
+  pendingQuestions?: Array<{ chatId: string; question: AgentQuestionState }>
+  resolveChatTitle?: (chatId: string) => string | undefined
   onJumpToChat?: (chatId: string) => void
   onRespondApproval?: (requestId: string, action: AgentApprovalAction) => void | Promise<void>
+  onAnswerQuestion?: (
+    questionId: string,
+    answer: string,
+    isCustom: boolean
+  ) => void | Promise<void>
+  onDismissQuestion?: (questionId: string) => void | Promise<void>
   onOpenSettings: () => void
   loadRecent?: () => Promise<ApprovalLedgerRecord[]>
 }) {
@@ -2326,15 +2397,34 @@ export function ApprovalsFooterPopover({
 
   const pendingShown = pendingApprovals.slice(0, APPROVALS_POPOVER_PENDING_LIMIT)
   const pendingOverflow = pendingApprovals.length - pendingShown.length
-  const pendingLiveSummary =
-    pendingApprovals.length === 0
-      ? 'No pending approvals'
-      : `${pendingApprovals.length} pending approval${pendingApprovals.length === 1 ? '' : 's'}`
+  const questionsShown = pendingQuestions.slice(0, APPROVALS_POPOVER_PENDING_LIMIT)
+  const questionsOverflow = pendingQuestions.length - questionsShown.length
+  const hasAnyPending = pendingApprovals.length > 0 || pendingQuestions.length > 0
+  const popoverTitle =
+    pendingQuestions.length > 0 && pendingApprovals.length === 0
+      ? 'Needs your input'
+      : pendingQuestions.length > 0
+        ? 'Needs your input'
+        : 'Approvals'
+  const pendingLiveSummary = (() => {
+    const parts: string[] = []
+    if (pendingQuestions.length > 0) {
+      parts.push(
+        `${pendingQuestions.length} pending question${pendingQuestions.length === 1 ? '' : 's'}`
+      )
+    }
+    if (pendingApprovals.length > 0) {
+      parts.push(
+        `${pendingApprovals.length} pending approval${pendingApprovals.length === 1 ? '' : 's'}`
+      )
+    }
+    return parts.length === 0 ? 'No pending approvals or questions' : parts.join(', ')
+  })()
 
   return (
     <SidebarFooterPopover
-      title="Approvals"
-      ariaLabel="Pending and recent approvals"
+      title={popoverTitle}
+      ariaLabel="Pending questions, approvals, and recent decisions"
       className="is-approvals"
       navLabel="Approvals & Grants"
       onNav={onOpenSettings}
@@ -2342,10 +2432,110 @@ export function ApprovalsFooterPopover({
       <div className="sr-only" role="status" aria-live="polite" aria-atomic="true">
         {pendingLiveSummary}
       </div>
-      {pendingShown.length === 0 ? (
-        <div className="sidebar-footer-popover-empty">No pending approvals</div>
-      ) : (
+      {!hasAnyPending ? (
+        <div className="sidebar-footer-popover-empty">No pending approvals or questions</div>
+      ) : null}
+
+      {questionsShown.length > 0 ? (
         <>
+          <div className="sidebar-footer-popover-subhead">Questions</div>
+          {questionsShown.map(({ chatId, question }) => {
+            const providerLabel = question.provider
+              ? getProviderLabel(question.provider)
+              : 'Agent'
+            const chatTitle = resolveChatTitle?.(chatId)?.trim() || 'Thread'
+            const options = question.options ?? []
+            const canAnswerInline = Boolean(onAnswerQuestion) && options.length > 0
+            const rowLabel =
+              chatId && onJumpToChat
+                ? `${question.question}, ${providerLabel}, open thread`
+                : `${question.question}, ${providerLabel}`
+            const summary =
+              chatId && onJumpToChat ? (
+                <button
+                  type="button"
+                  className="sidebar-footer-approval-row is-clickable sidebar-footer-approval-summary"
+                  onClick={() => onJumpToChat(chatId)}
+                  aria-label={rowLabel}
+                >
+                  <span className="sidebar-footer-led is-pending" aria-hidden />
+                  <span className="sidebar-footer-approval-title">{question.question}</span>
+                  <span className="sidebar-footer-approval-meta">
+                    {providerLabel} · {chatTitle}
+                  </span>
+                </button>
+              ) : (
+                <div
+                  className="sidebar-footer-approval-row sidebar-footer-approval-summary"
+                  aria-label={rowLabel}
+                >
+                  <span className="sidebar-footer-led is-pending" aria-hidden />
+                  <span className="sidebar-footer-approval-title">{question.question}</span>
+                  <span className="sidebar-footer-approval-meta">
+                    {providerLabel} · {chatTitle}
+                  </span>
+                </div>
+              )
+            return (
+              <div
+                className="sidebar-footer-approval-pending"
+                key={question.questionId}
+                data-agent-question-id={question.questionId}
+              >
+                {summary}
+                {question.context ? (
+                  <div className="sidebar-footer-approval-meta sidebar-footer-question-context">
+                    {question.context}
+                  </div>
+                ) : null}
+                {canAnswerInline ? (
+                  <div
+                    className="sidebar-footer-approval-actions"
+                    aria-label={`Answer choices for ${question.question}`}
+                  >
+                    {options.map((option) => (
+                      <button
+                        key={option}
+                        type="button"
+                        className="sidebar-footer-approval-action is-approve"
+                        title={option}
+                        onClick={() => void onAnswerQuestion?.(question.questionId, option, false)}
+                      >
+                        {option}
+                      </button>
+                    ))}
+                    {onDismissQuestion ? (
+                      <button
+                        type="button"
+                        className="sidebar-footer-approval-action is-deny"
+                        title="Skip this question"
+                        onClick={() => void onDismissQuestion(question.questionId)}
+                      >
+                        Skip
+                      </button>
+                    ) : null}
+                  </div>
+                ) : onJumpToChat && chatId ? (
+                  <div className="sidebar-footer-approval-meta">
+                    Open the thread to type your answer.
+                  </div>
+                ) : null}
+              </div>
+            )
+          })}
+          {questionsOverflow > 0 && (
+            <div className="sidebar-footer-popover-more">
+              +{questionsOverflow} more question{questionsOverflow === 1 ? '' : 's'}
+            </div>
+          )}
+        </>
+      ) : null}
+
+      {pendingShown.length > 0 ? (
+        <>
+          {pendingQuestions.length > 0 ? (
+            <div className="sidebar-footer-popover-subhead">Approvals</div>
+          ) : null}
           {pendingShown.map(({ chatId, approval }) => {
             const providerLabel = getProviderLabel(approval.provider)
             const actions = approval.actions || []
@@ -2446,7 +2636,7 @@ export function ApprovalsFooterPopover({
             <div className="sidebar-footer-popover-more">+{pendingOverflow} more pending</div>
           )}
         </>
-      )}
+      ) : null}
 
       {recent.length > 0 && (
         <>
@@ -2667,6 +2857,9 @@ export function Sidebar({
   pendingAgentApprovalByChatId = {},
   pendingApprovalQueueByChatId = {},
   onRespondAgentApproval,
+  pendingAgentQuestionsByChatId = {},
+  onAnswerAgentQuestion,
+  onDismissAgentQuestion,
   collaborationShares = [],
   onRevokeShare,
   hasConnectedCollaborator = false,
@@ -2711,7 +2904,17 @@ export function Sidebar({
     }
     return out
   }, [pendingAgentApprovalByChatId, pendingApprovalQueueByChatId])
+  const pendingQuestionsFlat = useMemo(
+    () => flattenPendingAgentQuestions(pendingAgentQuestionsByChatId),
+    [pendingAgentQuestionsByChatId]
+  )
   const hasPendingApprovals = pendingApprovalsFlat.length > 0
+  const hasPendingQuestions = pendingQuestionsFlat.length > 0
+  const hasNeedsInputAttention = hasPendingApprovals || hasPendingQuestions
+  const resolveChatTitleForAttention = useCallback(
+    (chatId: string) => chats.find((candidate) => candidate.appChatId === chatId)?.title,
+    [chats]
+  )
   const footerPopoverActive = approvalsPopoverOpen || sharesPopoverOpen || devicesPopoverOpen
   // Stable so the Approvals popover doesn't re-fetch the ledger on every
   // unrelated Sidebar re-render (e.g. the 5s device poll) while it's open.
@@ -3948,12 +4151,17 @@ export function Sidebar({
       : []
     const subProviderColor = `var(--provider-${subChat.provider || 'gemini'}-color)`
     const renameSurfaceId = `linked-${subChat.appChatId}`
+    const subNeedsInput = chatHasPendingAgentQuestion(
+      pendingAgentQuestionsByChatId,
+      subChat.appChatId
+    )
     const subRowA11y = buildSidebarChatRowA11y({
       chatId: subChat.appChatId,
       title: subChat.title,
       provider: subChat.provider,
       selected: selectedChatId === subChat.appChatId,
       isRunning: subRunning,
+      needsInput: subNeedsInput,
       lastRunStatus: subLastStatus,
       prefix: subKindLabel
     })
@@ -4018,10 +4226,14 @@ export function Sidebar({
                 {label}
               </span>
             ))}
-            {(subRunning ||
-              (subLastStatus &&
-                subLastStatus.tone !== 'success' &&
-                subLastStatus.tone !== 'muted')) &&
+            {subNeedsInput ? (
+              <span className="sidebar-run-status tone-warning" title="Agent is waiting for your answer">
+                Needs input
+              </span>
+            ) : (subRunning ||
+                (subLastStatus &&
+                  subLastStatus.tone !== 'success' &&
+                  subLastStatus.tone !== 'muted')) &&
               (subRunning ? (
                 <span className="sidebar-run-status tone-running">Running</span>
               ) : subLastStatus ? (
@@ -4990,6 +5202,10 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        needsInput={chatHasPendingAgentQuestion(
+                          pendingAgentQuestionsByChatId,
+                          chat.appChatId
+                        )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         query={sidebarSearchQuery}
                         draggable={false}
@@ -5062,6 +5278,10 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        needsInput={chatHasPendingAgentQuestion(
+                          pendingAgentQuestionsByChatId,
+                          chat.appChatId
+                        )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         query={sidebarSearchQuery}
                         draggable={dragHandlers.draggable}
@@ -5162,12 +5382,17 @@ export function Sidebar({
                         ? true
                         : expandedSubThreadParentIds.has(chat.appChatId)
                       const renameSurfaceId = `ensemble-${chat.appChatId}`
+                      const ensembleNeedsInput = chatHasPendingAgentQuestion(
+                        pendingAgentQuestionsByChatId,
+                        chat.appChatId
+                      )
                       const ensembleRowA11y = buildSidebarChatRowA11y({
                         chatId: chat.appChatId,
                         title: chat.title,
                         providerLabel: 'Ensemble',
                         selected: selectedChatId === chat.appChatId,
                         isRunning,
+                        needsInput: ensembleNeedsInput,
                         lastRunStatus: isRunning
                           ? { label: 'Running', tone: 'warning' }
                           : null,
@@ -5183,8 +5408,14 @@ export function Sidebar({
                             onKeyDown={(event) => handleChatRowKeyDown(event, chat)}
                             aria-label={ensembleRowA11y.ariaLabel}
                             aria-current={ensembleRowA11y.ariaCurrent}
+                            aria-describedby={ensembleRowA11y.statusDescribedById}
                             {...getChatTileDragProps(chat)}
                           >
+                            {ensembleRowA11y.statusDescription ? (
+                              <span id={ensembleRowA11y.statusDescribedById} className="sr-only">
+                                {ensembleRowA11y.statusDescription}
+                              </span>
+                            ) : null}
                             {subThreads.length > 0 && (
                               <span
                                 role="button"
@@ -5228,11 +5459,20 @@ export function Sidebar({
                                 />
                               </span>
                               <span className="sidebar-chat-subline">
-                                <span
-                                  className={`sidebar-run-status tone-${isRunning ? 'warning' : 'muted'}`}
-                                >
-                                  {isRunning ? `Speaking: ${subtitle}` : subtitle}
-                                </span>
+                                {ensembleNeedsInput ? (
+                                  <span
+                                    className="sidebar-run-status tone-warning"
+                                    title="Agent is waiting for your answer"
+                                  >
+                                    Needs input
+                                  </span>
+                                ) : (
+                                  <span
+                                    className={`sidebar-run-status tone-${isRunning ? 'warning' : 'muted'}`}
+                                  >
+                                    {isRunning ? `Speaking: ${subtitle}` : subtitle}
+                                  </span>
+                                )}
                                 {subThreads.length > 0 && (
                                   <span
                                     className="sidebar-branched-badge sidebar-branched-dim"
@@ -5467,6 +5707,10 @@ export function Sidebar({
                                     surfaceId={renameSurfaceId}
                                     isSelected={selectedChatId === chat.appChatId}
                                     isRunning={runningChatIdSet.has(chat.appChatId)}
+                                    needsInput={chatHasPendingAgentQuestion(
+                                      pendingAgentQuestionsByChatId,
+                                      chat.appChatId
+                                    )}
                                     isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                                     isCollaborating={collaboratingChatIds.has(chat.appChatId)}
                                     subThreadCount={subThreadCount}
@@ -5546,6 +5790,10 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        needsInput={chatHasPendingAgentQuestion(
+                          pendingAgentQuestionsByChatId,
+                          chat.appChatId
+                        )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         isCollaborating={false}
                         subThreadCount={0}
@@ -5652,6 +5900,10 @@ export function Sidebar({
                         surfaceId={renameSurfaceId}
                         isSelected={selectedChatId === chat.appChatId}
                         isRunning={runningChatIdSet.has(chat.appChatId)}
+                        needsInput={chatHasPendingAgentQuestion(
+                          pendingAgentQuestionsByChatId,
+                          chat.appChatId
+                        )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         isCollaborating={false}
                         subThreadCount={0}
@@ -5759,7 +6011,7 @@ export function Sidebar({
             <div className="sidebar-footer-control-anchor">
               <button
                 type="button"
-                className={`sidebar-footer-icon-btn${hasPendingApprovals ? ' glow-red' : ''}${
+                className={`sidebar-footer-icon-btn${hasNeedsInputAttention ? ' glow-red' : ''}${
                   approvalsPopoverOpen ? ' is-open' : ''
                 }`}
                 onClick={() => {
@@ -5768,9 +6020,23 @@ export function Sidebar({
                   setDevicesPopoverOpen(false)
                   setApprovalsPopoverOpen((open) => !open)
                 }}
-                title={hasPendingApprovals ? 'Approvals — pending approval' : 'Approvals'}
+                title={
+                  hasPendingQuestions && hasPendingApprovals
+                    ? 'Approvals — pending questions and approvals'
+                    : hasPendingQuestions
+                      ? 'Approvals — needs your input'
+                      : hasPendingApprovals
+                        ? 'Approvals — pending approval'
+                        : 'Approvals'
+                }
                 aria-label={
-                  hasPendingApprovals ? 'Approvals, a pending approval is waiting' : 'Approvals'
+                  hasPendingQuestions && hasPendingApprovals
+                    ? 'Approvals, questions and approvals are waiting'
+                    : hasPendingQuestions
+                      ? 'Approvals, an agent question is waiting'
+                      : hasPendingApprovals
+                        ? 'Approvals, a pending approval is waiting'
+                        : 'Approvals'
                 }
                 aria-haspopup="dialog"
                 aria-expanded={approvalsPopoverOpen}
@@ -5781,12 +6047,16 @@ export function Sidebar({
               {approvalsPopoverOpen && (
                 <ApprovalsFooterPopover
                   pendingApprovals={pendingApprovalsFlat}
+                  pendingQuestions={pendingQuestionsFlat}
+                  resolveChatTitle={resolveChatTitleForAttention}
                   onJumpToChat={(chatId) => {
                     setApprovalsPopoverOpen(false)
                     const chat = chats.find((candidate) => candidate.appChatId === chatId)
                     if (chat) onSelectChat(chat)
                   }}
                   onRespondApproval={onRespondAgentApproval}
+                  onAnswerQuestion={onAnswerAgentQuestion}
+                  onDismissQuestion={onDismissAgentQuestion}
                   loadRecent={loadRecentApprovals}
                   onOpenSettings={() => {
                     setApprovalsPopoverOpen(false)
