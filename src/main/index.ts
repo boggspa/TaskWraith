@@ -36611,13 +36611,28 @@ if (isGeminiMcpBridgeProcess) {
       // Durable run events are the reachability authority. Rebuild the
       // Project-reference owner ledger and remove zero-reference snapshots on
       // every startup before replaying an outer history-deletion transaction.
+      //
+      // Ask the ledger FIRST, because sourcing that authority is expensive:
+      // `{kinds:['reference_context']}` carries no runId/chatId, so it takes
+      // the whole-dir run-event sweep — measured 2026-07-19 at 5.9GB across
+      // 4,062 files, awaited right here, ~12k lines before `createWindow()`.
+      // It matched 0 of ~2.4M events on that machine, i.e. the window waited
+      // on a full-corpus read that produced an empty array.
+      //
+      // `needsLegacyReconciliation()` is false exactly when no ledger file and
+      // no snapshot bytes exist — nothing to own, nothing to orphan-prune — so
+      // the reconcile would be a no-op over an empty world. It stays true
+      // whenever a ledger OR any snapshot is present, which is what keeps
+      // drift repair (in both directions) running on every restart.
       const pendingDeletionForProjectReferenceReachability = AppStore.getPendingHistoryDeletion()
-      projectReferenceArtifactStore.reconcileLegacyOwnership(
-        projectReferenceOwnedArtifactRefsFromRunEvents(
-          await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] }),
-          pendingDeletionForProjectReferenceReachability
+      if (projectReferenceArtifactStore.needsLegacyReconciliation()) {
+        projectReferenceArtifactStore.reconcileLegacyOwnership(
+          projectReferenceOwnedArtifactRefsFromRunEvents(
+            await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] }),
+            pendingDeletionForProjectReferenceReachability
+          )
         )
-      )
+      }
       projectReferenceOwnershipReconciled = true
       recoverPendingUsageHistoryMutationBeforeOuterDeletion()
       await recoverPendingHistoryDeletionBeforeRunQueue()
