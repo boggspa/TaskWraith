@@ -87,10 +87,10 @@ export function nativeSubAgentPromptInstruction(
   const normalized = normalizeNativeSubAgentPolicy(policy)
   const mcpName = taskWraithToolNameForProvider(provider, 'delegate_to_subthread')
   if (normalized === 'provider') {
-    return `Native sub-agent requests are set to Provider. You may use provider-native Task/invoke_agent/subagent tools for same-provider work; use ${mcpName} for durable TaskWraith sub-threads and any cross-provider delegation.`
+    return `Native sub-agent requests are set to Provider. You may use provider-native multi-agent orchestration tools for same-provider work; use ${mcpName} for durable TaskWraith sub-threads and any cross-provider delegation.`
   }
   if (normalized === 'taskwraith') {
-    return `Native sub-agent requests are set to TaskWraith. Do not use provider-native Task/invoke_agent/subagent tools; call ${mcpName}({ provider, prompt, returnResult: true }) for delegated work so the task is durable, iOS-visible, recallable, and audited.`
+    return `Native sub-agent requests are set to TaskWraith. Do not use provider-native multi-agent orchestration tools; call ${mcpName}({ provider, prompt, returnResult: true }) for delegated work so the task is durable, iOS-visible, recallable, and audited.`
   }
-  return `Native sub-agent requests are set to Ask. If a provider-native Task/invoke_agent/subagent tool is available, TaskWraith may ask the user whether to continue natively or redirect to ${mcpName}; for durable/iOS-visible delegation, prefer ${mcpName}.`
+  return `Native sub-agent requests are set to Ask. If a provider-native multi-agent orchestration tool is available, TaskWraith may ask the user whether to continue natively or redirect to ${mcpName}; for durable/iOS-visible delegation, prefer ${mcpName}.`
 }

@@ -147,11 +147,11 @@ describe('attachSubThreadMailboxToParentPrompt', () => {
 
   it('preserves a leading runtime preamble and keeps the current request last', () => {
     const parentPrompt =
-      'TaskWraith runtime note (taskwraith-runtime-v5): exact guidance.\n\n' +
+      'TaskWraith runtime note (taskwraith-runtime-v6): exact guidance.\n\n' +
       'Conversation context.\nCurrent user request:\nDo the work.'
     const result = attachSubThreadMailboxToParentPrompt(parentPrompt, 'MAILBOX CONTEXT')
 
-    expect(result).toMatch(/^TaskWraith runtime note \(taskwraith-runtime-v5\):/)
+    expect(result).toMatch(/^TaskWraith runtime note \(taskwraith-runtime-v6\):/)
     expect(result).toContain('Conversation context.\nMAILBOX CONTEXT')
     expect(result).toMatch(/Current user request:\nDo the work\.$/)
   })

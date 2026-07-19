@@ -543,7 +543,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
@@ -715,7 +715,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'claude'")
-    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
     // Recall guidance — observed bug: Codex spawning a fresh sub-thread
     // on every status check, getting "first turn, no prior actions"
     // back from sub-agents with legitimately no history.
@@ -1020,7 +1020,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
     expect(payload.prompt).toContain("provider: 'codex'")
-    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
+    expect(payload.prompt).toContain('do not use provider-native multi-agent orchestration paths')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
     expect(payload.prompt).not.toContain('Complete TaskWraith tool list')

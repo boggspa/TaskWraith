@@ -115,7 +115,17 @@ export function resolveContextBudget(provider: ProviderId, modelId?: string): Co
 // Bumped v4 -> v5 when progressive capability discovery became the default.
 // Existing resumable sessions re-inject once so the provider learns how to
 // discover and invoke specialized tools without a full catalogue resend.
-export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v5'
+//
+// Bumped v5 -> v6 when the delegation guardrail stopped naming provider-native
+// tools (`Task`/`invoke_agent`/`subagent`) and switched to agnostic
+// "multi-agent orchestration" wording. Naming the tools was an own goal:
+// agents recognized the tokens as their own orchestration entry points and
+// spent reasoning deliberating about a tool TaskWraith has already stripped
+// from argv (`--tools ''`), instead of just using the TaskWraith route. The
+// bump makes existing resumable sessions re-inject the corrected wording once;
+// after that the preamble is first-turn-only again for history-bearing
+// providers.
+export const TASKWRAITH_RUNTIME_PREAMBLE_VERSION = 'taskwraith-runtime-v6'
 
 /**
  * Standalone one-shot hint re-injected on a RESUMED session (where the full
@@ -343,7 +353,7 @@ function buildTaskWraithRuntimePreamble(args: {
       ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE]
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
-    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths.`,
+    `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native multi-agent orchestration paths.`,
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
     ...(args.provider === 'grok'
       ? [
