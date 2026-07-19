@@ -123,6 +123,56 @@ describe('AppStore run events', () => {
     expect(asyncRunIds).toEqual(runIds)
   })
 
+  it('returns the same events for an unscoped {kinds} sweep as an unfiltered read', async () => {
+    // The startup Project-reference reconcile queries {kinds:['reference_context']}
+    // with no runId/chatId, which takes the whole-dir sweep. That sweep now skips
+    // JSON.parse on lines that cannot match — this pins that the skip is a pure
+    // optimization and never drops a real match.
+    const ev = (runId: string, kind: string, payload?: unknown): void => {
+      AppStore.appendRunEvent({
+        runId,
+        chatId: `chat-${runId}`,
+        provider: 'gemini',
+        kind,
+        phase: kind === 'provider_raw' ? 'raw' : 'artifact',
+        source: 'main',
+        ...(payload === undefined ? {} : { payload })
+      } as never)
+    }
+    // Bulk noise of the kind that dominates a real corpus (~89% of lines).
+    for (let i = 0; i < 25; i += 1) ev(`noise-${i}`, 'provider_raw', { data: 'x\n' })
+    ev('ref-1', 'reference_context')
+    ev('ref-2', 'reference_context')
+    ev('tool-1', 'tool')
+    // A NON-matching event whose payload merely mentions the kind string. The
+    // prefilter lets this line through; the real kind check must still reject it.
+    ev('decoy', 'provider_raw', { data: 'mentions "kind":"reference_context" inline' })
+
+    const swept = await AppStore.getRunEventsAsync({ kinds: ['reference_context'] } as never)
+    expect(swept.map((e) => e.runId).sort()).toEqual(['ref-1', 'ref-2'])
+    expect(swept.every((e) => e.kind === 'reference_context')).toBe(true)
+
+    // Ground truth: filtering an unfiltered sweep in memory must agree exactly.
+    const viaFullSweep = (await AppStore.getRunEventsAsync({}))
+      .filter((e) => e.kind === 'reference_context')
+      .map((e) => e.runId)
+      .sort()
+    expect(swept.map((e) => e.runId).sort()).toEqual(viaFullSweep)
+
+    // The sync twin takes the same path and must agree.
+    expect(
+      AppStore.getRunEvents({ kinds: ['reference_context'] } as never)
+        .map((e) => e.runId)
+        .sort()
+    ).toEqual(viaFullSweep)
+
+    // Multi-kind queries keep every requested kind.
+    const multi = await AppStore.getRunEventsAsync({
+      kinds: ['reference_context', 'tool']
+    } as never)
+    expect(multi.map((e) => e.runId).sort()).toEqual(['ref-1', 'ref-2', 'tool-1'])
+  })
+
   it('reads ALL of an ensemble chat runs (no early-stop) so interleaved-timestamp siblings keep newest ordering', () => {
     // Ensemble rounds run participants CONCURRENTLY under one chatId with
     // interleaved timestamps. runs=[rNewer, rOlder] → reverse() reads rOlder FIRST;

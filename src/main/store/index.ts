@@ -1,6 +1,7 @@
 import * as electron from 'electron'
 import * as fs from 'fs'
 import * as path from 'path'
+import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
 import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
@@ -48,6 +49,7 @@ import {
   RunQueueJobFilter,
   RunEventFilter,
   RunEventInput,
+  RunEventKind,
   RunEventRecord,
   RunEventArtifactRef,
   ApprovalLedgerFilter,
@@ -3845,27 +3847,55 @@ function tombstoneRunArtifactDirs(): void {
   }
 }
 
-function readRunEventFile(filePath: string): RunEventRecord[] {
+/**
+ * Cheap line prefilter for a `{kinds}` query, so an unscoped sweep can skip
+ * `JSON.parse` on lines that provably cannot match.
+ *
+ * Records are written by `serializeRunEventRecord` = `JSON.stringify(record)`,
+ * which never emits whitespace and never escapes a plain-ASCII kind, so a
+ * record of kind K always serializes the literal `"kind":"K"`. Testing for
+ * that substring therefore yields a strict SUPERSET of what `filterRunEvents`
+ * would keep — no false negatives — while a false positive (the text appearing
+ * inside some nested payload string) is harmless: the line still gets parsed
+ * and the real `kindSet` check downstream rejects it.
+ *
+ * This matters because the sweep is wildly unselective without it. Measured
+ * 2026-07-19: `provider_raw` is ~89% of all run-event lines, and the startup
+ * `{kinds:['reference_context']}` reconcile matched 0 of ~4M events across
+ * 5.9GB — i.e. it parsed the entire corpus to build an empty array.
+ */
+function runEventLinePrefilter(kinds?: RunEventKind[]): ((line: string) => boolean) | null {
+  if (!kinds?.length) return null
+  const needles = kinds.map((kind) => `"kind":"${kind}"`)
+  return needles.length === 1
+    ? (line) => line.includes(needles[0])
+    : (line) => needles.some((needle) => line.includes(needle))
+}
+
+function readRunEventFile(filePath: string, kinds?: RunEventKind[]): RunEventRecord[] {
+  const accepts = runEventLinePrefilter(kinds)
   try {
     if (!fs.existsSync(filePath)) return []
-    return fs
-      .readFileSync(filePath, 'utf-8')
-      .split(/\r?\n/)
-      .map(parseRunEventLine)
-      .filter((event): event is RunEventRecord => Boolean(event))
+    const events: RunEventRecord[] = []
+    for (const line of fs.readFileSync(filePath, 'utf-8').split(/\r?\n/)) {
+      if (accepts && !accepts(line)) continue
+      const event = parseRunEventLine(line)
+      if (event) events.push(event)
+    }
+    return events
   } catch (e) {
     console.error(`Failed to read ${filePath}`, e)
     return []
   }
 }
 
-function readAllRunEventFiles(): RunEventRecord[] {
+function readAllRunEventFiles(kinds?: RunEventKind[]): RunEventRecord[] {
   try {
     if (!fs.existsSync(runEventsDir)) return []
     return fs
       .readdirSync(runEventsDir)
       .filter((file) => file.endsWith('.jsonl'))
-      .flatMap((file) => readRunEventFile(path.join(runEventsDir, file)))
+      .flatMap((file) => readRunEventFile(path.join(runEventsDir, file), kinds))
   } catch (e) {
     console.error(`Failed to read ${runEventsDir}`, e)
     return []
@@ -3878,12 +3908,19 @@ function readAllRunEventFiles(): RunEventRecord[] {
  * realistic `limit`. */
 const RUN_EVENT_CHAT_FILE_CAP = 120
 
-async function readRunEventFileAsync(filePath: string): Promise<RunEventRecord[]> {
+async function readRunEventFileAsync(
+  filePath: string,
+  kinds?: RunEventKind[]
+): Promise<RunEventRecord[]> {
+  const accepts = runEventLinePrefilter(kinds)
   try {
-    return (await fs.promises.readFile(filePath, 'utf-8'))
-      .split(/\r?\n/)
-      .map(parseRunEventLine)
-      .filter((event): event is RunEventRecord => Boolean(event))
+    const events: RunEventRecord[] = []
+    for (const line of (await fs.promises.readFile(filePath, 'utf-8')).split(/\r?\n/)) {
+      if (accepts && !accepts(line)) continue
+      const event = parseRunEventLine(line)
+      if (event) events.push(event)
+    }
+    return events
   } catch (e) {
     if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') console.error(`Failed to read ${filePath}`, e)
     return []
@@ -3892,26 +3929,52 @@ async function readRunEventFileAsync(filePath: string): Promise<RunEventRecord[]
 
 /** Async twin of `readRunEventFile` over many paths — sequential `await` per file
  * yields the event loop between files. */
-async function readRunEventFilesAsync(paths: string[]): Promise<RunEventRecord[]> {
+async function readRunEventFilesAsync(
+  paths: string[],
+  kinds?: RunEventKind[]
+): Promise<RunEventRecord[]> {
   const all: RunEventRecord[] = []
   for (const filePath of paths) {
-    for (const event of await readRunEventFileAsync(filePath)) all.push(event)
+    for (const event of await readRunEventFileAsync(filePath, kinds)) all.push(event)
   }
   return all
 }
 
-/** Async twin of `readAllRunEventFiles`. The per-file `await` yields the event
- * loop, so even a (rare, no-filter) multi-GB forensics sweep can't beachball the
- * MAIN thread the way the sync version did. */
-async function readAllRunEventFilesAsync(): Promise<RunEventRecord[]> {
+/** Async twin of `readAllRunEventFiles`.
+ *
+ * Reads line-by-line rather than `readFile` + `split`: run-event files are
+ * unbounded (measured 2026-07-19: one 250MB file in a 5.9GB dir), and
+ * materializing one as a string plus an array of every line is a single
+ * uninterruptible allocation the per-file `await` cannot break up. Streaming
+ * keeps the working set to one line and lets the loop breathe mid-file.
+ *
+ * `kinds` is pushed down to skip `JSON.parse` on non-matching lines — see
+ * {@link runEventLinePrefilter}. Without it this sweep parses every event in
+ * the dir just to throw nearly all of them away. */
+async function readAllRunEventFilesAsync(kinds?: RunEventKind[]): Promise<RunEventRecord[]> {
+  const accepts = runEventLinePrefilter(kinds)
   try {
     const files = (await fs.promises.readdir(runEventsDir)).filter((file) =>
       file.endsWith('.jsonl')
     )
     const all: RunEventRecord[] = []
     for (const file of files) {
-      for (const event of await readRunEventFileAsync(path.join(runEventsDir, file))) {
-        all.push(event)
+      const filePath = path.join(runEventsDir, file)
+      const input = fs.createReadStream(filePath, { encoding: 'utf-8' })
+      const lines = createInterface({ input, crlfDelay: Infinity })
+      try {
+        for await (const line of lines) {
+          if (accepts && !accepts(line)) continue
+          const event = parseRunEventLine(line)
+          if (event) all.push(event)
+        }
+      } catch (e) {
+        if ((e as NodeJS.ErrnoException)?.code !== 'ENOENT') {
+          console.error(`Failed to read ${filePath}`, e)
+        }
+      } finally {
+        lines.close()
+        input.destroy()
       }
     }
     return all
@@ -10287,7 +10350,9 @@ export class AppStore {
   static getRunEvents(filter: RunEventFilter = {}): RunEventRecord[] {
     const paths = this.runEventFilePathsForFilter(filter)
     const events =
-      paths === null ? readAllRunEventFiles() : paths.flatMap((p) => readRunEventFile(p))
+      paths === null
+        ? readAllRunEventFiles(filter.kinds)
+        : paths.flatMap((p) => readRunEventFile(p, filter.kinds))
     return filterRunEvents(events, filter)
   }
 
@@ -10298,7 +10363,9 @@ export class AppStore {
   static async getRunEventsAsync(filter: RunEventFilter = {}): Promise<RunEventRecord[]> {
     const paths = this.runEventFilePathsForFilter(filter)
     const events =
-      paths === null ? await readAllRunEventFilesAsync() : await readRunEventFilesAsync(paths)
+      paths === null
+        ? await readAllRunEventFilesAsync(filter.kinds)
+        : await readRunEventFilesAsync(paths, filter.kinds)
     return filterRunEvents(events, filter)
   }
 
