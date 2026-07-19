@@ -1,8 +1,14 @@
 import { describe, expect, it } from 'vitest'
-import type { ChatRecord, RunQueueJob } from '../../../main/store/types'
+import type {
+  ChatRecord,
+  EnsembleQueuedPromptState,
+  RunQueueJob
+} from '../../../main/store/types'
 import type { QueuedRunRequest } from './runRequestTypes'
 import {
+  alignEnsembleQueuedPromptEntries,
   appendLocalQueuedRunEntries,
+  mapQueuedAttachmentsForComposer,
   preserveOptimisticEnsembleQueue
 } from './queuedMessageRows'
 
@@ -13,10 +19,22 @@ const chat = (id: string): ChatRecord =>
     messages: []
   }) as unknown as ChatRecord
 
+const entry = (
+  id: string,
+  prompt: string,
+  path?: string
+): EnsembleQueuedPromptState => ({
+  persistenceVersion: 1,
+  id,
+  prompt,
+  imageAttachments: path ? [{ id: `${id}-att`, path, name: path.split('/').pop() }] : []
+})
+
 const ensembleChat = (
   id: string,
   roundId: string,
-  queuedPrompts: string[]
+  queuedPrompts: string[],
+  queuedPromptEntries?: EnsembleQueuedPromptState[]
 ): ChatRecord =>
   ({
     appChatId: id,
@@ -31,7 +49,8 @@ const ensembleChat = (
         startedAt: '2026-06-22T10:00:00.000Z',
         participants: [],
         queuedPrompt: queuedPrompts[0],
-        queuedPrompts
+        queuedPrompts,
+        ...(queuedPromptEntries ? { queuedPromptEntries } : {})
       }
     }
   }) as unknown as ChatRecord
@@ -125,13 +144,22 @@ describe('queued message row helpers', () => {
   })
 
   it('preserves a longer local ensemble queue over stale hydration for the same running round', () => {
-    const incoming = ensembleChat('chat-1', 'round-1', ['first'])
+    const incoming = ensembleChat('chat-1', 'round-1', ['first'], [entry('e1', 'first', '/tmp/a.png')])
     const local = ensembleChat('chat-1', 'round-1', ['first', 'second'])
 
     const merged = preserveOptimisticEnsembleQueue(incoming, local)
 
     expect(merged.ensemble?.activeRound?.queuedPrompts).toEqual(['first', 'second'])
     expect(merged.ensemble?.activeRound?.queuedPrompt).toBe('first')
+    expect(merged.ensemble?.activeRound?.queuedPromptEntries).toEqual([
+      entry('e1', 'first', '/tmp/a.png'),
+      {
+        persistenceVersion: 1,
+        id: 'optimistic-queued-tail-round-1-0',
+        prompt: 'second',
+        imageAttachments: []
+      }
+    ])
   })
 
   it('keeps same-length ensemble queues main-authoritative', () => {
@@ -150,5 +178,79 @@ describe('queued message row helpers', () => {
     const merged = preserveOptimisticEnsembleQueue(incoming, local)
 
     expect(merged).toBe(incoming)
+  })
+
+  it('maps queued attachment snapshots back into composer rows', () => {
+    expect(
+      mapQueuedAttachmentsForComposer([
+        {
+          id: 'att-1',
+          path: '/tmp/shot.png',
+          name: 'shot.png',
+          persistenceVersion: 1,
+          sha256: 'abc',
+          mimeType: 'image/png',
+          byteLength: 12
+        },
+        { path: '' },
+        { path: '/tmp/note.pdf' }
+      ])
+    ).toEqual([
+      {
+        id: 'att-1',
+        path: '/tmp/shot.png',
+        name: 'shot.png',
+        persistenceVersion: 1,
+        sha256: 'abc',
+        mimeType: 'image/png',
+        byteLength: 12
+      },
+      {
+        id: 'queued-edit-attachment-2',
+        path: '/tmp/note.pdf',
+        name: 'note.pdf'
+      }
+    ])
+  })
+
+  it('aligns structured entries on index-accurate removal so attachments stay with remaining prompts', () => {
+    const previousPrompts = ['Queued A', 'Queued A', 'Queued C']
+    const previousEntries = [
+      entry('e0', 'Queued A', '/tmp/a0.png'),
+      entry('e1', 'Queued A', '/tmp/a1.png'),
+      entry('e2', 'Queued C', '/tmp/c.png')
+    ]
+
+    const aligned = alignEnsembleQueuedPromptEntries(
+      previousPrompts,
+      previousEntries,
+      ['Queued A', 'Queued C'],
+      { removedIndex: 0 }
+    )
+
+    expect(aligned).toEqual([
+      entry('e1', 'Queued A', '/tmp/a1.png'),
+      entry('e2', 'Queued C', '/tmp/c.png')
+    ])
+  })
+
+  it('appends an empty-attachment placeholder when optimistically enqueueing', () => {
+    const previousPrompts = ['first']
+    const previousEntries = [entry('e0', 'first', '/tmp/a.png')]
+
+    const aligned = alignEnsembleQueuedPromptEntries(
+      previousPrompts,
+      previousEntries,
+      ['first', 'second'],
+      { appendedPrompt: 'second' }
+    )
+
+    expect(aligned).toHaveLength(2)
+    expect(aligned?.[0]).toEqual(entry('e0', 'first', '/tmp/a.png'))
+    expect(aligned?.[1]).toMatchObject({
+      persistenceVersion: 1,
+      prompt: 'second',
+      imageAttachments: []
+    })
   })
 })
