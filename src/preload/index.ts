@@ -121,11 +121,11 @@ window.addEventListener(
   true
 )
 
-async function saveClipboardImageAttachmentFromTrustedPaste(): Promise<string[]> {
+async function saveClipboardImageAttachmentFromTrustedPaste(appChatId: string): Promise<string[]> {
   const intent = pendingClipboardPasteIntent
   pendingClipboardPasteIntent = null
   if (!intent || Date.now() > intent.expiresAt) return []
-  return ipcRenderer.invoke('save-clipboard-image-attachment', intent.token)
+  return ipcRenderer.invoke('save-clipboard-image-attachment', appChatId, intent.token)
 }
 
 const serializedChatPersistence = new SerializedChatPersistence((chat) =>
@@ -647,7 +647,7 @@ const api = {
     openWindow: (args: {
       url: string
       originAllowlist?: string[]
-      chatId?: string
+      chatId: string
     }): Promise<
       | {
           ok: true
@@ -661,7 +661,7 @@ const api = {
     openEmbedded: (args: {
       url: string
       originAllowlist?: string[]
-      chatId?: string
+      chatId: string
     }): Promise<
       | {
           ok: true
@@ -672,7 +672,7 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-embedded', args),
-    openSketchWindow: (args?: { chatId?: string }): Promise<
+    openSketchWindow: (args: { chatId: string }): Promise<
       | {
           ok: true
           canvasId: string
@@ -799,22 +799,33 @@ const api = {
         }
       | { ok: false; origin?: string; host?: string; blocked?: boolean; error: string }
     >,
-  // 1.0.6-CRUX42 — open a Terminal already running the provider's interactive CLI
-  // sign-in (Cursor / Grok). Main writes + opens a one-shot .command.
+  // Open a Terminal for provider sign-in. Main rejects historical Cursor
+  // requests before resolving a binary or writing a command file. Kimi returns
+  // explicit user-owned setup metadata; this handoff is not managed-run
+  // qualification.
   openProviderLoginTerminal: (provider: ProviderId) =>
     ipcRenderer.invoke('provider:open-login-terminal', provider) as Promise<{
       ok: boolean
       error?: string
+      scope?: 'user-owned-provider-setup'
+      managedRunReady?: false
+      notice?: string
     }>,
   openProviderLogoutTerminal: (provider: ProviderId) =>
     ipcRenderer.invoke('provider:open-logout-terminal', provider) as Promise<{
       ok: boolean
       error?: string
+      scope?: 'user-owned-provider-setup'
+      managedRunReady?: false
+      notice?: string
     }>,
   openProviderUpgradeTerminal: (provider: ProviderId) =>
     ipcRenderer.invoke('provider:open-upgrade-terminal', provider) as Promise<{
       ok: boolean
       error?: string
+      scope?: 'user-owned-provider-setup'
+      managedRunReady?: false
+      notice?: string
     }>,
   startPty: (workspacePath: string, sessionId: string = 'default') =>
     ipcRenderer.invoke('start-pty', workspacePath, sessionId),
@@ -1214,10 +1225,10 @@ const api = {
     fanoutPolicy?: EnsembleFanoutPolicy
     imageAttachments?: ComposerImageAttachment[]
     discordContextSnapshots?: DiscordContextSnapshot[]
-    /** A2 (1.0.3) — DM routing: scope this "round" to a single
-     * participant chip. The orchestrator's machinery still drives
-     * the run (so status pills + per-participant tally still update)
-     * but iterates a one-element participant list. */
+    /** Advisory exact target for an explicit participant-chip gesture.
+     * MAIN re-resolves prompt mentions against its canonical roster and only
+     * accepts this id when the prompt has no participant-routing signal and
+     * the seat is current, enabled, and foreground. */
     dmTargetParticipantId?: string
     /** 1.0.4-AT4 — composer-level external path grants applied to
      * every participant's effective permissions for the round.

@@ -496,7 +496,7 @@ declare global {
       // Resolves a dragged/pasted File's absolute path (Electron 32+ removed
       // `File.path`; webUtils.getPathForFile is the replacement).
       getPathForFile: (file: File) => string
-      saveClipboardImageAttachment: () => Promise<string[]>
+      saveClipboardImageAttachment: (appChatId: string) => Promise<string[]>
       readImagePreview: (path: string) => Promise<string | null>
       transcribeComposerAudio: (input: {
         localeIdentifier?: string
@@ -956,7 +956,7 @@ declare global {
         error?: string
       }>
       canvas: {
-        openWindow: (args: { url: string; originAllowlist?: string[]; chatId?: string }) => Promise<
+        openWindow: (args: { url: string; originAllowlist?: string[]; chatId: string }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -969,7 +969,7 @@ declare global {
         openEmbedded: (args: {
           url: string
           originAllowlist?: string[]
-          chatId?: string
+          chatId: string
         }) => Promise<
           | {
               ok: true
@@ -980,7 +980,7 @@ declare global {
             }
           | { ok: false; error: string }
         >
-        openSketchWindow: (args?: { chatId?: string }) => Promise<
+        openSketchWindow: (args: { chatId: string }) => Promise<
           | {
               ok: true
               canvasId: string
@@ -1055,11 +1055,29 @@ declare global {
           }
         | { ok: false; origin?: string; host?: string; blocked?: boolean; error: string }
       >
-      openProviderLoginTerminal: (provider: ProviderId) => Promise<{ ok: boolean; error?: string }>
-      openProviderLogoutTerminal: (provider: ProviderId) => Promise<{ ok: boolean; error?: string }>
+      openProviderLoginTerminal: (provider: ProviderId) => Promise<{
+        ok: boolean
+        error?: string
+        scope?: 'user-owned-provider-setup'
+        managedRunReady?: false
+        notice?: string
+      }>
+      openProviderLogoutTerminal: (provider: ProviderId) => Promise<{
+        ok: boolean
+        error?: string
+        scope?: 'user-owned-provider-setup'
+        managedRunReady?: false
+        notice?: string
+      }>
       openProviderUpgradeTerminal: (
         provider: ProviderId
-      ) => Promise<{ ok: boolean; error?: string }>
+      ) => Promise<{
+        ok: boolean
+        error?: string
+        scope?: 'user-owned-provider-setup'
+        managedRunReady?: false
+        notice?: string
+      }>
       startPty: (workspacePath: string, sessionId?: string) => Promise<void>
       stopPty: (sessionId?: string) => Promise<void>
       ptyWrite: (data: string, sessionId?: string) => Promise<void>
@@ -1546,7 +1564,8 @@ declare global {
         imageAttachments?: ComposerImageAttachment[]
         discordContextSnapshots?: DiscordContextSnapshot[]
         externalPathGrants?: ExternalPathGrant[]
-        /** A2 (1.0.3) — DM routing: scope the round to a single chip. */
+        /** Advisory exact target for a no-signal participant-chip gesture;
+         * MAIN validates it against the canonical roster before dispatch. */
         dmTargetParticipantId?: string
       }) => Promise<{ status: string; roundId?: string }>
       steerQueuedEnsemblePrompt: (payload: {
