@@ -18,9 +18,9 @@
  * branches in this component and NO per-shell CSS.
  *
  * Behaviour parity with the old <select>:
- *   - Available providers are gemini / codex / claude / kimi, plus
- *     grok / cursor ONLY when the caller passes the matching
- *     `*Available` flag (the old gated <option>s).
+ *   - Available providers come from the canonical live-provider contract;
+ *     the legacy Cursor availability flag cannot reintroduce an unqualified
+ *     provider.
  *   - The active provider carries a checkmark.
  *   - Selection calls `onSelect(providerId)` — wired by App.tsx to
  *     the same `handleComposerProviderChange` the <select> used, so
@@ -35,7 +35,7 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { createPortal } from 'react-dom'
 import type { AppSettings, ComposerStyle, ProviderId } from '../../../main/store/types'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -51,7 +51,7 @@ interface ComposerProviderPickerProps {
   composerStyle: ComposerStyle
   /** Show the Grok row only when the runtime advertises Grok. */
   grokAvailable: boolean
-  /** Show the Cursor row only when the runtime advertises Cursor. */
+  /** Legacy compatibility input; Cursor remains excluded by live admission. */
   cursorAvailable: boolean
   /** Same handler the old <select>'s onChange called. */
   onSelect: (provider: ProviderId) => void
@@ -100,10 +100,15 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   ollama: 'Local Ollama HTTP'
 }
 
+/** User-facing reason used to make historical provider chats read-only. */
+export function providerRunUnavailableReason(provider: ProviderId): string | null {
+  if (isLiveSelectableProvider(provider)) return null
+  return `${getProviderName(provider)} managed runs are unavailable. Switch this chat to a live provider to continue.`
+}
+
 /**
- * Resolve the visible provider rows. Ordering + gating mirror the old
- * <select>'s <option> order exactly: gemini, codex, claude, kimi,
- * then grok / cursor only when the matching availability flag is set.
+ * Resolve the visible provider rows. The shared live-provider predicate is the
+ * final gate even when a stale caller still reports Cursor as available.
  * Exported so the popover body can be unit-tested via SSR without a
  * DOM (the live popover only mounts after a click + layout effect).
  */
@@ -120,7 +125,7 @@ export function resolveProviderRows(
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
     'ollama'
-  ] as ProviderId[]).filter((id) => !isRetiredProvider(id))
+  ] as ProviderId[]).filter((id) => isLiveSelectableProvider(id))
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)
     return {

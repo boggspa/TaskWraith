@@ -1,4 +1,5 @@
 import type { ProviderCapabilityContract, ProviderId } from '../../../main/store/types'
+import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
 
 /**
  * ComposerSlashCommands — single source of truth for the chat composer's
@@ -319,6 +320,7 @@ function passesCapabilityGate(
 export function buildComposerSlashCommandRegistry(
   input: ComposerSlashRegistryInput
 ): ComposerSlashCommand[] {
+  if (!isLiveSelectableProvider(input.provider)) return []
   const wrapped = input.paletteItems.map(wrapPaletteItemAsSlashCommand)
   const combined = [...wrapped, ...(input.extraCommands ?? [])]
   return dedupeComposerSlashCommands(
@@ -490,18 +492,19 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
 
 /** Resolve the per-provider palette core. Mirrors the routing logic at
  * App.tsx:11874 (codex → CODEX, non-Codex CLI providers → CLI_PROVIDER).
- * Grok/Cursor/Ollama take the generic CLI core: provider-native TUI slash
+ * Grok/Ollama take the generic CLI core: provider-native TUI slash
  * commands are not reachable over our headless/ACP/local run paths. /review
  * here is TaskWraith's own read-only diff review (reviewDiffPrompt + a
- * plan-mode run), provider-agnostic. Retired provider ids intentionally return
- * an empty command set. */
+ * plan-mode run), provider-agnostic. Providers outside the canonical live set
+ * intentionally return an empty command set while their history remains
+ * decodable. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
+  if (!isLiveSelectableProvider(provider)) return RETIRED_PROVIDER_PALETTE_CORE
   if (provider === 'codex') return CODEX_PALETTE_CORE
   if (
     provider === 'claude' ||
     provider === 'kimi' ||
     provider === 'grok' ||
-    provider === 'cursor' ||
     provider === 'ollama'
   ) {
     return CLI_PROVIDER_PALETTE_CORE

@@ -1,7 +1,7 @@
 import React, { useEffect, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
 import { PillButton } from './PillButton'
 
 /**
@@ -40,9 +40,13 @@ const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string
     label: 'Claude',
     helper: 'Deep reasoning, tool use, careful code edits with strong safety.'
   },
-  { value: 'kimi', label: 'Kimi', helper: 'Wire-protocol-driven runs, structured tool calls.' }
+  {
+    value: 'kimi',
+    label: 'Kimi',
+    helper: 'Admitted ACP runtime with a governed per-run TaskWraith gateway.'
+  }
 ] as Array<{ value: ProviderId; label: string; helper: string }>).filter(
-  (opt) => !isRetiredProvider(opt.value)
+  (opt) => isLiveSelectableProvider(opt.value)
 )
 
 interface SubThreadCreatorProps {

@@ -5503,6 +5503,21 @@ input:disabled, select:disabled, textarea:disabled {
   max-height: 180px;
 }
 
+.canvas-eval-exact-review pre {
+  max-height: min(60vh, 720px);
+  min-height: 240px;
+  white-space: pre;
+  unicode-bidi: plaintext;
+  tab-size: 2;
+}
+
+.canvas-eval-review-metadata,
+.canvas-eval-exact-review small {
+  color: var(--text-secondary);
+  font-family: var(--font-mono);
+  overflow-wrap: anywhere;
+}
+
 /* Phase I3.3 — subthread-delegation approval gets a bespoke layout with
  * the cross-provider arc and a clear usage-allowance note. */
 .agent-approval-preview-subthread {
@@ -6342,7 +6357,7 @@ input:disabled, select:disabled, textarea:disabled {
   opacity: 0.62;
 }
 
-.settings-roster-participant.is-retired {
+.settings-roster-participant.is-unavailable {
   border-style: dashed;
   border-color: color-mix(in srgb, var(--warning, #d8a657) 36%, transparent);
   background: color-mix(in srgb, var(--warning, #d8a657) 7%, transparent);
@@ -6488,7 +6503,7 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-primary);
 }
 
-.settings-roster-retired-badge {
+.settings-roster-unavailable-badge {
   padding: 1px 7px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--warning, #d8a657) 22%, transparent);

@@ -40,11 +40,145 @@ const formatLaunchContextPreview = (preview: any): string => {
   return lines.join('\n')
 }
 
+export const isCanvasEvalApprovalToolName = (value: unknown): boolean => {
+  if (typeof value !== 'string') return false
+  const normalized = value.trim().toLowerCase().replace(/-/g, '_')
+  return normalized === 'canvas_eval' || /(?:^|_)canvas_eval$/.test(normalized)
+}
+
+const namedInvisibleCodePoints = new Map<number, string>([
+  [0x00a0, 'NBSP'],
+  [0x00ad, 'SOFT HYPHEN'],
+  [0x034f, 'COMBINING GRAPHEME JOINER'],
+  [0x061c, 'ARABIC LETTER MARK'],
+  [0x180e, 'MONGOLIAN VOWEL SEPARATOR'],
+  [0x200b, 'ZERO WIDTH SPACE'],
+  [0x200c, 'ZERO WIDTH NON-JOINER'],
+  [0x200d, 'ZERO WIDTH JOINER'],
+  [0x200e, 'LEFT-TO-RIGHT MARK'],
+  [0x200f, 'RIGHT-TO-LEFT MARK'],
+  [0x2028, 'LINE SEPARATOR'],
+  [0x2029, 'PARAGRAPH SEPARATOR'],
+  [0x202a, 'LEFT-TO-RIGHT EMBEDDING'],
+  [0x202b, 'RIGHT-TO-LEFT EMBEDDING'],
+  [0x202c, 'POP DIRECTIONAL FORMATTING'],
+  [0x202d, 'LEFT-TO-RIGHT OVERRIDE'],
+  [0x202e, 'RIGHT-TO-LEFT OVERRIDE'],
+  [0x2060, 'WORD JOINER'],
+  [0x2066, 'LEFT-TO-RIGHT ISOLATE'],
+  [0x2067, 'RIGHT-TO-LEFT ISOLATE'],
+  [0x2068, 'FIRST STRONG ISOLATE'],
+  [0x2069, 'POP DIRECTIONAL ISOLATE'],
+  [0xfeff, 'ZERO WIDTH NO-BREAK SPACE']
+])
+
+const visibleCodePoint = (character: string): string => {
+  const codePoint = character.codePointAt(0) ?? 0
+  // Marker delimiters and the line-prefix separator are visible characters,
+  // but leaving them literal makes the review rendering non-injective: a real
+  // tab and the literal text `⟨TAB U+0009⟩` would look identical. Escape the
+  // review grammar itself so no script can counterfeit a control marker or a
+  // generated line prefix.
+  const reviewGrammarName =
+    codePoint === 0x27e8
+      ? 'LITERAL LEFT ANGLE BRACKET'
+      : codePoint === 0x27e9
+        ? 'LITERAL RIGHT ANGLE BRACKET'
+        : codePoint === 0x2502
+          ? 'LITERAL BOX DRAWINGS LIGHT VERTICAL'
+          : undefined
+  const controlName =
+    character === '\t'
+      ? 'TAB'
+      : character === '\r'
+        ? 'CR'
+        : character === '\n'
+          ? 'LF'
+          : namedInvisibleCodePoints.get(codePoint)
+  const isControl = codePoint < 0x20 || (codePoint >= 0x7f && codePoint <= 0x9f)
+  const isUnpairedSurrogate = codePoint >= 0xd800 && codePoint <= 0xdfff
+  const isVariationSelector =
+    (codePoint >= 0xfe00 && codePoint <= 0xfe0f) ||
+    (codePoint >= 0xe0100 && codePoint <= 0xe01ef)
+  if (
+    !reviewGrammarName &&
+    !controlName &&
+    !isControl &&
+    !isUnpairedSurrogate &&
+    !isVariationSelector
+  ) {
+    return character
+  }
+  const label =
+    reviewGrammarName ||
+    controlName ||
+    (isUnpairedSurrogate
+      ? 'UNPAIRED SURROGATE'
+      : isVariationSelector
+        ? 'VARIATION SELECTOR'
+        : 'CONTROL')
+  return `\u27e8${label} U+${codePoint.toString(16).toUpperCase().padStart(4, '0')}\u27e9`
+}
+
+/** One-to-one, line-numbered rendering that makes bidi/zero-width/control code points visible. */
+export const formatCanvasEvalScriptForReview = (script: string): string => {
+  let line = 1
+  let output = `${line.toString().padStart(4, ' ')} \u2502 `
+  for (const character of script) {
+    output += visibleCodePoint(character)
+    if (character === '\n') {
+      output += '\n'
+      line += 1
+      output += `${line.toString().padStart(4, ' ')} \u2502 `
+    }
+  }
+  return output
+}
+
+const canvasEvalScriptFromPreview = (value: unknown, depth = 0): string => {
+  if (depth > 6) return ''
+  if (typeof value === 'string') {
+    if (value.length > 200_000 || !value.trim().startsWith('{')) return ''
+    try {
+      return canvasEvalScriptFromPreview(JSON.parse(value), depth + 1)
+    } catch {
+      return ''
+    }
+  }
+  if (Array.isArray(value)) {
+    for (const child of value) {
+      const script = canvasEvalScriptFromPreview(child, depth + 1)
+      if (script) return script
+    }
+    return ''
+  }
+  if (!value || typeof value !== 'object') return ''
+  const record = value as Record<string, unknown>
+  if (typeof record.script === 'string') return record.script
+  for (const child of Object.values(record)) {
+    const script = canvasEvalScriptFromPreview(child, depth + 1)
+    if (script) return script
+  }
+  return ''
+}
+
 const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
   if (!preview || typeof preview !== 'object') return null
   const command = typeof preview.command === 'string' ? preview.command : ''
   const cwd = typeof preview.cwd === 'string' ? preview.cwd : ''
   const toolName = typeof preview.toolName === 'string' ? preview.toolName : ''
+  const requiresCanvasEvalExactReview =
+    preview.requiresExactDesktopReview === true || isCanvasEvalApprovalToolName(toolName)
+  const canvasEvalScript = requiresCanvasEvalExactReview
+    ? canvasEvalScriptFromPreview(preview.params)
+    : ''
+  const canvasEvalReceipt =
+    preview.canvasEvalReceipt && typeof preview.canvasEvalReceipt === 'object'
+      ? preview.canvasEvalReceipt
+      : null
+  const canvasEvalReview = canvasEvalScript
+    ? formatCanvasEvalScriptForReview(canvasEvalScript)
+    : ''
   const taskPreview = typeof preview.task === 'string' ? preview.task : ''
   const patchPreview =
     typeof preview.patchPreview === 'string'
@@ -70,6 +204,7 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
     command ||
     cwd ||
     toolName ||
+    canvasEvalScript ||
     launchContextPreview ||
     taskPreview ||
     patchPreview ||
@@ -97,6 +232,23 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
         <div className="agent-approval-preview-block">
           <span>Command</span>
           <pre>{command}</pre>
+        </div>
+      )}
+      {canvasEvalScript && (
+        <div className="agent-approval-preview-block canvas-eval-exact-review">
+          <span>JavaScript to execute (control-visible exact review)</span>
+          <div className="canvas-eval-review-metadata">
+            UTF-16: {String(canvasEvalReceipt?.scriptLength ?? canvasEvalScript.length)} code units
+            {' \u00b7 '}UTF-8: {String(canvasEvalReceipt?.scriptByteLength ?? 'receipt pending')} bytes
+            {typeof canvasEvalReceipt?.scriptHash === 'string' && (
+              <>{' \u00b7 '}SHA-256: {canvasEvalReceipt.scriptHash}</>
+            )}
+          </div>
+          <pre dir="ltr">{canvasEvalReview}</pre>
+          <small>
+            Angle-bracket tokens are literal invisible/control characters in the script that will
+            execute.
+          </small>
         </div>
       )}
       {launchContextPreview && (

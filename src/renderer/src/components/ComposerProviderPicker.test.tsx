@@ -3,6 +3,7 @@ import { describe, expect, it } from 'vitest'
 import {
   ComposerProviderPicker,
   ComposerProviderPickerRows,
+  providerRunUnavailableReason,
   resolveProviderRows
 } from './ComposerProviderPicker'
 
@@ -64,7 +65,14 @@ describe('ComposerProviderPicker trigger', () => {
 })
 
 describe('resolveProviderRows (gated visibility + option order)', () => {
-  it('hides grok + cursor unless their availability flags are set', () => {
+  it('explains why historical Cursor chats cannot run while keeping live providers clear', () => {
+    expect(providerRunUnavailableReason('cursor')).toBe(
+      'Cursor managed runs are unavailable. Switch this chat to a live provider to continue.'
+    )
+    expect(providerRunUnavailableReason('claude')).toBeNull()
+  })
+
+  it('hides optional providers unless their availability flags are set', () => {
     expect(resolveProviderRows(false, false).map((r) => r.id)).toEqual([
       'codex',
       'claude',
@@ -73,23 +81,21 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
     ])
   })
 
-  it('appends grok then cursor when both are available (preserving option order)', () => {
+  it('offers Grok but never Cursor when both legacy availability flags are set', () => {
     expect(resolveProviderRows(true, true).map((r) => r.id)).toEqual([
       'codex',
       'claude',
       'kimi',
       'grok',
-      'cursor',
       'ollama'
     ])
   })
 
-  it('can append cursor without grok', () => {
+  it('does not let the legacy Cursor flag reintroduce an unqualified provider', () => {
     expect(resolveProviderRows(false, true).map((r) => r.id)).toEqual([
       'codex',
       'claude',
       'kimi',
-      'cursor',
       'ollama'
     ])
   })
@@ -136,12 +142,12 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('data-provider-value="claude"')
     expect(html).toContain('data-provider-value="kimi"')
     expect(html).toContain('data-provider-value="grok"')
-    expect(html).toContain('data-provider-value="cursor"')
+    expect(html).not.toContain('data-provider-value="cursor"')
     // ...each with the shared rich-popover row chrome + a provider icon.
     expect(html).toContain('composer-plus-picker-row')
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
-    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']) {
+    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'ollama']) {
       expect(html).toContain(`data-provider-logo="${provider}"`)
       expect(html).not.toContain(`provider-glyph-${provider}`)
     }

@@ -42,7 +42,7 @@ const ENSEMBLE_FANOUT_POLICIES = new Set<EnsembleFanoutPolicy>([
   'locked_writers_user_preflight'
 ])
 
-const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 6
+const DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS = 5
 
 function newPresetId(now: number): string {
   return `ensemble-roster-${now.toString(36)}-${Math.random().toString(36).slice(2, 8)}`
@@ -531,8 +531,9 @@ export function saveEnsembleRosterPresetFromParticipants(
 }
 
 /**
- * Create + persist a new roster preset seeded with a practical
- * two-participant starter lineup. The returned preset already passes
+ * Create + persist a new roster preset seeded with a practical small panel:
+ * Boss + Captain + Specialist, with room for a second specialist and an
+ * optional outsider. The returned preset already passes
  * `isEnsembleRosterPreset`, so it survives the next `readRawPresets`.
  */
 export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPreset {
@@ -541,10 +542,26 @@ export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPre
     throw new Error('Preset name is required.')
   }
   const now = Date.now()
-  const seeded: EnsembleParticipant[] = [
-    defaultParticipantForProvider('claude', 'ensemble-participant-1', 1),
-    defaultParticipantForProvider('codex', 'ensemble-participant-2', 2)
-  ]
+  const boss = {
+    ...defaultParticipantForProvider('claude', 'ensemble-participant-1', 1),
+    role: 'Boss',
+    instructions: 'Own the outcome, coordinate the panel, and synthesize the final decision.',
+    permissionPresetId: 'read_only' as const
+  }
+  const captain = {
+    ...defaultParticipantForProvider('codex', 'ensemble-participant-2', 2),
+    role: 'Captain',
+    instructions:
+      'Challenge the plan, keep unresolved risks visible, and execute approved changes.',
+    permissionPresetId: 'workspace_write' as const
+  }
+  const specialist = {
+    ...defaultParticipantForProvider('kimi', 'ensemble-participant-3', 3),
+    role: 'Specialist',
+    instructions: 'Review the work for gaps, edge cases, and missing verification.',
+    permissionPresetId: 'read_only' as const
+  }
+  const seeded: EnsembleParticipant[] = [boss, captain, specialist]
   const preset: EnsembleRosterPreset = {
     id: newPresetId(now),
     name: trimmed,
@@ -552,7 +569,7 @@ export function createEmptyEnsembleRosterPreset(name: string): EnsembleRosterPre
     updatedAt: now,
     orchestrationMode: 'turn_bound',
     maxParticipants: DEFAULT_ROSTER_PRESET_MAX_PARTICIPANTS,
-    participants: snapshotParticipantsForPreset(seeded)
+    participants: snapshotParticipantsForPreset(seeded, boss.id, captain.id)
   }
   const presets = readRawPresets()
   presets.unshift(preset)

@@ -10,6 +10,7 @@ import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseProviderApiKeyStatus,
+  type ProviderAuthSummary,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'
@@ -53,7 +54,7 @@ type OnboardingProviderId =
  *
  *   2. **Deep-link to Settings for auth.** Per-provider sign-in flows
  *      (Claude OAuth + API key, Gemini OAuth + profile management,
- *      Kimi API key) live in `SettingsPanel.tsx` and are tightly
+ *      Kimi user-owned OAuth + usage-key status) live in `SettingsPanel.tsx` and are tightly
  *      coupled to App-owned state + main-process IPC. Recreating
  *      them inline would mean lifting that wiring into yet another
  *      surface. Cards here show status only and deep-link via
@@ -91,9 +92,9 @@ export interface FirstLaunchSheetProps {
   /** Claude / Kimi auth status objects from App.tsx. */
   claudeAuthStatus: ProviderApiKeyStatus | null
   kimiAuthStatus: ProviderApiKeyStatus | null
-  /** Cursor / Grok are CLI-login providers (1.0.6). TaskWraith only knows
-   * whether each adapter is registered (enabled) — auth lives in their own
-   * CLI — so the cards surface availability + deep-link to Settings.
+  /** Cursor remains visible as disabled configuration/history; Grok is a
+   * CLI-login provider. Cursor availability must not be presented as run
+   * readiness because production starts no managed Cursor process.
    * Optional so older hosts / static tests can omit them. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
@@ -356,11 +357,13 @@ export function FirstLaunchSheet({
   const codexSummary = summariseCodexStatus(codexStatus)
   const claudeSummary = summariseProviderApiKeyStatus(claudeAuthStatus, 'Claude')
   const kimiSummary = summariseProviderApiKeyStatus(kimiAuthStatus, 'Kimi')
-  const cursorSummary = summariseCliProviderEnabled(
-    cursorProviderAvailable,
-    'Cursor',
-    'Sign in once with `cursor-agent login` in your shell, then launch Cursor runs.'
-  )
+  void cursorProviderAvailable
+  const cursorSummary: ProviderAuthSummary = {
+    variant: 'not-available',
+    statusText: 'Managed runs unavailable',
+    hint:
+      'TaskWraith will not start Cursor, including Plan runs, until the exact CLI build passes startup-containment qualification.'
+  }
   const grokSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
     'Grok',
@@ -386,7 +389,7 @@ export function FirstLaunchSheet({
       id: 'kimi',
       label: 'Kimi',
       description:
-        'Moonshot Kimi. Wire-protocol-driven runs and structured tool calls. Skip unless you have a Moonshot API key.',
+        'Moonshot Kimi. Managed runs require reviewed ACP runtime admission and use a governed per-run TaskWraith gateway. Skip unless Kimi Code is installed and signed in.',
       ...kimiSummary,
       deemphasised: true,
       optional: true
@@ -395,8 +398,9 @@ export function FirstLaunchSheet({
       id: 'cursor',
       label: 'Cursor',
       description:
-        'Cursor Composer 2.5. Write-capable agentic runs via the Cursor CLI. Sign-in is at the OS level — run `cursor-agent login` in your terminal once.',
+        'Configuration and historical records remain visible, but TaskWraith starts no managed Cursor process. Plan and tool modes are disabled pending stronger startup containment.',
       ...cursorSummary,
+      localOnly: true,
       optional: true
     },
     {
@@ -486,8 +490,8 @@ export function FirstLaunchSheet({
           <p className="first-launch-sheet-prose">
             TaskWraith is a local-first desktop workbench for AI coding agents. It brings together{' '}
             <strong>Codex</strong>,{' '}
-            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Cursor</strong>,{' '}
-            <strong>Grok</strong>, and local <strong>Ollama</strong> models inside one consistent
+            <strong>Claude</strong>, <strong>Kimi</strong>, <strong>Grok</strong>, and local{' '}
+            <strong>Ollama</strong> models inside one consistent
             UI so you can run solo chats, side chats, delegated workers, and Ensembles side by side.
             Each provider keeps its own auth — sign in to the ones you want to use, skip the rest.
             Chat history, goals, approvals, audit events, and usage stay in TaskWraith&apos;s local
@@ -555,14 +559,17 @@ export function FirstLaunchSheet({
             </li>
           </ul>
           <p className="first-launch-sheet-section-helper">
-            Providers sign in three ways: <strong>Codex</strong>, <strong>Cursor</strong>, and{' '}
-            <strong>Grok</strong> log in through their own CLI in a Terminal;{' '}
+            Providers sign in three ways: <strong>Codex</strong> and <strong>Grok</strong> log in
+            through their own CLI in a Terminal;{' '}
             <strong>Claude</strong> uses in-app OAuth or an API key;{' '}
-            <strong>Kimi</strong> takes an API key. <strong>Ollama</strong> is local-first: install
+            <strong>Kimi</strong> uses its current CLI OAuth login or a provider key configured in
+            its own <code>~/.kimi-code/config.toml</code>; the key saved in TaskWraith Settings is
+            usage-only, and its exact runtime must also pass admission. <strong>Ollama</strong>{' '}
+            is local-first: install
             Ollama and pull a model with no cloud account, or optionally sign in for Ollama Cloud /
-            Turbo and private models. Cursor and Grok auth stays inside their CLIs, so TaskWraith
-            marks those cards ready when the provider adapter is available; the CLI may still ask
-            you to finish login in Terminal.
+            Turbo and private models. Grok auth stays inside its CLI, so TaskWraith may ask you to
+            finish login in Terminal. Cursor is shown for configuration/history only; authentication
+            does not make managed Cursor runs available in this source-ahead build.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
@@ -746,11 +753,6 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-usage-mock-pct">56%</span>
             </div>
             <div className="first-launch-sheet-usage-mock-row">
-              <span className="first-launch-sheet-usage-mock-label">Cursor</span>
-              <QuotaProgressBar fraction={0.12} accent="var(--provider-cursor-color)" />
-              <span className="first-launch-sheet-usage-mock-pct">12%</span>
-            </div>
-            <div className="first-launch-sheet-usage-mock-row">
               <span className="first-launch-sheet-usage-mock-label">Grok</span>
               <QuotaProgressBar fraction={0.07} accent="var(--provider-grok-color)" />
               <span className="first-launch-sheet-usage-mock-pct">7%</span>
@@ -811,13 +813,6 @@ export function FirstLaunchSheet({
               <span className="first-launch-sheet-ensemble-arrow" aria-hidden>
                 →
               </span>
-              <span className="first-launch-sheet-ensemble-chip" data-provider="cursor">
-                <strong>Editor</strong>
-                <em>Cursor</em>
-              </span>
-              <span className="first-launch-sheet-ensemble-arrow" aria-hidden>
-                →
-              </span>
               <span className="first-launch-sheet-ensemble-chip" data-provider="grok">
                 <strong>Scout</strong>
                 <em>Grok</em>
@@ -870,8 +865,8 @@ export function FirstLaunchSheet({
             </li>
             <li>
               <strong>Fast Mode toggle.</strong> Inside the model picker, capable models (Codex
-              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, supported Cursor routes, and Kimi
-              K2.7 Coding) expose a Fast choice — K2.7 Coding switches between Standard and
+              GPT-5.6 / 5.5 / 5.4, supported Claude Opus models, and Kimi K2.7 Coding) expose a
+              Fast choice — K2.7 Coding switches between Standard and
               Highspeed (K3 has no Fast tier), while Grok 4.5 on the
               Grok CLI is always labelled Fast.
             </li>

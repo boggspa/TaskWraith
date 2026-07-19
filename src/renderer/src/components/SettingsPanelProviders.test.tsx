@@ -220,10 +220,15 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('aria-label="FX Labs intensity"')
   })
 
-  it('renders available Cursor and Grok cards without raw env flags and with ready LEDs', () => {
+  it('renders Cursor as unavailable and runnable Grok without raw env flags', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 
-    expect(html).toContain('settings-provider-auth-card-partial provider-cursor')
+    expect(html).toContain('settings-provider-auth-card-not-available provider-cursor')
+    expect(html).toContain('Managed runs unavailable')
+    expect(html).toContain(
+      'No login, logout, upgrade, Plan, MCP, shell, write, or resume action is'
+    )
+    expect(html).not.toContain('cursor-agent login')
     expect(html).toContain('settings-provider-auth-card-partial provider-grok')
     expect(html).toContain('Available · CLI sign-in')
     expect(html).toContain(
@@ -389,7 +394,7 @@ describe('SettingsPanel provider cards', () => {
       <SettingsPanel {...makeSettingsProps({ activeTab: 'mcp' })} />
     )
     expect(mcpHtml).toContain('Enables TaskWraith&#x27;s bundled MCP broker')
-    expect(mcpHtml).toContain('no manual Cursor or Grok MCP install is required')
+    expect(mcpHtml).toContain('no manual Grok MCP install is required')
   })
 
   it('renders user-managed MCP servers on the dedicated MCP Servers page', () => {
@@ -440,8 +445,8 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('1 header')
     expect(html).toContain('bearer env')
     expect(html).toContain('Import config')
-    expect(html).toContain('Codex + Claude + Cursor write mode')
-    expect(html).toContain('stdio/HTTP; Cursor write-mode support')
+    expect(html).toContain('Codex + Claude')
+    expect(html).toContain('stdio/HTTP provider attachment')
     expect(html).toContain('<span>Active</span><strong>3</strong><small>active definitions</small>')
     expect(html).toContain(
       '<span>Ready</span><strong>3</strong><small>attachable on next launch</small>'
@@ -458,11 +463,11 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain(
       '<span>Cursor export</span><strong>2</strong><small>mcp.json entries</small>'
     )
-    expect(html).toContain('runtime: Codex + Claude + Cursor write mode')
+    expect(html).toContain('runtime: Codex + Claude')
     expect(html).toContain('runtime: Claude')
-    expect(html).toContain('Ready for Codex + Claude + Cursor write mode')
+    expect(html).toContain('Ready for Codex + Claude')
     expect(html).toContain('Ready for Claude')
-    expect(html).toContain('Cursor support is limited to contained write-mode runs')
+    expect(html).toContain('Cursor JSON is export-only; TaskWraith starts no managed Cursor run')
     expect(html).toContain('SSE attaches to Claude only')
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')
@@ -1381,8 +1386,8 @@ describe('user MCP server name/audit helpers', () => {
       })
     ).toMatchObject({
       state: 'ready',
-      label: 'Ready for Codex + Claude + Cursor write mode',
-      providers: ['Codex', 'Claude', 'Cursor write mode'],
+      label: 'Ready for Codex + Claude',
+      providers: ['Codex', 'Claude'],
       blockers: []
     })
     expect(

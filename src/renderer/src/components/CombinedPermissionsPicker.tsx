@@ -65,6 +65,8 @@ interface CombinedPermissionsPickerProps {
   onToggleGrant: (service: AgenticServiceId, enabled: boolean) => void
   grantScopeLabel?: 'workspace' | 'participant'
   disabled?: boolean
+  /** Explain why the whole permission surface is unavailable. */
+  disabledReason?: string
   /** Ensemble-only: copy the current permission preset + grants to every participant. */
   onApplyToAllParticipants?: () => void
   /**
@@ -95,6 +97,7 @@ export function CombinedPermissionsPicker({
   onToggleGrant,
   grantScopeLabel = 'workspace',
   disabled,
+  disabledReason,
   onApplyToAllParticipants,
   onStartTrustedSession,
   onStopTrustedSession,
@@ -394,7 +397,8 @@ export function CombinedPermissionsPicker({
         disabled={disabled}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title="Permission mode and tool grants"
+        title={disabledReason || 'Permission mode and tool grants'}
+        aria-label={disabledReason || 'Choose permission mode and tool grants'}
       >
         <span className="composer-combined-picker-trigger-primary">{chipPieces.primary}</span>
         {chipPieces.suffix && (

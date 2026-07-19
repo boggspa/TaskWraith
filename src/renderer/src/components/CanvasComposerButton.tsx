@@ -59,11 +59,12 @@ export function CanvasComposerButton({
     setError(null)
     setBusyMode('web')
     try {
+      if (!chatId) throw new Error('Canvas requires an active chat.')
       // A standalone floating window (movable / closable) — not embedded over a
       // pane, so there's no DOM-overlay positioning to get wrong.
       const result = await window.api.canvas?.openWindow({
         url,
-        chatId: chatId || undefined
+        chatId
       })
       if (result?.ok) {
         setOpen(false)
@@ -84,9 +85,13 @@ export function CanvasComposerButton({
       setError('Sketch Canvas needs the updated preload bridge. Restart TaskWraith and try again.')
       return
     }
+    if (!chatId) {
+      setError('Canvas requires an active chat.')
+      return
+    }
     setBusyMode('sketch')
     try {
-      const result = await openSketchWindow({ chatId: chatId || undefined })
+      const result = await openSketchWindow({ chatId })
       if (result?.ok) {
         setOpen(false)
       } else {

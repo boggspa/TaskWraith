@@ -335,9 +335,8 @@ interface SettingsPanelProps {
   claudeAuthStatus?: ProviderApiKeyStatus | null
   kimiAuthStatus?: ProviderApiKeyStatus | null
   ollamaStatus?: any
-  /** Cursor / Grok adapter availability (enabled, not force-disabled). Both
-   * are CLI-login providers — auth lives in their own CLI — so the cards
-   * surface availability + a terminal-login instruction, no API-key field. */
+  /** Historical Cursor availability is always false under the no-spawn gate;
+   * Grok remains a CLI-login provider with terminal-managed auth. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
   claudeLoginState?: 'idle' | 'loading' | 'success' | 'error'
@@ -350,8 +349,8 @@ interface SettingsPanelProps {
   onStoreKimiApiKey?: (key: string) => void
   onClearKimiApiKey?: () => void
   onProviderUpgrade?: (provider: ProviderId) => void
-  // 1.0.6-CRUX42 — open a Terminal running the provider's interactive CLI login
-  // (Cursor / Grok). The host wires this to window.api.openProviderLoginTerminal.
+  // Open a Terminal running a qualified provider's interactive CLI login. Grok
+  // remains supported; historical Cursor requests are rejected main-side.
   onProviderLogin?: (provider: ProviderId) => void
   onProviderLogout?: (provider: ProviderId) => void
   onRemoveAgenticWorkspaceGrant?: (
@@ -735,8 +734,8 @@ const FUN_FX_MODES: Array<{ value: AppSettings['funFxMode']; label: string; help
 ]
 
 
-// 1.0.6-CRUX41 — cursor + grok are first-class; surface them in the MCP tab's
-// connected-surfaces grid (and the refresh-all loop) alongside the core four.
+// Cursor remains in the status grid for an explicit historical/unavailable
+// explanation; this list is not a live-provider offer set.
 const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'codex',
   'claude',
@@ -800,8 +799,8 @@ const USER_MCP_TRANSPORT_OPTIONS: Array<{ value: UserMcpServerTransport; label: 
   { value: 'sse', label: 'SSE' }
 ]
 const USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT: Record<UserMcpServerTransport, readonly string[]> = {
-  stdio: ['Codex', 'Claude', 'Cursor write mode'],
-  http: ['Codex', 'Claude', 'Cursor write mode'],
+  stdio: ['Codex', 'Claude'],
+  http: ['Codex', 'Claude'],
   sse: ['Claude']
 }
 const USER_MCP_STDIO_HTTP_RUNTIME_LABEL = USER_MCP_RUNTIME_PROVIDERS_BY_TRANSPORT.stdio.join(' + ')
@@ -1114,7 +1113,7 @@ export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServ
   if (server.transport === 'sse') {
     notes.push('SSE attaches to Claude only')
   } else {
-    notes.push('Cursor support is limited to contained write-mode runs')
+    notes.push('Cursor JSON is export-only; TaskWraith starts no managed Cursor run')
   }
   if (!server.enabled) {
     return {
@@ -2133,7 +2132,8 @@ const AUDIT_ARTIFACT_PROVIDER_OPTIONS: Array<{
   {
     value: 'kimi',
     label: 'Kimi',
-    helper: 'Artifact-backed role runs when a Kimi API key is configured.'
+    helper:
+      'Artifact-backed role runs require an admitted Kimi runtime plus current-home OAuth or a provider key in Kimi Code config.toml.'
   }
 ]
 
@@ -3261,9 +3261,10 @@ function SettingsProviderAuthCard({
   // The status dot has CSS for signed-in / partial / not-available only.
   // "out-of-usage" (signed in but rate-limited) reads as a warning, so
   // borrow the amber `partial` dot styling rather than fall back to the
-  // neutral base dot. Cursor/Grok are CLI-owned auth surfaces: when the
-  // adapter is available, the card should read as ready/connected even
-  // though TaskWraith cannot inspect the provider's private login state.
+  // neutral base dot. Grok is a CLI-owned auth surface: when the adapter is
+  // available, its card should read as ready/connected even though TaskWraith
+  // cannot inspect the provider's private login state. Cursor uses the
+  // explicit security-unavailable summary and never enters this partial path.
   const dotVariant =
     summary.variant === 'out-of-usage'
       ? 'partial'
@@ -4742,11 +4743,13 @@ export function SettingsPanel({
     ? !claudeAuthStatus.encryptionAvailable
     : false
   const kimiApiKeyStorageUnavailable = kimiAuthStatus ? !kimiAuthStatus.encryptionAvailable : false
-  const cursorAuthSummary = summariseCliProviderEnabled(
-    cursorProviderAvailable,
-    'Cursor',
-    'Sign in once with `cursor-agent login` in your shell; runs are diff-reviewed in write mode.'
-  )
+  void cursorProviderAvailable
+  const cursorAuthSummary: ProviderAuthSummary = {
+    variant: 'not-available',
+    statusText: 'Managed runs unavailable',
+    hint:
+      'TaskWraith starts no Cursor process while provider-managed startup hooks, skills, plugins, and MCP sources remain unqualified.'
+  }
   const grokAuthSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
     'Grok',
@@ -4807,8 +4810,8 @@ export function SettingsPanel({
       providerCapabilitiesByProvider?.[provider] ??
       (provider === activeProvider ? providerCapabilities : null)
     const status = mcpStatusByProvider?.[provider]
-    // Cursor + Grok get the brokered TaskWraith MCP bridge through their
-    // provider-native MCP surfaces. The accurate per-provider state/source/tools
+    // Grok gets the brokered TaskWraith MCP bridge through its provider-native
+    // MCP surface. Cursor is disabled. The accurate per-provider state/source/tools
     // message comes from the capability contract; these blocks only seed the card
     // BEFORE the contract has loaded so it doesn't flash stale delegated copy.
     const provisionalFallback =
@@ -4816,13 +4819,13 @@ export function SettingsPanel({
         ? null
         : provider === 'cursor'
           ? {
-              state: 'available' as const,
-              source: 'bridge',
-              serverName: 'taskwraith',
-              toolCount: TASKWRAITH_MCP_TOOLS.length,
+              state: 'unavailable' as const,
+              source: 'unsupported',
+              serverName: 'not connected',
+              toolCount: 0,
               providerManaged: false,
               message:
-                'TaskWraith registers a brokered MCP server for Cursor write-mode runs. Native Cursor shell/write tools are constrained so workspace side effects go through TaskWraith approvals.'
+                'Cursor managed runs and MCP attachment are unavailable pending exact-build startup-containment qualification.'
             }
           : provider === 'grok'
             ? {
@@ -4838,8 +4841,8 @@ export function SettingsPanel({
     const mcp = contract?.mcp
     // Provider-managed fallback surfaces are not installable TaskWraith MCP
     // servers, so they must never read as an error ("unsupported" /
-    // "not installed"). Cursor/Grok now report `bridge` when their TaskWraith
-    // MCP registrations are enabled.
+    // "not installed"). Grok reports `bridge` when its TaskWraith MCP
+    // registration is enabled; disabled Cursor reports unavailable.
     const providerManaged =
       mcp?.source === 'provider-managed' ||
       mcp?.source === 'taskwraith web bridge' ||
@@ -6830,19 +6833,6 @@ export function SettingsPanel({
                     }
                   />
                   <ApprovalTimeoutField
-                    label="Cursor"
-                    valueMs={approvalTimeouts.perProviderMs.cursor}
-                    disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
-                    onChange={(ms) =>
-                      onChange({
-                        approvalTimeouts: {
-                          ...approvalTimeouts,
-                          perProviderMs: { ...approvalTimeouts.perProviderMs, cursor: ms }
-                        }
-                      })
-                    }
-                  />
-                  <ApprovalTimeoutField
                     label="Ollama"
                     valueMs={approvalTimeouts.perProviderMs.ollama}
                     disabled={!approvalTimeouts.enabled || approvalTimeoutsManagedLocked}
@@ -6866,8 +6856,9 @@ export function SettingsPanel({
                 </div>
                 <p className="settings-hint">
                   Per-provider deadline before an unanswered approval is auto-denied. Defaults
-                  (Codex 30s, Kimi 60s, Main 60s, other providers 120s) reflect how tolerant each
-                  runtime is of paused tool calls.
+                  (Codex 30s, Kimi 60s, Main 60s, other live providers 120s) reflect how tolerant
+                  each runtime is of paused tool calls. Historical provider values remain stored
+                  for decode but are not editable.
                 </p>
               </div>
             </>
@@ -6999,7 +6990,7 @@ export function SettingsPanel({
                     provider="kimi"
                     label="Kimi"
                     summary={kimiSetupSummary}
-                    description="Moonshot Kimi for wire-protocol runs and structured tool calls."
+                    description="Moonshot Kimi over admitted ACP with a private runtime cwd and governed per-run TaskWraith gateway."
                     optional
                   >
                     <div className="settings-provider-auth-action-row">
@@ -7033,7 +7024,9 @@ export function SettingsPanel({
                       )}
                     </div>
                     <p className="settings-provider-auth-footnote">
-                      Paste a Moonshot API key in the Kimi section below.
+                      Use `kimi login` or a provider key in ~/.kimi-code/config.toml for managed
+                      ACP. The encrypted key below is usage-meter access only. Credentials do not
+                      bypass exact-runtime admission.
                       {renderProviderUpgradeHint('kimi')}
                     </p>
                     {renderProviderPauseControls('kimi')}
@@ -7042,39 +7035,14 @@ export function SettingsPanel({
                     provider="cursor"
                     label="Cursor"
                     summary={cursorAuthSummary}
-                    description="Cursor Composer 2.5 for write-capable agentic runs via the Cursor CLI."
+                    description="Configuration/history only. Managed Cursor runs are disabled before process launch."
                     optional
                   >
-                    <div className="settings-provider-auth-command">
-                      <code>cursor-agent login</code>
-                      <span>Run once in Terminal for official Cursor CLI runtime auth.</span>
-                    </div>
-                    <div className="settings-provider-auth-action-row">
-                      <PillButton
-                        size="compact"
-                        variant="primary"
-                        onClick={() => onProviderLogin?.('cursor')}
-                        disabled={!onProviderLogin}
-                      >
-                        Open Terminal to sign in
-                      </PillButton>
-                      <PillButton
-                        size="compact"
-                        variant="danger"
-                        onClick={() => onProviderLogout?.('cursor')}
-                        disabled={!onProviderLogout}
-                      >
-                        Open Terminal to sign out
-                      </PillButton>
-                      {renderProviderUpgradeButton('cursor')}
-                    </div>
                     <p className="settings-provider-auth-footnote">
-                      Write-mode runs are contained by a workspace-local deny-list and surfaced
-                      through Review changes. TaskWraith stores no Cursor credential; auth stays
-                      inside the Cursor CLI.
-                      {renderProviderUpgradeHint('cursor')}
+                      No login, logout, upgrade, Plan, MCP, shell, write, or resume action is
+                      offered because each would initialize unqualified provider-managed startup
+                      surfaces. Use another provider while the exact-build canary is pending.
                     </p>
-                    {renderProviderPauseControls('cursor')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
                     provider="grok"
@@ -7566,7 +7534,8 @@ export function SettingsPanel({
                   <div
                     style={{
                       display: 'flex',
-                      alignItems: 'center',
+                      flexDirection: 'column',
+                      alignItems: 'flex-start',
                       gap: 'var(--space-sm)',
                       marginBottom: 'var(--space-xs)'
                     }}
@@ -7698,28 +7667,39 @@ export function SettingsPanel({
                   >
                     {!kimiAuthStatus.available ? (
                       <span style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-                        ● Binary not found
+                        {kimiAuthStatus.binaryPath
+                          ? '● Binary found — blocked pending reviewed ACP runtime admission'
+                          : '● Binary not found'}
                       </span>
                     ) : kimiAuthStatus.transportSupported === false ? (
                       <span
                         style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}
                       >
-                        ● Kimi Code detected — runs are temporarily unavailable until the ACP
-                        transport migration lands
+                        ● Kimi Code detected — this exact runtime is not admitted for managed ACP
+                        runs
                       </span>
-                    ) : kimiAuthStatus.apiKeyConfigured ? (
+                    ) : ['authenticated', 'api-key', 'oauth'].includes(
+                        (kimiAuthStatus.authState || '').toLowerCase()
+                      ) ? (
                       <span style={{ fontSize: '0.78rem', color: 'var(--accent)' }}>
-                        ● API key configured
+                        ● Managed ACP authenticated ({kimiAuthStatus.authState})
+                      </span>
+                    ) : (kimiAuthStatus.authState || '').toLowerCase() === 'unknown' ? (
+                      <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
+                        ● Managed ACP credential state not observed
                       </span>
                     ) : (
                       <span style={{ fontSize: '0.78rem', color: 'var(--color-warning, #d29922)' }}>
-                        ● No API key
+                        ● Managed ACP not authenticated
                       </span>
                     )}
+                    <span style={{ fontSize: '0.72rem', color: 'var(--text-secondary)' }}>
+                      Usage-query key: {kimiAuthStatus.apiKeyConfigured ? 'stored' : 'not stored'}
+                    </span>
                   </div>
                 )}
 
-                <label className="settings-label">Moonshot API key</label>
+                <label className="settings-label">Moonshot API key (usage only)</label>
                 <p
                   style={{
                     fontSize: '0.72rem',
@@ -7727,9 +7707,9 @@ export function SettingsPanel({
                     margin: '0 0 var(--space-xs)'
                   }}
                 >
-                  Kimi Code signs in with <code>kimi login</code> (OAuth) in your shell — no API key
-                  required. Set a Moonshot API key here only to use an API key instead of the signed-in
-                  session.
+                  Managed ACP authenticates from the current Kimi Code home: <code>kimi login</code>{' '}
+                  (OAuth), or a provider key in <code>~/.kimi-code/config.toml</code>. The key stored
+                  here is not projected into ACP. No credential bypasses reviewed runtime admission.
                 </p>
                 <div
                   style={{
@@ -7769,7 +7749,7 @@ export function SettingsPanel({
                 <p className="settings-hint">
                   {kimiApiKeyStorageUnavailable
                     ? 'Secure storage is unavailable on this system, so API keys cannot be saved here.'
-                    : 'Your Moonshot API key (MOONSHOT_API_KEY). Stored encrypted on-device.'}
+                    : 'Optional token for TaskWraith’s Kimi usage query only. Stored encrypted on-device; not supplied to managed ACP.'}
                 </p>
 
                 <label className="settings-label">Kimi CLI binary</label>
@@ -8072,8 +8052,8 @@ export function SettingsPanel({
                             ? 'host tools not injected'
                             : 'No tools'}
                       </span>
-                      {/* Provider-managed surfaces (Grok CLI, Cursor host web
-                          bridge) are not installable TaskWraith MCP servers, so
+                      {/* Provider-managed surfaces such as Grok CLI are not
+                          installable TaskWraith MCP servers, so
                           "not installed" would read as an error. Show a calm tag
                           instead; only the actual bridges report installed state. */}
                       <span>
@@ -8112,9 +8092,9 @@ export function SettingsPanel({
                     TaskWraith MCP bridge
                     <small>
                       Enables TaskWraith&apos;s bundled MCP broker, including image_edit,
-                      svg_rasterize, and image_generate. Write-capable Cursor and Grok runs
-                      auto-inject a scoped broker when they need TaskWraith-owned tools; no
-                      manual Cursor or Grok MCP install is required. image_generate additionally
+                      svg_rasterize, and image_generate. Qualified Grok runs auto-inject a scoped
+                      broker when they need TaskWraith-owned tools; no manual Grok MCP install is
+                      required. Cursor starts no managed process. image_generate additionally
                       needs to be enabled with an API key.
                     </small>
                   </span>
@@ -8495,10 +8475,10 @@ export function SettingsPanel({
                   </div>
                   <p className="settings-hint">
                     Manage external MCP server definitions TaskWraith owns. Enabled stdio and HTTP
-                    servers attach to Codex and Claude launches; Cursor-compatible entries attach
-                    during contained Cursor write-mode runs. SSE attaches to Claude. Remote headers
-                    are stored locally and redacted in audit JSON. Cursor uses temporary
-                    workspace-local MCP config that TaskWraith restores after the run.
+                    servers attach to Codex and Claude launches; SSE attaches to Claude. Cursor JSON
+                    remains available for configuration interchange outside TaskWraith, but no
+                    server attaches to a source-ahead Cursor run because no managed process starts.
+                    Remote headers are stored locally and redacted in audit JSON.
                   </p>
                 </div>
                 <div className="settings-mcp-header-actions">
@@ -8589,7 +8569,7 @@ export function SettingsPanel({
                 <article className="settings-mcp-summary-card">
                   <span>Runtime</span>
                   <strong>{USER_MCP_STDIO_HTTP_RUNTIME_LABEL}</strong>
-                  <small>stdio/HTTP; Cursor write-mode support</small>
+                  <small>stdio/HTTP provider attachment</small>
                 </article>
                 <article className="settings-mcp-summary-card">
                   <span>Codex export</span>
@@ -8715,8 +8695,8 @@ export function SettingsPanel({
                 </h4>
                 <p className="settings-hint">
                   These records are stored by TaskWraith. Stdio and HTTP servers are available to
-                  Codex and Claude provider launch paths, plus contained Cursor write-mode runs; SSE
-                  is available to Claude.
+                  Codex and Claude provider launch paths; SSE is available to Claude. Cursor JSON
+                  remains exportable for use outside TaskWraith, but it is not attached here.
                 </p>
               </div>
               {userMcpServers.length > 0 && (
@@ -10184,8 +10164,10 @@ export function SettingsPanel({
                       Delete all chat history
                     </h4>
                     <p className="settings-hint">
-                      Permanently remove local chat transcripts and run history from this Mac.
-                      Workspaces and settings are left intact.
+                      Permanently remove local chats, run and approval history, execution graphs,
+                      Canvas workspaces/artifacts, Kimi seat state, and the bridge diagnostic log.
+                      Provider-native history, provider credentials, workspaces, and settings are
+                      left intact.
                     </p>
                   </div>
                   <div className="settings-danger-zone-actions">

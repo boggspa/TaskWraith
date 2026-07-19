@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   extractFirstEnsembleDmTarget,
   formatComposerPathMention,
+  formatEnsembleDmMention,
   parseComposerMentionTrigger
 } from './ComposerMentionTrigger'
 
@@ -70,6 +71,20 @@ describe('formatComposerPathMention', () => {
   })
 })
 
+describe('formatEnsembleDmMention', () => {
+  it('keeps the exact participant id in the structured picker token', () => {
+    expect(formatEnsembleDmMention('Reviewer', 'claude-read')).toBe(
+      '[@Reviewer](ensemble-dm://claude-read) '
+    )
+  })
+
+  it('keeps duplicate display roles distinct by participant id', () => {
+    expect(formatEnsembleDmMention('Reviewer', 'claude-write')).not.toBe(
+      formatEnsembleDmMention('Reviewer', 'claude-read')
+    )
+  })
+})
+
 describe('extractFirstEnsembleDmTarget', () => {
   it('extracts the participant id from an ensemble-dm:// markdown link', () => {
     expect(
@@ -117,6 +132,68 @@ describe('extractFirstEnsembleDmTarget', () => {
     )
   })
 
+  it.each([
+    [
+      'write-first',
+      [
+        {
+          id: 'claude-write',
+          role: 'Builder',
+          provider: 'claude',
+          model: 'claude-fable-5',
+          enabled: true
+        },
+        {
+          id: 'claude-read',
+          role: 'Reviewer',
+          provider: 'claude',
+          model: 'claude-opus-4-7',
+          enabled: true
+        }
+      ]
+    ],
+    [
+      'read-first',
+      [
+        {
+          id: 'claude-read',
+          role: 'Reviewer',
+          provider: 'claude',
+          model: 'claude-opus-4-7',
+          enabled: true
+        },
+        {
+          id: 'claude-write',
+          role: 'Builder',
+          provider: 'claude',
+          model: 'claude-fable-5',
+          enabled: true
+        }
+      ]
+    ]
+  ])('does not infer an ambiguous provider alias (%s)', (_label, participants) => {
+    expect(extractFirstEnsembleDmTarget('@claude review this', participants)).toBeNull()
+  })
+
+  it('round-trips duplicate picker labels through their structured ids', () => {
+    const participants = [
+      { id: 'claude-write', role: 'Reviewer', provider: 'claude', enabled: true },
+      { id: 'claude-read', role: 'Reviewer', provider: 'claude', enabled: true }
+    ]
+    expect(
+      extractFirstEnsembleDmTarget(
+        formatEnsembleDmMention('Reviewer', 'claude-write'),
+        participants
+      )
+    ).toBe('claude-write')
+    expect(
+      extractFirstEnsembleDmTarget(
+        formatEnsembleDmMention('Reviewer', 'claude-read'),
+        participants
+      )
+    ).toBe('claude-read')
+  })
+
   it('does not collapse a BG allocation mention into a single-seat DM', () => {
     const participants = [
       { id: 'ensemble-codex', role: 'Lead', provider: 'codex' },
@@ -152,7 +229,10 @@ describe('extractFirstEnsembleDmTarget', () => {
   })
 
   it('prefers the markdown link over plain @Role when both are present', () => {
-    const participants = [{ id: 'ensemble-codex', role: 'Worker', provider: 'codex' }]
+    const participants = [
+      { id: 'ensemble-codex', role: 'Worker', provider: 'codex' },
+      { id: 'forced-id', role: 'Override', provider: 'claude' }
+    ]
     // Markdown link wins because it unambiguously carries the id.
     expect(
       extractFirstEnsembleDmTarget(

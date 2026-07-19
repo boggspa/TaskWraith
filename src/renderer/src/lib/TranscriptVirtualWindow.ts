@@ -268,8 +268,9 @@ const TOOL_ACTIVITY_ESTIMATE_CHARS = 180
  *
  * `fanoutResult`: `EnsembleFanoutResultCard` wraps the whole card body in one
  * viewport capped at 240px (`collapsedMaxHeight={240}`); with the header + chrome
- * a collapsed lane card rests at ~320px — the flat base estimate. A READ-heavy
- * Cursor fan-out lane accumulates thousands of chars of tool output, which the
+ * a collapsed lane card rests at ~320px — the flat base estimate. Historical
+ * READ-heavy Cursor fan-out transcripts can contain thousands of chars of tool
+ * output, which the
  * generic content scale would size toward `CONTENT_SCALE_CAP_PX` (1400) — ~5× the
  * real clamped height. That phantom height inflates the virtualiser's bottom
  * spacer, so `scrollHeight` balloons on every 250ms flush while the visible card

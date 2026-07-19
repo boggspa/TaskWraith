@@ -349,6 +349,7 @@ function MarkdownExternalLink({
   onClick: (event: MouseEvent<HTMLAnchorElement>) => void
   children: ReactNode
 }): ReactNode {
+  const chat = useContext(AgentIdentityContext)
   const [canvasState, setCanvasState] = useState<'idle' | 'opening' | 'error'>('idle')
   const [errorMsg, setErrorMsg] = useState<string | null>(null)
   const link = (
@@ -372,7 +373,9 @@ function MarkdownExternalLink({
     const openWindow = (
       window as unknown as {
         api?: {
-          canvas?: { openWindow?: (a: { url: string }) => Promise<{ ok: boolean; error?: string }> }
+          canvas?: {
+            openWindow?: (a: { url: string; chatId: string }) => Promise<{ ok: boolean; error?: string }>
+          }
         }
       }
     ).api?.canvas?.openWindow
@@ -384,7 +387,11 @@ function MarkdownExternalLink({
       setErrorMsg(friendlyCanvasError(raw))
     }
     try {
-      void openWindow({ url: resolved })
+      if (!chat?.appChatId) {
+        fail('Canvas requires an active chat.')
+        return
+      }
+      void openWindow({ url: resolved, chatId: chat.appChatId })
         .then((result) => (result?.ok ? setCanvasState('idle') : fail(result?.error)))
         .catch((err) => fail(err instanceof Error ? err.message : String(err)))
     } catch (err) {

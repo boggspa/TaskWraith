@@ -166,8 +166,8 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('data-provider="claude"')
     expect(html).toContain('data-provider="kimi"')
     expect(html).toContain('data-provider="ollama"')
-    // Cursor, Grok, and Ollama complete the CLI/cloud/local preview roster.
-    expect(html).toContain('<em>Cursor</em>')
+    // Disabled Cursor is intentionally absent from the runnable preview roster.
+    expect(html).not.toContain('<em>Cursor</em>')
     expect(html).toContain('<em>Grok</em>')
     expect(html).toContain('<em>Ollama</em>')
     expect(html).not.toContain('<em>Gemini</em>')
@@ -184,7 +184,8 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        cursorProviderAvailable={true}
+        kimiAuthStatus={null}
+        cursorProviderAvailable={true}
         grokProviderAvailable={false}
       />
     )
@@ -199,12 +200,14 @@ describe('FirstLaunchSheet', () => {
     expect(grokCard).toContain('data-provider-logo="grok"')
     expect(grokCard).toContain('<img class="provider-brand-logo-image')
     expect(grokCard).not.toContain('provider-glyph-grok')
-    // Enabled Cursor → "Available" sign-in state; disabled Grok → "disabled".
-    expect(html).toContain('Available · CLI sign-in')
+    // Cursor remains configuration/history-only even when legacy availability
+    // state is true; disabled Grok retains its ordinary disabled state.
+    expect(cursorCard).toContain('Managed runs unavailable')
+    expect(cursorCard).toContain('first-launch-sheet-provider-status-dot-not-available')
     expect(html).toContain('Grok disabled')
   })
 
-  it('uses ready status dots for available Cursor, Grok, and Ollama cards', () => {
+  it('keeps Cursor unavailable while using ready dots for runnable Grok and Ollama cards', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -212,13 +215,17 @@ describe('FirstLaunchSheet', () => {
         onOpenSettings={() => {}}
         codexStatus={null}
         claudeAuthStatus={null}
-        kimiAuthStatus={null}        cursorProviderAvailable={true}
+        kimiAuthStatus={null}
+        cursorProviderAvailable={true}
         grokProviderAvailable={true}
         ollamaProviderAvailable={true}
       />
     )
 
-    for (const provider of ['cursor', 'grok', 'ollama']) {
+    expect(providerCardMarkup(html, 'cursor')).toContain(
+      'first-launch-sheet-provider-status-dot-not-available'
+    )
+    for (const provider of ['grok', 'ollama']) {
       expect(providerCardMarkup(html, provider)).toContain(
         'first-launch-sheet-provider-status-dot-signed-in'
       )

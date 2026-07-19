@@ -1604,6 +1604,33 @@ describe('ApprovalsFooterPopover', () => {
     expect(html).toContain('Actions for Approve shell command')
   })
 
+  it('requires in-task review before canvas_eval can be approved', () => {
+    const html = renderToStaticMarkup(
+      <ApprovalsFooterPopover
+        pendingApprovals={[
+          {
+            chatId: 'parent-1',
+            approval: makeApproval({
+              title: 'Approve canvas eval',
+              actions: ['accept', 'decline'],
+              preview: {
+                toolName: 'mcp__taskwraith__canvas_eval',
+                params: { script: 'document.cookie' }
+              }
+            })
+          }
+        ]}
+        onJumpToChat={() => {}}
+        onRespondApproval={() => {}}
+        onOpenSettings={() => {}}
+      />
+    )
+
+    expect(html).toContain('Review the exact script in the task before approving.')
+    expect(html).not.toContain('class="sidebar-footer-approval-action is-approve"')
+    expect(html).toContain('class="sidebar-footer-approval-action is-deny"')
+  })
+
   it('renders a non-clickable row when no jump handler is provided', () => {
     const html = renderToStaticMarkup(
       <ApprovalsFooterPopover

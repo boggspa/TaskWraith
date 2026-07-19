@@ -1121,8 +1121,8 @@ export const buildWelcomeUsageDashboardData = (
           ? (providerCostAggregate[provider].tokens / totalProviderTokensForBreakdown) * 100
           : 0
     }))
-    // 1.0.6 — Grok and Cursor are first-class providers, so all six render
-    // (even at zero) with provider-coloured meters.
+    // Keep historical Cursor usage visible even though new managed Cursor runs
+    // are unavailable; this breakdown is a ledger view, not a provider offer.
     .sort(
       (a, b) =>
         b.tokens - a.tokens || b.costUsd - a.costUsd || a.displayName.localeCompare(b.displayName)

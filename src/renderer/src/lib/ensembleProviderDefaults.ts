@@ -174,15 +174,15 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
 // Fast (Standard/Highspeed) stays exclusive to K2.7 Coding — K3 has no tier.
 const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
-// Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Keep Grok Composer separate from
-// Cursor's `composer-2.5-fast` because it dispatches through Grok Build CLI auth.
+// Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
+// from the historical Cursor catalog retained below for decode/render.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
   { id: GROK_45_MODEL_ID, label: 'Grok 4.5 Fast' },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
-// Cursor — Composer 2.5 plus Cursor Grok 4.5. Grok 4.5 is one friendly row in
-// the UI; dispatch maps reasoning/Fast to Cursor's concrete grok-4.5-* ids.
+// Historical Cursor model catalog retained for decoding and rendering stored
+// ensemble seats. Source-ahead builds do not offer or dispatch these routes.
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },

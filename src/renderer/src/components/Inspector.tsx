@@ -2714,10 +2714,10 @@ function SafetyTab(props: InspectorProps) {
             ? 'Claude acceptEdits'
             : 'Claude default permissions'
         : approvalMode === 'plan'
-          ? 'Kimi plan/read-only intent'
+          ? 'TaskWraith gateway Plan/read-only policy'
           : approvalMode === 'auto_edit'
-            ? 'Kimi provider approvals; YOLO not enabled'
-            : 'Kimi provider approvals'
+            ? 'TaskWraith gateway approvals; native tools deny-walled'
+            : 'TaskWraith gateway approvals'
     return (
       <div className="safety-panel">
         <div className="safety-card">
@@ -2729,8 +2729,9 @@ function SafetyTab(props: InspectorProps) {
               margin: '0 0 var(--space-md) 0'
             }}
           >
-            {label} runs through the provider adapter. Credential files are not read by this app;
-            setup stays delegated to the provider CLI.
+            {provider === 'kimi'
+              ? 'Managed Kimi runs read the current Kimi Code OAuth/provider configuration to prepare a private seat home under a durable credential authority. Tool execution routes through the TaskWraith gateway; login remains a user-owned CLI setup step and does not qualify the runtime.'
+              : `${label} runs through the provider adapter. Credential files are not read by this app; setup stays delegated to the provider CLI.`}
           </p>
           <div className="safety-row">
             <span>Binary</span>

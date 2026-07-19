@@ -34,8 +34,9 @@ describe('ComposerSlashCommands', () => {
   })
 
   describe('paletteCoreForProvider', () => {
-    it('returns no commands for retired Gemini chats', () => {
+    it('returns no commands for unavailable historical providers', () => {
       expect(paletteCoreForProvider('gemini')).toEqual([])
+      expect(paletteCoreForProvider('cursor')).toEqual([])
     })
     it('returns CODEX_PALETTE_CORE for codex', () => {
       expect(paletteCoreForProvider('codex')).toBe(CODEX_PALETTE_CORE)
@@ -51,9 +52,6 @@ describe('ComposerSlashCommands', () => {
       // over the headless/ACP run path; the generic CLI core gives a Grok
       // chat TaskWraith's own read-only /review + /diff.
       expect(paletteCoreForProvider('grok')).toBe(CLI_PROVIDER_PALETTE_CORE)
-    })
-    it('returns CLI_PROVIDER_PALETTE_CORE for cursor', () => {
-      expect(paletteCoreForProvider('cursor')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
     it('returns CLI_PROVIDER_PALETTE_CORE for ollama', () => {
       expect(paletteCoreForProvider('ollama')).toBe(CLI_PROVIDER_PALETTE_CORE)
@@ -204,6 +202,25 @@ describe('ComposerSlashCommands', () => {
         paletteItems: []
       })
       expect(result).toEqual([])
+    })
+
+    it('returns an empty registry for unavailable historical providers', () => {
+      const extraCommand: ComposerSlashCommand = {
+        kind: 'action',
+        id: 'must-not-run',
+        command: '/must-not-run',
+        label: 'Must not run',
+        description: 'Would dispatch an action if this provider were live.',
+        group: 'Custom',
+        run: () => undefined
+      }
+      expect(
+        buildComposerSlashCommandRegistry({
+          provider: 'cursor',
+          paletteItems: CLI_PROVIDER_PALETTE_CORE,
+          extraCommands: [extraCommand]
+        })
+      ).toEqual([])
     })
   })
 

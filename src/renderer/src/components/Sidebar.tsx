@@ -67,6 +67,7 @@ import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentAppr
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type { LocalServerEntry } from '../../../main/localServers/types'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
+import { isCanvasEvalApprovalToolName } from '../lib/agentApprovalPreview'
 
 export type SharedChatCreateVariant = 'global' | 'workspace' | 'ensemble'
 
@@ -2348,10 +2349,18 @@ export function ApprovalsFooterPopover({
           {pendingShown.map(({ chatId, approval }) => {
             const providerLabel = getProviderLabel(approval.provider)
             const actions = approval.actions || []
-            const canApprove = actions.includes('accept')
+            // Signed-elevated canvas_eval must be reviewed in the task, where the
+            // live (non-durable) card shows the exact script. The compact sidebar
+            // row intentionally cannot approve a title-only summary.
+            const requiresDetailedReview = isCanvasEvalApprovalToolName(
+              approval.preview?.toolName
+            ) || approval.preview?.requiresExactDesktopReview === true
+            const canApprove = actions.includes('accept') && !requiresDetailedReview
             const alwaysAllowAction: AgentApprovalAction | null = actions.includes('acceptForWorkspace')
-              ? 'acceptForWorkspace'
-              : actions.includes('acceptForSession')
+              ? requiresDetailedReview
+                ? null
+                : 'acceptForWorkspace'
+              : actions.includes('acceptForSession') && !requiresDetailedReview
                 ? 'acceptForSession'
                 : null
             const canDeny = actions.includes('decline')
@@ -2384,6 +2393,11 @@ export function ApprovalsFooterPopover({
             return (
               <div className="sidebar-footer-approval-pending" key={approval.id}>
                 {summary}
+                {requiresDetailedReview && (
+                  <div className="sidebar-footer-approval-meta">
+                    Review the exact script in the task before approving.
+                  </div>
+                )}
                 {hasInlineActions && (
                   <div
                     className="sidebar-footer-approval-actions"

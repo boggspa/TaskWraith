@@ -299,9 +299,28 @@ describe('ensembleRosterPresets — round-trip fidelity + isolation', () => {
 })
 
 describe('ensembleRosterPresets — editor primitives', () => {
-  it('createEmpty persists a valid preset at the 2-participant floor', () => {
+  it('createEmpty persists a valid Boss/Captain/Specialist starter panel', () => {
     const created = createEmptyEnsembleRosterPreset('My panel')
     expect(created.participants.length).toBeGreaterThanOrEqual(MIN_ROSTER_PRESET_PARTICIPANTS)
+    expect(created.maxParticipants).toBe(5)
+    expect(created.participants.map((participant) => participant.role)).toEqual([
+      'Boss',
+      'Captain',
+      'Specialist'
+    ])
+    expect(created.participants.map((participant) => participant.permissionPresetId)).toEqual([
+      'read_only',
+      'workspace_write',
+      'read_only'
+    ])
+    expect(created.participants.map((participant) => participant.isBossman === true)).toEqual([
+      true,
+      false,
+      false
+    ])
+    expect(
+      created.participants.map((participant) => participant.isSecondInCommand === true)
+    ).toEqual([false, true, false])
     // Survives a re-read (i.e. passes isEnsembleRosterPreset; not filtered out).
     expect(listEnsembleRosterPresets().find((p) => p.id === created.id)?.name).toBe('My panel')
   })

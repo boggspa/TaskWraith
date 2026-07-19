@@ -124,4 +124,86 @@ describe('RosterSettingsPanel', () => {
     expect(html).toContain('Enabled')
     expect(html).toContain('Role / nickname')
   })
+
+  it('renders stored Cursor seats as security-unavailable configuration/history rows', () => {
+    const preset = createEmptyEnsembleRosterPreset('Historical Cursor panel')
+    const participants = materializeParticipantsFromPresetWithBossman(
+      preset.participants
+    ).participants
+    const cursorParticipant = {
+      ...participants[0],
+      provider: 'cursor' as const,
+      role: 'Cursor reviewer',
+      model: undefined
+    }
+    const html = renderToStaticMarkup(
+      <RosterParticipantRow
+        participant={cursorParticipant}
+        mentionParticipants={[cursorParticipant]}
+        index={0}
+        total={1}
+        canRemove
+        composerStyle="default"
+        grokAvailable={false}
+        cursorAvailable={false}
+        showApplyToAll
+        isBossman={false}
+        isSecondInCommand={false}
+        onMove={() => {}}
+        onRemove={() => {}}
+        onSetBossman={() => {}}
+        onSetSecondInCommand={() => {}}
+        onPatch={() => {}}
+        onFlush={() => {}}
+        onApplyPermissionsToAll={() => {}}
+        onSaveToPool={() => {}}
+      />
+    )
+
+    expect(html).toContain('Cursor · Security unavailable')
+    expect(html).toContain('security unavailable')
+    expect(html).toContain('Cursor is security-unavailable for new runs')
+    expect(html).toContain('retained for configuration and history only')
+    expect(html).not.toContain('retired')
+  })
+
+  it('keeps retirement copy specific to stored Gemini seats', () => {
+    const preset = createEmptyEnsembleRosterPreset('Historical Gemini panel')
+    const participants = materializeParticipantsFromPresetWithBossman(
+      preset.participants
+    ).participants
+    const geminiParticipant = {
+      ...participants[0],
+      provider: 'gemini' as const,
+      role: 'Gemini historian',
+      model: undefined
+    }
+    const html = renderToStaticMarkup(
+      <RosterParticipantRow
+        participant={geminiParticipant}
+        mentionParticipants={[geminiParticipant]}
+        index={0}
+        total={1}
+        canRemove
+        composerStyle="default"
+        grokAvailable={false}
+        cursorAvailable={false}
+        showApplyToAll
+        isBossman={false}
+        isSecondInCommand={false}
+        onMove={() => {}}
+        onRemove={() => {}}
+        onSetBossman={() => {}}
+        onSetSecondInCommand={() => {}}
+        onPatch={() => {}}
+        onFlush={() => {}}
+        onApplyPermissionsToAll={() => {}}
+        onSaveToPool={() => {}}
+      />
+    )
+
+    expect(html).toContain('Gemini · Retired')
+    expect(html).toContain('retired providers can&#x27;t run')
+    expect(html).not.toContain('security-unavailable')
+  })
 })

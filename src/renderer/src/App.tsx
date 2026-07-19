@@ -44,7 +44,12 @@ import {
   taskWraithRoundCloseoutId,
   taskWraithRunCloseoutId
 } from '../../shared/taskWraithCloseout'
-import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../../shared/retiredProviders'
+import {
+  coerceLiveProvider,
+  DEFAULT_PROVIDER,
+  isLiveSelectableProvider,
+  isRetiredProvider
+} from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
 import {
@@ -72,6 +77,7 @@ import {
   type RunStreamMetrics
 } from '../../shared/runStreamMetrics'
 import type { MultiviewLayout } from '../../shared/multiviewLayouts'
+import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 // 1.0.5-EW25 — User-currency cost formatting helper.
 import { setFxRatesPerUsd, type DisplayCurrency } from './lib/formatCost'
 import { computeCumulativeRunBaseMs } from './lib/cumulativeRunTimecode'
@@ -155,6 +161,7 @@ import type {
 } from './lib/usageAggregateTypes'
 import { providerPlanNameFromSnapshot } from './lib/providerPlanName'
 import type { AgentApprovalAction, AgentApprovalRequest } from './lib/agentApprovalTypes'
+import { shouldDismissAgentApproval } from './lib/agentApprovalLifecycle'
 import { formatScheduledRunTime, toDateTimeLocalValue } from './lib/dateTimeFormat'
 import { buildReviewCurrentDiffPrompt } from './lib/reviewDiffPrompt'
 import { normalizeExternalPathGrants } from './lib/normalizeExternalPathGrants'
@@ -618,7 +625,6 @@ import {
 } from './lib/ensembleParticipantPermissions'
 import {
   buildPinnedMessageSummaries,
-  countMessagesWithPinnedMetadata,
   toggleChatMessagePin
 } from './lib/pinnedMessages'
 import { applyChatMessageFeedback, type MessageFeedbackDetails } from './lib/messageFeedback'
@@ -738,7 +744,14 @@ import {
   type AgentAuraStatus
 } from './components/FxLayers'
 import { estimateLiveOutputTokensFromChars } from './components/LiveThreadTokenTally'
-import { createChatWalkCache, noWalkDepsEqual } from './lib/chatWalkCache'
+import {
+  cachedPaneContextTelemetry,
+  cachedPaneLiveOutputTokens,
+  cachedPaneMediaRefs,
+  cachedPanePinnedCount,
+  cachedPaneRunCompleteNotice,
+  cachedPaneTokenTally
+} from './lib/multiviewPaneDerivations'
 import { ChatViewPane, type ChatViewPaneChromeAction } from './components/ChatViewPane'
 import { type ComposerProps } from './components/Composer'
 import type { ExecutionGraphProjection } from './lib/executionGraphProjection'
@@ -1190,142 +1203,6 @@ function buildLiveToolFileSummarySignature(messages: readonly ChatMessage[]): st
   }
   return chunks.join('\u0001')
 }
-
-// ── Multiview per-pane walk caches ─────────────────────────────────────────
-// renderMultiviewPaneCell runs for every NON-focused pane on every App render
-// (~60fps during any stream). These O(messages)/O(runs) derivations are keyed
-// on the pane's ChatRecord identity so a non-streaming pane computes each once
-// and reuses it every frame — the streaming pane's chat identity changes each
-// frame → recompute (correct). This is the multiview counterpart of
-// ChatViewPane's own memo, which already skips DOM reconciliation for an
-// unchanged pane; here we also skip the per-frame recompute that ran BEFORE
-// the memo boundary. See chatWalkCache.ts for the invariant.
-const cachedPaneTokenTally = createChatWalkCache(
-  (chat, deps: { providerRates: RendererProviderRates }) =>
-    buildChatTokenTally(chat.runs || [], { providerRates: deps.providerRates }),
-  (a, b) => a.providerRates === b.providerRates
-)
-const cachedPanePinnedCount = createChatWalkCache(
-  (chat) => countMessagesWithPinnedMetadata(chat.messages),
-  noWalkDepsEqual
-)
-const cachedPaneMediaRefs = createChatWalkCache(
-  (chat, deps: { attachments: Parameters<typeof collectChatMediaRefs>[1] }) =>
-    collectChatMediaRefs(chat, deps.attachments, []),
-  (a, b) => a.attachments === b.attachments
-)
-const cachedPaneRunCompleteNotice = createChatWalkCache(
-  (chat, deps: { isRunning: boolean }) => deriveChatRunCompleteNotice(chat, deps.isRunning),
-  (a, b) => a.isRunning === b.isRunning
-)
-const cachedPaneLiveOutputTokens = createChatWalkCache(
-  (chat, deps: { isRunning: boolean; runId: string | null }) => {
-    if (!deps.isRunning) return 0
-    const activeRunIds = new Set(
-      (chat.runs || [])
-        .filter((run) => !run.endedAt || run.status === 'running' || run.status === 'queued')
-        .map((run) => run.runId)
-        .filter((runId): runId is string => Boolean(runId))
-    )
-    if (activeRunIds.size === 0 && deps.runId) {
-      activeRunIds.add(deps.runId)
-    }
-    const activeRoundStartedAt = isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
-      ? Date.parse(chat.ensemble!.activeRound!.startedAt || '')
-      : Number.NaN
-    let liveChars = 0
-    for (const message of chat.messages || []) {
-      if (message.role !== 'assistant') continue
-      if (message.runId && activeRunIds.has(message.runId)) {
-        liveChars += message.content?.length || 0
-        continue
-      }
-      if (Number.isFinite(activeRoundStartedAt)) {
-        const messageTime = Date.parse(message.timestamp || '')
-        if (Number.isFinite(messageTime) && messageTime >= activeRoundStartedAt) {
-          liveChars += message.content?.length || 0
-        }
-      }
-    }
-    return estimateLiveOutputTokensFromChars(liveChars)
-  },
-  (a, b) => a.isRunning === b.isRunning && a.runId === b.runId
-)
-
-interface PaneContextTelemetryDeps {
-  provider: ProviderId
-  modelId?: string
-  liveOutputTokens: number
-  isRunning: boolean
-  resolveOllamaContextLength: (modelId?: string | null) => number | undefined
-}
-
-interface PaneContextTelemetry {
-  usedPercent: number
-  label: string
-  meter: ContextMeterModel
-}
-
-const cachedPaneContextTelemetry = createChatWalkCache(
-  (chat, deps: PaneContextTelemetryDeps): PaneContextTelemetry => {
-    const usedTokens = currentContextTokens(chat.runs || [], {
-      liveOutputTokens: deps.liveOutputTokens,
-      isRunning: deps.isRunning
-    })
-    const liveOllamaContextLength =
-      deps.provider === 'ollama'
-        ? deps.resolveOllamaContextLength(deps.modelId)
-        : undefined
-    const windowTokens = resolveContextWindow(
-      deps.provider,
-      deps.modelId,
-      undefined,
-      liveOllamaContextLength
-    )
-    const usedPercent = contextPercent(usedTokens, windowTokens)
-    const liveParticipantId =
-      deps.isRunning && isEnsembleActiveRoundDispatchLive(chat.ensemble?.activeRound)
-        ? chat.ensemble?.activeRound?.activeParticipantId
-        : undefined
-
-    return {
-      usedPercent,
-      label: `${formatContextTokens(usedTokens)} / ${formatContextTokens(windowTokens)} context`,
-      meter: {
-        solo: {
-          id: 'solo',
-          provider: deps.provider,
-          modelId: deps.modelId,
-          usedTokens,
-          windowTokens,
-          percent: usedPercent
-        },
-        participants:
-          chat.chatKind === 'ensemble'
-            ? buildParticipantContextRows(chat.runs || [], chat.ensemble?.participants || [], {
-                participantId: liveParticipantId,
-                outputTokens: liveOutputTokensForParticipant(
-                  chat.runs || [],
-                  chat.messages || [],
-                  liveParticipantId,
-                  estimateLiveOutputTokensFromChars
-                ),
-                resolveWindowTokens: (participant) =>
-                  participant.provider === 'ollama'
-                    ? deps.resolveOllamaContextLength(participant.model)
-                    : undefined
-              })
-            : undefined
-      }
-    }
-  },
-  (a, b) =>
-    a.provider === b.provider &&
-    a.modelId === b.modelId &&
-    a.liveOutputTokens === b.liveOutputTokens &&
-    a.isRunning === b.isRunning &&
-    a.resolveOllamaContextLength === b.resolveOllamaContextLength
-)
 
 interface LiveToolFileSummaryState {
   chatId: string
@@ -6146,7 +6023,7 @@ function App(): React.JSX.Element {
   const sideWorkspace = sideChat ? getWorkspaceForChat(sideChat) : null
 
   const refreshProviderModelCatalog = async (provider: ProviderId): Promise<void> => {
-    if (isRetiredProvider(provider) || typeof window.api.getAgentModels !== 'function') return
+    if (!isLiveSelectableProvider(provider) || typeof window.api.getAgentModels !== 'function') return
     try {
       const models = await window.api.getAgentModels(provider)
       const normalized =
@@ -6494,7 +6371,10 @@ function App(): React.JSX.Element {
             ? adapters.map((adapter) => (adapter as { provider?: string } | null)?.provider)
             : []
           setGrokProviderAvailable(ids.includes('grok'))
-          setCursorProviderAvailable(ids.includes('cursor'))
+          // Adapter registration preserves historical decoding; it is not
+          // live-run admission. Cursor remains unavailable until its exact CLI
+          // build passes startup-containment qualification.
+          setCursorProviderAvailable(false)
         })
         .catch(() => {})
     }
@@ -10334,7 +10214,7 @@ function App(): React.JSX.Element {
     }
   }
 
-  // ── Host-side fallback compaction (Cursor/Kimi) ────────────────────────────
+  // ── Host-side fallback compaction (legacy/unmarked Kimi) ──────────────────
   // Pending summarize runs keyed by appRunId, consumed on that run's exit.
   // Ref-only state — a run interrupted by app restart simply never finalizes
   // (no summary stored, no session reset: fail-safe, half-state-free).
@@ -10345,7 +10225,7 @@ function App(): React.JSX.Element {
       string,
       {
         chatId: string
-        provider: ProviderId
+        provider: 'kimi'
         trigger: 'manual' | 'auto'
         preTokens?: number
         startedAtMs: number
@@ -10363,8 +10243,8 @@ function App(): React.JSX.Element {
   >(null)
   /**
    * Consume a finished host-compaction summarize run: capture its final
-   * assistant message as the stored summary, reset Cursor's provider session
-   * (Kimi keeps its token — its cross-turn context is injection-bounded), and
+   * assistant message as the stored summary (Kimi keeps its token — its
+   * cross-turn context is injection-bounded), and
    * append the compaction card. Failure (non-zero exit / empty summary) cards
    * a failure instead. Idempotent via delete-on-read + deterministic card id.
    */
@@ -10409,9 +10289,6 @@ function App(): React.JSX.Element {
         ...updated,
         ...(succeeded
           ? {
-              // Cursor: abandon the bloated provider session — the next turn
-              // starts fresh and composeRunPrompt injects the summary once.
-              ...(pending.provider === 'cursor' ? { linkedProviderSessionId: undefined } : {}),
               contextCompactionSummary: {
                 text: summaryText,
                 createdAt: new Date().toISOString(),
@@ -10455,7 +10332,7 @@ function App(): React.JSX.Element {
     const chat = chatByIdRef.current.get(chatId)
     if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
     const provider = getChatProvider(chat)
-    if (provider !== 'cursor' && provider !== 'kimi') return
+    if (provider !== 'kimi') return
     // Never chain off an in-flight compaction, and respect the cooldown.
     if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chatId)) return
     const lastAttempt = lastHostCompactionAttemptAtByChatIdRef.current.get(chatId) || 0
@@ -12117,7 +11994,7 @@ function App(): React.JSX.Element {
     )
     const queuedProviderBaseChat =
       hasQueuedProviderChange
-        ? applyProviderChange(chatRecord, readPendingProviderChange(chatRecord)!)
+        ? applyPendingProviderChangeOnFinalize(chatRecord)
         : chatRecord
     const queuedProviderSelection =
       hasQueuedProviderChange
@@ -13903,7 +13780,10 @@ function App(): React.JSX.Element {
                 if (effectiveRunProvider === 'kimi' && event.kimiAcpNativeSession) {
                   updated.providerMetadata = {
                     ...(updated.providerMetadata || {}),
-                    kimiAcpNativeSession: true
+                    kimiAcpNativeSession: true,
+                    ...(event.kimiAcpPostureVersion
+                      ? { kimiAcpPostureVersion: event.kimiAcpPostureVersion }
+                      : {})
                   }
                 }
               } else {
@@ -14605,6 +14485,17 @@ function App(): React.JSX.Element {
           }
         : undefined
     )
+    if (
+      baseRequest.chatRecord?.chatKind !== 'ensemble' &&
+      !isLiveSelectableProvider(baseRequest.provider)
+    ) {
+      settleProjectReferenceContextForRequest(baseRequest, 'rejected')
+      appendThreadRawLog(baseRequest.chatRecord?.appChatId || currentChat?.appChatId, {
+        type: 'info',
+        content: `${getProviderLabel(baseRequest.provider)} managed runs are unavailable. Switch this chat to a live provider to continue.`
+      })
+      return
+    }
     // The textarea Enter + send-button handlers resolve @mentions before
     // calling us, but the global Run Prompt shortcut (Cmd/Ctrl+Enter) calls
     // handleRun directly. Resolve once more at this central seam so a queued
@@ -14739,6 +14630,12 @@ function App(): React.JSX.Element {
             null
           : null
       const sideProvider = selectedSideParticipant?.provider || parentProvider
+      if (!isLiveSelectableProvider(sideProvider)) {
+        const message = `${getProviderLabel(sideProvider)} managed runs are unavailable, so a new side chat cannot use this provider. Switch to a live provider first.`
+        appendThreadRawLog(parentChat.appChatId, { type: 'info', content: message })
+        window.alert(message)
+        return null
+      }
       const sideParticipantLabel = selectedSideParticipant
         ? selectedSideParticipant.role || getProviderLabel(selectedSideParticipant.provider)
         : getProviderLabel(sideProvider)
@@ -15273,6 +15170,12 @@ function App(): React.JSX.Element {
     dmTargetParticipantId?: string
   ) => {
     if (!sideChat) return
+    if (!isLiveSelectableProvider(sideComposerProvider)) {
+      const message = `${getProviderLabel(sideComposerProvider)} managed runs are unavailable. Switch this linked chat to a live provider to continue.`
+      appendThreadRawLog(sideChat.appChatId, { type: 'info', content: message })
+      window.alert(message)
+      return
+    }
     const sideRunAttachments =
       imageAttachmentsByChatIdRef.current[sideChat.appChatId] || EMPTY_IMAGE_ATTACHMENTS
     const hiddenContextPrompt = getPendingSideChatHiddenContextPrompt(sideChat)
@@ -16675,6 +16578,12 @@ function App(): React.JSX.Element {
     const { chat, prompt: sourcePrompt } = getCockpitRunSource(lane)
     if (!chat) return
     const provider = lane.provider || getChatProvider(chat)
+    if (!isLiveSelectableProvider(provider)) {
+      const message = `${getProviderLabel(provider)} managed runs are unavailable, so this run lane cannot be duplicated. Switch to a live provider first.`
+      appendThreadRawLog(chat.appChatId, { type: 'info', content: message })
+      window.alert(message)
+      return
+    }
     const workspace = getWorkspaceForChat(chat)
     const duplicate = isGlobalChat(chat)
       ? await window.api.createGlobalChat()
@@ -16758,6 +16667,15 @@ function App(): React.JSX.Element {
       chatByIdRef.current.get(card.sourceChatId) ||
       chats.find((item) => item.appChatId === card.sourceChatId)
     const provider = card.recommendedProvider || card.sourceProvider
+    if (!isLiveSelectableProvider(provider)) {
+      const message = `${getProviderLabel(provider)} managed runs are unavailable, so this handoff cannot be dispatched to that provider. Choose a live provider first.`
+      appendThreadRawLog(sourceChat?.appChatId || card.sourceChatId, {
+        type: 'info',
+        content: message
+      })
+      window.alert(message)
+      return
+    }
     const workspace = sourceChat ? getWorkspaceForChat(sourceChat) : null
     const targetChat =
       sourceChat && isGlobalChat(sourceChat)
@@ -18041,8 +17959,24 @@ function App(): React.JSX.Element {
     const noteForDecision = (intentNoteOverride ?? intentNote).trim() || undefined
     const usesIntentNoteOverride = intentNoteOverride !== undefined
     const pendingRoute = findPendingApprovalRoute(requestId)
+    let responseAccepted = false
     try {
-      await window.api.respondAgentApproval(requestId, action, noteForDecision)
+      responseAccepted = await window.api.respondAgentApproval(
+        requestId,
+        action,
+        noteForDecision
+      )
+      if (!shouldDismissAgentApproval(responseAccepted)) {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'stderr',
+            content:
+              'Approval response was not accepted. The request remains open for exact review or a different decision.'
+          }
+        ])
+        return
+      }
       setRawLogs((prev) => [
         ...prev,
         {
@@ -18064,34 +17998,36 @@ function App(): React.JSX.Element {
         { type: 'stderr', content: `Failed to send approval response: ${redactLog(String(error))}` }
       ])
     } finally {
-      // 1.0.4-AK4 — instead of nulling the head outright, advance
-      // the queue so the next pending approval for this chat
-      // (queued while the current one was on screen) becomes the
-      // new head. When the queue is empty the head goes to null
-      // as before. Pre-AK4 each chat held at most one in-flight
-      // approval so this distinction didn't matter.
-      const targetChatId = pendingRoute?.chatId || getCurrentComposerStateChatId()
-      // Order-4 — reset the intent note so the next queued approval
-      // (or the next request entirely) starts with an empty field.
-      if (!usesIntentNoteOverride) setIntentNote('')
-      if (!targetChatId) {
-        setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
-      } else if (pendingRoute?.location === 'queue') {
-        setPendingApprovalQueueByChatId((prev) => {
-          const existing = prev[targetChatId] || []
-          const next = existing.filter((approval) => approval.id !== requestId)
-          if (next.length === existing.length) return prev
-          if (next.length === 0) {
-            const { [targetChatId]: _omit, ...without } = prev
-            return without
-          }
-          return { ...prev, [targetChatId]: next }
-        })
-      } else {
-        setPendingAgentApprovalForChatId(targetChatId, (prev) =>
-          prev?.id === requestId ? null : prev
-        )
-        advanceApprovalQueueForChat(targetChatId)
+      if (shouldDismissAgentApproval(responseAccepted)) {
+        // 1.0.4-AK4 — instead of nulling the head outright, advance
+        // the queue so the next pending approval for this chat
+        // (queued while the current one was on screen) becomes the
+        // new head. When the queue is empty the head goes to null
+        // as before. Pre-AK4 each chat held at most one in-flight
+        // approval so this distinction didn't matter.
+        const targetChatId = pendingRoute?.chatId || getCurrentComposerStateChatId()
+        // Order-4 — reset the intent note so the next queued approval
+        // (or the next request entirely) starts with an empty field.
+        if (!usesIntentNoteOverride) setIntentNote('')
+        if (!targetChatId) {
+          setPendingAgentApproval((prev) => (prev?.id === requestId ? null : prev))
+        } else if (pendingRoute?.location === 'queue') {
+          setPendingApprovalQueueByChatId((prev) => {
+            const existing = prev[targetChatId] || []
+            const next = existing.filter((approval) => approval.id !== requestId)
+            if (next.length === existing.length) return prev
+            if (next.length === 0) {
+              const { [targetChatId]: _omit, ...without } = prev
+              return without
+            }
+            return { ...prev, [targetChatId]: next }
+          })
+        } else {
+          setPendingAgentApprovalForChatId(targetChatId, (prev) =>
+            prev?.id === requestId ? null : prev
+          )
+          advanceApprovalQueueForChat(targetChatId)
+        }
       }
     }
   }
@@ -20069,7 +20005,6 @@ function App(): React.JSX.Element {
       ? null
       : sideThinkingOllamaBrand?.providerClass || sideProvider
   const sideThinkingModelBadge = sideThinkingOllamaBrand?.modelLabel || null
-  const sideCanRun = Boolean(sideChat && (getChatScope(sideChat) === 'global' || sideWorkspace))
   const sidePendingProviderChange =
     sideChat && sideChat.chatKind !== 'ensemble' ? readPendingProviderChange(sideChat) : null
   const sideComposerSourceChat =
@@ -20084,6 +20019,11 @@ function App(): React.JSX.Element {
   const sideComposerProvider =
     sideComposerSelection?.provider ||
     (sideComposerSourceChat ? getChatProvider(sideComposerSourceChat) : sideProvider)
+  const sideCanRun = Boolean(
+    sideChat &&
+      isLiveSelectableProvider(sideComposerProvider) &&
+      (getChatScope(sideChat) === 'global' || sideWorkspace)
+  )
   const sideComposerModelOptionsRaw = getProviderModelOptions(sideComposerProvider)
   const sideComposerSelectedModel = sideComposerSelection?.selectedModelType
     ? isValidModelForProvider(sideComposerProvider, sideComposerSelection.selectedModelType)
@@ -20438,6 +20378,7 @@ function App(): React.JSX.Element {
     if (!sideChat || isSideEnsembleComposerLocked || sideIsGlobalChat || !sideWorkspace?.path) {
       return
     }
+    if (enabled && !isLiveSelectableProvider(sideComposerProvider)) return
     const nextSettings = enabled
       ? await window.api.upsertAgenticWorkspaceGrant(
           sideComposerProvider,
@@ -20671,11 +20612,15 @@ function App(): React.JSX.Element {
       const chat = chatId ? chatByIdRef.current.get(chatId) : null
       if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
       const provider = getChatProvider(chat)
+      // Cursor is historical/decode-only while managed startup containment is
+      // unqualified. Do not turn compaction into an attempted Cursor run.
+      if (provider === 'cursor') return
       const sessionId = chat.linkedProviderSessionId
       const kimiNativeSession = Boolean(
         provider === 'kimi' &&
           sessionId?.startsWith('session_') &&
-          chat.providerMetadata?.kimiAcpNativeSession === true
+          chat.providerMetadata?.kimiAcpNativeSession === true &&
+          isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
       )
       if (provider === 'codex') {
         if (!sessionId) return
@@ -20709,16 +20654,11 @@ function App(): React.JSX.Element {
         })
         return
       }
-      if (provider === 'cursor' || provider === 'kimi') {
+      if (provider === 'kimi') {
         // Host-side fallback: no native lever exists, so compaction is a REAL
-        // summarize turn on the session, captured on exit by
-        // finalizeHostCompactionRun (stores chat.contextCompactionSummary,
-        // resets Cursor's provider session, appends the card). Cursor needs a
-        // session to summarize; legacy/unmarked Kimi summarizes the bounded
-        // transcript projection carried in this prompt.
-        if (provider === 'cursor' && !sessionId) return
-        if (provider === 'kimi' && !(chat.messages || []).some((m) => m.role === 'assistant'))
-          return
+        // summarize turn, captured on exit by finalizeHostCompactionRun. Legacy
+        // Kimi summarizes the bounded transcript projection carried here.
+        if (!(chat.messages || []).some((m) => m.role === 'assistant')) return
         if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
           return
         const preTokens = currentContextTokens(chat.runs || [], {
@@ -20730,35 +20670,22 @@ function App(): React.JSX.Element {
           ? previousSummary.text
           : undefined
         const contextBudget = resolveContextBudget(provider)
-        const projection =
-          provider === 'kimi'
-            ? buildConversationCompactionProjection(
-                chat.messages || [],
-                clampContextTurns(chatContextTurnsRef.current, contextBudget),
-                previousSummaryText ? previousSummary?.provenance : undefined,
-                contextBudget
-              )
-            : { block: '', suppliedMessageIds: [], carriedForwardMessageIds: [] }
-        const provenance: ContextCompactionProvenance =
-          provider === 'cursor'
-            ? {
-                kind: 'provider_session',
-                providerSessionId: sessionId!,
-                observedMessageIds: [],
-                ...(previousSummaryText && previousSummary?.createdAt
-                  ? { previousSummaryCreatedAt: previousSummary.createdAt }
-                  : {})
-              }
-            : {
-                kind: 'bounded_prompt_window',
-                suppliedMessageIds: [...projection.suppliedMessageIds],
-                ...(projection.carriedForwardMessageIds.length > 0
-                  ? { carriedForwardMessageIds: [...projection.carriedForwardMessageIds] }
-                  : {}),
-                ...(previousSummaryText && previousSummary?.createdAt
-                  ? { previousSummaryCreatedAt: previousSummary.createdAt }
-                  : {})
-              }
+        const projection = buildConversationCompactionProjection(
+          chat.messages || [],
+          clampContextTurns(chatContextTurnsRef.current, contextBudget),
+          previousSummaryText ? previousSummary?.provenance : undefined,
+          contextBudget
+        )
+        const provenance: ContextCompactionProvenance = {
+          kind: 'bounded_prompt_window',
+          suppliedMessageIds: [...projection.suppliedMessageIds],
+          ...(projection.carriedForwardMessageIds.length > 0
+            ? { carriedForwardMessageIds: [...projection.carriedForwardMessageIds] }
+            : {}),
+          ...(previousSummaryText && previousSummary?.createdAt
+            ? { previousSummaryCreatedAt: previousSummary.createdAt }
+            : {})
+        }
         const compactionPrompt = buildHostCompactionSummaryPrompt({
           previousSummaryText,
           materialBlock: projection.block
@@ -20784,9 +20711,8 @@ function App(): React.JSX.Element {
         void executeRunRef.current({
           ...request,
           appRunId,
-          // The exact Kimi projection or Cursor provider-session instruction was
-          // assembled above. Send it verbatim so persisted provenance cannot
-          // drift from what the summarizer actually saw.
+          // Send the exact Kimi projection verbatim so persisted provenance
+          // cannot drift from what the summarizer actually saw.
           verbatimPrompt: true,
           discordContextSelection: undefined,
           discordContextSnapshots: undefined,
@@ -20800,10 +20726,11 @@ function App(): React.JSX.Element {
   const canCompactCurrentChatContext =
     !isCurrentEnsembleChat &&
     !isCurrentChatRunning &&
-    (currentProvider === 'claude' || currentProvider === 'codex' || currentProvider === 'cursor'
+    (currentProvider === 'claude' || currentProvider === 'codex'
       ? Boolean(currentChat?.linkedProviderSessionId)
       : currentProvider === 'kimi'
-        ? currentChat?.providerMetadata?.kimiAcpNativeSession === true
+        ? currentChat?.providerMetadata?.kimiAcpNativeSession === true &&
+          isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion)
           ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
           : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
         : false)
@@ -20829,7 +20756,10 @@ function App(): React.JSX.Element {
   const compactableParticipantIds = useMemo(() => {
     if (!isCurrentEnsembleChat) return undefined
     const ids = (currentChat?.ensemble?.participants || [])
-      .filter((participant) => participant.enabled !== false)
+      .filter(
+        (participant) =>
+          participant.enabled !== false && isLiveSelectableProvider(participant.provider)
+      )
       .map((participant) => participant.id)
     return ids.length > 0 ? ids : undefined
   }, [isCurrentEnsembleChat, currentChat])
@@ -23833,11 +23763,14 @@ function App(): React.JSX.Element {
         </select>
       </label>
     ) : null
-  const scheduleDisabledReason = !hasWorkspaceContext
-    ? 'Scheduling requires a workspace-backed chat.'
-    : !currentChat
-      ? 'Open a chat to schedule a message.'
-      : undefined
+  const scheduleDisabledReason =
+    currentProvider === 'kimi'
+      ? 'Scheduled Kimi runs are unavailable until the signed schedule seal covers the ACP containment posture.'
+      : !hasWorkspaceContext
+        ? 'Scheduling requires a workspace-backed chat.'
+        : !currentChat
+          ? 'Open a chat to schedule a message.'
+          : undefined
   const scheduleControls = currentChat ? (
     <ComposerScheduleButton
       provider={currentProvider}
@@ -23851,7 +23784,9 @@ function App(): React.JSX.Element {
           currentProjectReferenceContextSelection && currentChat?.chatKind !== 'ensemble'
         )
       }
-      disabled={!hasWorkspaceContext || !currentWorkspace || !currentChat}
+      disabled={
+        currentProvider === 'kimi' || !hasWorkspaceContext || !currentWorkspace || !currentChat
+      }
       disabledReason={scheduleDisabledReason}
     />
   ) : null
@@ -25065,7 +25000,7 @@ function App(): React.JSX.Element {
       label: 'Compact context',
       description: isEnsembleChat
         ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
-        : provider === 'claude' || provider === 'codex' || provider === 'cursor' || provider === 'kimi'
+        : provider === 'claude' || provider === 'codex' || provider === 'kimi'
           ? 'Compact this chat’s provider session (summarize + shrink live context).'
           : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
@@ -25080,7 +25015,7 @@ function App(): React.JSX.Element {
         const canNativelyCompact =
           !isEnsembleChat &&
           Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId)) &&
-          (provider === 'claude' || provider === 'codex' || provider === 'cursor'
+          (provider === 'claude' || provider === 'codex'
             ? Boolean(chat?.linkedProviderSessionId)
             : provider === 'kimi'
               ? Boolean(chat?.messages?.some((m) => m.role === 'assistant'))
@@ -25126,11 +25061,11 @@ function App(): React.JSX.Element {
                 }`
               : 'Selected participant context',
             description:
-              'Compact the selected seat’s provider session (claude/codex/cursor/kimi/grok), or insert a scoped summary request.',
+              'Compact the selected seat’s provider session (claude/codex/kimi/grok), or insert a scoped summary request.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               // Seat compaction where a real lever exists: a seat that has
-              // spoken (session for claude/codex/cursor; in-prompt material for
+              // spoken (session for claude/codex; in-prompt material for
               // kimi/grok), round idle. The card (success or failure) is
               // appended main-side, which also re-checks round liveness
               // authoritatively.
@@ -25143,7 +25078,6 @@ function App(): React.JSX.Element {
                 Boolean(seat) &&
                 (seat!.provider === 'claude' ||
                   seat!.provider === 'codex' ||
-                  seat!.provider === 'cursor' ||
                   seat!.provider === 'kimi' ||
                   seat!.provider === 'grok') &&
                 seatSessionOk &&
@@ -25544,7 +25478,6 @@ function App(): React.JSX.Element {
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
       const paneAttachments = imageAttachmentsByChatIdRef.current[chatId] || EMPTY_IMAGE_ATTACHMENTS
-      multiview.paneRefs[paneIndex]?.relockToLatest()
       const request = buildRunRequestRef.current(undefined, undefined, {
         chat: paneChat,
         prompt: panePrompt,
@@ -25558,10 +25491,18 @@ function App(): React.JSX.Element {
         imageAttachments: paneAttachments,
         discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
       })
+      if (!isLiveSelectableProvider(request.provider)) {
+        settleProjectReferenceContextForRequest(request, 'rejected')
+        const message = `${getProviderLabel(request.provider)} managed runs are unavailable. Switch this pane to a live provider to continue.`
+        appendThreadRawLog(chatId, { type: 'info', content: message })
+        window.alert(message)
+        return
+      }
       if (!runRequestHasContent(request)) {
         settleProjectReferenceContextForRequest(request, 'rejected')
         return
       }
+      multiview.paneRefs[paneIndex]?.relockToLatest()
       if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
       if (
         shouldQueueRunBeforeDispatch({
@@ -25657,6 +25598,7 @@ function App(): React.JSX.Element {
       const paneWorkspace = getWorkspaceForChat(paneChat)
       if (!paneWorkspace?.path) return
       const paneProvider = getChatProvider(paneChat)
+      if (enabled && !isLiveSelectableProvider(paneProvider)) return
       const nextSettings = enabled
         ? await window.api.upsertAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
         : await window.api.removeAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)

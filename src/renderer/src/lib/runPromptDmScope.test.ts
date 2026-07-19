@@ -1,7 +1,10 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
-import { resolveComposerRunDmTarget } from './runPromptDmScope'
+import {
+  resolveComposerRunDmTarget,
+  withExplicitEnsembleDmTarget
+} from './runPromptDmScope'
 
 const participants: EnsembleParticipant[] = [
   {
@@ -64,5 +67,38 @@ describe('resolveComposerRunDmTarget', () => {
     expect(ensembleSteer).toContain(
       '...(dmTargetParticipantId ? { dmTargetParticipantId } : {})'
     )
+  })
+})
+
+describe('withExplicitEnsembleDmTarget', () => {
+  it('stamps Retry/chip identity into the prompt so old aliases cannot retarget it', () => {
+    const retryPrompt = withExplicitEnsembleDmTarget({
+      prompt: '@OtherRole was in the original request',
+      participantId: 'boss-id',
+      participants
+    })
+    expect(retryPrompt).toBe(
+      '[@Boss](ensemble-dm://boss-id) @OtherRole was in the original request'
+    )
+  })
+
+  it('keeps a stale exact id visible for MAIN to reject against its current roster', () => {
+    expect(
+      withExplicitEnsembleDmTarget({
+        prompt: 'Retry this',
+        participantId: 'removed-seat',
+        participants
+      })
+    ).toBe('[@removed-seat](ensemble-dm://removed-seat) Retry this')
+  })
+
+  it('replaces a conflicting old structured target while preserving its visible label', () => {
+    expect(
+      withExplicitEnsembleDmTarget({
+        prompt: 'Ask [@Reviewer](ensemble-dm://old-seat) to verify it',
+        participantId: 'boss-id',
+        participants
+      })
+    ).toBe('[@Boss](ensemble-dm://boss-id) Ask @Reviewer to verify it')
   })
 })

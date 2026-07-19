@@ -260,9 +260,8 @@ const GROK_DEFAULT_MODELS = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
-// Cursor: Composer 2.5 remains the default route. Cursor Grok 4.5 is exposed as
-// one friendly model row with reasoning + Fast controls; dispatch maps those
-// controls to Cursor's concrete grok-4.5-* model ids.
+// Historical Cursor model catalog retained for decoding and rendering stored
+// selections. Source-ahead builds do not offer or dispatch these routes.
 const CURSOR_DEFAULT_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },

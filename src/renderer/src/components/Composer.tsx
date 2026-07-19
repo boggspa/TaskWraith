@@ -34,7 +34,10 @@ import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
 import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
-import { resolveProviderRows } from '../components/ComposerProviderPicker'
+import {
+  providerRunUnavailableReason,
+  resolveProviderRows
+} from '../components/ComposerProviderPicker'
 import { ComposerSlashMenu } from '../components/ComposerSlashMenu'
 import { TrustedSessionConfirmSheet } from '../components/TrustedSessionConfirmSheet'
 import { AnimatedDiffNumber } from '../components/AnimatedDiffNumber'
@@ -71,7 +74,13 @@ import { ExecutionStackAboveRow } from '../components/ExecutionStackAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
-import { extractFirstEnsembleDmTarget, formatComposerPathMention, parseComposerMentionTrigger } from '../lib/ComposerMentionTrigger'
+import {
+  extractFirstEnsembleDmTarget,
+  formatComposerPathMention,
+  formatEnsembleDmMention,
+  parseComposerMentionTrigger
+} from '../lib/ComposerMentionTrigger'
+import { withExplicitEnsembleDmTarget } from '../lib/runPromptDmScope'
 import { readPendingProviderChange } from '../../../main/providerChangeQueue'
 import {
   hasSlashCommandPlaceholders,
@@ -87,6 +96,7 @@ import { parseSideSlashCommand } from '../lib/SideSlashCommand'
 import type { SideSlashCommand } from '../lib/SideSlashCommand'
 import { lastRetryableEnsembleUserPrompt } from '../lib/ensembleRetryPrompt'
 import { renderAgentApprovalPreview } from '../lib/agentApprovalPreview'
+import { agentApprovalCancelPresentation } from '../lib/agentApprovalLifecycle'
 import { isNativeSubAgentPreferenceApproval } from '../lib/agentApprovalTypes'
 import { decideApprovalElevation } from '../lib/approvalElevation'
 import { formatScheduledRunTime } from '../lib/dateTimeFormat'
@@ -810,6 +820,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     showWorkspaceGitAboveRows = true,
     workspaces
   } = props
+  const pendingSoloProvider =
+    !isCurrentEnsembleChat && currentChat
+      ? readPendingProviderChange(currentChat)?.provider
+      : undefined
+  const currentProviderRunUnavailableReason = !isCurrentEnsembleChat
+    ? providerRunUnavailableReason(pendingSoloProvider ?? currentProvider)
+    : null
   const hasSendablePromptContent =
     hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
@@ -1024,6 +1041,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const agentApprovalTimeoutMs = pendingAgentApproval
     ? resolveApprovalTimeoutMs(pendingAgentApproval, approvalTimeouts)
     : null
+  const approvalCancelPresentation = agentApprovalCancelPresentation(pendingAgentApproval)
 
   const confirmTrustedSessionForLane = async (): Promise<void> => {
     if (trustedSessionMutationDisabledReason) {
@@ -1402,7 +1420,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       if (!hasImageItem) {
         return
       }
-      const saved = await window.api.saveClipboardImageAttachment().catch(() => [])
+      if (!targetChatId) return
+      const saved = await window.api.saveClipboardImageAttachment(targetChatId).catch(() => [])
       paths = saved || []
     }
     if (paths.length === 0) {
@@ -2274,7 +2293,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       }
                       void window.api.runEnsembleRound({
                         chatId: currentChat.appChatId,
-                        prompt: retryPrompt,
+                        prompt: withExplicitEnsembleDmTarget({
+                          prompt: retryPrompt,
+                          participantId,
+                          participants: currentChat.ensemble?.participants
+                        }),
                         mode: 'normal',
                         concurrentMode: false,
                         fanoutPolicy: 'off',
@@ -2659,6 +2682,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         onKeyDown={(e) => {
                           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                             e.preventDefault()
+                            if (currentProviderRunUnavailableReason) return
                             if (tryHandleSideSlashSubmit()) {
                               return
                             }
@@ -2720,7 +2744,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   onPasteClipboardAttachment={async () => {
                     const targetChatId = currentComposerChatId
                     if (!targetChatId) return false
-                    const saved = await window.api.saveClipboardImageAttachment().catch(() => [])
+                    const saved = await window.api
+                      .saveClipboardImageAttachment(targetChatId)
+                      .catch(() => [])
                     const paths = saved || []
                     if (paths.length === 0) return false
                     if ((currentChatIdRef.current || targetChatId) !== targetChatId) return false
@@ -2798,17 +2824,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         return `[@${mention.name}](agent://${mention.agentId}) `
                       }
                       if (mention.kind === 'participant' && mention.participantId) {
-                        // Ensemble DM mention. Insert PLAIN `@Role`
-                        // (no markdown link) so the composer textarea
-                        // shows a clean readable token instead of the
-                        // raw markdown URL. On send,
-                        // `extractFirstEnsembleDmTarget` resolves the
-                        // `@Role` against the chat's participants by
-                        // role (case-insensitive) → provider name and
-                        // produces the right `dmTargetParticipantId`.
-                        // This also means free-typed `@Gemini` or
-                        // `@Worker` works the same as a picker click.
-                        return `@${mention.name} `
+                        // Preserve the exact picker identity. A plain @Role
+                        // loses which seat was picked when roles/providers
+                        // collide and used to let roster order choose a
+                        // different permission posture. The textarea exposes
+                        // this markdown while editing; after send the existing
+                        // transcript renderer presents it as a tinted chip.
+                        return formatEnsembleDmMention(mention.name, mention.participantId)
                       }
                       return formatComposerPathMention(mention.path || mention.name)
                     })()
@@ -3143,6 +3165,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             mint a hidden matching-service session grant via acceptForSession. */}
                           {!isNativeSubAgentPreferenceApproval(pendingAgentApproval) &&
                             pendingAgentApproval.preview?.requestOnly !== true &&
+                            pendingAgentApproval.preview?.requiresExactDesktopReview !== true &&
                             !pendingAgentApproval.preview?.externalPathDetection && (
                               <PillButton
                                 variant="ghost"
@@ -3182,12 +3205,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               variant="ghost"
                               size="compact"
                               type="button"
-                              title="Cancel the run that is waiting on this approval."
+                              title={
+                                approvalCancelPresentation.title
+                              }
                               onClick={() =>
                                 void handleAgentApprovalAction(pendingAgentApproval.id, 'cancel')
                               }
                             >
-                              Cancel run
+                              {approvalCancelPresentation.label}
                             </PillButton>
                           )}
                           {/* Slice 4 external-path actions — only render when
@@ -4326,6 +4351,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           }
                           const pickerDisabled =
                             isCurrentComposerLocked ||
+                            Boolean(providerRunUnavailableReason(effectiveProvider)) ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
                           // Tier retirement (2026-07): Ollama uses the SAME standard
                           // permission-role picker as every provider — no more
@@ -4350,6 +4376,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }}
                               onStopTrustedSession={stopTrustedSessionForPicker}
                               disabled={pickerDisabled}
+                              disabledReason={
+                                providerRunUnavailableReason(effectiveProvider) || undefined
+                              }
                             />
                           )
                         })()}
@@ -4549,6 +4578,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 !currentChat ||
                                 (!isCurrentGlobalChat && !currentWorkspace) ||
                                 !hasSendablePromptContent ||
+                                Boolean(currentProviderRunUnavailableReason) ||
                                 (currentProvider === 'gemini' && !geminiWorkspaceTrustReady)
                               }
                               title={
@@ -4558,6 +4588,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                     ? 'Pick a workspace folder first'
                                     : !hasSendablePromptContent
                                       ? 'Type a prompt, attach a file, or choose Project references first'
+                                      : currentProviderRunUnavailableReason
+                                        ? currentProviderRunUnavailableReason
                                       : currentProvider === 'gemini' && !geminiWorkspaceTrustReady
                                           ? 'Trust this workspace for Gemini first'
                                           : isCurrentEnsembleChat && effectiveSelectedParticipantId
@@ -4584,6 +4616,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         </span>
                       </div>
                     </div>
+                    {currentProviderRunUnavailableReason && (
+                      <div className="composer-inline-warning" role="status">
+                        {currentProviderRunUnavailableReason}
+                      </div>
+                    )}
                     {currentProvider === 'gemini' && !geminiWorkspaceTrustReady && (
                       <div
                         className="composer-inline-warning"

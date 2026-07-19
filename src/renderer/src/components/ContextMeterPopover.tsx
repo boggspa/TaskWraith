@@ -37,10 +37,11 @@ interface ContextMeterPopoverProps {
   composerStyle: ComposerStyle
   disabled?: boolean
   /**
-   * "Compact context now" — provider-native session compaction for the chat
-   * (Claude `/compact` run / Codex thread/compact/start / Cursor-Kimi host
-   * summarize turn). Present only when the chat can compact (solo chat with
-   * compactable state, idle); the button renders once pressure reaches warn.
+   * "Compact context now" — current Claude/Codex native compaction or the
+   * Kimi host-summary fallback (with Grok compaction available on eligible
+   * ensemble seats). Historical Cursor summaries remain renderable, but never
+   * make this action available. The button appears only while idle and under
+   * warn-level context pressure.
    */
   onCompactContext?: () => void
   /**

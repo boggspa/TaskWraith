@@ -18,9 +18,12 @@ describe('universalFork', () => {
     expect(forkSlashDescription(capability)).toContain('emulated')
   })
 
-  it('marks retired providers as unsupported', () => {
-    const capability = buildStaticForkCapability('gemini')
+  it.each([
+    ['gemini', 'retired'],
+    ['cursor', 'managed runs are unavailable']
+  ] as const)('marks unavailable %s forks as unsupported', (provider, detail) => {
+    const capability = buildStaticForkCapability(provider)
     expect(capability.kind).toBe('unsupported')
-    expect(capability.detail).toContain('retired')
+    expect(capability.detail).toContain(detail)
   })
 })

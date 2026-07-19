@@ -210,8 +210,9 @@ export function PromptCacheSettingsSection(): React.JSX.Element {
 
       {error && <p className="prompt-cache-settings-error">{error}</p>}
       <p className="prompt-cache-settings-footnote">
-        CLI paths (Codex login, Claude Code, Kimi/Grok/Cursor CLIs) cannot be forced to cache from
-        TaskWraith. Rebuild after backend IPC lands if controls stay disabled unexpectedly.
+        Runnable opaque CLI paths (Codex login, Claude Code, Kimi/Grok) cannot be forced to cache
+        from TaskWraith. Historical Cursor cache metadata may remain visible, but managed Cursor
+        runs and cache controls are unavailable in this source-ahead build.
       </p>
     </div>
   )

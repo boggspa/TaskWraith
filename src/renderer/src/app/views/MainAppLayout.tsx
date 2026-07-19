@@ -1608,8 +1608,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <span className="multiview-empty-pane-label">Select a chat for this pane</span>
                   <CanvasPaneLauncher
                     onOpen={(url) => {
+                      if (!currentChatAppChatId) return
                       void window.api.canvas
-                        .openEmbedded({ url })
+                        .openEmbedded({ url, chatId: currentChatAppChatId })
                         .then((opened) => {
                           if (opened.ok) multiview.setPaneCanvas(emptyPaneIndex, opened.canvasId)
                         })

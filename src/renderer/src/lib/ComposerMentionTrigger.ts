@@ -21,7 +21,7 @@
  * room for someone tightening the regex later and creating a
  * silent overlap).
  */
-import { findAllMentions } from '../../../main/services/EnsembleMentionAlias'
+import { resolveEnsembleDmTargetForDispatch } from '../../../main/services/EnsembleMentionAlias'
 
 export type ComposerMentionTriggerKind = 'mention' | 'file-mention'
 
@@ -79,6 +79,25 @@ export function formatComposerPathMention(path: string): string {
 }
 
 /**
+ * Preserve the exact participant selected from the composer picker. Roles,
+ * providers, and models are all allowed to collide in an Ensemble roster, so
+ * inserting only a plain `@Role` discards the picker identity before MAIN can
+ * authorize routing. The transcript markdown renderer already understands this
+ * scheme and displays it as a participant chip after send.
+ *
+ * The current composer is still a plain textarea, so the structured markdown is
+ * visible while editing. That small UX limitation is preferable to silently
+ * routing a duplicate alias to whichever permission seat happens to sort first.
+ */
+export function formatEnsembleDmMention(label: string, participantId: string): string {
+  const trimmedParticipantId = participantId.trim()
+  if (!trimmedParticipantId) return ''
+  const trimmedLabel = label.trim() || trimmedParticipantId
+  const escapedLabel = trimmedLabel.replace(/\\/g, '\\\\').replace(/\]/g, '\\]')
+  return `[@${escapedLabel}](ensemble-dm://${trimmedParticipantId}) `
+}
+
+/**
  * Resolver shape for the participant lookup. Mirrors the subset of
  * `EnsembleParticipant` the matcher actually reads. Now includes
  * `model` so the shared mention-alias resolver can match `@GPT 5.5`,
@@ -92,6 +111,7 @@ export interface EnsembleDmCandidate {
   provider: string
   model?: string
   stageRole?: string
+  enabled?: boolean
 }
 
 /**
@@ -104,8 +124,8 @@ export interface EnsembleDmCandidate {
  * Two recognised forms (in priority order):
  *
  *   1. Markdown link form `[@Role](ensemble-dm://participant-id)`.
- *      Legacy from the first pass of the @-mention work — kept so
- *      historical prompts still route correctly.
+ *      This is the picker contract: it preserves exact participant
+ *      identity when aliases collide.
  *
  *   2. Plain `@Token` (multi-word + model-name aliases supported).
  *      Resolved via the shared `EnsembleMentionAlias` module so the
@@ -122,45 +142,22 @@ export function extractFirstEnsembleDmTarget(
   prompt: string,
   participants?: EnsembleDmCandidate[]
 ): string | null {
-  // Markdown form — always wins because the link unambiguously
-  // carries the participant id. Multiple explicit links mean the
-  // prompt is addressed to multiple participants, so leave it as a
-  // normal ensemble round.
-  const linkMatches = Array.from(prompt.matchAll(/\]\(ensemble-dm:\/\/([^)\s]+)\)/g))
-    .map((match) => match[1])
-    .filter(Boolean)
-  const uniqueLinkTargets = [...new Set(linkMatches)]
-  if (uniqueLinkTargets.length === 1) {
-    const linkedParticipant = participants?.find(
-      (participant) => participant.id === uniqueLinkTargets[0]
-    )
-    if (linkedParticipant?.stageRole === 'background') return null
-    return uniqueLinkTargets[0]
+  // This renderer result only controls optimistic fan-out UI and becomes an
+  // advisory IPC field. MAIN runs this resolver again against its current
+  // roster before dispatching any participant.
+  const resolution = resolveEnsembleDmTargetForDispatch({
+    text: prompt,
+    participants:
+      (participants as unknown as Parameters<
+        typeof resolveEnsembleDmTargetForDispatch
+      >[0]['participants']) ?? []
+  })
+  if (resolution.kind === 'target') return resolution.participantId
+  // Legacy callers used the structured link as the identity carrier before
+  // they had a roster snapshot. MAIN never takes this branch: desktop/remote
+  // dispatch always provide the canonical roster and reject stale ids.
+  if (resolution.kind === 'invalid-structured-target' && !participants?.length) {
+    return resolution.participantId
   }
-  if (uniqueLinkTargets.length > 1) return null
-
-  if (!participants || participants.length === 0) return null
-  // Shared multi-word matcher — same logic that powers the composer
-  // overlay tokeniser AND the orchestrator's auto-promotion path, so
-  // a prompt that says `@GPT 5.5 take a look` routes identically
-  // whether the renderer or the main process is doing the resolving.
-  // EnsembleDmCandidate is a structural subset of EnsembleParticipant;
-  // cast through unknown because the matcher only reads id /
-  // provider / role / model.
-  const mentions = findAllMentions(
-    prompt,
-    participants as unknown as Parameters<typeof findAllMentions>[1]
-  )
-  const participantMentions = mentions.filter((match) => match.kind === 'participant')
-  if (participantMentions.some((match) => match.participant.stageRole === 'background')) {
-    return null
-  }
-  const participantIds = [
-    ...new Set(
-      participantMentions.map((match) => match.participant.id)
-    )
-  ]
-  // User mentions are informational in this send path. They do not
-  // create a DM target.
-  return participantIds.length === 1 ? participantIds[0] : null
+  return null
 }

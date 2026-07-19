@@ -242,9 +242,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(html).toContain('>Work</button>')
       expect(html).toContain('>Review</button>')
       expect(html).toContain('>BG</button>')
-      expect(html).toMatch(
-        /aria-checked="true"[^>]*data-segmented-control-value="worker"/
-      )
+      expect(html).toMatch(/aria-checked="true"[^>]*data-segmented-control-value="worker"/)
     })
   })
 
@@ -302,12 +300,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       ]
       const defaults = createEnsembleParticipantAddDetails('claude', participants)
       expect(
-        retargetEnsembleParticipantAddDetails(
-          defaults,
-          'claude',
-          'codex',
-          participants
-        )
+        retargetEnsembleParticipantAddDetails(defaults, 'claude', 'codex', participants)
       ).toMatchObject({
         role: 'Codex',
         instructions: 'Contribute as Codex for this ensemble.'
@@ -394,7 +387,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(css).toContain('height: 100%')
     })
 
-    it('uses the existing provider order and omits synthetic custom models', () => {
+    it('uses the live provider order and omits retired providers and synthetic custom models', () => {
       expect(buildEnsembleAddProviderGroups(false, false).map((group) => group.provider)).toEqual([
         'codex',
         'claude',
@@ -407,7 +400,6 @@ describe('EnsembleParticipantsAboveRow', () => {
         'claude',
         'kimi',
         'grok',
-        'cursor',
         'ollama'
       ])
       expect(
@@ -416,9 +408,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
 
     it('normalizes provider-specific reasoning, thinking, and Fast defaults', () => {
-      expect(
-        createEnsembleParticipantAddConfiguration('codex', 'gpt-5.6-sol')
-      ).toMatchObject({
+      expect(createEnsembleParticipantAddConfiguration('codex', 'gpt-5.6-sol')).toMatchObject({
         provider: 'codex',
         model: 'gpt-5.6-sol',
         reasoningEffort: 'low',
@@ -480,11 +470,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       ]
 
       expect(
-        createEnsembleParticipantAddConfiguration(
-          'codex',
-          'gpt-next-live',
-          providerGroups
-        )
+        createEnsembleParticipantAddConfiguration('codex', 'gpt-next-live', providerGroups)
       ).toEqual({
         provider: 'codex',
         model: 'gpt-next-live',

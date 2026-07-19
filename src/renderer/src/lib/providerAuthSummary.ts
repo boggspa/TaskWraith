@@ -29,13 +29,24 @@ export function summariseProviderApiKeyStatus(
     }
   }
   if (!status.available) {
+    if (providerLabel === 'Kimi' && status.binaryPath) {
+      return {
+        variant: 'not-available',
+        statusText: 'Managed runtime unavailable',
+        hint:
+          'Kimi Code is installed, but this exact runtime is not admitted by this TaskWraith build. OAuth login or an API key does not bypass admission.'
+      }
+    }
     return {
       variant: 'not-available',
       statusText: 'CLI not found',
       hint: `Install the ${providerLabel} CLI first, then return here.`
     }
   }
-  if (status.apiKeyConfigured) {
+  // Kimi's encrypted Settings key is deliberately usage-query-only. Managed
+  // ACP authentication comes from the admitted Kimi Code home's OAuth or
+  // provider configuration, reported through authState below.
+  if (providerLabel !== 'Kimi' && status.apiKeyConfigured) {
     return {
       variant: 'signed-in',
       statusText: 'API key saved',
@@ -43,11 +54,7 @@ export function summariseProviderApiKeyStatus(
     }
   }
   const authState = (status.authState || '').toLowerCase()
-  const looksAuthed =
-    authState &&
-    !['not logged in', 'not authenticated', 'unauthenticated', 'error'].some((p) =>
-      authState.includes(p)
-    )
+  const looksAuthed = ['authenticated', 'api-key', 'oauth'].includes(authState)
   if (looksAuthed) {
     return {
       variant: 'signed-in',
@@ -55,10 +62,23 @@ export function summariseProviderApiKeyStatus(
       hint: 'You can launch runs against this provider.'
     }
   }
+  if (authState === 'unknown') {
+    return {
+      variant: 'partial',
+      statusText: 'Credential state not observed',
+      hint:
+        providerLabel === 'Kimi'
+          ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; runtime admission is separate.'
+          : `Open Settings → ${providerLabel} to check sign-in or paste an API key.`
+    }
+  }
   return {
     variant: 'not-signed-in',
     statusText: 'Not authenticated',
-    hint: `Open Settings → ${providerLabel} to sign in or paste an API key.`
+    hint:
+      providerLabel === 'Kimi'
+        ? 'Use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. The TaskWraith Settings key is usage-only; runtime admission is separate.'
+        : `Open Settings → ${providerLabel} to sign in or paste an API key.`
   }
 }
 
@@ -94,9 +114,8 @@ export function summariseGeminiStatus(status: GeminiAuthStatus | null): Provider
 }
 
 /**
- * Cursor / Grok summary. Both authenticate through their OWN CLI (no API
- * key, no in-app OAuth) — `cursor-agent login` / the Grok CLI — so TaskWraith
- * only knows whether the provider is *enabled* (adapter registered), not
+ * CLI-login provider summary. TaskWraith only knows whether the provider is
+ * *enabled* (adapter registered), not
  * whether the CLI is signed in. Surface an honest "available · finish
  * sign-in" state that deep-links to Settings, or "disabled" when the
  * provider's adapter isn't registered.

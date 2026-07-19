@@ -80,9 +80,9 @@ export const MODEL_USAGE_WINDOW_LABEL: Record<ModelUsageWindowKey, string> = {
  * Providers that can surface in the token/cost table. Ollama is handled
  * separately via {@link buildOllamaMemoryModelTable} (RAM semantics).
  * Grok token runs are priced here; subscription credits stay on the plan
- * meter. Mirrors the priced roster the external scanner covers for the
- * five CLI providers (codex/claude/gemini/kimi/cursor) plus grok when
- * TaskWraith runs exist.
+ * meter. Historical Gemini/Cursor records remain visible alongside current
+ * live-provider and external-scanner usage; this table is reporting, not an
+ * offer or dispatch surface.
  */
 export const MODEL_USAGE_PROVIDER_ORDER: ProviderId[] = [
   'gemini',
@@ -496,15 +496,15 @@ export function buildModelUsageTable(
 }
 
 /**
- * Providers whose TaskWraith-internal runs are always folded into the table
+ * Providers whose TaskWraith-internal records are always folded into the table
  * when External Usage is ON. Grok is never scanned externally. Cursor is
- * additive: IDE-native Composer activity comes from the external scanner while
- * TaskWraith-dispatched cursor-agent runs stay in the internal set.
+ * additive for reporting: IDE-native Composer activity comes from the external
+ * scanner while historical TaskWraith Cursor records stay visible.
  */
 const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = ['grok', 'cursor']
 
 /** Cursor's IDE activity scanner exposes input + output but no cache split. Match
- * internal cursor-agent rows on that same fresh-input + output basis; display
+ * historical internal Cursor rows on that same fresh-input + output basis; display
  * aggregation remains cache-inclusive through `usageRecordInputTokens`. */
 function cursorDedupeTokens(record: UsageRecord): number {
   return toNonNegative(record.inputTokens) + toNonNegative(record.outputTokens)
@@ -519,8 +519,8 @@ function cursorRecordsLikelyOverlap(internal: UsageRecord, external: UsageRecord
   return ratio >= 0.75 && ratio <= 1.33
 }
 
-/** Drop external Cursor rows that likely duplicate a TaskWraith cursor-agent run
- * already captured in the internal set (same ~2m window and similar token total). */
+/** Drop external Cursor rows that likely duplicate a historical TaskWraith
+ * Cursor record (same ~2m window and similar token total). */
 function dedupeCursorExternalAgainstInternal(
   internalRecords: UsageRecord[],
   externalRecords: UsageRecord[]
@@ -603,9 +603,9 @@ function mergeModelUsageProviderGroups(
 /**
  * Settings-table entry point. When External Usage is OFF this is identical to
  * {@link buildModelUsageTable}. When ON it uses the provider-wide external
- * dataset for CLI providers, always folds in TaskWraith-internal grok runs,
- * and additively merges internal + external Cursor (IDE Composer + TaskWraith
- * cursor-agent) with fuzzy dedup for overlapping runs.
+ * dataset for CLI providers, always folds in TaskWraith-internal Grok runs,
+ * and additively merges historical internal + external Cursor usage with fuzzy
+ * dedup for overlapping records. It does not imply Cursor dispatch availability.
  */
 export function buildModelUsageTableForSettings(
   internalRecords: UsageRecord[],

@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../../main/store/types'
+import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
 
 export type ForkCapabilityKind = 'native' | 'emulated' | 'unsupported'
 
@@ -23,6 +24,18 @@ const IPC_GET_CAPABILITY = 'fork:get-capability'
 
 /** Static fallback until WriteMain exposes fork:get-capability IPC. */
 export function buildStaticForkCapability(provider: ProviderId): ForkCapabilitySummary {
+  if (!isLiveSelectableProvider(provider)) {
+    return {
+      provider,
+      kind: 'unsupported',
+      label: 'Fork unavailable',
+      detail:
+        provider === 'cursor'
+          ? 'Cursor managed runs are unavailable pending startup-containment qualification. Historical chats remain readable, but new forks are not offered.'
+          : 'Gemini is retired in TaskWraith. Historical chats may still decode, but new forks are not offered.',
+      requiresLinkedSession: false
+    }
+  }
   if (provider === 'codex') {
     return {
       provider,
@@ -36,7 +49,6 @@ export function buildStaticForkCapability(provider: ProviderId): ForkCapabilityS
     provider === 'claude' ||
     provider === 'kimi' ||
     provider === 'grok' ||
-    provider === 'cursor' ||
     provider === 'ollama'
   ) {
     return {
@@ -52,10 +64,7 @@ export function buildStaticForkCapability(provider: ProviderId): ForkCapabilityS
     provider,
     kind: 'unsupported',
     label: 'Fork unavailable',
-    detail:
-      provider === 'gemini'
-        ? 'Gemini is retired in TaskWraith. Historical chats may still decode, but new forks are not offered.'
-        : 'Fork is not supported for this provider in TaskWraith.',
+    detail: 'Fork is not supported for this provider in TaskWraith.',
     requiresLinkedSession: false
   }
 }

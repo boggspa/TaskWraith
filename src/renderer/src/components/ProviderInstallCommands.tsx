@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactElement } from 'react'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
 import {
   OLLAMA_MODEL_COMMANDS,
   PROVIDER_INSTALL_COMMANDS
@@ -20,8 +20,7 @@ import { PillButton } from './PillButton'
  * Keep these in sync with the vendors' official install pages:
  *   Codex  — OpenAI:    npm i -g @openai/codex                         (developers.openai.com/codex/cli)
  *   Claude — Anthropic: curl -fsSL https://claude.ai/install.sh | bash (code.claude.com/docs/en/setup)
- *   Kimi   — Moonshot:  curl -LsSf https://code.kimi.com/install.sh    (moonshotai.github.io/kimi-cli)
- *   Cursor — Cursor:    curl https://cursor.com/install -fsS | bash    (cursor.com/docs/cli/installation)
+ *   Kimi   — Moonshot:  curl -LsSf https://code.kimi.com/install.sh    (code.kimi.com)
  *   Grok   — xAI:       curl -fsSL https://x.ai/cli/install.sh | bash  (x.ai/cli)
  *   Ollama — Ollama:    curl -fsSL https://ollama.com/install.sh | sh  (ollama.com)
  * (npm commands need Node 20+; the curl installers are self-contained.)
@@ -62,7 +61,7 @@ export function ProviderInstallCommands({
   }, [providerSetup])
 
   const activeProviderSetup = (providerSetup ?? loadedActivation?.providerSetup ?? []).filter(
-    (entry) => !isRetiredProvider(entry.setup.provider)
+    (entry) => isLiveSelectableProvider(entry.setup.provider)
   )
 
   const copy = (rowId: string, command: string): void => {
@@ -75,9 +74,11 @@ export function ProviderInstallCommands({
 
   return (
     <div className="provider-install-commands">
-      {/* Retired providers (retiredProviders.ts) are never offered an install
-          command — defensive backstop; the list above already omits them. */}
-      {PROVIDER_INSTALL_COMMANDS.filter((entry) => !isRetiredProvider(entry.id)).map((entry) => {
+      {/* Historical or security-disabled providers are never offered an install
+          command; only the canonical live-selectable set reaches this list. */}
+      {PROVIDER_INSTALL_COMMANDS.filter((entry) =>
+        isLiveSelectableProvider(entry.id)
+      ).map((entry) => {
         const rowLabel = entry.platform ? `${entry.label} (${entry.platform})` : entry.label
         return (
           <div

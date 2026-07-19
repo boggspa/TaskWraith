@@ -16,6 +16,7 @@ export type NormalizedEvent =
       timestamp: string
       fallback?: boolean
       kimiAcpNativeSession?: boolean
+      kimiAcpPostureVersion?: string
     }
   | { type: 'user_message'; content: string; timestamp: string }
   // Phase K1 — Codex emits `itemId` per logical assistant-message item.
@@ -244,7 +245,12 @@ export class GeminiStreamAdapter {
           timestamp: parsed.timestamp || new Date().toISOString(),
           fallback: Boolean(parsed.fallback),
           ...(parsed.kimi_acp_native_session === true
-            ? { kimiAcpNativeSession: true }
+            ? {
+                kimiAcpNativeSession: true,
+                ...(typeof parsed.kimi_acp_posture_version === 'string'
+                  ? { kimiAcpPostureVersion: parsed.kimi_acp_posture_version }
+                  : {})
+              }
             : {})
         })
         break

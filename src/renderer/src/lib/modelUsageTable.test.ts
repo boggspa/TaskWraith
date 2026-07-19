@@ -707,7 +707,7 @@ describe('buildModelUsageTableForSettings — grok/cursor supplement when extern
     expect(cursor.models).toHaveLength(2)
   })
 
-  it('dedupes external cursor rows that mirror a TaskWraith cursor-agent run', () => {
+  it('dedupes external cursor rows that mirror a historical TaskWraith Cursor record', () => {
     const ts = NOW - HOURS(1)
     const internal = [
       makeRecord({

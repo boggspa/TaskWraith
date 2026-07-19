@@ -16,7 +16,7 @@ import type {
   EnsembleOrchestrationMode,
   EnsembleParticipant
 } from '../../../main/store/types'
-import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { isLiveSelectableProvider, isRetiredProvider } from '../../../shared/retiredProviders'
 import {
   clonePermissionOverrides,
   createEmptyEnsembleRosterPreset,
@@ -344,7 +344,9 @@ export function RosterParticipantRow({
 }: RosterParticipantRowProps): JSX.Element {
   const [expanded, setExpanded] = useState(false)
   const contentId = useId()
+  const unavailable = !isLiveSelectableProvider(participant.provider)
   const retired = isRetiredProvider(participant.provider)
+  const unavailableLabel = retired ? 'Retired' : 'Security unavailable'
   const rolePresetId = resolveRolePresetId(participant.role)
   const isLinkedToPool = Boolean(participant.pooledAgentId)
 
@@ -408,14 +410,22 @@ export function RosterParticipantRow({
         {getProviderLabel(participant.provider)}
         {participant.model ? ` · ${participant.model}` : ''}
         {!participant.enabled ? ' · Disabled' : ''}
-        {retired ? ' · Retired' : isBossman ? ' · Boss' : isSecondInCommand ? ' · Captain' : ''}
+        {unavailable
+          ? ` · ${unavailableLabel}`
+          : isBossman
+            ? ' · Boss'
+            : isSecondInCommand
+              ? ' · Captain'
+              : ''}
       </span>
     </button>
   )
 
-  if (retired) {
+  if (unavailable) {
     return (
-      <li className={`settings-roster-participant is-retired${expanded ? '' : ' is-collapsed'}`}>
+      <li
+        className={`settings-roster-participant is-unavailable${retired ? ' is-retired' : ''}${expanded ? '' : ' is-collapsed'}`}
+      >
         {rail}
         <div className="settings-roster-participant-body">
           {disclosure}
@@ -425,10 +435,14 @@ export function RosterParticipantRow({
                 {getProviderLabel(participant.provider)}
               </span>
               <span
-                className="settings-roster-retired-badge"
-                title="This provider is retired. Remove this participant to replace it."
+                className="settings-roster-unavailable-badge"
+                title={
+                  retired
+                    ? 'This provider is retired. Remove this participant to replace it.'
+                    : 'TaskWraith does not start managed Cursor processes in this build. This saved participant remains available for configuration and history only.'
+                }
               >
-                retired
+                {retired ? 'retired' : 'security unavailable'}
               </span>
               <button
                 type="button"
@@ -442,9 +456,19 @@ export function RosterParticipantRow({
                 ✕
               </button>
             </div>
-            <p className="settings-roster-retired-note">
-              {participant.role || 'Untitled'} — retired providers can&apos;t run. Remove this row
-              to replace it with a live provider.
+            <p className="settings-roster-unavailable-note">
+              {retired ? (
+                <>
+                  {participant.role || 'Untitled'} — retired providers can&apos;t run. Remove this
+                  row to replace it with a live provider.
+                </>
+              ) : (
+                <>
+                  {participant.role || 'Untitled'} — Cursor is security-unavailable for new runs.
+                  This saved row is retained for configuration and history only. Remove it to
+                  replace it with a live provider.
+                </>
+              )}
             </p>
           </div>
         </div>
@@ -1120,9 +1144,9 @@ export function RosterSettingsPanel({
       const current = editingRef.current
       if (!current) return
       const participants = current.participants.map((participant) =>
-        // Don't mutate retired participants; otherwise mirror the source's
+        // Don't mutate unavailable participants; otherwise mirror the source's
         // permission preset + grants (deep-cloned so nothing aliases).
-        isRetiredProvider(participant.provider)
+        !isLiveSelectableProvider(participant.provider)
           ? participant
           : {
               ...participant,
