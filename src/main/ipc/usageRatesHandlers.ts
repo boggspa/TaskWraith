@@ -370,9 +370,15 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   setTimeout(() => broadcastFirstLaunchStateToRemote(), 8_000).unref?.()
   setInterval(() => broadcastFirstLaunchStateToRemote(), 10 * 60 * 1000).unref?.()
 
+  // 4s put this squarely inside launch: on a cold per-file cache this is not a
+  // cache read but a full multi-GB provider log walk, and it raced window
+  // creation for the main process. index.ts holds its own prewarm until after
+  // first paint; this rollup broadcast has to clear launch too or it just
+  // re-opens the same door. Both funnel into one in-flight scan, so whichever
+  // fires first does the work and the other joins it.
   setTimeout(() => {
     void deps.getExternalUsageCached().then(() => broadcastUsageRollupToRemote())
-  }, 4_000).unref?.()
+  }, 45_000).unref?.()
   setInterval(() => {
     // Bounded, NON-forced refresh: rescan only when the cache is older than
     // 90 minutes, so every 2h tick refreshes (same ≤2h freshness as before)

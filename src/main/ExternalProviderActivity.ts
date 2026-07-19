@@ -79,6 +79,40 @@ const MAX_CODEX_SQLITE_MARKERS_PER_BUCKET = 8
 const EXTERNAL_USAGE_CACHE_MAX_AGE_MS = 6 * 60 * 60 * 1000
 const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 
+// ── Main-thread duty cycle ──────────────────────────────────────────────────
+// Streaming keeps any single read short, but the scan AS A WHOLE is the
+// problem: a cold cache re-parses every in-window session file, which on a
+// busy machine is tens of GB (measured 2026-07-19: 74.9GB across 3.8k Codex
+// rollouts, ~216s at 0.35GB/s). Nothing here blocks in the `readFileSync`
+// sense, yet the main process stays pegged for minutes, IPC replies queue
+// behind it, and the window reads as frozen at launch.
+//
+// So bound the SHARE of the main thread the scan may take: run for at most
+// SCAN_SLICE_MS, then hand the loop back for SCAN_YIELD_MS so paint, IPC and
+// timers drain. This trades ~25% more wall-clock on a background task for a
+// responsive app, which is the right side of that trade. A `setImmediate`
+// yield is NOT enough — under sustained CPU it resolves straight back into
+// the scan and the loop re-saturates; only a real timer gap lets work land.
+const SCAN_SLICE_MS = 60
+const SCAN_YIELD_MS = 15
+// Checking the clock per line would itself cost real time on a 400M-line
+// corpus, so amortize it over a batch.
+const SCAN_CLOCK_CHECK_LINES = 512
+
+let scanSliceDeadlineMs = 0
+
+/** Hand the event loop back once the current slice is spent. Shared across
+ * every reader: the providers scan concurrently under one `Promise.all`, so
+ * the budget has to be global or each reader would claim a full slice. */
+async function yieldScanSlice(): Promise<void> {
+  const now = Date.now()
+  if (now < scanSliceDeadlineMs) return
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, SCAN_YIELD_MS)
+  })
+  scanSliceDeadlineMs = Date.now() + SCAN_SLICE_MS
+}
+
 export interface ExternalUsageRollup {
   providers: Array<{ provider: string; h24: number; d7: number; d90: number }>
   totals: { h24: number; d7: number; d90: number }
@@ -263,7 +297,21 @@ export async function loadExternalProviderUsageRecords(
     readKimiActivity,
     (homeDir: string, sinceMs: number) => readCursorActivity(homeDir, sinceMs, options)
   ]
-  const nested = await Promise.all(readers.map((reader) => safeRead(reader, homeDir, sinceMs)))
+  // Persist as each provider lands, not only once all five have.
+  //
+  // A cold-cache scan runs for minutes; persisting only at the end meant
+  // quitting mid-scan threw away every file parsed so far, so the next launch
+  // redid the whole walk — and a user who quits during launch never escapes
+  // that loop. Checkpointing per provider makes progress durable. Persist is
+  // dirty-gated and atomic (tmp + rename), so the extra calls are cheap no-ops
+  // when a provider parsed nothing new.
+  const nested = await Promise.all(
+    readers.map(async (reader) => {
+      const events = await safeRead(reader, homeDir, sinceMs)
+      await persistExternalActivityFileCacheIfDirty(fileCachePath)
+      return events
+    })
+  )
   await persistExternalActivityFileCacheIfDirty(fileCachePath)
   const byId = new Map<string, UsageRecord>()
   for (const event of nested.flat()) {
@@ -860,6 +908,12 @@ async function* parseJsonLineFile(
   try {
     for await (const line of lines) {
       lineIndex += 1
+      // Every byte of the Codex + Claude corpus passes through here, so this
+      // is the one place a duty-cycle check covers the whole scan. readline
+      // hands back buffered lines as already-resolved promises, which only
+      // drains microtasks — without this the loop can run for a whole chunk
+      // without ever letting an IPC reply through.
+      if (lineIndex % SCAN_CLOCK_CHECK_LINES === 0) await yieldScanSlice()
       const trimmed = line.trim()
       if (!trimmed || trimmed.startsWith('{$set')) continue
       if (lineFilter && !lineFilter(trimmed)) continue

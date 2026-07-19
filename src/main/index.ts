@@ -29402,6 +29402,48 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
   })
 }
 
+/** Grace period after first paint before the external-usage scan may start, so
+ * the renderer's own first-frame work (chat list hydration, theme, dock
+ * restore) isn't sharing the main process with a multi-GB log walk. */
+const EXTERNAL_USAGE_PREWARM_SETTLE_MS = 20_000
+
+/** Backstop for when no window ever paints (headless/CI, or a window that
+ * fails to show): paired remote devices still expect a usage rollup, so the
+ * hydrate must not depend solely on `ready-to-show`. */
+const EXTERNAL_USAGE_PREWARM_BACKSTOP_MS = 90_000
+
+let externalUsagePrewarmStarted = false
+let externalUsagePrewarmSettleTimer: ReturnType<typeof setTimeout> | null = null
+
+function startExternalUsagePrewarmOnce(): void {
+  if (externalUsagePrewarmStarted) return
+  externalUsagePrewarmStarted = true
+  if (externalUsagePrewarmSettleTimer) {
+    clearTimeout(externalUsagePrewarmSettleTimer)
+    externalUsagePrewarmSettleTimer = null
+  }
+  prewarmExternalUsageCache()
+}
+
+/** Called from the window's `ready-to-show`. Arms the settle gap rather than
+ * starting the scan immediately — first paint is exactly when the renderer is
+ * busiest. */
+function noteFirstPaintForExternalUsagePrewarm(): void {
+  if (externalUsagePrewarmStarted || externalUsagePrewarmSettleTimer) return
+  externalUsagePrewarmSettleTimer = setTimeout(
+    startExternalUsagePrewarmOnce,
+    EXTERNAL_USAGE_PREWARM_SETTLE_MS
+  )
+  externalUsagePrewarmSettleTimer.unref?.()
+}
+
+/** Arm the no-window backstop. `createWindow` is called ~12k lines later in
+ * this same whenReady block, so there is no window to hook here yet — first
+ * paint drives the normal path via {@link noteFirstPaintForExternalUsagePrewarm}. */
+function scheduleExternalUsagePrewarmAfterFirstPaint(): void {
+  setTimeout(startExternalUsagePrewarmOnce, EXTERNAL_USAGE_PREWARM_BACKSTOP_MS).unref?.()
+}
+
 function createWindow(): void {
   const isMac = process.platform === 'darwin'
   const settings = AppStore.getSettings()
@@ -29449,6 +29491,7 @@ function createWindow(): void {
     mainWindow?.show()
     emitDueScheduledTasks()
     appShellStatsService.start(isMainWindowStatsActive())
+    noteFirstPaintForExternalUsagePrewarm()
   })
   mainWindow.on('resize', schedulePersistMainWindowBounds)
   mainWindow.on('move', schedulePersistMainWindowBounds)
@@ -29946,9 +29989,18 @@ if (isGeminiMcpBridgeProcess) {
       })
     })
 
-    // Hydrate provider-wide external usage in the background. Cursor IDE scans
-    // are incremental + chunked off a persisted cache so this stays cheap.
-    prewarmExternalUsageCache()
+    // Hydrate provider-wide external usage AFTER the window is up.
+    //
+    // "Background" here only ever meant "not awaited" — it still runs on the
+    // main process, and a cold per-file cache makes it re-parse every
+    // in-window session file (measured 2026-07-19: 74.9GB across 3.8k Codex
+    // rollouts, ~216s). Started inside whenReady it competed with window
+    // creation for the whole of launch. The scan now yields on a duty cycle
+    // (see ExternalProviderActivity), but it still has no business running
+    // before there is a window to hydrate, so hold it until first paint plus
+    // a settle gap. Nothing depends on it being warm: every consumer goes
+    // through the stale-while-revalidate front door.
+    scheduleExternalUsagePrewarmAfterFirstPaint()
 
     /*
      * F4 (1.0.3) — explicit application menu.
