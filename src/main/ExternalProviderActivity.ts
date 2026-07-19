@@ -8,6 +8,10 @@ import { createInterface } from 'readline'
 import { app } from 'electron'
 import type { ProviderId, UsageRecord } from './store/types'
 import {
+  externalActivityRecordTokens,
+  externalActivityWindowBounds
+} from '../shared/usageAccounting'
+import {
   loadCursorIdeUsageEvents,
   prewarmCursorIdeUsageCache,
   setCursorExternalActivityUpdateListener
@@ -120,38 +124,39 @@ export interface ExternalUsageRollup {
 
 /** Token totals per provider for the 24h/7d/90d chips — computed off the
  * cached usage records so paired devices get the same numbers the desktop
- * External Activity header shows. */
+ * External Activity header shows.
+ *
+ * The `d90` window is 90 LOCAL CALENDAR days ending at the last millisecond of
+ * today, matching `buildHeatmapGrid`'s window rather than a rolling 90x24h
+ * cutoff, and tokens come from the shared accounting helper rather than a
+ * second formula. Both used to differ here, so this rollup and the desktop
+ * header disagreed by construction — see the parity test in
+ * ExternalProviderActivity.test.ts. */
 export function buildExternalUsageRollup(
   records: UsageRecord[],
   now: number = Date.now()
 ): ExternalUsageRollup {
   const h24 = now - 24 * 60 * 60 * 1000
   const d7 = now - 7 * 24 * 60 * 60 * 1000
-  const d90 = now - 90 * 24 * 60 * 60 * 1000
+  const { startMs, endMs } = externalActivityWindowBounds(new Date(now), DEFAULT_LOOKBACK_DAYS)
   const byProvider = new Map<string, { h24: number; d7: number; d90: number }>()
   const totals = { h24: 0, d7: 0, d90: 0 }
   for (const record of records) {
     if (record.usageKind === 'reset_hint') continue
-    const tokens =
-      record.totalTokens ||
-      record.inputTokens +
-        (record.cacheReadInputTokens || 0) +
-        (record.cacheCreationInputTokens || 0) +
-        record.outputTokens ||
-      0
-    if (!tokens || !Number.isFinite(record.timestamp)) continue
+    if (!Number.isFinite(record.timestamp)) continue
+    if (record.timestamp < startMs || record.timestamp > endMs) continue
+    const tokens = externalActivityRecordTokens(record)
+    if (!tokens) continue
     const key = record.provider ?? 'unknown'
     const bucket = byProvider.get(key) ?? { h24: 0, d7: 0, d90: 0 }
-    if (record.timestamp >= d90) {
-      bucket.d90 += tokens
-      totals.d90 += tokens
-      if (record.timestamp >= d7) {
-        bucket.d7 += tokens
-        totals.d7 += tokens
-        if (record.timestamp >= h24) {
-          bucket.h24 += tokens
-          totals.h24 += tokens
-        }
+    bucket.d90 += tokens
+    totals.d90 += tokens
+    if (record.timestamp >= d7) {
+      bucket.d7 += tokens
+      totals.d7 += tokens
+      if (record.timestamp >= h24) {
+        bucket.h24 += tokens
+        totals.h24 += tokens
       }
     }
     byProvider.set(key, bucket)

@@ -12,6 +12,10 @@
  */
 
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
+import {
+  externalActivityRecordTokens,
+  externalActivityWindowBounds
+} from '../../../shared/usageAccounting'
 
 export const HEATMAP_COLUMNS = 30 // days (default sidebar window)
 export const HEATMAP_ROWS = 12 // 2-hour buckets per day (00-02, 02-04, …, 22-24)
@@ -85,14 +89,9 @@ export function buildHeatmapGrid(
   columnCount: number = HEATMAP_COLUMNS
 ): HeatmapGrid {
   const columns = Math.max(1, Math.min(MAX_HEATMAP_COLUMNS, Math.round(columnCount)))
-  const endOfDay = new Date(now)
-  endOfDay.setHours(23, 59, 59, 999)
-  const startOfWindow = new Date(endOfDay)
-  startOfWindow.setDate(startOfWindow.getDate() - (columns - 1))
-  startOfWindow.setHours(0, 0, 0, 0)
-
-  const startMs = startOfWindow.getTime()
-  const endMs = endOfDay.getTime()
+  // Shared with `buildExternalUsageRollup`, which feeds paired devices the same
+  // chip values. Keep both on this one definition or the two surfaces drift.
+  const { startMs, endMs } = externalActivityWindowBounds(now, columns)
   const oneDayMs = 24 * 60 * 60 * 1000
 
   // Phase 1: aggregate per-bucket token totals + per-provider sums.
@@ -117,7 +116,7 @@ export function buildHeatmapGrid(
     if (record.usageKind === 'reset_hint') continue
     if (!Number.isFinite(record.timestamp)) continue
     if (record.timestamp < startMs || record.timestamp > endMs) continue
-    const tokens = Number.isFinite(record.totalTokens) ? Math.max(0, record.totalTokens) : 0
+    const tokens = externalActivityRecordTokens(record)
     // External-provider activity sources such as Cursor can report "used in
     // this bucket" without a token estimate. Keep those cells visible while
     // leaving token totals honest at zero.
@@ -219,8 +218,8 @@ export function buildHeatmapGrid(
     columns,
     cells,
     totals: { last24h, last7d, last30d, window },
-    startDay: startOfWindow.toISOString().slice(0, 10),
-    endDay: endOfDay.toISOString().slice(0, 10)
+    startDay: new Date(startMs).toISOString().slice(0, 10),
+    endDay: new Date(endMs).toISOString().slice(0, 10)
   }
 }
 

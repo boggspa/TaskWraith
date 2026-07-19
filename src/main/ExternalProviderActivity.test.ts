@@ -9,11 +9,85 @@ vi.mock('electron', () => ({
   }
 }))
 
-import { loadExternalProviderUsageRecords } from './ExternalProviderActivity'
+import {
+  loadExternalProviderUsageRecords,
+  buildExternalUsageRollup
+} from './ExternalProviderActivity'
 import { resetExternalActivityFileCacheForTests } from './ExternalActivityFileCache'
+import { buildHeatmapGrid } from '../renderer/src/lib/UsageHeatmap'
+import type { UsageRecord } from './store/types'
 
 beforeEach(() => {
   resetExternalActivityFileCacheForTests()
+})
+
+describe('buildExternalUsageRollup / buildHeatmapGrid parity', () => {
+  const now = new Date('2026-05-31T13:00:00.000Z')
+
+  const record = (overrides: Partial<UsageRecord> & { timestamp: number }): UsageRecord => ({
+    id: `r-${overrides.timestamp}-${overrides.provider ?? 'codex'}`,
+    provider: 'codex',
+    workspaceId: 'external',
+    chatId: '',
+    runId: '',
+    model: 'test',
+    inputTokens: 0,
+    outputTokens: 0,
+    totalTokens: 0,
+    durationMs: 0,
+    ...overrides
+  })
+
+  /** Records straddling every boundary the two implementations used to
+   * disagree on: the far edge of the 90-day window, a row with a breakdown but
+   * no total, and an activity-only marker that must stay at zero. */
+  const records: UsageRecord[] = [
+    record({ timestamp: now.getTime() - 60 * 60 * 1000, totalTokens: 1_000 }),
+    record({ timestamp: now.getTime() - 3 * 24 * 60 * 60 * 1000, totalTokens: 2_000 }),
+    record({ timestamp: now.getTime() - 40 * 24 * 60 * 60 * 1000, totalTokens: 4_000 }),
+    // Breakdown but no total — the rollup used to count this and the grid did not.
+    record({
+      timestamp: now.getTime() - 2 * 24 * 60 * 60 * 1000,
+      provider: 'claude',
+      inputTokens: 10,
+      cacheReadInputTokens: 900,
+      cacheCreationInputTokens: 80,
+      outputTokens: 10
+    }),
+    // Activity-only marker: colours a cell, contributes no spend.
+    record({ timestamp: now.getTime() - 5 * 60 * 60 * 1000, provider: 'cursor' }),
+    // Just inside the oldest calendar column, which a rolling 90x24h cutoff
+    // and a calendar-aligned window disagree about.
+    record({ timestamp: now.getTime() - 89.5 * 24 * 60 * 60 * 1000, totalTokens: 7_000 })
+  ]
+
+  it('reports identical 24h/7d/90d totals to the desktop header', () => {
+    const grid = buildHeatmapGrid(records, now, 90)
+    const rollup = buildExternalUsageRollup(records, now.getTime())
+
+    expect(rollup.totals.h24).toBe(grid.totals.last24h)
+    expect(rollup.totals.d7).toBe(grid.totals.last7d)
+    expect(rollup.totals.d90).toBe(grid.totals.window)
+
+    // Pinned, so the two agreeing on a WRONG number cannot pass as parity.
+    // 24h: 1_000. 7d: + 2_000 + the 1_000 breakdown-only row. 90d: + 4_000 and
+    // the 7_000 row sitting just inside the oldest calendar column.
+    expect(rollup.totals.h24).toBe(1_000)
+    expect(rollup.totals.d7).toBe(4_000)
+    expect(rollup.totals.d90).toBe(15_000)
+  })
+
+  it('excludes reset hints and keeps activity-only markers at zero', () => {
+    const withHint = [
+      ...records,
+      record({ timestamp: now.getTime(), usageKind: 'reset_hint', totalTokens: 999_999 })
+    ]
+    const grid = buildHeatmapGrid(withHint, now, 90)
+    const rollup = buildExternalUsageRollup(withHint, now.getTime())
+
+    expect(rollup.totals.d90).toBe(grid.totals.window)
+    expect(rollup.providers.find((p) => p.provider === 'cursor')?.d90 ?? 0).toBe(0)
+  })
 })
 
 describe('loadExternalProviderUsageRecords', () => {
