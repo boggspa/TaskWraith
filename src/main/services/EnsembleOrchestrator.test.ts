@@ -4771,6 +4771,38 @@ Next action:
     ])
   })
 
+  it('returns attachment snapshots from removeQueuedPrompt so Edit can restore them', async () => {
+    const harness = makeHarness()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Original prompt',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const queued = harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Queued with image',
+      event: { sender: {} as Electron.WebContents },
+      mode: 'queue',
+      imageAttachments: [{ id: 'img-1', path: '/tmp/queued.png', name: 'queued.png' }]
+    })
+    expect(queued.status).toBe('queued')
+
+    const removed = harness.orchestrator.removeQueuedPrompt({
+      chatId: 'ensemble-chat',
+      index: 0,
+      textPrefix: 'Queued with image'
+    })
+
+    expect(removed).toMatchObject({
+      ok: true,
+      prompt: expect.stringContaining('Queued with image'),
+      queuedPrompts: [],
+      imageAttachments: [{ id: 'img-1', path: '/tmp/queued.png', name: 'queued.png' }]
+    })
+  })
+
   it('removes queued prompts from runtime state so deleted entries do not dispatch later', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({

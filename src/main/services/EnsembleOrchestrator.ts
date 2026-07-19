@@ -236,6 +236,9 @@ export type EnsembleQueuedPromptMutationResult = {
   ok: boolean
   prompt?: string
   queuedPrompts?: string[]
+  /** Attachment snapshots from the removed entry so Edit can restore them. */
+  imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+  dmTargetParticipantId?: string
   error?: string
 }
 
@@ -3765,12 +3768,23 @@ export class EnsembleOrchestrator {
             }
           : round
       )
+      if (recovered.restartSafe) {
+        return {
+          ok: true,
+          prompt: recovered.selected.prompt,
+          queuedPrompts: recovered.remaining.map((entry) => entry.prompt),
+          imageAttachments: recovered.selected.imageAttachments.map((attachment) => ({
+            ...attachment
+          })),
+          ...(recovered.selected.dmTargetParticipantId
+            ? { dmTargetParticipantId: recovered.selected.dmTargetParticipantId }
+            : {})
+        }
+      }
       return {
         ok: true,
-        prompt: recovered.restartSafe ? recovered.selected.prompt : recovered.selected,
-        queuedPrompts: recovered.restartSafe
-          ? recovered.remaining.map((entry) => entry.prompt)
-          : recovered.remaining
+        prompt: recovered.selected,
+        queuedPrompts: recovered.remaining
       }
     }
     if (runtime.cancelled) {
@@ -3796,7 +3810,11 @@ export class EnsembleOrchestrator {
     return {
       ok: true,
       prompt: selected.prompt,
-      queuedPrompts: nextQueuedPrompts
+      queuedPrompts: nextQueuedPrompts,
+      imageAttachments: selected.imageAttachments.map((attachment) => ({ ...attachment })),
+      ...(selected.dmTargetParticipantId
+        ? { dmTargetParticipantId: selected.dmTargetParticipantId }
+        : {})
     }
   }
 
