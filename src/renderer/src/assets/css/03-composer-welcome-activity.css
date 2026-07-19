@@ -192,7 +192,28 @@
   align-items: center;
   gap: var(--space-sm);
   width: 100%;
-  min-height: 0;
+  /* The greeting + composer must keep their intrinsic height so a short pane
+     produces a REAL overflow. With `min-height: 0` (flex path) or the grid's
+     automatic-minimum override (grid path) this stack silently shrank to
+     whatever space was left — a 267px stack squashed to 109px — so the JS fit
+     observer in App.tsx, which measures getBoundingClientRect(), could never
+     see a required height greater than the available height. The progressive
+     collapse below (notification → dashboard → heatmap) therefore never
+     engaged and the composer was crushed instead. Both declarations are
+     load-bearing: `flex-shrink` governs the plain flex path, `min-height`
+     governs the `:has(> .notification-zone)` grid path. */
+  flex-shrink: 0;
+  min-height: auto;
+}
+
+/* Same reasoning for the 90-day heatmap: the fit budget counts its height as a
+   hard requirement, so it must be measured at natural size rather than at
+   whatever the flex line squeezed it down to. */
+.app-transcript.welcome-mode:not(.multiview-pane-transcript)
+  .composer-area
+  > .welcome-standalone-heatmaps {
+  flex-shrink: 0;
+  min-height: auto;
 }
 
 .app-transcript.welcome-mode:not(.multiview-pane-transcript)
