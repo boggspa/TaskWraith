@@ -29,11 +29,11 @@ const DEFAULT_JUNIT_OUTPUT_PATH = path.join(
 const PROVIDERS = ['kimi', 'cursor']
 const QUALIFICATION_SCOPES = Object.freeze({
   kimi: 'acp-synthetic-cwd-gateway-v1',
-  cursor: 'cursor-startup-containment-v1'
+  cursor: 'cursor-native-sandbox-readonly-v1'
 })
 const KIMI_PRODUCTION_POSTURE_VERSION = 'synthetic-cwd-gateway-v1'
 const KIMI_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
-const CURSOR_STARTUP_POSTURE_VERSION = 'cursor-startup-containment-v1'
+const CURSOR_STARTUP_POSTURE_VERSION = 'cursor-native-sandbox-readonly-v1'
 const CURSOR_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
 // Per-provider posture/attestation used by qualificationFor(). The manifest
 // providers.cursor roster ships EMPTY, so no Cursor tuple can match regardless
@@ -79,11 +79,10 @@ const REVIEWED_LIVE_ASSERTIONS = Object.freeze({
     'is gated behind KIMI_ACP_LIVE_TRACE + an authenticated Kimi Code install'
   ]),
   'src/main/cursor/CursorStartupContainment.live.test.ts': Object.freeze([
-    'isolates the synthetic Cursor config and data home and leaves the real user config untouched',
-    'never executes a hostile global or project MCP server before the first turn',
+    'spawns the contained read-only argv the production runtime builds (sandbox enabled, prompt guarded)',
+    'never auto-executes a hostile project MCP server in a read-only turn',
     'lets an in-workspace write land but sandbox-blocks a write to the user home',
-    'spawns no unexpected MCP, skill, or plugin child process before the first turn',
-    'requires a real contained attempt and tears down the synthetic home, workspace, and process',
+    'requires a real contained attempt and tears down the workspace and process',
     'builds a contained managed argv that enforces the sandbox and never emits force, yolo, or approve-mcps',
     'denies an unqualified cursor-agent binary while the embedded runtime roster is empty',
     'is gated behind CURSOR_API_KEY and an installed cursor-agent binary'

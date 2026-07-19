@@ -26,8 +26,11 @@ credential, or treats a skipped live suite as a pass.
 Live execution is never inferred from credentials being present. It requires the
 explicit `--live` entry point, and the runner executes only files listed in
 `REVIEWED_LIVE_TESTS` in `scripts/provider-containment-canary.cjs`. That allowlist
-currently contains Kimi's reviewed ACP containment suite only. Cursor has no
-reviewed live suite, and the canary starts no credentialed Cursor process.
+contains Kimi's reviewed ACP containment suite and Cursor's reviewed
+native-sandbox read-only suite. Cursor's manifest roster is empty (fail-closed),
+so no managed Cursor run is admissible and the required/release lists stay
+Kimi-only until a live pass mints Cursor's exact fingerprint; a `--live` Cursor
+run only produces review evidence and mints nothing on its own.
 
 ## Protected worker workflow
 
@@ -101,8 +104,9 @@ optional hardening.
 The qualification fingerprint manifest is intentionally empty until live reports
 have been reviewed. Each accepted entry must match all of the following exactly:
 
-- qualification scope (`acp-synthetic-cwd-gateway-v1` for Kimi; disabled Cursor has no
-  currently admissible scope);
+- qualification scope (`acp-synthetic-cwd-gateway-v1` for Kimi;
+  `cursor-native-sandbox-readonly-v1` for Cursor, whose manifest roster is empty
+  so it is not yet admissible);
 - provider version;
 - normalized capability fingerprint;
 - binary SHA-256;
@@ -114,15 +118,26 @@ change returns the provider to `UNRECOGNIZED` and blocks strict release.
 
 The Kimi scope covers its ACP synthetic-cwd production posture: no ACP client
 filesystem capability, the exact nine-tool native deny wall, and workspace
-access only through the authenticated per-run TaskWraith HTTP gateway. Cursor
-has no current runnable scope. Exact-build review found that authenticated Cursor can preload
-account/team hooks, managed skills/plugins, and plugin/team/bundled MCP despite
-fresh roots, excluded workspace context, disabled project configs, and Plan
-mode. Source-ahead TaskWraith therefore starts no managed `cursor-agent`
-process. Any legacy `plan-no-tools` probe/fingerprint is non-admissible inventory,
-not containment evidence. Both Cursor Plan and tool modes remain
-unavailable/unqualified until a reviewed exact-build live lifecycle suite or a
-stronger sandbox establishes an admissible boundary.
+access only through the authenticated per-run TaskWraith HTTP gateway.
+
+Cursor's `cursor-native-sandbox-readonly-v1` scope covers its Path-B posture:
+cursor-agent runs against the user's real `~/.cursor` login, contained by the
+native OS sandbox (`--sandbox enabled`, Seatbelt) and a read-only `--mode`, with
+an end-of-options `--` guard immediately before the prompt so a flag-shaped
+prompt cannot re-widen tools or disable the sandbox. The reviewed live suite
+proves the differential: with Write pre-approved, an in-workspace write lands
+while a write to the user's HOME is sandbox-blocked, and the contained argv the
+runtime actually spawns never emits write-widening or sandbox-disabling flags.
+HONEST SCOPE (egress caveat): the sandbox is validated to block FILE WRITES to
+the user HOME only; it is NOT proven to block NETWORK EGRESS, and cursor-agent
+uses the network normally (its own web tools, npx-installed language servers), so
+a non-scrubbed env secret is egress-exfiltratable by a compromised session —
+bounded by own-account trust (Path B), not by the sandbox. The account's own
+skills/plugins/MCP load but are sandbox-bounded; a malicious repo is the main
+residual threat, handled by the sandbox + read-only mode + prompt guard.
+`providers.cursor` is empty, so no managed Cursor run is admissible until a live
+pass mints its exact fingerprint; any legacy `plan-no-tools` probe/fingerprint is
+non-admissible inventory, not containment evidence.
 
 The live suite must force each of the nine denied Kimi native tools individually
 (`Bash`, `Glob`, `Grep`, `Read`, `Write`, `Edit`, `WebSearch`, `FetchURL`, and

@@ -446,11 +446,10 @@ Commands:
     expect(
       REVIEWED_LIVE_ASSERTIONS['src/main/cursor/CursorStartupContainment.live.test.ts']
     ).toEqual([
-      'isolates the synthetic Cursor config and data home and leaves the real user config untouched',
-      'never executes a hostile global or project MCP server before the first turn',
+      'spawns the contained read-only argv the production runtime builds (sandbox enabled, prompt guarded)',
+      'never auto-executes a hostile project MCP server in a read-only turn',
       'lets an in-workspace write land but sandbox-blocks a write to the user home',
-      'spawns no unexpected MCP, skill, or plugin child process before the first turn',
-      'requires a real contained attempt and tears down the synthetic home, workspace, and process',
+      'requires a real contained attempt and tears down the workspace and process',
       'builds a contained managed argv that enforces the sandbox and never emits force, yolo, or approve-mcps',
       'denies an unqualified cursor-agent binary while the embedded runtime roster is empty',
       'is gated behind CURSOR_API_KEY and an installed cursor-agent binary'

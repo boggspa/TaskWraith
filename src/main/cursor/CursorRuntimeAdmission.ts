@@ -7,7 +7,7 @@ import { join } from 'path'
 import { CURSOR_STARTUP_CONTAINMENT_POSTURE_VERSION } from '../../shared/cursorStartupPosture'
 import embeddedCursorRuntimeQualifications from './CursorRuntimeQualifications.generated.json'
 
-export const CURSOR_RUNTIME_QUALIFICATION_SCOPE = 'cursor-startup-containment-v1' as const
+export const CURSOR_RUNTIME_QUALIFICATION_SCOPE = 'cursor-native-sandbox-readonly-v1' as const
 export const CURSOR_RUNTIME_ATTESTATION_SOURCE = 'credentialed-live-containment-canary' as const
 export const CURSOR_UNATTESTED_DEVELOPMENT_SOURCE = 'unattested-development' as const
 

@@ -26,8 +26,8 @@ const DEFAULT_EMBEDDED = path.join(
 const RUNTIME_SOURCE = path.join(REPO_ROOT, 'src', 'main', 'cursor', 'CursorRuntimeAdmission.ts')
 const BUILDER_CONFIG = path.join(REPO_ROOT, 'electron-builder.yml')
 
-const CURSOR_SCOPE = 'cursor-startup-containment-v1'
-const CURSOR_POSTURE = 'cursor-startup-containment-v1'
+const CURSOR_SCOPE = 'cursor-native-sandbox-readonly-v1'
+const CURSOR_POSTURE = 'cursor-native-sandbox-readonly-v1'
 const CURSOR_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
 const SHA256_PATTERN = /^sha256:[0-9a-f]{64}$/
 const RELEASE_REQUIRED_STRING_FIELDS = Object.freeze([
