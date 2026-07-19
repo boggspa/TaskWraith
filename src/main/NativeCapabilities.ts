@@ -3,6 +3,7 @@ import os from 'os'
 import { join } from 'path'
 import { spawnSync } from 'child_process'
 import { buildRuntimeFeatureGateSnapshot, type RuntimeFeatureGateSnapshot } from '../shared/runtimeFeatureGates'
+import { getHostToolSnapshot, type HostToolSnapshot } from './HostToolResolver'
 
 export interface NativeFeatureCapability {
   available: boolean
@@ -25,6 +26,13 @@ export interface NativeCapabilitySnapshot {
   appwatch: NativeFeatureCapability
   ocr: NativeFeatureCapability
   appleEvents: NativeFeatureCapability
+  /**
+   * Presence of OPTIONAL, user-installed host binaries (ffmpeg, poppler, …).
+   * Unlike the fields above — which describe the BUNDLED Swift daemon — these can
+   * appear and disappear while the app is running, so treat them as a snapshot
+   * rather than a constant. Probed once and cached; see HostToolResolver.
+   */
+  hostTools: HostToolSnapshot
   /** Main-process feature gates — safe for the renderer to read (no process.env). */
   featureGates: RuntimeFeatureGateSnapshot
 }
@@ -39,6 +47,10 @@ export interface NativeCapabilityInput {
   binaryArchs?: string[]
   resourcesPath?: string
   dirname?: string
+  /** Injected host-tool presence — lets tests describe a machine without probing it. */
+  hostTools?: HostToolSnapshot
+  /** Re-probe host tools instead of reusing the cache (post-install refresh). */
+  forceHostToolProbe?: boolean
 }
 
 const MIN_BRIDGE_MACOS = '14.0'
@@ -115,6 +127,7 @@ export function getNativeCapabilitySnapshot(
       ? { available: true, reason: 'Vision OCR is optional and capture remains available if OCR fails.' }
       : nativeBridgeFeature,
     appleEvents: appleEventsFeature,
+    hostTools: input.hostTools ?? getHostToolSnapshot(input.forceHostToolProbe),
     featureGates: buildRuntimeFeatureGateSnapshot(process.env)
   }
 }
