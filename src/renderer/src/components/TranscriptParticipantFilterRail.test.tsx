@@ -81,7 +81,9 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).not.toContain('#1')
     expect(html).not.toContain('#2')
     expect(html).toContain('transcript-participant-filter-pooled-icon')
-    expect(html).toContain('provider-glyph-claude')
+    expect(html).toContain('data-provider-logo="claude"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-claude')
     expect(html).toContain('title="Boss"')
     expect(html).toContain('title="Captain"')
     expect(html).toContain('is-system')
@@ -144,7 +146,7 @@ describe('TranscriptParticipantFilterRail', () => {
     expect(html).toContain('System messages')
   })
 
-  it('uses Ollama display-brand hue overrides without changing the Ollama glyph', () => {
+  it('uses the official Ollama brand mark for Ollama-backed filter rows', () => {
     const html = renderToStaticMarkup(
       <TranscriptParticipantFilterRail
         currentChat={ensembleChat([
@@ -163,8 +165,9 @@ describe('TranscriptParticipantFilterRail', () => {
       />
     )
 
-    expect(html).toContain('provider-glyph-ollama')
-    expect(html).toContain('--provider-accent:var(--provider-alibaba-color, currentColor)')
+    expect(html).toContain('data-provider-logo="ollama"')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-ollama')
   })
 
   it('does not render for non-ensemble chats', () => {

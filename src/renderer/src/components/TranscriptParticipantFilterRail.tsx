@@ -17,7 +17,7 @@ import { useRailFrameRemeasure } from '../lib/useRailFrameRemeasure'
 import { resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { getProviderLabel } from '../lib/providerLabels'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 
 interface RailFrame {
   left: number
@@ -190,7 +190,7 @@ function FilterItemIcon({ item }: { item: TranscriptParticipantFilterItem }): Re
   }
   const accentProvider = resolveProviderHueClass(item.provider, item.participant?.model)
   return (
-    <ProviderGlyph
+    <ProviderBrandLogo
       provider={item.provider}
       accentProvider={accentProvider}
       className="transcript-participant-filter-provider-icon"

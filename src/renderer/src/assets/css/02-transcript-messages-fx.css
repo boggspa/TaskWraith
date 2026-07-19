@@ -2863,6 +2863,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 }
 
 .transcript-participant-filter-icon .provider-glyph,
+.transcript-participant-filter-icon .provider-brand-logo,
 .transcript-participant-filter-icon > svg,
 .transcript-participant-filter-pooled-icon,
 .transcript-participant-filter-provider-icon {
