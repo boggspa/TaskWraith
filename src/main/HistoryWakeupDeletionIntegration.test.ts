@@ -277,7 +277,7 @@ describe('history deletion wakeup lifecycle — durable integration', () => {
     })
     const runtime = createSoloRuntime({ dispatchRun: () => dispatch })
     const wakeup = scheduleSolo(runtime.service, 'in-flight', 10)
-    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
 
     await vi.advanceTimersByTimeAsync(10)
     await vi.waitFor(() => expect(runtime.dispatched).toHaveLength(1))
