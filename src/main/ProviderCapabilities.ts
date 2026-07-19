@@ -17,7 +17,6 @@ import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { providerLabel } from './ProviderAdapters'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
-import { cursorManagedRunAdmission } from './cursor/CursorManagedRunGate'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
 
@@ -509,12 +508,12 @@ function approvalContract(
   if (provider === 'cursor') {
     return {
       requestedMode,
-      effectiveMode: 'unavailable',
-      providerMode: 'unavailable',
+      effectiveMode,
+      providerMode: 'native Cursor tools bounded by the OS sandbox',
       inAppApprovals: false,
       supportsWorkspaceGrants: false,
       notes: [
-        'TaskWraith starts no Cursor process. Authentication, Plan mode, tool mode, approvals, grants, and resume remain unavailable pending exact-build startup-containment qualification.'
+        'Cursor runs its native tools contained by the native OS sandbox (--sandbox enabled) plus a read-only mode for read seats. TaskWraith does not mediate Cursor per-tool approvals; the sandbox is an honest partial backstop (it blocks $HOME-root sensitive dirs for a normal project workspace, but not a workspace placed directly under $HOME).'
       ]
     }
   }
@@ -605,13 +604,11 @@ export function buildProviderCapabilityContract({
   const warnings: ProviderCapabilityWarning[] = []
   const label = providerLabel(provider)
   const requestedMode = approvalMode || 'default'
-  // Cursor availability is qualification-driven, not hardcoded: it consults
-  // cursorManagedRunAdmission() -> CursorRuntimeAdmission's embedded roster.
-  // With the shipped EMPTY roster this is securityUnavailable:true, so Cursor
-  // stays unavailable (fail-closed). It flips to available only once a reviewed
-  // exact-build fingerprint is admitted into the roster.
-  const cursorSecurityUnavailable =
-    provider === 'cursor' && cursorManagedRunAdmission().securityUnavailable
+  // Cursor is always available: there is no per-build fingerprint gate (it was
+  // brittle — provider auto-updates broke the exact-SHA match). Containment lives
+  // on the run itself (runCursorProvider's contained --sandbox argv), not in an
+  // availability gate.
+  const cursorSecurityUnavailable = false
   const effectiveMode =
     provider === 'gemini'
       ? effectiveGeminiMode(requestedMode, services)

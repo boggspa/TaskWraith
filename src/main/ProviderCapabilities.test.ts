@@ -286,7 +286,7 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.delegate.enforcedByTaskWraith).toBe(false)
   })
 
-  it('reports Cursor managed runs and approvals as unavailable', () => {
+  it('reports Cursor as available (always-enabled; containment lives on the run, not a gate)', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'cursor',
       settings: { ...settings(), geminiMcpBridgeEnabled: true },
@@ -294,26 +294,13 @@ describe('ProviderCapabilities', () => {
       status: { provider: 'cursor', available: true, version: '1.0.0' }
     })
 
-    expect(contract.availability.available).toBe(false)
-    expect(contract.availability.setupRequired).toBe(true)
-    expect(contract.availability.error).toContain('Cursor managed runs are disabled')
-    expect(contract.mcp.state).toBe('unavailable')
-    expect(contract.mcp.source).toBe('unsupported')
-    expect(contract.mcp.serverName).toBe('not connected')
-    expect(contract.mcp.tools).toEqual([])
-    expect(contract.tools.shellCommands.state).toBe('unavailable')
-    expect(contract.tools.fileChanges.state).toBe('unavailable')
-    expect(contract.tools.mcpTools.state).toBe('unavailable')
-    expect(contract.tools.elicit.state).toBe('unavailable')
-    expect(contract.tools.delegate.state).toBe('unavailable')
-    expect(contract.approvals).toMatchObject({
-      effectiveMode: 'unavailable',
-      providerMode: 'unavailable',
-      inAppApprovals: false,
-      supportsWorkspaceGrants: false
-    })
-    expect(contract.approvals.notes.join(' ')).toContain('starts no Cursor process')
-    expect(contract.warnings.map((item) => item.id)).toContain('cursor-tool-mode-unqualified')
+    // No per-build fingerprint gate: Cursor is available and its run mode is not
+    // forced to 'unavailable'. Containment is the contained --sandbox argv on the
+    // run itself (runCursorProvider), not this availability contract.
+    expect(contract.availability.available).toBe(true)
+    // An available Cursor carries no disabled-state error.
+    expect(contract.availability.error).toBeUndefined()
+    expect(contract.approvals.effectiveMode).not.toBe('unavailable')
   })
 
   it('marks write-capable Grok as TaskWraith MCP bridge-backed', () => {

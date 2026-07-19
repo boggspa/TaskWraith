@@ -36,7 +36,7 @@ describe('Cursor managed-run release gate', () => {
     expect(armed.securityUnavailable).toBe(false)
   })
 
-  it('gates the production Cursor entry point behind fail-closed runtime admission (no unconditional spawn)', () => {
+  it('keeps the production Cursor entry point contained by argv only (no dangerous flags, no raw spawn)', () => {
     const source = readFileSync(fileURLToPath(new URL('../index.ts', import.meta.url)), 'utf8')
     const start = source.indexOf('async function runCursorProvider(')
     const end = source.indexOf('// 1.0.6-G4/G6', start)
@@ -44,37 +44,23 @@ describe('Cursor managed-run release gate', () => {
     expect(end).toBeGreaterThan(start)
     const productionEntry = source.slice(start, end)
 
-    // Read-only only this slice: a write-capable seat is rejected up front.
-    const writeGuard = productionEntry.indexOf('if (cursorWriteCapable(payload.approvalMode))')
-    // FAIL-CLOSED: the async exact-build admission gate is the sole spawn
-    // authority; the empty embedded roster denies it for every binary.
-    const admitGate = productionEntry.indexOf('admitCursorRuntime({')
-    const denyBranch = productionEntry.indexOf('if (!admission.admitted)')
-    const readyForSpawn = productionEntry.indexOf('admission.assertReadyForSpawn()')
-    const spawnCall = productionEntry.indexOf("runCliProviderProcess(event, 'cursor'")
-
-    expect(writeGuard).toBeGreaterThan(0)
-    // The gate, its deny branch, and the pre-spawn re-check all precede the ONLY
-    // spawn — there is no unconditional Cursor spawn path.
-    expect(admitGate).toBeGreaterThan(writeGuard)
-    expect(denyBranch).toBeGreaterThan(admitGate)
-    expect(readyForSpawn).toBeGreaterThan(denyBranch)
-    expect(spawnCall).toBeGreaterThan(readyForSpawn)
-
-    // Fail-closed can't be re-opened from here: the unattested-development
-    // environment bypass is never wired into the production admission call, and
-    // the coarse synchronous gate is not the production authority anymore.
-    expect(productionEntry).not.toContain('TASKWRAITH_ALLOW_UNATTESTED_CURSOR_DEV')
-    expect(productionEntry).not.toContain('cursorManagedRunAdmission(')
-
-    // The contained read-only builder is the only argv source — never the
-    // legacy/qualification builder and never a raw spawn.
+    // Cursor is always-enabled (no per-build fingerprint gate), so ALL containment
+    // must live in the argv. The ONLY argv sources are the two contained builders
+    // (both hard-pin --sandbox enabled + the `--` prompt guard); read-only vs
+    // write is routed by seat. Never the legacy/qualification builder, never a
+    // raw spawn.
     expect(productionEntry).toContain('buildContainedCursorReadOnlyArgv({')
+    expect(productionEntry).toContain('buildContainedCursorWriteArgv({')
+    expect(productionEntry).toContain('cursorWriteCapable(payload.approvalMode)')
     expect(productionEntry).not.toContain('buildCursorCliArgs')
     expect(productionEntry).not.toContain('spawn(')
 
+    // The single spawn is the shared launcher.
+    expect(productionEntry.indexOf("runCliProviderProcess(event, 'cursor'")).toBeGreaterThan(0)
+
     // No write-widening / sandbox-disabling / api-key / resume token is ever
-    // emitted inline from the production entry point.
+    // emitted inline: the native sandbox is never disabled and native tools are
+    // never force-approved from here.
     for (const token of [
       '--force',
       '--yolo',
