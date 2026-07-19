@@ -25,7 +25,14 @@ import { createInterface } from 'readline'
  *   full re-parse, never a broken usage surface.
  */
 
-export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 2
+// Bump whenever a provider parse function changes shape or semantics: entries
+// are keyed on (provider, path, mtime, size), so an unchanged file would
+// otherwise keep serving events produced by the previous parser forever.
+// v3: Codex parses whole files (was: last 8MB only) and derives per-turn
+// deltas from the cumulative advance (was: summing possibly-repeated deltas).
+// v4: Claude dedupes on requestId+messageId (was: keyed on timestamp too,
+// which never matched across the per-content-block rows of one message).
+export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 4
 
 interface ExternalActivityFileCacheEntry {
   provider: string

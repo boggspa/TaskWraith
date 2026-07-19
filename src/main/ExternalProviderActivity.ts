@@ -62,7 +62,6 @@ interface CollectedSessionFile {
 
 const DEFAULT_LOOKBACK_DAYS = 90
 const MAX_FILES_PER_PROVIDER = 260
-const MAX_CODEX_SESSION_FILES = 2_400
 const MAX_GEMINI_SESSION_FILES = 1_200
 const MAX_TEXT_BYTES = 8 * 1024 * 1024
 const MAX_EXPANDED_SESSION_TEXT_BYTES = 128 * 1024 * 1024
@@ -345,18 +344,23 @@ function extractCodexSessionModel(json: Record<string, unknown>): string | null 
 
 async function readCodexActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
   const codexRoot = join(homeDir, '.codex')
+  // A newest-file cap silently drops still-in-window sessions once enough
+  // newer ones exist, which makes long-window totals move backwards: a 90-day
+  // window spans ~3.8k rollouts here, so a 2.4k cap discarded the oldest ~1.4k
+  // outright. Keep the time window and let the per-file cache absorb the walk,
+  // exactly as Claude does below.
   const files = [
     ...(await collectFiles(
       join(codexRoot, 'sessions'),
       (path) => path.endsWith('.jsonl'),
       sinceMs,
-      MAX_CODEX_SESSION_FILES
+      null
     )),
     ...(await collectFiles(
       join(codexRoot, 'archived_sessions'),
       (path) => path.endsWith('.jsonl'),
       sinceMs,
-      MAX_CODEX_SESSION_FILES
+      null
     ))
   ]
   pruneExternalActivityFileCache('codex', new Set(files.map((file) => file.path)))
@@ -378,17 +382,46 @@ async function readCodexActivity(homeDir: string, sinceMs: number): Promise<Exte
  * result is cached per file and filtered by the caller's sinceMs. */
 async function parseCodexSessionFile(filePath: string): Promise<ExternalUsageEvent[]> {
   const events: ExternalUsageEvent[] = []
-  const text = await readTextTail(filePath)
-  let lineIndex = 0
   let sessionModel = ''
-  for (const json of parseJsonLines(text)) {
-    lineIndex += 1
+  // Codex reports `total_token_usage` as a CUMULATIVE session running total and
+  // `last_token_usage` as that turn's delta. Two traps follow. ~16% of
+  // token_count events re-emit an unchanged cumulative total, so summing the
+  // deltas blind double-counts those turns; and a forked session inherits its
+  // parent's cumulative baseline, so the first event's cumulative is NOT its
+  // own spend. Tracking the cumulative advance between consecutive events
+  // corrects both: it identifies repeats (no advance) while leaving the first
+  // event of a fork to be measured by its own delta.
+  let previousCumulative: number | null = null
+  for await (const { json, lineIndex } of parseJsonLineFile(filePath, isCodexActivityLine)) {
     const turnModel = extractCodexSessionModel(json)
     if (turnModel) sessionModel = turnModel
     if (json?.payload?.type !== 'token_count') continue
     const timestamp = parseTimestamp(json.timestamp)
     if (!timestamp) continue
-    const usage = json.payload?.info?.last_token_usage || json.payload?.info?.total_token_usage
+
+    const info = json.payload?.info
+    const cumulative = numberValue(info?.total_token_usage?.total_tokens)
+    const advance = previousCumulative === null ? null : cumulative - previousCumulative
+    if (cumulative > 0) previousCumulative = cumulative
+    // No advance means this event restates a turn already counted.
+    if (advance !== null && advance <= 0 && cumulative > 0) continue
+
+    const usage = info?.last_token_usage
+    if (!usage || typeof usage !== 'object') {
+      // No per-turn breakdown on this event. Fall back to the cumulative
+      // ADVANCE, never the cumulative total itself — the old fallback summed a
+      // whole-session running total as though it were a single turn.
+      if (advance !== null && advance > 0) {
+        events.push({
+          provider: 'codex',
+          timestamp,
+          model: sessionModel || 'codex',
+          totalTokens: advance,
+          sourceKey: `${filePath}:${lineIndex}`
+        })
+      }
+      continue
+    }
     const reportedInputTokens = numberValue(usage?.input_tokens)
     // Codex/OpenAI reports cached tokens as a subset of input_tokens. The two
     // cache-read keys are aliases seen across CLI versions, not additive
@@ -475,6 +508,15 @@ async function parseClaudeSessionFile(filePath: string): Promise<ExternalUsageEv
     if (totalTokens <= 0) continue
     const messageId = String(json?.message?.id || '')
     const requestId = String(json?.requestId || json?.request_id || '')
+    // One assistant message spanning several content blocks is written as one
+    // row per block, and every row repeats the SAME usage object — 12 rows for
+    // a 12-tool-call turn, each restating the whole turn's tokens. requestId +
+    // messageId identifies the single API call behind them; timestamp must
+    // stay OUT of the key, because those rows differ by sub-second write time
+    // and including it defeated the dedupe entirely (~2.2x over-count).
+    // Rows carrying neither id fall back to the line itself, which dedupes
+    // only across the resume/fork copies of one transcript.
+    const callIdentity = requestId || messageId ? `${requestId}|${messageId}` : `line:${lineIndex}`
     events.push({
       provider: 'claude',
       timestamp,
@@ -485,7 +527,7 @@ async function parseClaudeSessionFile(filePath: string): Promise<ExternalUsageEv
       outputTokens,
       totalTokens,
       sourceKey: `${filePath}:${lineIndex}`,
-      dedupeKey: `${requestId}|${messageId}|${timestamp}|${totalTokens}`
+      dedupeKey: `${callIdentity}|${totalTokens}`
     })
   }
   return events
@@ -800,8 +842,17 @@ function parseJsonLines(text: string): any[] {
   return parsed
 }
 
+/** Lines that can carry Codex activity: the token_count events themselves and
+ * the turn_context records that name the model. Reasoning, tool calls and
+ * message bodies are the overwhelming bulk of a rollout's bytes and can never
+ * contribute, so this keeps a full-file scan affordable without truncating. */
+function isCodexActivityLine(line: string): boolean {
+  return line.includes('"token_count"') || line.includes('"turn_context"')
+}
+
 async function* parseJsonLineFile(
-  filePath: string
+  filePath: string,
+  lineFilter?: (line: string) => boolean
 ): AsyncGenerator<{ json: any; lineIndex: number }> {
   const input = createReadStream(filePath, { encoding: 'utf8' })
   const lines = createInterface({ input, crlfDelay: Infinity })
@@ -811,6 +862,7 @@ async function* parseJsonLineFile(
       lineIndex += 1
       const trimmed = line.trim()
       if (!trimmed || trimmed.startsWith('{$set')) continue
+      if (lineFilter && !lineFilter(trimmed)) continue
       try {
         yield { json: JSON.parse(trimmed), lineIndex }
       } catch {

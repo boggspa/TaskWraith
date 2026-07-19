@@ -172,6 +172,208 @@ describe('loadExternalProviderUsageRecords', () => {
     }
   })
 
+  it('counts one Claude API call once when it spans several content-block rows', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-claude-blocks-'))
+    try {
+      const projectDir = join(homeDir, '.claude', 'projects', 'sample')
+      await mkdir(projectDir, { recursive: true })
+      // One assistant turn with three tool_use blocks: three rows, one API
+      // call, and every row repeats the same usage object verbatim except for
+      // its sub-second write time.
+      const row = (millis: string) =>
+        JSON.stringify({
+          timestamp: `2026-05-31T09:00:00.${millis}Z`,
+          requestId: 'req_abc',
+          message: {
+            id: 'msg_abc',
+            model: 'claude-opus-4-8',
+            usage: {
+              input_tokens: 10,
+              output_tokens: 5,
+              cache_read_input_tokens: 900,
+              cache_creation_input_tokens: 85
+            }
+          }
+        })
+      await writeFile(
+        join(projectDir, 'session.jsonl'),
+        [row('053'), row('549'), row('988')].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      const claude = records.filter((record) => record.provider === 'claude')
+      expect(claude).toHaveLength(1)
+      expect(claude[0]?.totalTokens).toBe(1_000)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('counts a Codex turn once when token_count re-emits an unchanged total', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-repeat-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      const turn = (minute: string, cumulative: number) =>
+        JSON.stringify({
+          timestamp: `2026-05-31T09:${minute}:00.000Z`,
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { total_tokens: cumulative },
+              last_token_usage: { input_tokens: 90, output_tokens: 10, total_tokens: 100 }
+            }
+          }
+        })
+      await writeFile(
+        join(sessionDir, 'rollout.jsonl'),
+        // Cumulative advances once, then the same total is re-emitted twice.
+        [turn('00', 100), turn('01', 200), turn('02', 200), turn('03', 200)].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      const codex = records.filter((record) => record.provider === 'codex')
+      expect(codex).toHaveLength(2)
+      expect(codex.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(200)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('does not bill a forked Codex session for its inherited cumulative baseline', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-fork-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      await writeFile(
+        join(sessionDir, 'rollout.jsonl'),
+        // A fork opens carrying 500_000 tokens of the parent's history; only
+        // the 100 tokens this turn actually spent belong to this session.
+        JSON.stringify({
+          timestamp: '2026-05-31T09:00:00.000Z',
+          payload: {
+            type: 'token_count',
+            info: {
+              total_token_usage: { total_tokens: 500_100 },
+              last_token_usage: { input_tokens: 90, output_tokens: 10, total_tokens: 100 }
+            }
+          }
+        })
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      expect(records.find((record) => record.provider === 'codex')?.totalTokens).toBe(100)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('falls back to the cumulative advance, not the cumulative total', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-fallback-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      await writeFile(
+        join(sessionDir, 'rollout.jsonl'),
+        [
+          JSON.stringify({
+            timestamp: '2026-05-31T09:00:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: { total_tokens: 1_000 },
+                last_token_usage: { input_tokens: 900, output_tokens: 100, total_tokens: 1_000 }
+              }
+            }
+          }),
+          // No per-turn breakdown: this turn spent 250, and the running total
+          // of 1_250 must never be billed as though it were a single turn.
+          JSON.stringify({
+            timestamp: '2026-05-31T09:01:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: { total_token_usage: { total_tokens: 1_250 } }
+            }
+          })
+        ].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      const codex = records.filter((record) => record.provider === 'codex')
+      expect(codex.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(1_250)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('counts Codex turns past the first 8MB of a long session file', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-longfile-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      // The head turn sits behind ~9MB of reasoning output. Tail-reading the
+      // last 8MB dropped it entirely, which is how multi-agent run days lost
+      // 97-99% of their tokens.
+      const filler = JSON.stringify({
+        timestamp: '2026-05-31T09:00:30.000Z',
+        payload: { type: 'agent_reasoning', text: 'x'.repeat(64 * 1024) }
+      })
+      await writeFile(
+        join(sessionDir, 'rollout.jsonl'),
+        [
+          JSON.stringify({
+            timestamp: '2026-05-31T09:00:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: { total_tokens: 4_000 },
+                last_token_usage: { input_tokens: 3_000, output_tokens: 1_000, total_tokens: 4_000 }
+              }
+            }
+          }),
+          ...Array.from({ length: 145 }, () => filler),
+          JSON.stringify({
+            timestamp: '2026-05-31T09:01:00.000Z',
+            payload: {
+              type: 'token_count',
+              info: {
+                total_token_usage: { total_tokens: 4_007 },
+                last_token_usage: { input_tokens: 5, output_tokens: 2, total_tokens: 7 }
+              }
+            }
+          })
+        ].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      const codex = records.filter((record) => record.provider === 'codex')
+      expect(codex).toHaveLength(2)
+      expect(codex.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(4_007)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
   it('keeps Codex history beyond the old narrow session cap', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-history-'))
     try {
