@@ -37,6 +37,50 @@ final class AttachedWindowOCRTests: XCTestCase {
         XCTAssertTrue(result.blocks.isEmpty)
     }
 
+    // MARK: - Path-based entry point (document.ocrImage)
+
+    func testRecognizeAtPathReadsAnImageFile() async throws {
+        let png = makeBlankPNG(width: 24, height: 24, gray: 1.0)
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ocr-path-\(UUID().uuidString).png")
+        try png.write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        let result = try await AttachedWindowOCR.recognize(imageAtPath: url.path)
+        XCTAssertEqual(result.text, "")
+        XCTAssertTrue(result.blocks.isEmpty)
+    }
+
+    func testRecognizeAtPathRejectsMissingFile() async throws {
+        let missing = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ocr-absent-\(UUID().uuidString).png")
+        do {
+            _ = try await AttachedWindowOCR.recognize(imageAtPath: missing.path)
+            XCTFail("expected badInput for a missing file")
+        } catch AttachedWindowOCR.OcrError.badInput(let message) {
+            XCTAssertTrue(message.contains("not found"))
+        }
+    }
+
+    func testRecognizeAtPathRejectsOversizedFile() async throws {
+        // Bounds the decode: an unbounded read would let a huge file balloon
+        // daemon memory. Written sparsely so the test stays fast.
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("ocr-huge-\(UUID().uuidString).png")
+        FileManager.default.createFile(atPath: url.path, contents: nil)
+        let handle = try FileHandle(forWritingTo: url)
+        try handle.truncate(atOffset: UInt64(AttachedWindowOCR.maxImageBytes + 1))
+        try handle.close()
+        defer { try? FileManager.default.removeItem(at: url) }
+
+        do {
+            _ = try await AttachedWindowOCR.recognize(imageAtPath: url.path)
+            XCTFail("expected badInput for an oversized file")
+        } catch AttachedWindowOCR.OcrError.badInput(let message) {
+            XCTAssertTrue(message.contains("OCR limit"))
+        }
+    }
+
     // MARK: - Empty-recognition error classification
     //
     // Vision throws on a blank/textless image on some macOS versions (observed

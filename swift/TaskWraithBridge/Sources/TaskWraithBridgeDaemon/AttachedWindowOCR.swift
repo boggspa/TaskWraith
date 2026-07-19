@@ -39,6 +39,46 @@ struct OcrResult: Sendable {
 }
 
 enum AttachedWindowOCR {
+    enum OcrError: Error {
+        case badInput(String)
+    }
+
+    /// Hard ceiling on an image handed to OCR. A 1600px-edge page raster (what
+    /// PdfAttachmentRenderService produces) lands around 2–5MB, so this is very
+    /// generous while still bounding the decode — an unbounded read here would
+    /// let a hostile or accidental multi-gigabyte file balloon daemon memory.
+    static let maxImageBytes = 64 * 1024 * 1024
+
+    /// Recognize text in an image FILE. Same on-device Vision path as the
+    /// in-memory entry point below; split out so callers that already hold a
+    /// path (document OCR, PDF page rasters) don't have to marshal the bytes
+    /// through JSON. ImageIO decodes the container, so PNG/JPEG/TIFF/HEIC all
+    /// work — the parameter name on the other overload is historical.
+    ///
+    /// The path is expected to be realpath-jailed by the main process BEFORE it
+    /// reaches the daemon, exactly like audio.transcribe's sourcePath.
+    static func recognize(imageAtPath path: String) async throws -> OcrResult {
+        let url = URL(fileURLWithPath: path)
+        let attributes: [FileAttributeKey: Any]
+        do {
+            attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        } catch {
+            throw OcrError.badInput("Image not found: \(path)")
+        }
+        if let size = attributes[.size] as? NSNumber, size.intValue > maxImageBytes {
+            throw OcrError.badInput(
+                "Image is \(size.intValue) bytes, above the \(maxImageBytes)-byte OCR limit."
+            )
+        }
+        let data: Data
+        do {
+            data = try Data(contentsOf: url, options: [.mappedIfSafe])
+        } catch {
+            throw OcrError.badInput("Could not read image: \(error.localizedDescription)")
+        }
+        return try await recognize(pngData: data)
+    }
+
     /// Recognize text in a PNG payload. Runs entirely on-device via the
     /// Vision framework — no data leaves the machine here. The caller still
     /// decides where to send the *resulting* OCR text (which follows the

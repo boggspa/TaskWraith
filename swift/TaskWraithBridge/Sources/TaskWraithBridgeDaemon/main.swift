@@ -1179,6 +1179,47 @@ dispatcher.register("audio.transcribe") { params in
     }
 }
 
+// MARK: - Document OCR
+//
+// `document.ocrImage` — on-device Vision OCR over an arbitrary image FILE,
+// rather than the attached-window capture buffer. Same recognizer that has
+// backed `attached_window_capture` since the appwatch work; this just exposes it
+// to the document lane so a scanned/image-only PDF page can be read after
+// rasterization. Runs entirely on-device (no network), like audio.transcribe.
+//
+// Params: `{ sourcePath: string }`. Returns `{ text, blocks }`.
+// The sourcePath is realpath-jailed by the main process before it gets here.
+struct DocumentOcrParams: Decodable {
+    let sourcePath: String
+}
+
+dispatcher.register("document.ocrImage") { params in
+    let parsed: DocumentOcrParams
+    do {
+        parsed = try decodeParams(params, as: DocumentOcrParams.self)
+    } catch {
+        throw JSONRPCError(
+            code: JSONRPCErrorCode.invalidParams,
+            message: "Invalid document.ocrImage params: \(error.localizedDescription)"
+        )
+    }
+    do {
+        let result = try runBlocking { @Sendable [sourcePath = parsed.sourcePath] in
+            try await AttachedWindowOCR.recognize(imageAtPath: sourcePath)
+        }
+        return result.toJSONObject()
+    } catch let err as AttachedWindowOCR.OcrError {
+        switch err {
+        case .badInput(let message):
+            throw JSONRPCError(code: JSONRPCErrorCode.invalidParams, message: message)
+        }
+    } catch let err as JSONRPCError {
+        throw err
+    } catch {
+        throw JSONRPCError(code: JSONRPCErrorCode.internalError, message: error.localizedDescription)
+    }
+}
+
 // MARK: - Creative-app probe (Phase K1)
 //
 // `creative.runningApplications` — answers "is bundle id X currently running?"
