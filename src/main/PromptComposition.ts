@@ -247,7 +247,7 @@ export function sanitizeTaskWraithMcpPromptClaims(
  * providers that still conflate the two.
  */
 export const TASKWRAITH_RECON_STEER_NOTE = [
-  'TaskWraith read-only recon turn: you are running under a Read-Only/Recon posture (review/investigation), NOT Plan workflow.',
+  'TaskWraith read-only recon turn: you are running under a Read-Only/Recon posture (review/investigation), NOT Plan-authoring mode.',
   'Answer the request directly and in place: report findings, evidence (cite files/lines where relevant), and risks.',
   'Do not draft a step-by-step implementation plan, do not present a plan for approval, and do not stop to ask whether to proceed — this turn IS the deliverable.',
   'Writes and shell mutations are unavailable on this turn: if a change would be needed, describe what you would change and why instead of attempting it.'

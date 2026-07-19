@@ -1192,7 +1192,7 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('you are the designated plan synthesizer')
     expect(prompt).toContain('<proposed_plan>...</proposed_plan>')
     expect(prompt).toContain('emit exactly one')
-    expect(prompt).toContain('Plan workflow is where plan artifacts belong')
+    expect(prompt).toContain('Plan-authoring mode is where plan artifacts belong')
     expect(prompt).not.toContain('do NOT emit a `<proposed_plan>` block')
   })
 
@@ -2023,7 +2023,7 @@ describe('Ensemble synthesizer + last-round summary (AT8)', () => {
     // Should contain a truncated chunk, NOT the full 3000-char blob.
     const summaryBlock = prompt
       .split('Prior round summary (from the panel synthesizer):\n')[1]
-      ?.split('\n\nPlan workflow owner:')[0]
+      ?.split('\n\nPlan-authoring owner:')[0]
     expect(summaryBlock).toBeDefined()
     expect(summaryBlock).toContain('xxxxxxxxxx')
     expect(summaryBlock?.length).toBe(2000)
@@ -2477,7 +2477,7 @@ describe('dynamic ensemble-state snapshots', () => {
     expect(snapshot.block).toContain('Boss/Captain control state: <none>')
     expect(snapshot.block).toContain('Recent session events: <none>')
     expect(snapshot.block).toContain('Prior round summary: <none>')
-    expect(snapshot.block).toContain('Plan workflow owner: <none>')
+    expect(snapshot.block).toContain('Plan-authoring owner: <none>')
 
     const reordered: EnsembleConfig = {
       ...ensemble,

@@ -467,11 +467,11 @@ function formatEnsemblePlanOwnerLines(
   const ownerLabel = owner ? formatParticipantScopeName(owner) : planOwnerId
   if (participant.id === planOwnerId) {
     return [
-      `- Ensemble Plan owner: you are the designated plan synthesizer (${ownerLabel}). If this turn needs a plan, emit exactly one \`<proposed_plan>...</proposed_plan>\` block that synthesizes the panel's findings; do not execute implementation steps in this plan-workflow turn.`
+      `- Ensemble Plan owner: you are the designated plan synthesizer (${ownerLabel}). If this turn needs a plan, emit exactly one \`<proposed_plan>...</proposed_plan>\` block that synthesizes the panel's findings; do not execute implementation steps in this Plan-authoring turn.`
     ]
   }
   return [
-    `- Ensemble Plan owner: ${ownerLabel} is responsible for the single synthesized \`<proposed_plan>...</proposed_plan>\` block. In plan workflow, contribute recon/findings/risks only and do NOT emit a \`<proposed_plan>\` block.`
+    `- Ensemble Plan owner: ${ownerLabel} is responsible for the single synthesized \`<proposed_plan>...</proposed_plan>\` block. In Plan-authoring mode, contribute recon/findings/risks only and do NOT emit a \`<proposed_plan>\` block.`
   ]
 }
 
@@ -731,13 +731,13 @@ function formatDynamicPlanWorkflowSlot(
   config: EnsembleConfig,
   stableParticipants: EnsembleParticipant[]
 ): string {
-  if (!isPlanWorkflowChat(chat)) return 'Plan workflow owner: <none>'
+  if (!isPlanWorkflowChat(chat)) return 'Plan-authoring owner: <none>'
   const ownerId = resolveEnsemblePlanOwnerId(config)
-  if (!ownerId) return 'Plan workflow owner: <none>'
+  if (!ownerId) return 'Plan-authoring owner: <none>'
   const owner = stableParticipants.find((participant) => participant.id === ownerId)
   const ownerLabel = owner ? formatParticipantScopeName(owner) : ownerId
   return [
-    'Plan workflow owner:',
+    'Plan-authoring owner:',
     `Designated participant: ${ownerLabel}.`,
     'Only this participant may emit the single `<proposed_plan>...</proposed_plan>` block; all other participants contribute findings, risks, or review only.'
   ].join('\n')
@@ -1238,12 +1238,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
-    // Mode is an orchestration mode; Plan workflow is where plan
+    // Mode is an orchestration mode; Plan-authoring mode is where plan
     // artifacts belong. Do not infer "produce a plan" from a
     // read-only runtime posture: read-only review/recon seats should
     // report findings in place unless the explicit plan-owner rule
     // below assigns a `<proposed_plan>` block.
-    '- Plan Mode and Ensemble Mode compose: Plan workflow is where plan artifacts belong; follow the explicit plan-owner rule when this chat is in plan workflow. A `read_only` permission preset is review posture, not plan ownership: produce findings/review in place, do not execute mutations, and do not create plan artifacts unless the plan-owner rule explicitly assigns you.',
+    '- Plan Mode and Ensemble Mode compose: Plan-authoring mode is where plan artifacts belong; follow the explicit plan-owner rule when this chat is in Plan-authoring mode. A `read_only` permission preset is review posture, not plan ownership: produce findings/review in place, do not execute mutations, and do not create plan artifacts unless the plan-owner rule explicitly assigns you.',
     ...planOwnerLines,
     // 1.0.4-AF / AR8 — deictic-resolution rule. Three branches:
     //

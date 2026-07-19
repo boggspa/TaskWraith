@@ -723,7 +723,7 @@ export function FirstLaunchSheet({
             Runs start inside the workspace boundary — files outside the project are off-limits
             unless you allow a path. Plan and Read-Only/Recon stay cautious; Default Approval keeps
             file actions visible; Workspace Write removes per-action prompts inside the project;
-            and lane-scoped Trusted Session is the highest local authority. Plan workflow can still
+            and lane-scoped Trusted Session is the highest local authority. Plan-authoring mode can still
             use approval-gated instruments like canvas, media, and sub-thread delegation when you
             allow them, but it does not grant ordinary file mutation by itself.
           </p>
@@ -857,7 +857,7 @@ export function FirstLaunchSheet({
               branch is pushed and ready.
             </li>
             <li>
-              <strong>Permission picker colour-codes the authority.</strong> Plan workflow is
+              <strong>Permission picker colour-codes the authority.</strong> Plan-authoring mode is
               separate from Read-Only/Recon: Plan drafts for approval, Default Approval keeps
               actions visible, Workspace Write removes per-action prompts inside the project, and
               Trusted Session is lane-scoped host authority. Approval-gated instruments remain
