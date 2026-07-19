@@ -32,12 +32,6 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     source: 'Moonshot'
   },
   {
-    id: 'cursor',
-    label: 'Cursor',
-    command: 'curl https://cursor.com/install -fsS | bash',
-    source: 'Cursor'
-  },
-  {
     id: 'grok',
     label: 'Grok',
     command: 'curl -fsSL https://x.ai/cli/install.sh | bash',

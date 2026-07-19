@@ -3,6 +3,8 @@ import {
   DEFAULT_PROVIDER,
   RETIRED_PROVIDER_IDS,
   coerceLiveProvider,
+  isLiveSelectableProvider,
+  LIVE_SELECTABLE_PROVIDER_IDS,
   isRetiredProvider
 } from './retiredProviders'
 
@@ -32,8 +34,16 @@ describe('retiredProviders', () => {
     expect(coerceLiveProvider('kimi')).toBe('kimi')
   })
 
+  it('keeps one canonical live-selection set and excludes Cursor', () => {
+    expect(LIVE_SELECTABLE_PROVIDER_IDS).toEqual(['codex', 'claude', 'kimi', 'grok', 'ollama'])
+    expect(isLiveSelectableProvider('codex')).toBe(true)
+    expect(isLiveSelectableProvider('cursor')).toBe(false)
+    expect(isLiveSelectableProvider('gemini')).toBe(false)
+  })
+
   it('coerceLiveProvider migrates retired/empty/missing to the default', () => {
     expect(coerceLiveProvider('gemini')).toBe(DEFAULT_PROVIDER)
+    expect(coerceLiveProvider('cursor')).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider(null)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider(undefined)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider('')).toBe(DEFAULT_PROVIDER)

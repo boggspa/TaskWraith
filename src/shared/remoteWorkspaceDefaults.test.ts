@@ -15,7 +15,7 @@ import {
 // src/main/RemoteWorkspaceAllowlist.ts. Active provider defaults are pinned here.
 describe('remoteWorkspaceDefaults', () => {
   it('pins active providers and mirrors approval-mode options', () => {
-    expect([...PROVIDER_OPTIONS]).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+    expect([...PROVIDER_OPTIONS]).toEqual(['codex', 'claude', 'kimi', 'grok', 'ollama'])
     expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
   })
 

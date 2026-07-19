@@ -147,8 +147,8 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['codex', 'kimi', 'cursor', 'grok', 'ollama'])
-    expect(groups.map((g) => g.label)).toEqual(['Codex', 'Kimi', 'Cursor', 'Grok', 'Ollama'])
+    expect(groups.map((g) => g.provider)).toEqual(['codex', 'kimi', 'grok', 'ollama'])
+    expect(groups.map((g) => g.label)).toEqual(['Codex', 'Kimi', 'Grok', 'Ollama'])
     expect(groups.some((g) => g.provider === 'claude')).toBe(false)
 
     const codex = groups.find((g) => g.provider === 'codex')
@@ -172,9 +172,6 @@ describe('notification registry', () => {
           'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
       }
     ])
-
-    const cursor = groups.find((g) => g.provider === 'cursor')
-    expect(cursor?.models.map((m) => m.name)).toEqual(['Cursor Grok 4.5'])
 
     const grok = groups.find((g) => g.provider === 'grok')
     expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.5 Fast'])

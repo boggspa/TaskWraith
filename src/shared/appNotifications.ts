@@ -137,7 +137,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'K3, K2.7 Coding Highspeed, the GPT-5.6 Luna/Terra/Sol trio, Cursor Grok 4.5, Grok 4.5 Fast, and four new local Ollama models are all available now.',
+    body: 'K3, K2.7 Coding Highspeed, the GPT-5.6 Luna/Terra/Sol trio, Grok 4.5 Fast, and four new local Ollama models are all available now.',
     dismissible: true,
     groups: [
       {
@@ -173,17 +173,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'K2.7 Coding Highspeed',
             blurb:
               'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
-          }
-        ]
-      },
-      {
-        provider: 'cursor',
-        label: 'Cursor',
-        models: [
-          {
-            name: 'Cursor Grok 4.5',
-            blurb:
-              "Cursor's first-party model pool — 500K context, Low/Medium/High reasoning, and a Fast toggle."
           }
         ]
       },

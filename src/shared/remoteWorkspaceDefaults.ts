@@ -1,3 +1,5 @@
+import { LIVE_SELECTABLE_PROVIDER_IDS } from './retiredProviders'
+
 /**
  * Node-builtin-FREE mirror of the remote-workspace allowlist capability/provider
  * constants that live in `src/main/RemoteWorkspaceAllowlist.ts`.
@@ -46,10 +48,11 @@ export interface RemoteWorkspaceEntry {
   updatedAt: number
 }
 
-/** Active providers for new remote-workspace grants. Retired providers such as
- * Gemini remain readable through historical records, but are not granted for new
- * phone-origin remote actions by default. */
-export const PROVIDER_OPTIONS = ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
+/** Active providers for new remote-workspace grants. Unavailable canonical
+ * providers such as Cursor and retired providers such as Gemini remain readable
+ * through compatibility/history paths, but are not granted for new phone-origin
+ * remote actions. */
+export const PROVIDER_OPTIONS = LIVE_SELECTABLE_PROVIDER_IDS
 
 export const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const
 

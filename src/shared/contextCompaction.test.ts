@@ -290,7 +290,7 @@ describe('host compaction summarize prompt', () => {
 
 describe('host auto-compaction evidence policy', () => {
   it('never treats generic processed run usage as live occupancy', () => {
-    for (const provider of ['cursor', 'kimi', 'grok'] as const) {
+    for (const provider of ['kimi', 'grok'] as const) {
       expect(
         shouldAutoCompactHostContext(provider, { kind: 'generic_run_usage', percent: 999 })
       ).toBe(false)
@@ -299,14 +299,14 @@ describe('host auto-compaction evidence policy', () => {
 
   it('accepts verified occupancy or classified overflow for host providers', () => {
     expect(
-      shouldAutoCompactHostContext('cursor', {
+      shouldAutoCompactHostContext('grok', {
         kind: 'provider_semantic_occupancy',
         percent: 90
       })
     ).toBe(true)
     expect(shouldAutoCompactHostContext('grok', { kind: 'classified_context_overflow' })).toBe(true)
     expect(
-      shouldAutoCompactHostContext('cursor', {
+      shouldAutoCompactHostContext('grok', {
         kind: 'provider_semantic_occupancy',
         percent: 89.9
       })
@@ -316,7 +316,6 @@ describe('host auto-compaction evidence policy', () => {
   it('accepts uncovered prompt rows only for Kimi', () => {
     const evidence = { kind: 'prompt_projection_uncovered' as const, messageIds: ['m1'] }
     expect(shouldAutoCompactHostContext('kimi', evidence)).toBe(true)
-    expect(shouldAutoCompactHostContext('cursor', evidence)).toBe(false)
     expect(shouldAutoCompactHostContext('grok', evidence)).toBe(false)
     expect(
       shouldAutoCompactHostContext('kimi', {

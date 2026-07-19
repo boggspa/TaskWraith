@@ -20,6 +20,22 @@
 export const RETIRED_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(['gemini'])
 
 /**
+ * Canonical offer/run set. Known ids omitted here remain valid for historical
+ * decode and rendering, but must not be used to create or dispatch new work.
+ * Cursor is temporarily absent until exact-build startup containment qualifies.
+ */
+export const LIVE_SELECTABLE_PROVIDER_IDS = [
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'ollama'
+] as const
+const LIVE_SELECTABLE_PROVIDER_ID_SET: ReadonlySet<string> = new Set(
+  LIVE_SELECTABLE_PROVIDER_IDS
+)
+
+/**
  * The structural fallback "live" provider used wherever code previously
  * defaulted to `'gemini'` (new-chat seed, projection fallbacks, malformed-record
  * coercion). Claude is the boring always-valid default; the *user-facing*
@@ -32,11 +48,18 @@ export function isRetiredProvider(provider: string | null | undefined): boolean 
   return provider != null && RETIRED_PROVIDER_IDS.has(provider)
 }
 
+/** True only for providers that may be offered, selected, or run now. */
+export function isLiveSelectableProvider(
+  provider: string | null | undefined
+): provider is (typeof LIVE_SELECTABLE_PROVIDER_IDS)[number] {
+  return provider != null && LIVE_SELECTABLE_PROVIDER_ID_SET.has(provider)
+}
+
 /**
- * Coerce a possibly-missing-or-retired provider to a live one: returns the input
- * unchanged when it is a non-retired, non-empty provider, otherwise
- * `DEFAULT_PROVIDER`. Use this on READ wherever a default provider is needed, so
- * retired values migrate to a runnable provider WITHOUT mutating stored history.
+ * Coerce a possibly missing or unavailable provider to a live one: returns the
+ * input unchanged only when it belongs to the canonical live-selectable set,
+ * otherwise `DEFAULT_PROVIDER`. Use this on READ wherever a runnable default is
+ * needed, without mutating the provider stored in historical records.
  *
  * Generic over the input so the return type stays assignable to the caller's
  * provider type (e.g. `ProviderId`) without this node-free module importing it.
@@ -44,7 +67,7 @@ export function isRetiredProvider(provider: string | null | undefined): boolean 
 export function coerceLiveProvider<T extends string>(
   provider: T | null | undefined
 ): T | typeof DEFAULT_PROVIDER {
-  if (provider != null && provider.length > 0 && !isRetiredProvider(provider)) {
+  if (isLiveSelectableProvider(provider)) {
     return provider
   }
   return DEFAULT_PROVIDER

@@ -289,7 +289,7 @@ export function pruneContiguousCompactionPrefix<T extends MessageWithId>(
 
 // ── Host auto-compaction evidence ───────────────────────────────────────────────
 
-export type HostAutoCompactionProvider = 'cursor' | 'kimi' | 'grok'
+export type HostAutoCompactionProvider = 'kimi' | 'grok'
 
 export type HostAutoCompactionEvidence =
   | { kind: 'generic_run_usage'; percent: number }
@@ -299,7 +299,7 @@ export type HostAutoCompactionEvidence =
 
 /**
  * Generic run input/output is processed usage, not proven live occupancy, so
- * it is always advisory. Cursor/Grok may auto-reset only on a provider-semantic
+ * it is always advisory. Grok may auto-reset only on a provider-semantic
  * occupancy signal or a classified context overflow. Kimi may additionally
  * refresh its non-destructive rolling summary when prompt projection proves
  * that specific transcript rows are uncovered.
@@ -316,7 +316,7 @@ export function shouldAutoCompactHostContext(
   return provider === 'kimi' && evidence.messageIds.some((id) => Boolean(id.trim()))
 }
 
-// ── Host-side fallback compaction (Cursor/legacy Kimi/Grok) ─────────────────
+// ── Host-side fallback compaction (legacy Kimi/Grok) ────────────────────────
 
 /**
  * The summarize instruction dispatched as a REAL turn when the host compacts
