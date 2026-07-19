@@ -1,5 +1,10 @@
 import { describe, it, expect } from 'vitest'
-import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './CursorCliArgs'
+import {
+  buildContainedCursorReadOnlyArgv,
+  buildCursorCliArgs,
+  buildCursorProviderCliArgs,
+  cursorWriteCapable
+} from './CursorCliArgs'
 import type { EffectiveRunPermissions } from '../store/types'
 
 const mcpDeniedPermissions: Pick<EffectiveRunPermissions, 'agenticServices'> = {
@@ -333,5 +338,84 @@ describe('read-only safe-subset bridge (Grok parity)', () => {
     expect(args).toContain('--disable-project-configs')
     expect(args).toContain('--exclude-workspace-context')
     expect(args.at(-1)).toBe(base.prompt)
+  })
+})
+
+describe('buildContainedCursorReadOnlyArgv (Path B contained read-only runtime)', () => {
+  const base = { workspace: '/ws', prompt: 'read the repo' }
+  const DANGEROUS_TOKENS = ['--force', '-f', '--yolo', '--approve-mcps', '--api-key']
+
+  it('hard-pins the native sandbox and a read-only mode with the workspace + prompt', () => {
+    const args = buildContainedCursorReadOnlyArgv(base)
+    expect(args).toContain('-p')
+    expect(args.join(' ')).toContain('--output-format stream-json')
+    expect(args).toContain('--trust')
+    // --sandbox is always immediately followed by `enabled` (never `disabled`).
+    expect(args.join(' ')).toContain('--sandbox enabled')
+    expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
+    expect(args).toContain('--skip-worktree-setup')
+    // Default read-only mode is `ask`.
+    expect(args.join(' ')).toContain('--mode ask')
+    expect(args.join(' ')).toContain('--workspace /ws')
+    // Prompt is the trailing positional, guarded by an end-of-options `--`.
+    expect(args[args.length - 1]).toBe('read the repo')
+    expect(args[args.length - 2]).toBe('--')
+  })
+
+  it('guards the prompt behind `--` so a flag-shaped prompt cannot inject a cursor-agent flag', () => {
+    // Live-verified: cursor-agent parses options INTERSPERSED, so without the
+    // `--` guard a prompt of "--sandbox disabled" / "--force" would be reparsed as
+    // a real flag (disabling the sandbox or widening tools). The guard forces the
+    // prompt to be a positional after the real, load-bearing flags.
+    for (const prompt of ['--sandbox disabled', '--force', '--yolo', '--approve-mcps', '--version']) {
+      const args = buildContainedCursorReadOnlyArgv({ workspace: '/ws', prompt })
+      const guard = args.indexOf('--')
+      expect(guard).toBeGreaterThan(-1)
+      // The prompt is the ONLY token after the guard.
+      expect(args.slice(guard + 1)).toEqual([prompt])
+      // The real --sandbox enabled flag is before the guard and still reads enabled.
+      expect(args.indexOf('--sandbox')).toBeLessThan(guard)
+      expect(args[args.indexOf('--sandbox') + 1]).toBe('enabled')
+    }
+  })
+
+  it('honors an explicit read-only mode (`plan`)', () => {
+    const args = buildContainedCursorReadOnlyArgv({ ...base, mode: 'plan' })
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args.join(' ')).not.toContain('--mode ask')
+  })
+
+  it('NEVER emits any write-widening / sandbox-disabling / api-key token', () => {
+    for (const input of [
+      base,
+      { ...base, mode: 'plan' as const },
+      { ...base, model: 'composer-2.5' },
+      { ...base, model: 'gpt-5' }
+    ]) {
+      const args = buildContainedCursorReadOnlyArgv(input)
+      for (const token of DANGEROUS_TOKENS) {
+        expect(args).not.toContain(token)
+      }
+      // Sandbox may only ever be enabled, never disabled.
+      expect(args.join(' ')).not.toContain('--sandbox disabled')
+      expect(args).not.toContain('disabled')
+    }
+  })
+
+  it('normalizes a requested Cursor model and coerces a leaked id to a concrete Cursor default', () => {
+    expect(buildContainedCursorReadOnlyArgv({ ...base, model: 'composer-2.5' }).join(' ')).toContain(
+      '--model composer-2.5'
+    )
+    // A non-Cursor / leaked id is coerced to a concrete Cursor model, never passed through.
+    const leaked = buildContainedCursorReadOnlyArgv({ ...base, model: 'gpt-5' })
+    expect(leaked.join(' ')).toContain('--model composer-2.5-fast')
+    expect(leaked).not.toContain('gpt-5')
+  })
+
+  it('omits --model entirely when no model is requested (falls back to the account default)', () => {
+    for (const model of [undefined, null, '']) {
+      const args = buildContainedCursorReadOnlyArgv({ ...base, model })
+      expect(args).not.toContain('--model')
+    }
   })
 })

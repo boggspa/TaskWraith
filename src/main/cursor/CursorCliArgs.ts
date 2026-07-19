@@ -17,6 +17,7 @@
 
 import { CURSOR_COMPOSER_MODEL_IDS } from './CursorCliProbe'
 import { resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
+import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
 import type { EffectiveRunPermissions } from '../store/types'
 import { cursorMcpToolsDenied } from './CursorMcpPolicy'
 
@@ -187,4 +188,60 @@ export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInpu
       Boolean(input.taskWraithReadOnlyMcpActive),
     forceAllowTools: input.forceAllowMcpTools
   })
+}
+
+export interface BuildContainedCursorReadOnlyArgvInput {
+  workspace: string
+  prompt: string
+  model?: string | null
+  /** Both `ask` and `plan` are read-only (non-mutating) Cursor modes. */
+  mode?: 'ask' | 'plan'
+}
+
+/**
+ * Production read-only Cursor launch surface (Path B: real ~/.cursor login +
+ * native OS sandbox). Unlike the legacy/qualification `buildCursorCliArgs`, this
+ * argv is what `runCursorProvider` actually spawns once a binary clears
+ * `admitCursorRuntime`. Its containment is LOAD-BEARING:
+ *   * `--sandbox enabled` hard-pins the native Seatbelt OS sandbox — live
+ *     validated to block writes to the user's HOME even with write+shell — and
+ *     is the universal impact bound for any startup-executed account code. It is
+ *     never droppable; `--sandbox disabled` is never emitted.
+ *   * A read-only `--mode` (`ask`/`plan`, both non-mutating) is the belt to the
+ *     sandbox's suspenders.
+ *   * `--skip-worktree-setup` blocks the `.cursor/worktrees.json` setup scripts.
+ *   * `--trust` avoids the interactive "trust this workspace" prompt (headless).
+ * It NEVER emits `--force`, `--yolo`, `--approve-mcps`, `--api-key`, or
+ * `--sandbox disabled`. No CURSOR_CONFIG_DIR/DATA override is applied — the
+ * caller inherits the user's real config via the process env (Path B), bounded
+ * by the sandbox. The prompt is passed after a `--` end-of-options guard (see
+ * below). Only canonical TaskWraith-exposed Cursor model ids survive
+ * normalization; a requested model is always coerced to a concrete Cursor id,
+ * and an absent model falls back to Cursor's own account default (no `--model`).
+ */
+export function buildContainedCursorReadOnlyArgv(
+  input: BuildContainedCursorReadOnlyArgvInput
+): string[] {
+  return [
+    '-p',
+    '--output-format',
+    'stream-json',
+    '--trust',
+    '--sandbox',
+    'enabled',
+    '--mode',
+    input.mode ?? 'ask',
+    '--skip-worktree-setup',
+    ...(input.model ? ['--model', normalizeCliProviderModel('cursor', input.model)] : []),
+    '--workspace',
+    input.workspace,
+    // End-of-options guard. cursor-agent parses options INTERSPERSED (live-
+    // verified: a positional `--version` prints the version instead of running a
+    // turn), so without this a flag-shaped user prompt — e.g. `--sandbox disabled`
+    // or `--force` — would be reparsed as a real flag and could disable the
+    // sandbox or widen tools. Everything after `--` is positional, so the prompt
+    // can never inject a flag. Keep the prompt strictly last.
+    '--',
+    input.prompt
+  ]
 }

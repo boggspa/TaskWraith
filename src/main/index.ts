@@ -1204,6 +1204,8 @@ import {
   type NormalizedCursorRunEvent
 } from './cursor/CursorStreamJson'
 import { cursorManagedRunAdmission } from './cursor/CursorManagedRunGate'
+import { admitCursorRuntime } from './cursor/CursorRuntimeAdmission'
+import { buildContainedCursorReadOnlyArgv, cursorWriteCapable } from './cursor/CursorCliArgs'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -16554,29 +16556,146 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 }
 
 // Cursor launch history lives in git and SECURITY_ENGINEERING_LEDGER.md.
-// Both tool and plan transports are unqualified because provider-managed
-// startup hooks/plugins/MCP load before a turn; production never spawns Cursor.
+// Cursor Path-B contained read-only runtime: Cursor is admitted ONLY when the
+// embedded, build-verified runtime roster (CursorRuntimeQualifications
+// .generated.json) proves the EXACT cursor-agent binary completed the
+// credentialed startup-containment lane. FAIL-CLOSED: with the shipped EMPTY
+// roster, admitCursorRuntime denies every binary (unknown_binary) and this
+// function NEVER spawns — Cursor stays unavailable. When (later) armed, a run is
+// bounded by the native OS sandbox (`--sandbox enabled`, Seatbelt —
+// live-validated to block writes to the user's HOME) plus a read-only `--mode`;
+// the contained argv never emits write-widening or sandbox-disabling flags (see
+// buildContainedCursorReadOnlyArgv). Write-capable seats are rejected (read-only
+// only this slice; governed write mode is a later slice). Path B inherits the
+// user's REAL ~/.cursor login via the process env (their Pro quota, seamless);
+// the sandbox is enforced via argv, not env.
 async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('cursor', payload)
-  const admission = cursorManagedRunAdmission()
+  // No TaskWraith MCP bridge is written for a contained read-only run, and the
+  // contained argv never resumes a prior chat, so keep the run state honest
+  // rather than letting a stale caller claim MCP is advertised or a session is
+  // being resumed.
   payload.taskWraithMcpAdvertised = false
   payload.providerSessionId = null
-  runManager.finish(route.appRunId, 'failed')
-  sendAgentCompatError(event.sender, 'cursor', admission.message, route)
-  sendAgentCompatLine(
-    event.sender,
-    'cursor',
-    {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'cursor',
-      setupRequired: true,
-      securityUnavailable: admission.securityUnavailable
-    },
-    route
-  )
-  sendAgentCompatExit(event.sender, 'cursor', 1, route)
+
+  // READ-ONLY ONLY this slice: a write-capable seat is politely rejected before
+  // any binary resolution or spawn. Governed Cursor write mode is a later slice.
+  if (cursorWriteCapable(payload.approvalMode)) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(
+      event.sender,
+      'cursor',
+      'Cursor write mode is not yet available; use a read-only/plan seat.',
+      route
+    )
+    sendAgentCompatLine(
+      event.sender,
+      'cursor',
+      { type: 'result', status: 'failed', stats: {}, provider: 'cursor', setupRequired: true },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'cursor', 1, route)
+    return
+  }
+
+  const resolved = await resolveCliProviderBinary('cursor', payload.runtimeProfile)
+  if (!resolved.binaryPath) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(
+      event.sender,
+      'cursor',
+      resolved.error ||
+        'Cursor CLI (cursor-agent) is not configured. Install it and run `cursor-agent login`.',
+      route
+    )
+    sendAgentCompatLine(
+      event.sender,
+      'cursor',
+      { type: 'result', status: 'failed', stats: {}, provider: 'cursor', setupRequired: true },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'cursor', 1, route)
+    return
+  }
+
+  // FAIL-CLOSED admission gate. With the shipped empty roster this returns
+  // admitted:false (unknown_binary) for EVERY binary, so control never reaches a
+  // spawn. No `environment` is handed to the gate, so the unattested-development
+  // bypass can never be read here — deny stays total until a real runtime
+  // qualification is minted for this exact build.
+  const admission = await admitCursorRuntime({
+    binaryPath: resolved.binaryPath,
+    isPackaged: app.isPackaged
+  })
+  if (!admission.admitted) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(event.sender, 'cursor', admission.message, route)
+    sendAgentCompatLine(
+      event.sender,
+      'cursor',
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'cursor',
+        setupRequired: true,
+        securityUnavailable: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'cursor', 1, route)
+    return
+  }
+
+  // Re-hash + re-stat the exact source immediately before spawn. If the binary
+  // identity changed since admission this throws; fail-close rather than leaving
+  // the run without a terminal result.
+  let spawnBinary: string
+  try {
+    spawnBinary = await admission.assertReadyForSpawn()
+  } catch (error) {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(
+      event.sender,
+      'cursor',
+      `Cursor runtime admission could not be revalidated before spawn: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      route
+    )
+    sendAgentCompatLine(
+      event.sender,
+      'cursor',
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'cursor',
+        setupRequired: true,
+        securityUnavailable: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'cursor', 1, route)
+    return
+  }
+
+  const args = buildContainedCursorReadOnlyArgv({
+    workspace: payload.workspace!,
+    prompt: payload.prompt,
+    model: payload.model,
+    mode: 'ask'
+  })
+
+  // extraEnv (NOT resolvedEnv): createCliEnv then inherits the REAL process.env
+  // (real HOME + real ~/.cursor → the user's login works) and auto-injects the
+  // TASKWRAITH_* keys. `--sandbox enabled` is enforced via argv, not env; no
+  // CURSOR_CONFIG_DIR/CURSOR_DATA_DIR override (Path B = real config). Read-only
+  // makes no config mutation, so no onComplete/config-restore is needed.
+  await runCliProviderProcess(event, 'cursor', spawnBinary, args, payload, {
+    fallback: false,
+    extraEnv: {}
+  })
 }
 
 // 1.0.6-G4/G6 — Grok over ACP (`grok agent stdio`, bidirectional

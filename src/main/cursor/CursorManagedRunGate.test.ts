@@ -33,7 +33,7 @@ describe('Cursor managed-run release gate', () => {
     expect(armed.securityUnavailable).toBe(false)
   })
 
-  it('keeps the production entry point free of every Cursor spawn/resolve path', () => {
+  it('gates the production Cursor entry point behind fail-closed runtime admission (no unconditional spawn)', () => {
     const source = readFileSync(fileURLToPath(new URL('../index.ts', import.meta.url)), 'utf8')
     const start = source.indexOf('async function runCursorProvider(')
     const end = source.indexOf('// 1.0.6-G4/G6', start)
@@ -41,14 +41,47 @@ describe('Cursor managed-run release gate', () => {
     expect(end).toBeGreaterThan(start)
     const productionEntry = source.slice(start, end)
 
-    expect(productionEntry).toContain('cursorManagedRunAdmission()')
-    expect(productionEntry).not.toContain('resolveCliProviderBinary')
-    expect(productionEntry).not.toContain('runCliProviderProcess')
+    // Read-only only this slice: a write-capable seat is rejected up front.
+    const writeGuard = productionEntry.indexOf('if (cursorWriteCapable(payload.approvalMode))')
+    // FAIL-CLOSED: the async exact-build admission gate is the sole spawn
+    // authority; the empty embedded roster denies it for every binary.
+    const admitGate = productionEntry.indexOf('admitCursorRuntime({')
+    const denyBranch = productionEntry.indexOf('if (!admission.admitted)')
+    const readyForSpawn = productionEntry.indexOf('admission.assertReadyForSpawn()')
+    const spawnCall = productionEntry.indexOf("runCliProviderProcess(event, 'cursor'")
+
+    expect(writeGuard).toBeGreaterThan(0)
+    // The gate, its deny branch, and the pre-spawn re-check all precede the ONLY
+    // spawn — there is no unconditional Cursor spawn path.
+    expect(admitGate).toBeGreaterThan(writeGuard)
+    expect(denyBranch).toBeGreaterThan(admitGate)
+    expect(readyForSpawn).toBeGreaterThan(denyBranch)
+    expect(spawnCall).toBeGreaterThan(readyForSpawn)
+
+    // Fail-closed can't be re-opened from here: the unattested-development
+    // environment bypass is never wired into the production admission call, and
+    // the coarse synchronous gate is not the production authority anymore.
+    expect(productionEntry).not.toContain('TASKWRAITH_ALLOW_UNATTESTED_CURSOR_DEV')
+    expect(productionEntry).not.toContain('cursorManagedRunAdmission(')
+
+    // The contained read-only builder is the only argv source — never the
+    // legacy/qualification builder and never a raw spawn.
+    expect(productionEntry).toContain('buildContainedCursorReadOnlyArgv({')
     expect(productionEntry).not.toContain('buildCursorCliArgs')
     expect(productionEntry).not.toContain('spawn(')
-    expect(productionEntry).not.toContain('--force')
-    expect(productionEntry).not.toContain('--approve-mcps')
-    expect(productionEntry).not.toContain('--resume')
+
+    // No write-widening / sandbox-disabling / api-key / resume token is ever
+    // emitted inline from the production entry point.
+    for (const token of [
+      '--force',
+      '--yolo',
+      '--approve-mcps',
+      '--sandbox disabled',
+      '--api-key',
+      '--resume'
+    ]) {
+      expect(productionEntry).not.toContain(token)
+    }
   })
 
   it('keeps production Kimi calls off the generic CLI launcher and on its admitted path', () => {
@@ -64,9 +97,11 @@ describe('Cursor managed-run release gate', () => {
       source.matchAll(/runCliProviderProcess\([^,]+,\s*'([^']+)'/g),
       (match) => match[1]
     )
-    expect(new Set(launchProviders)).toEqual(new Set(['claude']))
+    // Claude (SDK-fallback CLI) and the Path-B contained read-only Cursor runtime
+    // are the only generic-launcher providers. Kimi stays ACP-only.
+    expect(new Set(launchProviders)).toEqual(new Set(['claude', 'cursor']))
     expect(launchProviders).not.toContain('kimi')
-    expect(launchProviders).not.toContain('cursor')
+    expect(launchProviders).toContain('cursor')
 
     const kimiStart = source.indexOf('async function runKimiAcpProvider(')
     const kimiEnd = source.indexOf('\nasync function ', kimiStart + 1)
