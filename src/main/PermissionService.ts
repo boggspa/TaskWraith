@@ -6,6 +6,7 @@ import type {
   AgenticServicePolicy,
   AppSettings,
   ApprovalLedgerRequestInput,
+  ApprovalLedgerRecord,
   ProviderId
 } from './store/types'
 import type { RunManager } from './RunManager'
@@ -207,8 +208,8 @@ export class PermissionService {
     action: AgentApprovalAction,
     decisionSource: 'user' | 'system' = 'user',
     extraMetadata: Record<string, unknown> = {}
-  ): void {
-    AppStore.resolveApprovalRequest(approvalId, action, decisionSource, extraMetadata)
+  ): ApprovalLedgerRecord | null {
+    return AppStore.resolveApprovalRequest(approvalId, action, decisionSource, extraMetadata)
   }
 
   applyApprovalDecision(input: ApprovalDecisionInput): boolean {

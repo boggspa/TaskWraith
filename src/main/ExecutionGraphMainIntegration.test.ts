@@ -27,10 +27,14 @@ describe('execution graph main integration', () => {
       dispatcher.indexOf('runQueueService.leaseJob')
     )
     expect(dispatcher).toContain('composeMainOwnedExecutionGraphAttempt(appRunId)')
+    const adapterDispatch = dispatcher.indexOf('const result = await runCoordinator.dispatch(')
+    expect(adapterDispatch).toBeGreaterThanOrEqual(0)
     expect(dispatcher.indexOf('registerExecutionGraphRunTranscript')).toBeLessThan(
-      dispatcher.indexOf('runCoordinator.dispatch(entry.payload')
+      adapterDispatch
     )
-    expect(dispatcher).toContain('runCoordinator.dispatch(entry.payload')
+    expect(dispatcher).toMatch(
+      /const result = await runCoordinator\.dispatch\(\s*entry\.payload,/
+    )
     expect(dispatcher).toContain('recordPreSessionDispatchFailure')
     expect(dispatcher).toContain('releaseExclusiveChatDispatch(exclusiveReservation)')
   })
@@ -62,15 +66,20 @@ describe('execution graph main integration', () => {
   })
 
   it('lets unrelated chat deletion bypass unavailable graph authority', () => {
-    const handlers = between('registerChatHandlers({', 'registerUsageRatesHandlers({')
-    const presenceCheck = handlers.indexOf('storageRootMentionsRootChat(storageRoot, chatId)')
-    const unavailableError = handlers.indexOf(
-      'Execution-graph history authority is unavailable; chat deletion was stopped.'
+    const deletion = between(
+      'const clearExecutionGraphForHistoryPreparation =',
+      'const broadHistoryDeletionCoordinator ='
+    )
+    const presenceCheck = deletion.indexOf(
+      'ExecutionGraphRepository.storageRootMentionsRootChat(storageRoot, target.chatId)'
+    )
+    const unavailableError = deletion.indexOf(
+      'Execution-graph chat history could not be quiesced during recovery.'
     )
 
     expect(presenceCheck).toBeGreaterThanOrEqual(0)
     expect(unavailableError).toBeGreaterThan(presenceCheck)
-    expect(handlers).toContain('storageRootMentionsWorkspace(storageRoot, workspaceId)')
+    expect(deletion).toContain('ExecutionGraphRepository.storageRootMentionsWorkspace(')
   })
 
   it('keeps graph diagnostics available across initialization and recovery failures', () => {
@@ -91,8 +100,8 @@ describe('execution graph main integration', () => {
     expect(initialization).toContain("code: 'initialization_failed'")
 
     const recovery = between(
-      'const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()',
-      'if (!scheduledOccurrenceRecoveryBlockedReason) {'
+      'if (!historyDeletionStartupRecoveryBlockedReason) {\n      const startupRecoveryRecords',
+      'AppStore.recoverInterruptedScheduledTasksAfterStartup()'
     )
     expect(recovery).toContain(
       'executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []'
@@ -136,18 +145,29 @@ describe('execution graph main integration', () => {
     )
 
     expect(transcript).toContain('prompt: args.entry.payload.prompt')
+    const adapterDispatch = dispatcher.indexOf('const result = await runCoordinator.dispatch(')
+    expect(adapterDispatch).toBeGreaterThanOrEqual(0)
     expect(dispatcher.indexOf('graphOwnedComposerInput(appRunId)')).toBeLessThan(
-      dispatcher.indexOf('runCoordinator.dispatch(entry.payload')
+      adapterDispatch
     )
   })
 
-  it('waits for provider exit and a committed receipt before confirming graph cancellation', () => {
+  it('defers eager terminal projection for graph attempts and every tracked exact transport', () => {
     const cancellation = between(
       'async function terminateExactProviderSession',
       'async function cancelProviderRun'
     )
 
-    expect(cancellation).toContain('if (!graphOwnedAttempt) runManager.finish')
+    expect(cancellation).toContain(
+      'const graphOwnedAttempt = executionGraphOwnsAttemptRunId(runId)'
+    )
+    expect(cancellation).toContain('const deferEagerTerminalization =')
+    expect(cancellation).toContain('shouldDeferEagerProviderTerminalization({')
+    expect(cancellation).toContain(
+      'exactTransportOperationTracked: Boolean(providerTransportOperations.get(runId))'
+    )
+    expect(cancellation).toContain('if (!deferEagerTerminalization) {')
+    expect(cancellation).toContain('runManager.finish(runId, terminalStatus)')
     expect(cancellation).toContain('hasCommittedExecutionGraphTerminalReceipt')
     expect(cancellation).toContain('runManager.onChange')
     expect(cancellation).toContain('setTimeout(() => finish(false), 15_000)')
@@ -243,7 +263,7 @@ describe('execution graph main integration', () => {
 
   it('admits the exact main-owned MCP profile prompt normalization', () => {
     const admission = between(
-      'authorizeBeforeAdapterRun: (payload) => {',
+      'authorizeBeforeAdapterRun: (payload, reservation) => {',
       'runAdapter: async (adapter, event, payload) => {'
     )
 

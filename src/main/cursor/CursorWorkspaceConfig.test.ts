@@ -52,11 +52,18 @@ describe('cursorWriteModeSetupFailureMessage', () => {
 })
 
 // In-memory fake fs implementing the injected surface.
-function makeFakeFs(initial: Record<string, string> = {}) {
+function makeFakeFs(initial: Record<string, string> = {}, symlinks: readonly string[] = []) {
   const files = new Map<string, string>(Object.entries(initial))
   const dirs = new Set<string>()
+  const links = new Set(symlinks)
   const fs: CursorConfigFs = {
-    existsSync: (p) => files.has(p) || dirs.has(p),
+    existsSync: (p) => files.has(p) || dirs.has(p) || links.has(p),
+    lstatSync: (p) => {
+      if (!files.has(p) && !dirs.has(p) && !links.has(p)) {
+        throw Object.assign(new Error('ENOENT'), { code: 'ENOENT' })
+      }
+      return { isSymbolicLink: () => links.has(p) }
+    },
     readFileSync: (p) => {
       const v = files.get(p)
       if (v == null) throw new Error('ENOENT')
@@ -71,9 +78,10 @@ function makeFakeFs(initial: Record<string, string> = {}) {
     rmSync: (p) => {
       files.delete(p)
       dirs.delete(p)
+      links.delete(p)
     }
   }
-  return { fs, files, dirs }
+  return { fs, files, dirs, links }
 }
 
 describe('applyCursorWriteModeConfig', () => {
@@ -216,8 +224,8 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expectTaskWraithAllowRules(cli.permissions.allow)
 
     const mcp = JSON.parse(files.get(MCP)!)
-    // Other registered servers survive; the broker + legacy alias are added.
-    expect(mcp.mcpServers.other).toEqual({ command: 'x', args: [] })
+    // Pre-existing project servers are hidden for the managed run.
+    expect(mcp.mcpServers.other).toBeUndefined()
     expectTaskWraithMcpServer(mcp)
 
     restore()
@@ -225,6 +233,46 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expect(files.get(MCP)).toBe(mcpBytes)
     // We didn't create the dir, so restore leaves it.
     expect(dirs.has(DIR)).toBe(true)
+  })
+
+  it('rolls cli.json back if the later mcp.json write fails', () => {
+    const cliBytes = '{"permissions":{"allow":[],"deny":[]}}\n'
+    const mcpBytes = '{"mcpServers":{"other":{"command":"x"}}}\n'
+    const { fs, files } = makeFakeFs({ [CONFIG]: cliBytes, [MCP]: mcpBytes })
+    fs.mkdirSync(DIR, { recursive: true })
+    const write = fs.writeFileSync.bind(fs)
+    let failMcpOnce = true
+    fs.writeFileSync = (path, data) => {
+      if (path === MCP && failMcpOnce) {
+        failMcpOnce = false
+        throw new Error('simulated mcp write failure')
+      }
+      write(path, data)
+    }
+
+    expect(() => applyCursorWriteModeConfig(fs, CONFIG, DIR, bridge())).toThrow(
+      'simulated mcp write failure'
+    )
+    expect(files.get(CONFIG)).toBe(cliBytes)
+    expect(files.get(MCP)).toBe(mcpBytes)
+  })
+
+  it('fails before mutation when an existing config cannot be snapshotted', () => {
+    const cliBytes = '{"permissions":{"allow":[],"deny":[]}}\n'
+    const mcpBytes = '{"mcpServers":{}}\n'
+    const { fs, files } = makeFakeFs({ [CONFIG]: cliBytes, [MCP]: mcpBytes })
+    fs.mkdirSync(DIR, { recursive: true })
+    const read = fs.readFileSync.bind(fs)
+    fs.readFileSync = (path, encoding) => {
+      if (path === MCP) throw new Error('simulated read failure')
+      return read(path, encoding)
+    }
+
+    expect(() => applyCursorWriteModeConfig(fs, CONFIG, DIR, bridge())).toThrow(
+      'simulated read failure'
+    )
+    expect(files.get(CONFIG)).toBe(cliBytes)
+    expect(files.get(MCP)).toBe(mcpBytes)
   })
 
   it('can register user-managed MCP servers alongside the TaskWraith bridge', () => {
@@ -282,7 +330,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     restore()
   })
 
-  it('preserves the global broker and user servers when the workspace path aliases the global registry', () => {
+  it('retains only canonical TaskWraith brokers when the workspace path aliases the global registry', () => {
     const originalBytes = `${JSON.stringify(
       {
         mcpServers: {
@@ -308,21 +356,15 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
       command: '/x/electron',
       args: ['/broker.cjs']
     })
-    expect(mcp.mcpServers.taskwraith).toEqual({
-      command: 'node',
-      args: ['/user-web.cjs']
-    })
-    expect(mcp.mcpServers.agbench).toEqual({
-      command: 'node',
-      args: ['/agbench.cjs']
-    })
+    expect(mcp.mcpServers.taskwraith).toBeUndefined()
+    expect(mcp.mcpServers.agbench).toBeUndefined()
     expect(mcp.mcpServers.user_docs).toEqual({ url: 'https://example.test/mcp' })
 
     restore()
     expect(files.get(MCP)).toBe(originalBytes)
   })
 
-  it('still strips reserved server names from ordinary workspace configs', () => {
+  it('strips every pre-existing server from ordinary workspace configs', () => {
     const { fs, files } = makeFakeFs({
       [MCP]: JSON.stringify({
         mcpServers: {
@@ -342,14 +384,26 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     const mcp = JSON.parse(files.get(MCP)!)
     expect(mcp.mcpServers['taskwraith-broker']).toBeUndefined()
     expect(mcp.mcpServers.taskwraith).toBeUndefined()
-    expect(mcp.mcpServers.other).toEqual({ command: 'user-server' })
+    expect(mcp.mcpServers.other).toBeUndefined()
     expect(mcp.mcpServers.user_docs).toEqual({ url: 'https://example.test/mcp' })
+  })
+
+  it.each([
+    ['.cursor directory', DIR],
+    ['cli.json', CONFIG],
+    ['mcp.json', MCP]
+  ])('rejects a pre-existing symlinked %s before writing', (_label, symlinkPath) => {
+    const { fs, files } = makeFakeFs({}, [symlinkPath])
+
+    expect(() => applyCursorWriteModeConfig(fs, CONFIG, DIR, bridge())).toThrow(/symlinked/)
+    expect(files.has(CONFIG)).toBe(false)
+    expect(files.has(MCP)).toBe(false)
   })
 
   it('allowRules-only setup writes cli.json allow + deny but NO mcp.json', () => {
     const { fs, files } = makeFakeFs()
     // No mcpConfigPath / serverEntry — helper still supports callers that only
-    // need cli.json permission merging.
+    // need cli.json permission merging and no transient registry.
     const restore = applyCursorWriteModeConfig(fs, CONFIG, DIR, {
       allowRules: CURSOR_MCP_ALLOW_RULES
     })
@@ -358,7 +412,7 @@ describe('applyCursorWriteModeConfig with the TaskWraith MCP bridge', () => {
     expect(cli.permissions.deny).toContain('Shell(**)')
     expect(cli.permissions.deny).toContain('Write(**)')
     expectTaskWraithAllowRules(cli.permissions.allow)
-    // The per-run workspace mcp.json must NOT be written in B mode.
+    // Without both registry inputs, no workspace mcp.json is written.
     expect(files.has(MCP)).toBe(false)
 
     restore()
@@ -430,5 +484,17 @@ describe('ensureGlobalCursorBrokerRegistered (B mode)', () => {
     expect(cfg.mcpServers['taskwraith-cursor']).toBeUndefined()
     expect(cfg.mcpServers.taskwraith).toEqual({ command: 'node', args: ['/user-web.cjs'] })
     expect(cfg.mcpServers['taskwraith-broker']).toBeDefined()
+  })
+
+  it.each([
+    ['global .cursor directory', GLOBAL_DIR],
+    ['global mcp.json', GLOBAL_MCP]
+  ])('rejects a symlinked %s before durable broker registration', (_label, symlinkPath) => {
+    const { fs, files } = makeFakeFs({}, [symlinkPath])
+
+    expect(() =>
+      ensureGlobalCursorBrokerRegistered(fs, GLOBAL_MCP, GLOBAL_DIR, brokerOnly)
+    ).toThrow(/symlinked/)
+    expect(files.has(GLOBAL_MCP)).toBe(false)
   })
 })

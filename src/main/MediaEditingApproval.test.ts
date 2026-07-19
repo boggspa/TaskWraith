@@ -216,11 +216,10 @@ describe('mediaEditing approval service', () => {
   })
 
   // FIX 1 regression guard (F1 review finding) — the Gemini + Grok MCP service
-  // classifier (`previewForGeminiMcpTool`, gate sites in index.ts) must classify
+  // classifier (`McpToolApprovalPreview.ts`, with gate sites in index.ts) must classify
   // media tools as `mediaEditing` on BOTH provider paths, not `fileChanges`
-  // (ffmpeg/audio) or `mcpTools` (the native VtTools). previewForGeminiMcpTool is
-  // unexported and lives in the Electron app entrypoint (index.ts), so we mirror the
-  // EXACT predicate its media branch uses — `MEDIA_EDITING_TOOLS.has(toolName)` over
+  // (ffmpeg/audio) or `mcpTools` (the native VtTools). We mirror the EXACT predicate
+  // the extracted preview builder uses — `MEDIA_EDITING_TOOLS.has(toolName)` over
   // the bare TaskWraith tool name, with no provider-specific logic — the same way
   // this file already re-derives the unexported Claude classifier. If a tool were
   // dropped from the shared set, both the real branch and this mirror change in

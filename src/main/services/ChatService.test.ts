@@ -231,6 +231,66 @@ function makeDeps(overrides: Partial<ChatServiceDeps> = {}): {
   return { deps, store: deps.appStore }
 }
 
+describe('ChatService.clearChats external history', () => {
+  it('prepares and releases the matching global or workspace history-clear scope', async () => {
+    const clearExternalChatHistory = vi.fn()
+    const finishExternalChatHistoryClear = vi.fn()
+    const { deps, store } = makeDeps({
+      clearExternalChatHistory,
+      finishExternalChatHistoryClear
+    })
+    const service = new ChatService(deps)
+
+    await service.clearChats('workspace-1')
+    expect(store.clearChats).toHaveBeenCalledWith('workspace-1')
+    expect(clearExternalChatHistory).toHaveBeenCalledWith('workspace-1')
+    expect(finishExternalChatHistoryClear).toHaveBeenCalledWith('workspace-1')
+
+    await service.clearChats()
+    expect(store.clearChats).toHaveBeenCalledWith(undefined)
+    expect(clearExternalChatHistory).toHaveBeenCalledWith(undefined)
+    expect(finishExternalChatHistoryClear).toHaveBeenCalledWith(undefined)
+  })
+
+  it('awaits external history teardown before the durable chat clear', async () => {
+    let release!: () => void
+    const externalClear = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const { deps, store } = makeDeps({
+      clearExternalChatHistory: vi.fn(() => externalClear)
+    })
+    const service = new ChatService(deps)
+
+    const clearing = service.clearChats()
+    await Promise.resolve()
+    expect(store.clearChats).not.toHaveBeenCalled()
+    release()
+    await clearing
+    expect(store.clearChats).toHaveBeenCalledOnce()
+  })
+
+  it('supports a separate prepare/commit clear transaction without repeating teardown', async () => {
+    const clearExternalChatHistory = vi.fn()
+    const finishExternalChatHistoryClear = vi.fn()
+    const { deps, store } = makeDeps({
+      clearExternalChatHistory,
+      finishExternalChatHistoryClear
+    })
+    const service = new ChatService(deps)
+
+    await service.prepareClearChats()
+    expect(clearExternalChatHistory).toHaveBeenCalledOnce()
+    expect(store.clearChats).not.toHaveBeenCalled()
+
+    service.commitClearChats()
+    service.finishClearChats()
+    expect(store.clearChats).toHaveBeenCalledWith(undefined)
+    expect(clearExternalChatHistory).toHaveBeenCalledOnce()
+    expect(finishExternalChatHistoryClear).toHaveBeenCalledOnce()
+  })
+})
+
 describe('ChatService', () => {
   it('forwards getChats workspace filters to the store', () => {
     const { deps, store } = makeDeps()
@@ -286,6 +346,118 @@ describe('ChatService', () => {
     service.saveChat(makeChat({ title: '  Needs trim  ' }))
     expect(deps.sanitizeChatForSave).toHaveBeenCalledTimes(1)
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
+  })
+
+  it('rejects changing a live chat to a historical provider through saveChat', () => {
+    const current = makeChat({ provider: 'claude' })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    expect(() =>
+      new ChatService(deps).saveChat({
+        ...current,
+        provider: 'cursor'
+      })
+    ).toThrow('cursor is unavailable for new chats or delegated runs.')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('allows an unchanged historical provider record to round-trip for decode and display', () => {
+    const current = makeChat({ provider: 'cursor', title: 'Historical Cursor chat' })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      title: '  Renamed historical chat  '
+    })
+
+    expect(saved).toMatchObject({ provider: 'cursor', title: 'Renamed historical chat' })
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
+  })
+
+  it('rejects adding a historical provider to an existing ensemble roster', () => {
+    const current = makeChat({
+      provider: 'claude',
+      chatKind: 'ensemble',
+      ensemble: {
+        enabled: true,
+        maxParticipants: 20,
+        participants: [
+          {
+            id: 'seat-claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Lead',
+            instructions: '',
+            order: 0
+          }
+        ]
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    expect(() =>
+      new ChatService(deps).saveChat({
+        ...current,
+        ensemble: {
+          ...current.ensemble!,
+          participants: [
+            ...current.ensemble!.participants,
+            {
+              id: 'seat-cursor',
+              provider: 'cursor',
+              enabled: true,
+              role: 'Reviewer',
+              instructions: '',
+              order: 1
+            }
+          ]
+        }
+      })
+    ).toThrow('cursor is unavailable for new chats or delegated runs.')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('rejects newly queued provider changes to historical providers', () => {
+    const current = makeChat({ provider: 'claude', providerMetadata: {} })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    expect(() =>
+      new ChatService(deps).saveChat({
+        ...current,
+        providerMetadata: {
+          pendingProviderChange: {
+            provider: 'cursor',
+            queuedAt: '2026-07-19T00:00:00.000Z'
+          }
+        }
+      })
+    ).toThrow('cursor is unavailable for new chats or delegated runs.')
+    expect(store.saveChat).not.toHaveBeenCalled()
+  })
+
+  it('clears canonical historical pending-provider control state on save', () => {
+    const current = makeChat({
+      provider: 'claude',
+      providerMetadata: {
+        retainedSetting: true,
+        pendingProviderChange: {
+          provider: 'cursor',
+          queuedAt: '2026-07-18T00:00:00.000Z'
+        }
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({ ...current, title: 'Still live' })
+
+    expect(saved.provider).toBe('claude')
+    expect(saved.providerMetadata).toEqual({ retainedSetting: true })
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
   it('rejects a stale full-record save after canonical transcript, run, and config advances', () => {
@@ -1667,6 +1839,7 @@ describe('ChatService', () => {
     const events: string[] = []
     const parent = makeChat({
       appChatId: 'chat-1',
+      provider: 'codex',
       messages: [
         {
           id: 'msg-1',

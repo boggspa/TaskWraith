@@ -7,6 +7,7 @@ export interface AgenticWorkspaceGrantHandlerDeps {
   permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
   getSettings: () => AppSettings
   assertProviderId: (provider: ProviderId) => ProviderId
+  assertLiveProviderId: (provider: ProviderId) => ProviderId
   requireNonEmptyString: (value: string, label: string) => string
   assertAgenticServiceId: (service: AgenticServiceId) => AgenticServiceId
   assertSenderCanManageAgenticWorkspaceGrants: (
@@ -21,7 +22,7 @@ export function registerAgenticWorkspaceGrantHandlers(
   ipcMain.handle(
     'upsert-agentic-workspace-grant',
     (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
-      const validatedProvider = deps.assertProviderId(provider)
+      const validatedProvider = deps.assertLiveProviderId(provider)
       const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
       const validatedService = deps.assertAgenticServiceId(service)
       const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(

@@ -47,20 +47,36 @@ export interface RunCoordinatorDeps {
    * sender). Currently `ensureProviderRunPreflight`. */
   ensureProviderRunPreflight: (
     sender: Electron.WebContents,
-    payload: AgentRunPayload
+    payload: AgentRunPayload,
+    reservation?: object
   ) => Promise<boolean>
   /** Materialize an explicit, signed Project reference context after all
    * preflight checks and immediately before provider dispatch. */
   captureReferenceContext?: (payload: AgentRunPayload) => void | Promise<void>
+  /** Revalidate the immutable outer dispatch token immediately before any
+   * history-owned Project reference bytes/events are materialized. */
+  authorizeBeforeReferenceCapture?: (
+    payload: AgentRunPayload,
+    reservation?: object
+  ) => void | Promise<void>
   /** Register context identity without reading it so approvals raised by
    * preflight can be linked after materialization. */
   prepareReferenceContext?: (payload: AgentRunPayload) => void
+  /** Freeze main-owned durable chat authority at the outer dispatch boundary,
+   * before normalization or any preflight work can await. Facade callers pass
+   * their already-reserved token into `dispatch`; direct callers reserve here. */
+  reserveDispatch?: (payload: AgentRunPayload) => object
   /**
    * Last main-owned admission gate before an adapter can observe the payload.
    * Execution-graph runs use this to re-check their exact durable lease after
    * normalization, runtime-profile application, preflight, and context capture.
    */
-  authorizeBeforeAdapterRun?: (payload: AgentRunPayload) => void | Promise<void>
+  authorizeBeforeAdapterRun?: (
+    payload: AgentRunPayload,
+    reservation?: object
+  ) => void | Promise<void>
+  /** Always release a reservation after preflight/dispatch settles. */
+  releaseDispatchReservation?: (reservation: object) => void
   /** Optional main-owned adapter invocation context for provenance fencing. */
   runAdapter?: (
     adapter: ProviderAdapter,
@@ -76,7 +92,8 @@ export interface RunCoordinatorDeps {
     sender: Electron.WebContents,
     provider: ProviderId,
     message: string,
-    route: AgentRunRoute
+    route: AgentRunRoute,
+    reservation?: object
   ) => void
   /** Report a per-run exit (process termination, dispatch abort,
    * etc.) to the sender. Currently `sendAgentCompatExit`. */
@@ -84,7 +101,8 @@ export interface RunCoordinatorDeps {
     sender: Electron.WebContents,
     provider: ProviderId,
     exitCode: number,
-    route: AgentRunRoute
+    route: AgentRunRoute,
+    reservation?: object
   ) => void
 }
 
@@ -132,49 +150,108 @@ export class RunCoordinator {
    * resolution and adapter runtime failures intentionally propagate so
    * non-IPC callers such as `delegate_to_subthread` can surface the
    * failed child-run dispatch instead of leaving a sub-thread pending. */
-  async dispatch(payload: AgentRunPayload, event: RunDispatchEvent): Promise<DispatchResult> {
-    const normalizedPayload = this.deps.normalizePayload(payload)
-    normalizedPayload.appRunId = this.deps.routeWithRunId(
-      normalizedPayload.provider,
-      normalizedPayload
-    ).appRunId
+  async dispatch(
+    payload: AgentRunPayload,
+    event: RunDispatchEvent,
+    outerDispatchReservation?: object
+  ): Promise<DispatchResult> {
+    const ownsDispatchReservation = outerDispatchReservation === undefined
+    const dispatchReservation =
+      outerDispatchReservation ?? this.deps.reserveDispatch?.(payload)
     try {
-      this.deps.applyRuntimeProfileToPayload(normalizedPayload)
-    } catch (error) {
-      const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
-      const message = error instanceof Error ? error.message : String(error)
-      this.deps.sendError(event.sender, normalizedPayload.provider, message, route)
-      this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
-      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+      const normalizedPayload = this.deps.normalizePayload(payload)
+      normalizedPayload.appRunId = this.deps.routeWithRunId(
+        normalizedPayload.provider,
+        normalizedPayload
+      ).appRunId
+      try {
+        this.deps.applyRuntimeProfileToPayload(normalizedPayload)
+      } catch (error) {
+        const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+        const message = error instanceof Error ? error.message : String(error)
+        this.deps.sendError(
+          event.sender,
+          normalizedPayload.provider,
+          message,
+          route,
+          dispatchReservation
+        )
+        this.deps.sendExit(
+          event.sender,
+          normalizedPayload.provider,
+          -1,
+          route,
+          dispatchReservation
+        )
+        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+      }
+      const adapter = this.deps.getAdapter(normalizedPayload.provider)
+      try {
+        this.deps.prepareReferenceContext?.(normalizedPayload)
+      } catch (error) {
+        const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+        const message = error instanceof Error ? error.message : String(error)
+        this.deps.sendError(
+          event.sender,
+          normalizedPayload.provider,
+          message,
+          route,
+          dispatchReservation
+        )
+        this.deps.sendExit(
+          event.sender,
+          normalizedPayload.provider,
+          -1,
+          route,
+          dispatchReservation
+        )
+        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+      }
+      if (
+        !(await this.deps.ensureProviderRunPreflight(
+          event.sender,
+          normalizedPayload,
+          dispatchReservation
+        ))
+      ) {
+        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+      }
+      try {
+        await this.deps.authorizeBeforeReferenceCapture?.(
+          normalizedPayload,
+          dispatchReservation
+        )
+        await this.deps.captureReferenceContext?.(normalizedPayload)
+      } catch (error) {
+        const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+        const message = error instanceof Error ? error.message : String(error)
+        this.deps.sendError(
+          event.sender,
+          normalizedPayload.provider,
+          message,
+          route,
+          dispatchReservation
+        )
+        this.deps.sendExit(
+          event.sender,
+          normalizedPayload.provider,
+          -1,
+          route,
+          dispatchReservation
+        )
+        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+      }
+      await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload, dispatchReservation)
+      if (this.deps.runAdapter) {
+        await this.deps.runAdapter(adapter, event, normalizedPayload)
+      } else {
+        await adapter.run({ event, payload: normalizedPayload })
+      }
+      return { dispatched: true, appRunId: normalizedPayload.appRunId ?? '' }
+    } finally {
+      if (ownsDispatchReservation && dispatchReservation) {
+        this.deps.releaseDispatchReservation?.(dispatchReservation)
+      }
     }
-    const adapter = this.deps.getAdapter(normalizedPayload.provider)
-    try {
-      this.deps.prepareReferenceContext?.(normalizedPayload)
-    } catch (error) {
-      const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
-      const message = error instanceof Error ? error.message : String(error)
-      this.deps.sendError(event.sender, normalizedPayload.provider, message, route)
-      this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
-      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
-    }
-    if (!(await this.deps.ensureProviderRunPreflight(event.sender, normalizedPayload))) {
-      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
-    }
-    try {
-      await this.deps.captureReferenceContext?.(normalizedPayload)
-    } catch (error) {
-      const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
-      const message = error instanceof Error ? error.message : String(error)
-      this.deps.sendError(event.sender, normalizedPayload.provider, message, route)
-      this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route)
-      return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
-    }
-    await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload)
-    if (this.deps.runAdapter) {
-      await this.deps.runAdapter(adapter, event, normalizedPayload)
-    } else {
-      await adapter.run({ event, payload: normalizedPayload })
-    }
-    return { dispatched: true, appRunId: normalizedPayload.appRunId ?? '' }
   }
 }

@@ -172,8 +172,23 @@ export interface CanvasEvalResult {
   title?: string
 }
 
+/** Content-minimised proof binding an approved script to one execution. */
+export interface CanvasEvalApprovalReceipt {
+  schemaVersion: 2
+  approvalId: string
+  /** SHA-256 over the exact JavaScript UTF-16 code units encoded little-endian. */
+  scriptHashAlgorithm: 'sha256-utf16le'
+  scriptHash: string
+  /** JavaScript UTF-16 code-unit length (`String#length`). */
+  scriptLength: number
+  /** UTF-8 encoded byte length. */
+  scriptByteLength: number
+}
+
 /** Max chars of a stringified eval result returned to the model (and never logged). */
 export const CANVAS_EVAL_VALUE_CAP = 8000
+/** Reviewability ceiling for one signed-elevated script (UTF-16 code units). */
+export const CANVAS_EVAL_SCRIPT_CAP = 16_384
 
 /** A Set-of-Mark annotation cell — agent→human redline by ref or explicit bbox. */
 export interface CanvasMark {
@@ -232,6 +247,10 @@ export interface CanvasAnnotation {
   schemaVersion: 1
   id: string
   canvasId: string
+  /** Durable main-owned authority so scoped purge never depends on capped history. */
+  chatId?: string
+  workspacePath?: string
+  runId?: string
   marks: CanvasMark[]
   author: 'agent' | 'human'
   createdAt: string
@@ -339,6 +358,8 @@ export type CanvasEventKind =
   | 'sketch.read'
   | 'sketch.update'
   | 'eval'
+  | 'eval.started'
+  | 'eval.completed'
   | 'reload'
 
 /**
@@ -353,7 +374,9 @@ export interface CanvasEventRecord {
   kind: CanvasEventKind
   provider?: string
   chatId?: string
+  workspacePath?: string
   runId?: string
+  approvalId?: string
   detail?: Record<string, unknown>
   createdAt: string
 }
@@ -416,6 +439,8 @@ export interface CanvasCallContext {
   chatId?: string
   runId?: string
   workspacePath?: string
+  /** Required by CanvasService for the signed-elevated canvas_eval verb. */
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
 }
 
 // ---------------------------------------------------------------------------

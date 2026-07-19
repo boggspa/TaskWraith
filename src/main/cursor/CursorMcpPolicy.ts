@@ -1,6 +1,9 @@
 import type { UserMcpLaunchServer } from '../UserMcpServers'
 import type { EffectiveRunPermissions } from '../store/types'
 
+// Historical/qualification-only policy helpers. Production starts no managed
+// Cursor process; these functions do not establish an admissible runtime mode.
+
 type CursorEffectivePermissions = Pick<EffectiveRunPermissions, 'agenticServices'>
 
 /**
@@ -14,7 +17,7 @@ export function cursorMcpToolsDenied(
   return effectivePermissions?.agenticServices?.mcpTools === 'deny'
 }
 
-/** Cursor has no independently contained native write transport. */
+/** Historical write-path invariant; production Cursor is unconditionally disabled. */
 export function assertCursorWriteMcpPosture(
   writeCapable: boolean,
   effectivePermissions: CursorEffectivePermissions | null | undefined

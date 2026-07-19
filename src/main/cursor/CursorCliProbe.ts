@@ -1,19 +1,19 @@
 // Pure, dependency-injected probe for the Cursor Agent CLI (`cursor-agent`).
 //
 // Kept free of Electron / fs / child_process imports so the parsers are
-// directly unit-testable and the orchestrator can run against injected fakes
-// (no real process spawned in tests). The real app wires `resolveBinary` to
-// resolveCliProviderBinary('cursor') and `capture` to captureProcessOutput.
+// directly unit-testable and a future qualification harness can run against
+// injected fakes. No production caller wires this probe.
 //
-// READ-ONLY by construction: only `--version` / `--help` / `status` / `models`
-// probes. It NEVER runs a prompt (`-p`), never passes `--force`/`--yolo`, never
-// mutates global `~/.cursor`, and never reads credential files. This is the CR0
-// foundation for the gated Cursor provider arc.
+// `status` / `models` may observe provider-managed account state, so any future
+// live caller must use a fresh unauthenticated HOME/config/data root and exact
+// build allowlist. Production must not call this helper.
 //
-// CR3 live spike confirmed the load-bearing safety facts encoded here: a bare
-// `cursor-agent -p` writes files/runs shell UNMEDIATED, so production must
-// always pass `--mode plan` (read-only) or a workspace-local deny-list (write).
-// The probe touches none of that — it is inert.
+// CR3 first confirmed that bare `cursor-agent -p` writes/runs shell unmediated.
+// A later exact-build review found that authenticated startup can also preload
+// account/team hooks, skills, plugins, and MCP before a turn despite Plan mode
+// and local isolation flags. Production therefore starts no Cursor prompt
+// process. This unauthenticated/private-root probe remains inert inventory, not
+// containment evidence.
 
 export interface CursorModel {
   id: string
@@ -32,7 +32,7 @@ export interface CursorProbeFindings {
   subcommands: string[]
   /** Full `cursor-agent models` list (empty when logged out). */
   models: CursorModel[]
-  /** TaskWraith-exposed Cursor ids: Composer 2.5 plus Cursor Grok 4.5 variants. */
+  /** Cursor-reported compatibility ids retained for inventory/history surfaces. */
   composerModelIds: string[]
   errors: string[]
 }
@@ -60,10 +60,9 @@ export interface CursorProbeDeps {
 }
 
 /**
- * The canonical Cursor model ids TaskWraith ships (confirmed live via
- * `cursor-agent models`). Most Cursor-proxied models belong to their native
- * providers; Cursor Grok 4.5 is included because Cursor exposes it in the
- * first-party included model pool with its own reasoning/fast variants.
+ * Cursor model ids retained for configuration/inventory compatibility
+ * (historically confirmed via `cursor-agent models`). They do not imply that
+ * source-ahead TaskWraith can start a managed Cursor run.
  */
 export const CURSOR_COMPOSER_MODELS: readonly CursorModel[] = [
   { id: 'composer-2.5', label: 'Composer 2.5' },

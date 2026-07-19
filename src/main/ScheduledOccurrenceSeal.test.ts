@@ -450,19 +450,6 @@ function claudeCliReadOnlyPlan(): ProviderLaunchAuthorityInputByProvider['claude
   }
 }
 
-function kimiCliReadOnlyPlan(): ProviderLaunchAuthorityInputByProvider['kimi'] {
-  const plan = providerLaunchPlan('kimi') as ProviderLaunchAuthorityInputByProvider['kimi']
-  return {
-    ...plan,
-    controls: {
-      ...plan.controls,
-      transport: 'cli-print',
-      wireProtocolVersion: null,
-      planMode: true
-    }
-  }
-}
-
 function codexLaunchPlan(
   controls: Partial<ProviderLaunchAuthorityInputByProvider['codex']['controls']>,
   options: { advertiseTaskWraithMcp?: boolean } = {}
@@ -2015,9 +2002,7 @@ describe('runtime launch and loop verifier authority', () => {
     for (const provider of [
       'codex',
       'claude',
-      'kimi',
       'grok',
-      'cursor',
       'ollama'
     ] as const) {
       const scheduled = task({
@@ -2045,13 +2030,14 @@ describe('runtime launch and loop verifier authority', () => {
 
   it('accepts the exact read-only transport controls used by each provider path', () => {
     const cases: Array<
-      [Exclude<ProviderId, 'gemini' | 'grok' | 'cursor' | 'ollama'>, ProviderLaunchAuthorityInput]
+      [
+        Exclude<ProviderId, 'gemini' | 'kimi' | 'grok' | 'cursor' | 'ollama'>,
+        ProviderLaunchAuthorityInput
+      ]
     > = [
       ['codex', providerLaunchPlan('codex')],
       ['claude', providerLaunchPlan('claude')],
-      ['claude', claudeCliReadOnlyPlan()],
-      ['kimi', providerLaunchPlan('kimi')],
-      ['kimi', kimiCliReadOnlyPlan()]
+      ['claude', claudeCliReadOnlyPlan()]
     ]
     for (const [provider, providerLaunchAuthority] of cases) {
       const scheduled = task({
@@ -2318,68 +2304,41 @@ describe('runtime launch and loop verifier authority', () => {
     ).toMatchObject({ schemaVersion: 2 })
   })
 
-  it('maps Cursor read-only, plan, and write postures to exact bridge tiers', () => {
-    const readOnly = effectivePermissions()
-    const plan = effectivePermissions({ presetId: 'plan' })
-    const write = effectivePermissions({
-      presetId: 'workspace_write',
-      approvalMode: 'default',
-      readOnly: false
+  it('rejects every Cursor scheduled posture before launch authority is minted', () => {
+    const permissions = effectivePermissions()
+    const scheduled = task({
+      provider: 'cursor',
+      runtimeProfileId: undefined,
+      selectedModelType: 'cursor-model'
     })
-    const accepted: Array<
-      [EffectiveRunPermissions, ProviderLaunchAuthorityInputByProvider['cursor']]
-    > = [
-      [readOnly, cursorBridgePlan('safe-subset')],
-      [readOnly, cursorBridgePlan('none')],
-      [plan, cursorBridgePlan('plan-subset')],
-      [plan, cursorBridgePlan('none')],
-      [write, cursorBridgePlan('full')]
-    ]
-    for (const [permissions, launch] of accepted) {
-      const scheduled = task({
-        provider: 'cursor',
-        runtimeProfileId: undefined,
-        selectedModelType: 'cursor-model',
-        approvalMode: permissions.approvalMode,
-        permissionPresetId: permissions.presetId
-      })
-      expect(
-        mintScheduledOccurrenceSeal(
-          ROOT,
-          context(scheduled, {
-            runtimeSeats: [defaultSeatForPermissions('cursor', permissions, launch)]
-          }),
-          now
-        )
-      ).toMatchObject({ schemaVersion: 2 })
-    }
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [
+            defaultSeatForPermissions('cursor', permissions, cursorBridgePlan('none'))
+          ]
+        }),
+        now
+      )
+    ).toThrow(/scheduled task provider is unavailable/i)
+  })
 
-    const rejected: Array<
-      [EffectiveRunPermissions, ProviderLaunchAuthorityInputByProvider['cursor']]
-    > = [
-      [readOnly, cursorBridgePlan('plan-subset')],
-      [plan, cursorBridgePlan('safe-subset')],
-      [write, cursorBridgePlan('safe-subset')],
-      [readOnly, cursorBridgePlan('safe-subset', 'plan')]
-    ]
-    for (const [permissions, launch] of rejected) {
-      const scheduled = task({
-        provider: 'cursor',
-        runtimeProfileId: undefined,
-        selectedModelType: 'cursor-model',
-        approvalMode: permissions.approvalMode,
-        permissionPresetId: permissions.presetId
-      })
-      expect(() =>
-        mintScheduledOccurrenceSeal(
-          ROOT,
-          context(scheduled, {
-            runtimeSeats: [defaultSeatForPermissions('cursor', permissions, launch)]
-          }),
-          now
-        )
-      ).toThrow(/bridge mode does not match|execution mode does not match/i)
-    }
+  it('rejects Kimi scheduled posture until the seal binds ACP production containment', () => {
+    const scheduled = task({
+      provider: 'kimi',
+      runtimeProfileId: undefined,
+      selectedModelType: 'kimi-model'
+    })
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [defaultSeat('kimi')]
+        }),
+        now
+      )
+    ).toThrow(/unavailable for sealed scheduled execution.*Kimi ACP runtime admission/i)
   })
 
   it('uses a canonical Ollama HTTP marker and rejects selected CLI-style overrides', () => {

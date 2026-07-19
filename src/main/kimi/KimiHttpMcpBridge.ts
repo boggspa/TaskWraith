@@ -18,13 +18,14 @@
 
 import http from 'http'
 import { randomBytes, randomUUID } from 'crypto'
+import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
 
 export interface KimiHttpMcpBridgeOptions {
   /**
    * Dispatch one inbound MCP JSON-RPC message and resolve its response object,
    * or null for a notification (no reply). Must not throw for a normal error —
    * return a JSON-RPC error object instead; a thrown error is turned into a
-   * generic -32000 response by the server.
+   * generic -32603 response by the server.
    */
   dispatch: (message: Record<string, unknown>) => Promise<Record<string, unknown> | null>
   /** Max request body bytes (defensive). Default 8 MiB. */
@@ -60,7 +61,7 @@ export async function startKimiHttpMcpBridge(
     void handleRequest(req, res).catch(() => {
       if (!res.headersSent) {
         res.writeHead(500, { 'Content-Type': 'application/json' })
-        res.end(JSON.stringify({ jsonrpc: '2.0', id: null, error: { code: -32000, message: 'internal error' } }))
+        res.end(JSON.stringify(mcpUnexpectedInternalError(null)))
       }
     })
   })
@@ -111,12 +112,8 @@ export async function startKimiHttpMcpBridge(
     let response: Record<string, unknown> | null
     try {
       response = await options.dispatch(message)
-    } catch (error) {
-      response = {
-        jsonrpc: '2.0',
-        id: message.id ?? null,
-        error: { code: -32000, message: error instanceof Error ? error.message : String(error) }
-      }
+    } catch {
+      response = mcpUnexpectedInternalError(message.id)
     }
 
     const headers: Record<string, string> = { 'Content-Type': 'application/json' }

@@ -150,9 +150,13 @@ describe('RendererIpcPolicy', () => {
     expect(preload).toContain("window.addEventListener(\n  'paste'")
     expect(preload).toContain('if (!event.isTrusted) return')
     expect(preload).toContain("ipcRenderer.send('authorize-clipboard-paste-intent', token)")
-    expect(preload).toContain("ipcRenderer.invoke('save-clipboard-image-attachment', intent.token)")
+    expect(preload).toContain(
+      "ipcRenderer.invoke('save-clipboard-image-attachment', appChatId, intent.token)"
+    )
     expect(main).toContain("ipcMain.on('authorize-clipboard-paste-intent'")
     expect(main).toContain('saveClipboardImageFromTrustedPaste({')
+    expect(main).toContain('assetStore: getTranscriptMediaAssetStore()')
+    expect(main).not.toContain('taskwraith-paste-')
   })
 
   it('keeps sandboxed preload code free of unsupported Node crypto/util imports', () => {

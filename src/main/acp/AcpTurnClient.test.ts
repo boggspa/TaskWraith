@@ -5,6 +5,7 @@ import type { AcpRunEvent } from './AcpProtocol'
 class FakeAcpChild implements AcpChildProcess {
   writes: string[] = []
   killed = false
+  autoCloseOnKill = true
   private dataListeners: ((chunk: string) => void)[] = []
   private closeListener?: (code: number | null) => void
   private errorListener?: (err: Error) => void
@@ -35,7 +36,7 @@ class FakeAcpChild implements AcpChildProcess {
   }
   kill(_signal?: string): void {
     this.killed = true
-    this.closeListener?.(0)
+    if (this.autoCloseOnKill) this.closeListener?.(0)
   }
   emit(message: unknown): void {
     const line = `${JSON.stringify(message)}\n`
@@ -46,6 +47,9 @@ class FakeAcpChild implements AcpChildProcess {
   }
   fail(err: Error): void {
     this.errorListener?.(err)
+  }
+  finish(code: number | null): void {
+    this.closeListener?.(code)
   }
 }
 
@@ -69,6 +73,42 @@ const baseOptions = (
 }
 
 describe('runAcpTurn — neutral core', () => {
+  it('keeps closed pending through real child close and async terminal cleanup', async () => {
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    let releaseCleanup!: () => void
+    let cleanupStarted = false
+    const cleanup = new Promise<void>((resolve) => {
+      releaseCleanup = resolve
+    })
+    const { handle } = baseOptions(child, {
+      onClose: async () => {
+        cleanupStarted = true
+        await cleanup
+      }
+    })
+    let closeSettled = false
+    void handle.closed.then(() => {
+      closeSettled = true
+    })
+
+    handle.cancel()
+    await Promise.resolve()
+    expect(child.killed).toBe(true)
+    expect(cleanupStarted).toBe(false)
+    expect(closeSettled).toBe(false)
+
+    child.finish(0)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(cleanupStarted).toBe(true)
+    expect(closeSettled).toBe(false)
+
+    releaseCleanup()
+    await handle.closed
+    expect(closeSettled).toBe(true)
+  })
+
   it('sends the caller-supplied initialize capabilities verbatim', () => {
     const child = new FakeAcpChild()
     baseOptions(child)
@@ -77,6 +117,113 @@ describe('runAcpTurn — neutral core', () => {
       method: 'initialize',
       params: { clientCapabilities: { fs: { readTextFile: true, writeTextFile: true } } }
     })
+  })
+
+  it('waits for async spawn authority before sending initialize', async () => {
+    const child = new FakeAcpChild()
+    let releaseAuthority: (() => void) | undefined
+    baseOptions(child, {
+      beforeInitialize: () =>
+        new Promise<void>((resolve) => {
+          releaseAuthority = resolve
+        })
+    })
+
+    expect(child.sent()).toEqual([])
+    releaseAuthority?.()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(child.sent()).toHaveLength(1)
+    expect(child.sent()[0]).toMatchObject({ id: 1, method: 'initialize' })
+  })
+
+  it('keeps closed pending when cancellation overtakes beforeInitialize', async () => {
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    let releaseStartup!: () => void
+    const startup = new Promise<void>((resolve) => {
+      releaseStartup = resolve
+    })
+    const closes: Array<number | null> = []
+    const { handle } = baseOptions(child, {
+      beforeInitialize: () => startup,
+      onClose: (code) => {
+        closes.push(code)
+      }
+    })
+    let closeSettled = false
+    void handle.closed.then(() => {
+      closeSettled = true
+    })
+
+    handle.cancel()
+    child.finish(0)
+    await Promise.resolve()
+    await Promise.resolve()
+    expect(child.killed).toBe(true)
+    expect(closes).toEqual([])
+    expect(closeSettled).toBe(false)
+
+    releaseStartup()
+    await handle.closed
+    expect(closes).toEqual([0])
+    expect(closeSettled).toBe(true)
+    expect(child.sent()).toEqual([])
+  })
+
+  it('contains a throwing onProcess hook and waits for explicit child close', async () => {
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    const closes: Array<number | null> = []
+    const { events, handle } = baseOptions(child, {
+      onProcess: () => {
+        throw new Error('injected host registration failure')
+      },
+      onClose: (code) => {
+        closes.push(code)
+      }
+    })
+    let closeSettled = false
+    void handle.closed.then(() => {
+      closeSettled = true
+    })
+
+    expect(child.killed).toBe(true)
+    expect(child.sent()).toEqual([])
+    expect(closes).toEqual([])
+    expect(closeSettled).toBe(false)
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP provider process registration failed; the process was stopped before initialization.'
+    })
+
+    child.finish(0)
+    await handle.closed
+    expect(closes).toEqual([1])
+    expect(closeSettled).toBe(true)
+  })
+
+  it('stops the provider without initializing when async spawn authority fails', async () => {
+    const child = new FakeAcpChild()
+    const closes: Array<number | null> = []
+    const { events } = baseOptions(child, {
+      beforeInitialize: async () => {
+        throw new Error('private authority failure')
+      },
+      endProcess: (providerChild) => providerChild.stdin?.end?.(),
+      onClose: (code) => {
+        closes.push(code)
+      }
+    })
+
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(child.sent()).toEqual([])
+    expect(child.stdinEnded).toBe(true)
+    expect(closes).toEqual([0])
+    expect(events).toContainEqual({
+      type: 'provider_warning',
+      text: 'ACP provider startup authority could not be committed; the process was stopped.'
+    })
+    expect(JSON.stringify(events)).not.toContain('private authority failure')
   })
 
   it('resumes an advertised native session before sending the prompt', () => {
@@ -460,5 +607,51 @@ describe('runAcpTurn — neutral core', () => {
     expect(events.some((e) => e.type === 'provider_warning' && e.text === 'custom: spawn boom')).toBe(
       true
     )
+  })
+
+  it('terminates and joins process error even when warning projection throws', async () => {
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    const closes: Array<number | null> = []
+    const { handle } = baseOptions(child, {
+      onEvent: () => {
+        throw new Error('injected warning projection failure')
+      },
+      onClose: (code) => {
+        closes.push(code)
+      }
+    })
+    let closeSettled = false
+    void handle.closed.then(() => {
+      closeSettled = true
+    })
+
+    child.fail(new Error('provider transport failed'))
+    expect(child.killed).toBe(true)
+    expect(closes).toEqual([])
+    expect(closeSettled).toBe(false)
+
+    child.finish(null)
+    await handle.closed
+    expect(closes).toEqual([1])
+    expect(closeSettled).toBe(true)
+  })
+
+  it('waits for process close and delivers one terminal callback after an error', () => {
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    const closes: Array<number | null> = []
+    baseOptions(child, {
+      onClose: (code) => {
+        closes.push(code)
+      }
+    })
+
+    child.fail(new Error('spawn boom'))
+    expect(child.killed).toBe(true)
+    expect(closes).toEqual([])
+    child.finish(null)
+    child.finish(0)
+    expect(closes).toEqual([1])
   })
 })

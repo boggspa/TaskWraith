@@ -116,10 +116,40 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
     expect(state.providerCards.find((card) => card.id === 'kimi')?.statusKind).toBe('cliMissing')
-    expect(state.providerCards.find((card) => card.id === 'cursor')?.statusText).toBe(
-      'Not observable'
-    )
+    expect(state.providerCards.find((card) => card.id === 'cursor')).toMatchObject({
+      statusText: 'Managed runs unavailable',
+      setupCommands: []
+    })
+    expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(false)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
+  })
+
+  it('projects a present but unqualified Kimi runtime as managed-runtime unavailable', () => {
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-07-19T01:00:00.000Z',
+      workspace,
+      providers: {
+        kimi: contract('kimi', {
+          available: false,
+          setupRequired: true,
+          binaryPath: '/Users/alice/.kimi-code/bin/kimi',
+          version: 'security-unavailable',
+          authState: 'oauth',
+          error: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
+        })
+      },
+      usage: {},
+      notifications: []
+    })
+
+    const kimi = state.providerCards.find((card) => card.id === 'kimi')
+    expect(kimi).toMatchObject({
+      statusKind: 'notObservable',
+      statusText: 'Managed runtime unavailable'
+    })
+    expect(kimi?.detail).toContain('embedded reviewed roster')
+    expect(kimi?.detail).toContain('does not bypass')
+    expect(JSON.stringify(kimi)).not.toContain('/Users/alice')
   })
 
   it('includes activated plugin provider setup hints in remote provider cards', () => {
@@ -276,7 +306,6 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
       'codex',
       'kimi',
-      'cursor',
       'grok',
       'ollama'
     ])

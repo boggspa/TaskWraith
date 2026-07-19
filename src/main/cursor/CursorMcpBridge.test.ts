@@ -307,7 +307,7 @@ describe('mergeCursorMcpConfig', () => {
     })
   })
 
-  it('preserves other registered MCP servers + unknown top-level keys', () => {
+  it('isolates supplied servers while preserving non-server top-level keys', () => {
     const existing = {
       mcpServers: { other: { command: 'foo', args: [] } },
       someUnknownTopLevel: { keep: true }
@@ -316,7 +316,6 @@ describe('mergeCursorMcpConfig', () => {
     const merged = mergeCursorMcpConfig(existing, entry)
     expect(merged).toEqual({
       mcpServers: {
-        other: { command: 'foo', args: [] },
         [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] },
         [CURSOR_LEGACY_WEB_MCP_SERVER_NAME]: { command: 'node', args: ['/tmp/s.cjs'] }
       },
@@ -335,7 +334,7 @@ describe('mergeCursorMcpConfig', () => {
     expect(merged.mcpServers[CURSOR_MCP_SERVER_NAME].command).toBe('node')
   })
 
-  it('drops reserved taskwraith servers before adding the real broker + legacy alias', () => {
+  it('drops all pre-existing servers before adding the real broker + legacy alias', () => {
     const existing = {
       mcpServers: {
         other: { command: 'foo', args: [] },
@@ -349,7 +348,7 @@ describe('mergeCursorMcpConfig', () => {
     const merged = mergeCursorMcpConfig(existing, entry) as {
       mcpServers: Record<string, unknown>
     }
-    expect(merged.mcpServers.other).toEqual({ command: 'foo', args: [] })
+    expect(merged.mcpServers.other).toBeUndefined()
     expect(merged.mcpServers[CURSOR_MCP_SERVER_NAME]).toEqual({
       command: 'node',
       args: ['/tmp/new.cjs']
@@ -360,6 +359,28 @@ describe('mergeCursorMcpConfig', () => {
     })
     expect(merged.mcpServers['taskwraith-evil']).toBeUndefined()
     expect(merged.mcpServers[`${CURSOR_MCP_SERVER_NAME}-evil`]).toBeUndefined()
+  })
+
+  it('retains only the active canonical TaskWraith broker for the Home/global alias case', () => {
+    const existing = {
+      mcpServers: {
+        [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/broker.cjs'] },
+        [CURSOR_SCOPED_MCP_SERVER_NAME]: { command: 'node', args: ['/scoped.cjs'] },
+        taskwraith: { command: 'node', args: ['/user-web.cjs'] },
+        'taskwraith-broker-evil': { command: 'node', args: ['/evil.cjs'] },
+        agbench: { command: 'node', args: ['/agbench.cjs'] }
+      }
+    }
+    const merged = mergeCursorMcpConfig(
+      existing,
+      { user_docs: { url: 'https://example.test/mcp' } },
+      { preserveExistingTaskWraithBrokers: true }
+    ) as { mcpServers: Record<string, unknown> }
+
+    expect(merged.mcpServers).toEqual({
+      [CURSOR_MCP_SERVER_NAME]: { command: 'node', args: ['/broker.cjs'] },
+      user_docs: { url: 'https://example.test/mcp' }
+    })
   })
 })
 

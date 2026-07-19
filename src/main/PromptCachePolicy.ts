@@ -70,7 +70,7 @@ const STATIC_CAPABILITIES: StaticCacheCapability[] = [
     guaranteeTier: 'best-effort',
     guaranteeLabel: 'Best effort',
     detail:
-      'Kimi BYOK is launched through an opaque CLI transport. TaskWraith can pass credentials and record provider usage, but cache creation is provider-managed.',
+      'Runtime-admitted Kimi Code runs through opaque ACP provider semantics. Managed authentication comes from the current Kimi Code home, not the TaskWraith Settings usage key; cache creation is provider-managed.',
     controllable: false,
     supportsModeControl: true
   },
@@ -89,11 +89,13 @@ const STATIC_CAPABILITIES: StaticCacheCapability[] = [
     provider: 'cursor',
     label: 'Cursor',
     transport: 'cli-opaque',
-    guaranteeTier: 'best-effort',
-    guaranteeLabel: 'Best effort',
-    detail: 'Cursor runs are provider-native; cache behavior is opaque to TaskWraith.',
+    guaranteeTier: 'unsupported',
+    guaranteeLabel: 'Unsupported',
+    detail:
+      'Historical Cursor usage may still decode cache metadata. Cursor managed runs and cache controls are unavailable while startup containment remains unqualified.',
     controllable: false,
-    supportsModeControl: false
+    supportsModeControl: false,
+    retired: true
   },
   {
     provider: 'ollama',

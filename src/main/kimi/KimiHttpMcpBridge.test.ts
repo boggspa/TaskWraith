@@ -62,15 +62,24 @@ describe('startKimiHttpMcpBridge', () => {
     expect(r.json).toBeNull()
   })
 
-  it('turns a thrown dispatch into a -32000 error response', async () => {
+  it('redacts a thrown dispatch as a generic -32603 error response', async () => {
+    const sentinel = '/Users/operator/private/workspace/.secrets/token=host-secret'
     handle = await startKimiHttpMcpBridge({
       dispatch: async () => {
-        throw new Error('boom')
+        throw new Error(sentinel)
       }
     })
     const r = await post(handle, { jsonrpc: '2.0', id: 9, method: 'tools/call' })
     expect(r.status).toBe(200)
-    expect(r.json).toMatchObject({ id: 9, error: { code: -32000, message: 'boom' } })
+    expect(r.json).toEqual({
+      jsonrpc: '2.0',
+      id: 9,
+      error: {
+        code: -32603,
+        message: 'TaskWraith MCP bridge encountered an unexpected internal error.'
+      }
+    })
+    expect(JSON.stringify(r.json)).not.toContain(sentinel)
   })
 
   it('rejects a malformed body with -32700 and declines GET', async () => {

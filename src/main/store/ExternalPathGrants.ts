@@ -1,5 +1,5 @@
 import type { ExternalPathGrant, ProviderId } from './types'
-import { isRetiredProvider } from '../../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 
 export const EXTERNAL_PATH_GRANT_METADATA_KEYS = [
   'externalPathGrants',
@@ -10,9 +10,9 @@ export const EXTERNAL_PATH_GRANT_METADATA_KEYS = [
   'ollamaExternalPathGrants'
 ] as const
 
-// 1.0.6-CRUX21 — grok + cursor are first-class providers; their signed grants
-// must survive coalescing like the others. (Integrity is enforced separately by
-// the main-issued signature check, not by this membership set.)
+// Structural provider ids preserve signed historical grants during decode and
+// coalescing. Live dispatch eligibility is filtered separately, so retaining a
+// Cursor grant here does not make Cursor runnable.
 const KNOWN_PROVIDER_IDS: ProviderId[] = [
   'gemini',
   'codex',
@@ -33,7 +33,7 @@ const KNOWN_PROVIDERS = new Set<ProviderId>(KNOWN_PROVIDER_IDS)
  * checks as the brokered provider runtimes.
  */
 export const EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS = new Set<ProviderId>(
-  KNOWN_PROVIDER_IDS.filter((provider) => !isRetiredProvider(provider))
+  KNOWN_PROVIDER_IDS.filter((provider) => isLiveSelectableProvider(provider))
 )
 
 export function isExternalPathGrantDispatchProvider(

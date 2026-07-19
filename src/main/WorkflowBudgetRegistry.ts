@@ -34,11 +34,11 @@
 //     (handleCliProviderJsonEvent) — the Claude SDK path streams through the
 //     same handler, so both Claude transports are covered.
 //   - codex: live via the thread/tokenUsage/updated notification.
-//   - grok, cursor: their stream handlers early-return BEFORE the onUsage hook
-//     and only set tokenUsage at the TERMINAL result, so there is NO live mid-run
-//     token signal — they get WALL-CLOCK enforcement ONLY (the timer). A
-//     maxTokens/maxCostUsd budget on a grok/cursor scheduled run does not fire
-//     mid-run, and a run that already completed is not failed post-hoc for tokens.
+//   - grok: its stream handler early-returns BEFORE the onUsage hook and only
+//     sets tokenUsage at the TERMINAL result, so there is NO live mid-run token
+//     signal — it gets WALL-CLOCK enforcement ONLY (the timer). Historical
+//     Cursor records may have the same terminal-only shape, but source-ahead
+//     TaskWraith starts no new Cursor run.
 //   - gemini: retired (separate PTY path); not wired.
 // maxCostUsd is best-effort across ALL providers (cost is typically set only at
 // the terminal result and mergeProviderUsage does not accumulate it) — see the

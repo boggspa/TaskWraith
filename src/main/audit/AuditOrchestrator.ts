@@ -92,7 +92,17 @@ export interface AuditOrchestratorDeps {
   store: AuditOrchestratorStore
   resolveSignals: () => Promise<ProviderSignal[]>
   dispatchRole: (req: AuditRoleRunRequest) => Promise<AuditRoleRunResult>
-  runGates: (checks: AuditGateCheck[], workspacePath: string) => Promise<AuditGateResult[]>
+  runGates: (
+    checks: AuditGateCheck[],
+    workspacePath: string,
+    authority?: {
+      auditRunId: string
+      appChatId: string
+      workspaceId?: string
+      workspacePath: string
+    },
+    projectGate?: (gate: AuditGateResult) => void
+  ) => Promise<AuditGateResult[]>
   /** Static policy fallback, mostly for tests/back-compat. */
   policy?: AuditOrchestrationSettings
   /** Dynamic settings source. Snapshotted once at run start. */
@@ -393,10 +403,30 @@ export class AuditOrchestrator {
     const reviewerChain = roster.perRole.reviewer ?? []
     const collected: AuditFinding[] = []
 
+    const projectedGateIds = new Set<string>()
+    const projectGate = (gate: AuditGateResult): void => {
+      this.appendGate(gate)
+      projectedGateIds.add(gate.id)
+    }
     const gatesP = this.deps
-      .runGates(gateChecksForMode(input.mode), input.workspacePath)
+      .runGates(
+        gateChecksForMode(input.mode),
+        input.workspacePath,
+        {
+          auditRunId: this.record.id,
+          appChatId: input.chatId,
+          workspaceId: input.workspaceId,
+          workspacePath: input.workspacePath
+        },
+        projectGate
+      )
       .then((gates) => {
-        for (const gate of gates) this.appendGate(gate)
+        // Test/back-compat runners may ignore the projection callback. Persist
+        // those results here; the production runner invokes it before releasing
+        // each exact host-command projection handle.
+        for (const gate of gates) {
+          if (!projectedGateIds.has(gate.id)) projectGate(gate)
+        }
         this.endPhase('gates', 'completed')
       })
       .catch(() => this.endPhase('gates', 'failed'))

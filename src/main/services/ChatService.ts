@@ -37,6 +37,8 @@ import {
   type HumanCollaborationAuditLike
 } from '../collaboration/HumanCollaborationAuditLog'
 import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
   canonicalizeExternalPathGrantMetadata,
@@ -44,7 +46,8 @@ import {
   externalPathGrantMetadataLists
 } from '../store/ExternalPathGrants'
 
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Known ids for historical decode. New chat lifecycles use the shared live
+// admission predicate through `assertLiveProviderId` below.
 const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 
 export interface CreateSubThreadInput {
@@ -144,6 +147,7 @@ export interface ChatServiceStore {
   getSideChats: (parentChatId: string) => ChatRecord[]
   saveChat: (chat: ChatRecord) => ChatRecord
   deleteChat: (chatId: string) => void
+  truncateChatHistory?: (chatId: string) => ChatRecord | null
   clearChats: (workspaceId?: string) => void
 }
 
@@ -157,6 +161,14 @@ export interface ChatServiceDeps {
   /** Main-owned authority seam; must prepare copied media before the fork is persisted. */
   prepareForkMessages: PrepareForkMessages
   sanitizeChatForSave: (chat: ChatRecord) => ChatRecord
+  /** Main-owned topology fence checked immediately before child persistence. */
+  assertParentChatCreationAllowed?: (parentChatId: string) => void
+  /** Clears history stored outside Electron userData (currently bridge diagnostics). */
+  clearExternalChatHistory?: (workspaceId?: string) => void | Promise<void>
+  /** Main-owned durable prepare/quiesce/commit single-flight. */
+  clearHistoryTransaction?: (workspaceId?: string) => Promise<void>
+  /** Releases the scope admission fence after the durable clear commits/fails. */
+  finishExternalChatHistoryClear?: (workspaceId?: string) => void
   appendDurableRunEventForRoute: (
     provider: ProviderId,
     route: AgentRunRoute | null | undefined,
@@ -224,9 +236,10 @@ export class ChatService {
 
   createSubThread(args: CreateSubThreadInput | undefined): ChatRecord {
     const parentChatId = requireSafeChatId(args?.parentChatId, 'Parent chat id')
-    const provider = assertProviderId(args?.provider)
+    const provider = assertLiveProviderId(args?.provider)
     const delegationPrompt = requireNonEmptyString(args?.delegationPrompt, 'Delegation prompt')
     const returnResultToParent = Boolean(args?.returnResultToParent)
+    this.deps.assertParentChatCreationAllowed?.(parentChatId)
     const subThread = this.deps.appStore.createSubThread({
       parentChatId,
       provider,
@@ -259,13 +272,16 @@ export class ChatService {
 
   createSideChat(args: CreateSideChatInput | undefined): ChatRecord {
     const parentChatId = requireSafeChatId(args?.parentChatId, 'Parent chat id')
-    const provider = args?.provider === undefined ? undefined : assertProviderId(args.provider)
+    const inheritedProvider = this.deps.appStore.getChat(parentChatId)?.provider
+    if (args?.provider === undefined && inheritedProvider) assertLiveProviderId(inheritedProvider)
+    const provider = args?.provider === undefined ? undefined : assertLiveProviderId(args.provider)
     const sideChatMode =
       args?.sideChatMode === 'ensembleClone' ||
       args?.sideChatMode === 'singleProvider' ||
       args?.sideChatMode === 'fanOut'
         ? args.sideChatMode
         : undefined
+    this.deps.assertParentChatCreationAllowed?.(parentChatId)
     const sideChat = this.deps.appStore.createSideChat({
       parentChatId,
       chatKind: args?.chatKind === 'ensemble' ? 'ensemble' : args?.chatKind === 'single' ? 'single' : undefined,
@@ -307,7 +323,9 @@ export class ChatService {
     const parentChatId = requireSafeChatId(args?.parentChatId, 'Parent chat id')
     const parent = this.deps.appStore.getChat(parentChatId)
     if (!parent || parent.archived) throw new Error('Parent chat is not available for forking.')
-    const provider = args?.provider === undefined ? parent.provider : assertProviderId(args.provider)
+    const provider = assertLiveProviderId(
+      args?.provider === undefined ? parent.provider : args.provider
+    )
     const title =
       optionalString(args?.title) ||
       `Fork of ${parent.title && parent.title !== 'New Chat' ? parent.title : 'chat'}`
@@ -369,6 +387,7 @@ export class ChatService {
     const seedParticipant = args?.seedParticipant
       ? clearParticipantExternalPathGrantOverrides(args.seedParticipant)
       : undefined
+    if (seedParticipant) assertLiveProviderId(seedParticipant.provider)
     const canonicalProviderMetadata =
       args?.canonicalProviderMetadata && typeof args.canonicalProviderMetadata === 'object'
         ? clearExternalPathGrantMetadata(args.canonicalProviderMetadata)
@@ -376,7 +395,9 @@ export class ChatService {
     const result = this.deps.appStore.setChatKind(chatId, targetKind, {
       seedParticipant,
       canonicalProvider:
-        args?.canonicalProvider === undefined ? undefined : assertProviderId(args.canonicalProvider),
+        args?.canonicalProvider === undefined
+          ? undefined
+          : assertLiveProviderId(args.canonicalProvider),
       canonicalProviderMetadata
     })
 
@@ -431,9 +452,10 @@ export class ChatService {
     ) {
       return current
     }
+    const providerAdmissionFenced = fenceSavedProviderAdmission(sanitizedInput, current)
     const grantFenced = allowWorkspaceTransition
-      ? sanitizedInput
-      : preserveCanonicalExternalPathGrantMetadata(sanitizedInput, current)
+      ? providerAdmissionFenced
+      : preserveCanonicalExternalPathGrantMetadata(providerAdmissionFenced, current)
     const continuityFenced = allowWorkspaceTransition
       ? grantFenced
       : this.preserveTaskWraithMcpProfileReceipts(grantFenced)
@@ -807,8 +829,45 @@ export class ChatService {
     this.deps.appStore.deleteChat(id)
   }
 
-  clearChats(workspaceId?: string): void {
+  truncateChatHistory(chatId: string): ChatRecord | null {
+    const id = requireSafeChatId(chatId, 'Chat id')
+    if (!this.deps.appStore.truncateChatHistory) {
+      throw new Error('Strict chat history truncation is unavailable.')
+    }
+    return this.deps.appStore.truncateChatHistory(id)
+  }
+
+  async clearChats(workspaceId?: string): Promise<void> {
+    if (this.deps.clearHistoryTransaction) {
+      await this.deps.clearHistoryTransaction(workspaceId)
+      return
+    }
+    try {
+      await this.prepareClearChats(workspaceId)
+      this.commitClearChats(workspaceId)
+    } finally {
+      this.finishClearChats(workspaceId)
+    }
+  }
+
+  /**
+   * Revoke live external history authorities before any other clear step is
+   * allowed to await. The IPC clear flow deliberately invokes this prepare
+   * phase before execution-graph deletion so a pending signed-elevated Canvas
+   * approval cannot be accepted while that deletion is in flight.
+   */
+  async prepareClearChats(workspaceId?: string): Promise<void> {
+    await this.deps.clearExternalChatHistory?.(workspaceId)
+  }
+
+  /** Commit the durable chat deletion after every external store has cleared. */
+  commitClearChats(workspaceId?: string): void {
     this.deps.appStore.clearChats(workspaceId)
+  }
+
+  /** Release the prepare-phase admission hold for the same clear scope. */
+  finishClearChats(workspaceId?: string): void {
+    this.deps.finishExternalChatHistoryClear?.(workspaceId)
   }
 
   private requireHumanCollaborationStore(): HumanCollaborationStore {
@@ -1162,6 +1221,52 @@ function assertProviderId(value: unknown): ProviderId {
     return value as ProviderId
   }
   throw new Error('Provider is invalid.')
+}
+
+function assertLiveProviderId(value: unknown): ProviderId {
+  const provider = assertProviderId(value)
+  if (!isLiveSelectableProvider(provider)) {
+    throw new Error(`${provider} is unavailable for new chats or delegated runs.`)
+  }
+  return provider
+}
+
+/**
+ * Renderer-authored records may round-trip historical providers for decode and
+ * display, but they cannot mint a new executable lane by copying or mutating a
+ * record. Compare retired values against the canonical record by stable seat
+ * id; deletion or migration to a live provider remains allowed.
+ */
+function fenceSavedProviderAdmission(incoming: ChatRecord, current: ChatRecord | null): ChatRecord {
+  if (
+    incoming.provider &&
+    !isLiveSelectableProvider(incoming.provider) &&
+    current?.provider !== incoming.provider
+  ) {
+    assertLiveProviderId(incoming.provider)
+  }
+
+  const currentParticipants = new Map(
+    (current?.ensemble?.participants || []).map((participant) => [participant.id, participant])
+  )
+  for (const participant of incoming.ensemble?.participants || []) {
+    if (
+      !isLiveSelectableProvider(participant.provider) &&
+      currentParticipants.get(participant.id)?.provider !== participant.provider
+    ) {
+      assertLiveProviderId(participant.provider)
+    }
+  }
+
+  const incomingPending = readPendingProviderChange(incoming)
+  if (incomingPending && !isLiveSelectableProvider(incomingPending.provider)) {
+    const currentPending = current ? readPendingProviderChange(current) : null
+    if (currentPending?.provider !== incomingPending.provider) assertLiveProviderId(incomingPending.provider)
+    // An old queued switch is actionable runtime control, not identity needed
+    // for transcript rendering. Clear it on the first accepted historical save.
+    return clearPendingProviderChange(incoming)
+  }
+  return incoming
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

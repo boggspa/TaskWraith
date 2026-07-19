@@ -115,4 +115,40 @@ describe('AuditGatesRunner', () => {
     await runner.runGates([{ check: 'typecheck', command: 'tsc' }], '/some/workspace')
     expect(runCommand).toHaveBeenCalledWith('tsc', '/some/workspace')
   })
+
+  it('retains exact audit command scope until the gate result is persisted', async () => {
+    const events: string[] = []
+    const authority = {
+      auditRunId: 'audit-run-1',
+      appChatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/some/workspace'
+    }
+    const createHostCommandProjection = vi.fn(() => ({
+      run: async <T>(operation: () => Promise<T>): Promise<T> => {
+        events.push('run')
+        return operation()
+      },
+      complete: () => events.push('complete')
+    }))
+    const runner = createAuditGatesRunner({
+      runCommand: async () => {
+        events.push('command-close')
+        return hostResult({ exitCode: 0 })
+      },
+      createHostCommandProjection,
+      uuid: () => 'gate-1'
+    })
+
+    const gates = await runner.runGates(
+      [{ check: 'typecheck', command: 'tsc' }],
+      authority.workspacePath,
+      authority,
+      () => events.push('persist-gate')
+    )
+
+    expect(createHostCommandProjection).toHaveBeenCalledWith(authority)
+    expect(gates.map((gate) => gate.id)).toEqual(['gate-1'])
+    expect(events).toEqual(['run', 'command-close', 'persist-gate', 'complete'])
+  })
 })

@@ -39,6 +39,7 @@
  */
 
 import type { ChatRecord, ProviderId } from './store/types'
+import { isLiveSelectableProvider } from '../shared/retiredProviders'
 
 /** Metadata key under `chat.providerMetadata` that holds a queued switch. */
 export const PENDING_PROVIDER_CHANGE_KEY = 'pendingProviderChange'
@@ -92,6 +93,17 @@ export function readPendingProviderChange(chat: ChatRecord): PendingProviderChan
 /** Whether a switch is currently queued for turn-end application. */
 export function hasPendingProviderChange(chat: ChatRecord): boolean {
   return readPendingProviderChange(chat) !== null
+}
+
+/** Remove queued provider-control state without changing the active provider. */
+export function clearPendingProviderChange(chat: ChatRecord): ChatRecord {
+  if (!(PENDING_PROVIDER_CHANGE_KEY in (chat.providerMetadata ?? {}))) return chat
+  const { [PENDING_PROVIDER_CHANGE_KEY]: _dropPending, ...restMetadata } =
+    chat.providerMetadata ?? {}
+  return {
+    ...chat,
+    providerMetadata: restMetadata
+  }
 }
 
 /**
@@ -168,5 +180,10 @@ export function applyProviderChange(chat: ChatRecord, change: PendingProviderCha
 export function applyPendingProviderChangeOnFinalize(chat: ChatRecord): ChatRecord {
   const pending = readPendingProviderChange(chat)
   if (!pending) return chat
+  // Pending changes are executable control state, not historical attribution.
+  // Never promote a provider that is retained only for decode/render.
+  if (!isLiveSelectableProvider(pending.provider)) {
+    return clearPendingProviderChange(chat)
+  }
   return applyProviderChange(chat, pending)
 }

@@ -33,7 +33,7 @@ function makeDeps(): {
     spies,
     deps: {
       runManager: {
-        get: vi.fn(() => ({ runId: 'run-1', appChatId: 'chat-1' })),
+        get: vi.fn(() => ({ runId: 'run-1', appChatId: 'chat-1', status: 'running' })),
         resolveApproval: vi.fn(() => ({ runId: 'run-1', appChatId: 'chat-1' })),
         clearApproval: vi.fn()
       } as never,
@@ -79,14 +79,16 @@ describe('ApprovalService M3 approval choke-point gates', () => {
     const { deps, spies } = makeDeps()
     const service = new ApprovalService(deps)
     const resolve = vi.fn()
-    service.registerGeminiTool('approval-readonly', {
-      provider: 'codex',
-      service: 'fileChanges',
-      workspacePath: '/repo',
-      runId: 'run-1',
-      allowedActions: ['decline', 'cancel'],
-      resolve
-    })
+    expect(
+      service.registerGeminiTool('approval-readonly', {
+        provider: 'codex',
+        service: 'fileChanges',
+        workspacePath: '/repo',
+        runId: 'run-1',
+        allowedActions: ['decline', 'cancel'],
+        resolve
+      })
+    ).toBe(true)
 
     await expect(service.resolve('approval-readonly', 'accept')).resolves.toBe(false)
 
@@ -103,14 +105,16 @@ describe('ApprovalService M3 approval choke-point gates', () => {
     const { deps, spies } = makeDeps()
     const service = new ApprovalService(deps)
     const resolve = vi.fn()
-    service.registerGeminiTool('approval-non-grantable', {
-      provider: 'gemini',
-      service: 'canvasEval',
-      workspacePath: '/repo',
-      runId: 'run-1',
-      allowedActions: ['accept', 'decline'],
-      resolve
-    })
+    expect(
+      service.registerGeminiTool('approval-non-grantable', {
+        provider: 'gemini',
+        service: 'canvasEval',
+        workspacePath: '/repo',
+        runId: 'run-1',
+        allowedActions: ['accept', 'decline'],
+        resolve
+      })
+    ).toBe(true)
 
     await expect(service.resolve('approval-non-grantable', 'grantExternalPathEdit')).resolves.toBe(
       false

@@ -547,8 +547,8 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       const harness = makeHarness([
         participant('codex', 'codex', 'Lead', 1, 'workspace_write'),
         participant('claude', 'claude', 'Reviewer', 2, 'read_only'),
-        participant('gemini', 'gemini', 'Researcher', 3, 'read_only'),
-        participant('kimi', 'kimi', 'Builder', 4, 'workspace_write')
+        participant('grok', 'grok', 'Researcher', 3, 'read_only'),
+        participant('ollama', 'ollama', 'Builder', 4, 'workspace_write')
       ])
       harness.orchestrator.startRound({
         chatId: 'ensemble-chat',
@@ -557,10 +557,10 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       })
       // Round-start read-only recon wave dispatches both readers first.
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-      expect(harness.dispatched.map((p) => p.provider)).toEqual(['claude', 'gemini'])
+      expect(harness.dispatched.map((p) => p.provider)).toEqual(['claude', 'grok'])
 
       stream(harness, 0, 'W1-CLAUDE-RECON.')
-      stream(harness, 1, 'W1-GEMINI-RECON.')
+      stream(harness, 1, 'W1-GROK-RECON.')
       await sleep(FLUSH_MS)
       complete(harness, 0)
       complete(harness, 1)
@@ -582,9 +582,9 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
 
       // Only the Researcher lane produces output before the Lead yields;
       // the Reviewer lane stays silent.
-      stream(harness, 4, 'W2-GEMINI-NOTE.')
+      stream(harness, 4, 'W2-GROK-NOTE.')
       await sleep(FLUSH_MS)
-      expect(rowIndex(harness, 'W2-GEMINI-NOTE.')).toBeGreaterThan(rowIndex(harness, 'BOSS-INTRO.'))
+      expect(rowIndex(harness, 'W2-GROK-NOTE.')).toBeGreaterThan(rowIndex(harness, 'BOSS-INTRO.'))
 
       // Lead finishes its serial turn, but retains foreground ownership while
       // both wave-2 lanes are still running. Builder must not overlap the
@@ -602,7 +602,7 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       await sleep(FLUSH_MS)
 
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(6))
-      expect(harness.dispatched[5].provider).toBe('kimi')
+      expect(harness.dispatched[5].provider).toBe('ollama')
 
       stream(harness, 5, 'BUILDER-LIVE-MESSAGE.')
       await sleep(FLUSH_MS)
@@ -626,18 +626,18 @@ describe('fan-out transcript ordering vs a live serial speaker', () => {
       expect(
         orderedMarkers(harness, [
           'W1-CLAUDE-RECON.',
-          'W1-GEMINI-RECON.',
+          'W1-GROK-RECON.',
           'BOSS-INTRO.',
           'W2-CLAUDE-LATE-REPORT.',
-          'W2-GEMINI-NOTE.',
+          'W2-GROK-NOTE.',
           'BUILDER-LIVE-MESSAGE.'
         ])
       ).toEqual([
         'W1-CLAUDE-RECON.',
-        'W1-GEMINI-RECON.',
+        'W1-GROK-RECON.',
         'BOSS-INTRO.',
         'W2-CLAUDE-LATE-REPORT.',
-        'W2-GEMINI-NOTE.',
+        'W2-GROK-NOTE.',
         'BUILDER-LIVE-MESSAGE.'
       ])
     }

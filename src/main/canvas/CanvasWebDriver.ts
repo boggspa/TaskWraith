@@ -43,6 +43,7 @@ import type {
   CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
+import { CanvasEvalEgressGate } from './CanvasEvalEgressGate'
 import {
   CANVAS_EVAL_VALUE_CAP,
   isCanvasRequestBlocked,
@@ -313,10 +314,15 @@ export class CanvasWebDriver implements CanvasDriver {
   // just SSRF-class) so the model's script can never use fetch/XHR/ws/<img> as an
   // exfiltration channel during the eval window. Set immediately before, cleared
   // in a finally immediately after, win.webContents.executeJavaScript.
-  private evalEgressCut = false
+  private readonly evalEgressGate = new CanvasEvalEgressGate()
   private readonly createSurface: (opts: CanvasSurfaceOptions) => CanvasHostSurface
   private readonly resolveHost?: CanvasResolveHost
   private readonly dnsBlockCache = new Map<string, Promise<boolean>>()
+  // A Canvas driver is single-use. Once close() has been requested, every
+  // pending open continuation must stay cancelled; otherwise a slow DNS or
+  // navigation await can create/re-adopt a surface after history was cleared.
+  private lifecycleGeneration = 0
+  private closeRequested = false
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
@@ -333,6 +339,18 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
+    if (this.closeRequested) {
+      throw new Error('Canvas open was cancelled because the driver was closed.')
+    }
+    const lifecycleGeneration = this.lifecycleGeneration
+    const assertOpenStillLive = (): void => {
+      if (
+        this.closeRequested ||
+        lifecycleGeneration !== this.lifecycleGeneration
+      ) {
+        throw new Error('Canvas open was cancelled because the driver was closed.')
+      }
+    }
     const rawUrl = (input.url || '').trim()
     this.allowlist = Array.isArray(input.originAllowlist) ? input.originAllowlist : []
     const verdict = validateCanvasUrl(rawUrl, this.allowlist)
@@ -340,6 +358,7 @@ export class CanvasWebDriver implements CanvasDriver {
       throw new Error(verdict.reason || 'Canvas URL was rejected.')
     }
     await assertCanvasDnsAllowed(verdict.normalizedUrl, this.allowlist, this.resolveHost)
+    assertOpenStillLive()
     const viewport = resolveViewport({
       width: input.viewport?.width,
       height: input.viewport?.height
@@ -374,6 +393,7 @@ export class CanvasWebDriver implements CanvasDriver {
     })
 
     await this.loadUrl(wc, verdict.normalizedUrl)
+    assertOpenStillLive()
     return {
       url: wc.getURL() || verdict.normalizedUrl,
       title: surface.getTitle(),
@@ -451,7 +471,7 @@ export class CanvasWebDriver implements CanvasDriver {
     wr.onBeforeRequest((details, callback) => {
       // Egress-cut during eval takes precedence over the per-host SSRF policy:
       // while a script is running, NOTHING leaves the page.
-      if (this.evalEgressCut || isCanvasRequestBlocked(details.url, this.allowlist)) {
+      if (this.evalEgressGate.active || isCanvasRequestBlocked(details.url, this.allowlist)) {
         callback({ cancel: true })
         return
       }
@@ -636,7 +656,11 @@ export class CanvasWebDriver implements CanvasDriver {
       cap +
       '), truncated: s.length > ' +
       cap +
-      ' }; } catch (e) { return { ok: false, error: String((e && e.message) || e) }; } })()'
+      ' }; } catch (e) { var es = String((e && e.message) || e); return { ok: false, error: es.slice(0, ' +
+      cap +
+      '), truncated: es.length > ' +
+      cap +
+      ' }; } })()'
     // Cut ALL page egress for the script, then restore the per-host SSRF policy in
     // finally — even if the script throws.
     //
@@ -650,7 +674,7 @@ export class CanvasWebDriver implements CanvasDriver {
     //  - The eval RETURN VALUE is itself a read channel (the agent can `return
     //    document.cookie`); the cut does not — and is not meant to — stop that.
     //  - WebRTC/downloads are closed in hardenSession(); TURN-over-TCP is residual.
-    this.evalEgressCut = true
+    const releaseEgressCut = this.evalEgressGate.enter()
     let result: Omit<CanvasEvalResult, 'url' | 'title'>
     try {
       result = (await wc.executeJavaScript(wrapped, true)) as Omit<
@@ -659,7 +683,7 @@ export class CanvasWebDriver implements CanvasDriver {
       >
     } finally {
       await delay(EVAL_EGRESS_HOLD_MS)
-      this.evalEgressCut = false
+      releaseEgressCut()
     }
     return { ...result, url: wc.getURL(), title: surface.getTitle() }
   }
@@ -669,6 +693,8 @@ export class CanvasWebDriver implements CanvasDriver {
   }
 
   async close(): Promise<void> {
+    this.closeRequested = true
+    this.lifecycleGeneration += 1
     const surface = this.surface
     this.surface = null
     if (!surface || surface.isDestroyed()) return

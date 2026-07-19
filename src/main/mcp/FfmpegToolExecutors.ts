@@ -1,7 +1,16 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
-import { buildFfmpegArgs, buildFfprobeArgs, type AudioOutFormat, type FfmpegIntent } from '../media/FfmpegCommand'
+import {
+  buildFfmpegArgs,
+  buildFfprobeArgs,
+  type AudioOutFormat,
+  type FfmpegIntent
+} from '../media/FfmpegCommand'
 import { parseFfprobeJson } from '../media/FfprobeResult'
 import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../media/AvMediaRef'
+import type {
+  PendingToolMediaPersistence,
+  ToolMediaPersistOutput
+} from '../services/ToolMediaPersistenceGate'
 
 /**
  * ffmpeg-family MCP tool executors. Pure logic — the binary resolver, the realpath
@@ -23,7 +32,13 @@ import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../me
  *   construct a McpToolExecutionResult, so provider stdout can never reach the field.
  */
 
-export const FFMPEG_MCP_TOOL_NAMES = ['video_probe', 'video_thumbnail', 'audio_extract', 'transcode_audio', 'transcode_video'] as const
+export const FFMPEG_MCP_TOOL_NAMES = [
+  'video_probe',
+  'video_thumbnail',
+  'audio_extract',
+  'transcode_audio',
+  'transcode_video'
+] as const
 export type FfmpegMcpToolName = (typeof FFMPEG_MCP_TOOL_NAMES)[number]
 
 export function isFfmpegMcpToolName(name: string): name is FfmpegMcpToolName {
@@ -69,11 +84,9 @@ export interface FfmpegToolDeps {
    */
   persistOutputFile: (
     path: string,
-    mimeType: string
-  ) => Awaitable<
-    | { ok: true; path: string; sha256: string; byteLength: number }
-    | { ok: false; reason: string }
-  >
+    mimeType: string,
+    ctx: FfmpegToolContext
+  ) => Awaitable<ToolMediaPersistOutput>
   /**
    * Best-effort poster/waveform for a produced AV file (the card preview). Never
    * throws; resolves undefined on any failure (the producer still returns its ref).
@@ -152,14 +165,28 @@ function humanBytes(n: number): string {
 // file from flooding the model context. Over the cap we drop the optional codec
 // sub-objects (the heaviest) and flag the truncation, never silently corrupt.
 const MAX_PROBE_OUTPUT_BYTES = 64 * 1024
-function capProbeOutput<T extends Record<string, unknown>>(full: T): T | (Record<string, unknown> & { truncated: true }) {
+function capProbeOutput<T extends Record<string, unknown>>(
+  full: T
+): T | (Record<string, unknown> & { truncated: true }) {
   if (JSON.stringify(full).length <= MAX_PROBE_OUTPUT_BYTES) return full
   const { video: _video, audio: _audio, ...rest } = full
   return { ...rest, truncated: true }
 }
 
 export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecutors {
-  const { jailInput, resolveFfprobe, resolveFfmpeg, runFfprobe, runFfmpeg, stagingPath, readOutput, persistOutputFile, generatePoster, removeFile, missingMessage } = deps
+  const {
+    jailInput,
+    resolveFfprobe,
+    resolveFfmpeg,
+    runFfprobe,
+    runFfmpeg,
+    stagingPath,
+    readOutput,
+    persistOutputFile,
+    generatePoster,
+    removeFile,
+    missingMessage
+  } = deps
 
   // Part 2 — best-effort ffprobe on a PRODUCER'S OUTPUT file to fill durationMs +
   // codecs (the badge fields the VT producers already supply but the ffmpeg ones
@@ -167,7 +194,9 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
   // Pure best-effort: any failure (no ffprobe, bad JSON, probe error) → {} and the
   // ref is built without the badges (they're conditional). Gated on the SAME
   // concurrency semaphore as every other probe via the injected runFfprobe.
-  async function probeOutputMetadata(outputPath: string): Promise<{ durationMs?: number; codecs?: string }> {
+  async function probeOutputMetadata(
+    outputPath: string
+  ): Promise<{ durationMs?: number; codecs?: string }> {
     try {
       const ffprobe = resolveFfprobe()
       if (!ffprobe) return {}
@@ -177,7 +206,8 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       const parsed = parseFfprobeJson(run.stdout)
       if (!parsed.ok) return {}
       const out: { durationMs?: number; codecs?: string } = {}
-      if (parsed.info.format.durationMs !== undefined) out.durationMs = parsed.info.format.durationMs
+      if (parsed.info.format.durationMs !== undefined)
+        out.durationMs = parsed.info.format.durationMs
       // Join the present stream codecs (video first, then audio): e.g. "h264,aac".
       const codecNames = [parsed.info.video?.codec, parsed.info.audio?.codec].filter(
         (c): c is string => typeof c === 'string' && c.length > 0
@@ -199,10 +229,20 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     | { ok: false; result: McpToolExecutionResult }
   > {
     const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
-    if (!sourcePath) return { ok: false, result: fail(toolName, 'provide sourcePath (a media file inside the workspace)') }
+    if (!sourcePath)
+      return {
+        ok: false,
+        result: fail(toolName, 'provide sourcePath (a media file inside the workspace)')
+      }
     const jailed = await jailInput(sourcePath, ctx)
-    if (!jailed.ok) return { ok: false, result: fail(toolName, `could not read media: ${jailed.reason}`) }
-    return { ok: true, realPath: jailed.realPath, mimeType: jailed.mimeType, cleanup: jailed.cleanup }
+    if (!jailed.ok)
+      return { ok: false, result: fail(toolName, `could not read media: ${jailed.reason}`) }
+    return {
+      ok: true,
+      realPath: jailed.realPath,
+      mimeType: jailed.mimeType,
+      cleanup: jailed.cleanup
+    }
   }
 
   function cleanupInput(input: { cleanup: () => boolean | void }): void {
@@ -213,7 +253,10 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
   }
 
-  async function executeVideoProbe(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+  async function executeVideoProbe(
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
     const j = await jail('video_probe', args, ctx)
     if (!j.ok) return j.result
     try {
@@ -229,7 +272,12 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       }
       const parsed = parseFfprobeJson(run.stdout)
       if (!parsed.ok) return fail('video_probe', parsed.error)
-      const full = capProbeOutput({ ok: true, tool: 'video_probe', sniffedMime: j.mimeType, ...parsed.info })
+      const full = capProbeOutput({
+        ok: true,
+        tool: 'video_probe',
+        sniffedMime: j.mimeType,
+        ...parsed.info
+      })
       const text = JSON.stringify(full)
       return { text, structuredContent: full, content: [{ type: 'text', text }] }
     } finally {
@@ -237,23 +285,26 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
   }
 
-  async function executeVideoThumbnail(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+  async function executeVideoThumbnail(
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
     const j = await jail('video_thumbnail', args, ctx)
     if (!j.ok) return j.result
     try {
       const ffmpeg = resolveFfmpeg()
       if (!ffmpeg) return fail('video_thumbnail', missingMessage('ffmpeg'))
       const outputPath = stagingPath('png')
-      const intent: FfmpegIntent = {
-        kind: 'thumbnail',
-        inputPath: j.realPath,
-        outputPath,
-        atMs: numArg(args.atMs),
-        width: numArg(args.width)
-      }
-      const argv = buildFfmpegArgs(intent)
-      if (!argv.ok) return fail('video_thumbnail', argv.error)
       try {
+        const intent: FfmpegIntent = {
+          kind: 'thumbnail',
+          inputPath: j.realPath,
+          outputPath,
+          atMs: numArg(args.atMs),
+          width: numArg(args.width)
+        }
+        const argv = buildFfmpegArgs(intent)
+        if (!argv.ok) return fail('video_thumbnail', argv.error)
         await runFfmpeg(ffmpeg, argv.args)
         let buffer: Buffer
         try {
@@ -262,14 +313,27 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
           // buffer huge in the heap before the image block is built.
           buffer = await readOutput(outputPath, 'image/png')
         } catch (error) {
-          return fail('video_thumbnail', `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`)
+          return fail(
+            'video_thumbnail',
+            `ffmpeg output unavailable: ${error instanceof Error ? error.message : String(error)}`
+          )
         }
-        if (!buffer || buffer.length === 0) return fail('video_thumbnail', 'ffmpeg produced an empty frame')
+        if (!buffer || buffer.length === 0)
+          return fail('video_thumbnail', 'ffmpeg produced an empty frame')
         // Return the PNG as an image block → it rides the PROVEN image media spine
         // (createToolResultMediaRefs) and renders inline, no trusted lane needed.
-        const full = { ok: true, tool: 'video_thumbnail', mimeType: 'image/png', byteLength: buffer.length }
+        const full = {
+          ok: true,
+          tool: 'video_thumbnail',
+          mimeType: 'image/png',
+          byteLength: buffer.length
+        }
         const text = JSON.stringify(full)
-        const block: McpToolContentBlock = { type: 'image', mimeType: 'image/png', data: buffer.toString('base64') }
+        const block: McpToolContentBlock = {
+          type: 'image',
+          mimeType: 'image/png',
+          data: buffer.toString('base64')
+        }
         return { text, structuredContent: full, content: [{ type: 'text', text }, block] }
       } catch (error) {
         return fail('video_thumbnail', error instanceof Error ? error.message : String(error))
@@ -298,14 +362,16 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     outputName: string,
     ctx: FfmpegToolContext
   ): Promise<McpToolExecutionResult> {
-    const ffmpeg = resolveFfmpeg()
-    if (!ffmpeg) return fail(toolName, missingMessage('ffmpeg'))
-    const argv = buildFfmpegArgs(intent)
-    if (!argv.ok) return fail(toolName, argv.error)
+    let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
     try {
+      const ffmpeg = resolveFfmpeg()
+      if (!ffmpeg) return fail(toolName, missingMessage('ffmpeg'))
+      const argv = buildFfmpegArgs(intent)
+      if (!argv.ok) return fail(toolName, argv.error)
       await runFfmpeg(ffmpeg, argv.args)
-      const persisted = await persistOutputFile(outputPath, mimeType)
+      const persisted = await persistOutputFile(outputPath, mimeType, ctx)
       if (!persisted.ok) return fail(toolName, `Failed to persist output: ${persisted.reason}`)
+      pendingToolMediaPersistence = persisted.pendingToolMediaPersistence
       // Part 2 — best-effort durationMs/codecs from an ffprobe on the OUTPUT (badge
       // consistency with the VT producers). Part 1 — best-effort poster/waveform.
       // Both consume the canonical durable path and are fail-tolerant: any failure
@@ -337,15 +403,24 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
       // (mimeType is main-derived from a validated format), but fail LOUDLY rather
       // than return silent empty-success that would strand the persisted (content-
       // addressed) asset with no ref pointing at it.
-      if (!ref) return fail(toolName, `internal: unsupported output mime ${mimeType}`)
+      if (!ref) {
+        return {
+          ...fail(toolName, `internal: unsupported output mime ${mimeType}`),
+          pendingToolMediaPersistence
+        }
+      }
       const summary = `${PRODUCER_VERB[toolName]} ${outputName} (${humanBytes(persisted.byteLength)})`
       return {
         text: summary,
         content: [{ type: 'text', text: summary }],
-        trustedMediaRefs: [ref]
+        trustedMediaRefs: [ref],
+        pendingToolMediaPersistence
       }
     } catch (error) {
-      return fail(toolName, error instanceof Error ? error.message : String(error))
+      return {
+        ...fail(toolName, error instanceof Error ? error.message : String(error)),
+        ...(pendingToolMediaPersistence ? { pendingToolMediaPersistence } : {})
+      }
     } finally {
       try {
         removeFile(outputPath)
@@ -355,11 +430,15 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
     }
   }
 
-  async function executeAudioExtract(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+  async function executeAudioExtract(
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
     const j = await jail('audio_extract', args, ctx)
     if (!j.ok) return j.result
     try {
-      if (!isAudioOutFormat(args.format)) return fail('audio_extract', 'provide format: one of "wav", "m4a", "mp3"')
+      if (!isAudioOutFormat(args.format))
+        return fail('audio_extract', 'provide format: one of "wav", "m4a", "mp3"')
       const format = args.format
       const mimeType = AUDIO_FORMAT_MIME[format]
       const outputPath = stagingPath(format)
@@ -370,17 +449,28 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         format,
         bitrateKbps: numArg(args.bitrateKbps)
       }
-      return await runProducer('audio_extract', intent, outputPath, mimeType, `${sourceBaseName(args.sourcePath)}.${format}`, ctx)
+      return await runProducer(
+        'audio_extract',
+        intent,
+        outputPath,
+        mimeType,
+        `${sourceBaseName(args.sourcePath)}.${format}`,
+        ctx
+      )
     } finally {
       cleanupInput(j)
     }
   }
 
-  async function executeTranscodeAudio(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+  async function executeTranscodeAudio(
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
     const j = await jail('transcode_audio', args, ctx)
     if (!j.ok) return j.result
     try {
-      if (!isAudioOutFormat(args.format)) return fail('transcode_audio', 'provide format: one of "wav", "m4a", "mp3"')
+      if (!isAudioOutFormat(args.format))
+        return fail('transcode_audio', 'provide format: one of "wav", "m4a", "mp3"')
       const format = args.format
       const mimeType = AUDIO_FORMAT_MIME[format]
       const outputPath = stagingPath(format)
@@ -391,13 +481,23 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         format,
         bitrateKbps: numArg(args.bitrateKbps)
       }
-      return await runProducer('transcode_audio', intent, outputPath, mimeType, `${sourceBaseName(args.sourcePath)}.${format}`, ctx)
+      return await runProducer(
+        'transcode_audio',
+        intent,
+        outputPath,
+        mimeType,
+        `${sourceBaseName(args.sourcePath)}.${format}`,
+        ctx
+      )
     } finally {
       cleanupInput(j)
     }
   }
 
-  async function executeTranscodeVideo(args: Record<string, unknown>, ctx: FfmpegToolContext): Promise<McpToolExecutionResult> {
+  async function executeTranscodeVideo(
+    args: Record<string, unknown>,
+    ctx: FfmpegToolContext
+  ): Promise<McpToolExecutionResult> {
     const j = await jail('transcode_video', args, ctx)
     if (!j.ok) return j.result
     try {
@@ -410,7 +510,14 @@ export function createFfmpegToolExecutors(deps: FfmpegToolDeps): FfmpegToolExecu
         scaleWidth: numArg(args.scaleWidth),
         fps: numArg(args.fps)
       }
-      return await runProducer('transcode_video', intent, outputPath, 'video/mp4', `${sourceBaseName(args.sourcePath)}.mp4`, ctx)
+      return await runProducer(
+        'transcode_video',
+        intent,
+        outputPath,
+        'video/mp4',
+        `${sourceBaseName(args.sourcePath)}.mp4`,
+        ctx
+      )
     } finally {
       cleanupInput(j)
     }

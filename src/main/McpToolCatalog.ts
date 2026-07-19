@@ -1,6 +1,7 @@
 import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
+import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
 
 export interface TaskWraithMcpToolDefinition {
   name: TaskWraithMcpToolName
@@ -1281,7 +1282,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     },
     {
       name: 'cancel_subthread',
-      description: 'Cancel an active run in a sub-thread owned by the active parent chat.',
+      description:
+        'Cancel queued recalled follow-ups and, when present, the active run in a sub-thread owned by the active parent chat.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -1688,7 +1690,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           provider: {
             type: 'string',
             enum: selectableProviderIds(),
-            description: 'Optional provider to filter to. Omit to return all four providers.'
+            description: 'Optional provider to filter to. Omit to return every live selectable provider.'
           }
         }
       }
@@ -2503,7 +2505,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                 type: 'string',
                 enum: selectableProviderIds(),
                 description:
-                  'Live selectable provider id. Retired providers are rejected; provider-changing edits are health-checked.'
+                  'Live selectable provider id. Unavailable providers are rejected; provider-changing edits are health-checked.'
               },
               model: { type: 'string' },
               role: { type: 'string' },
@@ -3008,20 +3010,20 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       // sub-thread under the active parent thread, optionally on a
       // different provider, and (fire-and-forget) dispatches a run
       // with the delegation prompt. Returns immediately with the
-      // sub-thread id; the result auto-propagates back to the
-      // parent transcript as an untrusted tool-result message on
-      // sub-thread completion via the F2 back-propagation path (when
-      // returnResult=true).
+      // sub-thread id; when returnResult=true, every typed terminal
+      // outcome enters the durable parent mailbox and is projected as
+      // an untrusted result card. Active-worker recall durably queues a
+      // follow-up behind the live child turn.
       //
       // The parent provider should mention to the user that they
       // delegated, so the user knows to watch the sub-thread in the
       // sidebar or wait for the returned sub-thread result card.
       name: 'delegate_to_subthread',
       description:
-        'Spawn a fresh context-isolated sub-thread on a chosen live provider, or continue an existing one by passing subThreadId. ' +
+        'Spawn a fresh context-isolated sub-thread on a selectable provider (subject to current runtime admission), or continue an existing one by passing subThreadId. ' +
         'Fresh seats may set model, reasoningEffort, or kimiThinking; recall inherits those controls to preserve the native provider session. ' +
-        'Recall requires an idle, unarchived child of this parent with a resumable matching-provider session. ' +
-        'returnResult appends the final assistant message to the parent as untrusted child output. ' +
+        'An idle recall requires a resumable matching-provider session; an active recall durably queues the follow-up behind the live child turn. ' +
+        'returnResult persists a typed done/requires_action/failed/cancelled result in the parent mailbox and projects it as untrusted child output, including assistant output when present. ' +
         'Omit subThreadId to always spawn fresh.',
       annotations: {
         readOnlyHint: false,
@@ -3035,7 +3037,8 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           provider: {
             type: 'string',
             enum: selectableProviderIds(),
-            description: 'Which TaskWraith provider should run the sub-thread.'
+            description:
+              'Which selectable TaskWraith provider should run the sub-thread. Selection is still subject to current runtime admission.'
           },
           prompt: {
             type: 'string',
@@ -3051,7 +3054,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             type: 'string',
             enum: ['minimal', 'low', 'medium', 'high', 'xhigh', 'max', 'ultracode'],
             description:
-              'Spawn-only reasoning tier for Codex, Claude, K3, Grok, or Cursor. Known provider/model incompatibilities fail before approval.'
+              'Spawn-only reasoning tier for Codex, Claude, Kimi K3, or Grok. Known provider/model incompatibilities fail before approval.'
           },
           kimiThinking: {
             type: 'boolean',
@@ -3061,12 +3064,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           returnResult: {
             type: 'boolean',
             description:
-              'Return final assistant output to the parent as untrusted child output when the run completes.'
+              'Persist the typed terminal result in the parent mailbox and project an untrusted return card. Includes assistant output when present and typed failure/cancellation evidence otherwise.'
           },
           subThreadId: {
             type: 'string',
             description:
-              'Existing sub-thread id returned to this parent by an earlier delegation. The child must belong to this parent, use the requested provider, be unarchived and idle, and have a resumable provider session. Recall inherits model, reasoningEffort, and kimiThinking; omit all three controls. Omit subThreadId to create a fresh seat instead.'
+              'Existing sub-thread id returned to this parent by an earlier delegation. The child must belong to this parent, use the requested provider, and be unarchived. An idle child must have a resumable provider session; an active child receives a durably queued follow-up behind its live turn. Recall inherits model, reasoningEffort, and kimiThinking controls; omit all three. Omit subThreadId to create a fresh seat instead.'
           }
         },
         required: ['provider', 'prompt']
@@ -3687,7 +3690,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_eval',
       description:
-        'Run arbitrary JavaScript in the Canvas page and return its (size-capped) completion value. The MOST powerful canvas verb: it executes agent-supplied code in the previewed app (RCE). PREFER canvas_snapshot / canvas_inspect / canvas_click / canvas_fill — reach for eval only when a structured tool cannot express the check. Signed-elevated: it PROMPTS EVERY CALL (never auto-allowed by a grant, preset, or session-YOLO) and is denied under read-only; the human approving sees the exact script. The page network egress is best-effort cut while the script runs. The script text and its result are never written to the audit log.',
+        'Run human-approved agent-supplied JavaScript inside the Canvas preview page and return its (size-capped) completion value. The MOST powerful canvas verb: this is a code-execution boundary inside the previewed app, not an approval bypass. PREFER canvas_snapshot / canvas_inspect / canvas_click / canvas_fill — reach for eval only when a structured tool cannot express the check. Signed-elevated: it PROMPTS EVERY CALL (never auto-allowed by a grant, preset, or Trusted Session) and is denied under Read-only/Plan. The exact script is shown only in the transient desktop task approval; compact or paired-device approval surfaces may decline but cannot accept. Human-approved execution and Canvas-audit receipts retain the approval id, unkeyed SHA-256 digest, UTF-16/UTF-8 lengths, and outcome—not the script or returned value/error. Auto-denial and compatibility/tool-event rows are content-redacted but may omit that full receipt. The digest is reproducible correlation/integrity metadata, not encryption. The direct result reaches the calling model, and provider assistant prose can echo script/result content into TaskWraith\'s persisted transcript; provider-authored prose, provider-native session history, and explicitly enabled debug capture are outside this projection guarantee. The page network egress is best-effort cut while the script runs.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: true,
@@ -3698,7 +3701,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
         type: 'object',
         properties: {
           canvasId: { type: 'string' },
-          script: { type: 'string', description: 'JavaScript evaluated in the page global scope.' }
+          script: {
+            type: 'string',
+            maxLength: CANVAS_EVAL_SCRIPT_CAP,
+            description: `JavaScript evaluated in the page global scope (max ${CANVAS_EVAL_SCRIPT_CAP} UTF-16 code units).`
+          }
         },
         required: ['canvasId', 'script']
       }

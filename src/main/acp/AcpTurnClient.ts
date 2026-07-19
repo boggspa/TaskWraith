@@ -7,15 +7,15 @@
 //
 // This is the extraction of the Grok ACP client's guts (dossier slice 2):
 // GrokAcpClient now delegates here with Grok-shaped hooks, and KimiAcpClient
-// delegates here with Kimi-shaped hooks (fs client-authority handlers, its own
-// initialize capabilities). The three provider-specific seams are hooks:
-//   - initializeParams:   the `initialize` params (Grok disables fs caps;
-//                         Kimi advertises fs read+write to regain workspace
-//                         authority over every built-in file tool).
+// delegates here with Kimi-shaped hooks and its own initialize posture. The
+// provider-specific seams are hooks:
+//   - initializeParams:   the `initialize` params. Production Kimi advertises
+//                         no client-fs capability; its workspace surface is the
+//                         governed per-run HTTP MCP gateway.
 //   - onInboundRequest:   handle an inbound agent→client request the core does
-//                         not (Kimi answers fs/read_text_file + fs/write_text_file
-//                         here); return true when handled, false to fall through
-//                         to the method-not-found keep-alive.
+//                         not; return true when handled, false to fall through
+//                         to the method-not-found keep-alive. Production Kimi
+//                         installs no filesystem request handler.
 //   - deniedToolRecovery: optional one-shot same-session recovery prompt after a
 //                         provider converts a denied native tool into a terminal
 //                         cancellation (Grok-only; Kimi passes null).
@@ -111,6 +111,11 @@ export interface AcpTurnOptions {
   onEvent: (event: AcpRunEvent) => void
   onProcess?: (child: AcpChildProcess) => void
   /**
+   * Async spawn admission that must finish before the first initialize frame.
+   * Kimi uses this to durably bind its OAuth lease to the exact child PID/birth.
+   */
+  beforeInitialize?: (child: AcpChildProcess) => Promise<void>
+  /**
    * Client-mediated tool approval. When omitted, the default is DENY. A real
    * handler routes the request to the TaskWraith approval flow and returns the
    * decision written back.
@@ -149,7 +154,11 @@ export interface AcpTurnOptions {
    * reached a terminal stopReason before exit; `terminalStatus` is that raw
    * status so callers can distinguish end_turn from Cancelled/PermissionRejected.
    */
-  onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
+  onClose?: (
+    code: number | null,
+    turnComplete: boolean,
+    terminalStatus?: string
+  ) => void | Promise<void>
   /** Opt-in raw JSON-RPC frame tap (both directions) for gated debug capture. */
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
   /** Called after session/new or session/resume succeeds, before config/prompt. */
@@ -163,6 +172,12 @@ export interface AcpTurnOptions {
 export interface AcpTurnHandle {
   /** User-initiated cancel: session/cancel (protocol) then kill. */
   cancel: () => void
+  /**
+   * Resolves only after the exact child emits `close` and the provider-owned
+   * `onClose` callback has settled. A kill request is not close evidence, and
+   * async cleanup/projection performed by `onClose` remains inside this join.
+   */
+  closed: Promise<void>
 }
 
 // Keep prompt=3 for compatibility with existing protocol traces. Resume uses a
@@ -250,8 +265,24 @@ export function createAcpTurnAbortController(handle: { cancel: () => void }): Ab
  * synthesizes the canonical result/exit from `onClose`.
  */
 export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
+  // Create both join authorities before spawning. `onProcess` is deliberately
+  // invoked only after child close/error listeners are installed below.
+  let resolveClosed!: () => void
+  const closeSettled = new Promise<void>((resolve) => {
+    resolveClosed = resolve
+  })
+  let resolveStartup!: () => void
+  const startupSettled = new Promise<void>((resolve) => {
+    resolveStartup = resolve
+  })
+  let startupSettlementDelivered = false
+  const settleStartup = (): void => {
+    if (startupSettlementDelivered) return
+    startupSettlementDelivered = true
+    resolveStartup()
+  }
+
   const child = options.spawnProcess()
-  options.onProcess?.(child)
 
   let carry = ''
   let sessionId = ''
@@ -492,9 +523,6 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     }
   }
 
-  // Step 1 — initialize handshake with the caller-owned capabilities.
-  writeRpc(ACP_ID.initialize, 'initialize', options.initializeParams)
-
   child.stdout?.on('data', (chunk) => {
     const parsed = parseAcpStreamChunk(chunk.toString(), carry)
     carry = parsed.carry
@@ -607,7 +635,7 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
         continue
       }
       // Any OTHER inbound agent→client request: give a provider hook first
-      // chance (Kimi fs handlers), else answer method-not-found so the peer
+      // chance, else answer method-not-found so the peer
       // never aborts the channel. A hook reply, like method-not-found, is never
       // an allow/result-for-a-tool.
       if (isAcpInboundRequest(message)) {
@@ -676,24 +704,121 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
     if (text) options.onEvent({ type: 'provider_warning', text })
   })
 
+  let processError: Error | null = null
+  let terminalCloseDelivered = false
   child.on('error', (err) => {
-    closed = true
-    clearKillBackstop()
-    activePromptRpcId = null
-    deniedPromptRpcId = null
+    // Do not terminalize on `error`: request provider-specific termination and
+    // let the joined `close` boundary own cleanup/projection. A failed spawn or
+    // transport can otherwise emit no useful exit on provider wrappers and
+    // leave the run open indefinitely.
+    processError = err
     const text = options.formatProcessError ? options.formatProcessError(err) : err.message || String(err)
-    options.onEvent({ type: 'provider_warning', text })
-    options.onClose?.(1, turnComplete, terminalStatus)
+    try {
+      options.onEvent({ type: 'provider_warning', text })
+    } catch {
+      // Provider termination is authoritative even when transcript projection
+      // throws while reporting the process error.
+    } finally {
+      endProcess()
+    }
   })
   child.on('close', (code) => {
+    if (terminalCloseDelivered) return
+    terminalCloseDelivered = true
     closed = true
     clearKillBackstop()
     activePromptRpcId = null
     deniedPromptRpcId = null
-    options.onClose?.(code, turnComplete, terminalStatus)
+    const terminalCode = processError && (code === null || code === 0) ? 1 : code
+    // The public close authority includes provider-owned async cleanup and
+    // terminal projection. Resolve even when that callback rejects: callers
+    // need exact settlement evidence and providers own their error surface.
+    // Child close is necessary but not sufficient: Kimi's beforeInitialize
+    // records the exact provider PID/birth in its OAuth lease. Cancellation or
+    // process failure must not allow cleanup/history receipt to overtake that
+    // pending startup operation.
+    const deliverTerminalClose = (): void => {
+      let closeResult: void | Promise<void>
+      try {
+        closeResult = options.onClose?.(terminalCode, turnComplete, terminalStatus)
+      } catch {
+        resolveClosed()
+        return
+      }
+      void Promise.resolve(closeResult)
+        .catch(() => undefined)
+        .then(resolveClosed)
+    }
+    if (startupSettlementDelivered) deliverTerminalClose()
+    else void startupSettled.then(deliverTerminalClose)
   })
 
+  const sendInitialize = (): void => {
+    if (!closed && !cancelRequested) {
+      writeRpc(ACP_ID.initialize, 'initialize', options.initializeParams)
+    }
+  }
+  const stopForStartupFailure = (message: string): void => {
+    try {
+      options.onEvent({ type: 'provider_warning', text: message })
+    } catch {
+      // A throwing projection must not skip provider termination.
+    }
+    endProcess()
+  }
+
+  // Expose the child only after exact close/error listeners exist. A host hook
+  // may partially attach the process and then throw; contain that failure,
+  // request termination, return a joinable handle, and let real `close` own the
+  // terminal boundary.
+  let processExposureSucceeded = false
+  try {
+    options.onProcess?.(child)
+    processExposureSucceeded = true
+  } catch (error) {
+    processError = error instanceof Error ? error : new Error(String(error))
+    stopForStartupFailure(
+      'ACP provider process registration failed; the process was stopped before initialization.'
+    )
+    settleStartup()
+  }
+
+  if (processExposureSucceeded && options.beforeInitialize) {
+    let startupOperation: Promise<void>
+    try {
+      startupOperation = Promise.resolve(options.beforeInitialize(child))
+    } catch {
+      stopForStartupFailure(
+        'ACP provider startup authority could not be committed; the process was stopped.'
+      )
+      settleStartup()
+      startupOperation = Promise.resolve()
+    }
+    if (!startupSettlementDelivered) {
+      void startupOperation
+        .then(sendInitialize)
+        .catch(() => {
+          stopForStartupFailure(
+            'ACP provider startup authority could not be committed; the process was stopped.'
+          )
+        })
+        .finally(settleStartup)
+    }
+  } else if (processExposureSucceeded) {
+    // Step 1 — initialize handshake with the caller-owned capabilities.
+    try {
+      sendInitialize()
+    } catch {
+      stopForStartupFailure(
+        'ACP provider initialization could not be sent; the process was stopped.'
+      )
+    } finally {
+      settleStartup()
+    }
+  }
+
   return {
+    closed: closeSettled,
     cancel: () => {
       cancelRequested = true
       activePromptRpcId = null

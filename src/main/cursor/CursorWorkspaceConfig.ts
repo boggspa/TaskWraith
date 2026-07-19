@@ -1,3 +1,8 @@
+// HISTORICAL/QUALIFICATION-ONLY: production Cursor admission is disabled before
+// process launch. These config helpers remain for regression evidence and
+// possible future qualification; production must not mutate a workspace with
+// them or treat them as a sandbox.
+//
 // CR6 — workspace-local Cursor permission config for TaskWraith-owned WRITE mode.
 //
 // The CR3 spike proved a bare `cursor-agent -p` runs native write+shell
@@ -9,11 +14,12 @@
 // tools. Edits then flow through TaskWraith's approval ledger and workspace/path
 // checks instead of Cursor-native side effects. Restored after the run.
 //
-// SAFETY: never touches global `~/.cursor`. Merges (not clobbers) any existing
-// workspace `.cursor/cli.json` — we only ADD the shell deny — and restores the
-// exact original bytes on completion. A crash that skips restore leaves only
-// extra Shell(**) / Write(**) deny rules (conservative, never destructive). The
-// caller falls back to read-only (`--mode plan`) if this config can't be applied.
+// SAFETY: ordinary workspaces never touch global `~/.cursor`. The transient MCP
+// registry is isolated to TaskWraith-owned broker entries plus servers explicitly
+// supplied from TaskWraith settings; unrelated project/global definitions are not
+// carried into a `--approve-mcps` / `--force` run. Existing config bytes are
+// restored exactly on completion. Symlinked config directories/files are rejected
+// before any transient write. The caller stops the managed run if setup fails.
 //
 // Write mode also sets up the TaskWraith MCP bridge: a per-run
 // `.cursor/mcp.json` registering the full brokered TaskWraith MCP server plus
@@ -75,6 +81,7 @@ export function mergeCursorDenyRules(
 /** Minimal sync-fs surface (subset of node:fs) — injected for testability. */
 export interface CursorConfigFs {
   existsSync(path: string): boolean
+  lstatSync(path: string): { isSymbolicLink(): boolean }
   readFileSync(path: string, encoding: 'utf8'): string
   writeFileSync(path: string, data: string): void
   mkdirSync(path: string, options: { recursive: boolean }): void
@@ -82,28 +89,30 @@ export interface CursorConfigFs {
 }
 
 /**
- * Optional MCP bridge setup applied alongside the write-mode deny-list.
+ * Optional MCP bridge setup applied alongside the native-tool deny-list.
  * `allowRules` are always merged into the cli.json write. `mcpConfigPath` +
- * `serverEntry` are OPTIONAL: supply both to also register a per-run workspace
- * `.cursor/mcp.json` (the original approach); OMIT both for CRUX39 "B" mode,
- * which relies on a user-approved GLOBAL `~/.cursor/mcp.json` server and so needs
- * only the cli.json allow rule (no per-run registration).
+ * `serverEntry` are OPTIONAL: supply both to install the isolated per-run
+ * workspace `.cursor/mcp.json`. Current global-broker mode still supplies both
+ * (with an empty settings entry map when appropriate) so project servers cannot
+ * join the managed run. Omit both only when no transient MCP registry is needed.
  */
 export interface CursorMcpBridgeOptions {
   /** Allow rules to add to cli.json (normally `CURSOR_MCP_ALLOW_RULES`). */
   allowRules: readonly string[]
-  /** Absolute path to the workspace `.cursor/mcp.json` (omit in "B" mode). */
+  /** Absolute path to the workspace `.cursor/mcp.json` when isolation is required. */
   mcpConfigPath?: string
-  /** The `mcpServers` entry (from `buildCursorMcpServerEntry`; omit in "B" mode). */
+  /** Complete allowlisted `mcpServers` entries for the managed run. */
   serverEntry?: Record<string, unknown>
   /**
-   * Preserve reserved/global server entries while merging `serverEntry`.
+   * Preserve only the exact canonical TaskWraith broker registrations while
+   * installing `serverEntry`.
    *
    * This is only for a global chat whose normalized workspace is the user's
    * home directory: in that case the apparent workspace config path and the
-   * global registry are the same `~/.cursor/mcp.json` file. Ordinary workspace
-   * configs must leave this false so a project-local reserved name cannot
-   * shadow TaskWraith's canonical global broker.
+   * global registry are the same `~/.cursor/mcp.json` file. User/global servers
+   * are deliberately hidden for the transient run and restored byte-for-byte
+   * afterwards. Ordinary workspace configs must leave this false so a project-
+   * local reserved name cannot shadow TaskWraith's canonical global broker.
    */
   preserveExistingMcpServers?: boolean
 }
@@ -130,10 +139,14 @@ export function ensureGlobalCursorBrokerRegistered(
   brokerEntries: Record<string, unknown>,
   removeServerNames: readonly string[] = []
 ): boolean {
+  assertNotSymlink(fs, globalMcpDir, 'global .cursor directory')
+  assertNotSymlink(fs, globalMcpPath, 'global mcp.json')
   const cap = captureFile(fs, globalMcpPath)
   if (!globalCursorMcpNeedsUpdate(cap.parsed, brokerEntries, removeServerNames)) return false
   const merged = mergeGlobalCursorMcpServers(cap.parsed, brokerEntries, removeServerNames)
   if (!fs.existsSync(globalMcpDir)) fs.mkdirSync(globalMcpDir, { recursive: true })
+  assertNotSymlink(fs, globalMcpDir, 'global .cursor directory')
+  assertNotSymlink(fs, globalMcpPath, 'global mcp.json')
   fs.writeFileSync(globalMcpPath, `${JSON.stringify(merged, null, 2)}\n`)
   return true
 }
@@ -159,11 +172,8 @@ function captureFile(fs: CursorConfigFs, path: string): CapturedFile {
   const existed = fs.existsSync(path)
   let original: string | null = null
   if (existed) {
-    try {
-      original = fs.readFileSync(path, 'utf8')
-    } catch {
-      original = null
-    }
+    // Setup must fail before mutation if exact restoration cannot be promised.
+    original = fs.readFileSync(path, 'utf8')
   }
   let parsed: unknown = null
   if (original) {
@@ -176,10 +186,44 @@ function captureFile(fs: CursorConfigFs, path: string): CapturedFile {
   return { existed, original, parsed }
 }
 
+function assertNotSymlink(fs: CursorConfigFs, path: string, label: string): void {
+  let stat: { isSymbolicLink(): boolean }
+  try {
+    // lstat (rather than existsSync) is load-bearing here: existsSync follows a
+    // dangling symlink and reports false, after which a write would follow it.
+    stat = fs.lstatSync(path)
+  } catch (error) {
+    if (
+      error &&
+      typeof error === 'object' &&
+      'code' in error &&
+      (error as { code?: unknown }).code === 'ENOENT'
+    ) {
+      return
+    }
+    throw error
+  }
+  if (stat.isSymbolicLink()) {
+    throw new Error(`Refusing Cursor config write through symlinked ${label}: ${path}`)
+  }
+}
+
+function assertSafeTransientTargets(
+  fs: CursorConfigFs,
+  dirPath: string,
+  configPath: string,
+  mcpConfigPath?: string
+): void {
+  assertNotSymlink(fs, dirPath, '.cursor directory')
+  assertNotSymlink(fs, configPath, 'cli.json')
+  if (mcpConfigPath) assertNotSymlink(fs, mcpConfigPath, 'mcp.json')
+}
+
 /** Restore a captured file: rewrite original bytes if it existed, else remove. */
 function restoreFile(fs: CursorConfigFs, path: string, cap: CapturedFile): void {
   try {
     if (cap.existed && cap.original != null) {
+      assertNotSymlink(fs, path, 'restore target')
       fs.writeFileSync(path, cap.original)
     } else {
       fs.rmSync(path, { force: true })
@@ -203,6 +247,11 @@ export function applyCursorWriteModeConfig(
   bridge?: CursorMcpBridgeOptions,
   options?: { fullAccess?: boolean }
 ): () => void {
+  const mcpConfigPath = bridge?.mcpConfigPath
+  const serverEntry = bridge?.serverEntry
+  const writeMcp = Boolean(mcpConfigPath && serverEntry)
+  assertSafeTransientTargets(fs, dirPath, configPath, writeMcp ? mcpConfigPath : undefined)
+
   const dirExisted = fs.existsSync(dirPath)
 
   // cli.json: deny the native shell (write containment) + optionally allow the
@@ -216,24 +265,40 @@ export function applyCursorWriteModeConfig(
   let cliMerged = mergeCursorDenyRules(cli.parsed, denyRules)
   if (bridge) cliMerged = mergeCursorAllowRules(cliMerged, bridge.allowRules)
 
-  // mcp.json: register the TaskWraith server — only when the bridge supplies BOTH a
-  // path and an entry. "B" mode omits them (it relies on the user's approved
-  // global server), so only the cli.json allow rule above is written.
-  const mcpConfigPath = bridge?.mcpConfigPath
-  const serverEntry = bridge?.serverEntry
-  const writeMcp = Boolean(mcpConfigPath && serverEntry)
+  // mcp.json: install the complete isolated server set only when the bridge
+  // supplies BOTH a path and an entry. Global-broker mode also uses this path to
+  // hide project servers while retaining the canonical global broker when the
+  // workspace aliases Home.
   const mcp = writeMcp && mcpConfigPath ? captureFile(fs, mcpConfigPath) : null
   const mcpMerged =
     writeMcp && serverEntry
-      ? bridge?.preserveExistingMcpServers
-        ? mergeGlobalCursorMcpServers(mcp?.parsed ?? null, serverEntry)
-        : mergeCursorMcpConfig(mcp?.parsed ?? null, serverEntry)
+      ? mergeCursorMcpConfig(mcp?.parsed ?? null, serverEntry, {
+          preserveExistingTaskWraithBrokers: bridge?.preserveExistingMcpServers
+        })
       : null
 
-  if (!dirExisted) fs.mkdirSync(dirPath, { recursive: true })
-  fs.writeFileSync(configPath, `${JSON.stringify(cliMerged, null, 2)}\n`)
-  if (mcpConfigPath && mcpMerged) {
-    fs.writeFileSync(mcpConfigPath, `${JSON.stringify(mcpMerged, null, 2)}\n`)
+  try {
+    if (!dirExisted) fs.mkdirSync(dirPath, { recursive: true })
+    // Recheck after directory creation and immediately before each write. This
+    // does not claim to solve hostile filesystem races, but it ensures existing
+    // and setup-time symlinks are never followed.
+    assertSafeTransientTargets(fs, dirPath, configPath, writeMcp ? mcpConfigPath : undefined)
+    fs.writeFileSync(configPath, `${JSON.stringify(cliMerged, null, 2)}\n`)
+    if (mcpConfigPath && mcpMerged) {
+      assertSafeTransientTargets(fs, dirPath, configPath, mcpConfigPath)
+      fs.writeFileSync(mcpConfigPath, `${JSON.stringify(mcpMerged, null, 2)}\n`)
+    }
+  } catch (error) {
+    restoreFile(fs, configPath, cli)
+    if (mcpConfigPath && mcp) restoreFile(fs, mcpConfigPath, mcp)
+    if (!dirExisted) {
+      try {
+        fs.rmSync(dirPath, { force: true, recursive: true })
+      } catch {
+        // Preserve the setup error; cleanup is best-effort.
+      }
+    }
+    throw error
   }
 
   let restored = false

@@ -1,5 +1,5 @@
 import type { AgentRunPayload } from '../run/AgentRunTypes'
-import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { DEFAULT_PROVIDER, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
 import {
   formatDiscordContextPromptAppendix,
@@ -61,8 +61,10 @@ import {
 import { grokAcpEnabled, grokReadOnlyMcpAdvertiseEnabled } from '../grokGate'
 import { shouldAdvertiseTaskWraithMcpToGrok } from '../grok/GrokMcpAdvertise'
 import { isKimiK3Model, normalizeKimiReasoningEffort } from '../providers/StaticProviderModels'
+import { isKimiAcpProductionPosture } from '../../shared/kimiAcpPosture'
 
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Known ids for historical decode. Compose/dispatch uses the shared live
+// admission predicate through `assertLiveProviderId`.
 const PROVIDER_IDS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -247,9 +249,12 @@ export class ComposerService {
       settingsSnapshot: undefined
     }
 
-    // Live default for a provider-less compose (was `|| 'gemini'`). An explicit
-    // gemini chat still composes its gemini prompt and is blocked at dispatch.
-    const requestedProvider = assertProviderId(input.provider || chat.provider || DEFAULT_PROVIDER)
+    // Live default for a provider-less compose (was `|| 'gemini'`). Historical
+    // Gemini and Cursor records remain decodable, but retired or security-
+    // unavailable providers are rejected before any new run is composed.
+    const requestedProvider = assertLiveProviderId(
+      input.provider || chat.provider || DEFAULT_PROVIDER
+    )
     const scope: ChatScope =
       input.scope === 'global' || chat.scope === 'global' ? 'global' : 'workspace'
     const settings = this.deps.getSettings()
@@ -495,7 +500,8 @@ export class ComposerService {
       provider === 'kimi' &&
       resumeDecision.sessionId &&
       resumeDecision.sessionId.startsWith('session_') &&
-      metadataBoolean(chat, 'kimiAcpNativeSession') === true
+      metadataBoolean(chat, 'kimiAcpNativeSession') === true &&
+      isKimiAcpProductionPosture(chat.providerMetadata?.kimiAcpPostureVersion)
     )
     const promptInput = {
       provider,
@@ -865,6 +871,14 @@ function assertProviderId(value: unknown): ProviderId {
     return value as ProviderId
   }
   throw new Error('Provider is invalid.')
+}
+
+function assertLiveProviderId(value: unknown): ProviderId {
+  const provider = assertProviderId(value)
+  if (!isLiveSelectableProvider(provider)) {
+    throw new Error(`${provider} is unavailable for new runs.`)
+  }
+  return provider
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {

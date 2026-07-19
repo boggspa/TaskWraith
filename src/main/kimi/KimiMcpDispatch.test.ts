@@ -86,6 +86,66 @@ describe('createKimiMcpDispatch', () => {
     expect(dispatchBrokerRequest).not.toHaveBeenCalled()
   })
 
+  it('redacts an unexpected synchronous dispatch failure', async () => {
+    const sentinel = '/Users/operator/private/workspace/.secrets/token=host-secret'
+    const dispatch = createKimiMcpDispatch({
+      route: {},
+      appVersion: '1.8.4',
+      brokerToken: 'broker-token',
+      getMcpToolDefinitions: () => {
+        throw new Error(sentinel)
+      },
+      dispatchBrokerRequest: vi.fn()
+    })
+
+    const response = await dispatch({ jsonrpc: '2.0', id: 81, method: 'tools/list' })
+
+    expect(response).toEqual({
+      jsonrpc: '2.0',
+      id: 81,
+      error: {
+        code: -32603,
+        message: 'TaskWraith MCP bridge encountered an unexpected internal error.'
+      }
+    })
+    expect(JSON.stringify(response)).not.toContain(sentinel)
+  })
+
+  it('redacts an unexpected broker rejection from the shared gateway', async () => {
+    const sentinel = '/Users/operator/private/workspace/.secrets/token=host-secret'
+    const dispatch = createKimiMcpDispatch({
+      route: {},
+      appVersion: '1.8.4',
+      brokerToken: 'broker-token',
+      getMcpToolDefinitions: () => [{ name: 'list_ensemble_participants' }],
+      dispatchBrokerRequest: vi.fn(async () => {
+        throw new Error(sentinel)
+      })
+    })
+
+    const response = await dispatch({
+      jsonrpc: '2.0',
+      id: 82,
+      method: 'tools/call',
+      params: { name: 'list_ensemble_participants', arguments: {} }
+    })
+
+    expect(response).toMatchObject({
+      jsonrpc: '2.0',
+      id: 82,
+      result: {
+        isError: true,
+        content: [
+          {
+            type: 'text',
+            text: 'TaskWraith MCP bridge encountered an unexpected internal error.'
+          }
+        ]
+      }
+    })
+    expect(JSON.stringify(response)).not.toContain(sentinel)
+  })
+
   it('keeps an approval-backed call alive beyond the old 30 second cutoff', async () => {
     vi.useFakeTimers()
     try {

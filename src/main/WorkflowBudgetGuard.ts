@@ -96,8 +96,8 @@ export function evaluateWallclockBudget(budget: OccurrenceBudget, nowMs: number)
 
 /**
  * Human-readable terminal reason, persisted onto the task's lastError + the
- * durable event. `terminal: true` is the POST-HOC case (grok/cursor: the run
- * already FINISHED over budget — it was not aborted mid-run), so the copy says
+ * durable event. `terminal: true` is the POST-HOC case (Grok, plus historical
+ * Cursor records: the run already FINISHED over budget), so the copy says
  * "finished over its …" instead of "aborted: … exceeded". The non-terminal
  * phrasing is preserved byte-for-byte.
  */

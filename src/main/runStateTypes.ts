@@ -11,6 +11,11 @@ import type {
   TaskWraithMcpProfileId
 } from './store/types'
 import type { TaskWraithMcpProfileFenceState } from './run/AgentRunTypes'
+import type { ProviderTerminalProjectionOperation } from './run/ProviderOperationRegistry'
+import type {
+  CodexThreadAdmissionKind,
+  CodexThreadAdmissionReservation
+} from './codex/CodexThreadAdmission'
 export interface CodexRunState {
   sender: Electron.WebContents
   threadId: string
@@ -19,6 +24,12 @@ export interface CodexRunState {
   cwd: string
   workspacePath?: string
   turnId?: string
+  /** Host admission kind + reservation used to bind this run to one exact
+   * app-server operation. The reservation serializes same-thread host starts
+   * through identity assignment; terminal projection additionally requires
+   * the exact bound id. */
+  admissionKind?: CodexThreadAdmissionKind
+  admissionReservation?: CodexThreadAdmissionReservation
   /** When this run IS a native `/review` sub-run, the id of the synthesized
    * `codex_review` anchor activity the review card attaches its telemetry to
    * (Codex emits no natural anchor tool-call for a review). Set only for reviews;
@@ -77,6 +88,10 @@ export interface CodexRunState {
   filePatchByItemId: Map<string, any>
   hostRerunRequestedItemIds: Set<string>
   providerMediaRefKeys?: Set<string>
+  /** Exact per-turn settlement for the shared app-server transport. History
+   * deletion joins this until the terminal notification's main projection has
+   * completed; the daemon process lifetime is deliberately not used. */
+  terminalProjectionOperation?: ProviderTerminalProjectionOperation
   completed: boolean
 }
 

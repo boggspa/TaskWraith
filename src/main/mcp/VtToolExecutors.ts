@@ -1,5 +1,9 @@
 import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRuntime'
 import { buildAvMediaRef, type AvPosterResult, type GeneratePoster } from '../media/AvMediaRef'
+import type {
+  PendingToolMediaPersistence,
+  ToolMediaPersistOutput
+} from '../services/ToolMediaPersistenceGate'
 
 /**
  * VideoToolbox MCP tool executors. Pure logic — the realpath input jail and the
@@ -142,11 +146,9 @@ export interface VtToolDeps {
    */
   persistOutputFile: (
     path: string,
-    mimeType: string
-  ) => Awaitable<
-    | { ok: true; path: string; sha256: string; byteLength: number }
-    | { ok: false; reason: string }
-  >
+    mimeType: string,
+    ctx: VtToolContext
+  ) => Awaitable<ToolMediaPersistOutput>
   /**
    * Best-effort poster/waveform for a produced AV file (the card preview). Never
    * throws; resolves undefined on any failure (the producer still returns its ref).
@@ -179,6 +181,13 @@ function fail(toolName: string, message: string): McpToolExecutionResult {
   const value = { ok: false, tool: toolName, error: message }
   const text = JSON.stringify(value)
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
+}
+
+function withPendingToolMedia(
+  result: McpToolExecutionResult,
+  pending: PendingToolMediaPersistence | undefined
+): McpToolExecutionResult {
+  return pending ? { ...result, pendingToolMediaPersistence: pending } : result
 }
 
 // Last path segment of an agent-supplied sourcePath (cosmetic, for the output label
@@ -467,6 +476,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
 
       const outputPath = stagingPath('mp4')
       const mimeType = 'video/mp4'
+      let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
         const result = await encodeClip({
           sourcePath: jailed.realPath,
@@ -481,8 +491,9 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           overlayWidth,
           overlayOpacity
         })
-        const persisted = await persistOutputFile(outputPath, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType, ctx)
         if (!persisted.ok) return fail('video_encode_clip', `Failed to persist output: ${persisted.reason}`)
+        pendingToolMediaPersistence = persisted.pendingToolMediaPersistence
         // Best-effort poster from the canonical durable path. Guarded so a
         // misbehaving generator can never fail the producer (the poster is decorative).
         const poster = await safePoster(persisted.path, 'video', mimeType, persisted.byteLength)
@@ -500,7 +511,12 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         // (mimeType is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than
         // return silent empty-success that would strand the persisted (content-
         // addressed) asset with no ref pointing at it.
-        if (!ref) return fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`)
+        if (!ref) {
+          return withPendingToolMedia(
+            fail('video_encode_clip', `internal: unsupported output mime ${mimeType}`),
+            pendingToolMediaPersistence
+          )
+        }
         const summary =
           `Encoded clip → ${result.width}×${result.height}, ${(result.durationMs / 1000).toFixed(1)}s, ` +
           `${result.codec} (${humanBytes(persisted.byteLength)}, ${result.usedHardware ? 'hardware' : 'software'})` +
@@ -508,10 +524,14 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         return {
           text: summary,
           content: [{ type: 'text', text: summary }],
-          trustedMediaRefs: [ref]
+          trustedMediaRefs: [ref],
+          pendingToolMediaPersistence
         }
       } catch (error) {
-        return fail('video_encode_clip', error instanceof Error ? error.message : String(error))
+        return withPendingToolMedia(
+          fail('video_encode_clip', error instanceof Error ? error.message : String(error)),
+          pendingToolMediaPersistence
+        )
       } finally {
         try {
           removeFile(outputPath)
@@ -580,6 +600,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
 
       const outputPath = stagingPath('mp4')
       const mimeType = 'video/mp4'
+      let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
         const result = await concatClips({
           outputPath,
@@ -587,8 +608,9 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           scaleWidth,
           targetBitrateKbps
         })
-        const persisted = await persistOutputFile(outputPath, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType, ctx)
         if (!persisted.ok) return fail('video_concat_clips', `Failed to persist output: ${persisted.reason}`)
+        pendingToolMediaPersistence = persisted.pendingToolMediaPersistence
         // Best-effort poster (fail-tolerant) from the canonical durable path.
         const poster = await safePoster(persisted.path, 'video', mimeType, persisted.byteLength)
         const ref = buildAvMediaRef({
@@ -604,7 +626,12 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType
         // is the fixed main-derived 'video/mp4'), but fail LOUDLY rather than return a
         // silent empty-success that would strand the persisted asset with no ref.
-        if (!ref) return fail('video_concat_clips', `internal: unsupported output mime ${mimeType}`)
+        if (!ref) {
+          return withPendingToolMedia(
+            fail('video_concat_clips', `internal: unsupported output mime ${mimeType}`),
+            pendingToolMediaPersistence
+          )
+        }
         const summary =
           `Concatenated ${result.segmentCount} clips → ${result.width}×${result.height}, ` +
           `${(result.durationMs / 1000).toFixed(1)}s, ${result.codec} ` +
@@ -612,10 +639,14 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         return {
           text: summary,
           content: [{ type: 'text', text: summary }],
-          trustedMediaRefs: [ref]
+          trustedMediaRefs: [ref],
+          pendingToolMediaPersistence
         }
       } catch (error) {
-        return fail('video_concat_clips', error instanceof Error ? error.message : String(error))
+        return withPendingToolMedia(
+          fail('video_concat_clips', error instanceof Error ? error.message : String(error)),
+          pendingToolMediaPersistence
+        )
       } finally {
         try {
           removeFile(outputPath)
@@ -700,6 +731,7 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
       const mimeType = format === 'wav' ? 'audio/wav' : 'audio/mp4'
 
       const outputPath = stagingPath(ext)
+      let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
       try {
         const result = await mixdown({
           outputPath,
@@ -709,8 +741,9 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
           bitrateKbps,
           tracks: realTracks
         })
-        const persisted = await persistOutputFile(outputPath, mimeType)
+        const persisted = await persistOutputFile(outputPath, mimeType, ctx)
         if (!persisted.ok) return fail('audio_mix', `Failed to persist output: ${persisted.reason}`)
+        pendingToolMediaPersistence = persisted.pendingToolMediaPersistence
         // Best-effort waveform poster + harvested peaks from the canonical durable path.
         // Audio carries BOTH the JPEG poster (fallback) and the compact `peaks` envelope
         // the renderer DAW-draws from.
@@ -729,16 +762,25 @@ export function createVtToolExecutors(deps: VtToolDeps): VtToolExecutors {
         // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
         // the fixed main-derived 'audio/wav' | 'audio/mp4'), but fail LOUDLY rather than
         // return a silent empty-success that would strand the persisted asset with no ref.
-        if (!ref) return fail('audio_mix', `internal: unsupported output mime ${mimeType}`)
+        if (!ref) {
+          return withPendingToolMedia(
+            fail('audio_mix', `internal: unsupported output mime ${mimeType}`),
+            pendingToolMediaPersistence
+          )
+        }
         const summary =
           `Mixed ${realTracks.length} tracks → ${ref.name} (${humanBytes(persisted.byteLength)})`
         return {
           text: summary,
           content: [{ type: 'text', text: summary }],
-          trustedMediaRefs: [ref]
+          trustedMediaRefs: [ref],
+          pendingToolMediaPersistence
         }
       } catch (error) {
-        return fail('audio_mix', error instanceof Error ? error.message : String(error))
+        return withPendingToolMedia(
+          fail('audio_mix', error instanceof Error ? error.message : String(error)),
+          pendingToolMediaPersistence
+        )
       } finally {
         try {
           removeFile(outputPath)

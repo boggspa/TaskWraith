@@ -7,7 +7,7 @@ import {
   type AppNotificationIcon,
   type AppNotificationProviderGroup
 } from '../shared/appNotifications'
-import { isRetiredProvider } from '../shared/retiredProviders'
+import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
 import {
   OLLAMA_MODEL_COMMANDS,
   PROVIDER_INSTALL_COMMANDS,
@@ -120,9 +120,10 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
     'OpenAI Codex CLI for fast agentic coding work. Sign-in happens on the Mac through the Codex CLI.',
   claude:
     'Anthropic Claude Code for careful reasoning and edits. OAuth or API-key setup happens on the Mac.',
-  kimi: 'Moonshot Kimi for structured tool-call runs. Use it when a Moonshot API key is configured on the Mac.',
+  kimi:
+    'Moonshot Kimi over admitted ACP. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml; neither bypasses runtime admission.',
   cursor:
-    'Cursor Composer runs through the Cursor CLI. The CLI may still ask for sign-in on the Mac.',
+    'Cursor configuration/history remains visible, but TaskWraith starts no managed Cursor process. Plan and tool modes are disabled.',
   grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
   ollama:
     'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.'
@@ -132,8 +133,10 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   gemini: 'Gemini is not offered for new runs.',
   codex: 'On your Mac, install Codex if needed, then run codex login in Terminal.',
   claude: 'On your Mac, open TaskWraith Settings or run the Claude auth flow.',
-  kimi: 'On your Mac, add a Moonshot/Kimi API key in TaskWraith Settings.',
-  cursor: 'On your Mac, install Cursor CLI and run cursor-agent login if prompted.',
+  kimi:
+    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml, then confirm the exact runtime is admitted. The key saved in TaskWraith Settings is usage-only.',
+  cursor:
+    'No setup action enables Cursor runs in this source-ahead build. Use another provider while startup containment remains unqualified.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
   ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.'
 }
@@ -186,13 +189,15 @@ function buildNotices(notifications: readonly AppNotification[]): RemoteFirstLau
 }
 
 function providerSetupCommands() {
-  return PROVIDER_INSTALL_COMMANDS.filter((entry) => !isRetiredProvider(entry.id)).map((entry) => ({
-    id: entry.id,
-    label: entry.label,
-    command: entry.command,
-    source: entry.source,
-    ...(entry.platform ? { platform: entry.platform } : {})
-  }))
+  return PROVIDER_INSTALL_COMMANDS.filter((entry) => isLiveSelectableProvider(entry.id)).map(
+    (entry) => ({
+      id: entry.id,
+      label: entry.label,
+      command: entry.command,
+      source: entry.source,
+      ...(entry.platform ? { platform: entry.platform } : {})
+    })
+  )
 }
 
 function buildProviderCard(args: {
@@ -226,6 +231,14 @@ function deriveProviderStatus(
   contract: ProviderCapabilityContract | null,
   usage: ProviderUsageSummary | null
 ): { kind: RemoteFirstLaunchProviderStatusKind; text: string; detail?: string } {
+  if (provider === 'cursor') {
+    return {
+      kind: 'notObservable',
+      text: 'Managed runs unavailable',
+      detail:
+        'TaskWraith will not start Cursor, including Plan runs, until provider-managed startup surfaces pass exact-build containment qualification.'
+    }
+  }
   const exhausted = usage?.windows.some(
     (window) => typeof window.usedPercent === 'number' && window.usedPercent >= 99
   )
@@ -263,6 +276,18 @@ function deriveProviderStatus(
             : `${providerLabel(provider)} is not installed or was not found by TaskWraith on the Mac.`
       }
     }
+    if (
+      provider === 'kimi' &&
+      (availability.version === 'security-unavailable' ||
+        availability.version === 'admission-required')
+    ) {
+      return {
+        kind: 'notObservable',
+        text: 'Managed runtime unavailable',
+        detail:
+          'Kimi Code is installed, but this exact runtime is not admitted by TaskWraith’s embedded reviewed roster. OAuth login or an API key does not bypass this gate.'
+      }
+    }
     return {
       kind: 'needsSignIn',
       text: 'Needs sign-in on Mac',
@@ -287,14 +312,13 @@ function deriveProviderStatus(
     availability.authState === 'unknown' ||
     availability.authState === 'not-observable' ||
     availability.authState === 'not-queried' ||
-    provider === 'cursor' ||
     provider === 'grok'
   ) {
     return {
       kind: 'notObservable',
       text: 'Not observable',
       detail:
-        provider === 'cursor' || provider === 'grok'
+        provider === 'grok'
           ? `${providerLabel(provider)} CLI is available on the Mac; the CLI may still ask for sign-in when a run starts.`
           : `${providerLabel(provider)} is available, but TaskWraith cannot prove account sign-in from the remote snapshot.`
     }
@@ -328,6 +352,7 @@ function setupCommandsForProvider(
   provider: ProviderId,
   setupCommands: ReturnType<typeof providerSetupCommands>
 ) {
+  if (provider === 'cursor') return []
   return setupCommands.filter((entry) =>
     provider === 'ollama'
       ? entry.id === 'ollama' || entry.id === 'ollama-windows'
@@ -359,6 +384,7 @@ function providerSetupHintsForProvider(
   provider: ProviderId,
   providerSetup: readonly TaskWraithPluginActivatedProviderSetup[]
 ): RemoteFirstLaunchProviderSetupHint[] {
+  if (provider === 'cursor') return []
   return providerSetup
     .filter((entry) => entry.setup.provider === provider)
     .map((entry) => ({

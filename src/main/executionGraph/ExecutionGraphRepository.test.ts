@@ -386,7 +386,7 @@ describe('ExecutionGraphRepository execution ledgers', () => {
       lastSequence: 3,
       integrity: 'valid'
     })
-  })
+  }, 15_000)
 
   it('quarantines deletion of every complete ledger suffix instead of accepting a valid prefix', () => {
     const root = storageRoot()

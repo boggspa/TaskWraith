@@ -9,6 +9,7 @@ import {
   type EnsembleRosterPreset
 } from './EnsembleRosterPresetContract'
 import { PENDING_PROVIDER_CHANGE_KEY } from './providerChangeQueue'
+import { isLiveSelectableProvider } from '../shared/retiredProviders'
 import type {
   ChatRecord,
   EnsembleFanoutPolicy,
@@ -33,18 +34,8 @@ const ASSIGNABLE_PERMISSION_PRESETS = new Set<PermissionPresetId>([
   'default'
 ])
 
-// Keep this module browser-safe: App.tsx imports the pending-roster finalizer.
-// Pulling selectableProviderIds from MainSanitizers drags main-only policy and
-// node:crypto modules into the renderer bundle. Gemini remains decode-only;
-// these are the live providers selectable for new runs.
-const LIVE_PROVIDERS = new Set<ProviderId>([
-  'codex',
-  'claude',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-])
+// This module stays browser-safe by consuming the node-free shared admission
+// predicate rather than duplicating the live provider list.
 
 export function parseSingleAgentRosterPresetExport(json: string): EnsembleRosterPreset {
   if (new TextEncoder().encode(json).byteLength > AGENT_ROSTER_IMPORT_MAX_BYTES) {
@@ -177,7 +168,7 @@ function normalizedFanoutPolicy(preset: EnsembleRosterPreset): EnsembleFanoutPol
 function validatePortableParticipant(
   participant: EnsembleRosterParticipantSnapshot
 ): Extract<BuildEnsembleRosterPresetApplyResult, { ok: false }> | null {
-  if (!LIVE_PROVIDERS.has(participant.provider)) {
+  if (!isLiveSelectableProvider(participant.provider)) {
     return fail(
       'provider_unavailable',
       `Roster preset import rejected: ${participant.provider} is not a live selectable provider.`

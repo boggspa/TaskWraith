@@ -311,14 +311,9 @@ export const BUILT_IN_TASKWRAITH_PLUGIN_MANIFESTS: TaskWraithPluginManifest[] = 
       },
       {
         provider: 'kimi',
-        label: 'Kimi CLI',
-        installHint: 'Install Kimi CLI and configure TaskWraith provider credentials.',
-        preflightChecks: ['binary', 'auth']
-      },
-      {
-        provider: 'cursor',
-        label: 'Cursor CLI',
-        installHint: 'Use Cursor CLI login and TaskWraith-contained write mode for edits.',
+        label: 'Kimi Code',
+        installHint:
+          'Install Kimi Code, authenticate with `kimi login` or ~/.kimi-code/config.toml, and use an exactly admitted runtime. The TaskWraith Settings key is usage-query-only.',
         preflightChecks: ['binary', 'auth']
       },
       {

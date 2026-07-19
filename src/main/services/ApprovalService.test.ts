@@ -12,6 +12,7 @@ import {
   DEFAULT_APPROVAL_TIMEOUT_POLICY
 } from '../ApprovalTimeoutScheduler'
 import type { BridgeRemoteAttentionPushPayload } from '../BridgeApnsPusher'
+import { HistoryClearAdmissionGate } from '../HistoryClearAdmissionGate'
 
 type AttentionPushCall = [string, 'production' | 'sandbox', BridgeRemoteAttentionPushPayload]
 
@@ -37,6 +38,7 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
   spies: {
     runManager: {
       get: ReturnType<typeof vi.fn>
+      getClaimedTerminalStatus: ReturnType<typeof vi.fn>
       resolveApproval: ReturnType<typeof vi.fn>
       clearApproval: ReturnType<typeof vi.fn>
     }
@@ -66,7 +68,13 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
   }
   const spies = {
     runManager: {
-      get: vi.fn(() => ({ runId: 'r-1', appChatId: 'c-1', providerSessionId: 's-1' })),
+      get: vi.fn(() => ({
+        runId: 'r-1',
+        appChatId: 'c-1',
+        providerSessionId: 's-1',
+        status: 'running'
+      })),
+      getClaimedTerminalStatus: vi.fn(() => undefined),
       resolveApproval: vi.fn(() => ({ runId: 'r-1', appChatId: 'c-1' })),
       clearApproval: vi.fn()
     },
@@ -137,6 +145,95 @@ describe('ApprovalService — registries', () => {
     const { deps } = makeDeps()
     const svc = new ApprovalService(deps)
     expect(svc.has('any-id')).toBe(false)
+  })
+
+  it('blocks registration while global approval admission is fenced', async () => {
+    const blocked = vi.fn(() => true)
+    const { deps, spies } = makeDeps({ isApprovalAdmissionBlocked: blocked })
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+
+    expect(
+      svc.registerGeminiTool('blocked-1', {
+        provider: 'claude',
+        service: 'canvasEval',
+        runId: 'r-1',
+        resolve
+      })
+    ).toBe(false)
+    expect(svc.has('blocked-1')).toBe(false)
+    expect(await svc.resolve('blocked-1', 'accept')).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(spies.publishApprovalRunEvent).not.toHaveBeenCalled()
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('history clear'))
+  })
+
+  it('rechecks a slow chat-clear hold before accepting main or exact Canvas approvals', async () => {
+    const gate = new HistoryClearAdmissionGate()
+    const isApprovalAdmissionBlocked = vi.fn(
+      (runId?: string, _workspacePath?: string, appChatId?: string) =>
+        gate.isAuthorityBlocked({
+          chatId: appChatId || (runId === 'r-1' ? 'c-1' : undefined),
+          chatWorkspaceId: null,
+          pathWorkspaceId: null
+        })
+    )
+    const { deps, spies } = makeDeps({ isApprovalAdmissionBlocked })
+    const svc = new ApprovalService(deps)
+    const resolveMain = vi.fn()
+    const resolveCanvas = vi.fn()
+    expect(
+      svc.registerMain('main-slow-clear', {
+        provider: 'gemini',
+        runId: 'r-1',
+        appChatId: 'c-1',
+        resolve: resolveMain
+      })
+    ).toBe(true)
+    expect(
+      svc.registerGeminiTool('canvas-slow-clear', {
+        provider: 'claude',
+        service: 'canvasEval',
+        runId: 'r-1',
+        resolve: resolveCanvas
+      })
+    ).toBe(true)
+
+    // The clear owns its synchronous hold while slow Canvas cleanup awaits.
+    gate.beginChat('c-1')
+    expect(await svc.resolve('main-slow-clear', 'accept')).toBe(false)
+    expect(await svc.resolve('canvas-slow-clear', 'accept')).toBe(false)
+    gate.endChat('c-1')
+
+    expect(resolveMain).toHaveBeenCalledWith(false)
+    expect(resolveCanvas).toHaveBeenCalledWith(false)
+    expect(svc.has('main-slow-clear')).toBe(false)
+    expect(svc.has('canvas-slow-clear')).toBe(false)
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('history clear'))
+    expect(spies.resolveApprovalLedger).not.toHaveBeenCalledWith(
+      expect.any(String),
+      'accept',
+      'user',
+      expect.any(Object)
+    )
+  })
+
+  it('blocks late registration after a terminal claim even if the session still says running', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.getClaimedTerminalStatus.mockReturnValue('cancelled')
+    const svc = new ApprovalService(deps)
+
+    expect(
+      svc.registerCodex('late-1', {
+        rpcId: 1,
+        method: 'item/permissions/requestApproval',
+        params: {},
+        runId: 'r-1'
+      })
+    ).toBe(false)
+    expect(svc.has('late-1')).toBe(false)
+    expect(spies.publishApprovalRunEvent).not.toHaveBeenCalled()
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('no longer active'))
   })
 
   it('registerMain → has() returns true and publishes approval_pending', () => {
@@ -266,6 +363,76 @@ describe('ApprovalService — registries', () => {
     ])
   })
 
+  it('projects canvas_eval as desktop-review-required and blocks remote acceptance', async () => {
+    const { deps, spies } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+    svc.registerGeminiTool('eval-1', {
+      provider: 'claude',
+      service: 'canvasEval',
+      workspacePath: '/ws',
+      runId: 'r-1',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve
+    })
+
+    expect(svc.listProjectionCards()[0]).toMatchObject({
+      toolCallId: 'eval-1',
+      title: 'Canvas eval requires desktop review',
+      actions: ['decline', 'cancel']
+    })
+    expect(await svc.resolve('eval-1', 'accept', { origin: 'remote' })).toBe(false)
+    expect(resolve).not.toHaveBeenCalled()
+    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('blocked remote acceptance'))
+
+    expect(await svc.resolve('eval-1', 'decline', { origin: 'remote' })).toBe(true)
+    expect(resolve).toHaveBeenCalledWith(false)
+  })
+
+  it('keeps provider-native canvas_eval approvals decline-only on paired devices', async () => {
+    const { deps, spies } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const secret = '__REMOTE_NATIVE_CANVAS_SCRIPT_SECRET__'
+    svc.registerCodex('codex-eval', {
+      rpcId: 1,
+      method: 'item/permissions/requestApproval',
+      params: { toolName: 'canvas_eval', script: secret },
+      service: 'canvasEval',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+    svc.registerKimi('kimi-eval', {
+      child: { kill: vi.fn() } as never,
+      rpcId: 2,
+      params: { toolName: 'canvas_eval', script: secret },
+      service: 'canvasEval',
+      allowedActions: ['accept', 'decline', 'cancel']
+    })
+
+    const cards = svc.listProjectionCards()
+    expect(cards).toHaveLength(2)
+    for (const card of cards) {
+      expect(card.title).toBe('Canvas eval requires desktop review')
+      expect(card.actions).toEqual(['decline', 'cancel'])
+      expect(JSON.stringify(card)).not.toContain(secret)
+    }
+    expect(await svc.resolve('codex-eval', 'accept', { origin: 'remote' })).toBe(false)
+    expect(await svc.resolve('kimi-eval', 'acceptForWorkspace', { origin: 'remote' })).toBe(false)
+    expect(await svc.resolve('kimi-eval', 'decline', { origin: 'remote' })).toBe(true)
+    expect(JSON.stringify(spies.appendDurableRunEventForRoute.mock.calls)).not.toContain(secret)
+    expect(spies.appendDurableRunEventForRoute).toHaveBeenCalledWith(
+      'kimi',
+      expect.anything(),
+      'approval_response',
+      'control',
+      expect.any(String),
+      expect.objectContaining({
+        requestId: 'kimi-eval',
+        service: 'canvasEval',
+        paramsRedacted: true
+      })
+    )
+  })
+
   it('listProjectionCards projects Kimi workspace from the pending record', () => {
     const { deps } = makeDeps()
     const svc = new ApprovalService(deps)
@@ -293,7 +460,8 @@ describe('ApprovalService — registries', () => {
       runId: 'r-1',
       appChatId: 'c-1',
       providerSessionId: 's-1',
-      workspacePath: '/session-ws'
+      workspacePath: '/session-ws',
+      status: 'running'
     })
     const svc = new ApprovalService(deps)
     svc.registerKimi('k-1', {
@@ -374,6 +542,216 @@ describe('ApprovalService — registries', () => {
   })
 })
 
+describe('ApprovalService — lifecycle cancellation', () => {
+  it('cancelForRun settles all five registries, rejects provider wires, and rejects late responses', async () => {
+    const { deps, spies } = makeDeps()
+    const svc = new ApprovalService(deps)
+    const mainResolve = vi.fn()
+    const mainResolveAction = vi.fn()
+    const toolResolve = vi.fn()
+    const kimiChild = { kill: vi.fn() } as never
+
+    expect(
+      svc.registerMain('main-1', {
+        provider: 'claude',
+        runId: 'r-1',
+        resolve: mainResolve,
+        resolveAction: mainResolveAction
+      })
+    ).toBe(true)
+    expect(
+      svc.registerGeminiTool('tool-1', {
+        provider: 'claude',
+        service: 'mcpTools',
+        runId: 'r-1',
+        resolve: toolResolve
+      })
+    ).toBe(true)
+    expect(
+      svc.registerCodex('codex-1', {
+        rpcId: 11,
+        method: 'item/permissions/requestApproval',
+        params: {},
+        runId: 'r-1'
+      })
+    ).toBe(true)
+    expect(
+      svc.registerKimi('kimi-1', {
+        child: kimiChild,
+        rpcId: 12,
+        params: { payload: { id: 'native-kimi-request-12' } },
+        runId: 'r-1'
+      })
+    ).toBe(true)
+    expect(
+      svc.registerHostCommand('host-1', {
+        sender: {} as never,
+        provider: 'codex',
+        command: 'pwd',
+        commandText: 'pwd',
+        cwd: '/ws',
+        threadId: 'c-1',
+        model: 'm-1',
+        appRunId: 'r-1',
+        reason: 'sandbox',
+        output: 'denied'
+      })
+    ).toBe(true)
+    spies.publishApprovalRunEvent.mockClear()
+
+    expect(svc.cancelForRun('r-1', 'run-cancelled')).toBe(5)
+    expect(svc.pendingCounts()).toEqual({
+      main: 0,
+      geminiTool: 0,
+      codex: 0,
+      kimi: 0,
+      hostCommand: 0
+    })
+    expect(mainResolveAction).toHaveBeenCalledWith('cancel')
+    expect(mainResolve).toHaveBeenCalledWith(false)
+    expect(toolResolve).toHaveBeenCalledWith(false)
+    expect(spies.respondToKimiWireRequest).toHaveBeenCalledWith(
+      kimiChild,
+      12,
+      expect.objectContaining({
+        request_id: 'native-kimi-request-12',
+        response: 'reject'
+      })
+    )
+    expect(spies.codexClient.reject).toHaveBeenCalledWith(
+      11,
+      expect.stringContaining('run-cancelled')
+    )
+    expect(spies.resolveApprovalLedger).toHaveBeenCalledTimes(5)
+    expect(spies.resolveApprovalLedger).toHaveBeenCalledWith(
+      expect.any(String),
+      'cancel',
+      'system',
+      expect.objectContaining({ cancelledByLifecycle: true, reason: 'run-cancelled' })
+    )
+    expect(spies.publishApprovalRunEvent).toHaveBeenCalledTimes(5)
+    expect(spies.publishApprovalRunEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: 'approval_resolved',
+        action: 'cancel',
+        decisionSource: 'system'
+      })
+    )
+    expect(await svc.resolve('main-1', 'accept')).toBe(false)
+    expect(await svc.resolve('tool-1', 'accept')).toBe(false)
+    expect(await svc.resolve('codex-1', 'accept')).toBe(false)
+    expect(await svc.resolve('kimi-1', 'accept')).toBe(false)
+    expect(await svc.resolve('host-1', 'accept')).toBe(false)
+  })
+
+  it('cancelAll settles approvals from different runs in one history-clear transaction', () => {
+    const { deps } = makeDeps()
+    const svc = new ApprovalService(deps)
+    svc.registerMain('main-a', { provider: 'gemini', runId: 'run-a', resolve: vi.fn() })
+    svc.registerMain('main-b', { provider: 'claude', runId: 'run-b', resolve: vi.fn() })
+    svc.registerCodex('codex-c', {
+      rpcId: 3,
+      method: 'item/permissions/requestApproval',
+      params: {},
+      runId: 'run-c'
+    })
+
+    expect(svc.cancelAll('history-cleared')).toBe(3)
+    expect(svc.pendingCounts()).toEqual({
+      main: 0,
+      geminiTool: 0,
+      codex: 0,
+      kimi: 0,
+      hostCommand: 0
+    })
+  })
+
+  it('cancelForWorkspace settles only matching approvals and leaves unrelated workspaces live', async () => {
+    const { deps, spies } = makeDeps()
+    spies.workspaceIdForPath.mockImplementation((path?: string) => {
+      if (path === '/workspace-a') return 'workspace-a'
+      if (path === '/workspace-b') return 'workspace-b'
+      return path ?? 'global'
+    })
+    spies.runManager.get.mockImplementation((runId: string) => ({
+      runId,
+      appChatId: `chat-${runId}`,
+      status: 'running',
+      workspacePath: runId === 'run-a' ? '/workspace-a' : '/workspace-b'
+    }))
+    const svc = new ApprovalService(deps)
+    const resolveA = vi.fn()
+    const resolveB = vi.fn()
+    svc.registerGeminiTool('approval-a', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-a',
+      resolve: resolveA
+    })
+    svc.registerGeminiTool('approval-b', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-b',
+      resolve: resolveB
+    })
+
+    expect(svc.cancelForWorkspace('workspace-a')).toBe(1)
+    expect(resolveA).toHaveBeenCalledWith(false)
+    expect(resolveB).not.toHaveBeenCalled()
+    expect(svc.has('approval-a')).toBe(false)
+    expect(svc.has('approval-b')).toBe(true)
+    expect(await svc.resolve('approval-a', 'accept')).toBe(false)
+    expect(await svc.resolve('approval-b', 'decline')).toBe(true)
+  })
+
+  it('cancelForChat settles only approvals owned by the deleting chat', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockImplementation((runId: string) => ({
+      runId,
+      appChatId: runId === 'run-a' ? 'chat-a' : 'chat-b',
+      status: 'running'
+    }))
+    const svc = new ApprovalService(deps)
+    const resolveA = vi.fn()
+    const resolveB = vi.fn()
+    svc.registerGeminiTool('approval-a', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-a',
+      resolve: resolveA
+    })
+    svc.registerGeminiTool('approval-b', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-b',
+      resolve: resolveB
+    })
+
+    expect(svc.cancelForChat('chat-a')).toBe(1)
+    expect(resolveA).toHaveBeenCalledWith(false)
+    expect(resolveB).not.toHaveBeenCalled()
+    expect(svc.has('approval-b')).toBe(true)
+  })
+
+  it('cancelForChat uses a main approval exact chat id when no run session exists', () => {
+    const { deps, spies } = makeDeps()
+    spies.runManager.get.mockReturnValue(undefined)
+    const svc = new ApprovalService(deps)
+    const resolve = vi.fn()
+    expect(
+      svc.registerMain('main-chat-owned', {
+        provider: 'gemini',
+        appChatId: 'chat-a',
+        resolve
+      })
+    ).toBe(true)
+
+    expect(svc.cancelForChat('chat-a')).toBe(1)
+    expect(resolve).toHaveBeenCalledWith(false)
+    expect(svc.has('main-chat-owned')).toBe(false)
+  })
+})
+
 describe('ApprovalService — lookupRoute', () => {
   it('returns null for an unknown approvalId', () => {
     const { deps } = makeDeps()
@@ -384,7 +762,11 @@ describe('ApprovalService — lookupRoute', () => {
   it('returns the route for a registered Main approval', () => {
     const { deps, spies } = makeDeps()
     const svc = new ApprovalService(deps)
-    spies.runManager.get.mockReturnValue({ runId: 'r-99', appChatId: 'c-99' })
+    spies.runManager.get.mockReturnValue({
+      runId: 'r-99',
+      appChatId: 'c-99',
+      status: 'running'
+    })
     svc.registerMain('m-1', { provider: 'gemini', runId: 'r-99', resolve: vi.fn() })
     const route = svc.lookupRoute('m-1')
     expect(route).toEqual({ provider: 'gemini', appRunId: 'r-99', appChatId: 'c-99' })
@@ -526,6 +908,117 @@ describe('ApprovalService — resolve dispatch', () => {
     )
   })
 
+  it('canvas_eval persists the accepted ledger decision before resuming the execution lane', async () => {
+    const resolveStrict = vi.fn()
+    const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+    const svc = new ApprovalService(deps)
+    const resume = vi.fn()
+    expect(
+      svc.registerGeminiTool('canvas-strict-1', {
+        provider: 'claude',
+        service: 'canvasEval',
+        workspacePath: '/ws',
+        runId: 'r-1',
+        resolve: resume
+      })
+    ).toBe(true)
+
+    expect(await svc.resolve('canvas-strict-1', 'accept')).toBe(true)
+    expect(resolveStrict).toHaveBeenCalledWith('canvas-strict-1', 'accept', 'user', {})
+    expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+    expect(resolveStrict.mock.invocationCallOrder[0]).toBeLessThan(
+      spies.runManager.resolveApproval.mock.invocationCallOrder[0]
+    )
+    expect(resolveStrict.mock.invocationCallOrder[0]).toBeLessThan(
+      spies.permissionService.applyApprovalDecision.mock.invocationCallOrder[0]
+    )
+    expect(resolveStrict.mock.invocationCallOrder[0]).toBeLessThan(
+      resume.mock.invocationCallOrder[0]
+    )
+    expect(svc.has('canvas-strict-1')).toBe(false)
+  })
+
+  it.each([
+    ['missing', undefined],
+    [
+      'throwing',
+      vi.fn(() => {
+        throw new Error('disk unavailable')
+      })
+    ]
+  ])(
+    'canvas_eval fails closed when the strict ledger writer is %s',
+    async (_name, strictWriter) => {
+      const { deps, spies } = makeDeps({
+        resolveApprovalLedgerStrict:
+          strictWriter as ApprovalServiceDeps['resolveApprovalLedgerStrict']
+      })
+      const svc = new ApprovalService(deps)
+      const resume = vi.fn()
+      expect(
+        svc.registerGeminiTool('canvas-strict-fail', {
+          provider: 'claude',
+          service: 'canvasEval',
+          runId: 'r-1',
+          resolve: resume
+        })
+      ).toBe(true)
+
+      expect(await svc.resolve('canvas-strict-fail', 'accept')).toBe(false)
+      expect(svc.has('canvas-strict-fail')).toBe(true)
+      expect(resume).not.toHaveBeenCalled()
+      expect(spies.runManager.resolveApproval).not.toHaveBeenCalled()
+      expect(spies.permissionService.applyApprovalDecision).not.toHaveBeenCalled()
+      expect(spies.appendDurableRunEventForRoute).not.toHaveBeenCalledWith(
+        expect.anything(),
+        expect.anything(),
+        'approval_response',
+        expect.anything(),
+        expect.anything(),
+        expect.anything()
+      )
+      expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+      expect(spies.log).toHaveBeenCalledWith(
+        expect.stringContaining('blocked canvas_eval acceptance')
+      )
+    }
+  )
+
+  it.each(['kimi', 'codex'] as const)(
+    'persists native %s canvas_eval acceptance before replying to the provider',
+    async (provider) => {
+      const resolveStrict = vi.fn()
+      const { deps, spies } = makeDeps({ resolveApprovalLedgerStrict: resolveStrict })
+      const svc = new ApprovalService(deps)
+
+      if (provider === 'kimi') {
+        svc.registerKimi('native-canvas', {
+          child: { kill: vi.fn() } as never,
+          rpcId: 21,
+          params: { payload: { id: 'kimi-native-21' } },
+          service: 'canvasEval',
+          runId: 'r-1'
+        })
+      } else {
+        svc.registerCodex('native-canvas', {
+          rpcId: 22,
+          method: 'item/permissions/requestApproval',
+          params: { permissions: {} },
+          service: 'canvasEval',
+          runId: 'r-1'
+        })
+      }
+
+      expect(await svc.resolve('native-canvas', 'accept')).toBe(true)
+      const providerReply =
+        provider === 'kimi' ? spies.respondToKimiWireRequest : spies.codexClient.respond
+      expect(resolveStrict.mock.invocationCallOrder[0]).toBeLessThan(
+        providerReply.mock.invocationCallOrder[0]
+      )
+      expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
+    }
+  )
+
   it('GeminiTool request-only approvals coerce grant actions to one-shot accept', async () => {
     const { deps, spies } = makeDeps()
     const svc = new ApprovalService(deps)
@@ -612,7 +1105,9 @@ describe('ApprovalService — resolve dispatch', () => {
     expect(spies.permissionService.applyApprovalDecision).not.toHaveBeenCalled()
     expect(spies.resolveApprovalLedger).not.toHaveBeenCalled()
     expect(svc.has('g-reject')).toBe(true)
-    expect(spies.log).toHaveBeenCalledWith(expect.stringContaining('rejected invalid approval action'))
+    expect(spies.log).toHaveBeenCalledWith(
+      expect.stringContaining('rejected invalid approval action')
+    )
   })
 
   it('HostCommand accept: invokes runApprovedHostCommand and does NOT clear the registry', async () => {

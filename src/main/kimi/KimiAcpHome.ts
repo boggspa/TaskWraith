@@ -19,6 +19,12 @@ import {
   UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS
 } from './KimiAcpContainment'
 import { effectiveKimiModelContextWindow } from './KimiModelContext'
+import { isAbsolute, relative, sep } from 'path'
+import type {
+  KimiOAuthCredentialLease,
+  KimiOAuthCredentialLeaseAcquireResult,
+  KimiOAuthCredentialLeaseRequest
+} from './KimiOAuthCredentialLease'
 
 export interface KimiHomeFs {
   readFile: (path: string) => Promise<string>
@@ -29,12 +35,33 @@ export interface KimiHomeFs {
   exists: (path: string) => Promise<boolean>
   rm: (path: string) => Promise<void>
   join: (...parts: string[]) => string
+  /** Required by production containment; optional only for legacy probe fakes. */
+  readdir?: (path: string) => Promise<string[]>
+  /** Must not follow a symlink at the checked path. */
+  lstat?: (path: string) => Promise<{
+    isDirectory: () => boolean
+    isFile: () => boolean
+    isSymbolicLink: () => boolean
+    mode: number
+    nlink?: number
+    uid?: number
+  }>
+  realpath?: (path: string) => Promise<string>
+  /**
+   * Required for OAuth-backed production seats. The returned durable lease
+   * owns the single-use refresh credential from seed through writeback.
+   */
+  acquireOAuthCredentialLease?: (
+    request: KimiOAuthCredentialLeaseRequest
+  ) => Promise<KimiOAuthCredentialLeaseAcquireResult>
 }
 
 export interface PrepareKimiHomeInput {
   runId: string
   /** Absolute isolated home path (per-run for probes, stable for durable seats). */
   homeDir: string
+  /** Trusted root that must contain homeDir. Defaults to homeDir for ephemeral probes. */
+  boundaryRoot?: string
   /** The real Kimi Code data root to transform config + seed credentials from. */
   sourceHome: string
   extraDenyTools?: readonly string[]
@@ -50,6 +77,9 @@ export interface PrepareKimiHomeInput {
    * removed after every process exit and regenerated before the next turn.
    */
   preserveSessionState?: boolean
+  /** Strict teardown: reject cleanup when an ephemeral home survives or when a
+   * durable home cannot be reduced to verified native continuity state. */
+  strictCleanup?: boolean
   fs: KimiHomeFs
 }
 
@@ -59,32 +89,75 @@ export type PrepareKimiHomeResult =
       home: string
       env: Record<string, string>
       modelContextWindow?: number
+      /** Record the exact child identity before the first ACP initialize. */
+      noteProviderProcess: (pid: number) => Promise<void>
       cleanup: () => Promise<void>
     }
   | { ok: false; reason: 'not-authenticated' | 'no-config' | 'error'; message: string }
 
-/** Credential artefacts seeded into the isolated home (relative paths). */
-const CREDENTIAL_ARTEFACTS = ['credentials/kimi-code.json', 'oauth/kimi-code', 'device_id'] as const
+/** Only provider-native continuity files proven necessary for ACP resume. */
+const KIMI_SESSION_CONTINUITY_TOP_LEVEL = new Set(['sessions', 'session_index.jsonl'])
 
-/** Everything materialized only while the ACP process is live. Session state is
- * deliberately absent from this list. */
-const KIMI_RUNTIME_ARTEFACTS = [
-  'credentials',
-  'oauth',
-  'device_id',
-  'config.toml',
-  'mcp.json',
-  'plugins',
-  'skills'
-] as const
+function pathIsWithin(parent: string, child: string): boolean {
+  const rel = relative(parent, child)
+  return rel === '' || (rel !== '..' && !rel.startsWith(`..${sep}`) && !isAbsolute(rel))
+}
 
 /**
- * Return the first un-sandboxable project Kimi config the workspace carries
- * (`.kimi-code/mcp.json` or `.kimi-code/plugins`), or null. Kimi Code loads
- * these from the ACP session cwd — outside the isolated home + deny wall — so a
- * contained run must refuse when one is present (dossier B3/B4). Only the
- * session-cwd workspace is checked; `--add-dir` grants do NOT trigger project
- * discovery (verified).
+ * Kimi Code also supports a non-rotating API key directly in a `kimi` provider
+ * table. This is the hosted-CI authentication path: unlike OAuth, it has no
+ * single-use refresh credential to copy back after the ephemeral job ends.
+ * Return only a boolean so callers never surface the key itself.
+ */
+export function hasConfiguredKimiApiKey(configBody: string): boolean {
+  let inKimiProvider = false
+  let hasKimiType = false
+  let hasApiKey = false
+  const flush = (): boolean => inKimiProvider && hasKimiType && hasApiKey
+
+  for (const line of configBody.split(/\r?\n/)) {
+    const trimmed = line.trim()
+    const table = trimmed.match(/^\[providers\.(?:"kimi"|kimi)\]$/)
+    if (/^\[/.test(trimmed)) {
+      if (flush()) return true
+      inKimiProvider = Boolean(table)
+      hasKimiType = false
+      hasApiKey = false
+      continue
+    }
+    if (!inKimiProvider || !trimmed || trimmed.startsWith('#')) continue
+    if (/^type\s*=\s*["']kimi["']\s*(?:#.*)?$/.test(trimmed)) hasKimiType = true
+    const apiKey = trimmed.match(/^api_key\s*=\s*(["'])(.+)\1\s*(?:#.*)?$/)
+    if (apiKey && apiKey[2].trim().length > 0) hasApiKey = true
+  }
+  return flush()
+}
+
+/**
+ * Managed ACP authentication comes only from the current Kimi Code home. The
+ * legacy ~/.kimi credential is usage-history compatibility and is never seeded
+ * into a managed seat. A TaskWraith Settings key is likewise usage-only unless
+ * the product later adds a separately reviewed secret-projection design.
+ */
+export async function detectKimiManagedAuthState(
+  sourceHome: string,
+  fs: Pick<KimiHomeFs, 'exists' | 'readFile' | 'join'>
+): Promise<'oauth' | 'api-key' | 'unknown'> {
+  const oauthCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
+  if (await fs.exists(oauthCredential)) return 'oauth'
+  try {
+    const config = await fs.readFile(fs.join(sourceHome, 'config.toml'))
+    return hasConfiguredKimiApiKey(config) ? 'api-key' : 'unknown'
+  } catch {
+    return 'unknown'
+  }
+}
+
+/**
+ * Historical/test-only detector for the project-config exposure documented in
+ * dossier B3/B4. Production managed ACP starts in a private synthetic cwd, so
+ * workspace `.kimi-code` discovery is inert and this helper is not a runtime
+ * admission guard. It remains to preserve the original containment evidence.
  */
 export async function findUnsafeWorkspaceKimiConfig(
   workspace: string,
@@ -108,96 +181,164 @@ export async function prepareKimiIsolatedHome(
 ): Promise<PrepareKimiHomeResult> {
   const { fs, homeDir, sourceHome } = input
 
-  const removeRuntimeArtefacts = async (bestEffort: boolean): Promise<void> => {
-    for (const rel of KIMI_RUNTIME_ARTEFACTS) {
-      const path = fs.join(homeDir, ...rel.split('/'))
+  if (!fs.readdir || !fs.lstat || !fs.realpath) {
+    return {
+      ok: false,
+      reason: 'error',
+      message: 'Kimi isolated-home filesystem boundary primitives are unavailable.'
+    }
+  }
+
+  // Establish and verify the credential-bearing boundary BEFORE reading,
+  // copying, or writing any runtime material. mkdir may encounter an existing
+  // path, so lstat + realpath are load-bearing: a pre-planted symlinked v2 seat
+  // home/root must fail before it can redirect credentials elsewhere.
+  const boundaryRoot = input.boundaryRoot || homeDir
+  try {
+    await fs.mkdir(boundaryRoot)
+    let boundaryStat = await fs.lstat(boundaryRoot)
+    if (
+      !boundaryStat.isDirectory() ||
+      boundaryStat.isSymbolicLink()
+    ) {
+      throw new Error('the isolated-home root is not a private real directory')
+    }
+    await fs.chmod(boundaryRoot, 0o700)
+    boundaryStat = await fs.lstat(boundaryRoot)
+    if ((boundaryStat.mode & 0o077) !== 0) {
+      throw new Error('the isolated-home root is not mode 0700')
+    }
+    await fs.mkdir(homeDir)
+    let homeStat = await fs.lstat(homeDir)
+    if (!homeStat.isDirectory() || homeStat.isSymbolicLink()) {
+      throw new Error('the isolated Kimi home is not a private real directory')
+    }
+    await fs.chmod(homeDir, 0o700)
+    const [rootReal, homeReal, privateHomeStat] = await Promise.all([
+      fs.realpath(boundaryRoot),
+      fs.realpath(homeDir),
+      fs.lstat(homeDir)
+    ])
+    homeStat = privateHomeStat
+    if (
+      !homeStat.isDirectory() ||
+      homeStat.isSymbolicLink() ||
+      (homeStat.mode & 0o077) !== 0 ||
+      !pathIsWithin(rootReal, homeReal)
+    ) {
+      throw new Error('the isolated Kimi home escaped its private root')
+    }
+  } catch (error) {
+    return {
+      ok: false,
+      reason: 'error',
+      message: `Failed to establish the isolated Kimi Code home boundary: ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    }
+  }
+
+  const currentUid = typeof process.getuid === 'function' ? process.getuid() : undefined
+  const continuityEntryIsSafe = async (path: string): Promise<boolean> => {
+    const stat = await fs.lstat!(path)
+    if (stat.isSymbolicLink()) return false
+    if (currentUid !== undefined && stat.uid !== undefined && stat.uid !== currentUid) return false
+    if (stat.isFile()) return stat.nlink === undefined || stat.nlink === 1
+    if (!stat.isDirectory()) return false
+    const entries = await fs.readdir!(path)
+    for (const entry of entries) {
+      if (!(await continuityEntryIsSafe(fs.join(path, entry)))) return false
+    }
+    return true
+  }
+
+  const scrubDurableHome = async (bestEffort: boolean): Promise<void> => {
+    let entries: string[] = []
+    try {
+      entries = await fs.readdir!(homeDir)
+    } catch (error) {
+      if (!bestEffort) throw error
+      return
+    }
+    for (const entry of entries) {
+      const path = fs.join(homeDir, entry)
       try {
-        if (await fs.exists(path)) await fs.rm(path)
+        if (KIMI_SESSION_CONTINUITY_TOP_LEVEL.has(entry)) {
+          const stat = await fs.lstat!(path)
+          const valid =
+            !stat.isSymbolicLink() &&
+            (entry === 'sessions' ? stat.isDirectory() : stat.isFile()) &&
+            (await continuityEntryIsSafe(path))
+          if (valid) continue
+        }
+        await fs.rm(path)
       } catch (error) {
         if (!bestEffort) throw error
-        // Teardown keeps cleaning the rest; preparation uses the strict path
-        // and refuses to spawn if stale runtime material cannot be removed.
+        // Teardown keeps scrubbing the rest; preparation uses the strict path
+        // and refuses to spawn if unknown/invalid material cannot be removed.
       }
     }
   }
 
-  // Kimi Code (Moonshot) issues SINGLE-USE refresh tokens: every refresh
-  // consumes the current refresh token and mints a new one (verified live — the
-  // refresh token's jti + value rotate on each refresh). Because each run
-  // executes in this throwaway home (a 0600 copy of ~/.kimi-code), a refresh
-  // during the run writes the ROTATED credential HERE; deleting the home would
-  // discard it while the real-home refresh token is now invalidated server-side
-  // — forcing `kimi login` again every ~15-minute access-token lifetime. So
-  // before teardown, persist a STRICTLY-NEWER refreshed credential back to the
-  // real home. Newness-gated on `expires_at` so a concurrent staler run can't
-  // clobber a fresher real-home token; best-effort so it never fails a run.
+  // Kimi Code issues single-use OAuth refresh tokens. The authority lease is
+  // acquired before seeding and remains held across the entire provider
+  // lifetime. That prevents two managed seats from copying the same refresh
+  // token, while its durable record lets the next admitted seat recover a
+  // rotated credential after a host crash.
+  let oauthCredentialLease: KimiOAuthCredentialLease | null = null
   const persistRotatedCredential = async (): Promise<void> => {
-    try {
-      const isoCred = fs.join(homeDir, 'credentials', 'kimi-code.json')
-      if (!(await fs.exists(isoCred))) return
-      const isoRaw = await fs.readFile(isoCred)
-      const realCred = fs.join(sourceHome, 'credentials', 'kimi-code.json')
-      const realRaw = (await fs.exists(realCred)) ? await fs.readFile(realCred) : null
-      if (realRaw === isoRaw) return // no refresh happened this run
-      const expiryOf = (raw: string): number => {
-        try {
-          const value = (JSON.parse(raw) as { expires_at?: unknown }).expires_at
-          return typeof value === 'number' ? value : 0
-        } catch {
-          return 0
-        }
-      }
-      // Only ever advance the real home forward — never regress it.
-      if (realRaw !== null && expiryOf(isoRaw) <= expiryOf(realRaw)) return
-      // A refresh happened — persist every credential artefact back to the real
-      // home (copyFile is binary-safe for the oauth/device artefacts), 0600.
-      for (const rel of CREDENTIAL_ARTEFACTS) {
-        const isoArtefact = fs.join(homeDir, ...rel.split('/'))
-        if (!(await fs.exists(isoArtefact))) continue
-        const realArtefact = fs.join(sourceHome, ...rel.split('/'))
-        await fs.copyFile(isoArtefact, realArtefact)
-        await fs.chmod(realArtefact, 0o600)
-      }
-    } catch {
-      // Best-effort; a failed write-back must never break teardown.
-    }
+    if (!oauthCredentialLease) return
+    await oauthCredentialLease.commitAndRelease()
   }
 
   const cleanup = async (): Promise<void> => {
-    await persistRotatedCredential()
     try {
-      if (input.preserveSessionState) await removeRuntimeArtefacts(true)
+      await persistRotatedCredential()
+    } catch {
+      // Preserve the isolated credential and durable lease for a joined retry
+      // or next-start recovery. Scrubbing it here could discard the only valid
+      // single-use refresh token after the provider rotated it.
+      throw new Error(
+        'Kimi OAuth credential writeback did not complete; the private seat home was preserved for recovery.'
+      )
+    }
+    let cleanupFailed = false
+    try {
+      if (input.preserveSessionState) await scrubDurableHome(!input.strictCleanup)
       else if (await fs.exists(homeDir)) await fs.rm(homeDir)
     } catch {
+      cleanupFailed = true
       // Best-effort teardown; cleanup errors must not replace the run result.
     }
-  }
-
-  // Scrub crash residue even when the current run cannot proceed (for example,
-  // the user logged out and the source credential is now missing).
-  if (input.preserveSessionState && (await fs.exists(homeDir))) {
-    try {
-      await removeRuntimeArtefacts(false)
-    } catch (error) {
-      return {
-        ok: false,
-        reason: 'error',
-        message: `Failed to scrub the isolated Kimi Code home: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+    if (input.strictCleanup && input.preserveSessionState) {
+      try {
+        const entries = await fs.readdir!(homeDir)
+        for (const entry of entries) {
+          if (!KIMI_SESSION_CONTINUITY_TOP_LEVEL.has(entry)) {
+            throw new Error(`unexpected durable entry survived: ${entry}`)
+          }
+          if (!(await continuityEntryIsSafe(fs.join(homeDir, entry)))) {
+            throw new Error(`unsafe durable continuity entry survived: ${entry}`)
+          }
+        }
+      } catch {
+        cleanupFailed = true
       }
-    }
-  }
-
-  // Fail closed if the user has not logged into Kimi Code — no credential to
-  // seed means an isolated session would -32000; surface setup-required first.
-  const sourceCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
-  if (!(await fs.exists(sourceCredential))) {
-    return {
-      ok: false,
-      reason: 'not-authenticated',
-      message:
-        'Kimi Code is not signed in. Run `kimi login` (or `kimi acp --login`) in your shell, then retry.'
+      if (cleanupFailed) {
+        throw new Error(
+          'Strict Kimi cleanup could not reduce the durable seat home to verified session continuity.'
+        )
+      }
+    } else if (input.strictCleanup) {
+      let homeRemains = true
+      try {
+        homeRemains = await fs.exists(homeDir)
+      } catch {
+        cleanupFailed = true
+      }
+      if (cleanupFailed || homeRemains) {
+        throw new Error('Strict Kimi canary cleanup did not remove its credential-bearing home.')
+      }
     }
   }
 
@@ -212,15 +353,53 @@ export async function prepareKimiIsolatedHome(
     }
   }
 
+  // OAuth seats require a copied credential. Hosted canaries instead use a
+  // protected, non-rotating API key in config.toml and deliberately have no
+  // fake or disposable OAuth credential file.
+  const sourceCredential = fs.join(sourceHome, 'credentials', 'kimi-code.json')
+  const hasOAuthCredential = await fs.exists(sourceCredential)
+  if (!hasOAuthCredential && !hasConfiguredKimiApiKey(baseConfig)) {
+    return {
+      ok: false,
+      reason: 'not-authenticated',
+      message:
+        'Kimi Code has no current OAuth login or provider API key in ~/.kimi-code/config.toml. Run `kimi login` (or configure that Kimi Code provider), then retry.'
+    }
+  }
+
+  if (hasOAuthCredential) {
+    if (!fs.acquireOAuthCredentialLease) {
+      return {
+        ok: false,
+        reason: 'error',
+        message:
+          'TaskWraith cannot start managed Kimi OAuth without its durable credential authority.'
+      }
+    }
+    const acquired = await fs.acquireOAuthCredentialLease({
+      sourceHome,
+      isolatedHome: homeDir,
+      boundaryRoot
+    })
+    if (!acquired.ok) {
+      return {
+        ok: false,
+        reason: 'error',
+        message: acquired.message
+      }
+    }
+    oauthCredentialLease = acquired.lease
+  }
+
   try {
     const modelContextWindow = input.selectedModelAlias
       ? effectiveKimiModelContextWindow(baseConfig, input.selectedModelAlias)
       : undefined
     await fs.mkdir(homeDir)
     await fs.chmod(homeDir, 0o700)
-    // A prior process crash may have left live runtime material in a durable
-    // seat home. Strip it before seeding current credentials/config.
-    if (input.preserveSessionState) await removeRuntimeArtefacts(false)
+    // A prior process crash or provider upgrade may have left unknown top-level
+    // material. Keep only the two proven native-continuity entries.
+    if (input.preserveSessionState) await scrubDurableHome(false)
     await fs.mkdir(fs.join(homeDir, 'credentials'))
     await fs.mkdir(fs.join(homeDir, 'oauth'))
     // Empty plugins/skills so nothing auto-loads (dossier B4/I3).
@@ -235,14 +414,9 @@ export async function prepareKimiIsolatedHome(
     })
     await fs.writeFile(fs.join(homeDir, 'config.toml'), isolatedConfig, 0o600)
 
-    // Seed the credential artefacts (0600) so session/new authenticates.
-    for (const rel of CREDENTIAL_ARTEFACTS) {
-      const from = fs.join(sourceHome, ...rel.split('/'))
-      if (!(await fs.exists(from))) continue
-      const to = fs.join(homeDir, ...rel.split('/'))
-      await fs.copyFile(from, to)
-      await fs.chmod(to, 0o600)
-    }
+    // OAuth seats seed the exact snapshot owned by their durable lease. API-key
+    // profiles authenticate from the curated config and leave these empty.
+    await oauthCredentialLease?.seedIntoIsolatedHome()
     await fs.chmod(fs.join(homeDir, 'credentials'), 0o700)
     await fs.chmod(fs.join(homeDir, 'oauth'), 0o700)
 
@@ -251,15 +425,28 @@ export async function prepareKimiIsolatedHome(
       home: homeDir,
       env: { KIMI_CODE_HOME: homeDir },
       ...(modelContextWindow ? { modelContextWindow } : {}),
+      noteProviderProcess: (pid) => oauthCredentialLease?.noteProviderProcess(pid) ?? Promise.resolve(),
       cleanup
     }
   } catch (error) {
-    await cleanup()
+    let recoveryStatePreserved = false
+    try {
+      await cleanup()
+    } catch {
+      // A setup failure can coincide with unsafe crash residue. Keep the
+      // durable authority record + candidate for restart recovery rather than
+      // turning the typed preparation failure into an unjoined rejection.
+      recoveryStatePreserved = true
+    }
     return {
       ok: false,
       reason: 'error',
       message: `Failed to build the isolated Kimi Code home: ${
         error instanceof Error ? error.message : String(error)
+      }${
+        recoveryStatePreserved
+          ? ' Private OAuth recovery state was preserved; restart TaskWraith before retrying.'
+          : ''
       }`
     }
   }

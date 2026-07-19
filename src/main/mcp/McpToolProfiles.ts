@@ -181,14 +181,14 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
 /**
- * Cursor's Grok 4.5 catalogue currently rejects large MCP surfaces before a
- * turn starts. Keep TaskWraith below the observed ~80-tool ceiling while
- * reserving room for Cursor/global MCP tools and the three audit-role tools.
+ * The Cursor-hosted Grok 4.5 catalogue historically rejected large MCP
+ * surfaces before a turn started. Keep the named profile for decoding pinned
+ * sessions and for compatible constrained-model routes; source-ahead
+ * TaskWraith starts no managed Cursor process.
  *
  * This is deliberately a named profile rather than `slice(0, N)`: additions to
- * the full catalog cannot silently change which capabilities constrained models
- * receive. Remove the model routing (not this safety boundary) when Cursor lifts
- * the provider limit.
+ * the full catalog cannot silently change which capabilities constrained live
+ * models receive. Historical Cursor profile receipts remain decode-only.
  */
 export const CORE_MCP_TOOL_BUDGET = 60
 
@@ -397,7 +397,7 @@ export function taskWraithMcpAdvertisedToolNamesForProfile(
   return MCP_ADVERTISE_TOOLS_BY_PROFILE[profileId]
 }
 
-/** Keep the workaround model-aware so Cursor Composer 2.5 retains the full MCP surface. */
+/** Keep the historical Cursor-model mapping stable for pinned profile decoding. */
 export function shouldUseCoreMcpProfile(
   provider: ProviderId,
   modelId: string | null | undefined

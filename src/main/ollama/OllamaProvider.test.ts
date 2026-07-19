@@ -57,6 +57,10 @@ import {
   ollamaToolNamesForTier,
   ollamaToolRequiresIntent
 } from './OllamaToolTiers'
+import {
+  CANVAS_EVAL_RESULT_REDACTED,
+  createCanvasEvalApprovalReceipt
+} from '../canvas/CanvasEvalAudit'
 
 type SendLineCall = {
   provider: string
@@ -143,6 +147,7 @@ function makeProviderDeps(
   overrides: {
     fetchMock?: ReturnType<typeof vi.fn>
     executeTool?: OllamaProviderDeps['executeTool']
+    createHostCommandProjection?: OllamaProviderDeps['createHostCommandProjection']
     settings?: Record<string, unknown>
   } = {}
 ): {
@@ -219,6 +224,7 @@ function makeProviderDeps(
       },
       emitProviderCapabilityWarnings: vi.fn(async () => undefined),
       executeTool: overrides.executeTool,
+      createHostCommandProjection: overrides.createHostCommandProjection,
       getOllamaSessionMemory: vi.fn(),
       saveOllamaSessionMemory: vi.fn()
     },
@@ -569,6 +575,80 @@ describe('runOllamaProvider streaming', () => {
       }),
       'ensemble:lfm-seat'
     )
+  })
+
+  it('keeps the live gateway canvas_eval result while redacting saved trajectory', async () => {
+    let chatCalls = 0
+    const chatBodies: any[] = []
+    const script = 'throw new Error("OLLAMA_GATEWAY_SCRIPT_SECRET")'
+    const resultSecret = 'OLLAMA_GATEWAY_ERROR_SECRET'
+    const receipt = createCanvasEvalApprovalReceipt(script, 'approval-capability-invoke')
+    const toolArgs = {
+      name: 'canvas_eval',
+      arguments: { canvasId: 'canvas-gateway', script }
+    }
+    const executeTool = vi.fn(async () => ({
+      ok: false,
+      output: `${resultSecret}: exact live response`,
+      structuredContent: { secret: resultSecret },
+      canvasEvalApproval: receipt
+    }))
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        chatBodies.push(JSON.parse(String(init?.body || '{}')))
+        if (chatCalls === 1) {
+          return ollamaStreamResponse([
+            JSON.stringify({
+              message: {
+                role: 'assistant',
+                tool_calls: [
+                  { function: { name: 'capability_invoke', arguments: toolArgs } }
+                ]
+              }
+            }),
+            JSON.stringify({ done: true, prompt_eval_count: 20, eval_count: 8 })
+          ])
+        }
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Canvas call handled.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 16, eval_count: 5 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock, executeTool })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(executeTool).toHaveBeenCalledTimes(1)
+    // The immediate tool response sent back to the live model remains exact.
+    expect(JSON.stringify(chatBodies[1]?.messages)).toContain(resultSecret)
+
+    const saved = (deps.saveOllamaSessionMemory as ReturnType<typeof vi.fn>).mock.calls[0]?.[1]
+    const serialized = JSON.stringify(saved)
+    expect(serialized).not.toContain(script)
+    expect(serialized).not.toContain(resultSecret)
+    expect(serialized).toContain(CANVAS_EVAL_RESULT_REDACTED)
+    expect(saved.trajectory?.[0]).toMatchObject({
+      effectiveToolName: 'canvas_eval',
+      canvasEvalReceipt: receipt
+    })
   })
 
   it('keeps ensemble authority salient after empty Ollama turns', async () => {
@@ -1358,12 +1438,41 @@ describe('runOllamaProvider streaming', () => {
       }
       throw new Error(`unexpected fetch ${url}`)
     })
-    const { deps, lines } = makeProviderDeps({
+    let projectedLines: SendLineCall[] = []
+    const lifecycleEvents: string[] = []
+    const createHostCommandProjection = vi.fn(() => ({
+      run: async <T>(operation: () => Promise<T>): Promise<T> => {
+        lifecycleEvents.push('run')
+        return operation()
+      },
+      complete: () => {
+        expect(
+          projectedLines.some(
+            (line) => line.payload.type === 'tool_result' && line.payload.tool_name === 'read_file'
+          )
+        ).toBe(true)
+        lifecycleEvents.push('complete-after-tool-result')
+      }
+    }))
+    const prepared = makeProviderDeps({
       fetchMock,
-      executeTool: async () => ({ ok: true, output: 'TaskWraith runs local agents.' })
+      executeTool: async () => ({ ok: true, output: 'TaskWraith runs local agents.' }),
+      createHostCommandProjection
     })
+    const { deps, lines } = prepared
+    projectedLines = lines
 
     await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(createHostCommandProjection).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appRunId: baseRoute.appRunId,
+        appChatId: baseRoute.appChatId,
+        workspacePath: basePayload.workspace,
+        toolName: 'read_file'
+      })
+    )
+    expect(lifecycleEvents).toEqual(['run', 'complete-after-tool-result'])
 
     const ordered = lines
       .filter((line) => ['content', 'tool_use', 'tool_result', 'result'].includes(line.payload.type))

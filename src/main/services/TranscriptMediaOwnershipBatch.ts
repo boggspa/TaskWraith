@@ -16,7 +16,7 @@ import {
 
 export type TranscriptMediaOwnershipBatchStore = Pick<
   TranscriptMediaAssetStore,
-  'grantMany' | 'owns' | 'write'
+  'grantMany' | 'owns' | 'write' | 'writeOwnedMany'
 >
 
 export type CreateOwnedToolResultMediaRefsOptions = Omit<
@@ -187,68 +187,44 @@ export function isVerifiedEmulatedForkMediaTransfer(
 }
 
 /**
- * Build tool/provider image refs while keeping the content write separate from
- * ownership. Only assets whose unowned write succeeded enter one atomic grant;
- * no store locator is returned unless that grant also succeeded.
+ * Build tool/provider image refs through the store's atomic owned-write batch.
+ * No store locator is returned unless both byte publication and the exact chat
+ * grants committed; a failed batch rolls back only files it newly created.
  */
 export function createOwnedToolResultMediaRefs(
   options: CreateOwnedToolResultMediaRefsOptions
 ): TranscriptMediaRef[] {
   const { appChatId, store, ...refOptions } = options
   const canonicalChatId = appChatId?.trim()
-  const successfullyWrittenAssets = new Set<string>()
-  const failedAssetWrites = new Set<string>()
+  const pendingWrites: Array<{
+    sha256: string
+    buffer: Buffer
+    mimeType: string
+    appChatId: string
+  }> = []
   const refs = createToolResultMediaRefs({
     ...refOptions,
     assetWriter: ({ sha256, buffer, mimeType }) => {
       if (!canonicalChatId) return
-      const key = ownershipAssetKey(sha256, mimeType)
-      try {
-        const written = store.write({ sha256, buffer, mimeType })
-        if (written.ok && !failedAssetWrites.has(key)) {
-          successfullyWrittenAssets.add(key)
-          return
-        }
-      } catch {
-        // A throwing content write poisons every duplicate ref for this asset.
-      }
-      failedAssetWrites.add(key)
-      successfullyWrittenAssets.delete(key)
+      pendingWrites.push({ sha256, buffer, mimeType, appChatId: canonicalChatId })
     }
   })
-
-  const grantsByAsset = new Map<
-    string,
-    { sha256: string; mimeType: string; appChatId: string }
-  >()
-  for (const ref of refs) {
-    if (!canonicalChatId) continue
-    if (!ref.sha256 || !ref.mimeType) continue
-    const key = ownershipAssetKey(ref.sha256, ref.mimeType)
-    if (!successfullyWrittenAssets.has(key) || grantsByAsset.has(key)) continue
-    grantsByAsset.set(key, {
-      sha256: ref.sha256,
-      mimeType: ref.mimeType,
-      appChatId: canonicalChatId
-    })
+  let committed = false
+  if (canonicalChatId && pendingWrites.length > 0) {
+    try {
+      committed = store.writeOwnedMany(pendingWrites).ok
+    } catch {
+      committed = false
+    }
   }
-
-  const grants = [...grantsByAsset.entries()]
-  const grantedIndexes = grantTranscriptMediaOwnershipCandidates(
-    store,
-    grants.map(([, grant]) => grant)
-  )
-  const grantedAssets = new Set(
-    grants
-      .filter((_, index) => grantedIndexes.has(index))
-      .map(([assetKey]) => assetKey)
-  )
+  const committedAssets = committed
+    ? new Set(pendingWrites.map((input) => ownershipAssetKey(input.sha256, input.mimeType)))
+    : new Set<string>()
 
   return refs.map((ref) => {
     if (!ref.sha256 || !ref.mimeType) return ref
     const key = ownershipAssetKey(ref.sha256, ref.mimeType)
-    const written = successfullyWrittenAssets.has(key)
-    return written && grantedAssets.has(key) ? ref : redactStoreLocators(ref)
+    return committedAssets.has(key) ? ref : redactStoreLocators(ref)
   })
 }
 

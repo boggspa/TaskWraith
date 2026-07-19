@@ -1,6 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AgentThreadForkCapability, ChatRecord, ProviderId } from '../store/types'
-import { isRetiredProvider } from '../../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 
 type ThreadListParams = {
   limit?: number
@@ -152,15 +152,15 @@ function forkCapability(
       detail: 'Creates a provider-native Codex thread fork through thread/fork.'
     }
   }
-  if (isRetiredProvider(provider)) {
+  if (!isLiveSelectableProvider(provider)) {
     return {
       provider,
       label: 'Fork unavailable',
       kind: 'unsupported',
       nativeThreadTools: false,
       requiresLinkedSession: false,
-      caveats: [`${providerDisplayName(provider)} is retired and cannot start new forked runs.`],
-      detail: `${providerDisplayName(provider)} is retired in TaskWraith.`
+      caveats: [`${providerDisplayName(provider)} is unavailable and cannot start new forked runs.`],
+      detail: `${providerDisplayName(provider)} is retained for historical records only.`
     }
   }
   return {

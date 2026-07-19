@@ -1,6 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isAbsolute, parse, resolve } from 'node:path'
-import { isRetiredProvider } from '../shared/retiredProviders'
+import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
 import type {
   AgenticNetworkPolicy,
   AgenticServiceId,
@@ -29,7 +29,6 @@ import {
   type CanonicalProviderLaunchAuthority,
   type ClaudeLaunchControls,
   type CodexLaunchControls,
-  type CursorLaunchControls,
   type GrokLaunchControls,
   type KimiLaunchControls,
   type OllamaLaunchControls,
@@ -1109,24 +1108,9 @@ function assertProviderPostureControls(
       return
     }
     case 'cursor': {
-      const controls = launch.controls as CursorLaunchControls
-      const allowedBridgeModes: readonly CursorLaunchControls['bridgeMode'][] = !readOnly
-        ? ['full']
-        : permissions.presetId === 'plan'
-          ? ['none', 'plan-subset']
-          : ['none', 'safe-subset']
-      if (!allowedBridgeModes.includes(controls.bridgeMode)) {
-        throw new TypeError('Cursor bridge mode does not match the signed posture tier.')
-      }
-      const bridgeActive = controls.bridgeMode !== 'none'
-      if (launch.tools.taskWraithMcpAdvertised !== bridgeActive) {
-        throw new TypeError('Cursor MCP advertisement does not match its signed bridge mode.')
-      }
-      const expectedMode = bridgeActive ? 'contained-default' : 'plan'
-      if (controls.executionMode !== expectedMode) {
-        throw new TypeError('Cursor execution mode does not match the signed posture.')
-      }
-      return
+      throw new TypeError(
+        'Cursor scheduled launches are disabled pending exact-build containment qualification.'
+      )
     }
     case 'ollama': {
       const controls = launch.controls as OllamaLaunchControls
@@ -1386,6 +1370,12 @@ function providerId(value: unknown, label: string): ProviderId {
 function runnableProviderId(value: unknown, label: string): ProviderId {
   const provider = providerId(value, label)
   if (isRetiredProvider(provider)) throw new TypeError(`${label} is retired.`)
+  if (!isLiveSelectableProvider(provider)) throw new TypeError(`${label} is unavailable.`)
+  if (provider === 'kimi') {
+    throw new TypeError(
+      `${label} is unavailable for sealed scheduled execution until the signed launch authority binds Kimi ACP runtime admission, synthetic cwd, and authenticated per-run gateway posture.`
+    )
+  }
   return provider
 }
 

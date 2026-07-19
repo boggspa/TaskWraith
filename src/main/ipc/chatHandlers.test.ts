@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { registerChatHandlers } from './chatHandlers'
+import { deleteChatCascadeWithLifecycle, registerChatHandlers } from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
 
@@ -50,7 +50,11 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       getChat: vi.fn((chatId: string) => chat(chatId)),
       saveChat: vi.fn((record: ChatRecord) => record),
       deleteChat: vi.fn(),
+      truncateChatHistory: vi.fn((chatId: string) => chat(chatId, { messages: [], runs: [] })),
       clearChats: vi.fn(),
+      prepareClearChats: vi.fn(async () => undefined),
+      commitClearChats: vi.fn(),
+      finishClearChats: vi.fn(),
       createChat: vi.fn(() => chat('created')),
       createGlobalChat: vi.fn(() => chat('global')),
       createEnsembleChat: vi.fn(() => chat('ensemble', { chatKind: 'ensemble' })),
@@ -79,6 +83,14 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
       )
     },
     deleteExecutionGraphHistoryForChat: vi.fn(async () => undefined),
+    revokeApprovalsForChat: vi.fn(),
+    beginChatHistoryMutation: vi.fn(),
+    finishChatHistoryMutation: vi.fn(),
+    deleteChatWithLifecycle: vi.fn(async () => undefined),
+    truncateChatWithLifecycle: vi.fn(async (chatId: string) =>
+      chat(chatId, { messages: [], runs: [], persistenceRevision: 4 })
+    ),
+    assertParentChatCreationAllowed: vi.fn(),
     clearExecutionGraphHistory: vi.fn(async () => undefined),
     getSettings: vi.fn(() => settings),
     detectConfiguredProviders: vi.fn(async () => new Set(['codex'] as const)),
@@ -96,6 +108,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     getWorkflowChatIds: vi.fn(() => new Set(['workflow-chat'])),
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
     getOpenChatPopoutIds: vi.fn(() => new Set<string>()),
+    getOpenCanvasChatIds: vi.fn(() => new Set<string>()),
     resolveSenderChatReadScope: vi.fn(() => ({ kind: 'all' as const })),
     assertSenderCanManageChatCollection: vi.fn(),
     assertSenderChatScope: vi.fn(),
@@ -256,10 +269,7 @@ describe('registerChatHandlers', () => {
       chat('ensemble', { chatKind: 'ensemble' })
     )
     expect(deps.detectConfiguredProviders).toHaveBeenCalledWith(deps.getSettings())
-    expect(deps.chatService.createEnsembleChat).toHaveBeenCalledWith(
-      undefined,
-      new Set(['codex'])
-    )
+    expect(deps.chatService.createEnsembleChat).toHaveBeenCalledWith(undefined, new Set(['codex']))
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('ensemble')
   })
 
@@ -577,10 +587,12 @@ describe('registerChatHandlers', () => {
 
     expect(deps.normalizeTranscriptMarkdownMediaForChat).toHaveBeenCalledWith(next)
     expect(deps.chatService.saveChat).toHaveBeenCalledWith(next)
-    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(expect.objectContaining({
-      appChatId: 'chat-1',
-      title: 'New title'
-    }))
+    expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(
+      expect.objectContaining({
+        appChatId: 'chat-1',
+        title: 'New title'
+      })
+    )
     expect(deps.maybeScheduleCodexNativeGoalSync).toHaveBeenCalledWith(
       previous,
       expect.objectContaining({ appChatId: 'chat-1' }),
@@ -713,10 +725,12 @@ describe('registerChatHandlers', () => {
 
   it('routes delete, truncate, and clear chat channels through the injected service', async () => {
     const deps = createDeps()
-    vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1', {
-      messages: [{ id: 'message-1', role: 'user', content: 'hello', timestamp: 'now' }],
-      runs: [{ runId: 'run-1', provider: 'codex', startedAt: '2026-01-01T00:00:00.000Z' }]
-    }))
+    vi.mocked(deps.chatService.getChat).mockReturnValue(
+      chat('chat-1', {
+        messages: [{ id: 'message-1', role: 'user', content: 'hello', timestamp: 'now' }],
+        runs: [{ runId: 'run-1', provider: 'codex', startedAt: '2026-01-01T00:00:00.000Z' }]
+      })
+    )
     vi.mocked(deps.chatService.saveChat).mockImplementation((record: ChatRecord) => ({
       ...record,
       persistenceRevision: 4
@@ -724,39 +738,45 @@ describe('registerChatHandlers', () => {
     registerChatHandlers(deps)
 
     await handlerFor('delete-chat')({} as any, 'chat-1')
-    expect(deps.deleteExecutionGraphHistoryForChat).toHaveBeenCalledWith('chat-1')
-    expect(deps.chatService.deleteChat).toHaveBeenCalledWith('chat-1')
+    expect(deps.deleteChatWithLifecycle).toHaveBeenCalledWith('chat-1')
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
 
     const truncated = await handlerFor('truncate-chat')({} as any, 'chat-1')
+    expect(deps.truncateChatWithLifecycle).toHaveBeenCalledWith('chat-1')
     expect(truncated).toMatchObject({
       appChatId: 'chat-1',
       messages: [],
       runs: [],
       persistenceRevision: 4
     })
-    expect(deps.chatService.saveChat).toHaveBeenCalledWith(
-      expect.objectContaining({ appChatId: 'chat-1', messages: [], runs: [] })
-    )
     expect(deps.broadcastChatUpdated).toHaveBeenCalledWith(
       expect.objectContaining({ appChatId: 'chat-1', persistenceRevision: 4 })
     )
     expect(deps.broadcastThreadUpdate).toHaveBeenCalledWith('chat-1')
-    expect(deps.deleteExecutionGraphHistoryForChat).toHaveBeenCalledTimes(2)
 
     await handlerFor('clear-chats')({} as any, 'workspace-1')
-    expect(deps.clearExecutionGraphHistory).toHaveBeenCalledWith('workspace-1')
     expect(deps.chatService.clearChats).toHaveBeenCalledWith('workspace-1')
+    expect(deps.chatService.prepareClearChats).not.toHaveBeenCalled()
+    expect(deps.clearExecutionGraphHistory).not.toHaveBeenCalled()
+    expect(deps.chatService.commitClearChats).not.toHaveBeenCalled()
+    expect(deps.chatService.finishClearChats).not.toHaveBeenCalled()
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(2)
   })
 
-  it('fails closed before chat deletion when graph cleanup cannot complete', async () => {
+  it('propagates failures from each shared history lifecycle without broadcasting', async () => {
+    const baseline = createDeps()
     const deps = createDeps({
-      deleteExecutionGraphHistoryForChat: vi.fn(async () => {
+      chatService: {
+        ...baseline.chatService,
+        clearChats: vi.fn(async () => {
+          throw new Error('graph clear unresolved')
+        })
+      },
+      deleteChatWithLifecycle: vi.fn(async () => {
         throw new Error('graph cleanup unresolved')
       }),
-      clearExecutionGraphHistory: vi.fn(async () => {
-        throw new Error('graph clear unresolved')
+      truncateChatWithLifecycle: vi.fn(async () => {
+        throw new Error('graph cleanup unresolved')
       })
     })
     registerChatHandlers(deps)
@@ -773,26 +793,125 @@ describe('registerChatHandlers', () => {
     )
     expect(deps.chatService.saveChat).not.toHaveBeenCalled()
 
-    await expect(handlerFor('clear-chats')({} as any)).rejects.toThrow(
-      'graph clear unresolved'
-    )
-    expect(deps.chatService.clearChats).not.toHaveBeenCalled()
+    await expect(handlerFor('clear-chats')({} as any)).rejects.toThrow('graph clear unresolved')
+    expect(deps.chatService.clearChats).toHaveBeenCalledWith(undefined)
+    expect(deps.chatService.prepareClearChats).not.toHaveBeenCalled()
+    expect(deps.clearExecutionGraphHistory).not.toHaveBeenCalled()
+    expect(deps.chatService.commitClearChats).not.toHaveBeenCalled()
+    expect(deps.chatService.finishClearChats).not.toHaveBeenCalled()
     expect(deps.broadcastThreadList).not.toHaveBeenCalled()
   })
 
-  it('reaps abandoned chats with delete-only store guards and broadcasts only on changes', () => {
-    const reapAbandonedChats =
-      vi.fn<Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']>(() => ['old-chat'])
+  it('passes strict shared-clear failures through without attempting local cleanup', async () => {
+    const baseline = createDeps()
+    const deps = createDeps({
+      chatService: {
+        ...baseline.chatService,
+        clearChats: vi.fn(async () => {
+          throw new Error('strict bridge purge fsync failed')
+        })
+      }
+    })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('clear-chats')({} as any)).rejects.toThrow(
+      'strict bridge purge fsync failed'
+    )
+    expect(deps.chatService.clearChats).toHaveBeenCalledWith(undefined)
+    expect(deps.chatService.prepareClearChats).not.toHaveBeenCalled()
+    expect(deps.clearExecutionGraphHistory).not.toHaveBeenCalled()
+    expect(deps.chatService.commitClearChats).not.toHaveBeenCalled()
+    expect(deps.chatService.finishClearChats).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+  })
+
+  it('awaits the shared clear lifecycle before broadcasting completion', async () => {
+    let releaseClear!: () => void
+    const clear = new Promise<void>((resolve) => {
+      releaseClear = resolve
+    })
+    const baseline = createDeps()
+    const deps = createDeps({
+      chatService: {
+        ...baseline.chatService,
+        clearChats: vi.fn(() => clear)
+      }
+    })
+    registerChatHandlers(deps)
+
+    const clearing = handlerFor('clear-chats')({} as any, 'workspace-a')
+    await Promise.resolve()
+
+    expect(deps.chatService.clearChats).toHaveBeenCalledWith('workspace-a')
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+
+    releaseClear()
+    await clearing
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+
+  it('delete-chat revokes chat authority before awaiting graph cleanup', async () => {
+      let releaseGraph!: () => void
+      const graphClear = new Promise<void>((resolve) => {
+        releaseGraph = resolve
+      })
+      const order: string[] = []
+      const deps = createDeps({
+        beginChatHistoryMutation: vi.fn(() => {
+          order.push('begin')
+        }),
+        revokeApprovalsForChat: vi.fn(() => order.push('revoke')),
+        deleteExecutionGraphHistoryForChat: vi.fn(() => {
+          order.push('graph')
+          return graphClear
+        }),
+        finishChatHistoryMutation: vi.fn(() => order.push('finish'))
+      })
+      deps.deleteChatWithLifecycle = vi.fn((chatId: string) =>
+        deleteChatCascadeWithLifecycle(
+          {
+            getChats: deps.chatService.getChats,
+            deleteChat: deps.chatService.deleteChat,
+            beginChatHistoryMutation: deps.beginChatHistoryMutation,
+            finishChatHistoryMutation: deps.finishChatHistoryMutation,
+            revokeApprovalsForChat: deps.revokeApprovalsForChat,
+            deleteExecutionGraphHistoryForChat: deps.deleteExecutionGraphHistoryForChat
+          },
+          chatId
+        )
+      )
+      vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1'))
+      registerChatHandlers(deps)
+
+      const deleting = handlerFor('delete-chat')({} as any, 'chat-1')
+      await vi.waitFor(() => expect(order).toEqual(['begin', 'revoke', 'graph']))
+      expect(deps.chatService.deleteChat).not.toHaveBeenCalled()
+      expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+
+      releaseGraph()
+      await deleting
+      expect(order.at(-1)).toBe('finish')
+  })
+
+  it('reaps abandoned chats with delete-only store guards and broadcasts only on changes', async () => {
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      reaperDeps.deleteChat('old-chat')
+      return ['old-chat']
+    })
     const deps = createDeps({
       reapAbandonedChats
     })
     registerChatHandlers(deps)
 
-    expect(handlerFor('reap-abandoned-chats')({} as any, {
-      protectedChatIds: ['active-chat'],
-      draftChatIds: ['draft-chat'],
-      keepChatId: 'created-chat'
-    })).toEqual({ ok: true, reaped: ['old-chat'] })
+    await expect(
+      handlerFor('reap-abandoned-chats')({} as any, {
+        protectedChatIds: ['active-chat'],
+        draftChatIds: ['draft-chat'],
+        keepChatId: 'created-chat'
+      })
+    ).resolves.toEqual({ ok: true, reaped: ['old-chat'] })
 
     expect(reapAbandonedChats).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -809,40 +928,39 @@ describe('registerChatHandlers', () => {
     )
     const reaperDeps = reapAbandonedChats.mock.calls[0]![0]
     expect(reaperDeps.getChats()).toEqual([chat('chat-1')])
-    reaperDeps.deleteChat('old-chat')
-    expect(deps.chatService.deleteChat).toHaveBeenCalledWith('old-chat')
+    expect(deps.deleteChatWithLifecycle).toHaveBeenCalledWith('old-chat')
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
 
     reapAbandonedChats.mockReturnValueOnce([])
-    expect(handlerFor('reap-abandoned-chats')({} as any, {})).toEqual({
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
       ok: true,
       reaped: []
     })
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
   })
 
-  it('authoritatively protects live chat popouts after their handoff payload is consumed', () => {
-    const reapAbandonedChats =
-      vi.fn<Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']>(() => [])
+  it('authoritatively protects live chat popouts after their handoff payload is consumed', async () => {
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >(() => [])
     const deps = createDeps({
       reapAbandonedChats,
       getOpenChatPopoutIds: vi.fn(() => new Set(['open-popout', 'already-protected']))
     })
     registerChatHandlers(deps)
 
-    expect(handlerFor('reap-abandoned-chats')({} as any, {
-      protectedChatIds: ['active-chat', 'already-protected'],
-      draftChatIds: ['draft-chat'],
-      keepChatId: 'created-chat'
-    })).toEqual({ ok: true, reaped: [] })
-
-    expect(reapAbandonedChats).toHaveBeenCalledWith(
-      expect.any(Object),
-      {
-        protectedChatIds: ['active-chat', 'already-protected', 'open-popout'],
+    await expect(
+      handlerFor('reap-abandoned-chats')({} as any, {
+        protectedChatIds: ['active-chat', 'already-protected'],
         draftChatIds: ['draft-chat'],
         keepChatId: 'created-chat'
-      }
-    )
+      })
+    ).resolves.toEqual({ ok: true, reaped: [] })
+
+    expect(reapAbandonedChats).toHaveBeenCalledWith(expect.any(Object), {
+      protectedChatIds: ['active-chat', 'already-protected', 'open-popout'],
+      draftChatIds: ['draft-chat'],
+      keepChatId: 'created-chat'
+    })
   })
 })

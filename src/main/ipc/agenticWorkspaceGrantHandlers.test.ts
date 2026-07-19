@@ -44,6 +44,10 @@ function createDeps() {
     },
     getSettings: vi.fn(() => settings),
     assertProviderId: vi.fn((provider: ProviderId) => provider),
+    assertLiveProviderId: vi.fn((provider: ProviderId) => {
+      if (provider === 'cursor') throw new Error('Provider is unavailable')
+      return provider
+    }),
     requireNonEmptyString: vi.fn((value: string) => value),
     assertAgenticServiceId: vi.fn((service: AgenticServiceId) => service),
     assertSenderCanManageAgenticWorkspaceGrants: vi.fn(
@@ -73,7 +77,8 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
     expect(result).not.toHaveProperty('claudeApiKey')
     expect(result.codexUsageCredential).not.toHaveProperty('encryptedAccessToken')
 
-    expect(deps.assertProviderId).toHaveBeenCalledWith('codex')
+    expect(deps.assertLiveProviderId).toHaveBeenCalledWith('codex')
+    expect(deps.assertProviderId).not.toHaveBeenCalled()
     expect(deps.requireNonEmptyString).toHaveBeenCalledWith('/tmp/workspace', 'Workspace path')
     expect(deps.assertAgenticServiceId).toHaveBeenCalledWith('fileChanges')
     expect(deps.assertSenderCanManageAgenticWorkspaceGrants).toHaveBeenCalledWith(
@@ -120,6 +125,37 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
       'shellCommands'
     )
     expect(deps.getSettings).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects a new Cursor grant but permits legacy Cursor grant removal', () => {
+    const deps = createDeps()
+    const event = { sender: { id: 1 } }
+    registerAgenticWorkspaceGrantHandlers(deps)
+
+    expect(() =>
+      handlerFor('upsert-agentic-workspace-grant')(
+        event,
+        'cursor',
+        '/tmp/workspace',
+        'fileChanges'
+      )
+    ).toThrow('Provider is unavailable')
+    expect(deps.permissionService.upsertWorkspaceGrant).not.toHaveBeenCalled()
+
+    expect(() =>
+      handlerFor('remove-agentic-workspace-grant')(
+        event,
+        'cursor',
+        '/tmp/workspace',
+        'fileChanges'
+      )
+    ).not.toThrow()
+    expect(deps.assertProviderId).toHaveBeenCalledWith('cursor')
+    expect(deps.permissionService.removeWorkspaceGrant).toHaveBeenCalledWith(
+      'cursor',
+      '/tmp/workspace',
+      'fileChanges'
+    )
   })
 
   it('rejects an upsert from a hostile secondary renderer before permission mutation', () => {

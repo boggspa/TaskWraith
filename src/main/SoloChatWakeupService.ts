@@ -160,7 +160,9 @@ export function buildSoloScratchpadRecall(chat: ChatRecord): string {
   return lines.join('\n')
 }
 
-function cloneExternalPathGrants(grants: ExternalPathGrant[] | undefined): ExternalPathGrant[] | undefined {
+function cloneExternalPathGrants(
+  grants: ExternalPathGrant[] | undefined
+): ExternalPathGrant[] | undefined {
   if (!Array.isArray(grants)) return undefined
   return grants.map((grant) => ({ ...grant }))
 }
@@ -250,7 +252,9 @@ export function buildSoloWakeupResumePayload(
       ? { externalPathGrants: cloneExternalPathGrants(resumePermissions.externalPathGrants) }
       : {}),
     ...(resumePermissions?.effectivePermissions
-      ? { effectivePermissions: cloneEffectiveRunPermissions(resumePermissions.effectivePermissions) }
+      ? {
+          effectivePermissions: cloneEffectiveRunPermissions(resumePermissions.effectivePermissions)
+        }
       : {})
   }
 }
@@ -302,8 +306,179 @@ export interface CancelWakeupResult {
   message?: string
 }
 
+export type SoloWakeupHistoryClearScope =
+  | { kind: 'chat'; chatIds: readonly string[] }
+  | { kind: 'workspace'; workspaceId: string; chatIds: readonly string[] }
+  | { kind: 'global' }
+
+declare const soloWakeupHistoryHoldBrand: unique symbol
+
+/**
+ * Opaque process-local hold raised by a destructive history transaction.
+ * `completion` joins the exact fire callbacks that were already in flight when
+ * the fence was raised. The caller must retain the hold through store commit.
+ */
+export type SoloWakeupHistoryHold = Readonly<{
+  completion: Promise<void>
+  [soloWakeupHistoryHoldBrand]: true
+}>
+
+interface ActiveSoloWakeupHistoryHold {
+  kind: SoloWakeupHistoryClearScope['kind']
+  workspaceId?: string
+  chatIds: string[]
+}
+
+interface SoloWakeupHistoryAuthority {
+  globalGeneration: number
+  workspaceId?: string
+  workspaceGeneration: number
+  chatId: string
+  chatGeneration: number
+}
+
+function normalizedHistoryScopeValue(value: string | null | undefined): string | undefined {
+  const normalized = typeof value === 'string' ? value.trim() : ''
+  return normalized || undefined
+}
+
+function sameWakeupIncarnation(
+  current: SoloChatWakeupRecord | undefined,
+  expected: SoloChatWakeupRecord
+): current is SoloChatWakeupRecord {
+  if (!current) return false
+  return (
+    current.wakeupId === expected.wakeupId &&
+    current.chatId === expected.chatId &&
+    current.provider === expected.provider &&
+    current.runId === expected.runId &&
+    current.scheduledAt === expected.scheduledAt &&
+    current.wakeAt === expected.wakeAt &&
+    current.status === expected.status &&
+    current.reason === expected.reason &&
+    current.cancelOnUserInput === expected.cancelOnUserInput &&
+    JSON.stringify(current.resumePermissions ?? null) ===
+      JSON.stringify(expected.resumePermissions ?? null) &&
+    current.firedAt === expected.firedAt &&
+    current.cancelledAt === expected.cancelledAt &&
+    current.expiredAt === expected.expiredAt
+  )
+}
+
 export class SoloChatWakeupService {
+  private globalHistoryHolds = 0
+  private globalHistoryGeneration = 0
+  private readonly workspaceHistoryHolds = new Map<string, number>()
+  private readonly workspaceHistoryGenerations = new Map<string, number>()
+  private readonly chatHistoryHolds = new Map<string, number>()
+  private readonly chatHistoryGenerations = new Map<string, number>()
+  private readonly activeHistoryHolds = new Map<
+    SoloWakeupHistoryHold,
+    ActiveSoloWakeupHistoryHold
+  >()
+  private readonly fireActivitiesByChat = new Map<string, Set<Promise<boolean>>>()
+
   constructor(private deps: SoloChatWakeupServiceDeps) {}
+
+  /**
+   * Raise a history-specific wakeup admission fence synchronously, cancel every
+   * still-armed timer in the frozen scope, and return an exact join for fire
+   * callbacks that entered before the fence. Persisted records are deliberately
+   * left for the outer delete/truncate commit: once durable prepare exists,
+   * ordinary `saveChat` is correctly fail-closed.
+   */
+  beginHistoryClear(scope: SoloWakeupHistoryClearScope): SoloWakeupHistoryHold {
+    const chatIds =
+      scope.kind === 'global'
+        ? [...new Set([...this.deps.listChats()].map((chat) => chat.appChatId).filter(Boolean))]
+        : [...new Set(scope.chatIds.map((chatId) => chatId.trim()).filter(Boolean))]
+    const workspaceId =
+      scope.kind === 'workspace' ? normalizedHistoryScopeValue(scope.workspaceId) : undefined
+    if (scope.kind === 'workspace' && !workspaceId) {
+      throw new Error('Solo wakeup workspace history clear requires an exact workspace id.')
+    }
+
+    // Generations advance before timer cancellation or any promise creation.
+    // A callback already queued in the microtask queue therefore cannot publish
+    // even when `clearTimeout` can no longer remove its wall-clock callback.
+    if (scope.kind === 'global') {
+      this.globalHistoryGeneration += 1
+      this.globalHistoryHolds += 1
+    } else {
+      if (workspaceId) {
+        this.workspaceHistoryGenerations.set(
+          workspaceId,
+          (this.workspaceHistoryGenerations.get(workspaceId) ?? 0) + 1
+        )
+        this.workspaceHistoryHolds.set(
+          workspaceId,
+          (this.workspaceHistoryHolds.get(workspaceId) ?? 0) + 1
+        )
+      }
+      for (const chatId of chatIds) {
+        this.chatHistoryGenerations.set(chatId, (this.chatHistoryGenerations.get(chatId) ?? 0) + 1)
+        this.chatHistoryHolds.set(chatId, (this.chatHistoryHolds.get(chatId) ?? 0) + 1)
+      }
+    }
+
+    const synchronousErrors: unknown[] = []
+    for (const chatId of chatIds) {
+      const chat = this.deps.getChat(chatId)
+      for (const wakeup of Object.values(chat?.soloWakeups || {})) {
+        if (wakeup.status !== 'pending') continue
+        try {
+          this.deps.cancelWakeupTimer(wakeup.wakeupId)
+        } catch (error) {
+          synchronousErrors.push(error)
+        }
+      }
+    }
+
+    const activities = chatIds.flatMap((chatId) => [
+      ...(this.fireActivitiesByChat.get(chatId) || [])
+    ])
+    const completion = Promise.allSettled(activities).then((results) => {
+      const callbackErrors = results.flatMap((result) =>
+        result.status === 'rejected' ? [result.reason] : []
+      )
+      const errors = [...synchronousErrors, ...callbackErrors]
+      if (errors.length > 0) {
+        throw new AggregateError(
+          errors,
+          'Solo wakeup history clear could not cancel and join every callback.'
+        )
+      }
+    })
+    const hold = Object.freeze({ completion }) as SoloWakeupHistoryHold
+    this.activeHistoryHolds.set(hold, {
+      kind: scope.kind,
+      ...(workspaceId ? { workspaceId } : {}),
+      chatIds
+    })
+    return hold
+  }
+
+  /** Release one exact history hold after the outer store commit. */
+  endHistoryClear(hold: SoloWakeupHistoryHold): boolean {
+    const active = this.activeHistoryHolds.get(hold)
+    if (!active) return false
+    this.activeHistoryHolds.delete(hold)
+    if (active.kind === 'global') {
+      this.globalHistoryHolds = Math.max(0, this.globalHistoryHolds - 1)
+      return true
+    }
+    if (active.workspaceId) {
+      const count = this.workspaceHistoryHolds.get(active.workspaceId) ?? 0
+      if (count <= 1) this.workspaceHistoryHolds.delete(active.workspaceId)
+      else this.workspaceHistoryHolds.set(active.workspaceId, count - 1)
+    }
+    for (const chatId of active.chatIds) {
+      const count = this.chatHistoryHolds.get(chatId) ?? 0
+      if (count <= 1) this.chatHistoryHolds.delete(chatId)
+      else this.chatHistoryHolds.set(chatId, count - 1)
+    }
+    return true
+  }
 
   /**
    * Schedule a wakeup against a solo chat. Mirrors the ensemble
@@ -326,6 +501,12 @@ export class SoloChatWakeupService {
     if (!chatId) return { ok: false, error: 'schedule_wakeup requires an active chat id.' }
     const chat = this.deps.getChat(chatId)
     if (!chat) return { ok: false, error: 'No chat matches this wakeup request.' }
+    if (this.isHistoryBlocked(chat)) {
+      return {
+        ok: false,
+        error: 'Chat history is being cleared; new wakeups are temporarily blocked.'
+      }
+    }
     if (chat.chatKind === 'ensemble') {
       return {
         ok: false,
@@ -413,22 +594,51 @@ export class SoloChatWakeupService {
    * `handleAnyWakeupTimerFired` can return early); `false` lets the
    * caller fall back to the ensemble path or expire-as-orphan.
    */
-  async handleWakeupFired(wakeupId: string): Promise<boolean> {
+  handleWakeupFired(wakeupId: string): Promise<boolean> {
     const located = this.findRecordByWakeupId(wakeupId)
-    if (!located) return false
+    if (!located) return Promise.resolve(false)
     const { chat, wakeup } = located
-    if (wakeup.status !== 'pending') return false
+    if (wakeup.status !== 'pending') return Promise.resolve(false)
+    if (this.isHistoryBlocked(chat)) return Promise.resolve(true)
+    const authority = this.captureHistoryAuthority(chat)
+    // Defer the body by one microtask so the activity is registered before its
+    // first persistence/dispatch side effect. A same-stack deletion can now
+    // synchronously fence and join this exact promise.
+    const activity = Promise.resolve().then(() =>
+      this.handleWakeupFiredWithAuthority(wakeup, authority)
+    )
+    const active = this.fireActivitiesByChat.get(chat.appChatId) ?? new Set<Promise<boolean>>()
+    active.add(activity)
+    this.fireActivitiesByChat.set(chat.appChatId, active)
+    void activity
+      .finally(() => {
+        active.delete(activity)
+        if (active.size === 0) this.fireActivitiesByChat.delete(chat.appChatId)
+      })
+      .catch(() => {})
+    return activity
+  }
+
+  private async handleWakeupFiredWithAuthority(
+    wakeup: SoloChatWakeupRecord,
+    authority: SoloWakeupHistoryAuthority
+  ): Promise<boolean> {
+    const currentBeforeFire = this.currentWakeupForAuthority(wakeup, authority)
+    if (!currentBeforeFire) return true
     const nowIso = this.deps.nowIso()
     const fired: SoloChatWakeupRecord = {
-      ...wakeup,
+      ...currentBeforeFire.wakeup,
       status: 'fired',
       firedAt: nowIso
     }
-    this.persistWakeup(chat, fired)
-    // Refresh the chat from store (saveChat may have replaced it).
-    const refreshed: ChatRecord = this.deps.getChat(chat.appChatId) ?? chat
+    this.persistWakeup(currentBeforeFire.chat, fired)
+    // Refresh from the store and validate both the history generation and the
+    // exact fired-record incarnation. Never retain the pre-save ChatRecord as a
+    // fallback: delete/truncate is allowed to make the chat disappear.
+    const refreshed = this.currentWakeupForAuthority(fired, authority)
+    if (!refreshed) return true
     const appRunId = this.deps.createRunId(wakeup.provider)
-    const payload = buildSoloWakeupResumePayload(refreshed, fired, appRunId, nowIso)
+    const payload = buildSoloWakeupResumePayload(refreshed.chat, refreshed.wakeup, appRunId, nowIso)
     // Stamp the resumed posture so the normalize-time clamp trusts this
     // main-built continuation rather than downgrading it to read-only.
     if (this.deps.signRunPermissionPosture) {
@@ -447,23 +657,45 @@ export class SoloChatWakeupService {
       )
     }
     try {
-      await this.deps.dispatchRun(payload)
+      if (!this.currentWakeupForAuthority(fired, authority)) return true
+      const dispatched = await this.deps.dispatchRun(payload)
+      if (!dispatched.dispatched) {
+        this.expireFiredWakeupAfterDispatchFailure(
+          fired,
+          authority,
+          new Error('Run coordinator declined the resumed wakeup dispatch.')
+        )
+      }
     } catch (error) {
-      // Best-effort. If dispatch fails (e.g. preflight rejection,
-      // adapter unavailable, network) we expire the record so the
-      // user can see what happened in the next surface refresh.
+      this.expireFiredWakeupAfterDispatchFailure(fired, authority, error)
+    }
+    return true
+  }
+
+  /**
+   * Both a rejected dispatch promise and a resolved `{ dispatched: false }`
+   * represent a non-started continuation. Re-fetch the exact current record so
+   * this diagnostic state can never overwrite a concurrent cancel or a
+   * delete/truncate commit.
+   */
+  private expireFiredWakeupAfterDispatchFailure(
+    fired: SoloChatWakeupRecord,
+    authority: SoloWakeupHistoryAuthority,
+    error: unknown
+  ): void {
+    const currentAfterFailure = this.currentWakeupForAuthority(fired, authority)
+    if (currentAfterFailure) {
       const expired: SoloChatWakeupRecord = {
-        ...fired,
+        ...currentAfterFailure.wakeup,
         status: 'expired',
         expiredAt: this.deps.nowIso()
       }
-      this.persistWakeup(refreshed, expired)
-      console.warn(
-        `Solo wakeup ${wakeupId} dispatch failed; record expired:`,
-        error instanceof Error ? error.message : error
-      )
+      this.persistWakeup(currentAfterFailure.chat, expired)
     }
-    return true
+    console.warn(
+      `Solo wakeup ${fired.wakeupId} dispatch failed; record expired:`,
+      error instanceof Error ? error.message : error
+    )
   }
 
   /**
@@ -509,6 +741,48 @@ export class SoloChatWakeupService {
       if (wakeup.status === 'pending') return wakeup
     }
     return undefined
+  }
+
+  private isHistoryBlocked(chat: ChatRecord): boolean {
+    if (this.globalHistoryHolds > 0) return true
+    if ((this.chatHistoryHolds.get(chat.appChatId) ?? 0) > 0) return true
+    const workspaceId = normalizedHistoryScopeValue(chat.workspaceId)
+    return Boolean(workspaceId && (this.workspaceHistoryHolds.get(workspaceId) ?? 0) > 0)
+  }
+
+  private captureHistoryAuthority(chat: ChatRecord): SoloWakeupHistoryAuthority {
+    const workspaceId = normalizedHistoryScopeValue(chat.workspaceId)
+    return {
+      globalGeneration: this.globalHistoryGeneration,
+      ...(workspaceId ? { workspaceId } : {}),
+      workspaceGeneration: workspaceId
+        ? (this.workspaceHistoryGenerations.get(workspaceId) ?? 0)
+        : 0,
+      chatId: chat.appChatId,
+      chatGeneration: this.chatHistoryGenerations.get(chat.appChatId) ?? 0
+    }
+  }
+
+  private currentWakeupForAuthority(
+    expected: SoloChatWakeupRecord,
+    authority: SoloWakeupHistoryAuthority
+  ): { chat: ChatRecord; wakeup: SoloChatWakeupRecord } | null {
+    const chat = this.deps.getChat(authority.chatId)
+    if (!chat || this.isHistoryBlocked(chat)) return null
+    const workspaceId = normalizedHistoryScopeValue(chat.workspaceId)
+    const workspaceGeneration = workspaceId
+      ? (this.workspaceHistoryGenerations.get(workspaceId) ?? 0)
+      : 0
+    if (
+      this.globalHistoryGeneration !== authority.globalGeneration ||
+      workspaceId !== authority.workspaceId ||
+      workspaceGeneration !== authority.workspaceGeneration ||
+      (this.chatHistoryGenerations.get(authority.chatId) ?? 0) !== authority.chatGeneration
+    ) {
+      return null
+    }
+    const wakeup = chat.soloWakeups?.[expected.wakeupId]
+    return sameWakeupIncarnation(wakeup, expected) ? { chat, wakeup } : null
   }
 
   private findRecordByWakeupId(

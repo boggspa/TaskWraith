@@ -29,10 +29,6 @@ export const GROK_SCOPED_MCP_SERVER_NAME = 'taskwraith-grok'
 /** Tool namespace reported by Grok ACP for the per-run TaskWraith broker. */
 export const GROK_BROKER_MCP_TOOL_NAMESPACE = 'taskwraith-broker'
 
-export const KIMI_WIRE_PROTOCOL_FALLBACK = '1.9'
-
-export const KIMI_WIRE_PROTOCOL_INFO_TIMEOUT_MS = 3_000
-
 export const PROBE_TIMEOUT_MS = 1000
 
 export const KNOWN_OFF_PATH_CODEX_BINARIES = ['/Applications/Codex.app/Contents/Resources/codex']

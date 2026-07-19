@@ -171,32 +171,68 @@ describe('buildProviderAuthStatusV2 — kimi', () => {
     const result = buildProviderAuthStatusV2({
       provider: 'kimi',
       available: true,
-      apiKeyConfigured: true
+      rawAuthState: 'api-key',
+      apiKeyConfigured: false
     })
     expect(result.transport).toBe('cli')
     expect(result.approvalSupport).toBe(true)
-    expect(result.mcpStatusSupport).toBe(false)
+    expect(result.mcpStatusSupport).toBe(true)
     expect(result.authState).toBe('authenticated')
   })
 
-  it('reports missing when no API key is stored', () => {
+  it('does not treat the Settings usage key as managed ACP authentication', () => {
     const result = buildProviderAuthStatusV2({
       provider: 'kimi',
       available: true,
-      apiKeyConfigured: false
+      rawAuthState: 'unknown',
+      apiKeyConfigured: true
     })
-    expect(result.authState).toBe('missing')
-    expect(result.authReason).toBe('No Kimi API key stored')
+    expect(result.authState).toBe('not-observable')
   })
 
-  it('marks unavailable + missing when the CLI binary is absent', () => {
+  it('recognises an OAuth-only admitted runtime as authenticated', () => {
     const result = buildProviderAuthStatusV2({
       provider: 'kimi',
-      available: false
+      available: true,
+      apiKeyConfigured: false,
+      rawAuthState: 'oauth'
+    })
+    expect(result.authState).toBe('authenticated')
+  })
+
+  it('does not claim missing credentials when the admitted runtime did not expose auth state', () => {
+    const result = buildProviderAuthStatusV2({
+      provider: 'kimi',
+      available: true,
+      apiKeyConfigured: false,
+      rawAuthState: 'unknown'
+    })
+    expect(result.authState).toBe('not-observable')
+    expect(result.authReason).toContain('not observed')
+  })
+
+  it('reports an explicit missing credential state without implying API-key-only auth', () => {
+    const result = buildProviderAuthStatusV2({
+      provider: 'kimi',
+      available: true,
+      apiKeyConfigured: false,
+      rawAuthState: 'missing'
+    })
+    expect(result.authState).toBe('missing')
+    expect(result.authReason).toContain('OAuth login or config.toml provider API key')
+  })
+
+  it('marks an unqualified runtime unavailable even when OAuth exists', () => {
+    const result = buildProviderAuthStatusV2({
+      provider: 'kimi',
+      available: false,
+      rawAuthState: 'oauth',
+      errorReason: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
     })
     expect(result.serverState).toBe('unavailable')
     expect(result.transport).toBe('unavailable')
     expect(result.authState).toBe('missing')
+    expect(result.authReason).toContain('embedded reviewed roster')
   })
 })
 

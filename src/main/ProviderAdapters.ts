@@ -161,28 +161,38 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     return {
       provider,
       label: providerLabel(provider),
-      transport: 'kimi-wire-or-cli',
+      transport: 'kimi-acp-authenticated-http-mcp',
       runChannel: 'run-agent',
-      capabilitySource: 'mixed',
+      capabilitySource: 'bridge',
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants: false,
-        agentBenchMcpBridge: false,
-        providerManagedMcp: true,
+        workspaceGrants: true,
+        agentBenchMcpBridge: true,
+        providerManagedMcp: false,
         nativeThreadTools: false,
         hostCommandFallback: false
       },
       capabilities: {
-        approvalModes: ['default'],
+        approvalModes: ['default', 'plan'],
         reasoningEffort: false,
         speedTiers: ['fast'],
-        imageAttachments: true,
+        imageAttachments: false,
         contextInjection: true,
         sessionResumption: true,
-        perThreadMcp: false,
+        perThreadMcp: true,
         assistantTextStreaming: 'token'
-      }
+      },
+      capabilityCaveats: [
+        {
+          id: 'kimi-reviewed-runtime-admission',
+          severity: 'warning',
+          capability: 'taskwraithMcpBridge',
+          title: 'Reviewed runtime admission required',
+          message:
+            'Managed Kimi turns and native compaction launch only after exact runtime admission, then use a private synthetic cwd and authenticated per-run TaskWraith HTTP MCP gateway. User-owned login/upgrade terminals do not qualify a runtime.'
+        }
+      ]
     }
   }
   if (provider === 'grok') {
@@ -232,17 +242,10 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'cursor') {
-    // First-class Cursor (Composer 2.5 + Cursor Grok 4.5). Transport is the
-    // cursor-agent headless
-    // stream-json CLI; sessions resume via --resume. CR6 landed write mode
-    // (`approvalModes: ['plan','default']`): 'plan' = read-only (--mode plan),
-    // 'default' = file-write contained by a workspace-local deny-list (native
-    // shell denied; edits diff/PR-reviewed — Grok-parity). NO app-managed
-    // per-tool approval cards. The full TaskWraith MCP bridge is mode-scoped:
-    // read-only runs stay provider-delegated unless separately enabled, while
-    // write-capable runs auto-inject the governed bridge. Without this branch
-    // cursor would inherit the Claude default below, advertising capabilities it
-    // does not have.
+    // Cursor stays decodable/renderable for historical records, but managed
+    // runs are disabled for the current exact CLI build. Provider-managed
+    // startup hooks/plugins/MCP load before a turn, so neither plan nor tool
+    // transport is qualified.
     return {
       provider,
       label: providerLabel(provider),
@@ -250,7 +253,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       runChannel: 'run-agent',
       capabilitySource: 'provider',
       features: {
-        persistentSessions: true,
+        persistentSessions: false,
         appManagedApprovals: false,
         workspaceGrants: false,
         agentBenchMcpBridge: false,
@@ -259,23 +262,23 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         hostCommandFallback: false
       },
       capabilities: {
-        approvalModes: ['plan', 'default'],
+        approvalModes: [],
         reasoningEffort: true,
         speedTiers: ['fast'],
         imageAttachments: false,
         contextInjection: false,
-        sessionResumption: true,
+        sessionResumption: false,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       },
       capabilityCaveats: [
         {
-          id: 'cursor-taskwraith-bridge-write-mode-only',
-          severity: 'info',
-          capability: 'taskwraithMcpBridge',
-          title: 'TaskWraith MCP bridge is mode-scoped',
+          id: 'cursor-tool-mode-unqualified',
+          severity: 'warning',
+          capability: 'approvalModes',
+          title: 'Cursor managed runs are temporarily unavailable',
           message:
-            'Read-only Cursor runs do not advertise the full TaskWraith MCP bridge by default; write-capable Cursor runs auto-inject a scoped broker so side effects route through TaskWraith approvals and path checks.'
+            'TaskWraith will not start Cursor, including in plan mode, until an exact-build canary covers provider-managed account/team hooks, skills, plugins, MCP sources, and session state.'
         }
       ]
     }

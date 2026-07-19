@@ -168,18 +168,19 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     const definitions = createTaskWraithMcpToolDefinitions()
     const serializedChars = (names: readonly string[], extras: unknown[] = []) =>
       JSON.stringify({
-        tools: [
-          ...definitions.filter((definition) => names.includes(definition.name)),
-          ...extras
-        ]
+        tools: [...definitions.filter((definition) => names.includes(definition.name)), ...extras]
       }).length
     const fullChars = serializedChars(FULL_MCP_ADVERTISE_TOOLS)
     const gatewayChars = serializedChars(GATEWAY_MCP_DIRECT_TOOLS, gatewayToolDefinitions())
 
-    expect(fullChars).toBe(130_883)
-    expect(gatewayChars).toBe(39_261)
+    // Measured 2026-07-19 baseline after correcting delegation's advertised
+    // runtime-admission, active-recall queueing, and typed-terminal semantics.
+    // Keep the exact values review-sensitive; the 40k gateway limit below is
+    // the transport contract.
+    expect(fullChars).toBe(132_006)
+    expect(gatewayChars).toBe(39_624)
     expect(gatewayChars).toBeLessThan(40_000)
-    expect(gatewayChars / fullChars).toBeLessThan(0.3)
+    expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })
 })
 

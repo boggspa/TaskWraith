@@ -16,8 +16,24 @@ describe('delegate_to_subthread MCP schema', () => {
     expect(properties?.reasoningEffort?.enum).toEqual(
       expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     )
-    expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*grok.*cursor/i)
+    expect(properties?.provider?.enum).not.toContain('cursor')
+    expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*kimi.*grok/i)
+    expect(properties?.reasoningEffort?.description).not.toMatch(/cursor/i)
     expect(properties?.kimiThinking?.description).toMatch(/kimi/i)
     expect(properties?.subThreadId?.description).toMatch(/inherits.*model.*controls/i)
+    expect(properties?.subThreadId?.description).toMatch(/active child.*durably queued/i)
+    expect(properties?.subThreadId?.description).not.toMatch(/unarchived and idle/i)
+    expect(properties?.returnResult?.description).toMatch(/typed terminal result/i)
+    expect(definition?.description).toMatch(/subject to current runtime admission/i)
+    expect(definition?.description).toMatch(/done\/requires_action\/failed\/cancelled/i)
+  })
+
+  it('documents cancellation of queued recalls as well as a live child run', () => {
+    const definition = createTaskWraithMcpToolDefinitions().find(
+      (tool) => tool.name === 'cancel_subthread'
+    )
+
+    expect(definition?.description).toMatch(/queued recalled follow-ups/i)
+    expect(definition?.description).toMatch(/active run/i)
   })
 })

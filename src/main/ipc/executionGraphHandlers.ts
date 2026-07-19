@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 import {
   compileExecutionGraphRevision,
   stableExecutionGraphStringify
@@ -37,7 +38,10 @@ export interface ExecutionRunListFilter {
 }
 
 export interface ExecutionGraphServiceDiagnostic {
-  readonly code: 'initialization_failed' | 'startup_recovery_failed'
+  readonly code:
+    | 'initialization_failed'
+    | 'startup_recovery_failed'
+    | 'history_deletion_recovery_required'
   readonly message: string
 }
 
@@ -138,7 +142,6 @@ interface PreparedStackTemplate {
   readonly ceiling: ExecutionPermissionCeilingRef
 }
 
-const PROVIDERS = new Set<ProviderId>(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 const EXECUTION_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -172,7 +175,7 @@ function clientRequestId(value: unknown): string {
 }
 
 function providerId(value: unknown): ProviderId {
-  if (typeof value !== 'string' || !PROVIDERS.has(value as ProviderId)) {
+  if (typeof value !== 'string' || !isLiveSelectableProvider(value)) {
     throw new Error('Execution provider is invalid or retired.')
   }
   return value as ProviderId

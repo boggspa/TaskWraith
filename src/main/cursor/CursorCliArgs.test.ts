@@ -78,11 +78,13 @@ describe('buildCursorCliArgs', () => {
       ...base,
       prompt: discordPrompt,
       approvalMode: 'default',
-      taskWraithMcpActive: true
+      taskWraithMcpActive: true,
+      containmentAttested: true
     })
 
     expect(args).not.toContain('plan')
-    expect(args).toContain('--approve-mcps')
+    expect(args).toContain('--force')
+    expect(args).not.toContain('--approve-mcps')
     expect(args[args.length - 1]).toBe(discordPrompt)
   })
 
@@ -91,9 +93,9 @@ describe('buildCursorCliArgs', () => {
     expect(args.join(' ')).toContain('--mode plan')
   })
 
-  it('write-capable mode omits --mode plan', () => {
+  it('an unqualified write-capable request is clamped to --mode plan', () => {
     const args = buildCursorCliArgs({ ...base, approvalMode: 'acceptEdits' })
-    expect(args).not.toContain('plan')
+    expect(args.join(' ')).toContain('--mode plan')
   })
 
   it('NEVER passes --force/--yolo WITHOUT the bridge (bare / plan / uncontained)', () => {
@@ -107,21 +109,32 @@ describe('buildCursorCliArgs', () => {
 
   it('emits --force ONLY with an active bridge (deny-list containment present), never --yolo', () => {
     // Write seat + bridge → --force (MCP tool calls need it headlessly).
-    const write = buildCursorCliArgs({ ...base, approvalMode: 'default', webBridgeActive: true })
+    const write = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'default',
+      webBridgeActive: true,
+      containmentAttested: true
+    })
     expect(write).toContain('--force')
     expect(write).not.toContain('--yolo')
     // Read-only-contained seat + safe-subset bridge → --force too.
-    const ro = buildCursorCliArgs({ ...base, approvalMode: 'plan', readOnlyBridgeActive: true })
+    const ro = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'plan',
+      readOnlyBridgeActive: true,
+      containmentAttested: true
+    })
     expect(ro).toContain('--force')
     // Withheld when explicitly disabled (kill-switch) — tools go back to rejected.
     const off = buildCursorCliArgs({
       ...base,
       approvalMode: 'default',
       webBridgeActive: true,
+      containmentAttested: true,
       forceAllowTools: false
     })
     expect(off).not.toContain('--force')
-    expect(off).toContain('--approve-mcps')
+    expect(off).not.toContain('--approve-mcps')
   })
 
   it('suppresses every MCP widening flag and clamps to plan when the effective posture denies MCP', () => {
@@ -202,27 +215,28 @@ describe('buildCursorCliArgs', () => {
     expect(buildCursorCliArgs({ ...base, providerSessionId: '   ' })).not.toContain('--resume')
   })
 
-  it('adds --approve-mcps only for write-capable runs with the TaskWraith MCP bridge active', () => {
-    // Write-capable + bridge → flag present.
-    expect(
-      buildCursorCliArgs({ ...base, approvalMode: 'acceptEdits', webBridgeActive: true })
-    ).toContain('--approve-mcps')
-    // Write-capable but bridge NOT active (e.g. config write failed) → no flag.
-    expect(
-      buildCursorCliArgs({ ...base, approvalMode: 'acceptEdits', webBridgeActive: false })
-    ).not.toContain('--approve-mcps')
-    // Plan mode never executes MCP tools → never flag it, even if asked.
-    expect(
+  it('never emits aggregate --approve-mcps, including for an attested bridge', () => {
+    for (const args of [
+      buildCursorCliArgs({
+        ...base,
+        approvalMode: 'acceptEdits',
+        webBridgeActive: true,
+        containmentAttested: true
+      }),
+      buildCursorCliArgs({ ...base, approvalMode: 'acceptEdits', webBridgeActive: false }),
       buildCursorCliArgs({ ...base, approvalMode: 'plan', webBridgeActive: true })
-    ).not.toContain('--approve-mcps')
-    // Default (no webBridgeActive) → no flag.
-    expect(buildCursorCliArgs({ ...base, approvalMode: 'acceptEdits' })).not.toContain(
-      '--approve-mcps'
-    )
+    ]) {
+      expect(args).not.toContain('--approve-mcps')
+    }
   })
 
   it('with the bridge active passes --force (contained) but NEVER --yolo', () => {
-    const args = buildCursorCliArgs({ ...base, approvalMode: 'default', webBridgeActive: true })
+    const args = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'default',
+      webBridgeActive: true,
+      containmentAttested: true
+    })
     expect(args).toContain('--force')
     expect(args).not.toContain('--yolo')
   })
@@ -231,11 +245,16 @@ describe('buildCursorCliArgs', () => {
 describe('read-only safe-subset bridge (Grok parity)', () => {
   const base = { prompt: 'read a thing', workspace: '/ws' }
 
-  it('read-only + readOnlyBridgeActive runs CONTAINED default mode (no --mode plan) with --approve-mcps + --force', () => {
-    const args = buildCursorCliArgs({ ...base, approvalMode: 'plan', readOnlyBridgeActive: true })
+  it('attested read-only bridge runs contained default mode with --force but never --approve-mcps', () => {
+    const args = buildCursorCliArgs({
+      ...base,
+      approvalMode: 'plan',
+      readOnlyBridgeActive: true,
+      containmentAttested: true
+    })
     // Contained default mode: --mode plan would execute NO tools, so it's suppressed.
     expect(args).not.toContain('plan')
-    expect(args).toContain('--approve-mcps')
+    expect(args).not.toContain('--approve-mcps')
     // --force so the (safe-subset) MCP read tools execute headlessly; the broker
     // advertises only read tools + the deny-list blocks native writes, so it's
     // strictly contained. NEVER --yolo.
@@ -256,30 +275,34 @@ describe('read-only safe-subset bridge (Grok parity)', () => {
       approvalMode: 'default',
       readOnlyBridgeActive: true
     })
-    expect(args).not.toContain('plan')
+    expect(args.join(' ')).toContain('--mode plan')
     expect(args).not.toContain('--approve-mcps')
   })
 
-  it('provider wrapper: read-only seat with taskWraithReadOnlyMcpActive → contained default mode + --approve-mcps', () => {
+  it('provider wrapper: attested read-only seat can enter contained default mode', () => {
     const args = buildCursorProviderCliArgs({
       ...base,
       approvalMode: 'plan',
       taskWraithMcpActive: false,
-      taskWraithReadOnlyMcpActive: true
+      taskWraithReadOnlyMcpActive: true,
+      containmentAttested: true
     })
     expect(args).not.toContain('plan')
-    expect(args).toContain('--approve-mcps')
+    expect(args).toContain('--force')
+    expect(args).not.toContain('--approve-mcps')
   })
 
-  it('provider wrapper: full write bridge wins over the read-only flag (single --approve-mcps, no plan)', () => {
+  it('provider wrapper: attested full write bridge wins over the read-only flag', () => {
     const args = buildCursorProviderCliArgs({
       ...base,
       approvalMode: 'default',
       taskWraithMcpActive: true,
-      taskWraithReadOnlyMcpActive: true
+      taskWraithReadOnlyMcpActive: true,
+      containmentAttested: true
     })
     expect(args).not.toContain('plan')
-    expect(args.filter((a) => a === '--approve-mcps')).toHaveLength(1)
+    expect(args).toContain('--force')
+    expect(args).not.toContain('--approve-mcps')
   })
 
   it('provider wrapper: no bridge at all → read-only plan mode, no --approve-mcps', () => {
@@ -291,5 +314,24 @@ describe('read-only safe-subset bridge (Grok parity)', () => {
     })
     expect(args.join(' ')).toContain('--mode plan')
     expect(args).not.toContain('--approve-mcps')
+  })
+
+  it('unqualified stale bridge flags remain plan/no-tools', () => {
+    const args = buildCursorProviderCliArgs({
+      ...base,
+      approvalMode: 'default',
+      taskWraithMcpActive: true,
+      taskWraithReadOnlyMcpActive: true
+    })
+    expect(args.join(' ')).toContain('--mode plan')
+    expect(args).not.toContain('--approve-mcps')
+    expect(args).not.toContain('--force')
+  })
+
+  it('adds project-config isolation flags before the trailing prompt', () => {
+    const args = buildCursorCliArgs({ ...base, isolateProjectConfigs: true })
+    expect(args).toContain('--disable-project-configs')
+    expect(args).toContain('--exclude-workspace-context')
+    expect(args.at(-1)).toBe(base.prompt)
   })
 })

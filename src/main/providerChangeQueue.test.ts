@@ -242,4 +242,18 @@ describe('applyPendingProviderChangeOnFinalize (turn-end)', () => {
     expect(finalized.providerMetadata?.selectedModelType).toBe('claude-opus')
     expect(hasPendingProviderChange(finalized)).toBe(false)
   })
+
+  it('drops a queued historical provider without changing the active provider', () => {
+    const queued = queueProviderChange(
+      chat({ provider: 'claude', linkedProviderSessionId: 'sess-claude' }),
+      { provider: 'cursor', providerMetadata: { selectedModelType: 'composer-2.5' } }
+    )
+
+    const finalized = applyPendingProviderChangeOnFinalize(queued)
+
+    expect(finalized.provider).toBe('claude')
+    expect(finalized.linkedProviderSessionId).toBe('sess-claude')
+    expect(finalized.providerMetadata?.selectedModelType).toBeUndefined()
+    expect(hasPendingProviderChange(finalized)).toBe(false)
+  })
 })

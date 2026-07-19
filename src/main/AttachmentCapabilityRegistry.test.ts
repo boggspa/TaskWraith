@@ -39,4 +39,41 @@ describe('AttachmentCapabilityRegistry', () => {
     expect(registry.getAuthorizedPathsForRenderer(101)).toEqual([])
     expect(registry.getAuthorizedPathsForRenderer(303)).toEqual(['/tmp/other.png'])
   })
+
+  it('revokes a chat-scoped main path only after its last owner is removed', () => {
+    const registry = new AttachmentCapabilityRegistry()
+    registry.authorizeMainPath('/tmp/shared.png', { appChatId: 'chat-a' })
+    registry.authorizeMainPath('/tmp/shared.png', { appChatId: 'chat-b' })
+    registry.authorizeMainPath('/tmp/private.png', { appChatId: 'chat-a' })
+
+    expect(registry.revokeMainChat('chat-a')).toBe(1)
+    expect(registry.getMainAuthorizedPaths()).toEqual(['/tmp/shared.png'])
+    expect(registry.revokeMainChat('chat-b')).toBe(1)
+    expect(registry.getMainAuthorizedPaths()).toEqual([])
+  })
+
+  it('preserves an unscoped main authority during scoped revocation and clears all on global clear', () => {
+    const registry = new AttachmentCapabilityRegistry()
+    registry.authorizeMainPath('/tmp/unscoped.png')
+    registry.authorizeMainPath('/tmp/unscoped.png', { appChatId: 'chat-a' })
+    registry.authorizeMainPath('/tmp/chat-only.png', { appChatId: 'chat-a' })
+
+    expect(registry.revokeMainChat('chat-a')).toBe(1)
+    expect(registry.getMainAuthorizedPaths()).toEqual(['/tmp/unscoped.png'])
+    expect(registry.clearMainAuthority()).toBe(1)
+    expect(registry.getMainAuthorizedPaths()).toEqual([])
+    expect(registry.clearMainAuthority()).toBe(0)
+  })
+
+  it('drops scoped ownership metadata when main-path bounds evict a capability', () => {
+    const registry = new AttachmentCapabilityRegistry(2)
+    registry.authorizeMainPath('/tmp/one.png', { appChatId: 'chat-a' })
+    registry.authorizeMainPath('/tmp/two.png', { appChatId: 'chat-a' })
+    registry.authorizeMainPath('/tmp/three.png', { appChatId: 'chat-b' })
+
+    expect(registry.getMainAuthorizedPaths()).toEqual(['/tmp/two.png', '/tmp/three.png'])
+    expect(registry.revokeMainChat('chat-a')).toBe(1)
+    expect(registry.revokeMainChat('chat-b')).toBe(1)
+    expect(registry.getMainAuthorizedPaths()).toEqual([])
+  })
 })

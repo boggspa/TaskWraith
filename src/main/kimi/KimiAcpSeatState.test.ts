@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest'
-import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './KimiAcpSeatState'
+import {
+  kimiAcpSeatStatePath,
+  kimiAcpSeatStateRoot,
+  legacyKimiAcpSeatStatePaths,
+  legacyKimiAcpSeatStateRoots
+} from './KimiAcpSeatState'
 
 describe('KimiAcpSeatState', () => {
   it('isolates chats and participants behind stable opaque paths', () => {
@@ -9,5 +14,15 @@ describe('KimiAcpSeatState', () => {
     expect(solo).not.toBe(kimiAcpSeatStatePath('/user-data', 'chat-a', 'worker'))
     expect(solo.startsWith(`${kimiAcpSeatStateRoot('/user-data')}/`)).toBe(true)
     expect(solo).not.toContain('chat-a')
+  })
+
+  it('uses a new namespace and identifies legacy homes for cleanup only', () => {
+    expect(kimiAcpSeatStateRoot('/user-data')).toBe('/user-data/kimi-acp-seats-v2')
+    expect(legacyKimiAcpSeatStateRoots('/user-data')).toEqual([
+      '/user-data/kimi-acp-seats-v1'
+    ])
+    expect(legacyKimiAcpSeatStatePaths('/user-data', 'chat-a')[0]).not.toBe(
+      kimiAcpSeatStatePath('/user-data', 'chat-a')
+    )
   })
 })

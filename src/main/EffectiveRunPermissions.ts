@@ -32,8 +32,8 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 // permission lattice lied: the UI offered two postures that enforced the same
 // thing. They now have DISTINCT maps and MUST NOT be re-merged.
 //
-// Both keep `approvalMode: 'plan'` (the provider wire value — Grok/Cursor
-// physically run `--mode plan` and cannot write) and `readOnly: true`, so
+// Both keep `approvalMode: 'plan'` (the host posture value that each runnable
+// adapter must map without weakening the lattice) and `readOnly: true`, so
 // NEITHER can edit files, run shell, eval, capture, cross-thread-read, or write
 // directly. The ONLY axis on which they differ is which agent INSTRUMENTS a
 // human may approve mid-run:

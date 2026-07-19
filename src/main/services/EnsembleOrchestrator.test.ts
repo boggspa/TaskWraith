@@ -40,6 +40,7 @@ import {
 } from '../../shared/contextCompaction'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
+import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -252,6 +253,7 @@ function makeHarness(
     dispatch?: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
     beforeSaveChat?: (chat: ChatRecord) => void
     cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
+    terminateRunForHistory?: EnsembleOrchestratorDeps['terminateRunForHistory']
     /**
      * 1.0.4-AD — optional probe injection. When set, the orchestrator
      * calls it BEFORE each participant's dispatch. Returning
@@ -333,17 +335,22 @@ function makeHarness(
       : { dispatched: true, appRunId: payload.appRunId || '' }
   })
   const cancelRun = vi.fn(options.cancelRun ?? (async () => true))
+  const terminateRunForHistory = options.terminateRunForHistory
+    ? vi.fn(options.terminateRunForHistory)
+    : undefined
   const transitionRunQueueJob = vi.fn(options.transitionRunQueueJob ?? (() => null))
   const probeParticipant = options.probeParticipant ? vi.fn(options.probeParticipant) : undefined
+  const saveChat = vi.fn((next: ChatRecord) => {
+    options.beforeSaveChat?.(next)
+    chat = next
+  })
   const orchestrator = new EnsembleOrchestrator({
     getChat: () => chat,
-    saveChat: (next) => {
-      options.beforeSaveChat?.(next)
-      chat = next
-    },
+    saveChat,
     getSettings: options.getSettings ?? makeSettings,
     dispatch,
     cancelRun,
+    ...(terminateRunForHistory ? { terminateRunForHistory } : {}),
     ...(options.awaitPendingSeatCompaction
       ? { awaitPendingSeatCompaction: options.awaitPendingSeatCompaction }
       : {}),
@@ -401,7 +408,9 @@ function makeHarness(
       return chat
     },
     cancelRun,
+    terminateRunForHistory,
     transitionRunQueueJob,
+    saveChat,
     dispatched,
     dispatch,
     probeParticipant,
@@ -4368,6 +4377,213 @@ Next action:
     await new Promise((r) => setTimeout(r, 20))
     expect(harness.dispatched).toHaveLength(1) // still only p1 — no zombie codex run
     expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled') // not stuck 'running'
+  })
+
+  it('does not resurrect messages or dispatch after history truncation cancels a paused health probe', async () => {
+    let resolveProbe!: (result: ParticipantProbeResult) => void
+    const probe = new Promise<ParticipantProbeResult>((resolve) => {
+      resolveProbe = resolve
+    })
+    let historyPrepared = false
+    const persistSessionCheckpoint = vi.fn()
+    const completeSessionCheckpoint = vi.fn()
+    const harness = makeHarness({
+      probeParticipant: async () => probe,
+      beforeSaveChat: () => {
+        if (historyPrepared) throw new Error('AppStore history mutation is prepared')
+      },
+      persistSessionCheckpoint,
+      completeSessionCheckpoint
+    })
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Prompt that must be cleared',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.probeParticipant).toHaveBeenCalled())
+    expect(harness.dispatched).toHaveLength(0)
+
+    const roundId = harness.chat.ensemble!.activeRound!.roundId
+    const saveCountAtPrepare = harness.saveChat.mock.calls.length
+    const checkpointCountAtPrepare = persistSessionCheckpoint.mock.calls.length
+    historyPrepared = true
+    let cancellationJoined = false
+    const cancelling = harness.orchestrator
+      .cancelRoundForHistory('ensemble-chat', 'chat history cleared', roundId)
+      .then((result) => {
+        cancellationJoined = true
+        return result
+      })
+    await Promise.resolve()
+    expect(cancellationJoined).toBe(false)
+    resolveProbe({ reachable: true })
+    await expect(cancelling).resolves.toBe(true)
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
+    expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
+    expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+
+    // Model the truncate commit after exact round settlement: roster survives,
+    // while transcript and active-round projection do not.
+    harness.chat.messages = []
+    harness.chat.ensemble!.activeRound = undefined
+
+    await new Promise((resolve) => setTimeout(resolve, 20))
+    expect(harness.dispatched).toHaveLength(0)
+    expect(harness.chat.messages).toEqual([])
+    expect(harness.chat.ensemble?.participants).toHaveLength(2)
+    expect(harness.chat.ensemble?.activeRound).toBeUndefined()
+  })
+
+  it('joins an accepted transport without saving or checkpointing after history prepare', async () => {
+    const transportJoinGate = deferred<boolean>()
+    let historyPrepared = false
+    const persistSessionCheckpoint = vi.fn()
+    const completeSessionCheckpoint = vi.fn()
+    const harness = makeHarness({
+      terminateRunForHistory: async () => transportJoinGate.promise,
+      beforeSaveChat: () => {
+        if (historyPrepared) throw new Error('AppStore history mutation is prepared')
+      },
+      persistSessionCheckpoint,
+      completeSessionCheckpoint
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Delete this live round under the prepared history write guard.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const liveRunId = harness.dispatched[0].appRunId!
+    const roundId = harness.chat.ensemble!.activeRound!.roundId
+    const saveCountAtPrepare = harness.saveChat.mock.calls.length
+    const checkpointCountAtPrepare = persistSessionCheckpoint.mock.calls.length
+    const queueTransitionCountAtPrepare = harness.transitionRunQueueJob.mock.calls.length
+    historyPrepared = true
+
+    let cancellationJoined = false
+    const cancelling = harness.orchestrator
+      .cancelRoundForHistory('ensemble-chat', 'chat history cleared', roundId)
+      .then((result) => {
+        cancellationJoined = true
+        return result
+      })
+    await vi.waitFor(() =>
+      expect(harness.terminateRunForHistory).toHaveBeenCalledWith('claude', liveRunId)
+    )
+    expect(cancellationJoined).toBe(false)
+    expect(harness.cancelRun).not.toHaveBeenCalled()
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
+    expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
+    expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+    expect(harness.transitionRunQueueJob).toHaveBeenCalledTimes(
+      queueTransitionCountAtPrepare
+    )
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: liveRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'MUST-NOT-PERSIST-AFTER-PREPARE.' }
+      )
+    ).toBe(false)
+
+    transportJoinGate.resolve(true)
+    await expect(cancelling).resolves.toBe(true)
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
+    expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
+    expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+  })
+
+  it('cancels orphaned and sleeping wakeup timers without a running runtime or durable write', async () => {
+    const initialChat = makeChat()
+    initialChat.ensemble!.activeRound = undefined
+    initialChat.ensemble!.wakeups = {
+      'orphan-wakeup': {
+        wakeupId: 'orphan-wakeup',
+        chatId: 'ensemble-chat',
+        roundId: 'old-round',
+        participantId: 'claude',
+        provider: 'claude',
+        runId: 'old-claude-run',
+        scheduledAt: '2026-05-24T00:00:01.000Z',
+        wakeAt: '2026-05-24T01:00:01.000Z',
+        status: 'pending'
+      },
+      'sleeping-wakeup': {
+        wakeupId: 'sleeping-wakeup',
+        chatId: 'ensemble-chat',
+        roundId: 'sleeping-round',
+        participantId: 'codex',
+        provider: 'codex',
+        runId: 'old-codex-run',
+        scheduledAt: '2026-05-24T00:00:02.000Z',
+        wakeAt: '2026-05-24T02:00:02.000Z',
+        status: 'pending'
+      }
+    }
+    const cancelWakeupTimer = vi.fn()
+    const persistSessionCheckpoint = vi.fn()
+    const completeSessionCheckpoint = vi.fn()
+    const harness = makeHarness({
+      initialChat,
+      cancelWakeupTimer,
+      beforeSaveChat: () => {
+        throw new Error('AppStore history mutation is prepared')
+      },
+      persistSessionCheckpoint,
+      completeSessionCheckpoint
+    })
+    const targetPollTimer = setTimeout(() => undefined, 60_000)
+    const siblingPollTimer = setTimeout(() => undefined, 60_000)
+    targetPollTimer.unref?.()
+    siblingPollTimer.unref?.()
+    const pollTimers = (
+      harness.orchestrator as unknown as {
+        bossmanPollTimeoutsById: Map<
+          string,
+          {
+            chatId: string
+            pollId: string
+            handle: ReturnType<typeof setTimeout>
+          }
+        >
+      }
+    ).bossmanPollTimeoutsById
+    pollTimers.set('target-poll-key', {
+      chatId: 'ensemble-chat',
+      pollId: 'target-poll',
+      handle: targetPollTimer
+    })
+    pollTimers.set('sibling-poll-key', {
+      // Valid chat ids may contain `:`. This must not be treated as the target
+      // chat merely because its textual prefix is the same.
+      chatId: 'ensemble-chat:child',
+      pollId: 'sibling-poll',
+      handle: siblingPollTimer
+    })
+
+    try {
+      await expect(
+        harness.orchestrator.cancelRoundForHistory('ensemble-chat')
+      ).resolves.toBe(true)
+      expect(cancelWakeupTimer.mock.calls.map(([id]) => id).sort()).toEqual([
+        'orphan-wakeup',
+        'sleeping-wakeup'
+      ])
+      expect(pollTimers.has('target-poll-key')).toBe(false)
+      expect(pollTimers.get('sibling-poll-key')?.handle).toBe(siblingPollTimer)
+      expect(harness.saveChat).not.toHaveBeenCalled()
+      expect(persistSessionCheckpoint).not.toHaveBeenCalled()
+      expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+      // The outer transaction owns the only durable mutation. Locally there is
+      // no runtime left for an already-queued callback to fire or re-arm.
+      expect(harness.orchestrator.handleWakeupFired('orphan-wakeup')).toBe(false)
+      expect(harness.orchestrator.handleWakeupFired('sleeping-wakeup')).toBe(false)
+      expect(harness.chat.ensemble?.wakeups?.['orphan-wakeup']?.status).toBe('pending')
+    } finally {
+      clearTimeout(targetPollTimer)
+      clearTimeout(siblingPollTimer)
+    }
   })
 
   it('does not dispatch fan-out lanes onto a round cancelled during seat compaction', async () => {
@@ -14502,6 +14718,93 @@ Next action:
     expect(harness.chat.ensemble?.activeRound?.status).toBe('cancelled')
   })
 
+  it('joins and re-cancels a fan-out transport accepted after history cancellation', async () => {
+    const dispatchGate = deferred<boolean>()
+    const transportJoinGate = deferred<boolean>()
+    let laneAdapterRegistered = false
+    let historyPrepared = false
+    const persistSessionCheckpoint = vi.fn()
+    const completeSessionCheckpoint = vi.fn()
+    const harness = makeFanoutRaceHarness({
+      dispatch: async (payload) => {
+        if (!payload.ensembleRun?.laneId) {
+          return { dispatched: true, appRunId: payload.appRunId || '' }
+        }
+        const accepted = await dispatchGate.promise
+        laneAdapterRegistered = accepted
+        return { dispatched: accepted, appRunId: payload.appRunId || '' }
+      },
+      cancelRun: async (provider) => provider !== 'claude' || laneAdapterRegistered,
+      terminateRunForHistory: async (provider) =>
+        provider === 'claude' ? transportJoinGate.promise : true,
+      beforeSaveChat: () => {
+        if (historyPrepared) throw new Error('AppStore history mutation is prepared')
+      },
+      persistSessionCheckpoint,
+      completeSessionCheckpoint
+    })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Delete history while the reviewer dispatch receipt is pending.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
+      targets: ['Reviewer'],
+      prompt: 'This late-accepted lane must be joined before history commit.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    const provisionalLane = harness.dispatched[1]
+    const roundId = harness.chat.ensemble!.activeRound!.roundId
+    const saveCountAtPrepare = harness.saveChat.mock.calls.length
+    const checkpointCountAtPrepare = persistSessionCheckpoint.mock.calls.length
+    historyPrepared = true
+
+    let cancellationJoined = false
+    const cancelling = harness.orchestrator
+      .cancelRoundForHistory('ensemble-chat', 'chat history cleared', roundId)
+      .then((result) => {
+        cancellationJoined = true
+        return result
+      })
+    await Promise.resolve()
+    expect(cancellationJoined).toBe(false)
+    expect(harness.terminateRunForHistory).not.toHaveBeenCalled()
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
+    expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
+    expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+
+    dispatchGate.resolve(true)
+    await expect(fanout).resolves.toMatchObject({ ok: false, error: 'dispatch_failed' })
+    await vi.waitFor(() =>
+      expect(harness.terminateRunForHistory).toHaveBeenCalledWith(
+        'claude',
+        provisionalLane.appRunId
+      )
+    )
+    expect(cancellationJoined).toBe(false)
+    transportJoinGate.resolve(true)
+    await expect(cancelling).resolves.toBe(true)
+    const laneCancellationCount = harness.cancelRun.mock.calls.filter(
+      ([provider, runId]) => provider === 'claude' && runId === provisionalLane.appRunId
+    ).length
+    expect(laneCancellationCount).toBeGreaterThanOrEqual(1)
+    expect(harness.saveChat).toHaveBeenCalledTimes(saveCountAtPrepare)
+    expect(persistSessionCheckpoint).toHaveBeenCalledTimes(checkpointCountAtPrepare)
+    expect(completeSessionCheckpoint).not.toHaveBeenCalled()
+
+    harness.chat.messages = []
+    harness.chat.ensemble!.activeRound = undefined
+    expect(
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: provisionalLane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'HISTORY-ZOMBIE-LANE-OUTPUT.' }
+      )
+    ).toBe(false)
+    expect(harness.chat.messages).toEqual([])
+  })
+
   it('rejects late tools and provider events from a terminal owner retained for settlement', async () => {
     const harness = makeFanoutRaceHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'codex'
@@ -17357,7 +17660,8 @@ describe('slim resumed-turn prompts', () => {
           model: 'kimi-k2.7-code',
           permissionPresetId: 'read_only',
           linkedProviderSessionId: 'session_native-kimi-1',
-          kimiAcpNativeSession: true
+          kimiAcpNativeSession: true,
+          kimiAcpPostureVersion: KIMI_ACP_PRODUCTION_POSTURE_VERSION
         }
       ]
       chat.ensemble!.participants[0].promptShellVersion =
@@ -17712,7 +18016,7 @@ describe('classified context-overflow seat relief', () => {
   const overflowText = "This model's maximum context length is 128000 tokens"
 
   function hostSeatChat(
-    provider: 'cursor' | 'kimi' | 'grok',
+    provider: 'kimi' | 'grok',
     id = provider
   ): ChatRecord {
     const chat = makeChat()
@@ -17725,8 +18029,7 @@ describe('classified context-overflow seat relief', () => {
         instructions: 'Work.',
         order: 1,
         model: `${provider}-model`,
-        permissionPresetId: 'read_only',
-        ...(provider === 'cursor' ? { linkedProviderSessionId: 'cursor-session' } : {})
+        permissionPresetId: 'read_only'
       }
     ]
     return chat
@@ -17735,12 +18038,12 @@ describe('classified context-overflow seat relief', () => {
   it('compacts once only after a matching failed serial run settles', async () => {
     const compactSeatContext = vi.fn(async () => ({ ok: true }))
     const harness = makeHarness({
-      initialChat: hostSeatChat('cursor'),
+      initialChat: hostSeatChat('grok'),
       compactSeatContext
     })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
-      prompt: 'Use the Cursor worker.',
+      prompt: 'Use the Grok worker.',
       event: { sender: {} as Electron.WebContents }
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
@@ -17750,17 +18053,17 @@ describe('classified context-overflow seat relief', () => {
     }
 
     expect(
-      harness.orchestrator.noteProviderFailureText('cursor', { ...route, appChatId: 'wrong' }, overflowText)
+      harness.orchestrator.noteProviderFailureText('grok', { ...route, appChatId: 'wrong' }, overflowText)
     ).toBe(false)
     expect(harness.orchestrator.noteProviderFailureText('kimi', route, overflowText)).toBe(false)
     expect(
-      harness.orchestrator.noteProviderFailureText('cursor', route, 'Too many tokens for team')
+      harness.orchestrator.noteProviderFailureText('grok', route, 'Too many tokens for team')
     ).toBe(false)
-    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
-    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+    expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(true)
+    expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(true)
     expect(compactSeatContext).not.toHaveBeenCalled()
 
-    harness.orchestrator.handleProviderOutput('cursor', route, {
+    harness.orchestrator.handleProviderOutput('grok', route, {
       type: 'result',
       status: 'failed'
     })
@@ -17768,11 +18071,11 @@ describe('classified context-overflow seat relief', () => {
     await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
     expect(compactSeatContext).toHaveBeenCalledWith({
       chatId: 'ensemble-chat',
-      participantId: 'cursor',
-      provider: 'cursor',
+      participantId: 'grok',
+      provider: 'grok',
       trigger: 'auto'
     })
-    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(false)
+    expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(false)
   })
 
   it('does not promote classified text from successful or cancelled runs', async () => {
@@ -17825,7 +18128,7 @@ describe('classified context-overflow seat relief', () => {
     let compactionBarrierActive = false
     const compactSeatContext = vi.fn(async () => ({ ok: true }))
     const harness = makeHarness({
-      initialChat: hostSeatChat('cursor'),
+      initialChat: hostSeatChat('grok'),
       compactSeatContext,
       awaitPendingSeatCompaction: () =>
         compactionBarrierActive ? Promise.resolve({ ok: true }) : undefined
@@ -17840,9 +18143,9 @@ describe('classified context-overflow seat relief', () => {
       appRunId: harness.dispatched[0].appRunId,
       appChatId: 'ensemble-chat'
     }
-    expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
+    expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(true)
     compactionBarrierActive = true
-    harness.orchestrator.handleProviderOutput('cursor', route, {
+    harness.orchestrator.handleProviderOutput('grok', route, {
       type: 'result',
       status: 'failed'
     })
@@ -17850,8 +18153,8 @@ describe('classified context-overflow seat relief', () => {
     expect(compactSeatContext).not.toHaveBeenCalled()
 
     const seat = harness.chat.ensemble!.participants[0]
-    seat.model = 'cursor-relinked-model'
-    seat.linkedProviderSessionId = 'cursor-relinked-session'
+    seat.model = 'grok-relinked-model'
+    seat.linkedProviderSessionId = 'grok-relinked-session'
     compactionBarrierActive = false
     ;(
       harness.orchestrator as unknown as {
@@ -17907,7 +18210,7 @@ describe('classified context-overflow seat relief', () => {
     let clock = 1_000
     const compactSeatContext = vi.fn(async () => ({ ok: true }))
     const harness = makeHarness({
-      initialChat: hostSeatChat('cursor'),
+      initialChat: hostSeatChat('grok'),
       compactSeatContext,
       now: () => clock
     })
@@ -17921,8 +18224,8 @@ describe('classified context-overflow seat relief', () => {
       await vi.waitFor(() => expect(harness.dispatched).toHaveLength(expectedDispatchCount))
       const payload = harness.dispatched.at(-1)!
       const route = { appRunId: payload.appRunId, appChatId: 'ensemble-chat' }
-      expect(harness.orchestrator.noteProviderFailureText('cursor', route, overflowText)).toBe(true)
-      harness.orchestrator.handleProviderOutput('cursor', route, {
+      expect(harness.orchestrator.noteProviderFailureText('grok', route, overflowText)).toBe(true)
+      harness.orchestrator.handleProviderOutput('grok', route, {
         type: 'result',
         status: 'failed'
       })
@@ -17941,7 +18244,7 @@ describe('classified context-overflow seat relief', () => {
       harness.orchestrator as unknown as {
         maybeAutoCompactSeatAfterTurn: (chatId: string, participantId: string) => void
       }
-    ).maybeAutoCompactSeatAfterTurn('ensemble-chat', 'cursor')
+    ).maybeAutoCompactSeatAfterTurn('ensemble-chat', 'grok')
     await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(2))
   })
 
@@ -17958,15 +18261,14 @@ describe('classified context-overflow seat relief', () => {
         permissionPresetId: 'workspace_write'
       },
       {
-        id: 'cursor-lane',
-        provider: 'cursor',
+        id: 'kimi-lane',
+        provider: 'kimi',
         enabled: true,
-        role: 'Cursor lane',
+        role: 'Kimi lane',
         instructions: 'Inspect.',
         order: 2,
-        model: 'cursor-model',
-        permissionPresetId: 'read_only',
-        linkedProviderSessionId: 'cursor-session'
+        model: 'kimi-model',
+        permissionPresetId: 'read_only'
       },
       {
         id: 'grok-lane',
@@ -17995,21 +18297,21 @@ describe('classified context-overflow seat relief', () => {
     expect(runtime).toBeTruthy()
     runtime!.fanoutPolicy = 'read_only'
     const receipt = await harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
-      targets: ['cursor-lane', 'grok-lane'],
+      targets: ['kimi-lane', 'grok-lane'],
       prompt: 'Inspect in parallel.'
     })
     expect(receipt.ok).toBe(true)
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
-    const cursorPayload = harness.dispatched[1]
+    const kimiPayload = harness.dispatched[1]
     const grokPayload = harness.dispatched[2]
-    const cursorRoute = {
-      appRunId: cursorPayload.appRunId,
+    const kimiRoute = {
+      appRunId: kimiPayload.appRunId,
       appChatId: 'ensemble-chat'
     }
     expect(
-      harness.orchestrator.noteProviderFailureText('cursor', cursorRoute, overflowText)
+      harness.orchestrator.noteProviderFailureText('kimi', kimiRoute, overflowText)
     ).toBe(true)
-    harness.orchestrator.handleProviderOutput('cursor', cursorRoute, {
+    harness.orchestrator.handleProviderOutput('kimi', kimiRoute, {
       type: 'result',
       status: 'failed'
     })
@@ -18023,8 +18325,8 @@ describe('classified context-overflow seat relief', () => {
     await vi.waitFor(() => expect(compactSeatContext).toHaveBeenCalledTimes(1))
     expect(compactSeatContext).toHaveBeenCalledWith({
       chatId: 'ensemble-chat',
-      participantId: 'cursor-lane',
-      provider: 'cursor',
+      participantId: 'kimi-lane',
+      provider: 'kimi',
       trigger: 'auto'
     })
   })

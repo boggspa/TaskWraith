@@ -165,6 +165,7 @@ import {
   type RosterEditRequest
 } from '../EnsembleRosterMutation'
 import { selectableProviderIds } from '../settings/MainSanitizers'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import { isCodexAppServerThreadId } from '../CodexSessionIdentity'
 import {
@@ -178,6 +179,14 @@ import {
   queuePendingEnsembleRosterPresetApply,
   type BuildEnsembleRosterPresetApplyResult
 } from '../EnsembleRosterPresetApply'
+import {
+  isHostSeatCompactionProvider,
+  isProductionKimiAcpSeat,
+  persistedSeatRuntimeState,
+  seatOverflowEvidenceKey,
+  type HostSeatCompactionProvider,
+  type PendingSeatOverflowEvidence
+} from './EnsembleSeatRuntimePosture'
 
 export type EnsembleRunMode = 'normal' | 'queue' | 'steer'
 export type EnsembleQueuedSteerResult = {
@@ -196,18 +205,6 @@ const ENSEMBLE_SEAT_STAGE_ROLES = new Set<string>([
 const SESSION_ACTIVITY_LEDGER_LIMIT = 40
 const MAX_BOSSMAN_BRIEF_CHARS = 4000
 const BRIEF_SEAT_VALUE_PREVIEW_CHARS = 160
-type HostSeatCompactionProvider = 'cursor' | 'kimi' | 'grok'
-interface PendingSeatOverflowEvidence {
-  provider: HostSeatCompactionProvider
-  model: string
-  linkedProviderSessionId: string | null
-}
-function isHostSeatCompactionProvider(provider: ProviderId): provider is HostSeatCompactionProvider {
-  return provider === 'cursor' || provider === 'kimi' || provider === 'grok'
-}
-function seatOverflowEvidenceKey(chatId: string, participantId: string): string {
-  return `${chatId}:${participantId}`
-}
 const CONTINUATION_BLOCKED_PARTICIPANT_STATUSES = new Set<EnsembleParticipantStatus>([
   'answered',
   'yielded',
@@ -344,7 +341,12 @@ export interface EnsembleOrchestratorDeps {
   /** False for an ephemeral cross-provider reroute with no target session lane. */
   shouldPersistProviderSessionForRun?: (runId: string) => boolean
   releaseProviderSessionPersistenceDecision?: (runId: string) => void
-  cancelRun: (provider: ProviderId, runId?: string) => Promise<unknown>
+  cancelRun: (provider: ProviderId, runId?: string) => Promise<boolean>
+  /**
+   * Destructive-history stop receipt. Unlike ordinary UI cancellation, this
+   * must join the exact adapter/transport cleanup before resolving true.
+   */
+  terminateRunForHistory?: (provider: ProviderId, runId: string) => Promise<boolean>
   createRunId: (provider: ProviderId) => string
   now: () => number
   nowIso: () => string
@@ -358,7 +360,7 @@ export interface EnsembleOrchestratorDeps {
    */
   probeParticipant?: (participant: EnsembleParticipant) => Promise<ParticipantProbeResult>
   /**
-   * Wave 3 seat compaction — host maintenance-lane compaction for cursor/kimi/grok
+   * Wave 3 seat compaction — host maintenance-lane compaction for Kimi/Grok
    * seats. `awaitPendingSeatCompaction` returns the in-flight compaction
    * promise for a seat (if any); every participant dispatch awaits it so a
    * round started mid-compaction can't race the seat's session reset.
@@ -459,9 +461,8 @@ export interface EnsembleOrchestratorDeps {
 type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'tool'; toolId: string }
 
 /**
- * Spike 5 — providers whose sessions genuinely resume with full history
- * across ensemble turns, making them eligible for the slim resumed-turn
- * prompt. Marked Kimi Code ACP seats join this set because session/resume
+ * Providers with a live, qualified session-resume transport across ensemble
+ * turns. Marked Kimi Code ACP seats join this set because session/resume
  * restores native history; legacy Kimi is filtered at the call site. Grok's
  * default ACP transport opens a fresh session every turn and Ollama is
  * stateless, so neither is eligible.
@@ -469,7 +470,6 @@ type ParticipantTimelineEntry = { kind: 'content'; text: string } | { kind: 'too
 const SLIM_RESUME_PROVIDERS: ReadonlySet<ProviderId> = new Set([
   'claude',
   'codex',
-  'cursor',
   'kimi'
 ])
 
@@ -507,6 +507,15 @@ interface ActiveParticipantRun {
   chatId: string
   roundId: string
   runId: string
+  /**
+   * Main-side provider admission state for this exact run id. History deletion
+   * uses this after joining an in-flight dispatch receipt: a cancellation that
+   * raced before adapter registration is not proof that an accepted transport
+   * stopped.
+   */
+  transportDispatchState?: 'pending' | 'accepted' | 'rejected' | 'unknown'
+  /** At least one exact provider cancellation returned an affirmative receipt. */
+  transportCancellationConfirmed?: boolean
   laneId?: string
   laneIntent?: ConcurrentLane['intent']
   approvedWriteScopes?: ConcurrentLaneWriteScope[]
@@ -2693,6 +2702,8 @@ interface ActiveRoundRuntime {
   imageThumbnails: EnsembleImageThumbnail[]
   discordContextSnapshots?: DiscordContextSnapshot[]
   cancelled: boolean
+  /** Every async round loop currently capable of projecting or dispatching. */
+  roundActivities?: Set<Promise<void>>
   /** An explicit yield to user is terminal even after the provider emits late completion events. */
   returnedControlToUser?: boolean
   /**
@@ -2869,13 +2880,194 @@ export class EnsembleOrchestrator {
    * deferred), and by `clearRuntimeIfCurrent` as teardown hygiene.
    */
   private deferredLaneDrainByChatId = new Map<string, ActiveRoundRuntime>()
-  private bossmanPollTimeoutsById = new Map<string, ReturnType<typeof setTimeout>>()
+  private bossmanPollTimeoutsById = new Map<
+    string,
+    {
+      chatId: string
+      pollId: string
+      handle: ReturnType<typeof setTimeout>
+    }
+  >()
   private queuedPromptIdCounter = 0
 
   /** Failed-run overflow evidence waiting for the seat's settled maintenance seam. */
   private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
+
+  private trackRoundActivity(runtime: ActiveRoundRuntime, activity: Promise<void>): Promise<void> {
+    const activities = runtime.roundActivities ?? new Set<Promise<void>>()
+    runtime.roundActivities = activities
+    const tracked = activity.finally(() => {
+      activities.delete(tracked)
+      if (activities.size === 0) runtime.roundActivities = undefined
+    })
+    activities.add(tracked)
+    return tracked
+  }
+
+  private async requestExactRunCancellation(run: ActiveParticipantRun): Promise<boolean> {
+    const cancelled = await this.deps.cancelRun(run.participant.provider, run.runId)
+    if (cancelled === true) run.transportCancellationConfirmed = true
+    return cancelled
+  }
+
+  private requestExactHistoryTransportTermination(
+    run: ActiveParticipantRun
+  ): Promise<boolean> {
+    const terminate = this.deps.terminateRunForHistory ?? this.deps.cancelRun
+    return terminate(run.participant.provider, run.runId)
+  }
+
+  private exactRoundRuns(chatId: string, roundId: string): ActiveParticipantRun[] {
+    return [...this.runsByRunId.values()].filter(
+      (run) => run.chatId === chatId && run.roundId === roundId
+    )
+  }
+
+  /**
+   * Join every main-side activity that can still cross provider admission for
+   * one cancelled round. Explicit fan-out dispatch windows are retained on the
+   * source run separately from the root runRound promise, so both sets must
+   * drain before history deletion can evaluate transport receipts.
+   */
+  private async joinHistoryRoundActivities(
+    runtime: ActiveRoundRuntime,
+    trackedRuns: Set<ActiveParticipantRun>
+  ): Promise<void> {
+    while (true) {
+      for (const run of this.exactRoundRuns(runtime.chatId, runtime.roundId)) {
+        trackedRuns.add(run)
+      }
+      const activities = [
+        ...(runtime.roundActivities || []),
+        ...[...trackedRuns].flatMap((run) => [
+          ...(run.pendingFanoutDispatches || []),
+          ...(run.ownedFanoutSettlements || [])
+        ])
+      ]
+      if (activities.length === 0) return
+      await Promise.allSettled(activities)
+    }
+  }
+
+  /**
+   * History prepare closes AppStore writes before the orchestrator is asked to
+   * quiesce. Consequently this path must be entirely runtime-local: ordinary
+   * run finalisation flushes transcript/run state and is intentionally not
+   * reusable here.
+   */
+  private terminallyReleaseRunForHistory(run: ActiveParticipantRun, reason: string): void {
+    if (run.flushTimer) {
+      clearTimeout(run.flushTimer)
+      run.flushTimer = undefined
+    }
+    run.fanoutDispatchCancelled = true
+    run.suppressOwnedFanoutTranscriptRelease = true
+    run.status = 'cancelled'
+    run.terminalReason = reason
+    run.terminalFinalized = true
+    // Suppress every ordinary terminal side effect if an already-held async
+    // closure still retains this run object after it leaves runsByRunId.
+    run.terminalSideEffectsApplied = true
+    run.terminalTokenTotalsApplied = true
+    this.participantWorkingTelemetryByRunId.delete(run.runId)
+    this.pendingSeatOverflowEvidence.delete(
+      seatOverflowEvidenceKey(run.chatId, run.participant.id)
+    )
+    try {
+      this.deps.onParticipantWorkingTelemetry?.({
+        type: 'clear',
+        chatId: run.chatId,
+        roundId: run.roundId,
+        participantId: run.participant.id,
+        runId: run.runId
+      })
+    } catch {
+      // Renderer telemetry is best-effort and never part of the deletion receipt.
+    }
+    if (run.laneId) {
+      try {
+        this.deps.releaseWriteIntentsForLane?.(run.laneId)
+      } catch {
+        // The history transaction still owns the durable cleanup boundary.
+      }
+    }
+    try {
+      this.deps.releaseProviderSessionPersistenceDecision?.(run.runId)
+    } catch {
+      // Runtime-only decision cleanup must not bypass exact transport joining.
+    }
+    if (this.runsByRunId.get(run.runId) === run) this.runsByRunId.delete(run.runId)
+    const completion = run.completion
+    run.completion = undefined
+    completion?.('cancelled')
+  }
+
+  /** Cancel every timer capable of reviving history for one target chat. */
+  private cancelHistoryTimerHandles(
+    chatId: string,
+    runtime: ActiveRoundRuntime | undefined,
+    chat: ChatRecord | null | undefined
+  ): void {
+    const wakeupIds = new Set<string>()
+    for (const wakeup of Object.values(chat?.ensemble?.wakeups || {})) {
+      // History deletion removes the whole target chat history, so orphaned or
+      // sleeping wakeups from older rounds are in scope too.
+      if (wakeup.status === 'pending') wakeupIds.add(wakeup.wakeupId)
+    }
+    for (const wakeup of runtime?.pendingWakeups?.values() || []) {
+      if (wakeup.status === 'pending') wakeupIds.add(wakeup.wakeupId)
+    }
+    for (const wakeupId of wakeupIds) this.deps.cancelWakeupTimer?.(wakeupId)
+    if (runtime) {
+      runtime.pendingWakeups?.clear()
+      runtime.readyWakeups = []
+      runtime.resumeWakeup = undefined
+      this.signalWakeWaiter(runtime)
+    }
+
+    // Advisory polls pre-date roundId stamping. Structured ownership is
+    // required here: safe chat ids may contain `:`, so a raw string prefix can
+    // mistake chat `a:b` for a descendant of chat `a`.
+    for (const [key, entry] of this.bossmanPollTimeoutsById) {
+      if (entry.chatId !== chatId) continue
+      clearTimeout(entry.handle)
+      this.bossmanPollTimeoutsById.delete(key)
+    }
+  }
+
+  /**
+   * Synchronously fence one live round without touching AppStore/checkpoints.
+   * The caller retains the run objects separately until dispatch/activity and
+   * exact transport receipts have joined.
+   */
+  private fenceRoundForHistory(
+    runtime: ActiveRoundRuntime,
+    trackedRuns: Set<ActiveParticipantRun>,
+    reason: string,
+    chat: ChatRecord | null | undefined
+  ): void {
+    runtime.cancelled = true
+    this.deferredLaneDrainByChatId.delete(runtime.chatId)
+    runtime.queuedPrompts = []
+    runtime.remainingParticipants = []
+    runtime.fanoutReservedParticipantIds = undefined
+    runtime.pendingParticipantSeatChanges = undefined
+    runtime.pendingRoundEndParticipantSeatChanges = undefined
+    runtime.yieldTarget = undefined
+    runtime.yieldReturnStack = []
+    this.cancelHistoryTimerHandles(runtime.chatId, runtime, chat)
+
+    // Lanes first: their completion promises may release retained owners.
+    const orderedRuns = [...trackedRuns].sort(
+      (left, right) => Number(Boolean(right.laneId)) - Number(Boolean(left.laneId))
+    )
+    for (const run of orderedRuns) this.terminallyReleaseRunForHistory(run, reason)
+    runtime.activeRunId = undefined
+    runtime.activeScoutRunIds = undefined
+    this.clearRuntimeIfCurrent(runtime)
+  }
 
   private nextQueuedPromptId(chatId: string): string {
     const usedIds = new Set<string>()
@@ -3643,7 +3835,8 @@ export class EnsembleOrchestrator {
   async cancelRound(
     chatId: string,
     reason = 'cancelled',
-    expectedRoundId?: string
+    expectedRoundId?: string,
+    strictTransport = false
   ): Promise<boolean> {
     const runtime = this.roundsByChatId.get(chatId)
     if (!runtime) {
@@ -3651,6 +3844,11 @@ export class EnsembleOrchestrator {
       const round = chat?.ensemble?.activeRound
       if (!round || round.status !== 'running') return false
       if (expectedRoundId && round.roundId !== expectedRoundId) return false
+      for (const wakeup of Object.values(chat?.ensemble?.wakeups || {})) {
+        if (wakeup.roundId === round.roundId && wakeup.status === 'pending') {
+          this.markWakeupCancelled(wakeup, reason)
+        }
+      }
       const endedAt = this.deps.nowIso()
       this.updateChatRound(chatId, (current) =>
         current?.roundId === round.roundId
@@ -3752,7 +3950,85 @@ export class EnsembleOrchestrator {
     this.completeCheckpoint(chatId, roundId, 'cancelled')
     this.clearRuntimeIfCurrent(runtime)
     for (const active of activeRuns) {
-      await this.deps.cancelRun(active.participant.provider, active.runId).catch(() => undefined)
+      try {
+        const result = await this.requestExactRunCancellation(active)
+        if (strictTransport && result !== true) {
+          throw new Error(`Ensemble run ${active.runId} did not confirm cancellation.`)
+        }
+      } catch (error) {
+        if (strictTransport) throw error
+      }
+    }
+    return true
+  }
+
+  /** History deletion needs the round loop itself, not only seeded providers, quiesced. */
+  async cancelRoundForHistory(
+    chatId: string,
+    reason = 'chat history cleared',
+    expectedRoundId?: string
+  ): Promise<boolean> {
+    const chat = this.deps.getChat(chatId)
+    const runtime = this.roundsByChatId.get(chatId)
+    const persistedRound = chat?.ensemble?.activeRound
+
+    // A stale coordinator must never fence a successor round. With no runtime,
+    // there is no provider activity to join: cancel every target-chat timer and
+    // let the outer history transaction own the sole durable commit.
+    if (!runtime) {
+      if (
+        expectedRoundId &&
+        persistedRound?.status === 'running' &&
+        persistedRound.roundId !== expectedRoundId
+      ) {
+        return false
+      }
+      this.cancelHistoryTimerHandles(chatId, undefined, chat)
+      return true
+    }
+    const roundId = expectedRoundId ?? runtime.roundId
+    if (runtime.roundId !== roundId) return false
+    if (
+      expectedRoundId &&
+      (!persistedRound ||
+        persistedRound.roundId !== expectedRoundId ||
+        persistedRound.status !== 'running')
+    ) {
+      return false
+    }
+    const trackedRuns = new Set(this.exactRoundRuns(chatId, roundId))
+    const transportsRequiringHistoryJoin = [...trackedRuns].filter(
+      (run) =>
+        run.terminalFinalized !== true &&
+        (run.transportDispatchState === 'pending' ||
+          run.transportDispatchState === 'accepted' ||
+          run.transportDispatchState === 'unknown')
+    )
+    // This call is deliberately synchronous up to the activity join. It closes
+    // every in-memory admission/timer/event route before yielding, but performs
+    // no AppStore/checkpoint write after the outer durable prepare.
+    this.fenceRoundForHistory(runtime, trackedRuns, reason, chat)
+    await this.joinHistoryRoundActivities(runtime, trackedRuns)
+    for (const run of transportsRequiringHistoryJoin) {
+      if (run.transportDispatchState === 'pending') {
+        throw new Error(`Ensemble run ${run.runId} did not settle provider admission.`)
+      }
+      if (
+        run.transportDispatchState === 'accepted' ||
+        run.transportDispatchState === 'unknown'
+      ) {
+        let confirmed = false
+        try {
+          confirmed = (await this.requestExactHistoryTransportTermination(run)) === true
+        } catch {
+          confirmed = false
+        }
+        if (!confirmed) {
+          throw new Error(
+            `Ensemble run ${run.runId} did not confirm history-safe transport settlement.`
+          )
+        }
+      }
     }
     return true
   }
@@ -7113,9 +7389,9 @@ export class EnsembleOrchestrator {
     timeoutAt: string | undefined
   ): void {
     if (!timeoutAt) return
-    const key = `${chatId}:${pollId}`
+    const key = JSON.stringify([chatId, pollId])
     const existing = this.bossmanPollTimeoutsById.get(key)
-    if (existing) clearTimeout(existing)
+    if (existing) clearTimeout(existing.handle)
     const dueMs = new Date(timeoutAt).getTime()
     if (!Number.isFinite(dueMs)) return
     const delayMs = Math.max(0, dueMs - this.deps.now())
@@ -7124,14 +7400,14 @@ export class EnsembleOrchestrator {
       this.expireBossmanPoll(chatId, pollId, timeoutAt)
     }, delayMs)
     handle.unref?.()
-    this.bossmanPollTimeoutsById.set(key, handle)
+    this.bossmanPollTimeoutsById.set(key, { chatId, pollId, handle })
   }
 
   private clearBossmanPollTimeout(chatId: string, pollId: string): void {
-    const key = `${chatId}:${pollId}`
+    const key = JSON.stringify([chatId, pollId])
     const existing = this.bossmanPollTimeoutsById.get(key)
     if (!existing) return
-    clearTimeout(existing)
+    clearTimeout(existing.handle)
     this.bossmanPollTimeoutsById.delete(key)
   }
 
@@ -8468,7 +8744,7 @@ export class EnsembleOrchestrator {
         .filter((laneId): laneId is string => Boolean(laneId))
       if (acceptedTargets.length === 0) {
         const message = `${label} was not dispatched: no target provider accepted a lane. The target remains eligible for serial rotation.`
-        this.appendRoundStatus(run.chatId, run.roundId, message)
+        if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
         return {
           ok: false,
           tool: 'ensemble_fanout',
@@ -8504,11 +8780,13 @@ export class EnsembleOrchestrator {
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'ensemble_fanout: dispatch failed.'
-      try {
-        this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
-      } catch {
-        // The structured failure + finally cleanup remain authoritative when
-        // even the diagnostic projection cannot be persisted.
+      if (!runtime.cancelled) {
+        try {
+          this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
+        } catch {
+          // The structured failure + finally cleanup remain authoritative when
+          // even the diagnostic projection cannot be persisted.
+        }
       }
       return {
         ok: false,
@@ -9650,8 +9928,11 @@ export class EnsembleOrchestrator {
         `${participant.role || providerLabel(participant.provider)} is resuming from TaskWraith transcript context; no native provider session id was available.`
       )
     }
-    void this.runRound(runtime, [participant]).catch((error) =>
-      this.failUnexpectedRound(runtime, error)
+    void this.trackRoundActivity(
+      runtime,
+      this.runRound(runtime, [participant]).catch((error) =>
+        this.failUnexpectedRound(runtime, error)
+      )
     )
     return true
   }
@@ -10567,8 +10848,11 @@ export class EnsembleOrchestrator {
           'Fan-out requested but parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0) — running participants serially.'
         )
       }
-      void this.runRound(runtime, ordered, { backgroundParticipants }).catch((error) =>
-        this.failUnexpectedRound(runtime, error)
+      void this.trackRoundActivity(
+        runtime,
+        this.runRound(runtime, ordered, { backgroundParticipants }).catch((error) =>
+          this.failUnexpectedRound(runtime, error)
+        )
       )
     } catch (error) {
       this.failUnexpectedRound(runtime, error)
@@ -10679,6 +10963,9 @@ export class EnsembleOrchestrator {
       !runtime.cancelled
     ) {
       const health = await this.probeParticipantsForRound(runtime, remaining)
+      if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
+        return
+      }
       dispatchAttempts += health.unreachable.length
       unreachableFailures += health.unreachable.length
       remaining.length = 0
@@ -11069,7 +11356,7 @@ export class EnsembleOrchestrator {
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // Spike 5 — slim resumed-turn prompt (TASKWRAITH_ENSEMBLE_SLIM_RESUME,
       // default OFF). Eligible only when: the flag is on; the seat's provider
-      // session genuinely resumes across turns (claude/codex/cursor plus Kimi
+      // session genuinely resumes across turns (claude/codex plus Kimi
       // Code ACP seats marked after a successful session/new or session/resume;
       // legacy Kimi Wire, Grok-ACP, and Ollama remain ineligible); a resume id
       // exists; this is NOT a
@@ -11092,7 +11379,7 @@ export class EnsembleOrchestrator {
             run.providerSessionId || participant.linkedProviderSessionId
           )) &&
         (participant.provider !== 'kimi' ||
-          (participant.kimiAcpNativeSession === true &&
+          (isProductionKimiAcpSeat(participant) &&
             String(run.providerSessionId || participant.linkedProviderSessionId).startsWith(
               'session_'
             ))) &&
@@ -11257,13 +11544,27 @@ export class EnsembleOrchestrator {
       // production when ensemble_yield hit ECONNREFUSED on Gemini.
       let dispatchedResult: { dispatched: boolean; appRunId: string } | null = null
       let dispatchFailure: DispatchFailureReason | null = null
+      run.transportDispatchState = 'pending'
       try {
         dispatchedResult = await this.deps.dispatch(payload, { sender: runtime.sender })
+        run.transportDispatchState = dispatchedResult.dispatched ? 'accepted' : 'rejected'
       } catch (error) {
         // Adapter entry may publish a process/controller before rejecting. Stop
         // that exact run before failed bookkeeping clears its only handle.
-        await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+        run.transportDispatchState = 'unknown'
+        await this.requestExactRunCancellation(run).catch(() => false)
         dispatchFailure = classifyDispatchError(error)
+      }
+      if (dispatchedResult?.dispatched && (runtime.cancelled || run.terminalFinalized === true)) {
+        // Stop/history deletion may have reached cancelRun before dispatch
+        // registered this run. An accepted receipt is the first point at which
+        // the exact transport can be cancelled authoritatively.
+        await this.requestExactRunCancellation(run).catch(() => false)
+        if (this.runsByRunId.get(run.runId) === run) {
+          this.finalizeRun(run, 'cancelled', 'Round cancelled during provider dispatch.')
+        }
+        runtime.activeRunId = undefined
+        continue
       }
       if (dispatchFailure || !dispatchedResult?.dispatched) {
         // Reason precedence: the typed classification from a thrown
@@ -11312,6 +11613,11 @@ export class EnsembleOrchestrator {
         run.ensemblePromptUsageTelemetry = promptUsageTelemetry
         run.injectedBlackboardEntryIds = injectedBlackboardEntryIds
         await completion
+        // History cancellation resolves the local completion only to release
+        // this activity join. It has already removed the run/runtime under a
+        // durable AppStore write gate, so no post-turn maintenance or routing
+        // projection may run after that resolution.
+        if (runtime.cancelled) break
         this.maybeAutoCompactSeatAfterTurn(runtime.chatId, participant.id)
       }
       runtime.activeRunId = undefined
@@ -11719,7 +12025,7 @@ export class EnsembleOrchestrator {
               `${participant.role || providerLabel(participant.provider)} is resuming from TaskWraith transcript context; no native provider session id was available.`
             )
           }
-          await this.runRound(runtime, [participant])
+          await this.trackRoundActivity(runtime, this.runRound(runtime, [participant]))
           return
         }
       }
@@ -11806,7 +12112,10 @@ export class EnsembleOrchestrator {
     ) {
       const continuationRoster = this.tryAutoContinueRound(runtime, chatAfterCheck)
       if (continuationRoster && continuationRoster.length > 0 && !runtime.cancelled) {
-        await this.runRound(runtime, continuationRoster, { skipPreamble: true })
+        await this.trackRoundActivity(
+          runtime,
+          this.runRound(runtime, continuationRoster, { skipPreamble: true })
+        )
         return
       }
     }
@@ -12094,6 +12403,7 @@ export class EnsembleOrchestrator {
     }
     const isEligible = (participant: EnsembleParticipant): boolean => {
       if (!participant.enabled) return false
+      if (!isLiveSelectableProvider(participant.provider)) return false
       if (participant.id === run.participant.id) return false
       if (activeParticipantIds.has(participant.id)) return false
       // A target can be reserved for a concurrent ensemble_fanout call whose
@@ -12128,6 +12438,13 @@ export class EnsembleOrchestrator {
         return {
           ok: false,
           message: `ensemble_fanout: target "${rawTarget}" did not resolve to an enabled participant.`,
+          error: 'invalid_target'
+        }
+      }
+      if (!isLiveSelectableProvider(participant.provider)) {
+        return {
+          ok: false,
+          message: `ensemble_fanout: target "${rawTarget}" uses a provider that is unavailable for new runs.`,
           error: 'invalid_target'
         }
       }
@@ -12460,7 +12777,7 @@ export class EnsembleOrchestrator {
     // the stale `chat` would clobber the status note we just
     // appended.
     // Wave 3 — same seat-compaction barrier as the serial path, for every
-    // fan-out lane (a cursor read-only lane can be mid-compaction too).
+    // fan-out lane (a Kimi/Grok lane can be mid-compaction too).
     await Promise.all(
       participants.map((participant) =>
         this.awaitSeatCompactionBeforeDispatch(runtime.chatId, participant)
@@ -12675,13 +12992,16 @@ export class EnsembleOrchestrator {
           }
 
           let dispatched: Awaited<ReturnType<EnsembleOrchestratorDeps['dispatch']>>
+          run.transportDispatchState = 'pending'
           try {
             dispatched = await this.deps.dispatch(payload, { sender: runtime.sender })
+            run.transportDispatchState = dispatched.dispatched ? 'accepted' : 'rejected'
           } catch (error) {
+            run.transportDispatchState = 'unknown'
             if (dispatchWasCancelled()) {
               // Dispatch may have crossed into the provider adapter before it
               // rejected. Repeat cancellation against the now-known run id.
-              await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+              await this.requestExactRunCancellation(run).catch(() => false)
               if (this.runsByRunId.get(run.runId) === run) {
                 this.finalizeRun(
                   run,
@@ -12695,7 +13015,7 @@ export class EnsembleOrchestrator {
             }
             // A thrown dispatch can occur after adapter entry. Exact cancellation
             // is safe even when preflight rejected before any transport existed.
-            await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+            await this.requestExactRunCancellation(run).catch(() => false)
             if (this.runsByRunId.get(run.runId) === run) {
               const reason = classifyDispatchError(error)
               const note = formatDispatchFailureNote(participant, reason)
@@ -12710,7 +13030,7 @@ export class EnsembleOrchestrator {
               // A Stop/Skip may have called cancel before the dispatch facade
               // registered the provider run. The accepted receipt closes that
               // gap: cancel again before treating the lane as accepted.
-              await this.deps.cancelRun(participant.provider, run.runId).catch(() => undefined)
+              await this.requestExactRunCancellation(run).catch(() => false)
             }
             if (this.runsByRunId.get(run.runId) === run) {
               this.finalizeRun(
@@ -13378,6 +13698,9 @@ export class EnsembleOrchestrator {
         result: await probe(participant).catch((err: unknown) => probeErrorToResult(err))
       }))
     )
+    if (runtime.cancelled || this.roundsByChatId.get(runtime.chatId)?.roundId !== runtime.roundId) {
+      return { reachable: [], unreachable: [] }
+    }
     // 1.0.5-EW29 — Emit the participant-health header as a
     // structured message the renderer can render as a card
     // (matching the tool-call / ensemble-block visual treatment)
@@ -14414,7 +14737,7 @@ export class EnsembleOrchestrator {
   /**
    * Await an in-flight host seat compaction for this participant, then refresh
    * the roster object's session/summary fields from the persisted chat — the
-   * compaction may have cleared the cursor seat's session id, and dispatching
+   * compaction may have cleared a provider seat's session id, and dispatching
    * with the stale one would resume the abandoned session.
    */
   private async awaitSeatCompactionBeforeDispatch(
@@ -14443,12 +14766,7 @@ export class EnsembleOrchestrator {
         .getChat(chatId)
         ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
       if (refreshed) {
-        participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
-        participant.contextCompactionSummary = refreshed.contextCompactionSummary
-        participant.promptShellVersion = refreshed.promptShellVersion
-        participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
-        participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
-        participant.kimiAcpNativeSession = refreshed.kimiAcpNativeSession
+        Object.assign(participant, persistedSeatRuntimeState(refreshed))
       }
     }
     await this.maybeAutoCompactSeatBeforeDispatch(chatId, participant)
@@ -14479,12 +14797,7 @@ export class EnsembleOrchestrator {
       .getChat(chatId)
       ?.ensemble?.participants?.find((candidate) => candidate.id === participant.id)
     if (refreshed) {
-      participant.linkedProviderSessionId = refreshed.linkedProviderSessionId
-      participant.contextCompactionSummary = refreshed.contextCompactionSummary
-      participant.promptShellVersion = refreshed.promptShellVersion
-      participant.promptDynamicStateVersion = refreshed.promptDynamicStateVersion
-      participant.taskWraithMcpProfileReceipt = refreshed.taskWraithMcpProfileReceipt
-      participant.kimiAcpNativeSession = refreshed.kimiAcpNativeSession
+      Object.assign(participant, persistedSeatRuntimeState(refreshed))
     }
   }
 
@@ -14516,7 +14829,6 @@ export class EnsembleOrchestrator {
     if (this.deps.getSettings().hostAutoCompactEnabled === false) return null
     if (!isHostSeatCompactionProvider(participant.provider)) return null
     if (participant.enabled === false) return null
-    if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) return null
     // Preserve fresh evidence while another summarize/reset is already in
     // flight. The dispatch barrier will await that work; a later settled check
     // can decide whether the new overflow still needs its own attempt.
@@ -14565,7 +14877,7 @@ export class EnsembleOrchestrator {
         trigger: 'auto'
       }
     }
-    if (participant.provider === 'kimi' && participant.kimiAcpNativeSession === true) {
+    if (isProductionKimiAcpSeat(participant)) {
       // Kimi ACP now owns live occupancy. Without provider-semantic token
       // telemetry, compact only after a classified overflow (handled above),
       // never from the host transcript projection.
@@ -14626,13 +14938,13 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * Wave 3 — post-round host auto-compaction for cursor/grok and legacy Kimi
-   * seats. Native Kimi ACP compacts only on a classified overflow or a manual
+   * Wave 3 — post-round host auto-compaction for Grok and legacy Kimi seats.
+   * Native Kimi ACP compacts only on a classified overflow or a manual
    * request because its live occupancy is provider-owned. Runs in idle time after a
    * COMPLETED round: deferred a tick so a chained queued round is visible.
    * Kimi may refresh its non-destructive durable summary when exact transcript
    * projection proves rows fell outside the live prompt window. Generic run
-   * usage remains advisory and cannot reset Cursor/Grok sessions.
+   * usage remains advisory and cannot reset Grok sessions.
    * Fire-and-forget —
    * the maintenance lane cards success/failure itself, and the dispatch-wait
    * above protects any round that starts mid-compaction.
@@ -14656,8 +14968,9 @@ export class EnsembleOrchestrator {
         for (const participant of chat.ensemble.participants || []) {
           if (participant.enabled === false) continue
           if (!isHostSeatCompactionProvider(participant.provider)) continue
-          if (participant.provider === 'kimi' && participant.kimiAcpNativeSession === true) continue
-          if (participant.provider === 'cursor' && !participant.linkedProviderSessionId) continue
+          if (isProductionKimiAcpSeat(participant)) {
+            continue
+          }
           // Cooldown applies only to a seat we've ALREADY attempted — a
           // genuinely-new seat (no recorded attempt) is never held back. Using
           // `|| 0` here would conflate "never attempted" with "attempted at

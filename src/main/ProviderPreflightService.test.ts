@@ -294,7 +294,7 @@ describe('ProviderPreflightService', () => {
 
     expect(result.state).toBe('blocked')
     expect(result.repairAction).toBe('none')
-    expect(result.reason).toMatch(/retired/i)
+    expect(result.reason).toMatch(/unavailable/i)
     expect(result.fallbackAvailable).toBe(false)
   })
 })

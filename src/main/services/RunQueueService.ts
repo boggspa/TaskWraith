@@ -26,6 +26,7 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
+import { isLiveSelectableProvider } from '../../shared/retiredProviders'
 import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
@@ -49,7 +50,8 @@ const RUN_QUEUE_SOURCES = new Set<RunQueueJobSource>([
   'host_rerun',
   'system'
 ])
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Known ids for persisted queue decoding. New requests apply a narrower live
+// admission check in `assertRunnableProviderId`.
 const PROVIDER_IDS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -365,7 +367,7 @@ export class RunQueueService {
     executionGraph?: ExecutionGraphQueueBinding
   ): Partial<RunQueueJob> & Pick<RunQueueJob, 'runId' | 'provider' | 'source'> {
     const record = requireRecord(value, 'Run queue request')
-    const provider = assertProviderId(record.provider)
+    const provider = assertRunnableProviderId(record.provider)
     const runId = optionalString(record.runId) || optionalString(record.id) || randomUUID()
     const chatId = optionalString(record.chatId)
     const chat = chatId ? this.deps.appStore.getChat(chatId) : null
@@ -636,6 +638,14 @@ function assertProviderId(value: unknown): ProviderId {
     return value as ProviderId
   }
   throw new Error('Provider is invalid.')
+}
+
+function assertRunnableProviderId(value: unknown): ProviderId {
+  const provider = assertProviderId(value)
+  if (!isLiveSelectableProvider(provider)) {
+    throw new Error('Provider is unavailable for new runs.')
+  }
+  return provider
 }
 
 function sanitizeRunQueueStatus(

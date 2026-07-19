@@ -81,7 +81,6 @@ export interface UsageRatesHandlerDeps {
   fetchCodexUsageSnapshot: UsageSnapshotFetcher
   fetchClaudeUsageSnapshot: UsageSnapshotFetcher
   fetchKimiUsageSnapshot: UsageSnapshotFetcher
-  fetchCursorUsageSnapshot: UsageSnapshotFetcher
   getProviderCapabilityContract: (provider: ProviderId) => Promise<ProviderCapabilityContract>
   getPluginActivationSnapshot?: () => TaskWraithPluginActivationSnapshot
   getCurrentFxRates: () => unknown
@@ -240,8 +239,7 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
       const providerFetchers: ReadonlyArray<[ProviderId, UsageSnapshotFetcher]> = [
         ['codex', deps.fetchCodexUsageSnapshot],
         ['claude', deps.fetchClaudeUsageSnapshot],
-        ['kimi', deps.fetchKimiUsageSnapshot],
-        ['cursor', deps.fetchCursorUsageSnapshot]
+        ['kimi', deps.fetchKimiUsageSnapshot]
       ]
 
       const entries = await Promise.all(
@@ -326,8 +324,7 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
   const FIRST_LAUNCH_USAGE_FETCHERS: Partial<Record<ProviderId, NormalizedUsageSnapshotFetcher>> = {
     codex: deps.fetchCodexUsageSnapshot as NormalizedUsageSnapshotFetcher,
     claude: deps.fetchClaudeUsageSnapshot as NormalizedUsageSnapshotFetcher,
-    kimi: deps.fetchKimiUsageSnapshot as NormalizedUsageSnapshotFetcher,
-    cursor: deps.fetchCursorUsageSnapshot as NormalizedUsageSnapshotFetcher
+    kimi: deps.fetchKimiUsageSnapshot as NormalizedUsageSnapshotFetcher
   }
 
   const buildFirstLaunchProviderUsage = async (): Promise<

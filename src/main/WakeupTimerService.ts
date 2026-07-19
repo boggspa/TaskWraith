@@ -25,14 +25,21 @@ interface WakeupTimerServiceDeps {
   now?: () => number
   setTimeout?: (callback: () => void, delayMs: number) => unknown
   clearTimeout?: (handle: unknown) => void
-  onFire: (wakeupId: string) => void
+  onFire: (wakeupId: string) => unknown
+  /**
+   * Timer callbacks are detached from their caller, so neither a synchronous
+   * throw nor a rejected async handler has an awaiting owner. Keep both inside
+   * the timer boundary and surface them through this diagnostic hook.
+   */
+  onFireError?: (error: unknown, wakeupId: string) => void
 }
 
 export class WakeupTimerService {
   private readonly now: () => number
   private readonly setTimer: (callback: () => void, delayMs: number) => unknown
   private readonly clearTimer: (handle: unknown) => void
-  private readonly onFire: (wakeupId: string) => void
+  private readonly onFire: (wakeupId: string) => unknown
+  private readonly onFireError: (error: unknown, wakeupId: string) => void
   private readonly timers = new Map<string, unknown>()
 
   constructor(deps: WakeupTimerServiceDeps) {
@@ -41,6 +48,11 @@ export class WakeupTimerService {
     this.clearTimer =
       deps.clearTimeout || ((handle) => clearTimeout(handle as ReturnType<typeof setTimeout>))
     this.onFire = deps.onFire
+    this.onFireError =
+      deps.onFireError ||
+      ((error, wakeupId) => {
+        console.error(`Wakeup timer handler failed for ${wakeupId}:`, error)
+      })
   }
 
   schedule(wakeup: WakeupRecordLike): void {
@@ -49,7 +61,14 @@ export class WakeupTimerService {
     const delayMs = Math.max(0, new Date(wakeup.wakeAt).getTime() - this.now())
     const handle = this.setTimer(() => {
       this.timers.delete(wakeup.wakeupId)
-      this.onFire(wakeup.wakeupId)
+      try {
+        const outcome = this.onFire(wakeup.wakeupId)
+        void Promise.resolve(outcome).catch((error) => {
+          this.reportFireError(error, wakeup.wakeupId)
+        })
+      } catch (error) {
+        this.reportFireError(error, wakeup.wakeupId)
+      }
     }, delayMs)
     this.timers.set(wakeup.wakeupId, handle)
   }
@@ -82,6 +101,17 @@ export class WakeupTimerService {
   clear(): void {
     for (const wakeupId of Array.from(this.timers.keys())) {
       this.cancel(wakeupId)
+    }
+  }
+
+  private reportFireError(error: unknown, wakeupId: string): void {
+    try {
+      this.onFireError(error, wakeupId)
+    } catch (reportError) {
+      console.error(
+        `Wakeup timer error reporter failed for ${wakeupId}:`,
+        new AggregateError([error, reportError], 'Wakeup timer handler and reporter both failed.')
+      )
     }
   }
 }

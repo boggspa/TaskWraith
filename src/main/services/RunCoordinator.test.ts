@@ -155,6 +155,59 @@ describe('RunCoordinator', () => {
     expect(order).toEqual(['prepare', 'preflight', 'capture', 'adapter'])
   })
 
+  it('revalidates outer dispatch authority before materializing reference bytes', async () => {
+    const order: string[] = []
+    const reservation = Object.freeze({ id: 'dispatch-reference' })
+    const { deps, adapter, spies } = makeDeps({
+      reserveDispatch: () => reservation,
+      authorizeBeforeReferenceCapture: vi.fn((_payload, received) => {
+        expect(received).toBe(reservation)
+        order.push('reference-authorize')
+      }),
+      captureReferenceContext: vi.fn(() => {
+        order.push('capture')
+      }),
+      authorizeBeforeAdapterRun: vi.fn(() => {
+        order.push('adapter-authorize')
+      })
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      return true
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('adapter')
+    })
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+
+    expect(order).toEqual([
+      'preflight',
+      'reference-authorize',
+      'capture',
+      'adapter-authorize',
+      'adapter'
+    ])
+  })
+
+  it('writes no reference context when destructive authority changed during preflight', async () => {
+    const captureReferenceContext = vi.fn()
+    const reservation = Object.freeze({ id: 'dispatch-reference' })
+    const { deps, adapter } = makeDeps({
+      reserveDispatch: () => reservation,
+      authorizeBeforeReferenceCapture: () => {
+        throw new Error('history authority changed')
+      },
+      captureReferenceContext
+    })
+
+    const result = await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+
+    expect(result.dispatched).toBe(false)
+    expect(captureReferenceContext).not.toHaveBeenCalled()
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
   it('runs the final main admission gate immediately before adapter dispatch', async () => {
     const order: string[] = []
     const authorizeBeforeAdapterRun = vi.fn(() => {
@@ -177,12 +230,65 @@ describe('RunCoordinator', () => {
     await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
     expect(order).toEqual(['preflight', 'capture', 'authorize', 'adapter'])
     expect(authorizeBeforeAdapterRun).toHaveBeenCalledWith(
-      expect.objectContaining({ appRunId: 'run-fixed', provider: 'gemini' })
+      expect.objectContaining({ appRunId: 'run-fixed', provider: 'gemini' }),
+      undefined
     )
   })
 
+  it('holds one exact dispatch reservation across preflight and always releases it', async () => {
+    const order: string[] = []
+    const reservation = Object.freeze({ id: 'dispatch-1' })
+    const { deps, adapter, spies } = makeDeps({
+      reserveDispatch: vi.fn(() => {
+        order.push('reserve')
+        return reservation
+      }),
+      captureReferenceContext: vi.fn(() => {
+        order.push('capture')
+      }),
+      authorizeBeforeAdapterRun: vi.fn((_payload, received) => {
+        expect(received).toBe(reservation)
+        order.push('authorize')
+      }),
+      releaseDispatchReservation: vi.fn((received) => {
+        expect(received).toBe(reservation)
+        order.push('release')
+      })
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      return true
+    })
+    ;(adapter.run as ReturnType<typeof vi.fn>).mockImplementation(async () => {
+      order.push('adapter')
+    })
+
+    await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    expect(order).toEqual(['reserve', 'preflight', 'capture', 'authorize', 'adapter', 'release'])
+  })
+
+  it('releases a reserved dispatch when preflight declines', async () => {
+    const reservation = Object.freeze({ id: 'dispatch-1' })
+    const releaseDispatchReservation = vi.fn()
+    const { deps, adapter, spies } = makeDeps({
+      reserveDispatch: () => reservation,
+      releaseDispatchReservation
+    })
+    spies.ensureProviderRunPreflight.mockResolvedValue(false)
+
+    await expect(
+      new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
+    ).resolves.toEqual({ dispatched: false, appRunId: 'run-fixed' })
+    expect(releaseDispatchReservation).toHaveBeenCalledWith(reservation)
+    expect(adapter.run).not.toHaveBeenCalled()
+  })
+
   it('does not invoke the adapter when final main admission rejects', async () => {
+    const reservation = Object.freeze({ id: 'dispatch-1' })
+    const releaseDispatchReservation = vi.fn()
     const { deps, adapter } = makeDeps({
+      reserveDispatch: () => reservation,
+      releaseDispatchReservation,
       authorizeBeforeAdapterRun: () => {
         throw new Error('lease changed')
       }
@@ -192,6 +298,32 @@ describe('RunCoordinator', () => {
       'lease changed'
     )
     expect(adapter.run).not.toHaveBeenCalled()
+    expect(releaseDispatchReservation).toHaveBeenCalledWith(reservation)
+  })
+
+  it('uses an outer reservation without recapturing or releasing facade-owned authority', async () => {
+    const outerReservation = Object.freeze({ id: 'outer-dispatch-1' })
+    const reserveDispatch = vi.fn(() => Object.freeze({ id: 'wrong-inner-token' }))
+    const releaseDispatchReservation = vi.fn()
+    const authorizeBeforeAdapterRun = vi.fn((_payload, received) => {
+      expect(received).toBe(outerReservation)
+    })
+    const { deps, adapter } = makeDeps({
+      reserveDispatch,
+      releaseDispatchReservation,
+      authorizeBeforeAdapterRun
+    })
+
+    await expect(
+      new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent(), outerReservation)
+    ).resolves.toEqual({ dispatched: true, appRunId: 'run-fixed' })
+    expect(reserveDispatch).not.toHaveBeenCalled()
+    expect(authorizeBeforeAdapterRun).toHaveBeenCalledWith(
+      expect.objectContaining({ appRunId: 'run-fixed' }),
+      outerReservation
+    )
+    expect(releaseDispatchReservation).not.toHaveBeenCalled()
+    expect(adapter.run).toHaveBeenCalledOnce()
   })
 
   it('can invoke the adapter inside a main-owned provenance wrapper', async () => {

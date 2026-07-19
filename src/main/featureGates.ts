@@ -16,7 +16,7 @@ export function concurrentWriteLanesEnabled(): boolean {
 /**
  * Spike 5 (docs/ensemble-posture-fanout-preamble-design.md) — slim ensemble
  * turn prompts for seats whose provider session natively resumes
- * (claude/codex/cursor): the full ~5.5k-char shell re-sent every turn
+ * (claude/codex): the full ~5.5k-char shell re-sent every turn
  * duplicates history those sessions already hold. Default ON (user opt-in,
  * 2026-07-02) with TASKWRAITH_ENSEMBLE_SLIM_RESUME=0 as the kill switch —
  * flip that if resumed seats start losing panel context on live rounds.

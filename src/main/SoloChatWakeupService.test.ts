@@ -7,6 +7,7 @@ import {
   SOLO_MAX_WAKEUP_DELAY_MS,
   SoloChatWakeupService
 } from './SoloChatWakeupService'
+import { WakeupTimerService } from './WakeupTimerService'
 import type { AgentRunPayload } from './run/AgentRunTypes'
 import type {
   ChatMessage,
@@ -648,6 +649,40 @@ describe('SoloChatWakeupService — handleWakeupFired', () => {
     expect(chat.soloWakeups?.[id].status).toBe('expired')
     consoleWarnSpy.mockRestore()
   })
+
+  it('expires the exact record when dispatch resolves without starting a run', async () => {
+    const declinedService = new SoloChatWakeupService({
+      getChat: (id) => chats.get(id),
+      saveChat: (chat) => chats.set(chat.appChatId, chat),
+      listChats: () => Array.from(chats.values()),
+      dispatchRun: async (payload) => ({
+        dispatched: false,
+        appRunId: payload.appRunId || 'run-declined-1'
+      }),
+      scheduleWakeupTimer: () => {},
+      cancelWakeupTimer: () => {},
+      createRunId: () => 'run-declined-1',
+      now: () => 1_700_000_000_000,
+      nowIso: () => '2026-05-27T11:00:00.000Z'
+    })
+    const consoleWarnSpy = vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const scheduled = declinedService.scheduleWakeup('chat-solo-1', 'codex', 'run-1', {
+      delayMs: 60_000
+    })
+
+    const handled = await declinedService.handleWakeupFired(scheduled.wakeup!.wakeupId)
+
+    expect(handled).toBe(true)
+    expect(chats.get('chat-solo-1')?.soloWakeups?.[scheduled.wakeup!.wakeupId]).toMatchObject({
+      status: 'expired',
+      expiredAt: '2026-05-27T11:00:00.000Z'
+    })
+    expect(consoleWarnSpy).toHaveBeenCalledWith(
+      expect.stringContaining(scheduled.wakeup!.wakeupId),
+      expect.stringContaining('declined')
+    )
+    consoleWarnSpy.mockRestore()
+  })
 })
 
 describe('SoloChatWakeupService — getAllPersistedWakeups', () => {
@@ -750,5 +785,311 @@ describe('SoloChatWakeupService — expireWakeup', () => {
       '2026-05-28T00:00:00Z'
     )
     consoleWarnSpy.mockRestore()
+  })
+})
+
+describe('SoloChatWakeupService — destructive history fence', () => {
+  function createHistoryHarness(initialChats: ChatRecord[]): {
+    chats: Map<string, ChatRecord>
+    cancelledTimers: string[]
+    dispatches: AgentRunPayload[]
+    service: SoloChatWakeupService
+    setDispatch: (
+      dispatch: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
+    ) => void
+  } {
+    const chats = new Map(initialChats.map((chat) => [chat.appChatId, chat]))
+    const cancelledTimers: string[] = []
+    const dispatches: AgentRunPayload[] = []
+    let dispatchImpl = async (payload: AgentRunPayload) => {
+      dispatches.push(payload)
+      return { dispatched: true, appRunId: payload.appRunId || 'run' }
+    }
+    const service = new SoloChatWakeupService({
+      getChat: (id) => chats.get(id),
+      saveChat: (chat) => chats.set(chat.appChatId, chat),
+      listChats: () => chats.values(),
+      dispatchRun: (payload) => dispatchImpl(payload),
+      scheduleWakeupTimer: () => {},
+      cancelWakeupTimer: (wakeupId) => {
+        cancelledTimers.push(wakeupId)
+      },
+      createRunId: () => 'history-wakeup-run',
+      now: () => 1_700_000_000_000,
+      nowIso: () => '2026-05-27T11:00:00.000Z'
+    })
+    return {
+      chats,
+      cancelledTimers,
+      dispatches,
+      service,
+      setDispatch: (dispatch) => {
+        dispatchImpl = dispatch
+      }
+    }
+  }
+
+  function deferredDispatch(): {
+    promise: Promise<{ dispatched: boolean; appRunId: string }>
+    resolve: () => void
+    reject: (error: Error) => void
+  } {
+    let resolvePromise!: (result: { dispatched: boolean; appRunId: string }) => void
+    let rejectPromise!: (error: Error) => void
+    const promise = new Promise<{ dispatched: boolean; appRunId: string }>((resolve, reject) => {
+      resolvePromise = resolve
+      rejectPromise = reject
+    })
+    return {
+      promise,
+      resolve: () => resolvePromise({ dispatched: true, appRunId: 'history-wakeup-run' }),
+      reject: rejectPromise
+    }
+  }
+
+  it('scoped truncate cancels its timer, exactly joins an already-fired callback, and cannot resurrect the transcript', async () => {
+    const harness = createHistoryHarness([
+      makeChat({
+        appChatId: 'chat-a',
+        messages: [
+          {
+            id: 'before-clear',
+            role: 'assistant',
+            content: 'must stay deleted',
+            timestamp: '2026-05-27T10:00:00.000Z'
+          }
+        ]
+      }),
+      makeChat({ appChatId: 'chat-b' })
+    ])
+    const wakeA = harness.service.scheduleWakeup('chat-a', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+    const wakeB = harness.service.scheduleWakeup('chat-b', 'codex', 'run-b', {
+      delayMs: 60_000
+    }).wakeup!
+    const dispatch = deferredDispatch()
+    harness.setDispatch((payload) => {
+      harness.dispatches.push(payload)
+      return dispatch.promise
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const firing = harness.service.handleWakeupFired(wakeA.wakeupId)
+    await vi.waitFor(() => expect(harness.dispatches).toHaveLength(1))
+    const hold = harness.service.beginHistoryClear({ kind: 'chat', chatIds: ['chat-a'] })
+    let joined = false
+    void hold.completion.then(() => {
+      joined = true
+    })
+    await Promise.resolve()
+    expect(joined).toBe(false)
+
+    const current = harness.chats.get('chat-a')!
+    harness.chats.set('chat-a', {
+      ...current,
+      messages: [],
+      runs: [],
+      soloWakeups: undefined
+    })
+    dispatch.reject(new Error('dispatch rejected by history generation'))
+    await firing
+    await hold.completion
+    expect(joined).toBe(true)
+    expect(harness.chats.get('chat-a')?.messages).toEqual([])
+    expect(harness.chats.get('chat-a')?.soloWakeups).toBeUndefined()
+    expect(harness.chats.get('chat-b')?.soloWakeups?.[wakeB.wakeupId]?.status).toBe('pending')
+    expect(harness.cancelledTimers).not.toContain(wakeB.wakeupId)
+    expect(harness.service.endHistoryClear(hold)).toBe(true)
+    warning.mockRestore()
+  })
+
+  it('scoped delete joins an in-flight rejection without saving the stale deleted chat', async () => {
+    const harness = createHistoryHarness([makeChat({ appChatId: 'chat-delete' })])
+    const wakeup = harness.service.scheduleWakeup('chat-delete', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+    const dispatch = deferredDispatch()
+    harness.setDispatch((payload) => {
+      harness.dispatches.push(payload)
+      return dispatch.promise
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const firing = harness.service.handleWakeupFired(wakeup.wakeupId)
+    await vi.waitFor(() => expect(harness.dispatches).toHaveLength(1))
+    const hold = harness.service.beginHistoryClear({
+      kind: 'chat',
+      chatIds: ['chat-delete']
+    })
+    harness.chats.delete('chat-delete')
+    dispatch.reject(new Error('chat deleted'))
+    await Promise.all([firing, hold.completion])
+
+    expect(harness.chats.has('chat-delete')).toBe(false)
+    expect(harness.service.endHistoryClear(hold)).toBe(true)
+    warning.mockRestore()
+  })
+
+  it('rejects a queued fire after the scoped generation changes, before persistence or dispatch', async () => {
+    const harness = createHistoryHarness([makeChat({ appChatId: 'chat-due' })])
+    const wakeup = harness.service.scheduleWakeup('chat-due', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+
+    // handleWakeupFired registers the activity synchronously but defers its
+    // first side effect. Beginning deletion in the same stack invalidates it.
+    const firing = harness.service.handleWakeupFired(wakeup.wakeupId)
+    const hold = harness.service.beginHistoryClear({ kind: 'chat', chatIds: ['chat-due'] })
+    await Promise.all([firing, hold.completion])
+
+    expect(harness.dispatches).toEqual([])
+    expect(harness.chats.get('chat-due')?.soloWakeups?.[wakeup.wakeupId]?.status).toBe('pending')
+    expect(harness.cancelledTimers).toContain(wakeup.wakeupId)
+    expect(harness.service.endHistoryClear(hold)).toBe(true)
+  })
+
+  it('workspace clear fences every chat in that workspace while preserving other-workspace timers', async () => {
+    const harness = createHistoryHarness([
+      makeChat({ appChatId: 'workspace-a-existing', workspaceId: 'workspace-a' }),
+      makeChat({ appChatId: 'workspace-a-new', workspaceId: 'workspace-a' }),
+      makeChat({ appChatId: 'workspace-b', workspaceId: 'workspace-b' })
+    ])
+    const wakeA = harness.service.scheduleWakeup('workspace-a-existing', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+    const wakeB = harness.service.scheduleWakeup('workspace-b', 'codex', 'run-b', {
+      delayMs: 60_000
+    }).wakeup!
+
+    const hold = harness.service.beginHistoryClear({
+      kind: 'workspace',
+      workspaceId: 'workspace-a',
+      chatIds: ['workspace-a-existing', 'workspace-a-new']
+    })
+    await hold.completion
+
+    expect(harness.cancelledTimers).toContain(wakeA.wakeupId)
+    expect(harness.cancelledTimers).not.toContain(wakeB.wakeupId)
+    expect(
+      harness.service.scheduleWakeup('workspace-a-new', 'codex', 'run-new', {
+        delayMs: 60_000
+      })
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/history is being cleared/i) })
+    expect(harness.service.endHistoryClear(hold)).toBe(true)
+    expect(
+      harness.service.scheduleWakeup('workspace-a-new', 'codex', 'run-new', {
+        delayMs: 60_000
+      }).ok
+    ).toBe(true)
+  })
+
+  it('global clear cancels all pending timer records and blocks all new wakeup admission', async () => {
+    const harness = createHistoryHarness([
+      makeChat({ appChatId: 'global-chat' }),
+      makeChat({ appChatId: 'workspace-chat', workspaceId: 'workspace-a' }),
+      makeChat({ appChatId: 'empty-chat', workspaceId: 'workspace-b' })
+    ])
+    const globalWake = harness.service.scheduleWakeup('global-chat', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+    const workspaceWake = harness.service.scheduleWakeup('workspace-chat', 'codex', 'run-b', {
+      delayMs: 60_000
+    }).wakeup!
+
+    const hold = harness.service.beginHistoryClear({ kind: 'global' })
+    await hold.completion
+
+    expect(harness.cancelledTimers).toEqual(
+      expect.arrayContaining([globalWake.wakeupId, workspaceWake.wakeupId])
+    )
+    expect(
+      harness.service.scheduleWakeup('empty-chat', 'codex', 'run-new', { delayMs: 60_000 })
+    ).toMatchObject({ ok: false, error: expect.stringMatching(/history is being cleared/i) })
+    expect(harness.service.endHistoryClear(hold)).toBe(true)
+    expect(harness.service.endHistoryClear(hold)).toBe(false)
+  })
+
+  it('removes the armed wall-clock timer so advancing time after commit cannot fire it', async () => {
+    vi.useFakeTimers()
+    try {
+      const chat = makeChat({ appChatId: 'timer-chat' })
+      const chats = new Map([[chat.appChatId, chat]])
+      const dispatchRun = vi.fn(async () => ({ dispatched: true, appRunId: 'late-run' }))
+      const serviceRef: { current?: SoloChatWakeupService } = {}
+      const timer = new WakeupTimerService({
+        now: () => 1_700_000_000_000,
+        onFire: (wakeupId) => {
+          void serviceRef.current?.handleWakeupFired(wakeupId)
+        }
+      })
+      const service = new SoloChatWakeupService({
+        getChat: (id) => chats.get(id),
+        saveChat: (next) => chats.set(next.appChatId, next),
+        listChats: () => chats.values(),
+        dispatchRun,
+        scheduleWakeupTimer: (wakeup) => timer.schedule(wakeup),
+        cancelWakeupTimer: (wakeupId) => {
+          timer.cancel(wakeupId)
+        },
+        createRunId: () => 'late-run',
+        now: () => 1_700_000_000_000,
+        nowIso: () => '2026-05-27T11:00:00.000Z'
+      })
+      serviceRef.current = service
+      const wakeup = service.scheduleWakeup('timer-chat', 'codex', 'run-a', {
+        delayMs: 60_000
+      }).wakeup!
+      expect(timer.has(wakeup.wakeupId)).toBe(true)
+
+      const hold = service.beginHistoryClear({ kind: 'chat', chatIds: ['timer-chat'] })
+      await hold.completion
+      expect(timer.has(wakeup.wakeupId)).toBe(false)
+      // Model the outer truncate commit before releasing the process-local hold.
+      chats.set('timer-chat', { ...chats.get('timer-chat')!, soloWakeups: undefined })
+      expect(service.endHistoryClear(hold)).toBe(true)
+      await vi.advanceTimersByTimeAsync(60_000)
+
+      expect(dispatchRun).not.toHaveBeenCalled()
+      expect(chats.get('timer-chat')?.soloWakeups).toBeUndefined()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('never expires over a newer exact wakeup record after an unrelated dispatch rejection', async () => {
+    const harness = createHistoryHarness([makeChat({ appChatId: 'chat-replaced' })])
+    const wakeup = harness.service.scheduleWakeup('chat-replaced', 'codex', 'run-a', {
+      delayMs: 60_000
+    }).wakeup!
+    const dispatch = deferredDispatch()
+    harness.setDispatch((payload) => {
+      harness.dispatches.push(payload)
+      return dispatch.promise
+    })
+    const warning = vi.spyOn(console, 'warn').mockImplementation(() => {})
+
+    const firing = harness.service.handleWakeupFired(wakeup.wakeupId)
+    await vi.waitFor(() => expect(harness.dispatches).toHaveLength(1))
+    const current = harness.chats.get('chat-replaced')!
+    harness.chats.set('chat-replaced', {
+      ...current,
+      soloWakeups: {
+        ...current.soloWakeups,
+        [wakeup.wakeupId]: {
+          ...current.soloWakeups![wakeup.wakeupId],
+          status: 'cancelled',
+          cancelledAt: '2026-05-27T11:00:01.000Z'
+        }
+      }
+    })
+    dispatch.reject(new Error('preflight failed'))
+    await firing
+
+    expect(harness.chats.get('chat-replaced')?.soloWakeups?.[wakeup.wakeupId]).toMatchObject({
+      status: 'cancelled',
+      cancelledAt: '2026-05-27T11:00:01.000Z'
+    })
+    warning.mockRestore()
   })
 })

@@ -27,18 +27,15 @@ import {
   isGatewayMcpAdvertisedTool
 } from './McpToolProfiles'
 import type { McpCallerContext } from './McpRouteGuards'
+import { MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE } from './McpInternalError'
+import { sanitizeCanvasEvalProviderText } from '../canvas/CanvasEvalAudit'
+import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
+import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
 // Audit MCP tool definitions — advertised ONLY to audit role-runs (the bridge
 // child carries TASKWRAITH_MCP_AUDIT=1, set per-run at the provider spawn site).
 // AuditToolExecutors imports McpToolDefinition from here as `import type` (erased
 // at runtime), so this value import introduces no runtime require cycle.
 import { AUDIT_MCP_TOOL_NAMES, auditToolDefinitions } from './AuditToolExecutors'
-import {
-  KIMI_LEGACY_TASKWRAITH_SERVER_NAMES,
-  KIMI_TASKWRAITH_SERVER_NAME,
-  buildKimiMcpBridgeAddArgs,
-  buildKimiMcpBridgeRemoveArgs,
-  redactKimiMcpBridgeAddArgs
-} from '../KimiMcpBridge'
 import type {
   AppSettings,
   ChatScope,
@@ -65,6 +62,8 @@ export const GEMINI_MCP_BRIDGE_ENV = 'TASKWRAITH_GEMINI_MCP_BRIDGE'
 export const GEMINI_MCP_BRIDGE_ARG_SUFFIX = '-gemini-mcp-bridge'
 export const GEMINI_MCP_SOCKET_ARG = '--socket'
 export const GEMINI_MCP_TOKEN_ARG = '--token'
+/** Durable bridge-log generation captured when the provider seat is launched. */
+export const GEMINI_MCP_LOG_EPOCH_ARG = '--bridge-log-epoch'
 // Fail-closed read-only scope flag. Carried in the bridge ARGV (not env) so it
 // is atomic with the spawn: a bridge launched with these args is scoped, full
 // stop. The bootstrap translates it to TASKWRAITH_MCP_SAFE_SUBSET=1 (the env the
@@ -174,6 +173,10 @@ export interface McpToolExecutionResult {
   isError?: boolean
   structuredContent?: Record<string, unknown>
   content?: McpToolContentBlock[]
+  /** Main-only execution/approval join; never projected by the MCP transport. */
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
+  /** Main-only produced-media rollback authority; stripped before provider projection. */
+  pendingToolMediaPersistence?: PendingToolMediaPersistence
   // S1b-3: main-built AV media refs on a TRUSTED channel — injected straight into run
   // state by the host, bypassing the image-only provider sanitizer (kind!=='image' is
   // hard-dropped). Un-forgeable: only main-side executor code constructs this result.
@@ -318,15 +321,409 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   'codex',
   'claude',
   'kimi',
-  // Cursor and Grok reach the broker via provider-native MCP registrations.
-  'cursor',
+  // Grok reaches the broker through its provider-native MCP registration.
   'grok'
 ])
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
+const BRIDGE_LOG_MAX_LINE_CHARS = 32_768
+const BRIDGE_LOG_DIRECTORY_MODE = 0o700
+const BRIDGE_LOG_FILE_MODE = 0o600
+const BRIDGE_LOG_LOCK_WAIT_MS = 5_000
+const BRIDGE_LOG_LOCK_POLL_MS = 10
 const DEFAULT_MAX_CAPTURE_OUTPUT_CHARS = 200_000
 
 let bridgeLogPath: string | null = null
 let bridgeLogResolved = false
+let bridgeLogHistoryClearHolds = 0
+let bridgeLogEpochPath: string | null = null
+let bridgeLogProcessEpoch: number | null = null
+let bridgeLogEpochPinnedByLaunch = false
+const bridgeLogDirectoryIdentities = new Map<string, BridgeFsIdentity>()
+const bridgeLogFileIdentities = new Map<string, BridgeFsIdentity>()
+const bridgeLogSensitiveValues = new Map<string, '<redacted>' | '<redacted-path>'>()
+
+interface BridgeFsIdentity {
+  dev: number
+  ino: number
+}
+
+interface BridgeLogLock {
+  path: string
+  fd: number | null
+  stat: fsSync.Stats
+}
+
+export interface BridgeLogHistoryPurgeResult {
+  status: 'cleared' | 'missing'
+  epoch: number
+}
+
+function bridgeFsIdentity(stat: fsSync.Stats): BridgeFsIdentity {
+  return { dev: stat.dev, ino: stat.ino }
+}
+
+function sameBridgeFsIdentity(
+  left: Pick<fsSync.Stats, 'dev' | 'ino'> | BridgeFsIdentity,
+  right: Pick<fsSync.Stats, 'dev' | 'ino'> | BridgeFsIdentity
+): boolean {
+  return left.dev === right.dev && left.ino === right.ino
+}
+
+function assertBridgeOwned(stat: fsSync.Stats, label: string): void {
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) {
+    throw new Error(`${label} is not owned by the current user.`)
+  }
+}
+
+function assertBridgePrivateMode(stat: fsSync.Stats, mode: number, label: string): void {
+  // Windows does not expose POSIX owner/group/other mode authority. The no-link,
+  // regular-file, and fd/path identity checks still apply there.
+  if (process.platform !== 'win32' && (stat.mode & 0o777) !== mode) {
+    throw new Error(`${label} permissions are not private.`)
+  }
+}
+
+function assertBridgeDirectoryStat(stat: fsSync.Stats, label: string): void {
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`${label} is not a trusted directory.`)
+  }
+  assertBridgeOwned(stat, label)
+}
+
+function assertBridgeFileStat(stat: fsSync.Stats, label: string): void {
+  if (!stat.isFile() || stat.isSymbolicLink()) {
+    throw new Error(`${label} is not a regular file.`)
+  }
+  if (stat.nlink !== 1) throw new Error(`${label} has an unsafe link count.`)
+  assertBridgeOwned(stat, label)
+}
+
+function assertExpectedBridgeIdentity(
+  expected: BridgeFsIdentity | undefined,
+  actual: Pick<fsSync.Stats, 'dev' | 'ino'>,
+  label: string
+): void {
+  if (expected && !sameBridgeFsIdentity(expected, actual)) {
+    throw new Error(`${label} identity changed.`)
+  }
+}
+
+function canonicalBridgeLogDirectory(): string {
+  return join(os.homedir(), 'Library', 'Logs', 'TaskWraith')
+}
+
+function ensurePrivateBridgeLogDirectory(path: string): BridgeFsIdentity {
+  fsSync.mkdirSync(path, { recursive: true, mode: BRIDGE_LOG_DIRECTORY_MODE })
+  const before = fsSync.lstatSync(path)
+  assertBridgeDirectoryStat(before, 'Bridge log directory')
+  assertExpectedBridgeIdentity(
+    bridgeLogDirectoryIdentities.get(path),
+    before,
+    'Bridge log directory'
+  )
+
+  if (process.platform === 'win32') {
+    const after = fsSync.lstatSync(path)
+    assertBridgeDirectoryStat(after, 'Bridge log directory')
+    if (!sameBridgeFsIdentity(before, after)) {
+      throw new Error('Bridge log directory changed during validation.')
+    }
+    const identity = bridgeFsIdentity(after)
+    bridgeLogDirectoryIdentities.set(path, identity)
+    return identity
+  }
+
+  let fd: number | null = null
+  try {
+    fd = fsSync.openSync(
+      path,
+      fsSync.constants.O_RDONLY |
+        (fsSync.constants.O_DIRECTORY ?? 0) |
+        (fsSync.constants.O_NOFOLLOW ?? 0)
+    )
+    const opened = fsSync.fstatSync(fd)
+    assertBridgeDirectoryStat(opened, 'Bridge log directory')
+    if (!sameBridgeFsIdentity(before, opened)) {
+      throw new Error('Bridge log directory changed while it was opened.')
+    }
+    if ((opened.mode & 0o777) !== BRIDGE_LOG_DIRECTORY_MODE) {
+      // The legacy bridge created its own canonical leaf with the process
+      // umask. Repair that one owned directory in place, but never chmod an
+      // arbitrary parent supplied to the focused purge seam (for example
+      // /tmp).
+      if (path !== canonicalBridgeLogDirectory()) {
+        throw new Error('Bridge log directory permissions are not private.')
+      }
+      fsSync.fchmodSync(fd, BRIDGE_LOG_DIRECTORY_MODE)
+    }
+    const privateStat = fsSync.fstatSync(fd)
+    assertBridgeDirectoryStat(privateStat, 'Bridge log directory')
+    assertBridgePrivateMode(
+      privateStat,
+      BRIDGE_LOG_DIRECTORY_MODE,
+      'Bridge log directory'
+    )
+    const after = fsSync.lstatSync(path)
+    assertBridgeDirectoryStat(after, 'Bridge log directory')
+    if (!sameBridgeFsIdentity(privateStat, after)) {
+      throw new Error('Bridge log directory changed during validation.')
+    }
+    const identity = bridgeFsIdentity(privateStat)
+    bridgeLogDirectoryIdentities.set(path, identity)
+    return identity
+  } finally {
+    if (fd !== null) fsSync.closeSync(fd)
+  }
+}
+
+function lstatBridgeFile(path: string, label: string): fsSync.Stats | null {
+  try {
+    const stat = fsSync.lstatSync(path)
+    assertBridgeFileStat(stat, label)
+    assertExpectedBridgeIdentity(bridgeLogFileIdentities.get(path), stat, label)
+    return stat
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function openPrivateBridgeFile(
+  path: string,
+  flags: number,
+  options: { create: boolean; missingOk?: boolean; label: string }
+): { fd: number; stat: fsSync.Stats } | null {
+  const directoryPath = dirname(path)
+  const directoryIdentity = ensurePrivateBridgeLogDirectory(directoryPath)
+  const before = lstatBridgeFile(path, options.label)
+  if (!before && !options.create && options.missingOk) return null
+
+  let fd: number | null = null
+  try {
+    fd = fsSync.openSync(
+      path,
+      flags |
+        (options.create ? fsSync.constants.O_CREAT : 0) |
+        (fsSync.constants.O_NOFOLLOW ?? 0),
+      BRIDGE_LOG_FILE_MODE
+    )
+    const opened = fsSync.fstatSync(fd)
+    assertBridgeFileStat(opened, options.label)
+    if (before && !sameBridgeFsIdentity(before, opened)) {
+      throw new Error(`${options.label} changed while it was opened.`)
+    }
+    assertExpectedBridgeIdentity(bridgeLogFileIdentities.get(path), opened, options.label)
+
+    const pathStat = fsSync.lstatSync(path)
+    assertBridgeFileStat(pathStat, options.label)
+    if (!sameBridgeFsIdentity(opened, pathStat)) {
+      throw new Error(`${options.label} path does not identify the opened file.`)
+    }
+    if (!sameBridgeFsIdentity(directoryIdentity, ensurePrivateBridgeLogDirectory(directoryPath))) {
+      throw new Error('Bridge log directory changed while opening a file.')
+    }
+
+    if (process.platform !== 'win32') fsSync.fchmodSync(fd, BRIDGE_LOG_FILE_MODE)
+    const privateStat = fsSync.fstatSync(fd)
+    assertBridgeFileStat(privateStat, options.label)
+    assertBridgePrivateMode(privateStat, BRIDGE_LOG_FILE_MODE, options.label)
+    const finalPathStat = fsSync.lstatSync(path)
+    assertBridgeFileStat(finalPathStat, options.label)
+    if (!sameBridgeFsIdentity(privateStat, finalPathStat)) {
+      throw new Error(`${options.label} changed during validation.`)
+    }
+    bridgeLogFileIdentities.set(path, bridgeFsIdentity(privateStat))
+    const result = { fd, stat: privateStat }
+    fd = null
+    return result
+  } catch (error) {
+    if (!options.create && options.missingOk && (error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return null
+    }
+    throw error
+  } finally {
+    if (fd !== null) fsSync.closeSync(fd)
+  }
+}
+
+function revalidatePrivateBridgeFile(
+  path: string,
+  opened: { fd: number; stat: fsSync.Stats },
+  label: string
+): fsSync.Stats {
+  const fdStat = fsSync.fstatSync(opened.fd)
+  assertBridgeFileStat(fdStat, label)
+  assertBridgePrivateMode(fdStat, BRIDGE_LOG_FILE_MODE, label)
+  if (!sameBridgeFsIdentity(opened.stat, fdStat)) {
+    throw new Error(`${label} opened-file identity changed.`)
+  }
+  const pathStat = fsSync.lstatSync(path)
+  assertBridgeFileStat(pathStat, label)
+  if (!sameBridgeFsIdentity(fdStat, pathStat)) {
+    throw new Error(`${label} path identity changed.`)
+  }
+  ensurePrivateBridgeLogDirectory(dirname(path))
+  return fdStat
+}
+
+function bridgeLogLockPath(logPath: string): string {
+  return `${logPath}.lock`
+}
+
+function validateBridgeLogLock(lock: BridgeLogLock): void {
+  if (lock.fd !== null) {
+    const fdStat = fsSync.fstatSync(lock.fd)
+    assertBridgeDirectoryStat(fdStat, 'Bridge log transaction lock')
+    assertBridgePrivateMode(fdStat, BRIDGE_LOG_DIRECTORY_MODE, 'Bridge log transaction lock')
+    if (!sameBridgeFsIdentity(lock.stat, fdStat)) {
+      throw new Error('Bridge log transaction lock identity changed.')
+    }
+  }
+  const pathStat = fsSync.lstatSync(lock.path)
+  assertBridgeDirectoryStat(pathStat, 'Bridge log transaction lock')
+  assertBridgePrivateMode(pathStat, BRIDGE_LOG_DIRECTORY_MODE, 'Bridge log transaction lock')
+  if (!sameBridgeFsIdentity(lock.stat, pathStat)) {
+    throw new Error('Bridge log transaction lock path identity changed.')
+  }
+  ensurePrivateBridgeLogDirectory(dirname(lock.path))
+}
+
+function validateContendedBridgeLogLock(path: string): boolean {
+  try {
+    const stat = fsSync.lstatSync(path)
+    assertBridgeDirectoryStat(stat, 'Bridge log transaction lock')
+    assertBridgePrivateMode(stat, BRIDGE_LOG_DIRECTORY_MODE, 'Bridge log transaction lock')
+    return true
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false
+    throw error
+  }
+}
+
+function tryAcquireBridgeLogLock(logPath: string): BridgeLogLock | null {
+  const parentPath = dirname(logPath)
+  ensurePrivateBridgeLogDirectory(parentPath)
+  const path = bridgeLogLockPath(logPath)
+  try {
+    fsSync.mkdirSync(path, { mode: BRIDGE_LOG_DIRECTORY_MODE })
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error
+    validateContendedBridgeLogLock(path)
+    return null
+  }
+
+  let fd: number | null = null
+  let openedStat: fsSync.Stats | null = null
+  try {
+    if (process.platform === 'win32') {
+      openedStat = fsSync.lstatSync(path)
+      const lock = { path, fd: null, stat: openedStat }
+      validateBridgeLogLock(lock)
+      return lock
+    }
+    fd = fsSync.openSync(
+      path,
+      fsSync.constants.O_RDONLY |
+        (fsSync.constants.O_DIRECTORY ?? 0) |
+        (fsSync.constants.O_NOFOLLOW ?? 0)
+    )
+    openedStat = fsSync.fstatSync(fd)
+    const lock = { path, fd, stat: openedStat }
+    validateBridgeLogLock(lock)
+    fd = null
+    return lock
+  } catch (error) {
+    if (fd !== null) fsSync.closeSync(fd)
+    try {
+      const pathStat = fsSync.lstatSync(path)
+      if (
+        openedStat &&
+        pathStat.isDirectory() &&
+        !pathStat.isSymbolicLink() &&
+        sameBridgeFsIdentity(openedStat, pathStat)
+      ) {
+        fsSync.rmdirSync(path)
+      }
+    } catch {
+      // Preserve a substituted lock path; strict callers will surface the
+      // original validation failure and never enter the clear transaction.
+    }
+    throw error
+  }
+}
+
+async function acquireBridgeLogLockStrict(logPath: string): Promise<BridgeLogLock> {
+  const deadline = Date.now() + BRIDGE_LOG_LOCK_WAIT_MS
+  while (true) {
+    const lock = tryAcquireBridgeLogLock(logPath)
+    if (lock) return lock
+    if (Date.now() >= deadline) {
+      throw new Error('Bridge log transaction lock remained busy.')
+    }
+    await new Promise<void>((resolveWait) => setTimeout(resolveWait, BRIDGE_LOG_LOCK_POLL_MS))
+  }
+}
+
+function releaseBridgeLogLock(lock: BridgeLogLock): void {
+  const fdOpen = lock.fd !== null
+  try {
+    validateBridgeLogLock(lock)
+    fsSync.rmdirSync(lock.path)
+  } finally {
+    if (fdOpen && lock.fd !== null) fsSync.closeSync(lock.fd)
+  }
+}
+
+function readBridgeLogEpochStrict(path: string): number {
+  let opened: { fd: number; stat: fsSync.Stats } | null = null
+  try {
+    opened = openPrivateBridgeFile(path, fsSync.constants.O_RDWR, {
+      create: false,
+      missingOk: true,
+      label: 'Bridge log epoch'
+    })
+    if (!opened) return 0
+    revalidatePrivateBridgeFile(path, opened, 'Bridge log epoch')
+    const raw = fsSync.readFileSync(opened.fd, 'utf8').trim()
+    if (!/^\d+$/.test(raw)) {
+      throw new Error('Bridge log epoch is invalid.')
+    }
+    const parsed = Number(raw)
+    if (!Number.isSafeInteger(parsed)) throw new Error('Bridge log epoch is invalid.')
+    revalidatePrivateBridgeFile(path, opened, 'Bridge log epoch')
+    return parsed
+  } finally {
+    if (opened) fsSync.closeSync(opened.fd)
+  }
+}
+
+function readBridgeLogEpoch(path: string): number | null {
+  try {
+    return readBridgeLogEpochStrict(path)
+  } catch {
+    return null
+  }
+}
+
+function writeBridgeLogEpoch(path: string, epoch: number): void {
+  let opened: { fd: number; stat: fsSync.Stats } | null = null
+  try {
+    opened = openPrivateBridgeFile(path, fsSync.constants.O_RDWR, {
+      create: true,
+      label: 'Bridge log epoch'
+    })
+    if (!opened) throw new Error('Bridge log epoch could not be opened.')
+    // Do not truncate until link, owner, mode, fd/path, and directory identity
+    // have all been verified. This keeps a prepositioned victim untouched.
+    revalidatePrivateBridgeFile(path, opened, 'Bridge log epoch')
+    fsSync.ftruncateSync(opened.fd, 0)
+    fsSync.writeFileSync(opened.fd, String(epoch), 'utf8')
+    fsSync.fsyncSync(opened.fd)
+    revalidatePrivateBridgeFile(path, opened, 'Bridge log epoch')
+  } finally {
+    if (opened) fsSync.closeSync(opened.fd)
+  }
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value && typeof value === 'object' && !Array.isArray(value))
@@ -477,13 +874,14 @@ export function brokerRequest(socketPath: string, request: unknown): Promise<unk
       const line = buffer.slice(0, lineEnd).trim()
       try {
         finish(JSON.parse(line))
-      } catch (error) {
-        finish({ ok: false, error: error instanceof Error ? error.message : String(error) })
+      } catch {
+        finish({ ok: false, error: 'TaskWraith MCP broker returned malformed JSON.' })
       }
     })
     socket.on('error', (error) => {
       clearTimeout(timeout)
-      finish({ ok: false, error: error.message })
+      bridgeLog(`broker client connection-failed ${bridgeFailureMetadata(error)}`)
+      finish({ ok: false, error: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE })
     })
     socket.on('close', () => {
       clearTimeout(timeout)
@@ -506,6 +904,228 @@ export function parseBridgeSocketArg(
 export function parseBridgeTokenArg(argv: string[] = process.argv): string {
   const index = argv.indexOf(GEMINI_MCP_TOKEN_ARG)
   return index >= 0 && argv[index + 1] ? argv[index + 1] : ''
+}
+
+export function parseBridgeLogEpochArg(argv: string[] = process.argv): number | null {
+  const index = argv.indexOf(GEMINI_MCP_LOG_EPOCH_ARG)
+  if (index < 0 || !argv[index + 1]) return null
+  const parsed = Number(argv[index + 1])
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : null
+}
+
+const BRIDGE_SECRET_ARG_NAMES = new Set([
+  GEMINI_MCP_TOKEN_ARG,
+  '--api-key',
+  '--auth-token',
+  '--broker-token',
+  '--password',
+  '--secret'
+])
+const BRIDGE_PATH_ARG_NAMES = new Set([
+  GEMINI_MCP_SOCKET_ARG,
+  '--config',
+  '--config-path',
+  '--cwd',
+  '--dir',
+  '--directory',
+  '--home',
+  '--mcp-config',
+  '--path',
+  '--user-data-dir',
+  '--workdir',
+  '--workspace',
+  '--workspace-path'
+])
+const BRIDGE_STRUCTURAL_FLAG_ARG_NAMES = new Set([
+  GEMINI_MCP_BRIDGE_ARG,
+  GEMINI_MCP_SAFE_SUBSET_ARG,
+  GEMINI_MCP_PLAN_SUBSET_ARG,
+  GEMINI_MCP_CORE_SUBSET_ARG,
+  GEMINI_MCP_GATEWAY_SUBSET_ARG,
+  GEMINI_MCP_AUDIT_SUBSET_ARG
+])
+
+type BridgeLogRedaction = '<redacted>' | '<redacted-path>'
+
+function bridgeArgNameAndInlineValue(arg: string): { name: string; value?: string } {
+  const equals = arg.indexOf('=')
+  if (equals <= 0) return { name: arg.toLowerCase() }
+  return {
+    name: arg.slice(0, equals).toLowerCase(),
+    value: arg.slice(equals + 1)
+  }
+}
+
+function bridgeArgRedaction(name: string): BridgeLogRedaction | null {
+  if (BRIDGE_SECRET_ARG_NAMES.has(name)) return '<redacted>'
+  if (BRIDGE_PATH_ARG_NAMES.has(name)) return '<redacted-path>'
+  return null
+}
+
+function looksLikeBridgePath(value: string): boolean {
+  return (
+    value.startsWith('/') ||
+    value.startsWith('~/') ||
+    value.startsWith('./') ||
+    value.startsWith('../') ||
+    value.startsWith('file:') ||
+    /^[a-zA-Z]:[\\/]/.test(value) ||
+    value.includes('/') ||
+    value.includes('\\')
+  )
+}
+
+function bridgeStartupSensitiveArgValues(
+  argv: readonly string[]
+): Array<{ value: string; replacement: BridgeLogRedaction }> {
+  const sensitive: Array<{ value: string; replacement: BridgeLogRedaction }> = []
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = String(argv[index] ?? '')
+    const parsed = bridgeArgNameAndInlineValue(arg)
+    const replacement = bridgeArgRedaction(parsed.name)
+    if (replacement) {
+      if (parsed.value !== undefined) {
+        if (parsed.value) sensitive.push({ value: parsed.value, replacement })
+      } else if (index + 1 < argv.length) {
+        const value = String(argv[index + 1] ?? '')
+        if (value) sensitive.push({ value, replacement })
+        index += 1
+      }
+      continue
+    }
+    if (looksLikeBridgePath(arg)) {
+      sensitive.push({ value: arg, replacement: '<redacted-path>' })
+    }
+  }
+  return sensitive
+}
+
+/**
+ * Return a diagnostic-only argv projection. Broker credentials and all known
+ * path-bearing values are represented by fixed markers rather than persisted.
+ */
+export function sanitizeBridgeStartupArgvForLog(argv: readonly string[]): string[] {
+  const sanitized: string[] = []
+  for (let index = 0; index < argv.length; index += 1) {
+    const arg = String(argv[index] ?? '')
+    const parsed = bridgeArgNameAndInlineValue(arg)
+    const replacement = bridgeArgRedaction(parsed.name)
+    if (replacement) {
+      if (parsed.value !== undefined) {
+        sanitized.push(`${arg.slice(0, arg.indexOf('='))}=${replacement}`)
+      } else {
+        sanitized.push(arg, replacement)
+        if (index + 1 < argv.length) index += 1
+      }
+      continue
+    }
+    if (parsed.name === GEMINI_MCP_LOG_EPOCH_ARG) {
+      if (parsed.value !== undefined) {
+        sanitized.push(`${GEMINI_MCP_LOG_EPOCH_ARG}=<epoch>`)
+      } else {
+        sanitized.push(GEMINI_MCP_LOG_EPOCH_ARG, '<epoch>')
+        if (index + 1 < argv.length) index += 1
+      }
+      continue
+    }
+    if (BRIDGE_STRUCTURAL_FLAG_ARG_NAMES.has(parsed.name)) {
+      sanitized.push(parsed.name)
+      continue
+    }
+    if (looksLikeBridgePath(arg)) {
+      sanitized.push('<redacted-path>')
+      continue
+    }
+    sanitized.push(arg.startsWith('--') ? '<option>' : '<arg>')
+  }
+  return sanitized
+}
+
+function registerBridgeLogSensitiveValues(
+  values: Array<{ value: string | undefined; replacement: BridgeLogRedaction }>
+): void {
+  for (const { value, replacement } of values) {
+    if (!value) continue
+    bridgeLogSensitiveValues.set(value, replacement)
+  }
+}
+
+function sanitizeBridgeLogMessage(message: string): string {
+  let sanitized = sanitizeCanvasEvalProviderText(message)
+  const sensitive = [...bridgeLogSensitiveValues.entries()].sort(
+    ([left], [right]) => right.length - left.length
+  )
+  for (const [value, replacement] of sensitive) {
+    sanitized = sanitized.split(value).join(replacement)
+  }
+  return sanitized.slice(0, BRIDGE_LOG_MAX_LINE_CHARS)
+}
+
+function bridgeStructuralKind(value: unknown): string {
+  if (value === null) return 'null'
+  if (Array.isArray(value)) return 'array'
+  if (value instanceof Error) return 'error'
+  return typeof value
+}
+
+function bridgeToolArgumentsMetadata(args: unknown): string {
+  const kind = bridgeStructuralKind(args)
+  const fieldCount = isRecord(args) ? Object.keys(args).length : 0
+  const itemCount = Array.isArray(args) ? args.length : 0
+  let byteLength = 0
+  try {
+    const serialized = JSON.stringify(args)
+    if (serialized !== undefined) byteLength = Buffer.byteLength(serialized, 'utf8')
+  } catch {
+    // Parsed JSON normally cannot reach this path; retain only a zero length if
+    // a focused test or host shim supplies an unserializable value.
+  }
+  return `args.kind=${kind} args.fields=${fieldCount} args.items=${itemCount} args.bytes=${byteLength}`
+}
+
+function bridgeFailureMetadata(value: unknown): string {
+  return `failure.kind=${bridgeStructuralKind(value)}`
+}
+
+function bridgeToolLogName(
+  name: unknown,
+  gatewayTarget?: GatewayInvocationTarget | null
+): string {
+  const canonical = String(name || '')
+  const outerKnown =
+    isTaskWraithMcpToolName(canonical) ||
+    isCapabilityGatewayToolName(canonical) ||
+    isBridgeAuditMcpToolName(canonical)
+  const outer = outerKnown ? canonical : 'unknown'
+  if (gatewayTarget?.ok) return `${outer}->${gatewayTarget.name}`
+  return outer
+}
+
+export function buildBridgeStartupLogMessage(input: {
+  argv: readonly string[]
+  cwd: string
+  runId?: string
+  parentProvider?: string
+  workspacePath?: string
+}): string {
+  const parentProvider = VALID_BROKER_PARENT_PROVIDERS.has(input.parentProvider as ProviderId)
+    ? input.parentProvider
+    : input.parentProvider
+      ? 'unknown'
+      : ''
+  return (
+    `spawn argv=${JSON.stringify(sanitizeBridgeStartupArgvForLog(input.argv))}` +
+    ` cwd=<redacted-path>` +
+    ` env.TASKWRAITH_RUN_ID.present=${String(Boolean(input.runId))}` +
+    ` env.TASKWRAITH_PARENT_PROVIDER=${parentProvider}` +
+    ` env.TASKWRAITH_WORKSPACE_PATH=${input.workspacePath ? '<redacted-path>' : ''}`
+  )
+}
+
+/** Pin the child to the generation its parent captured before any log access. */
+export function configureBridgeLogProcessEpochFromLaunch(argv: string[] = process.argv): void {
+  bridgeLogEpochPinnedByLaunch = true
+  bridgeLogProcessEpoch = parseBridgeLogEpochArg(argv)
 }
 
 type SafeWritable = {
@@ -570,35 +1190,195 @@ export function writeMcpError(
   writeMcpPayload({ jsonrpc: '2.0', id: id ?? null, error: { code, message } }, transport, stdout)
 }
 
+function resolveBridgeLogPathStrict(): string {
+  const logsDir = canonicalBridgeLogDirectory()
+  ensurePrivateBridgeLogDirectory(logsDir)
+  const path = join(logsDir, 'bridge-subprocess.log')
+  const epochPath = `${path}.epoch`
+  const durableEpoch = readBridgeLogEpochStrict(epochPath)
+  if (!bridgeLogEpochPinnedByLaunch) bridgeLogProcessEpoch = durableEpoch
+  if (bridgeLogProcessEpoch === null) {
+    throw new Error('Bridge log launch epoch is invalid.')
+  }
+
+  let opened: { fd: number; stat: fsSync.Stats } | null = null
+  try {
+    opened = openPrivateBridgeFile(path, fsSync.constants.O_RDWR, {
+      create: false,
+      missingOk: true,
+      label: 'Bridge subprocess log'
+    })
+  } finally {
+    if (opened) fsSync.closeSync(opened.fd)
+  }
+
+  bridgeLogPath = path
+  bridgeLogEpochPath = epochPath
+  return path
+}
+
 export function resolveBridgeLogPath(): string | null {
   if (bridgeLogResolved) return bridgeLogPath
   bridgeLogResolved = true
   try {
-    const logsDir = join(os.homedir(), 'Library', 'Logs', 'TaskWraith')
-    fsSync.mkdirSync(logsDir, { recursive: true })
-    bridgeLogPath = join(logsDir, 'bridge-subprocess.log')
-    try {
-      const stat = fsSync.statSync(bridgeLogPath)
-      if (stat.size > BRIDGE_LOG_MAX_BYTES) {
-        fsSync.writeFileSync(bridgeLogPath, '')
-      }
-    } catch {
-      // File does not exist yet; first append will create it.
-    }
+    return resolveBridgeLogPathStrict()
   } catch {
     bridgeLogPath = null
+    bridgeLogEpochPath = null
+    return null
   }
-  return bridgeLogPath
 }
 
 export function bridgeLog(message: string, pid: number = process.pid): void {
-  const path = resolveBridgeLogPath()
-  if (!path) return
+  if (bridgeLogHistoryClearHolds > 0) return
+  let opened: { fd: number; stat: fsSync.Stats } | null = null
+  let lock: BridgeLogLock | null = null
   try {
-    const line = `[${new Date().toISOString()}] pid=${pid} ${message}\n`
-    fsSync.appendFileSync(path, line)
+    const path = resolveBridgeLogPath()
+    if (!path) return
+    lock = tryAcquireBridgeLogLock(path)
+    if (!lock) return
+    validateBridgeLogLock(lock)
+    if (
+      !bridgeLogEpochPath ||
+      bridgeLogProcessEpoch === null ||
+      readBridgeLogEpochStrict(bridgeLogEpochPath) !== bridgeLogProcessEpoch
+    ) {
+      // The process was alive before a global history clear. It must never
+      // repopulate the new generation's diagnostic log after the clear returns.
+      return
+    }
+    opened = openPrivateBridgeFile(
+      path,
+      fsSync.constants.O_WRONLY | fsSync.constants.O_APPEND,
+      { create: true, label: 'Bridge subprocess log' }
+    )
+    if (!opened) return
+    validateBridgeLogLock(lock)
+    revalidatePrivateBridgeFile(path, opened, 'Bridge subprocess log')
+    if (opened.stat.size > BRIDGE_LOG_MAX_BYTES) {
+      fsSync.ftruncateSync(opened.fd, 0)
+      fsSync.fsyncSync(opened.fd)
+      revalidatePrivateBridgeFile(path, opened, 'Bridge subprocess log')
+    }
+    // Clear holds the same cross-process lock while it advances the epoch and
+    // truncates. A child that checked the old epoch can therefore only finish
+    // its append before clear acquires the lock; it can never publish after a
+    // successful clear returns.
+    validateBridgeLogLock(lock)
+    if (
+      !bridgeLogEpochPath ||
+      bridgeLogProcessEpoch === null ||
+      readBridgeLogEpochStrict(bridgeLogEpochPath) !== bridgeLogProcessEpoch
+    ) {
+      return
+    }
+    const line = `[${new Date().toISOString()}] pid=${pid} ${sanitizeBridgeLogMessage(message)}\n`
+    fsSync.writeSync(opened.fd, line)
+    revalidatePrivateBridgeFile(path, opened, 'Bridge subprocess log')
   } catch {
-    // Logging failures must never crash the bridge.
+    // Runtime diagnostics are deliberately best-effort. Privacy-critical user
+    // history clears use the strict path below and propagate every failure.
+  } finally {
+    if (opened) {
+      try {
+        fsSync.closeSync(opened.fd)
+      } catch {
+        // best-effort
+      }
+    }
+    if (lock) {
+      try {
+        releaseBridgeLogLock(lock)
+      } catch {
+        // A failed diagnostic append/lock release is best-effort. Strict clear
+        // validates and waits on the lock path before committing history.
+      }
+    }
+  }
+}
+
+function purgeBridgeSubprocessLogHistoryStrict(targetPath: string): 'cleared' | 'missing' {
+  let opened: { fd: number; stat: fsSync.Stats } | null = null
+  try {
+    opened = openPrivateBridgeFile(targetPath, fsSync.constants.O_RDWR, {
+      create: false,
+      missingOk: true,
+      label: 'Bridge subprocess log'
+    })
+    if (!opened) return 'missing'
+    // Never add O_TRUNC to open: validate the path, fd, owner, mode, directory,
+    // and link count first, then mutate only the already-verified descriptor.
+    revalidatePrivateBridgeFile(targetPath, opened, 'Bridge subprocess log')
+    fsSync.ftruncateSync(opened.fd, 0)
+    fsSync.fsyncSync(opened.fd)
+    revalidatePrivateBridgeFile(targetPath, opened, 'Bridge subprocess log')
+    return 'cleared'
+  } finally {
+    if (opened) fsSync.closeSync(opened.fd)
+  }
+}
+
+/** Truncate and suspend bridge diagnostics for a global clear transaction. */
+export async function beginBridgeSubprocessLogHistoryClear(
+  targetPath?: string | null
+): Promise<BridgeLogHistoryPurgeResult> {
+  // This executes before the async function returns its Promise, so log
+  // admission is fenced synchronously even when strict validation later fails.
+  bridgeLogHistoryClearHolds += 1
+  const path =
+    targetPath === undefined ? resolveBridgeLogPathStrict() : targetPath
+  if (!path) return { status: 'missing', epoch: bridgeLogProcessEpoch ?? 0 }
+
+  const lock = await acquireBridgeLogLockStrict(path)
+  try {
+    validateBridgeLogLock(lock)
+    const epochPath = `${path}.epoch`
+    const current = readBridgeLogEpochStrict(epochPath)
+    if (current >= Number.MAX_SAFE_INTEGER) {
+      throw new Error('Bridge log epoch cannot be advanced safely.')
+    }
+    const next = current + 1
+    writeBridgeLogEpoch(epochPath, next)
+    // The process that owns the clear joins the new generation; already-running
+    // subprocesses retain their old process-local epoch and fail closed.
+    if (path === bridgeLogPath) {
+      bridgeLogEpochPath = epochPath
+      bridgeLogProcessEpoch = next
+    }
+    validateBridgeLogLock(lock)
+    const status = purgeBridgeSubprocessLogHistoryStrict(path)
+    validateBridgeLogLock(lock)
+    return { status, epoch: next }
+  } finally {
+    releaseBridgeLogLock(lock)
+  }
+}
+
+/** Release one global clear hold after old provider transports are quiescent. */
+export function endBridgeSubprocessLogHistoryClear(): void {
+  if (bridgeLogHistoryClearHolds > 0) bridgeLogHistoryClearHolds -= 1
+}
+
+/** Best-effort runtime rotation; user history deletion uses the strict begin path. */
+export function clearBridgeSubprocessLogHistory(targetPath?: string | null): void {
+  const path = targetPath === undefined ? resolveBridgeLogPath() : targetPath
+  if (!path) return
+  let lock: BridgeLogLock | null = null
+  try {
+    lock = tryAcquireBridgeLogLock(path)
+    if (!lock) return
+    purgeBridgeSubprocessLogHistoryStrict(path)
+  } catch {
+    // A diagnostic rotation must not crash a provider runtime.
+  } finally {
+    if (lock) {
+      try {
+        releaseBridgeLogLock(lock)
+      } catch {
+        // best-effort
+      }
+    }
   }
 }
 
@@ -699,18 +1479,20 @@ export function handleMcpJsonRpcMessage(
       name === 'capability_invoke' ? resolveBridgeGatewayInvocationTarget(args) : null
     if (gatewayInvocationTarget && !gatewayInvocationTarget.ok) {
       bridgeLog(
-        `tools/call REJECTED (gateway target) name=${String(rawName)} ` +
-          `id=${String(id)} reason=${gatewayInvocationTarget.error}`
+        `tools/call rejected scope=gateway-target tool=${bridgeToolLogName(name)} ` +
+          'reason=invalid-target'
       )
       writeMcpError(id, -32602, gatewayInvocationTarget.error, transport, stdout)
       return
     }
     const policyToolName = gatewayInvocationTarget?.ok ? gatewayInvocationTarget.name : name
+    const canvasEvalLogEnvelope = policyToolName === 'canvas_eval'
+    const safeLogName = bridgeToolLogName(name, gatewayInvocationTarget)
     if (gatewayToolRequested && !gatewaySubsetOnly) {
       writeMcpError(
         id,
         -32601,
-        `Tool '${String(rawName || name)}' is available only in the TaskWraith gateway MCP profile.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is available only in the TaskWraith gateway MCP profile.`,
         transport,
         stdout
       )
@@ -758,13 +1540,12 @@ export function handleMcpJsonRpcMessage(
       isExactReviewerVerdictCall
     if (safeSubsetOnly && !safeScopedToolAllowed && !auditToolRequested) {
       bridgeLog(
-        `tools/call REJECTED (${planSubset ? 'plan' : 'read-only'} scope) ` +
-          `name=${String(rawName)} canonical=${String(name)} id=${String(id)}`
+        `tools/call rejected scope=${planSubset ? 'plan' : 'read-only'} tool=${safeLogName}`
       )
       writeMcpError(
         id,
         -32601,
-        `Tool '${String(rawName || name)}' is not available to a read-only TaskWraith seat.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not available to a read-only TaskWraith seat.`,
         transport,
         stdout
       )
@@ -781,14 +1562,11 @@ export function handleMcpJsonRpcMessage(
       !isGatewayMcpAdvertisedForSeat(String(name)) &&
       !auditToolRequested
     ) {
-      bridgeLog(
-        `tools/call REJECTED (gateway scope) name=${String(rawName)} ` +
-          `canonical=${String(name)} id=${String(id)}`
-      )
+      bridgeLog(`tools/call rejected scope=gateway tool=${safeLogName}`)
       writeMcpError(
         id,
         -32601,
-        `Tool '${String(rawName || name)}' is not directly available in the TaskWraith gateway MCP profile. Use capability_search and capability_invoke.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not directly available in the TaskWraith gateway MCP profile. Use capability_search and capability_invoke.`,
         transport,
         stdout
       )
@@ -804,23 +1582,17 @@ export function handleMcpJsonRpcMessage(
       !isCoreMcpAdvertisedForSeat(String(name)) &&
       !auditToolRequested
     ) {
-      bridgeLog(
-        `tools/call REJECTED (core scope) name=${String(rawName)} ` +
-          `canonical=${String(name)} id=${String(id)}`
-      )
+      bridgeLog(`tools/call rejected scope=core tool=${safeLogName}`)
       writeMcpError(
         id,
         -32601,
-        `Tool '${String(rawName || name)}' is not available in the TaskWraith core MCP profile.`,
+        `Tool '${canvasEvalLogEnvelope ? safeLogName : String(rawName || name)}' is not available in the TaskWraith core MCP profile.`,
         transport,
         stdout
       )
       return
     }
-    bridgeLog(
-      `tools/call name=${String(rawName)} canonical=${String(name)} id=${String(id)} ` +
-        `args=${JSON.stringify(args).slice(0, 200)}`
-    )
+    bridgeLog(`tools/call started tool=${safeLogName} ${bridgeToolArgumentsMetadata(args)}`)
     const requestBroker = deps.brokerRequest || brokerRequest
     requestBroker(socketPath, {
       id: id ?? `${Date.now()}-${Math.random().toString(36).slice(2)}`,
@@ -839,26 +1611,34 @@ export function handleMcpJsonRpcMessage(
         const responseFromResult =
           deps.mcpToolCallResponseFromBrokerResult || mcpToolCallResponseFromBrokerResult
         const resultRecord = isRecord(result) ? result : {}
+        const outcome =
+          resultRecord.ok === true ? 'ok' : resultRecord.ok === false ? 'error' : 'unknown'
+        const resultText =
+          typeof resultRecord.text === 'string'
+            ? resultRecord.text
+            : typeof resultRecord.error === 'string'
+              ? resultRecord.error
+              : ''
+        const contentBlocks = Array.isArray(resultRecord.content)
+          ? resultRecord.content.length
+          : 0
         bridgeLog(
-          `tools/call name=${String(rawName)} canonical=${String(name)} id=${String(id)} ` +
-            `result.ok=${String(resultRecord.ok)} text.len=${String((String(resultRecord.text || resultRecord.error || '')).length)}`
+          `tools/call completed tool=${safeLogName} outcome=${outcome} ` +
+            `result.bytes=${Buffer.byteLength(resultText, 'utf8')} content.blocks=${contentBlocks}`
         )
         try {
           writeMcpResponse(id, responseFromResult(result), transport, stdout)
         } catch (writeError) {
-          bridgeLog(
-            `tools/call write FAILED id=${String(id)} err=${writeError instanceof Error ? writeError.message : String(writeError)}`
-          )
+          bridgeLog(`tools/call response-write-failed ${bridgeFailureMetadata(writeError)}`)
         }
       })
       .catch((rejection) => {
-        const reasonText = rejection instanceof Error ? rejection.message : String(rejection)
-        bridgeLog(`tools/call REJECTION id=${String(id)} reason=${reasonText}`)
+        bridgeLog(`tools/call broker-rejected ${bridgeFailureMetadata(rejection)}`)
         try {
           writeMcpResponse(
             id,
             {
-              content: [{ type: 'text', text: `TaskWraith bridge internal error: ${reasonText}` }],
+              content: [{ type: 'text', text: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE }],
               isError: true
             },
             transport,
@@ -881,22 +1661,32 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
   const exit = deps.exit || ((code?: number) => process.exit(code))
   const socketPath = parseBridgeSocketArg(argv, deps.getDefaultSocketPath())
   const brokerToken = parseBridgeTokenArg(argv)
+  const cwd = deps.cwd?.() || process.cwd()
+  const workspacePath = env.TASKWRAITH_WORKSPACE_PATH || ''
+  registerBridgeLogSensitiveValues([
+    { value: brokerToken, replacement: '<redacted>' },
+    { value: socketPath, replacement: '<redacted-path>' },
+    { value: cwd, replacement: '<redacted-path>' },
+    { value: workspacePath, replacement: '<redacted-path>' },
+    ...bridgeStartupSensitiveArgValues(argv.slice(1))
+  ])
+  configureBridgeLogProcessEpochFromLaunch(argv)
   bridgeLog(
-    `spawn argv=${JSON.stringify(argv.slice(1))} cwd=${deps.cwd?.() || process.cwd()} env.TASKWRAITH_RUN_ID=${env.TASKWRAITH_RUN_ID || ''} env.TASKWRAITH_PARENT_PROVIDER=${env.TASKWRAITH_PARENT_PROVIDER || ''} env.TASKWRAITH_WORKSPACE_PATH=${env.TASKWRAITH_WORKSPACE_PATH || ''}`,
+    buildBridgeStartupLogMessage({
+      argv: argv.slice(1),
+      cwd,
+      runId: env.TASKWRAITH_RUN_ID,
+      parentProvider: env.TASKWRAITH_PARENT_PROVIDER,
+      workspacePath
+    }),
     deps.pid?.() || process.pid
   )
 
   process.on('uncaughtException', (error) => {
-    bridgeLog(
-      `uncaughtException: ${error instanceof Error ? `${error.message}\n${error.stack}` : String(error)}`,
-      deps.pid?.() || process.pid
-    )
+    bridgeLog(`uncaughtException ${bridgeFailureMetadata(error)}`, deps.pid?.() || process.pid)
   })
   process.on('unhandledRejection', (reason) => {
-    bridgeLog(
-      `unhandledRejection: ${reason instanceof Error ? `${reason.message}\n${reason.stack}` : String(reason)}`,
-      deps.pid?.() || process.pid
-    )
+    bridgeLog(`unhandledRejection ${bridgeFailureMetadata(reason)}`, deps.pid?.() || process.pid)
   })
 
   let buffer = Buffer.alloc(0)
@@ -920,15 +1710,12 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
         buffer = buffer.subarray(bodyStart + contentLength)
         try {
           handleMcpJsonRpcMessage(deps, socketPath, brokerToken, JSON.parse(body), 'framed')
-        } catch (error) {
-          bridgeLog(
-            `parse FAILED (framed) err=${error instanceof Error ? error.message : String(error)}`,
-            deps.pid?.() || process.pid
-          )
+        } catch {
+          bridgeLog('parse FAILED (framed): malformed JSON', deps.pid?.() || process.pid)
           writeMcpError(
             null,
             -32700,
-            error instanceof Error ? error.message : String(error),
+            'Malformed MCP JSON request.',
             'framed',
             stdout
           )
@@ -944,15 +1731,12 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
       if (!line) continue
       try {
         handleMcpJsonRpcMessage(deps, socketPath, brokerToken, JSON.parse(line), 'line')
-      } catch (error) {
-        bridgeLog(
-          `parse FAILED (line) err=${error instanceof Error ? error.message : String(error)}`,
-          deps.pid?.() || process.pid
-        )
+      } catch {
+        bridgeLog('parse FAILED (line): malformed JSON', deps.pid?.() || process.pid)
         writeMcpError(
           null,
           -32700,
-          error instanceof Error ? error.message : String(error),
+          'Malformed MCP JSON request.',
           'line',
           stdout
         )
@@ -973,10 +1757,10 @@ export function startGeminiMcpBridgeProcess(deps: GeminiMcpBridgeProcessDeps): v
     exit(0)
   })
   stdin.on('error', (error) => {
-    bridgeLog(`stdin error: ${error instanceof Error ? error.message : String(error)}`)
+    bridgeLog(`stdin error ${bridgeFailureMetadata(error)}`)
   })
   stdout.on('error', (error) => {
-    bridgeLog(`stdout error: ${error instanceof Error ? error.message : String(error)}`)
+    bridgeLog(`stdout error ${bridgeFailureMetadata(error)}`)
   })
   process.on('exit', (code) => {
     bridgeLog(`process exit code=${code ?? 'unknown'}`, deps.pid?.() || process.pid)
@@ -1000,7 +1784,6 @@ export class McpBridgeRuntime {
   } | null = null
   private geminiMcpBridgeInstalledForCurrentToken = false
   private kimiMcpBridgeInstalledForCurrentToken = false
-  private kimiMcpBridgeRepairPromise: Promise<void> | null = null
 
   constructor(private readonly deps: McpBridgeRuntimeDeps) {}
 
@@ -1042,6 +1825,14 @@ export class McpBridgeRuntime {
     coreSubset = false,
     gatewaySubset = false
   ): string[] {
+    const logEpochPath = join(
+      os.homedir(),
+      'Library',
+      'Logs',
+      'TaskWraith',
+      'bridge-subprocess.log.epoch'
+    )
+    const logEpoch = readBridgeLogEpoch(logEpochPath)
     return [
       ...(this.deps.isDev() ? [this.deps.getAppPath()] : []),
       GEMINI_MCP_BRIDGE_ARG,
@@ -1049,13 +1840,17 @@ export class McpBridgeRuntime {
       socketPath,
       GEMINI_MCP_TOKEN_ARG,
       this.deps.getGeminiMcpBrokerToken(),
-      // Read-only seat (Grok): append the scope flag LAST so socket/token
-      // index-based parsing is unaffected. Default false keeps the Gemini/Kimi
-      // launch args byte-identical (bridgeArgsMatchCurrentLaunch still matches).
+      // Pin logging generation before the bridge child can emit its first line.
+      // An invalid/missing epoch fails closed inside the child.
+      GEMINI_MCP_LOG_EPOCH_ARG,
+      logEpoch === null ? 'invalid' : String(logEpoch),
+      // Read-only seat (Grok): append the scope flag after the fixed launch
+      // authority fields so socket/token index-based parsing is unaffected.
+      // bridgeArgsMatchCurrentLaunch compares the epoch-stamped argv exactly.
       ...(safeSubset ? [GEMINI_MCP_SAFE_SUBSET_ARG] : []),
       // Plan-tier seat: widen the safe-subset to the plan instruments. Appended
-      // after --safe-subset, still index-safe; default false keeps the persistent
-      // Gemini/Kimi launch args byte-identical (bridgeArgsMatchCurrentLaunch).
+      // after --safe-subset and remains index-safe. Default false omits only this
+      // optional profile flag; every launch still carries its log epoch.
       ...(planSubset ? [GEMINI_MCP_PLAN_SUBSET_ARG] : []),
       // Tool-count constrained model seat: advertise the explicit coding/core
       // profile while retaining normal write approvals. Appended last so the
@@ -1166,10 +1961,10 @@ export class McpBridgeRuntime {
             let parsed: unknown
             try {
               parsed = JSON.parse(trimmed)
-            } catch (error) {
+            } catch {
               safeMcpStreamWrite(
                 socket,
-                `${JSON.stringify({ ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
+                `${JSON.stringify({ ok: false, error: 'Malformed broker JSON request.' })}\n`
               )
               continue
             }
@@ -1181,12 +1976,13 @@ export class McpBridgeRuntime {
                   `${JSON.stringify({ id: parsedRecord.id, ...coerceRecord(result) })}\n`
                 )
               )
-              .catch((error) =>
+              .catch((error) => {
+                bridgeLog(`broker execution-rejected ${bridgeFailureMetadata(error)}`)
                 safeMcpStreamWrite(
                   socket,
-                  `${JSON.stringify({ id: parsedRecord.id, ok: false, error: error instanceof Error ? error.message : String(error) })}\n`
+                  `${JSON.stringify({ id: parsedRecord.id, ok: false, error: MCP_UNEXPECTED_INTERNAL_ERROR_MESSAGE })}\n`
                 )
-              )
+              })
           }
         })
       })
@@ -1853,110 +2649,40 @@ export class McpBridgeRuntime {
     )
   }
 
-  async addKimiMcpBridgeRegistration(kimiBinaryPath: string, socketPath: string): Promise<void> {
-    const addArgs = buildKimiMcpBridgeAddArgs({
-      bridgeBinaryPath: this.processExecPath(),
-      // Kimi owns one global MCP registration rather than a receipted,
-      // session-scoped tool surface. Keep that TaskWraith-owned registration on
-      // the compact gateway profile by default, while leaving user MCP servers
-      // and Kimi-native tools untouched. Native sessions may observe a repaired
-      // registration on Kimi's own refresh schedule; do not claim a session fence.
-      bridgeArgs: this.taskwraithMcpBridgeArgs(socketPath, false, false, false, true)
-    })
-    const addResult = await this.deps.captureProcessOutput(kimiBinaryPath, addArgs, undefined, 15_000)
-    if (addResult.code !== 0) {
-      const output = (
-        addResult.stderr ||
-        addResult.stdout ||
-        addResult.error ||
-        'kimi mcp add failed.'
-      ).trim()
-      const safeArgs = redactKimiMcpBridgeAddArgs(addArgs)
-      throw new Error(
-        `Kimi MCP bridge registration failed (exit ${addResult.code ?? 'unknown'}): kimi ${safeArgs.join(' ')}\n${output}`
-      )
-    }
+  async addKimiMcpBridgeRegistration(
+    _kimiBinaryPath: string,
+    _socketPath: string
+  ): Promise<void> {
+    throw new Error(
+      'Global Kimi MCP registration is retired; managed Kimi uses a per-run authenticated HTTP gateway.'
+    )
   }
 
   async removeKimiMcpBridgeRegistration(
-    kimiBinaryPath: string,
-    serverName: string
+    _kimiBinaryPath: string,
+    _serverName: string
   ): Promise<boolean> {
-    const removeResult = await this.deps.captureProcessOutput(
-      kimiBinaryPath,
-      buildKimiMcpBridgeRemoveArgs(serverName),
-      undefined,
-      8_000
-    )
-    return removeResult.code === 0
+    return false
   }
 
-  async pruneLegacyKimiMcpBridgeRegistrations(kimiBinaryPath: string): Promise<string[]> {
-    const removed: string[] = []
-    for (const serverName of KIMI_LEGACY_TASKWRAITH_SERVER_NAMES) {
-      try {
-        if (await this.removeKimiMcpBridgeRegistration(kimiBinaryPath, serverName)) {
-          removed.push(serverName)
-        }
-      } catch {
-        // Best effort: stale legacy registrations should not block current TaskWraith setup.
-      }
-    }
-    return removed
+  async pruneLegacyKimiMcpBridgeRegistrations(_kimiBinaryPath: string): Promise<string[]> {
+    return []
   }
 
   async installKimiMcpBridge(): Promise<void> {
-    await this.startGeminiMcpBroker()
-    const resolved = await this.deps.resolveCliProviderBinary('kimi')
-    if (!resolved.binaryPath) {
-      return
-    }
-    await this.pruneLegacyKimiMcpBridgeRegistrations(resolved.binaryPath)
-    const bridgeCommandStatus = this.taskwraithMcpBridgeCommandStatus()
-    if (!bridgeCommandStatus.available) {
-      await this.removeKimiMcpBridgeRegistration(resolved.binaryPath, KIMI_TASKWRAITH_SERVER_NAME)
-      this.kimiMcpBridgeInstalledForCurrentToken = false
-      throw new Error(this.taskwraithMcpBridgeCommandUnavailableMessage(bridgeCommandStatus))
-    }
-    const socketPath = this.deps.getGeminiMcpSocketPath()
-    await this.addKimiMcpBridgeRegistration(resolved.binaryPath, socketPath)
-    this.kimiMcpBridgeInstalledForCurrentToken = true
+    throw new Error(
+      'Global Kimi MCP repair is retired; managed Kimi requires its per-run HTTP gateway.'
+    )
   }
 
   async repairKimiMcpBridge(): Promise<void> {
-    if (!this.kimiMcpBridgeRepairPromise) {
-      this.kimiMcpBridgeRepairPromise = this.installKimiMcpBridge().finally(() => {
-        this.kimiMcpBridgeRepairPromise = null
-      })
-    }
-    await this.kimiMcpBridgeRepairPromise
+    await this.installKimiMcpBridge()
   }
 
-  async prepareKimiMcpBridgeForRun(sender: WebContents): Promise<boolean> {
-    const settings = this.deps.getSettings()
-    if (!settings.geminiMcpBridgeEnabled) {
-      return false
-    }
-    try {
-      await this.startGeminiMcpBroker()
-      // Active Kimi processes receive an isolated --mcp-config-file from the
-      // provider launch path. Do not rewrite ~/.kimi/mcp.json here: that file is
-      // shared by Release and Dev, so a global repair routes the other app's
-      // already-running seats into this broker. We only prove that this app's
-      // broker and bridge command are ready for the per-run document.
-      this.assertTaskWraithMcpBridgeCommandAvailable()
-      return true
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      this.deps.sendAgentCompatLine(sender, 'kimi', {
-        type: 'provider_warning',
-        provider: 'kimi',
-        severity: 'warning',
-        title: 'Kimi MCP bridge preparation failed',
-        message: `TaskWraith could not prepare its isolated MCP server for Kimi: ${message}. TaskWraith MCP tools will not be available for this run.`
-      })
-      return false
-    }
+  async prepareKimiMcpBridgeForRun(_sender: WebContents): Promise<boolean> {
+    // Legacy Wire/print repair is inert. Production ACP starts an authenticated
+    // per-run HTTP gateway inside its launch composition instead.
+    return false
   }
 
   getGeminiMcpBridgeInstalledForCurrentToken(): boolean {

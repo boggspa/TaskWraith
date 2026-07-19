@@ -19,6 +19,8 @@ import {
   verifyRunPermissionPosture
 } from '../RunPermissionPosture'
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
+import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
+import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -94,7 +96,7 @@ function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
     appChatId: 'chat-1',
     scope: 'workspace',
-    provider: 'gemini',
+    provider: DEFAULT_PROVIDER,
     title: 'Chat',
     workspaceId: 'workspace-1',
     workspacePath: '/repo',
@@ -152,7 +154,7 @@ function compose(
     provider: chat.provider as ProviderId,
     workspace: chat.workspacePath,
     userInput: 'Do the thing',
-    selectedModelType: 'flash-lite',
+    selectedModelType: 'cli-default',
     approvalMode: 'default',
     ...inputOverrides
   })
@@ -324,7 +326,7 @@ describe('ComposerService', () => {
     }
   })
 
-  it('does not claim an active MCP profile for headless Grok', () => {
+  it('does not claim an ACP profile when the retired override fails the run closed', () => {
     const previous = process.env.TASKWRAITH_GROK_ACP
     process.env.TASKWRAITH_GROK_ACP = '0'
     try {
@@ -333,7 +335,7 @@ describe('ComposerService', () => {
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
       expect(payload.taskWraithMcpProfileId).toBe('taskwraith-full-v1')
-      expect(payload.prompt).not.toContain('TaskWraith core MCP profile is active')
+      expect(payload.prompt).not.toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_GROK_ACP
@@ -361,24 +363,23 @@ describe('ComposerService', () => {
     }
   })
 
-  it('builds Gemini workspace prompts with compact context and write-tool preamble', () => {
-    const payload = compose({ provider: 'gemini' }, {})
-    expect(payload.provider).toBe('gemini')
-    expect(payload.prompt).toContain(
-      `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this Gemini workspace run has access to the TaskWraith MCP server.`
-    )
-    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
-    expect(payload.prompt).not.toContain('workspace/file tools:')
-    expect(payload.prompt).not.toContain('Spawn example')
-    expect(payload.prompt).not.toContain('RECALL')
-    expect(payload.prompt).toContain('Conversation context (last 1 turn(s)):')
-    expect(payload.prompt).toContain('User: Previous question')
-    expect(payload.prompt).toContain('Current user request:\nDo the thing')
-    expect(payload.composer.providerMetadataPatch).toMatchObject({
-      taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
-      taskWraithRuntimePreambleProvider: 'gemini'
+  it('rejects a new Gemini run from a linked historical Gemini chat', () => {
+    const chat = makeChat({
+      provider: 'gemini',
+      linkedGeminiSessionId: 'gemini-session-1'
     })
-    expect(payload.composer.contextTurnsApplied).toBe(6)
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService(deps)
+    expect(() =>
+      service.composeRun({
+        chatId: chat.appChatId,
+        provider: 'gemini',
+        workspace: chat.workspacePath,
+        userInput: 'Continue the historical chat.',
+        selectedModelType: 'flash-lite',
+        approvalMode: 'plan'
+      })
+    ).toThrow('gemini is unavailable for new runs.')
   })
 
   it('carries the per-chat Ollama run profile from providerMetadata onto the run payload', () => {
@@ -404,73 +405,31 @@ describe('ComposerService', () => {
     expect(payload.ollamaRunProfile).toBeUndefined()
   })
 
-  it('keeps Gemini cross-provider guardrails compact on ordinary prompts', () => {
-    const payload = compose({ provider: 'gemini' }, {})
-    expect(payload.prompt).toContain('delegate_to_subthread')
-    expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
-    expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
-    expect(payload.prompt).not.toContain("provider: 'kimi'")
-    expect(payload.prompt).not.toContain('Spawn example')
-    expect(payload.prompt).not.toContain('RECALL')
+  it('does not revive Gemini when a historical chat supplies the provider fallback', () => {
+    const chat = makeChat({ provider: 'gemini' })
+    const { deps } = makeDeps(chat)
+    const service = new ComposerService(deps)
+    expect(() =>
+      service.composeRun({
+        chatId: chat.appChatId,
+        workspace: chat.workspacePath,
+        userInput: 'Start another run.',
+        selectedModelType: 'flash-lite',
+        approvalMode: 'default'
+      })
+    ).toThrow('gemini is unavailable for new runs.')
   })
 
-  it('adds Gemini sub-thread recall guidance only when delegation is requested', () => {
+  it('maps non-plan global runs back to default approval mode', () => {
     const payload = compose(
-      { provider: 'gemini' },
-      { userInput: 'Use two review agents and delegate one pass to Kimi.' }
-    )
-    expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
-    expect(payload.prompt).toContain("provider: 'kimi'")
-    expect(payload.prompt).toContain('Spawn example')
-    expect(payload.prompt).toContain('RECALL')
-    expect(payload.prompt).toContain('subThreadId')
-    expect(payload.prompt).toContain('Omitting `subThreadId` always spawns a fresh')
-    expect(payload.prompt).not.toContain('Complete TaskWraith tool list')
-  })
-
-  it('keeps Gemini plan-mode resumes and skips duplicated context', () => {
-    const payload = compose(
+      { provider: 'codex', scope: 'global', workspacePath: undefined },
       {
-        provider: 'gemini',
-        linkedGeminiSessionId: 'gemini-session-1',
-        runs: [
-          {
-            runId: 'run-1',
-            provider: 'gemini',
-            startedAt: 't',
-            requestedModel: 'flash-lite',
-            approvalMode: 'plan'
-          }
-        ]
-      },
-      { approvalMode: 'plan', geminiWorktree: { enabled: false } }
-    )
-    expect(payload.providerSessionId).toBe('gemini-session-1')
-    expect(payload.prompt).not.toContain('Conversation context')
-    expect(payload.prompt).not.toContain('TaskWraith runtime note')
-    expect(payload.approvalMode).toBe('plan')
-  })
-
-  it('skips unsafe Gemini write-mode resumes with the original restart hint', () => {
-    const payload = compose(
-      {
-        provider: 'gemini',
-        linkedGeminiSessionId: 'gemini-session-1'
-      },
-      { approvalMode: 'default' }
-    )
-    expect(payload.providerSessionId).toBeNull()
-    expect(payload.composer.clearLinkedGeminiSession).toBe(true)
-    expect(payload.composer.geminiResumeSkippedReason).toContain(
-      'write-capable Gemini runs cannot safely resume CLI sessions'
-    )
-  })
-
-  it('maps non-plan global Gemini runs back to default approval mode', () => {
-    const payload = compose(
-      { provider: 'gemini', scope: 'global', workspacePath: undefined },
-      { scope: 'global', workspace: undefined, approvalMode: 'auto_edit' }
+        provider: 'codex',
+        selectedModelType: 'cli-default',
+        scope: 'global',
+        workspace: undefined,
+        approvalMode: 'auto_edit'
+      }
     )
     expect(payload.scope).toBe('global')
     expect(payload.workspace).toBeUndefined()
@@ -498,6 +457,7 @@ describe('ComposerService', () => {
         linkedProviderSessionId: 'session_native_1',
         providerMetadata: {
           kimiAcpNativeSession: true,
+          kimiAcpPostureVersion: KIMI_ACP_PRODUCTION_POSTURE_VERSION,
           taskWraithRuntimePreambleVersion: TASKWRAITH_RUNTIME_PREAMBLE_VERSION,
           taskWraithRuntimePreambleProvider: 'kimi'
         }
@@ -508,6 +468,20 @@ describe('ComposerService', () => {
     expect(payload.prompt).not.toContain('Conversation context')
     expect(payload.resumeFallbackPrompt).toContain('Conversation context')
     expect(payload.composer.applicationLog).toContain('resuming Kimi Code ACP session context')
+  })
+
+  it('does not slim-resume a legacy boolean-only Kimi ACP record', () => {
+    const payload = compose(
+      {
+        provider: 'kimi',
+        linkedProviderSessionId: 'session_legacy',
+        providerMetadata: { kimiAcpNativeSession: true }
+      },
+      { selectedModelType: 'kimi-k2.7-code' }
+    )
+
+    expect(payload.prompt).toContain('Conversation context')
+    expect(payload.resumeFallbackPrompt).toBeUndefined()
   })
 
   it('defaults Kimi thinking to true from provider metadata defaults', () => {
@@ -681,8 +655,8 @@ describe('ComposerService', () => {
 
   it('1.0.4-AF: accepts /meta as an alias for /discuss with the same flag', () => {
     const payload = compose(
-      { provider: 'gemini' },
-      { userInput: '/meta let us reflect on the harness UX' }
+      { provider: 'claude' },
+      { selectedModelType: 'cli-default', userInput: '/meta let us reflect on the harness UX' }
     )
     expect(payload.composer.selfReflectiveRequested).toBe(true)
     expect(payload.prompt).toContain('let us reflect on the harness UX')
@@ -714,8 +688,11 @@ describe('ComposerService', () => {
     // discussing the command itself ("explain /discuss") should not
     // accidentally flip the ensemble's mode.
     const payload = compose(
-      { provider: 'gemini' },
-      { userInput: 'Please explain how /discuss differs from /plan.' }
+      { provider: 'claude' },
+      {
+        selectedModelType: 'cli-default',
+        userInput: 'Please explain how /discuss differs from /plan.'
+      }
     )
     expect(payload.composer.selfReflectiveRequested).toBeFalsy()
     expect(payload.prompt).toContain('/discuss')
@@ -726,7 +703,7 @@ describe('ComposerService', () => {
     // correctly (~/Library/Logs/TaskWraith/bridge-subprocess.log shows
     // 100+ codex-parented bridge spawns) but the Codex agent itself
     // never invoked a single tool — zero tools/call entries from any
-    // codex-parented bridge. Gemini/Claude/Kimi each got a delegation
+    // codex-parented bridge. Claude/Kimi each got a delegation
     // runtime-note preamble in Phase I3/I4 and immediately started
     // calling delegate_to_subthread; Codex was the only provider
     // missing the preamble.
@@ -737,7 +714,7 @@ describe('ComposerService', () => {
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
-    expect(payload.prompt).toContain("provider: 'gemini'")
+    expect(payload.prompt).toContain("provider: 'claude'")
     expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
     // Recall guidance — observed bug: Codex spawning a fresh sub-thread
     // on every status check, getting "first turn, no prior actions"
@@ -1033,16 +1010,16 @@ describe('ComposerService', () => {
   it('teaches Claude about cross-provider delegate_to_subthread (Phase I3)', () => {
     // The runtime note must point Claude at mcp__TaskWraith__delegate_to_subthread
     // so it doesn't reach for its built-in Task tool when asked to
-    // delegate to Gemini / Codex / Kimi.
+    // delegate to Codex.
     const payload = compose(
       { provider: 'claude' },
-      { userInput: 'Use a review agent and delegate one pass to Gemini.' },
+      { userInput: 'Use a review agent and delegate one pass to Codex.' },
       { geminiMcpBridgeEnabled: true }
     )
     expect(payload.prompt).toContain('TaskWraith MCP server')
     expect(payload.prompt).toContain('mcp__TaskWraith__delegate_to_subthread')
     expect(payload.prompt).toContain('CROSS-PROVIDER delegation')
-    expect(payload.prompt).toContain("provider: 'gemini'")
+    expect(payload.prompt).toContain("provider: 'codex'")
     expect(payload.prompt).toContain('do not use provider-native Task/invoke_agent/subagent paths')
     expect(payload.prompt).toContain('RECALL')
     expect(payload.prompt).toContain('subThreadId')
@@ -1078,8 +1055,12 @@ describe('ComposerService', () => {
     expect(payload.approvalMode).toBe('plan')
   })
 
-  it('honors context-turn setting 0 by disabling Gemini history injection', () => {
-    const payload = compose({ provider: 'gemini' }, {}, { chatContextTurns: 0 })
+  it('honors context-turn setting 0 by disabling cold-run history injection', () => {
+    const payload = compose(
+      { provider: 'codex' },
+      { selectedModelType: 'cli-default' },
+      { chatContextTurns: 0 }
+    )
     expect(payload.prompt).not.toContain('Conversation context')
     expect(payload.composer.contextTurnsApplied).toBe(0)
   })
@@ -1089,7 +1070,11 @@ describe('ComposerService', () => {
       { id: `u${index}`, role: 'user' as const, content: `user-${index}`, timestamp: 't' },
       { id: `a${index}`, role: 'assistant' as const, content: `assistant-${index}`, timestamp: 't' }
     ]).flat()
-    const payload = compose({ provider: 'gemini', messages }, {}, { chatContextTurns: 2 })
+    const payload = compose(
+      { provider: 'codex', messages },
+      { selectedModelType: 'cli-default' },
+      { chatContextTurns: 2 }
+    )
     expect(payload.prompt).not.toContain('user-0')
     expect(payload.prompt).toContain('user-4')
     expect(payload.prompt).toContain('assistant-5')
@@ -1101,7 +1086,11 @@ describe('ComposerService', () => {
       { id: `u${index}`, role: 'user' as const, content: `user-${index}`, timestamp: 't' },
       { id: `a${index}`, role: 'assistant' as const, content: `assistant-${index}`, timestamp: 't' }
     ]).flat()
-    const payload = compose({ provider: 'gemini', messages }, {}, { chatContextTurns: 99 })
+    const payload = compose(
+      { provider: 'codex', messages },
+      { selectedModelType: 'cli-default' },
+      { chatContextTurns: 99 }
+    )
     expect(payload.prompt).toContain('Conversation context (last 20 turn(s)):')
     expect(payload.prompt).not.toContain('user-0')
     expect(payload.prompt).toContain('user-24')
@@ -1114,7 +1103,7 @@ describe('ComposerService', () => {
     expect(() =>
       service.composeRun({
         chatId: chat.appChatId,
-        provider: 'gemini',
+        provider: chat.provider as ProviderId,
         workspace: '/repo',
         userInput: '   '
       })
@@ -1200,7 +1189,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
       provider: trustedChat.provider as ProviderId,
       workspace: trustedChat.workspacePath,
       userInput: 'Do the thing',
-      selectedModelType: 'flash-lite',
+      selectedModelType: 'cli-default',
       approvalMode: 'auto_edit',
       permissionPresetId: 'full_access',
       appRunId: 'run-full-access'
@@ -1211,7 +1200,7 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(trusted).toHaveBeenCalledWith(
       expect.objectContaining({
         chatId: trustedChat.appChatId,
-        provider: 'gemini',
+        provider: DEFAULT_PROVIDER,
         workspacePath: trustedChat.workspacePath
       })
     )
@@ -1428,7 +1417,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       provider: chat.provider as ProviderId,
       workspace: chat.workspacePath,
       userInput: 'Do the thing',
-      selectedModelType: 'flash-lite',
+      selectedModelType: 'cli-default',
       approvalMode: 'default',
       ...inputOverrides
     })

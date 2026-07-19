@@ -1,4 +1,4 @@
-import { describe, it, expect } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -10,6 +10,8 @@ import type { NormalizedGrokRunEvent } from './GrokAcpProtocol'
 class FakeAcpChild implements AcpChildProcess {
   writes: string[] = []
   killed = false
+  autoCloseOnKill = true
+  killSignals: string[] = []
   writeError: Error | null = null
   private dataListeners: ((chunk: string) => void)[] = []
   private closeListener?: (code: number | null) => void
@@ -39,9 +41,10 @@ class FakeAcpChild implements AcpChildProcess {
     else this.errorListener = listener as (err: Error) => void
   }
 
-  kill(): void {
+  kill(signal?: string): void {
     this.killed = true
-    this.closeListener?.(0)
+    this.killSignals.push(signal || '')
+    if (this.autoCloseOnKill) this.closeListener?.(0)
   }
 
   /** Test helper: deliver an ACP message line to the client. */
@@ -60,6 +63,10 @@ class FakeAcpChild implements AcpChildProcess {
 
   failStdin(err: Error): void {
     this.stdinErrorListener?.(err)
+  }
+
+  finish(code: number | null): void {
+    this.closeListener?.(code)
   }
 }
 
@@ -90,6 +97,8 @@ const run = (
 }
 
 describe('runGrokAcpTurn', () => {
+  afterEach(() => vi.useRealTimers())
+
   it('drives initialize → session/new → session/prompt and streams the answer', async () => {
     const child = new FakeAcpChild()
     const { events, closes } = run(child)
@@ -316,9 +325,9 @@ describe('runGrokAcpTurn', () => {
     await new Promise((resolve) => setTimeout(resolve, 0))
 
     const lateReplies = child.sent().filter((message) => message.id === 100)
-    expect(
-      lateReplies.some((message) => JSON.stringify(message).includes('"optionId":"a"'))
-    ).toBe(false)
+    expect(lateReplies.some((message) => JSON.stringify(message).includes('"optionId":"a"'))).toBe(
+      false
+    )
   })
 
   it('recovers once when a denied native tool makes Grok cancel the turn', async () => {
@@ -545,5 +554,39 @@ describe('runGrokAcpTurn', () => {
     expect(warning).toContain('ENOENT')
     expect(warning).toContain('Settings -> Providers -> Grok')
     expect(closes).toEqual([1])
+  })
+
+  it('holds a provider-delete receipt until TERM, KILL backstop, and exact child close join', async () => {
+    vi.useFakeTimers()
+    const child = new FakeAcpChild()
+    child.autoCloseOnKill = false
+    const lifecycle: string[] = []
+    const { handle } = run(child, {
+      onClose: () => {
+        lifecycle.push('onClose-cleanup')
+      }
+    })
+    let joined = false
+    const deletion = (async () => {
+      handle.cancel()
+      await handle.closed
+      lifecycle.push('deletion-receipt')
+      joined = true
+    })()
+
+    await Promise.resolve()
+    expect(child.killSignals).toEqual(['SIGTERM'])
+    expect(joined).toBe(false)
+    expect(lifecycle).toEqual([])
+
+    await vi.advanceTimersByTimeAsync(4_000)
+    expect(child.killSignals).toEqual(['SIGTERM', 'SIGKILL'])
+    expect(joined).toBe(false)
+    expect(lifecycle).toEqual([])
+
+    child.finish(null)
+    await deletion
+    expect(joined).toBe(true)
+    expect(lifecycle).toEqual(['onClose-cleanup', 'deletion-receipt'])
   })
 })

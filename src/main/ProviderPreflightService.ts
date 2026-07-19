@@ -7,7 +7,7 @@ import type {
   ProviderId
 } from './store/types'
 import { toolingControlRows } from './ProviderCapabilities'
-import { isRetiredProvider } from '../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../shared/retiredProviders'
 import { codexModelRetiresAt, isCodexModelRetired } from '../shared/codexModelLifecycle'
 import {
   isPreviewModelPlaceholder,
@@ -70,8 +70,8 @@ export class ProviderPreflightService {
     const chips: ProviderCapabilityWarning[] = [...contract.warnings]
     const label = contract.label || input.provider
 
-    if (isRetiredProvider(input.provider)) {
-      const reason = `${label} has been retired. Chat history is preserved; start a new chat with another provider to continue.`
+    if (!isLiveSelectableProvider(input.provider)) {
+      const reason = `${label} is unavailable for new runs. Chat history is preserved; start a new chat with another provider to continue.`
       return {
         provider: input.provider,
         state: 'blocked',
@@ -79,7 +79,10 @@ export class ProviderPreflightService {
         repairAction: 'none',
         fallbackAvailable: false,
         contract,
-        chips: [warning(`${input.provider}-retired`, 'error', `${label} retired`, reason), ...chips]
+        chips: [
+          warning(`${input.provider}-unavailable`, 'error', `${label} unavailable`, reason),
+          ...chips
+        ]
       }
     }
 
@@ -138,30 +141,6 @@ export class ProviderPreflightService {
             'Preview model unavailable',
             reason
           ),
-          ...chips
-        ]
-      }
-    }
-
-    if (
-      input.provider === 'gemini' &&
-      contract.mcp.enabled &&
-      (!contract.mcp.installed || !contract.mcp.available)
-    ) {
-      const reason =
-        contract.mcp.message ||
-        (contract.mcp.installed
-          ? 'TaskWraith MCP bridge is installed but unavailable.'
-          : 'TaskWraith MCP bridge is not installed.')
-      return {
-        provider: input.provider,
-        state: 'blocked',
-        reason,
-        repairAction: 'install_gemini_bridge',
-        fallbackAvailable: false,
-        contract,
-        chips: [
-          warning('gemini-mcp-bridge-blocked', 'error', 'Gemini bridge blocked', reason),
           ...chips
         ]
       }

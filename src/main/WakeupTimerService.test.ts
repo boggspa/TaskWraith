@@ -77,6 +77,50 @@ describe('WakeupTimerService', () => {
       vi.useRealTimers()
     }
   })
+
+  it('contains a synchronous fire-handler throw inside the detached timer boundary', () => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error('prepared history rejected the wakeup write')
+      const onFireError = vi.fn()
+      const service = new WakeupTimerService({
+        now: () => new Date('2026-05-27T00:00:00.000Z').getTime(),
+        onFire: () => {
+          throw failure
+        },
+        onFireError
+      })
+      service.schedule(wakeup())
+
+      expect(() => vi.advanceTimersByTime(60_000)).not.toThrow()
+      expect(onFireError).toHaveBeenCalledWith(failure, 'wake-1')
+      expect(service.has('wake-1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('observes an asynchronous fire-handler rejection without an unhandled promise', async () => {
+    vi.useFakeTimers()
+    try {
+      const failure = new Error('solo wakeup persistence rejected')
+      const onFireError = vi.fn()
+      const service = new WakeupTimerService({
+        now: () => new Date('2026-05-27T00:00:00.000Z').getTime(),
+        onFire: async () => {
+          throw failure
+        },
+        onFireError
+      })
+      service.schedule(wakeup())
+
+      await vi.advanceTimersByTimeAsync(60_000)
+      expect(onFireError).toHaveBeenCalledWith(failure, 'wake-1')
+      expect(service.has('wake-1')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
 
 describe('classifyWakeupRecovery', () => {

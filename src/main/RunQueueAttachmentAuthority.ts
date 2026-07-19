@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import type {
   ExternalPathGrant,
   PersistedAttachmentRef,
@@ -9,7 +10,7 @@ import { MAX_DURABLE_ATTACHMENT_REFS } from './ScheduledAttachmentDurability'
 
 type RunQueueAttachmentStore = Pick<
   TranscriptMediaAssetStore,
-  'grantMany' | 'owns' | 'resolvePersistedAttachment' | 'writeContentAddressed'
+  'owns' | 'resolvePersistedAttachment' | 'writeContentAddressed' | 'writeOwnedMany'
 >
 
 export type OwnedPersistedRunQueueAttachmentResult =
@@ -72,8 +73,16 @@ export function createMainOwnedRunQueueAttachmentStager(
     if (input.attachments.length > MAX_DURABLE_ATTACHMENT_REFS) {
       return { ok: false, reason: 'Attachment snapshot failed.' }
     }
-    const attachments: PersistedAttachmentRef[] = []
-    const pendingOwnership: Array<{ sha256: string; mimeType: string; appChatId: string }> = []
+    const slots: Array<
+      | { kind: 'persisted'; attachment: PersistedAttachmentRef }
+      | { kind: 'pending'; index: number; id?: string; name?: string }
+    > = []
+    const pendingWrites: Array<{
+      sha256: string
+      mimeType: string
+      buffer: Buffer
+      appChatId: string
+    }> = []
     try {
       const store = deps.getAssetStore()
       for (const attachment of input.attachments) {
@@ -84,10 +93,13 @@ export function createMainOwnedRunQueueAttachmentStager(
             appChatId: input.chatId
           })
           if (!existing.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
-          attachments.push({
-            ...existing.attachment,
-            ...(attachment.id ? { id: attachment.id } : {}),
-            ...(attachment.name ? { name: attachment.name } : {})
+          slots.push({
+            kind: 'persisted',
+            attachment: {
+              ...existing.attachment,
+              ...(attachment.id ? { id: attachment.id } : {}),
+              ...(attachment.name ? { name: attachment.name } : {})
+            }
           })
           continue
         }
@@ -99,33 +111,61 @@ export function createMainOwnedRunQueueAttachmentStager(
             input.authorizedFilePaths ?? [...(deps.getAuthorizedFilePaths?.() || [])]
         })
         if (!snapshot.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
-        const persisted = store.writeContentAddressed({
-          buffer: snapshot.buffer,
-          mimeType: snapshot.mimeType
-        })
-        if (!persisted.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
-        attachments.push({
-          persistenceVersion: 1,
-          ...(attachment.id ? { id: attachment.id } : {}),
-          path: persisted.path,
-          ...(attachment.name ? { name: attachment.name } : {}),
-          sha256: persisted.sha256,
-          mimeType: persisted.mimeType,
-          byteLength: persisted.byteLength
-        })
-        if (input.chatId) {
-          pendingOwnership.push({
-            sha256: persisted.sha256,
-            mimeType: persisted.mimeType,
-            appChatId: input.chatId
+        if (!input.chatId) {
+          const persisted = store.writeContentAddressed({
+            buffer: snapshot.buffer,
+            mimeType: snapshot.mimeType
           })
+          if (!persisted.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
+          slots.push({
+            kind: 'persisted',
+            attachment: {
+              persistenceVersion: 1,
+              ...(attachment.id ? { id: attachment.id } : {}),
+              path: persisted.path,
+              ...(attachment.name ? { name: attachment.name } : {}),
+              sha256: persisted.sha256,
+              mimeType: persisted.mimeType,
+              byteLength: persisted.byteLength
+            }
+          })
+          continue
         }
+        const pendingIndex = pendingWrites.length
+        pendingWrites.push({
+          sha256: createHash('sha256').update(snapshot.buffer).digest('base64url'),
+          mimeType: snapshot.mimeType,
+          buffer: snapshot.buffer,
+          appChatId: input.chatId
+        })
+        slots.push({
+          kind: 'pending',
+          index: pendingIndex,
+          ...(attachment.id ? { id: attachment.id } : {}),
+          ...(attachment.name ? { name: attachment.name } : {})
+        })
       }
-      if (pendingOwnership.length > 0) {
-        const granted = store.grantMany(pendingOwnership)
-        if (!granted.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
+      const written =
+        pendingWrites.length > 0
+          ? store.writeOwnedMany(pendingWrites)
+          : { ok: true as const, assets: [] }
+      if (!written.ok) return { ok: false, reason: 'Attachment snapshot failed.' }
+      return {
+        ok: true,
+        attachments: slots.map((slot) => {
+          if (slot.kind === 'persisted') return slot.attachment
+          const asset = written.assets[slot.index]
+          return {
+            persistenceVersion: 1,
+            ...(slot.id ? { id: slot.id } : {}),
+            path: asset.path,
+            ...(slot.name ? { name: slot.name } : {}),
+            sha256: asset.sha256,
+            mimeType: asset.mimeType,
+            byteLength: asset.byteLength
+          }
+        })
       }
-      return { ok: true, attachments }
     } catch {
       return { ok: false, reason: 'Attachment snapshot failed.' }
     }

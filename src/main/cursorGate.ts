@@ -1,29 +1,19 @@
-// Cursor (Composer 2.5) provider sub-gates (raw-stream debug + web bridge).
+// Cursor (Composer 2.5) provider sub-gates.
 //
 // Pure (reads only process.env), so it can be imported by the Electron-heavy
 // index.ts without an import cycle.
 //
-// NO PROVIDER-ELIGIBILITY GATE LIVES HERE ANYMORE. Cursor is a permanent
-// first-class member of `ProviderId` (src/main/store/types.ts) and is accepted
-// unconditionally at every trust boundary, exactly like gemini/codex/claude/
-// kimi/ollama. The old `experimentalCursorProviderEnabled()` flag and its
-// `TASKWRAITH_DISABLE_CURSOR` / `TASKWRAITH_EXPERIMENTAL_CURSOR` kill-switch were
-// removed 2026-06 once Cursor matured — do NOT reintroduce an eligibility gate.
-//
-// Provider eligibility is independent of write SAFETY (which is unchanged): the
-// load-bearing containment lives in CursorCliArgs (never bare `-p`: read-only
-// uses `--mode plan`; write mode runs in default mode contained by a workspace-
-// local deny-list config). Cursor is WRITE-CAPABLE like every other provider,
-// gated by approval mode (CR6 landed write mode) — not read-only. Its read-only
-// PLAN seat alone keeps no TaskWraith MCP coordination tools, because cursor-
-// agent plan mode rejects all tools incl. MCP — a per-seat capability nuance,
-// not an eligibility gate.
+// Cursor remains a stable ProviderId for historical records and configuration
+// interchange, but source-ahead production admission fails before process
+// launch. These legacy feature switches are hard-disabled compatibility seams;
+// none authorize a managed Cursor run. Re-enabling any path requires a reviewed
+// exact-build startup-containment suite or a stronger sandbox.
 
 /**
  * Opt-in raw-stream capture for Cursor (mirrors TASKWRAITH_GROK_DEBUG). When set,
- * every parsed cursor-agent stream-json object is teed to stderr ([cursor-raw])
- * + a tmp jsonl so the live wire shape can be captured from an in-app run.
- * Off by default; never affects behaviour.
+ * every parsed historical/qualification stream-json object is teed to stderr
+ * ([cursor-raw]) plus a temporary jsonl. Source-ahead production starts no
+ * in-app Cursor run, so this compatibility flag is inert there.
  */
 export function cursorDebugEnabled(): boolean {
   const v = process.env.TASKWRAITH_CURSOR_DEBUG
@@ -31,10 +21,9 @@ export function cursorDebugEnabled(): boolean {
 }
 
 /**
- * OQ#2 — toggle for the Cursor web bridge (CRUX39 "B", the proven reliable path).
- * DEFAULT ON (opt-out via TASKWRAITH_CURSOR_WEB=0). It's inert anyway unless the
- * user's global taskwraith server is registered, so that registration is the real
- * opt-in; the env var is just an explicit kill-switch.
+ * Historical OQ#2 Cursor web-bridge switch. Production keeps this false and
+ * starts no Cursor process; the retained probe notes below are evidence, not a
+ * supported setup recipe.
  *
  * Background: the spike PROVED Cursor can route web research through an TaskWraith
  * `web_fetch` MCP server in headless default/write mode (plan mode rejects all
@@ -53,55 +42,29 @@ export function cursorDebugEnabled(): boolean {
  * write). See the OQ#2 verdict in the Cursor blueprint.
  */
 export function cursorWebBridgeEnabled(): boolean {
-  // DEFAULT ON (opt-out): inert anyway unless the user's global taskwraith server is
-  // registered, so the registration is the real opt-in. TASKWRAITH_CURSOR_WEB=0
-  // (or false/no) is an explicit kill-switch.
-  const v = process.env.TASKWRAITH_CURSOR_WEB
-  return v !== '0' && v !== 'false' && v !== 'no'
+  return false
 }
 
 /**
- * Read-only Cursor seats get a scoped SAFE-SUBSET TaskWraith MCP broker (Grok
- * parity) so they can read/inspect instead of getting zero tools. Because Cursor
- * `--mode plan` executes no tools, this runs the read-only seat in CONTAINED
- * default mode (native Shell/Write denied + a broker that advertises only the
- * non-mutating read subset). DEFAULT ON; TASKWRAITH_CURSOR_READONLY_MCP=0 (or
- * false/no) is an explicit kill-switch that restores the old plan-mode, no-tools
- * behavior for read-only Cursor seats.
+ * Historical read-only-broker switch. It is hard-disabled: there is no
+ * source-ahead Cursor seat, Plan run, safe subset, or broker attachment.
  */
 export function cursorReadOnlyMcpEnabled(): boolean {
-  const v = process.env.TASKWRAITH_CURSOR_READONLY_MCP
-  return v !== '0' && v !== 'false' && v !== 'no'
+  return false
 }
 
 /**
- * "B" mode: register the TaskWraith broker in the GLOBAL `~/.cursor/mcp.json`
- * (durable "ready" approval) instead of a per-run WORKSPACE server (which the
- * live cursor-agent CLI never durably approves → "User rejected MCP" on every
- * call). DEFAULT ON; TASKWRAITH_CURSOR_GLOBAL_BROKER=0 (or false/no) is an
- * explicit kill-switch that reverts to the per-run workspace-mcp.json path.
- *
- * This is the ONLY place TaskWraith writes global `~/.cursor` for Cursor runs;
- * the write is additive (never removes a server) and only touches TaskWraith's
- * own `taskwraith-broker` / `taskwraith-cursor` entries.
+ * Historical global-broker switch. It remains false and production must not
+ * mutate the user's Cursor configuration through this path.
  */
 export function cursorGlobalBrokerEnabled(): boolean {
-  const v = process.env.TASKWRAITH_CURSOR_GLOBAL_BROKER
-  return v !== '0' && v !== 'false' && v !== 'no'
+  return false
 }
 
 /**
- * Emit `--force` alongside the TaskWraith MCP bridge so Cursor actually EXECUTES
- * the broker's MCP tool calls headlessly. Proven necessary live: `--approve-mcps`
- * only approves the SERVER, so `cursor-agent -p` rejects every MCP tool CALL
- * ("User rejected MCP", isReadonly:false) without `--force`. `--force` = "allow
- * unless explicitly denied", and the run's `.cursor/cli.json` explicitly denies
- * native `Shell(**)`/`Write(**)`, so it only unlocks the TaskWraith broker tools
- * (still governed by TaskWraith's approval ledger), never native side effects.
- * DEFAULT ON; TASKWRAITH_CURSOR_FORCE_MCP=0 (or false/no) withholds `--force`
- * (the MCP tools go back to being rejected — the pre-fix behavior).
+ * Historical force-MCP switch. It remains false; production never emits
+ * `--force`, `--approve-mcps`, or a Cursor launch from this checkout.
  */
 export function cursorForceMcpEnabled(): boolean {
-  const v = process.env.TASKWRAITH_CURSOR_FORCE_MCP
-  return v !== '0' && v !== 'false' && v !== 'no'
+  return false
 }

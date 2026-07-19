@@ -50,7 +50,8 @@ export interface RunDispatchFacadeDeps {
   /** Self-heal stale persisted MCP configs (best-effort, error-swallowed).
    *  Currently `repairKnownStaleGeminiMcpBridgeConfigs`. */
   repairKnownStaleGeminiMcpBridgeConfigs: (cwd?: string) => Promise<void>
-  /** Expand PDF attachments to per-page images (best-effort, error-logged).
+  /** Expand PDF attachments to durable per-page images. Expansion failure is
+   *  fail-closed so a provider never receives a payload with its PDF omitted.
    *  Currently `expandPdfImagePathsForPayload`. */
   expandPdfImagePathsForPayload: (payload: AgentRunPayload) => Promise<void>
   /** Snapshot the dispatched request for a later failover re-run. Currently
@@ -64,6 +65,11 @@ export interface RunDispatchFacadeDeps {
   failoverSnapshotByRun: Map<string, FailoverRunSnapshot>
   /** The extracted run-dispatch coordinator (context root). */
   runCoordinator: RunCoordinator
+  /** Capture the exact durable chat revision synchronously at facade entry,
+   * before config repair or attachment expansion can await. */
+  reserveDispatch: (payload: AgentRunPayload) => object
+  /** Release the facade-owned reservation after dispatch orchestration settles. */
+  releaseDispatchReservation: (reservation: object) => void
   /** AppStore accessors, injected so the facade stays AppStore-free (leaf). */
   getSettings: () => AppSettings
   getScheduledTasks: () => ScheduledTask[]
@@ -77,26 +83,34 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
     payload: AgentRunPayload,
     event: IpcMainInvokeEvent | { sender: WebContents }
   ): Promise<{ dispatched: boolean; appRunId: string }> => {
-    // A scheduled occurrence is claimed + registered by the main scheduler
-    // before it reaches this facade. Prove that exact ownership synchronously,
-    // before repair, attachment expansion, or an adapter can run. Conversely,
-    // an ordinary dispatch may never reuse either a process-live owner run id
-    // or any run id already observed in durable scheduled-task state.
-    const scheduledTaskId = scheduledTaskIdFromPayload(payload)
-    const occurrenceAuthorized = mainOwnedScheduledOccurrencePayloads.delete(payload)
-    const scheduledOwner = scheduledTaskId
-      ? requireExactScheduledSoloOwner(deps, payload, scheduledTaskId)
-      : resolveExactScheduledChildOwner(deps, payload)
-    if (occurrenceAuthorized !== Boolean(scheduledOwner)) {
-      throw new Error('Scheduled occurrence dispatch requires one-shot MAIN authorization.')
-    }
-    if (!scheduledOwner) rejectObservedScheduledRunIdReplay(deps, payload.appRunId)
-
-    const ordinaryChatReservation =
-      !scheduledOwner && payload.appChatId
-        ? deps.scheduledOccurrenceOwners.reserveOrdinaryChatDispatch(payload.appChatId)
-        : undefined
+    // This MUST be the first operation at the outer dispatch boundary. Config
+    // repair and PDF expansion both await; a history clear during either wait
+    // must invalidate this immutable pre-clear token, not let the coordinator
+    // capture a fresh post-clear revision for a stale payload.
+    const dispatchReservation = deps.reserveDispatch(payload)
+    let ordinaryChatReservation: ReturnType<
+      ScheduledOccurrenceOwnerRegistry['reserveOrdinaryChatDispatch']
+    > | undefined
     try {
+      // A scheduled occurrence is claimed + registered by the main scheduler
+      // before it reaches this facade. Prove that exact ownership synchronously,
+      // before repair, attachment expansion, or an adapter can run. Conversely,
+      // an ordinary dispatch may never reuse either a process-live owner run id
+      // or any run id already observed in durable scheduled-task state.
+      const scheduledTaskId = scheduledTaskIdFromPayload(payload)
+      const occurrenceAuthorized = mainOwnedScheduledOccurrencePayloads.delete(payload)
+      const scheduledOwner = scheduledTaskId
+        ? requireExactScheduledSoloOwner(deps, payload, scheduledTaskId)
+        : resolveExactScheduledChildOwner(deps, payload)
+      if (occurrenceAuthorized !== Boolean(scheduledOwner)) {
+        throw new Error('Scheduled occurrence dispatch requires one-shot MAIN authorization.')
+      }
+      if (!scheduledOwner) rejectObservedScheduledRunIdReplay(deps, payload.appRunId)
+
+      ordinaryChatReservation =
+        !scheduledOwner && payload.appChatId
+          ? deps.scheduledOccurrenceOwners.reserveOrdinaryChatDispatch(payload.appChatId)
+          : undefined
 
     const settings = deps.getSettings()
     const claimedReroute = payload.providerReroute
@@ -174,13 +188,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         ? routedPayload.workspace
         : undefined
     await deps.repairKnownStaleGeminiMcpBridgeConfigs(repairCwd).catch(() => {})
-    await deps.expandPdfImagePathsForPayload(routedPayload).catch((error) => {
-      console.warn(
-        `[pdf-attachments] failed to expand PDF image paths: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      )
-    })
+    await deps.expandPdfImagePathsForPayload(routedPayload)
     if (
       scheduledOwner &&
       deps.scheduledOccurrenceOwners.lookupByOwnerRunId(scheduledOwner.ownerRunId) !==
@@ -220,7 +228,11 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
         }
       }
     }
-    const dispatchResult = await deps.runCoordinator.dispatch(routedPayload, event)
+    const dispatchResult = await deps.runCoordinator.dispatch(
+      routedPayload,
+      event,
+      dispatchReservation
+    )
     // Snapshot the dispatched request so a later quota wall can re-run it.
     // A provider-native `/compact` dispatch is excluded: failing it over
     // would send the literal slash text to a DIFFERENT provider as prose.
@@ -241,6 +253,7 @@ export function createRunDispatchFacade(deps: RunDispatchFacadeDeps) {
       if (ordinaryChatReservation) {
         deps.scheduledOccurrenceOwners.releaseOrdinaryChatDispatch(ordinaryChatReservation)
       }
+      deps.releaseDispatchReservation(dispatchReservation)
     }
   }
 }

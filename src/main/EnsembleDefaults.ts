@@ -63,17 +63,6 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
     permissionPresetId: 'read_only'
   },
   {
-    // Cursor (Composer 2.5) is first-class, so it seeds into the default panel
-    // too. Read-only in THIS curated panel like the other recon seats (codex
-    // is the lone writer); the user can grant write per-participant.
-    // Chip-strip adds seed 'default' instead (see header note).
-    provider: 'cursor',
-    role: 'Cursor',
-    instructions:
-      'Draft the concrete implementation: propose specific edits, file touches, and integration steps.',
-    permissionPresetId: 'read_only'
-  },
-  {
     provider: 'ollama',
     role: 'Local',
     instructions:
@@ -82,11 +71,68 @@ const DEFAULT_ENSEMBLE_ROLES: Array<{
   }
 ]
 
-export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configuredProviders?: Set<ProviderId>): EnsembleConfig {
+const DEFAULT_SMALL_PANEL_SIZE = 4
+
+const SMALL_PANEL_ROLES = [
+  {
+    role: 'Boss',
+    brief:
+      'Own the outcome, keep the panel scoped, and synthesize a clear decision from the other seats.'
+  },
+  {
+    role: 'Captain',
+    brief:
+      'Act as second-in-command: challenge the plan, track unresolved risks, and keep the work moving.'
+  },
+  {
+    role: 'Specialist',
+    brief: 'Contribute concrete domain work and evidence for the task in front of the panel.'
+  },
+  {
+    role: 'Outsider',
+    brief:
+      'Take an independent view, stress-test the emerging consensus, and surface missed alternatives.'
+  }
+] as const
+
+// Prefer a local seat as the independent fourth voice when it is available,
+// then fall back to providers whose default briefs are explicitly adversarial.
+const OUTSIDER_PROVIDER_PRIORITY: ProviderId[] = ['ollama', 'grok', 'kimi']
+
+function selectSmallPanelRoles(
+  roles: typeof DEFAULT_ENSEMBLE_ROLES,
+  activeProvider?: ProviderId
+): typeof DEFAULT_ENSEMBLE_ROLES {
+  const orderedProviders = rotateProviderFirst(
+    roles.map((entry) => entry.provider),
+    activeProvider
+  )
+  if (orderedProviders.length <= DEFAULT_SMALL_PANEL_SIZE) {
+    return orderedProviders.map((provider) => roles.find((entry) => entry.provider === provider)!)
+  }
+
+  const primaryProviders = orderedProviders.slice(0, DEFAULT_SMALL_PANEL_SIZE - 1)
+  const outsider = OUTSIDER_PROVIDER_PRIORITY.find(
+    (provider) => orderedProviders.includes(provider) && !primaryProviders.includes(provider)
+  )
+  const selectedProviders = [
+    ...primaryProviders,
+    ...(outsider
+      ? [outsider]
+      : orderedProviders.slice(DEFAULT_SMALL_PANEL_SIZE - 1, DEFAULT_SMALL_PANEL_SIZE))
+  ]
+  return selectedProviders.map((provider) => roles.find((entry) => entry.provider === provider)!)
+}
+
+export function createDefaultEnsembleConfig(
+  activeProvider?: ProviderId,
+  configuredProviders?: Set<ProviderId>
+): EnsembleConfig {
   // E — seed only providers the user has actually configured (one of each) when
   // a set is supplied. The active provider is always included (current context).
-  // Fall back to the full roster if fewer than 2 would remain, so a fresh or
-  // barely-configured install still gets a usable panel, not a 1-participant one.
+  // Fall back to the recommended panel if fewer than 2 would remain, so a
+  // fresh or barely configured install still gets a usable panel rather than
+  // a single-participant one.
   let roles = DEFAULT_ENSEMBLE_ROLES
   if (configuredProviders) {
     const allowed = new Set(configuredProviders)
@@ -94,26 +140,33 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     const filtered = DEFAULT_ENSEMBLE_ROLES.filter((entry) => allowed.has(entry.provider))
     if (filtered.length >= 2) roles = filtered
   }
-  const orderedProviders = rotateProviderFirst(
-    roles.map((entry) => entry.provider),
-    activeProvider
-  )
+  // A fresh panel should be small enough for each contribution to remain
+  // inspectable. Users can still add seats up to the global ceiling, but the
+  // default is Boss + Captain + Specialist + an independent Outsider.
+  roles = selectSmallPanelRoles(roles, activeProvider)
+  const orderedProviders = roles.map((entry) => entry.provider)
   const orderByProvider = new Map(orderedProviders.map((provider, index) => [provider, index + 1]))
-  // Slice F (1.0.3) — every provider is enabled by default now that
+  // Slice F (1.0.3) — every selected provider is enabled by default now that
   // the in-composer chip strip + flyout let the user disable them
   // inline with one click. Previously we only enabled `activeProvider`
   // + claude + codex, which left Gemini / Kimi feeling like
   // second-class members of the ensemble surface.
-  const participants: EnsembleParticipant[] = roles.map((entry) => ({
-    id: `ensemble-${entry.provider}`,
-    provider: entry.provider,
-    enabled: true,
-    role: entry.role,
-    instructions: entry.instructions,
-    order: orderByProvider.get(entry.provider) || 99,
-    model: getDefaultEnsembleModel(entry.provider),
-    permissionPresetId: entry.permissionPresetId
-  })).sort((a, b) => a.order - b.order)
+  const participants: EnsembleParticipant[] = roles
+    .map((entry) => {
+      const order = orderByProvider.get(entry.provider) || 99
+      const panelRole = SMALL_PANEL_ROLES[order - 1] || SMALL_PANEL_ROLES[2]
+      return {
+        id: `ensemble-${entry.provider}`,
+        provider: entry.provider,
+        enabled: true,
+        role: panelRole.role,
+        instructions: `${panelRole.brief} ${entry.instructions}`,
+        order,
+        model: getDefaultEnsembleModel(entry.provider),
+        permissionPresetId: entry.permissionPresetId
+      }
+    })
+    .sort((a, b) => a.order - b.order)
 
   return {
     enabled: true,
@@ -121,9 +174,9 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     // 1.0.5-EW1 — ceiling raised 8 → 12. The DEFAULT_ENSEMBLE_ROLES
     // 1.0.5-EW46 — ceiling raised 12 → 18 while keeping six chips per
     // wrapped row, so a full panel occupies three rows.
-    // seed yields the live providers (claude / codex / kimi / grok /
-    // cursor / ollama; gemini retired) so the user starts with a panel
-    // well under the cap and has plenty
+    // The registry covers all currently runnable providers (claude / codex /
+    // kimi / grok / ollama), while the selector seeds at most four
+    // so the user starts with a panel well under the cap and has plenty
     // of headroom to add specialists / extra Claudes / etc. before
     // hitting the cap. The chip strip wraps at 6+ into balanced rows
     // of at most 5, so even a fully-loaded 20-participant panel
@@ -132,6 +185,8 @@ export function createDefaultEnsembleConfig(activeProvider?: ProviderId, configu
     orchestrationMode: 'turn_bound',
     maxContinuationHops: 6,
     participants,
+    bossmanParticipantId: participants[0]?.id,
+    secondInCommandParticipantId: participants[1]?.id,
     updatedAt: new Date().toISOString()
   }
 }

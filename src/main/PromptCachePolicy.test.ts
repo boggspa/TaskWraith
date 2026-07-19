@@ -64,6 +64,13 @@ describe('PromptCachePolicy', () => {
           supportsModeControl: true
         }),
         expect.objectContaining({
+          provider: 'cursor',
+          guaranteeTier: 'unsupported',
+          retired: true,
+          defaultMode: 'off',
+          detail: expect.stringContaining('managed runs and cache controls are unavailable')
+        }),
+        expect.objectContaining({
           provider: 'gemini',
           guaranteeTier: 'unsupported',
           retired: true,

@@ -104,6 +104,12 @@ function accessLabel(def: TaskWraithMcpToolDefinition): string {
   const annotations = (
     def.annotations && typeof def.annotations === 'object' ? def.annotations : {}
   ) as Record<string, unknown>
+  // `canvas_eval` is deliberately stricter than the generic mutating-tool
+  // label: policy clamps it to one exact desktop-reviewed prompt per call, so
+  // no grant or Trusted Session can make it automatic.
+  if (def.name === 'canvas_eval') {
+    return 'signed-elevated — denied under Read-Only/Plan; prompts every call and requires exact desktop review'
+  }
   if (annotations.readOnlyHint === true) return 'read-only (no approval needed)'
   if (annotations.destructiveHint === true) {
     return 'mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)'

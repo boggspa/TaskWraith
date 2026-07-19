@@ -55,6 +55,14 @@ describe('resources/Tools.md', () => {
     )
     expect(section).not.toContain('"action":"text"')
   })
+
+  it('does not describe non-grantable canvas_eval as grantable', () => {
+    const section = buildOllamaToolDocSection('canvas_eval')
+    expect(section).toContain(
+      '- Access: signed-elevated — denied under Read-Only/Plan; prompts every call and requires exact desktop review'
+    )
+    expect(section).not.toContain('unless granted')
+  })
 })
 
 describe('buildOllamaToolDocSection (tool_help runtime lookup)', () => {

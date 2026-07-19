@@ -1,7 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
-import type { KimiFlavourFindings } from '../providers/KimiFlavour'
 import { registerKimiAuthHandlers } from './kimiAuthHandlers'
 
 vi.mock('electron', () => ({
@@ -45,15 +44,22 @@ function createDeps() {
     isEncryptionAvailable: vi.fn(() => true),
     encryptApiKey: vi.fn((value: string) => `encrypted:${value}`),
     resolveCliProviderBinary: vi.fn(async () => createResolved('/usr/local/bin/kimi')),
-    readResolvedCliVersion: vi.fn(async () => '2.7.0'),
-    probeKimiFlavour: vi.fn(
-      async (): Promise<KimiFlavourFindings> => ({
-        flavour: 'legacy-wire',
-        evidence: '--wire advertised in --help'
-      })
+    inspectRuntime: vi.fn<
+      (
+        resolved: ResolvedProviderBinary
+      ) => Promise<
+        | { admitted: true; version: string; mode: 'reviewed' | 'unattested-development' }
+        | { admitted: false; message: string }
+      >
+    >(async () => ({
+      admitted: true,
+      version: '2.7.0',
+      mode: 'reviewed'
+    })),
+    getManagedAuthState: vi.fn<() => Promise<'oauth' | 'api-key' | 'unknown'>>(
+      async () => 'unknown'
     ),
-    hasOAuthCredential: vi.fn(async () => false),
-    isMainRendererSender: vi.fn(() => true)
+    isMainRendererSender: vi.fn<() => boolean>(() => true)
   }
 
   return {
@@ -85,30 +91,31 @@ describe('registerKimiAuthHandlers', () => {
     })
   })
 
-  it('returns api-key vs unknown authState depending on whether a key is configured', async () => {
+  it('keeps the encrypted Settings key separate from managed ACP auth', async () => {
     const { deps } = createDeps()
     registerKimiAuthHandlers(deps)
 
     await expect(handlerFor('get-kimi-auth-status')({})).resolves.toEqual({
       available: true,
-      authState: 'api-key',
+      authState: 'unknown',
       apiKeyConfigured: true,
       encryptionAvailable: true,
       version: '2.7.0',
       binaryPath: '/usr/local/bin/kimi',
-      cliFlavour: 'legacy-wire',
+      cliFlavour: 'kimi-code',
       transportSupported: true
     })
 
+    deps.getManagedAuthState.mockResolvedValueOnce('api-key')
     deps.getSettings.mockReturnValueOnce({ kimiApiKey: undefined })
     await expect(handlerFor('get-kimi-auth-status')({})).resolves.toEqual({
       available: true,
-      authState: 'unknown',
+      authState: 'api-key',
       apiKeyConfigured: false,
       encryptionAvailable: true,
       version: '2.7.0',
       binaryPath: '/usr/local/bin/kimi',
-      cliFlavour: 'legacy-wire',
+      cliFlavour: 'kimi-code',
       transportSupported: true
     })
   })
@@ -116,7 +123,7 @@ describe('registerKimiAuthHandlers', () => {
   it('reports oauth authState for a signed-in user with no API key', async () => {
     const { deps } = createDeps()
     deps.getSettings.mockReturnValue({ kimiApiKey: undefined })
-    deps.hasOAuthCredential.mockResolvedValue(true)
+    deps.getManagedAuthState.mockResolvedValue('oauth')
     registerKimiAuthHandlers(deps)
 
     await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
@@ -129,7 +136,7 @@ describe('registerKimiAuthHandlers', () => {
   it('stays unknown when neither an API key nor an OAuth credential is present', async () => {
     const { deps } = createDeps()
     deps.getSettings.mockReturnValue({ kimiApiKey: undefined })
-    deps.hasOAuthCredential.mockResolvedValue(false)
+    deps.getManagedAuthState.mockResolvedValue('unknown')
     registerKimiAuthHandlers(deps)
 
     await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
@@ -137,20 +144,31 @@ describe('registerKimiAuthHandlers', () => {
     })
   })
 
-  it('marks a Kimi Code binary as available but transport-unsupported', async () => {
+  it('marks an admitted Kimi Code binary as transport-supported', async () => {
     const { deps } = createDeps()
-    deps.probeKimiFlavour.mockResolvedValue({
-      flavour: 'kimi-code' as const,
-      evidence: "no --wire option; 'acp' subcommand advertised in --help"
-    })
     registerKimiAuthHandlers(deps)
 
     await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
       available: true,
       cliFlavour: 'kimi-code',
+      transportSupported: true
+    })
+    expect(deps.inspectRuntime).toHaveBeenCalledWith(
+      expect.objectContaining({ binaryPath: '/usr/local/bin/kimi' })
+    )
+  })
+
+  it('does not inspect credentials when runtime admission fails', async () => {
+    const { deps } = createDeps()
+    deps.inspectRuntime.mockResolvedValue({ admitted: false, message: 'not in reviewed roster' })
+    registerKimiAuthHandlers(deps)
+
+    await expect(handlerFor('get-kimi-auth-status')({})).resolves.toMatchObject({
+      available: false,
+      authState: 'unknown',
       transportSupported: false
     })
-    expect(deps.probeKimiFlavour).toHaveBeenCalledWith('/usr/local/bin/kimi')
+    expect(deps.getManagedAuthState).not.toHaveBeenCalled()
   })
 
   it('omits the resolved binary path from secondary auth status', async () => {
@@ -160,7 +178,7 @@ describe('registerKimiAuthHandlers', () => {
 
     await expect(handlerFor('get-kimi-auth-status')({ sender: { id: 42 } })).resolves.toEqual({
       available: true,
-      authState: 'api-key',
+      authState: 'unknown',
       apiKeyConfigured: true,
       encryptionAvailable: true,
       version: '2.7.0'

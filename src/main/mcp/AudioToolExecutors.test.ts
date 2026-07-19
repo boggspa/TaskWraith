@@ -12,6 +12,7 @@ import {
   MAX_AUDIO_SEGMENT_CLIP_MS,
   normalizeHarvestedPeaks,
   type AudioEngine,
+  type AudioToolContext,
   type AudioToolExecutorDeps,
   type ResolvedAudioSource,
   type WindowClipProduction
@@ -86,7 +87,11 @@ const FAKE_WINDOW_CLIP: WindowClipProduction = {
   peaks: [0, 64, 128, 255, 200, 12],
   thumbnail: { dataBase64: 'thumb', mimeType: 'image/jpeg', width: 320, height: 80 },
   transcript: 'the chorus kicks in here',
-  segments: [{ text: 'the chorus kicks in here', startMs: 0, endMs: 15_000, confidence: 0.94 }]
+  segments: [{ text: 'the chorus kicks in here', startMs: 0, endMs: 15_000, confidence: 0.94 }],
+  pendingToolMediaPersistence: {
+    commit: () => true,
+    rollback: async () => undefined
+  }
 }
 
 function build(
@@ -101,7 +106,12 @@ function build(
 ) {
   let lastSpec: AudioRenderSpec | null = null
   let lastAnalyzeInput: AudioAnalysisInput | null = null
-  let lastWindowClipArgs: { sourcePath: string; startMs: number; endMs: number } | null = null
+  let lastWindowClipArgs: {
+    sourcePath: string
+    startMs: number
+    endMs: number
+    ctx: AudioToolContext
+  } | null = null
   const engine: AudioEngine = {
     renderWaveformPng: vi.fn(async (spec: AudioRenderSpec) => {
       lastSpec = spec
@@ -136,8 +146,8 @@ function build(
   // omit the transcript or to throw (daemon/persist failure).
   const produceWindowClip =
     overrides.produceWindowClip ??
-    vi.fn(async (sourcePath: string, startMs: number, endMs: number) => {
-      lastWindowClipArgs = { sourcePath, startMs, endMs }
+    vi.fn(async (sourcePath: string, startMs: number, endMs: number, ctx: AudioToolContext) => {
+      lastWindowClipArgs = { sourcePath, startMs, endMs, ctx }
       return { ...FAKE_WINDOW_CLIP }
     })
   const deps: AudioToolExecutorDeps = overrides.omitWindowDeps
@@ -402,7 +412,9 @@ describe('inspect_audio_segment (interactive clip)', () => {
     resolveJail({ ok: true, realPath: '/ws/deferred.wav', cleanup })
     const result = await pending
     expect(result.isError).toBeFalsy()
-    expect(produceWindowClip).toHaveBeenCalledWith('/ws/deferred.wav', 0, 15_000)
+    expect(produceWindowClip).toHaveBeenCalledWith('/ws/deferred.wav', 0, 15_000, {
+      appRunId: 'run-async-jail'
+    })
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 
@@ -417,7 +429,13 @@ describe('inspect_audio_segment (interactive clip)', () => {
     // Jailed first, the REAL path (not the agent string) reaches the producer.
     expect(jailAudio).toHaveBeenCalledTimes(1)
     expect(produceWindowClip).toHaveBeenCalledTimes(1)
-    expect(getWindowClipArgs()).toEqual({ sourcePath: '/ws/clip.wav', startMs: 65000, endMs: 80000 })
+    expect(getWindowClipArgs()).toEqual({
+      sourcePath: '/ws/clip.wav',
+      startMs: 65000,
+      endMs: 80000,
+      ctx: { appChatId: 'c1', appRunId: 'run-7' }
+    })
+    expect(result.pendingToolMediaPersistence).toBeDefined()
     // A single TRUSTED AV ref (NOT an image block, NOT mediaRefHints) — the interactive lane.
     expect(result.content?.some((b) => b.type === 'image')).toBe(false)
     expect(result.mediaRefHints).toBeUndefined()
@@ -454,7 +472,11 @@ describe('inspect_audio_segment (interactive clip)', () => {
         byteLength: 32_000,
         durationMs: 5_000,
         peaks: [10, 20, 30],
-        thumbnail: { dataBase64: 'thumb2', mimeType: 'image/jpeg' }
+        thumbnail: { dataBase64: 'thumb2', mimeType: 'image/jpeg' },
+        pendingToolMediaPersistence: {
+          commit: () => true,
+          rollback: async () => undefined
+        }
         // transcript + segments ABSENT (Speech permission / locale unavailable)
       }))
     })
@@ -579,6 +601,9 @@ describe('inspect_audio_segment (interactive clip)', () => {
     )
     expect(result.isError).toBe(true)
     expect(result.text).toContain('unsupported output mime')
+    expect(result.pendingToolMediaPersistence).toBe(
+      FAKE_WINDOW_CLIP.pendingToolMediaPersistence
+    )
     expect(cleanup).toHaveBeenCalledTimes(1)
   })
 

@@ -11,8 +11,23 @@ import {
 } from '../../shared/systemThemeAppearance'
 import { isRetiredExternalChannelInboundMessage } from '../LegacyExternalChannelHistory'
 import { resolveActiveGoalForEnsemble } from '../GoalState'
-import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from '../kimi/KimiAcpSeatState'
-import { partitionUsageRecordsForRotation } from './usageRotation'
+import {
+  kimiAcpSeatStatePath,
+  kimiAcpSeatStateRoot,
+  legacyKimiAcpSeatStatePaths,
+  legacyKimiAcpSeatStateRoots
+} from '../kimi/KimiAcpSeatState'
+import {
+  UsageJournalStore,
+  type UsageHistoryMutationHold,
+  type UsageHistoryMutationInput,
+  type UsageHistoryPurgeReport
+} from './UsageJournalStore'
+export type {
+  UsageHistoryMutationHold,
+  UsageHistoryMutationInput,
+  UsageHistoryPurgeReport
+} from './UsageJournalStore'
 import type { TaskWraithPluginResourceProvenance } from '../../shared/plugins/PluginTypes'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import { workflowAuthorityDigest } from '../WorkflowAuthorityDigest'
@@ -192,7 +207,6 @@ import {
   capMessageFeedbackReceipts,
   filterMessageFeedbackReceipts,
   normalizeMessageFeedbackReceipt,
-  removeMessageFeedbackReceipts,
   updateMessageFeedbackLedgerForChatSave,
   type MessageFeedbackReceiptFilter
 } from '../MessageFeedbackLedger'
@@ -329,7 +343,14 @@ const settingsPath = path.join(userDataPath, 'settings.json')
 const workspacesPath = path.join(userDataPath, 'workspaces.json')
 const projectsPath = path.join(userDataPath, 'projects.json')
 const usagePath = path.join(userDataPath, 'usage.json')
+const usageJournalPath = path.join(userDataPath, 'usage-journal.jsonl')
 const usageArchivePath = path.join(userDataPath, 'usage-archive.jsonl')
+
+const usageJournalStore = new UsageJournalStore({
+  checkpointPath: usagePath,
+  journalPath: usageJournalPath,
+  archivePath: usageArchivePath
+})
 
 /** Main-owned Project registry (Work surface). Constructed against the
  * hardened readJson/writeJson pair below (function declarations, so hoisting
@@ -339,20 +360,6 @@ const projectRegistry = createProjectRegistry({
   readJson: (filePath, defaultData) => readJson(filePath, defaultData),
   writeJson: (filePath, data) => writeJson(filePath, data)
 })
-
-/** Append rotated usage records to the JSONL archive. Returns false on any
- * failure so the caller keeps the records in the hot file instead — archive
- * failure must degrade to grow-forever, never to data loss. Append-only
- * (O_APPEND) keeps concurrent writers (second instance) line-safe. */
-function appendUsageArchiveRecords(records: UsageRecord[]): boolean {
-  try {
-    const lines = records.map((record) => JSON.stringify(record)).join('\n')
-    fs.appendFileSync(usageArchivePath, `${lines}\n`, { encoding: 'utf-8', mode: 0o600 })
-    return true
-  } catch {
-    return false
-  }
-}
 
 // getSettings() used to re-read + re-parse + re-normalize settings.json on
 // EVERY call — ~214 call sites across the main process, including per-tool-
@@ -466,6 +473,7 @@ const memoryProposalPacksPath = path.join(userDataPath, 'memory-proposal-packs.j
 const introspectionSchedulePath = path.join(userDataPath, 'introspection-schedule.json')
 const runEventsDir = path.join(userDataPath, 'run-events')
 const runArtifactsDir = path.join(userDataPath, 'run-artifacts')
+const historyDeletionIntentPath = path.join(userDataPath, 'history-deletion-intent.json')
 const runEventSequenceCache = new Map<string, number>()
 const runEventHashCache = new Map<string, string>()
 // Stage 1 — durable per-execution workflow run ledger (one .jsonl per
@@ -481,15 +489,171 @@ const agentStatsSeenCache = new Map<string, Set<string>>()
 const agentStatsRawCountCache = new Map<string, number>()
 const deletedChatIds = new Set<string>()
 const deletedRunIds = new Set<string>()
+const historyDeletionFailureStepsForTests = new Set<HistoryDeletionStep>()
+
+export type HistoryDeletionKind = 'global' | 'workspace' | 'chat' | 'truncate'
+export type HistoryDeletionQuiescenceKind =
+  | 'maintenance-compaction'
+  | 'provider-run'
+  | 'canvas'
+  | 'execution-graph'
+  | 'usage'
+  | 'project-reference'
+  | 'media'
+  | 'bridge'
+
+export interface HistoryDeletionQuiescenceTarget {
+  /** Main-minted stable id, unique within one deletion intent. */
+  id: string
+  kind: HistoryDeletionQuiescenceKind
+  runId?: string
+  /** Process-local detached maintenance reservation. Absent on the scope
+   * barrier target that also captures the discovery-to-prepare window. */
+  maintenanceCompactionId?: string
+  provider?: ProviderId
+  chatId?: string
+  workspaceId?: string
+}
+
+export interface HistoryDeletionPreparation {
+  operationId: string
+  kind: HistoryDeletionKind
+  workspaceId?: string
+  rootChatId?: string
+  chatIds: string[]
+  runIds: string[]
+  quiescenceTargets: HistoryDeletionQuiescenceTarget[]
+  completedQuiescenceTargetIds: string[]
+}
+
+export interface HistoryDeletionScopePreview {
+  kind: HistoryDeletionKind
+  workspaceId?: string
+  rootChatId?: string
+  chatIds: string[]
+  runIds: string[]
+}
+
+export type HistoryDeletionPrepareInput = {
+  kind: HistoryDeletionKind
+  workspaceId?: string
+  rootChatId?: string
+  quiescenceTargets?: HistoryDeletionQuiescenceTarget[]
+}
+type HistoryDeletionStep =
+  | 'scheduled-orchestration'
+  | 'workflow-run-history'
+  | 'run-queue'
+  | 'run-recovery'
+  | 'approval-ledger'
+  | 'message-feedback'
+  | 'sub-thread-mailboxes'
+  | 'run-events'
+  | 'run-artifacts'
+  | 'kimi-seat-state'
+  | 'chat-records'
+  | 'chat-list-index'
+  | 'project-membership'
+
+const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
+  // Resurrection sources are retired before the visible transcript commit.
+  'scheduled-orchestration',
+  'workflow-run-history',
+  'run-queue',
+  'run-recovery',
+  'approval-ledger',
+  'message-feedback',
+  'sub-thread-mailboxes',
+  'run-events',
+  'run-artifacts',
+  'kimi-seat-state',
+  'chat-records',
+  'chat-list-index',
+  'project-membership'
+]
+
+interface HistoryDeletionIntent {
+  schemaVersion: 1
+  operationId: string
+  kind: HistoryDeletionKind
+  createdAt: string
+  updatedAt: string
+  workspaceId?: string
+  rootChatId?: string
+  chatIds: string[]
+  runIds: string[]
+  scheduledTaskIds: string[]
+  retainedScheduledTaskIds: string[]
+  workflowIds: string[]
+  workflowExecutionIds: string[]
+  kimiSeats: Array<{ chatId: string; participantId: string }>
+  quiescenceTargets: HistoryDeletionQuiescenceTarget[]
+  completedQuiescenceTargetIds: string[]
+  completedSteps: HistoryDeletionStep[]
+  failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }>
+}
+
+export class HistoryDeletionIncompleteError extends Error {
+  readonly operationId: string
+  readonly failures: ReadonlyArray<{ step: HistoryDeletionStep | 'journal'; message: string }>
+
+  constructor(
+    operationId: string,
+    failures: ReadonlyArray<{ step: HistoryDeletionStep | 'journal'; message: string }>
+  ) {
+    super(
+      `History deletion ${operationId} is incomplete (${failures
+        .map((failure) => failure.step)
+        .join(', ')}). The durable deletion intent was retained for retry.`
+    )
+    this.name = 'HistoryDeletionIncompleteError'
+    this.operationId = operationId
+    this.failures = [...failures]
+  }
+}
+
+export class HistoryDeletionQuiescenceRequiredError extends Error {
+  readonly operationId: string
+  readonly pendingTargetIds: string[]
+
+  constructor(operationId: string, pendingTargetIds: string[]) {
+    super(
+      `History deletion ${operationId} cannot commit until ${pendingTargetIds.length} quiescence target(s) complete.`
+    )
+    this.name = 'HistoryDeletionQuiescenceRequiredError'
+    this.operationId = operationId
+    this.pendingTargetIds = [...pendingTargetIds]
+  }
+}
+
+export class HistoryDeletionMutationBlockedError extends Error {
+  readonly operationId: string
+  readonly kind: HistoryDeletionKind
+
+  constructor(operationId: string, kind: HistoryDeletionKind, operation: string) {
+    super(
+      `${operation} is blocked while history deletion ${operationId} (${kind}) is pending. Retry after the deletion finishes.`
+    )
+    this.name = 'HistoryDeletionMutationBlockedError'
+    this.operationId = operationId
+    this.kind = kind
+  }
+}
+
+export interface HistoryMutationAdmissionInput {
+  operation: string
+  chatIds?: ReadonlyArray<string | null | undefined>
+  workspaceIds?: ReadonlyArray<string | null | undefined>
+  runIds?: ReadonlyArray<string | null | undefined>
+}
 // Newest-N audit runs kept on disk. Each run holds its own findings/verdicts;
 // the per-run JSONL ledger (run-events) carries the replayable detail.
 const AUDIT_RUN_HISTORY_LIMIT = 100
 const INTROSPECTION_RUN_HISTORY_LIMIT = 100
 const MEMORY_PROPOSAL_PACK_HISTORY_LIMIT = 200
-// 1.0.6-CRUX27 — grok + cursor are first-class providers; seed their built-in
-// runtime profiles too (local + global per provider, see getDefaultRuntimeProfiles)
-// so their global chats have a usable runtime out of the box. Unconditional:
-// unused default profiles for a force-disabled provider are harmless data.
+// Structural provider ids seed default-profile records for persistence and
+// historical configuration compatibility. A stored Cursor profile is not run
+// admission; the no-spawn gate remains unconditional.
 const providerIds: ProviderId[] = ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
 const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
@@ -2120,6 +2284,369 @@ function writeJson<T>(filePath: string, data: T) {
   }
 }
 
+function historyDeletionErrorMessage(error: unknown): string {
+  const message = error instanceof Error ? error.message : String(error)
+  return message.replace(/[\r\n]+/g, ' ').slice(0, 500) || 'Unknown deletion failure.'
+}
+
+function readJsonStrictIfPresent(filePath: string): unknown | null {
+  if (!fs.existsSync(filePath)) return null
+  return JSON.parse(fs.readFileSync(filePath, 'utf-8')) as unknown
+}
+
+function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    throw new Error('History deletion intent is not an object.')
+  }
+  const record = value as Partial<HistoryDeletionIntent>
+  const kinds = new Set<HistoryDeletionKind>(['global', 'workspace', 'chat', 'truncate'])
+  const steps = new Set<HistoryDeletionStep>(HISTORY_DELETION_STEPS)
+  const safeStrings = (items: unknown, label: string, validateSafeChatId = false): string[] => {
+    if (!Array.isArray(items)) throw new Error(`History deletion intent ${label} is not an array.`)
+    const result = [...new Set(items)]
+    if (
+      result.some(
+        (item) =>
+          typeof item !== 'string' ||
+          !item ||
+          item.length > 4096 ||
+          (validateSafeChatId && !isSafeChatId(item))
+      )
+    ) {
+      throw new Error(`History deletion intent ${label} contains an unsafe identifier.`)
+    }
+    return result as string[]
+  }
+  if (
+    record.schemaVersion !== 1 ||
+    typeof record.operationId !== 'string' ||
+    !record.operationId ||
+    record.operationId.length > 128 ||
+    !kinds.has(record.kind as HistoryDeletionKind) ||
+    typeof record.createdAt !== 'string' ||
+    !Number.isFinite(Date.parse(record.createdAt)) ||
+    typeof record.updatedAt !== 'string' ||
+    !Number.isFinite(Date.parse(record.updatedAt))
+  ) {
+    throw new Error('History deletion intent header is invalid.')
+  }
+  const kind = record.kind as HistoryDeletionKind
+  if (
+    (kind === 'workspace' &&
+      (typeof record.workspaceId !== 'string' || !record.workspaceId.trim())) ||
+    ((kind === 'chat' || kind === 'truncate') &&
+      (typeof record.rootChatId !== 'string' || !isSafeChatId(record.rootChatId)))
+  ) {
+    throw new Error('History deletion intent scope is invalid.')
+  }
+  const completedSteps = safeStrings(record.completedSteps, 'completed steps').filter((step) =>
+    steps.has(step as HistoryDeletionStep)
+  ) as HistoryDeletionStep[]
+  if (completedSteps.length !== new Set(record.completedSteps as string[]).size) {
+    throw new Error('History deletion intent contains an unknown completion step.')
+  }
+  if (!Array.isArray(record.kimiSeats)) {
+    throw new Error('History deletion intent Kimi seats is not an array.')
+  }
+  const chatIds = safeStrings(record.chatIds, 'chat ids', true)
+  const runIds = safeStrings(record.runIds, 'run ids')
+  // Never normalize a missing ownership inventory to empty: that would turn a
+  // source-ahead journal upgrade into an apparently successful clear while an
+  // old schedule could still recreate the transcript.
+  const scheduledTaskIds = safeStrings(record.scheduledTaskIds, 'scheduled task ids')
+  const retainedScheduledTaskIds = safeStrings(
+    record.retainedScheduledTaskIds,
+    'retained scheduled task ids'
+  )
+  if (retainedScheduledTaskIds.some((taskId) => !scheduledTaskIds.includes(taskId))) {
+    throw new Error(
+      'History deletion intent retains a scheduled task outside its frozen deletion scope.'
+    )
+  }
+  const workflowIds = safeStrings(record.workflowIds, 'workflow ids')
+  const workflowExecutionIds = safeStrings(record.workflowExecutionIds, 'workflow execution ids')
+  const kimiSeats = record.kimiSeats.map((seat) => {
+    if (
+      !seat ||
+      typeof seat !== 'object' ||
+      Array.isArray(seat) ||
+      !isSafeChatId((seat as { chatId?: unknown }).chatId) ||
+      typeof (seat as { participantId?: unknown }).participantId !== 'string' ||
+      !(seat as { participantId: string }).participantId ||
+      (seat as { participantId: string }).participantId.length > 4096
+    ) {
+      throw new Error('History deletion intent contains an unsafe Kimi seat identity.')
+    }
+    return {
+      chatId: (seat as { chatId: string }).chatId,
+      participantId: (seat as { participantId: string }).participantId
+    }
+  })
+  if (!Array.isArray(record.quiescenceTargets)) {
+    throw new Error('History deletion intent quiescence targets is not an array.')
+  }
+  const quiescenceKinds = new Set<HistoryDeletionQuiescenceKind>([
+    'maintenance-compaction',
+    'provider-run',
+    'canvas',
+    'execution-graph',
+    'usage',
+    'project-reference',
+    'media',
+    'bridge'
+  ])
+  const targetIds = new Set<string>()
+  const quiescenceTargets = record.quiescenceTargets.map((targetValue) => {
+    const target = objectRecord(targetValue)
+    if (
+      !target ||
+      typeof target.id !== 'string' ||
+      !target.id ||
+      target.id.length > 512 ||
+      targetIds.has(target.id) ||
+      !quiescenceKinds.has(target.kind as HistoryDeletionQuiescenceKind) ||
+      (target.chatId !== undefined &&
+        (typeof target.chatId !== 'string' || !isSafeChatId(target.chatId))) ||
+      (target.runId !== undefined &&
+        (typeof target.runId !== 'string' || !target.runId || target.runId.length > 4096)) ||
+      (target.maintenanceCompactionId !== undefined &&
+        (typeof target.maintenanceCompactionId !== 'string' ||
+          !target.maintenanceCompactionId ||
+          target.maintenanceCompactionId.length > 4096)) ||
+      (target.workspaceId !== undefined &&
+        (typeof target.workspaceId !== 'string' || !target.workspaceId || target.workspaceId.length > 4096)) ||
+      (target.provider !== undefined && !providerIds.includes(target.provider as ProviderId))
+    ) {
+      throw new Error('History deletion intent contains an invalid quiescence target.')
+    }
+    targetIds.add(target.id)
+    const normalizedTarget: HistoryDeletionQuiescenceTarget = {
+      id: target.id,
+      kind: target.kind as HistoryDeletionQuiescenceKind,
+      ...(typeof target.runId === 'string' ? { runId: target.runId } : {}),
+      ...(typeof target.maintenanceCompactionId === 'string'
+        ? { maintenanceCompactionId: target.maintenanceCompactionId }
+        : {}),
+      ...(typeof target.provider === 'string' ? { provider: target.provider as ProviderId } : {}),
+      ...(typeof target.chatId === 'string' ? { chatId: target.chatId } : {}),
+      ...(typeof target.workspaceId === 'string' ? { workspaceId: target.workspaceId } : {})
+    }
+    if (
+      (normalizedTarget.kind === 'provider-run' &&
+        (!normalizedTarget.runId || !normalizedTarget.provider)) ||
+      (normalizedTarget.kind !== 'maintenance-compaction' &&
+        Boolean(normalizedTarget.maintenanceCompactionId)) ||
+      (normalizedTarget.kind === 'maintenance-compaction' &&
+        Boolean(normalizedTarget.maintenanceCompactionId) &&
+        (!normalizedTarget.provider || !normalizedTarget.chatId)) ||
+      (normalizedTarget.kind === 'usage' &&
+        (normalizedTarget.runId ||
+          normalizedTarget.maintenanceCompactionId ||
+          normalizedTarget.provider ||
+          normalizedTarget.chatId)) ||
+      (normalizedTarget.kind === 'project-reference' &&
+        (normalizedTarget.runId ||
+          normalizedTarget.maintenanceCompactionId ||
+          normalizedTarget.provider ||
+          normalizedTarget.chatId ||
+          (kind === 'workspace'
+            ? normalizedTarget.workspaceId !== record.workspaceId
+            : Boolean(normalizedTarget.workspaceId)))) ||
+      (normalizedTarget.chatId && !chatIds.includes(normalizedTarget.chatId)) ||
+      (kind === 'workspace' &&
+        normalizedTarget.workspaceId &&
+        normalizedTarget.workspaceId !== record.workspaceId) ||
+      (normalizedTarget.kind === 'bridge' && kind !== 'global')
+    ) {
+      throw new Error('History deletion quiescence target does not belong to its deletion scope.')
+    }
+    return normalizedTarget
+  })
+  const completedQuiescenceTargetIds = safeStrings(
+    record.completedQuiescenceTargetIds,
+    'completed quiescence target ids'
+  )
+  if (completedQuiescenceTargetIds.some((id) => !targetIds.has(id))) {
+    throw new Error('History deletion intent completed an unknown quiescence target.')
+  }
+  const failures = Array.isArray(record.failures)
+    ? record.failures
+        .filter(
+          (failure): failure is { step: HistoryDeletionStep | 'journal'; message: string } =>
+            Boolean(
+              failure &&
+                typeof failure === 'object' &&
+                !Array.isArray(failure) &&
+                ((failure as { step?: unknown }).step === 'journal' ||
+                  steps.has((failure as { step?: HistoryDeletionStep }).step as HistoryDeletionStep)) &&
+                typeof (failure as { message?: unknown }).message === 'string'
+            )
+        )
+        .map((failure) => ({ step: failure.step, message: failure.message.slice(0, 500) }))
+    : []
+  return {
+    schemaVersion: 1,
+    operationId: record.operationId,
+    kind,
+    createdAt: record.createdAt,
+    updatedAt: record.updatedAt,
+    ...(typeof record.workspaceId === 'string' ? { workspaceId: record.workspaceId } : {}),
+    ...(typeof record.rootChatId === 'string' ? { rootChatId: record.rootChatId } : {}),
+    chatIds,
+    runIds,
+    scheduledTaskIds,
+    retainedScheduledTaskIds,
+    workflowIds,
+    workflowExecutionIds,
+    kimiSeats,
+    quiescenceTargets,
+    completedQuiescenceTargetIds,
+    completedSteps,
+    failures
+  }
+}
+
+function readHistoryDeletionIntent(): HistoryDeletionIntent | null {
+  const value = readJsonStrictIfPresent(historyDeletionIntentPath)
+  return value === null ? null : normalizeHistoryDeletionIntent(value)
+}
+
+function writeHistoryDeletionIntent(intent: HistoryDeletionIntent): void {
+  writeJson(historyDeletionIntentPath, normalizeHistoryDeletionIntent(intent))
+}
+
+function removePathStrict(targetPath: string, label: string): void {
+  fs.rmSync(targetPath, { recursive: true, force: true })
+  if (fs.existsSync(targetPath)) throw new Error(`${label} still exists after deletion.`)
+}
+
+function removePathsStrict(targets: Array<{ targetPath: string; label: string }>): void {
+  const failures: Error[] = []
+  for (const target of targets) {
+    try {
+      removePathStrict(target.targetPath, target.label)
+    } catch (error) {
+      failures.push(new Error(`${target.label}: ${historyDeletionErrorMessage(error)}`))
+    }
+  }
+  if (failures.length > 0) {
+    throw new AggregateError(failures, `Failed to remove ${failures.length} history target(s).`)
+  }
+}
+
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null
+}
+
+function historyRecordMatches(
+  value: unknown,
+  intent: HistoryDeletionIntent,
+  options: { includeRunIds?: boolean } = {}
+): boolean {
+  if (intent.kind === 'global') return true
+  const record = objectRecord(value)
+  if (!record) return false
+  const chatIds = new Set(intent.chatIds)
+  const recordChatIds = [record.chatId, record.parentChatId, record.subThreadId].filter(
+    (value): value is string => typeof value === 'string'
+  )
+  if (recordChatIds.length > 0) {
+    // A direct chat owner is stronger than a run id. This avoids deleting a
+    // sibling record when legacy/test data reused a run id across chats.
+    if (recordChatIds.some((chatId) => chatIds.has(chatId))) return true
+    if (
+      intent.kind === 'workspace' &&
+      typeof record.workspaceId === 'string' &&
+      record.workspaceId === intent.workspaceId
+    ) {
+      return true
+    }
+    return false
+  }
+  if (
+    intent.kind === 'workspace' &&
+    typeof record.workspaceId === 'string' &&
+    record.workspaceId === intent.workspaceId
+  ) {
+    return true
+  }
+  return Boolean(
+    recordChatIds.length === 0 &&
+      options.includeRunIds !== false &&
+      typeof record.runId === 'string' &&
+      new Set(intent.runIds).has(record.runId)
+  )
+}
+
+function rewriteArrayHistoryStore(
+  filePath: string,
+  label: string,
+  intent: HistoryDeletionIntent
+): void {
+  if (intent.kind === 'global') {
+    removePathStrict(filePath, label)
+    return
+  }
+  const stored = readJsonStrictIfPresent(filePath)
+  if (stored === null) return
+  if (!Array.isArray(stored)) throw new Error(`${label} is not an array.`)
+  const retained = stored.filter((record) => !historyRecordMatches(record, intent))
+  if (retained.length === 0) {
+    removePathStrict(filePath, label)
+  } else if (retained.length !== stored.length) {
+    writeJson(filePath, retained)
+  }
+  const verified = readJsonStrictIfPresent(filePath)
+  if (verified !== null) {
+    if (!Array.isArray(verified) || verified.some((record) => historyRecordMatches(record, intent))) {
+      throw new Error(`${label} still contains records owned by the deletion scope.`)
+    }
+  }
+}
+
+function chatContainsTruncatableHistory(chat: ChatRecord): boolean {
+  const ensemble = chat.ensemble
+  const delegation = chat.delegationContext
+  return Boolean(
+    chat.messages.length > 0 ||
+      chat.runs.length > 0 ||
+      chat.linkedProviderSessionId ||
+      chat.linkedGeminiSessionId ||
+      chat.taskWraithMcpProfileReceipt ||
+      chat.seatGeneration ||
+      chat.contextCompactionSummary ||
+      chat.activeGoal ||
+      chat.chatTodos ||
+      chat.soloWakeups ||
+      chat.ollamaSessionMemory ||
+      chat.ollamaSessionMemories ||
+      delegation ||
+      ensemble?.activeRound ||
+      ensemble?.workSession ||
+      ensemble?.sessionActivityLedger ||
+      ensemble?.bossmanControlState ||
+      ensemble?.lastRoundSummary ||
+      ensemble?.roundSummaries ||
+      ensemble?.wakeups ||
+      ensemble?.blackboard ||
+      ensemble?.escalationSignals ||
+      ensemble?.participants.some(
+        (participant) =>
+          participant.linkedProviderSessionId ||
+          participant.taskWraithMcpProfileReceipt ||
+          participant.seatGeneration ||
+          participant.contextCompactionSummary ||
+          participant.promptShellVersion ||
+          participant.promptDynamicStateVersion ||
+          participant.tokenTotals ||
+          participant.kimiAcpNativeSession ||
+          participant.kimiAcpPostureVersion
+      )
+  )
+}
+
 function normalizedScheduledRunIdTombstone(
   value: unknown
 ): ScheduledRunIdTombstoneRecord | null {
@@ -2552,6 +3079,38 @@ function assertNoPendingScheduledOccurrenceMutation(): void {
       ? journal.reason
       : 'Scheduled occurrence mutation recovery is pending.'
   )
+}
+
+function readScheduledTasksForHistoryDeletionStrict(): ScheduledTask[] {
+  const value = readJsonStrictIfPresent(scheduledTasksPath)
+  if (value === null) return []
+  if (!Array.isArray(value)) throw new Error('Scheduled task store is not an array.')
+  const ids = new Set<string>()
+  return value.map((candidate) => {
+    const task = objectRecord(candidate)
+    if (
+      !task ||
+      !isNonEmptyTrimmedString(task.id) ||
+      ids.has(task.id) ||
+      !isSafeChatId(task.chatId) ||
+      !isNonEmptyTrimmedString(task.workspaceId) ||
+      typeof task.prompt !== 'string' ||
+      !['pending', 'due', 'running', 'completed', 'failed', 'cancelled'].includes(
+        String(task.status)
+      )
+    ) {
+      throw new Error('Scheduled task store contains an invalid or duplicate record.')
+    }
+    ids.add(task.id)
+    return candidate as ScheduledTask
+  })
+}
+
+function readWorkflowsForHistoryDeletionStrict(): WorkflowDefinition[] {
+  if (!fs.existsSync(workflowsPath)) return []
+  const records = readScheduledOccurrenceWorkflowRecordsStrict()
+  if (!records) throw new Error('Workflow definition store is not a canonical record set.')
+  return records.normalized
 }
 
 function occurrenceRecordState<T extends { id: string }>(
@@ -3421,6 +3980,14 @@ export class AppStore {
     this.chatListIndexCache = null
     this.chatListIndexWriteAtByChatId.clear()
     this.orphanSubThreadsReaped = false
+    this.orphanSubThreadReapCandidates.clear()
+    this.historyDeletionRunning = false
+    historyDeletionFailureStepsForTests.clear()
+  }
+
+  static setHistoryDeletionFailureInjectionForTests(steps: HistoryDeletionStep[]): void {
+    historyDeletionFailureStepsForTests.clear()
+    for (const step of steps) historyDeletionFailureStepsForTests.add(step)
   }
 
   static getExtensionSecretStatusSnapshot(): ExtensionSecretStatusSnapshot {
@@ -3866,6 +4433,21 @@ export class AppStore {
   }
 
   static applyProjectOp(op: ProjectOp): ProjectRegistryMutationResult {
+    const addedChatIds =
+      op.kind === 'add-chat'
+        ? [op.chatId]
+        : op.kind === 'create'
+          ? Array.isArray(op.input.memberChatIds)
+            ? op.input.memberChatIds
+            : []
+          : []
+    if (addedChatIds.length > 0) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Project chat membership persistence',
+        chatIds: addedChatIds,
+        workspaceIds: addedChatIds.map((chatId) => this.getChat(chatId)?.workspaceId)
+      })
+    }
     return projectRegistry.applyOp(op)
   }
 
@@ -3877,6 +4459,13 @@ export class AppStore {
     projectId: string,
     chatId: string | null
   ): ProjectRegistryMutationResult {
+    if (chatId) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Project home-chat persistence',
+        chatIds: [chatId],
+        workspaceIds: [this.getChat(chatId)?.workspaceId]
+      })
+    }
     return projectRegistry.setHomeChat(projectId, chatId)
   }
 
@@ -4252,13 +4841,16 @@ export class AppStore {
   }
 
   private static orphanSubThreadsReaped = false
+  private static orphanSubThreadReapCandidates = new Set<string>()
 
-  /** One-time-per-process reap of child chats (sub-threads / side-chats /
+  /** One-time-per-process discovery of child chats (sub-threads / side-chats /
    * guests) whose parent chat FILE no longer exists. Historically `deleteChat`
    * did not cascade, so deleting a parent stranded its children on disk; those
    * orphans then surfaced on iOS as perpetual "running" tombstones and inflated
    * the remote thread count. Runs lazily on the first getChats() so it needs no
-   * startup wiring (keeps the fix out of the concurrently-edited index.ts).
+   * startup wiring. Discovery is intentionally read-only: main drains these
+   * candidates through the same lifecycle-fenced deletion authority as every
+   * renderer/reaper delete. Failed candidates remain queued for retry.
    * Parent existence is checked by FILE presence — never the parsed list — so a
    * transiently unparseable parent can never cause its children to be reaped.
    * Best-effort: any failure leaves data untouched. */
@@ -4272,7 +4864,7 @@ export class AppStore {
         const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
         if (!chat?.parentChatId) continue
         if (!fs.existsSync(chatPathForId(chatsDir, chat.parentChatId))) {
-          this.deleteChat(chat.appChatId)
+          this.orphanSubThreadReapCandidates.add(chat.appChatId)
         }
       }
     } catch {
@@ -4288,11 +4880,25 @@ export class AppStore {
     for (const file of files) {
       const chatId = path.basename(file, '.json')
       const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
-      if (chat && (!workspaceId || chat.workspaceId === workspaceId)) {
+      if (
+        chat &&
+        !this.orphanSubThreadReapCandidates.has(chat.appChatId) &&
+        (!workspaceId || chat.workspaceId === workspaceId)
+      ) {
         chats.push(chat)
       }
     }
     return chats.sort((a, b) => b.updatedAt - a.updatedAt)
+  }
+
+  static listOrphanSubThreadReapCandidates(): string[] {
+    this.ensureOrphanSubThreadsReaped()
+    return [...this.orphanSubThreadReapCandidates].sort()
+  }
+
+  static acknowledgeOrphanSubThreadReapCandidate(chatId: string): void {
+    if (!isSafeChatId(chatId)) return
+    this.orphanSubThreadReapCandidates.delete(chatId)
   }
 
   static getPinnedMessages(workspaceId?: string): PinnedMessageGroup[] {
@@ -4399,16 +5005,11 @@ export class AppStore {
     return filterMessageFeedbackReceipts(this.readMessageFeedbackLedger(), filter)
   }
 
-  private static removeMessageFeedbackReceipts(
-    filter: { chatIds?: Iterable<string>; workspaceId?: string }
-  ): void {
-    const existing = this.readMessageFeedbackLedger()
-    if (existing.length === 0) return
-    const next = removeMessageFeedbackReceipts(existing, filter)
-    if (next.length !== existing.length) writeMessageFeedbackLedger(next)
-  }
-
   static createChat(workspaceId: string, workspacePath: string): ChatRecord {
+    this.assertHistoryMutationAllowed({
+      operation: 'Workspace chat creation',
+      workspaceIds: [workspaceId]
+    })
     const settings = this.getSettings()
     const chat: ChatRecord = {
       appChatId: randomUUID(),
@@ -4432,6 +5033,7 @@ export class AppStore {
   }
 
   static createGlobalChat(): ChatRecord {
+    this.assertHistoryMutationAllowed({ operation: 'Global chat creation' })
     const settings = this.getSettings()
     const chat: ChatRecord = {
       appChatId: randomUUID(),
@@ -4456,6 +5058,10 @@ export class AppStore {
     args: { workspaceId?: string; workspacePath?: string } = {},
     configuredProviders?: Set<ProviderId>
   ): ChatRecord {
+    this.assertHistoryMutationAllowed({
+      operation: 'Ensemble chat creation',
+      workspaceIds: [args.workspaceId]
+    })
     const settings = this.getSettings()
     const activeProvider = coerceLiveProvider(settings.activeProvider)
     const scope: ChatRecord['scope'] =
@@ -4746,6 +5352,11 @@ export class AppStore {
     if (!parent) {
       throw new Error(`Cannot create side chat: parent chat ${args.parentChatId} not found`)
     }
+    this.assertHistoryMutationAllowed({
+      operation: 'Side-chat creation',
+      chatIds: [args.parentChatId],
+      workspaceIds: [parent.workspaceId]
+    })
 
     const settings = this.getSettings()
     const now = Date.now()
@@ -4879,6 +5490,11 @@ export class AppStore {
     const inheritWorkspace = args.workspaceId === undefined && args.workspacePath === undefined
     const workspaceId = inheritWorkspace ? parent.workspaceId : args.workspaceId
     const workspacePath = inheritWorkspace ? parent.workspacePath : args.workspacePath
+    this.assertHistoryMutationAllowed({
+      operation: 'Sub-thread creation',
+      chatIds: [args.parentChatId],
+      workspaceIds: [parent.workspaceId, workspaceId]
+    })
     const chat: ChatRecord = {
       appChatId: randomUUID(),
       // Scope inherited from parent — a sub-thread of a workspace
@@ -4957,6 +5573,12 @@ export class AppStore {
   }
 
   static saveChat(chat: ChatRecord): ChatRecord {
+    this.assertHistoryMutationAllowed({
+      operation: 'Chat persistence',
+      chatIds: [chat.appChatId, chat.parentChatId],
+      workspaceIds: [chat.workspaceId],
+      runIds: (chat.runs || []).map((run) => run.runId)
+    })
     const settings = this.getSettings()
     if (!settings.storeLocalChatHistory) return chat
     if ((chat as Partial<ChatListItem>).summaryOnly === true) {
@@ -5027,131 +5649,1022 @@ export class AppStore {
     return normalizedChat
   }
 
-  static deleteChat(chatId: string, seen: Set<string> = new Set()): void {
-    // Cascade to linked children FIRST. A parent owns its sub-threads,
-    // side-chats and guest child chats (any chat whose parentChatId is this
-    // chat). Without this cascade those children survive on disk as orphans and
-    // surface on iOS as perpetual "running" tombstones (the remote feed has no
-    // parent-existence gate). `seen` guards against malformed parent cycles.
-    if (seen.has(chatId)) return
-    seen.add(chatId)
-    deletedChatIds.add(chatId)
-    for (const child of this.getChats().filter((candidate) => candidate.parentChatId === chatId)) {
-      this.deleteChat(child.appChatId, seen)
-    }
+  private static historyDeletionRunning = false
 
-    // Read the chat's KNOWN runs before unlinking so we can clean up its
-    // per-run forensic files (run-event ledger + artifacts) that would
-    // otherwise be orphaned on disk forever. Derived purely from this chat's
-    // own runIds (never a directory scan), so a sibling chat's similar/prefixed
-    // run files are guaranteed untouched. All cleanup is best-effort.
-    const chat = this.getChat(chatId)
-    const runs = Array.isArray(chat?.runs) ? chat.runs : []
-    for (const run of runs) {
-      if (run && typeof run.runId === 'string') {
-        deleteRunForensicFiles(run.runId)
-      }
-    }
-    if (chat) {
-      const seatIds = new Set([
-        'solo',
-        ...(chat.ensemble?.participants || []).map((participant) => participant.id)
-      ])
-      for (const seatId of seatIds) {
-        try {
-          fs.rmSync(kimiAcpSeatStatePath(userDataPath, chat.appChatId, seatId), {
-            recursive: true,
-            force: true
-          })
-        } catch {
-          // Best-effort, like run-forensic cleanup; chat deletion must proceed.
-        }
-      }
-    }
+  /**
+   * Durable admission fence for every store-owned producer that can recreate
+   * chat/run history while a prepared deletion is waiting on external joins.
+   * The journal, rather than an in-memory latch, is authoritative across
+   * restart. Deletion internals are the sole bypass and run only while
+   * `historyDeletionRunning` owns the synchronous commit section.
+   */
+  static assertHistoryMutationAllowed(input: HistoryMutationAdmissionInput): void {
+    if (this.historyDeletionRunning) return
+    const intent = readHistoryDeletionIntent()
+    if (!intent) return
 
-    const chatPath = chatPathForId(chatsDir, chatId)
-    if (fs.existsSync(chatPath)) {
-      fs.unlinkSync(chatPath)
-    }
-    this.chatRecordCache.delete(chatId)
-    const index = this.readChatListIndexCached()
-    this.chatListIndexWriteAtByChatId.delete(chatId)
-    if (index[chatId]) {
-      delete index[chatId]
-      this.writeChatListIndex(index)
-    }
-    this.removeMessageFeedbackReceipts({ chatIds: [chatId] })
-    this.deleteSubThreadMailbox(chatId)
-    // Project-membership reconciliation at the delete choke point: every
-    // durable per-chat delete funnels through this method (renderer IPC,
-    // per-workspace clearChats, AbandonedChatReaper, remote-draft cleanup,
-    // the orphan sub-thread sweep), so no delete path can strand a stale
-    // memberChatIds entry in projects.json. Runs even when the chat file was
-    // already gone — that is what heals memberships that were already stale.
-    // Best-effort: a projects.json failure must never abort the deletion.
-    try {
-      this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId, now: Date.now() })
-    } catch (error) {
-      console.error('Failed to remove deleted chat from project membership', chatId, error)
+    const chatIds = new Set(
+      (input.chatIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+    )
+    const workspaceIds = new Set(
+      (input.workspaceIds || []).filter(
+        (value): value is string => typeof value === 'string' && Boolean(value)
+      )
+    )
+    const runIds = new Set(
+      (input.runIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+    )
+    const blocked =
+      intent.kind === 'global' ||
+      (intent.kind === 'workspace' &&
+        Boolean(intent.workspaceId && workspaceIds.has(intent.workspaceId))) ||
+      intent.chatIds.some((chatId) => chatIds.has(chatId)) ||
+      intent.runIds.some((runId) => runIds.has(runId))
+
+    if (blocked) {
+      throw new HistoryDeletionMutationBlockedError(
+        intent.operationId,
+        intent.kind,
+        input.operation || 'History mutation'
+      )
     }
   }
 
-  static clearChats(workspaceId?: string) {
-    if (!workspaceId) {
-      try {
-        if (fs.existsSync(chatsDir)) {
-          for (const file of fs.readdirSync(chatsDir).filter((item) => item.endsWith('.json'))) {
-            deletedChatIds.add(path.basename(file, '.json'))
+  private static allReadableChatsForDeletion(): ChatRecord[] {
+    if (!fs.existsSync(chatsDir)) return []
+    const chats: ChatRecord[] = []
+    for (const file of fs.readdirSync(chatsDir).filter((item) => item.endsWith('.json'))) {
+      const chatId = path.basename(file, '.json')
+      if (!isSafeChatId(chatId)) continue
+      const chat = this.readChatRecordCached(chatId, path.join(chatsDir, file))
+      if (chat) chats.push(chat)
+    }
+    return chats
+  }
+
+  private static createHistoryDeletionIntent(
+    input: HistoryDeletionPrepareInput
+  ): HistoryDeletionIntent {
+    const now = new Date().toISOString()
+    const scheduledMutation = readScheduledOccurrenceMutationJournal()
+    if (scheduledMutation.status !== 'none') {
+      throw new Error(
+        scheduledMutation.status === 'blocked'
+          ? scheduledMutation.reason
+          : 'Scheduled occurrence mutation recovery must finish before history deletion can prepare.'
+      )
+    }
+    if (input.kind === 'workspace' && fs.existsSync(chatsDir)) {
+      // Workspace ownership is stored inside each chat record. If any record is
+      // unreadable we cannot prove whether deleting or retaining it is correct,
+      // so stop before writing an intent or touching sibling history.
+      for (const file of fs.readdirSync(chatsDir).filter((item) => item.endsWith('.json'))) {
+        const stored = readJsonStrictIfPresent(path.join(chatsDir, file))
+        if (!objectRecord(stored)) {
+          throw new Error(`Chat record ${file} is invalid; workspace deletion cannot prove scope.`)
+        }
+      }
+    }
+    const allChats = this.allReadableChatsForDeletion()
+    const chatIds = new Set<string>()
+    if (input.kind === 'global') {
+      for (const chat of allChats) chatIds.add(chat.appChatId)
+      if (fs.existsSync(chatsDir)) {
+        for (const file of fs.readdirSync(chatsDir).filter((item) => item.endsWith('.json'))) {
+          const id = path.basename(file, '.json')
+          if (isSafeChatId(id)) chatIds.add(id)
+        }
+      }
+      // With no chats left every project membership is stale, including ids
+      // whose chat file disappeared before this transaction began.
+      for (const project of this.getProjects()) {
+        for (const id of project.memberChatIds) {
+          if (isSafeChatId(id)) chatIds.add(id)
+        }
+      }
+    } else if (input.kind === 'workspace') {
+      for (const chat of allChats) {
+        if (chat.workspaceId === input.workspaceId) chatIds.add(chat.appChatId)
+      }
+      const indexed = readJsonStrictIfPresent(chatListIndexPath)
+      const index = objectRecord(indexed)
+      if (indexed !== null && !index) {
+        throw new Error('Chat list index is invalid; workspace deletion cannot preserve siblings.')
+      }
+      for (const [chatId, itemValue] of Object.entries(index || {})) {
+        const item = objectRecord(itemValue)
+        if (item?.workspaceId === input.workspaceId && isSafeChatId(chatId)) chatIds.add(chatId)
+      }
+    } else if (input.rootChatId) {
+      chatIds.add(input.rootChatId)
+    }
+    for (const target of input.quiescenceTargets || []) {
+      if (target.chatId && isSafeChatId(target.chatId)) chatIds.add(target.chatId)
+    }
+
+    // Delete/clear owns descendants. Truncate keeps linked children intact.
+    if (input.kind !== 'truncate') {
+      let changed = true
+      while (changed) {
+        changed = false
+        for (const chat of allChats) {
+          if (chat.parentChatId && chatIds.has(chat.parentChatId) && !chatIds.has(chat.appChatId)) {
+            chatIds.add(chat.appChatId)
+            changed = true
           }
         }
-        for (const chat of this.getChats()) {
-          deletedChatIds.add(chat.appChatId)
-          for (const run of chat.runs || []) {
-            if (run?.runId) deleteRunForensicFiles(run.runId)
+      }
+    }
+
+    const runIds = new Set<string>()
+    const kimiSeats: Array<{ chatId: string; participantId: string }> = []
+    for (const chat of allChats) {
+      if (!chatIds.has(chat.appChatId)) continue
+      const historicalSeatIds = new Set<string>()
+      for (const run of chat.runs || []) {
+        if (run?.runId) runIds.add(run.runId)
+        if (run?.ensembleParticipantId) historicalSeatIds.add(run.ensembleParticipantId)
+      }
+      for (const wakeup of Object.values(chat.soloWakeups || {})) {
+        if (wakeup.runId) runIds.add(wakeup.runId)
+      }
+      for (const participant of chat.ensemble?.activeRound?.participants || []) {
+        if (participant.runId) runIds.add(participant.runId)
+      }
+      for (const lane of Object.values(chat.ensemble?.activeRound?.lanes || {})) {
+        if (lane.runId) runIds.add(lane.runId)
+      }
+      for (const wakeup of Object.values(chat.ensemble?.wakeups || {})) {
+        if (wakeup.runId) runIds.add(wakeup.runId)
+      }
+      for (const event of chat.delegationContext?.workerControl?.events || []) {
+        runIds.add(event.plannedRunId)
+        if (event.dispatchRunId) runIds.add(event.dispatchRunId)
+        if (event.parentRunId) runIds.add(event.parentRunId)
+      }
+      const seatIds = new Set([
+        'solo',
+        ...(chat.ensemble?.participants || []).map((participant) => participant.id),
+        ...historicalSeatIds
+      ])
+      for (const participantId of seatIds) kimiSeats.push({ chatId: chat.appChatId, participantId })
+    }
+    for (const target of input.quiescenceTargets || []) {
+      if (target.runId) runIds.add(target.runId)
+    }
+
+    const draft: HistoryDeletionIntent = {
+      schemaVersion: 1,
+      operationId: randomUUID(),
+      kind: input.kind,
+      createdAt: now,
+      updatedAt: now,
+      ...(input.workspaceId ? { workspaceId: input.workspaceId } : {}),
+      ...(input.rootChatId ? { rootChatId: input.rootChatId } : {}),
+      chatIds: [...chatIds].sort(),
+      runIds: [],
+      scheduledTaskIds: [],
+      retainedScheduledTaskIds: [],
+      workflowIds: [],
+      workflowExecutionIds: [],
+      kimiSeats,
+      quiescenceTargets: [...(input.quiescenceTargets || [])],
+      completedQuiescenceTargetIds: [],
+      completedSteps: [],
+      failures: []
+    }
+
+    // A schedule can recreate a cleared transcript without any row in the
+    // ordinary run queue yet. Freeze exact task/workflow/execution ownership in
+    // the durable intent, including pruned execution history that survives only
+    // in the per-execution workflow ledger.
+    const scheduledTasks = readScheduledTasksForHistoryDeletionStrict()
+    const workflows = readWorkflowsForHistoryDeletionStrict()
+    const targetScheduledTaskIds = new Set<string>()
+    const targetWorkflowIds = new Set<string>()
+    const targetWorkflowExecutionIds = new Set<string>()
+    const taskMatchesScope = (task: ScheduledTask): boolean =>
+      input.kind === 'global' ||
+      (input.kind === 'workspace'
+        ? task.workspaceId === input.workspaceId
+        : chatIds.has(task.chatId))
+    const workflowMatchesScope = (workflow: WorkflowDefinition): boolean =>
+      input.kind === 'global' ||
+      (input.kind === 'workspace'
+        ? workflow.workspaceId === input.workspaceId ||
+          workflow.template.workspaceId === input.workspaceId
+        : chatIds.has(workflow.template.chatId))
+
+    for (const task of scheduledTasks) {
+      if (taskMatchesScope(task)) targetScheduledTaskIds.add(task.id)
+    }
+    for (const workflow of workflows) {
+      if (workflowMatchesScope(workflow)) targetWorkflowIds.add(workflow.id)
+    }
+
+    const workflowLedgers: Array<{ events: WorkflowRunEvent[] }> = []
+    if (fs.existsSync(workflowRunsDir)) {
+      for (const entry of fs.readdirSync(workflowRunsDir, { withFileTypes: true })) {
+        if (!entry.isFile() || !entry.name.endsWith('.jsonl')) continue
+        const ledger = readWorkflowRunLedgerStrict(path.join(workflowRunsDir, entry.name))
+        if (ledger.hasTornTail || ledger.events.length === 0) {
+          throw new Error(
+            `Workflow run ledger ${entry.name} is incomplete; history deletion cannot prove scope.`
+          )
+        }
+        workflowLedgers.push({ events: ledger.events })
+      }
+    }
+
+    let scheduleScopeChanged = true
+    while (scheduleScopeChanged) {
+      scheduleScopeChanged = false
+      for (const task of scheduledTasks) {
+        if (
+          targetScheduledTaskIds.has(task.id) &&
+          task.workflowId &&
+          !targetWorkflowIds.has(task.workflowId)
+        ) {
+          targetWorkflowIds.add(task.workflowId)
+          scheduleScopeChanged = true
+        }
+        if (
+          task.workflowId &&
+          targetWorkflowIds.has(task.workflowId) &&
+          !targetScheduledTaskIds.has(task.id)
+        ) {
+          targetScheduledTaskIds.add(task.id)
+          scheduleScopeChanged = true
+        }
+      }
+      for (const workflow of workflows) {
+        if (!targetWorkflowIds.has(workflow.id)) continue
+        for (const execution of workflow.history) {
+          if (
+            execution.scheduledTaskId &&
+            !targetScheduledTaskIds.has(execution.scheduledTaskId)
+          ) {
+            targetScheduledTaskIds.add(execution.scheduledTaskId)
+            scheduleScopeChanged = true
+          }
+        }
+      }
+      for (const ledger of workflowLedgers) {
+        const first = ledger.events[0]
+        const ledgerTaskIds = new Set(
+          ledger.events
+            .map((event) => event.scheduledTaskId)
+            .filter((value): value is string => Boolean(value))
+        )
+        if (
+          input.kind !== 'global' &&
+          !targetWorkflowIds.has(first.workflowId) &&
+          ![...ledgerTaskIds].some((taskId) => targetScheduledTaskIds.has(taskId)) &&
+          !ledger.events.some((event) => Boolean(event.runId && runIds.has(event.runId)))
+        ) {
+          continue
+        }
+        if (!targetWorkflowIds.has(first.workflowId)) {
+          targetWorkflowIds.add(first.workflowId)
+          scheduleScopeChanged = true
+        }
+        for (const taskId of ledgerTaskIds) {
+          if (!targetScheduledTaskIds.has(taskId)) {
+            targetScheduledTaskIds.add(taskId)
+            scheduleScopeChanged = true
+          }
+        }
+      }
+    }
+
+    for (const task of scheduledTasks) {
+      if (!targetScheduledTaskIds.has(task.id)) continue
+      if (task.runId) runIds.add(task.runId)
+      if (task.workflowExecutionId) targetWorkflowExecutionIds.add(task.workflowExecutionId)
+    }
+    for (const workflow of workflows) {
+      if (!targetWorkflowIds.has(workflow.id)) continue
+      for (const execution of workflow.history) {
+        targetWorkflowExecutionIds.add(execution.id)
+        if (execution.runId) runIds.add(execution.runId)
+      }
+    }
+    for (const ledger of workflowLedgers) {
+      const first = ledger.events[0]
+      if (
+        input.kind !== 'global' &&
+        !targetWorkflowIds.has(first.workflowId) &&
+        !ledger.events.some(
+          (event) =>
+            (event.scheduledTaskId && targetScheduledTaskIds.has(event.scheduledTaskId)) ||
+            (event.runId && runIds.has(event.runId))
+        )
+      ) {
+        continue
+      }
+      targetWorkflowExecutionIds.add(first.workflowExecutionId)
+      for (const event of ledger.events) {
+        if (event.runId) runIds.add(event.runId)
+      }
+    }
+    draft.scheduledTaskIds = [...targetScheduledTaskIds].sort()
+    draft.retainedScheduledTaskIds = scheduledTasks
+      .filter(
+        (task) =>
+          targetScheduledTaskIds.has(task.id) &&
+          !task.workflowId &&
+          !isTerminalScheduledTaskStatus(task.status)
+      )
+      .map((task) => task.id)
+      .sort()
+    draft.workflowIds = [...targetWorkflowIds].sort()
+    draft.workflowExecutionIds = [...targetWorkflowExecutionIds].sort()
+
+    // Snapshot queued/recovery/approval run ids before any store is rewritten.
+    for (const [filePath, label] of [
+      [runQueuePath, 'run queue'],
+      [runRecoveryPath, 'run recovery'],
+      [approvalLedgerPath, 'approval ledger']
+    ] as const) {
+      const stored = readJsonStrictIfPresent(filePath)
+      if (stored === null) continue
+      if (!Array.isArray(stored)) {
+        if (input.kind === 'global') continue
+        throw new Error(`${label} is not an array; scoped history deletion cannot preserve siblings.`)
+      }
+      for (const record of stored) {
+        if (!historyRecordMatches(record, draft, { includeRunIds: false })) continue
+        const runId = objectRecord(record)?.runId
+        if (typeof runId === 'string' && runId) runIds.add(runId)
+      }
+    }
+
+    const mailboxValue = readJsonStrictIfPresent(subThreadMailboxesPath)
+    const mailboxLedger = objectRecord(mailboxValue)
+    const mailboxes = objectRecord(mailboxLedger?.mailboxes)
+    if (mailboxValue !== null && (!mailboxLedger || !mailboxes) && input.kind !== 'global') {
+      throw new Error('Sub-thread mailbox ledger is invalid; scoped deletion cannot preserve siblings.')
+    }
+    for (const [parentChatId, mailboxValueForParent] of Object.entries(mailboxes || {})) {
+      const mailbox = objectRecord(mailboxValueForParent)
+      for (const eventValue of Array.isArray(mailbox?.events) ? mailbox.events : []) {
+        const event = objectRecord(eventValue)
+        const source = objectRecord(event?.source)
+        const matches =
+          chatIds.has(parentChatId) ||
+          (typeof source?.subThreadId === 'string' && chatIds.has(source.subThreadId))
+        if (!matches) continue
+        if (typeof source?.sourceRunId === 'string') runIds.add(source.sourceRunId)
+      }
+    }
+
+    if (input.kind === 'global') {
+      try {
+        if (fs.existsSync(runEventsDir)) {
+          for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
+            runIds.add(path.basename(file, '.jsonl'))
+          }
+        }
+        if (fs.existsSync(runArtifactsDir)) {
+          for (const entry of fs.readdirSync(runArtifactsDir, { withFileTypes: true })) {
+            if (entry.isDirectory()) runIds.add(entry.name)
           }
         }
       } catch {
-        // The direct directory removal below still clears best-effort history.
+        // The strict directory-removal steps remain authoritative for global clear.
       }
-      tombstoneRunEventFiles()
-      tombstoneRunArtifactDirs()
-      deletePathBestEffort(chatsDir, 'chat history directory')
-      deletePathBestEffort(chatListIndexPath, 'chat list index')
-      deletePathBestEffort(runEventsDir, 'run event history directory')
-      deletePathBestEffort(runArtifactsDir, 'run artifact history directory')
-      deletePathBestEffort(runQueuePath, 'run queue history')
-      deletePathBestEffort(runRecoveryPath, 'run recovery history')
-      deletePathBestEffort(messageFeedbackLedgerPath, 'message feedback receipt ledger')
-      deletePathBestEffort(subThreadMailboxesPath, 'sub-thread mailbox ledger')
-      deletePathBestEffort(kimiAcpSeatStateRoot(userDataPath), 'Kimi ACP seat history')
-      this.chatRecordCache.clear()
-      this.chatListIndexCache = null
-      this.chatListIndexWriteAtByChatId.clear()
-      this.orphanSubThreadsReaped = false
-      runEventSequenceCache.clear()
-      runEventHashCache.clear()
-      // A full-history clear removes the chats directory wholesale without
-      // routing through deleteChat, so reconcile membership here instead:
-      // with no chats left, EVERY memberChatIds entry is stale by definition
-      // (including ids that were already stale before the clear).
-      try {
-        const now = Date.now()
-        const memberChatIds = new Set<string>()
-        for (const project of this.getProjects()) {
-          for (const id of project.memberChatIds) memberChatIds.add(id)
+    } else if (fs.existsSync(runEventsDir)) {
+      // A run can reach the event ledger before it is attached to ChatRecord.
+      // Inspect retained event identities so a scoped clear also catches that row.
+      for (const file of fs.readdirSync(runEventsDir).filter((item) => item.endsWith('.jsonl'))) {
+        const filePath = path.join(runEventsDir, file)
+        let lines: string[]
+        try {
+          lines = fs.readFileSync(filePath, 'utf-8').split(/\r?\n/).filter(Boolean)
+        } catch {
+          continue
         }
-        for (const id of memberChatIds) {
-          this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId: id, now })
+        for (const line of lines) {
+          try {
+            const event = JSON.parse(line) as unknown
+            if (!historyRecordMatches(event, draft, { includeRunIds: false })) continue
+            const runId = objectRecord(event)?.runId
+            if (typeof runId === 'string' && runId) runIds.add(runId)
+          } catch {
+            // Another valid row in the same append-only ledger may still identify ownership.
+          }
         }
-      } catch (error) {
-        console.error('Failed to clear project chat membership after clear-chats', error)
+      }
+    }
+
+    draft.runIds = [...runIds].sort()
+    return normalizeHistoryDeletionIntent(draft)
+  }
+
+  private static executeHistoryDeletionStep(
+    intent: HistoryDeletionIntent,
+    step: HistoryDeletionStep
+  ): void {
+    if (historyDeletionFailureStepsForTests.has(step)) {
+      throw new Error(`Injected history deletion failure at ${step}.`)
+    }
+    if (step === 'scheduled-orchestration') {
+      const occurrenceMutation = readScheduledOccurrenceMutationJournal()
+      if (occurrenceMutation.status !== 'none') {
+        throw new Error(
+          occurrenceMutation.status === 'blocked'
+            ? occurrenceMutation.reason
+            : 'Scheduled occurrence mutation recovery is pending during history deletion.'
+        )
+      }
+      const targetTaskIds = new Set(intent.scheduledTaskIds)
+      const retainedTaskIds = new Set(intent.retainedScheduledTaskIds)
+      const targetWorkflowIds = new Set(intent.workflowIds)
+      const tasks = readScheduledTasksForHistoryDeletionStrict()
+      const rewrittenTasks = tasks.flatMap((task): ScheduledTask[] => {
+        if (!targetTaskIds.has(task.id)) return [task]
+        // Freeze the retention decision at prepare time. A task that was
+        // already terminal is occurrence history, while a nonterminal
+        // standalone task still carries a reusable user-authored prompt. A
+        // materialized workflow task is occurrence payload; the disabled
+        // WorkflowDefinition below retains its reusable template instead.
+        if (!retainedTaskIds.has(task.id)) return []
+        const {
+          runId: _dropRunId,
+          handoffSourceRunId: _dropHandoffRunId,
+          permissionPosture: _dropPermissionPosture,
+          dispatchReceipt: _dropDispatchReceipt,
+          occurrenceSeal: _dropOccurrenceSeal,
+          firedAt: _dropFiredAt,
+          runningSince: _dropRunningSince,
+          workflowExecutionId: _dropWorkflowExecutionId,
+          workflowOccurrenceAt: _dropWorkflowOccurrenceAt,
+          ...configuration
+        } = task
+        return [
+          {
+            ...configuration,
+            status: 'cancelled',
+            completedAt: intent.createdAt,
+            lastError: 'history_cleared',
+            updatedAt: intent.createdAt
+          }
+        ]
+      })
+      if (!sameJsonValue(tasks, rewrittenTasks)) writeJson(scheduledTasksPath, rewrittenTasks)
+
+      const workflows = readWorkflowsForHistoryDeletionStrict()
+      const rewrittenWorkflows = workflows.map((workflow): WorkflowDefinition => {
+        if (!targetWorkflowIds.has(workflow.id)) return workflow
+        const {
+          unattendedElevation: _dropUnattendedElevation,
+          nextRunAt: _dropNextRunAt,
+          lastRunAt: _dropLastRunAt,
+          lastCompletedAt: _dropLastCompletedAt,
+          lastRunIterationCount: _dropIterationCount,
+          lastRunStopReason: _dropStopReason,
+          lastRunTokens: _dropTokens,
+          activeExecutionId: _dropActiveExecution,
+          ...configuration
+        } = workflow
+        const { handoffSourceRunId: _dropTemplateHandoffRunId, ...template } =
+          configuration.template
+        return {
+          ...configuration,
+          enabled: false,
+          template,
+          nextRunAt: undefined,
+          lastStatus: 'cancelled',
+          lastError: 'history_cleared',
+          failureStreak: 0,
+          history: [],
+          updatedAt: intent.createdAt
+        }
+      })
+      if (!sameJsonValue(workflows, rewrittenWorkflows)) writeJson(workflowsPath, rewrittenWorkflows)
+
+      const verifiedTasks = readScheduledTasksForHistoryDeletionStrict()
+      for (const task of verifiedTasks) {
+        if (!targetTaskIds.has(task.id)) continue
+        if (
+          !retainedTaskIds.has(task.id) ||
+          task.workflowId ||
+          task.status !== 'cancelled' ||
+          task.runId ||
+          task.handoffSourceRunId ||
+          task.permissionPosture ||
+          task.dispatchReceipt ||
+          task.occurrenceSeal ||
+          task.firedAt ||
+          task.runningSince ||
+          task.workflowExecutionId ||
+          task.workflowOccurrenceAt
+        ) {
+          throw new Error('Scheduled occurrence remains runnable or linked after history clear.')
+        }
+      }
+      const verifiedWorkflows = readWorkflowsForHistoryDeletionStrict()
+      for (const workflow of verifiedWorkflows) {
+        if (!targetWorkflowIds.has(workflow.id)) continue
+        if (
+          workflow.enabled ||
+          workflow.nextRunAt ||
+          workflow.activeExecutionId ||
+          workflow.history.length > 0 ||
+          workflow.unattendedElevation ||
+          workflow.template.handoffSourceRunId
+        ) {
+          throw new Error('Workflow remains runnable or retains occurrence linkage after history clear.')
+        }
       }
       return
     }
-    const chats = this.getChats(workspaceId)
-    for (const chat of chats) {
-      this.deleteChat(chat.appChatId)
+    if (step === 'workflow-run-history') {
+      if (intent.kind === 'global') {
+        removePathStrict(workflowRunsDir, 'workflow run history directory')
+      } else {
+        removePathsStrict(
+          intent.workflowExecutionIds.map((executionId) => ({
+            targetPath: workflowRunFilePath(executionId),
+            label: `workflow run history for ${safeWorkflowRunFileName(executionId)}`
+          }))
+        )
+      }
+      return
     }
+    if (step === 'run-queue') {
+      rewriteArrayHistoryStore(runQueuePath, 'run queue history', intent)
+      return
+    }
+    if (step === 'run-recovery') {
+      rewriteArrayHistoryStore(runRecoveryPath, 'run recovery history', intent)
+      return
+    }
+    if (step === 'approval-ledger') {
+      rewriteArrayHistoryStore(approvalLedgerPath, 'approval ledger history', intent)
+      return
+    }
+    if (step === 'message-feedback') {
+      rewriteArrayHistoryStore(messageFeedbackLedgerPath, 'message feedback receipt history', intent)
+      return
+    }
+    if (step === 'sub-thread-mailboxes') {
+      if (intent.kind === 'global') {
+        removePathStrict(subThreadMailboxesPath, 'sub-thread mailbox history')
+        return
+      }
+      const value = readJsonStrictIfPresent(subThreadMailboxesPath)
+      if (value === null) return
+      const ledger = objectRecord(value)
+      const mailboxes = objectRecord(ledger?.mailboxes)
+      if (!ledger || !mailboxes) throw new Error('Sub-thread mailbox ledger is invalid.')
+      const targetChatIds = new Set(intent.chatIds)
+      let changed = false
+      for (const [parentChatId, mailboxValue] of Object.entries(mailboxes)) {
+        if (targetChatIds.has(parentChatId)) {
+          delete mailboxes[parentChatId]
+          changed = true
+          continue
+        }
+        const mailbox = objectRecord(mailboxValue)
+        if (!mailbox || !Array.isArray(mailbox.events)) continue
+        const retained = mailbox.events.filter((eventValue) => {
+          const event = objectRecord(eventValue)
+          const source = objectRecord(event?.source)
+          return !(
+            (typeof source?.subThreadId === 'string' && targetChatIds.has(source.subThreadId)) ||
+            (typeof source?.sourceRunId === 'string' && intent.runIds.includes(source.sourceRunId))
+          )
+        })
+        if (retained.length !== mailbox.events.length) {
+          mailbox.events = retained
+          changed = true
+        }
+      }
+      if (Object.keys(mailboxes).length === 0) {
+        removePathStrict(subThreadMailboxesPath, 'sub-thread mailbox history')
+      } else if (changed) {
+        writeJson(subThreadMailboxesPath, ledger)
+      }
+      const verified = readJsonStrictIfPresent(subThreadMailboxesPath)
+      if (verified !== null) {
+        const verifiedMailboxes = objectRecord(objectRecord(verified)?.mailboxes)
+        if (!verifiedMailboxes) throw new Error('Sub-thread mailbox verification failed.')
+        for (const [parentChatId, mailboxValue] of Object.entries(verifiedMailboxes)) {
+          if (targetChatIds.has(parentChatId)) {
+            throw new Error('Sub-thread mailbox history still contains a target parent.')
+          }
+          const mailbox = objectRecord(mailboxValue)
+          for (const eventValue of Array.isArray(mailbox?.events) ? mailbox.events : []) {
+            const source = objectRecord(objectRecord(eventValue)?.source)
+            if (
+              (typeof source?.subThreadId === 'string' && targetChatIds.has(source.subThreadId)) ||
+              (typeof source?.sourceRunId === 'string' && intent.runIds.includes(source.sourceRunId))
+            ) {
+              throw new Error('Sub-thread mailbox history still contains a target event.')
+            }
+          }
+        }
+      }
+      return
+    }
+    if (step === 'run-events') {
+      if (intent.kind === 'global') {
+        removePathStrict(runEventsDir, 'run event history directory')
+      } else {
+        removePathsStrict(
+          intent.runIds.map((runId) => ({
+            targetPath: runEventFilePath(runId),
+            label: `run event history for ${safeRunEventFileName(runId)}`
+          }))
+        )
+      }
+      return
+    }
+    if (step === 'run-artifacts') {
+      if (intent.kind === 'global') {
+        removePathStrict(runArtifactsDir, 'run artifact history directory')
+      } else {
+        removePathsStrict(
+          intent.runIds.map((runId) => ({
+            targetPath: runArtifactDirPath(runId),
+            label: `run artifact history for ${safeRunEventFileName(runId)}`
+          }))
+        )
+      }
+      return
+    }
+    if (step === 'kimi-seat-state') {
+      if (intent.kind === 'global') {
+        removePathsStrict([
+          { targetPath: kimiAcpSeatStateRoot(userDataPath), label: 'Kimi ACP seat history' },
+          ...legacyKimiAcpSeatStateRoots(userDataPath).map((targetPath) => ({
+            targetPath,
+            label: 'legacy Kimi ACP seat history'
+          }))
+        ])
+      } else {
+        removePathsStrict(
+          intent.kimiSeats.flatMap((seat) => [
+            {
+              targetPath: kimiAcpSeatStatePath(userDataPath, seat.chatId, seat.participantId),
+              label: `Kimi ACP seat history for chat ${seat.chatId}`
+            },
+            ...legacyKimiAcpSeatStatePaths(userDataPath, seat.chatId, seat.participantId).map(
+              (targetPath) => ({
+                targetPath,
+                label: `legacy Kimi ACP seat history for chat ${seat.chatId}`
+              })
+            )
+          ])
+        )
+      }
+      return
+    }
+    if (step === 'chat-records') {
+      if (intent.kind === 'global') {
+        removePathStrict(chatsDir, 'chat history directory')
+      } else if (intent.kind === 'truncate') {
+        const chatId = intent.rootChatId!
+        const chatPath = chatPathForId(chatsDir, chatId)
+        const stored = readJsonStrictIfPresent(chatPath)
+        if (stored === null) return
+        const chat = this.normalizeChatRecord(stored as ChatRecord)
+        const {
+          taskWraithMcpProfileReceipt: _dropReceipt,
+          seatGeneration: _dropSeatGeneration,
+          contextCompactionSummary: _dropContextCompaction,
+          linkedGeminiSessionId: _dropGeminiSession,
+          linkedProviderSessionId: _dropProviderSession,
+          activeGoal: _dropGoal,
+          chatTodos: _dropTodos,
+          soloWakeups: _dropSoloWakeups,
+          ollamaSessionMemory: _dropOllamaMemory,
+          ollamaSessionMemories: _dropOllamaMemories,
+          delegationContext: _dropDelegationContext,
+          ...retainedChat
+        } = chat
+        const ensemble = chat.ensemble
+          ? (() => {
+              const {
+                activeRound: _dropActiveRound,
+                workSession: _dropWorkSession,
+                sessionActivityLedger: _dropActivity,
+                bossmanControlState: _dropBossControl,
+                lastRoundSummary: _dropLastSummary,
+                roundSummaries: _dropRoundSummaries,
+                wakeups: _dropWakeups,
+                blackboard: _dropBlackboard,
+                escalationSignals: _dropEscalations,
+                ...retainedEnsemble
+              } = chat.ensemble!
+              return {
+                ...retainedEnsemble,
+                participants: retainedEnsemble.participants.map((participant) => {
+                  const {
+                    taskWraithMcpProfileReceipt: _dropParticipantReceipt,
+                    seatGeneration: _dropParticipantGeneration,
+                    contextCompactionSummary: _dropParticipantSummary,
+                    promptShellVersion: _dropShell,
+                    promptDynamicStateVersion: _dropDynamic,
+                    tokenTotals: _dropTotals,
+                    kimiAcpNativeSession: _dropNativeMarker,
+                    kimiAcpPostureVersion: _dropPosture,
+                    ...retainedParticipant
+                  } = participant
+                  return { ...retainedParticipant, linkedProviderSessionId: null }
+                }),
+                updatedAt: intent.createdAt
+              }
+            })()
+          : undefined
+        const truncated = compactChatForPersist(
+          this.normalizeChatRecord({
+            ...retainedChat,
+            ...(ensemble ? { ensemble } : {}),
+            messages: [],
+            runs: [],
+            updatedAt: Date.parse(intent.createdAt),
+            persistenceRevision: chatPersistenceRevision(chat) + 1
+          })
+        )
+        if (chatContainsTruncatableHistory(chat)) writeJson(chatPath, truncated)
+        this.chatRecordCache.delete(chatId)
+        const verified = readJsonStrictIfPresent(chatPath) as ChatRecord | null
+        if (verified && chatContainsTruncatableHistory(this.normalizeChatRecord(verified))) {
+          throw new Error('Truncated chat still contains a durable history or orchestration source.')
+        }
+      } else {
+        removePathsStrict(
+          intent.chatIds.map((chatId) => ({
+            targetPath: chatPathForId(chatsDir, chatId),
+            label: `chat record ${chatId}`
+          }))
+        )
+        for (const chatId of intent.chatIds) this.chatRecordCache.delete(chatId)
+      }
+      return
+    }
+    if (step === 'chat-list-index') {
+      if (intent.kind === 'global') {
+        removePathStrict(chatListIndexPath, 'chat list index')
+      } else {
+        const value = readJsonStrictIfPresent(chatListIndexPath)
+        if (value === null) return
+        const index = objectRecord(value)
+        if (!index) throw new Error('Chat list index is invalid.')
+        let changed = false
+        for (const chatId of intent.chatIds) {
+          if (Object.prototype.hasOwnProperty.call(index, chatId)) {
+            delete index[chatId]
+            changed = true
+          }
+        }
+        if (Object.keys(index).length === 0) {
+          removePathStrict(chatListIndexPath, 'chat list index')
+        } else if (changed) {
+          writeJson(chatListIndexPath, index)
+        }
+        const verified = objectRecord(readJsonStrictIfPresent(chatListIndexPath))
+        if (verified && intent.chatIds.some((chatId) => chatId in verified)) {
+          throw new Error('Chat list index still contains a target chat.')
+        }
+      }
+      this.chatListIndexCache = null
+      for (const chatId of intent.chatIds) this.chatListIndexWriteAtByChatId.delete(chatId)
+      return
+    }
+    if (step === 'project-membership') {
+      if (intent.kind === 'truncate') return
+      const failures: Error[] = []
+      for (const chatId of intent.chatIds) {
+        try {
+          this.applyProjectOp({ kind: 'remove-chat-everywhere', chatId, now: Date.now() })
+        } catch (error) {
+          failures.push(new Error(`project membership ${chatId}: ${historyDeletionErrorMessage(error)}`))
+        }
+      }
+      const residual = this.getProjects().flatMap((project) =>
+        project.memberChatIds.filter((chatId) => intent.chatIds.includes(chatId))
+      )
+      if (residual.length > 0) failures.push(new Error('Project membership still references a target chat.'))
+      if (failures.length > 0) throw new AggregateError(failures, 'Project membership cleanup failed.')
+    }
+  }
+
+  private static executeHistoryDeletion(intent: HistoryDeletionIntent): void {
+    const completedQuiescence = new Set(intent.completedQuiescenceTargetIds)
+    const pendingQuiescence = intent.quiescenceTargets
+      .map((target) => target.id)
+      .filter((targetId) => !completedQuiescence.has(targetId))
+    if (pendingQuiescence.length > 0) {
+      throw new HistoryDeletionQuiescenceRequiredError(intent.operationId, pendingQuiescence)
+    }
+    for (const chatId of intent.chatIds) {
+      if (intent.kind !== 'truncate') deletedChatIds.add(chatId)
+    }
+    for (const runId of intent.runIds) {
+      deletedRunIds.add(runId)
+      runEventSequenceCache.delete(runId)
+      runEventHashCache.delete(runId)
+    }
+    if (intent.kind === 'global') {
+      tombstoneRunEventFiles()
+      tombstoneRunArtifactDirs()
+    }
+
+    const failures: Array<{ step: HistoryDeletionStep | 'journal'; message: string }> = []
+    for (const step of HISTORY_DELETION_STEPS) {
+      if (intent.completedSteps.includes(step)) continue
+      try {
+        this.executeHistoryDeletionStep(intent, step)
+        intent.completedSteps.push(step)
+        intent.failures = []
+        intent.updatedAt = new Date().toISOString()
+        writeHistoryDeletionIntent(intent)
+      } catch (error) {
+        failures.push({ step, message: historyDeletionErrorMessage(error) })
+      }
+    }
+
+    // Re-run every idempotent boundary once under the still-held lifecycle
+    // authority. This is both final residual verification and a last sweep for
+    // a late writer that raced an earlier store step.
+    for (const step of HISTORY_DELETION_STEPS) {
+      try {
+        this.executeHistoryDeletionStep(intent, step)
+      } catch (error) {
+        if (!failures.some((failure) => failure.step === step)) {
+          failures.push({ step, message: historyDeletionErrorMessage(error) })
+        }
+      }
+    }
+
+    if (failures.length > 0) {
+      intent.failures = failures
+      intent.updatedAt = new Date().toISOString()
+      try {
+        writeHistoryDeletionIntent(intent)
+      } catch (error) {
+        failures.push({ step: 'journal', message: historyDeletionErrorMessage(error) })
+      }
+      throw new HistoryDeletionIncompleteError(intent.operationId, failures)
+    }
+
+    try {
+      removePathStrict(historyDeletionIntentPath, 'history deletion intent journal')
+    } catch (error) {
+      const journalFailure = { step: 'journal' as const, message: historyDeletionErrorMessage(error) }
+      intent.failures = [journalFailure]
+      intent.updatedAt = new Date().toISOString()
+      writeHistoryDeletionIntent(intent)
+      throw new HistoryDeletionIncompleteError(intent.operationId, [journalFailure])
+    }
+
+    this.chatListIndexCache = null
+    if (intent.kind === 'global') {
+      this.chatRecordCache.clear()
+      this.chatListIndexWriteAtByChatId.clear()
+      this.orphanSubThreadsReaped = false
+      this.orphanSubThreadReapCandidates.clear()
+      runEventSequenceCache.clear()
+      runEventHashCache.clear()
+    }
+  }
+
+  static recoverPendingHistoryDeletion(): void {
+    if (this.historyDeletionRunning) return
+    const intent = readHistoryDeletionIntent()
+    if (!intent) return
+    const completed = new Set(intent.completedQuiescenceTargetIds)
+    const pending = intent.quiescenceTargets
+      .map((target) => target.id)
+      .filter((targetId) => !completed.has(targetId))
+    if (pending.length > 0) {
+      throw new HistoryDeletionQuiescenceRequiredError(intent.operationId, pending)
+    }
+    this.historyDeletionRunning = true
+    try {
+      this.executeHistoryDeletion(intent)
+    } finally {
+      this.historyDeletionRunning = false
+    }
+  }
+
+  private static historyDeletionPreparation(intent: HistoryDeletionIntent): HistoryDeletionPreparation {
+    return {
+      operationId: intent.operationId,
+      kind: intent.kind,
+      ...(intent.workspaceId ? { workspaceId: intent.workspaceId } : {}),
+      ...(intent.rootChatId ? { rootChatId: intent.rootChatId } : {}),
+      chatIds: [...intent.chatIds],
+      runIds: [...intent.runIds],
+      quiescenceTargets: intent.quiescenceTargets.map((target) => ({ ...target })),
+      completedQuiescenceTargetIds: [...intent.completedQuiescenceTargetIds]
+    }
+  }
+
+  static getPendingHistoryDeletion(): HistoryDeletionPreparation | null {
+    const intent = readHistoryDeletionIntent()
+    return intent ? this.historyDeletionPreparation(intent) : null
+  }
+
+  /**
+   * Read-only canonical scope snapshot for main-owned external quiescence.
+   * Callers must invoke prepareHistoryDeletion synchronously in the same stack;
+   * the durable intent returned by prepare remains the commit authority.
+   */
+  static previewHistoryDeletionScope(
+    input: Omit<HistoryDeletionPrepareInput, 'quiescenceTargets'>
+  ): HistoryDeletionScopePreview {
+    const intent = this.createHistoryDeletionIntent(input)
+    return {
+      kind: intent.kind,
+      ...(intent.workspaceId ? { workspaceId: intent.workspaceId } : {}),
+      ...(intent.rootChatId ? { rootChatId: intent.rootChatId } : {}),
+      chatIds: [...intent.chatIds],
+      runIds: [...intent.runIds]
+    }
+  }
+
+  static prepareHistoryDeletion(
+    input: HistoryDeletionPrepareInput
+  ): HistoryDeletionPreparation {
+    if (this.historyDeletionRunning) throw new Error('A history deletion transaction is already running.')
+    const existing = readHistoryDeletionIntent()
+    if (existing) {
+      const sameScope =
+        existing.kind === input.kind &&
+        existing.workspaceId === input.workspaceId &&
+        existing.rootChatId === input.rootChatId
+      if (!sameScope) {
+        throw new Error(
+          `History deletion ${existing.operationId} is still pending; complete it before starting another scope.`
+        )
+      }
+      return this.historyDeletionPreparation(existing)
+    }
+    const intent = this.createHistoryDeletionIntent(input)
+    // Durable prepare is the point of no return. No destructive operation may
+    // precede this fsynced intent, and it remains until every sink verifies.
+    writeHistoryDeletionIntent(intent)
+    return this.historyDeletionPreparation(intent)
+  }
+
+  static recordHistoryDeletionQuiesced(operationId: string, targetIds: string[]): void {
+    if (this.historyDeletionRunning) throw new Error('History deletion has already entered commit.')
+    const intent = readHistoryDeletionIntent()
+    if (!intent || intent.operationId !== operationId) {
+      throw new Error('History deletion quiescence receipt does not match the pending operation.')
+    }
+    const known = new Set(intent.quiescenceTargets.map((target) => target.id))
+    const completed = new Set(intent.completedQuiescenceTargetIds)
+    for (const targetId of targetIds) {
+      if (!known.has(targetId)) {
+        throw new Error(`Unknown history deletion quiescence target: ${targetId}`)
+      }
+      completed.add(targetId)
+    }
+    intent.completedQuiescenceTargetIds = [...completed].sort()
+    intent.updatedAt = new Date().toISOString()
+    writeHistoryDeletionIntent(intent)
+  }
+
+  static commitPreparedHistoryDeletion(operationId: string): void {
+    if (this.historyDeletionRunning) throw new Error('A history deletion transaction is already running.')
+    const intent = readHistoryDeletionIntent()
+    if (!intent || intent.operationId !== operationId) {
+      throw new Error('History deletion commit does not match the pending operation.')
+    }
+    this.historyDeletionRunning = true
+    try {
+      this.executeHistoryDeletion(intent)
+    } finally {
+      this.historyDeletionRunning = false
+    }
+  }
+
+  private static runHistoryDeletion(input: HistoryDeletionPrepareInput): void {
+    const prepared = this.prepareHistoryDeletion(input)
+    this.commitPreparedHistoryDeletion(prepared.operationId)
+  }
+
+  static deleteChat(chatId: string, _seen: Set<string> = new Set()): void {
+    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+    this.runHistoryDeletion({ kind: 'chat', rootChatId: chatId })
+  }
+
+  static truncateChatHistory(chatId: string): ChatRecord | null {
+    if (!isSafeChatId(chatId)) throw new Error('Chat id must be a safe chat id.')
+    if (!this.getChat(chatId)) return null
+    this.runHistoryDeletion({ kind: 'truncate', rootChatId: chatId })
+    return this.getChat(chatId)
+  }
+
+  static clearChats(workspaceId?: string): void {
+    this.runHistoryDeletion(
+      workspaceId ? { kind: 'workspace', workspaceId } : { kind: 'global' }
+    )
   }
 
   // Durable parent-bound sub-thread event mailbox. Kept outside ChatRecord so
@@ -5172,6 +6685,15 @@ export class AppStore {
     input: SubThreadMailboxEventInput,
     options: { now?: string } = {}
   ): ReturnType<typeof enqueueMailboxEvent> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Sub-thread mailbox enqueue',
+      chatIds: [input.parentChatId, input.subThreadId],
+      workspaceIds: [
+        this.getChat(input.parentChatId)?.workspaceId,
+        this.getChat(input.subThreadId)?.workspaceId
+      ],
+      runIds: [input.sourceRunId]
+    })
     const ledger = readSubThreadMailboxLedger()
     const result = enqueueMailboxEvent(ledger.mailboxes[input.parentChatId], input, options)
     if (result.inserted) {
@@ -5185,6 +6707,12 @@ export class AppStore {
     parentChatId: string,
     input: Parameters<typeof claimPendingSubThreadMailboxEvents>[1]
   ): ReturnType<typeof claimPendingSubThreadMailboxEvents> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Sub-thread mailbox delivery claim',
+      chatIds: [parentChatId],
+      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
+      runIds: [input.deliveryRunId]
+    })
     const ledger = readSubThreadMailboxLedger()
     const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
     const result = claimPendingSubThreadMailboxEvents(mailbox, input)
@@ -5215,6 +6743,12 @@ export class AppStore {
     deliveryRunId: string,
     options: Parameters<typeof releaseMailboxDelivery>[2]
   ): ReturnType<typeof releaseMailboxDelivery> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Sub-thread mailbox delivery release',
+      chatIds: [parentChatId],
+      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
+      runIds: [deliveryRunId]
+    })
     const ledger = readSubThreadMailboxLedger()
     const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
     const result = releaseMailboxDelivery(mailbox, deliveryRunId, options)
@@ -5238,10 +6772,9 @@ export class AppStore {
 
   // Usage
   static getUsage(workspaceId?: string, chatId?: string) {
-    // NOTE: reads only the hot usage.json. Records older than the rotation
-    // retention window (see usageRotation.ts — well past every live surface's
-    // window) live in usage-archive.jsonl and are not served here.
-    const records = readJson<UsageRecord[]>(usagePath, [])
+    // Reads the hot checkpoint plus uncheckpointed journal records. History
+    // rotated to usage-archive.jsonl is intentionally not served here.
+    const records = usageJournalStore.getRecords()
     return records.filter((record) => {
       if (workspaceId && record.workspaceId !== workspaceId) return false
       if (chatId && record.chatId !== chatId) return false
@@ -5250,8 +6783,13 @@ export class AppStore {
   }
 
   static recordUsage(usage: Omit<UsageRecord, 'id' | 'timestamp'>) {
+    this.assertHistoryMutationAllowed({
+      operation: 'Usage history append',
+      chatIds: [usage.chatId],
+      workspaceIds: [usage.workspaceId],
+      runIds: [usage.runId]
+    })
     const settings = this.getSettings()
-    const records = readJson<UsageRecord[]>(usagePath, [])
 
     const record: UsageRecord = {
       id: randomUUID(),
@@ -5264,20 +6802,27 @@ export class AppStore {
       delete record.responseText
     }
 
-    records.push(record)
+    usageJournalStore.append(record)
+  }
 
-    // Bound the hot file: rotate records past the retention window into the
-    // append-only archive, and only drop them from usage.json AFTER the
-    // archive append succeeded — a failed archive degrades to the old
-    // grow-forever behavior, never to data loss. (A crash between append and
-    // rewrite can duplicate a batch into the archive; records carry unique
-    // ids, so archive consumers dedupe by id.)
-    const { keep, rotate } = partitionUsageRecordsForRotation(records, record.timestamp)
-    if (rotate.length > 0 && appendUsageArchiveRecords(rotate)) {
-      writeJson(usagePath, keep)
-      return
-    }
-    writeJson(usagePath, records)
+  static beginUsageHistoryMutation(
+    input: UsageHistoryMutationInput
+  ): UsageHistoryMutationHold {
+    return usageJournalStore.beginHistoryMutation(input)
+  }
+
+  static purgeUsageHistoryStrict(
+    hold: UsageHistoryMutationHold
+  ): UsageHistoryPurgeReport {
+    return usageJournalStore.purgeHistoryStrict(hold)
+  }
+
+  static endUsageHistoryMutation(hold: UsageHistoryMutationHold): boolean {
+    return usageJournalStore.endHistoryMutation(hold)
+  }
+
+  static recoverPendingUsageHistoryMutationStrict(): UsageHistoryPurgeReport | null {
+    return usageJournalStore.recoverPendingHistoryMutationStrict()
   }
 
   static getProviderUsageSnapshot(provider: ProviderId) {
@@ -5389,6 +6934,13 @@ export class AppStore {
       >
   ): WorkflowDefinition {
     assertNoPendingScheduledOccurrenceMutation()
+    if (workflow.enabled) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Workflow schedule enablement',
+        chatIds: [workflow.template.chatId],
+        workspaceIds: [workflow.workspaceId, workflow.template.workspaceId]
+      })
+    }
     const workflows = this.getWorkflowDefinitions()
     const nowMs = Date.now()
     const nowIso = new Date(nowMs).toISOString()
@@ -5456,6 +7008,13 @@ export class AppStore {
     }
     const normalized = normalizeWorkflowDefinitionRecord(merged, nowMs)
     if (!normalized) return null
+    if (normalized.enabled) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Workflow schedule enablement',
+        chatIds: [normalized.template.chatId],
+        workspaceIds: [normalized.workspaceId, normalized.template.workspaceId]
+      })
+    }
     if (normalized.unattendedElevation && !sameWorkflowAuthority(source, normalized)) {
       delete normalized.unattendedElevation
     }
@@ -6875,6 +8434,16 @@ export class AppStore {
     let next: number | null = null
     for (const workflow of this.getWorkflowDefinitions()) {
       if (!workflow.enabled || !workflow.nextRunAt) continue
+      try {
+        this.assertHistoryMutationAllowed({
+          operation: 'Workflow scheduling',
+          chatIds: [workflow.template.chatId],
+          workspaceIds: [workflow.workspaceId, workflow.template.workspaceId]
+        })
+      } catch (error) {
+        if (error instanceof HistoryDeletionMutationBlockedError) continue
+        throw error
+      }
       const runAtMs = new Date(workflow.nextRunAt).getTime()
       if (!Number.isFinite(runAtMs)) continue
       if (next === null || runAtMs < next) next = runAtMs
@@ -6893,6 +8462,16 @@ export class AppStore {
     let changed = false
     for (const workflow of workflows) {
       if (!workflow.enabled || !workflow.nextRunAt) continue
+      try {
+        this.assertHistoryMutationAllowed({
+          operation: 'Workflow occurrence materialization',
+          chatIds: [workflow.template.chatId],
+          workspaceIds: [workflow.workspaceId, workflow.template.workspaceId]
+        })
+      } catch (error) {
+        if (error instanceof HistoryDeletionMutationBlockedError) continue
+        throw error
+      }
       const nextRunAtMs = new Date(workflow.nextRunAt).getTime()
       if (!Number.isFinite(nextRunAtMs) || nextRunAtMs > nowMs) continue
       const before = JSON.stringify(workflow)
@@ -6922,6 +8501,11 @@ export class AppStore {
     const workflows = this.getWorkflowDefinitions()
     const workflow = workflows.find((item) => item.id === id)
     if (!workflow) return null
+    this.assertHistoryMutationAllowed({
+      operation: 'Manual workflow occurrence materialization',
+      chatIds: [workflow.template.chatId],
+      workspaceIds: [workflow.workspaceId, workflow.template.workspaceId]
+    })
     const before = JSON.stringify(workflow)
     const task = this.materializeWorkflowTask(
       workflow,
@@ -7194,11 +8778,36 @@ export class AppStore {
       .sort((a, b) => new Date(a.runAt).getTime() - new Date(b.runAt).getTime())
   }
 
+  /** Scheduler-only view. UI/history queries keep seeing paused records, while
+   * a prepared deletion removes affected occurrences from timer admission. */
+  static getDispatchableScheduledTasks(workspaceId?: string): ScheduledTask[] {
+    return this.getScheduledTasks(workspaceId).filter((task) => {
+      try {
+        this.assertHistoryMutationAllowed({
+          operation: 'Scheduled task timer admission',
+          chatIds: [task.chatId],
+          workspaceIds: [task.workspaceId],
+          runIds: [task.runId, task.handoffSourceRunId]
+        })
+        return true
+      } catch (error) {
+        if (error instanceof HistoryDeletionMutationBlockedError) return false
+        throw error
+      }
+    })
+  }
+
   static saveScheduledTask(
     task: Omit<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'> &
       Partial<Pick<ScheduledTask, 'id' | 'createdAt' | 'updatedAt' | 'status'>>
   ): ScheduledTask {
     assertNoPendingScheduledOccurrenceMutation()
+    this.assertHistoryMutationAllowed({
+      operation: 'Scheduled task creation',
+      chatIds: [task.chatId],
+      workspaceIds: [task.workspaceId],
+      runIds: [task.handoffSourceRunId]
+    })
     const tasks = this.getScheduledTasks()
     if (task.id && tasks.some((item) => item.id === task.id)) {
       throw new Error('Scheduled task already exists. Use the lifecycle update APIs.')
@@ -7233,6 +8842,18 @@ export class AppStore {
     const index = tasks.findIndex((task) => task.id === id)
     if (index < 0) return null
     const current = tasks[index]
+    const terminalOnly =
+      partial.status === 'completed' ||
+      partial.status === 'failed' ||
+      partial.status === 'cancelled'
+    if (!terminalOnly) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Scheduled task mutation',
+        chatIds: [current.chatId],
+        workspaceIds: [current.workspaceId],
+        runIds: [current.runId, current.handoffSourceRunId]
+      })
+    }
     const partialFields = Object.keys(partial) as Array<keyof ScheduledTask>
     if (!partial.status && partialFields.length === 0) return current
     if (!partial.status && partialFields.some((field) => !SCHEDULED_TASK_MAINTENANCE_FIELDS.has(field))) {
@@ -7361,6 +8982,12 @@ export class AppStore {
     if (taskIndexes.length !== 1) return null
     const index = taskIndexes[0]
     const current = tasks[index]
+    this.assertHistoryMutationAllowed({
+      operation: 'Scheduled task claim',
+      chatIds: [current.chatId],
+      workspaceIds: [current.workspaceId],
+      runIds: [current.runId, options.runId, current.handoffSourceRunId]
+    })
     const runAtMs =
       typeof current.runAt === 'string' && current.runAt.trim()
         ? Date.parse(current.runAt)
@@ -7990,6 +9617,17 @@ export class AppStore {
     assertNoPendingScheduledOccurrenceMutation()
     const due: ScheduledTask[] = []
     for (const task of this.getScheduledTasks()) {
+      try {
+        this.assertHistoryMutationAllowed({
+          operation: 'Scheduled task dispatch',
+          chatIds: [task.chatId],
+          workspaceIds: [task.workspaceId],
+          runIds: [task.runId, task.handoffSourceRunId]
+        })
+      } catch (error) {
+        if (error instanceof HistoryDeletionMutationBlockedError) continue
+        throw error
+      }
       const runAtMs = typeof task.runAt === 'string' ? Date.parse(task.runAt) : Number.NaN
       const eligible =
         (task.status === 'due' || task.status === 'pending') &&
@@ -8194,6 +9832,17 @@ export class AppStore {
   }
 
   static saveRunQueueJob(input: RunQueueJobInput): RunQueueJob {
+    if (
+      typeof input.status === 'string' &&
+      ['queued', 'steer_promoting', 'starting', 'active'].includes(input.status)
+    ) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Run-queue enqueue or lease',
+        chatIds: [input.chatId],
+        workspaceIds: [input.workspaceId],
+        runIds: [input.runId]
+      })
+    }
     const jobs = readJson<RunQueueJob[]>(runQueuePath, [])
     const index = jobs.findIndex((job) => job.id === input.id || job.runId === input.runId)
     const now = new Date().toISOString()
@@ -8214,6 +9863,14 @@ export class AppStore {
     const index = jobs.findIndex((job) => job.id === runIdOrId || job.runId === runIdOrId)
     if (index < 0) return null
     const updated = updateRunQueueJobRecord(jobs[index], partial)
+    if (['queued', 'steer_promoting', 'starting', 'active'].includes(updated.status)) {
+      this.assertHistoryMutationAllowed({
+        operation: 'Run-queue enqueue or lease',
+        chatIds: [updated.chatId],
+        workspaceIds: [updated.workspaceId],
+        runIds: [updated.runId]
+      })
+    }
     jobs[index] = updated
     writeRunQueueJobs(jobs)
     return updated
@@ -8248,8 +9905,14 @@ export class AppStore {
   }
 
   // Run transcript/event store
-  static appendRunEvent(input: RunEventInput): RunEventRecord {
+  static appendRunEvent(
+    input: RunEventInput,
+    options: { durability?: 'batched' | 'strict' } = {}
+  ): RunEventRecord {
     if (deletedRunIds.has(input.runId)) {
+      if (options.durability === 'strict') {
+        throw new Error('Strict run-event append was rejected for deleted history.')
+      }
       return createRunEventRecord(input, 1, { storeRawPayload: false })
     }
     const filePath = runEventFilePath(input.runId)
@@ -8267,15 +9930,28 @@ export class AppStore {
       previousHash,
       artifacts
     })
-    fs.mkdirSync(path.dirname(filePath), { recursive: true })
+    const directoryPath = path.dirname(filePath)
+    const directoryExisted = fs.existsSync(directoryPath)
+    const fileExisted = fs.existsSync(filePath)
+    fs.mkdirSync(directoryPath, { recursive: true })
+    if (options.durability === 'strict' && !directoryExisted) {
+      fsyncDirectory(path.dirname(directoryPath))
+    }
     const fd = fs.openSync(filePath, 'a')
     try {
       fs.writeFileSync(fd, serializeRunEventRecord(record), 'utf-8')
-      if (input.kind === 'lifecycle' || sequence % 25 === 0) {
+      if (
+        options.durability === 'strict' ||
+        input.kind === 'lifecycle' ||
+        sequence % 25 === 0
+      ) {
         fs.fsyncSync(fd)
       }
     } finally {
       fs.closeSync(fd)
+    }
+    if (options.durability === 'strict' && !fileExisted) {
+      fsyncDirectory(directoryPath)
     }
     runEventSequenceCache.set(input.runId, record.sequence)
     runEventHashCache.set(input.runId, record.hash || previousHash)
@@ -8748,7 +10424,10 @@ export class AppStore {
   ): ApprovalLedgerRecord | null {
     const records = this.recoverExpiredApprovalLedger()
     const index = records.findIndex((record) => record.approvalId === approvalId)
-    if (index < 0) return null
+    // A renderer/phone response is valid only while the durable row is still
+    // pending. Recovery above converts timed-out rows to `expired`; terminal or
+    // already-resolved rows must never be rewritten into a fresh approval.
+    if (index < 0 || records[index].status !== 'pending') return null
     const updated = resolveApprovalLedgerRecord(
       records[index],
       action,

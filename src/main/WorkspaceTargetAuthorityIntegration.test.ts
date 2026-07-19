@@ -49,7 +49,7 @@ describe('workspace target authority integration', () => {
       replay
     )
     const guardedRecovery = indexSource.lastIndexOf(
-      'if (!scheduledOccurrenceRecoveryBlockedReason)',
+      '!scheduledOccurrenceRecoveryBlockedReason',
       scheduledRecovery
     )
     const emitGuard = indexSource.indexOf(

@@ -60,7 +60,6 @@ function createDeps() {
       fetchCodexUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchClaudeUsageSnapshot: vi.fn(async (): Promise<any> => null),
       fetchKimiUsageSnapshot: vi.fn(async (): Promise<any> => null),
-      fetchCursorUsageSnapshot: vi.fn(async (): Promise<any> => null),
       getProviderCapabilityContract: vi.fn(async () => null as any),
       getCurrentFxRates: vi.fn(() => ({ rates: { USD: 1 }, source: 'live' })),
       refreshFxRates: vi.fn(async (force: boolean) => ({ refreshed: force })),
@@ -315,7 +314,6 @@ describe('registerUsageRatesHandlers', () => {
     })
     deps.fetchClaudeUsageSnapshot.mockResolvedValue({ windows: [] })
     deps.fetchKimiUsageSnapshot.mockResolvedValue({ windows: [] })
-    deps.fetchCursorUsageSnapshot.mockResolvedValue({ windows: [] })
     deps.getChats.mockReturnValue([{ workspaceId: 'ws-1', runs: [{ status: 'running' }] }])
 
     callbacks.triggerUsageModel()

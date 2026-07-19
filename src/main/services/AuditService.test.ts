@@ -84,6 +84,41 @@ describe('AuditService', () => {
     expect(errors).toEqual([{ message: 'Failed to resolve approval ledger request', error }])
   })
 
+  it('strict ledger resolution returns only after the durable row resolves', () => {
+    const resolveApprovalResponse = vi.fn(() => ({ status: 'approved' }))
+    const { deps } = makeDeps({ resolveApprovalResponse })
+    const service = new AuditService(deps)
+
+    expect(() =>
+      service.resolveApprovalLedgerResponseStrict('canvas-approval', 'accept', 'user', {
+        exactReview: true
+      })
+    ).not.toThrow()
+    expect(resolveApprovalResponse).toHaveBeenCalledWith(
+      'canvas-approval',
+      'accept',
+      'user',
+      { exactReview: true }
+    )
+  })
+
+  it.each([
+    ['missing durable row', vi.fn(() => null)],
+    [
+      'storage failure',
+      vi.fn(() => {
+        throw new Error('disk unavailable')
+      })
+    ]
+  ])('strict ledger resolution throws on %s', (_name, resolveApprovalResponse) => {
+    const { deps } = makeDeps({ resolveApprovalResponse })
+    const service = new AuditService(deps)
+
+    expect(() =>
+      service.resolveApprovalLedgerResponseStrict('canvas-approval', 'accept')
+    ).toThrow()
+  })
+
   it('records automatic allow decisions with request-scoped expiration', () => {
     const { deps, records } = makeDeps()
     const service = new AuditService(deps)
@@ -165,6 +200,47 @@ describe('AuditService', () => {
         expiresAt: fixedNow.toISOString(),
         expiredAt: fixedNow.toISOString(),
         expiredReason: 'policy_denied'
+      }
+    })
+  })
+
+  it('redacts an automatically denied canvas_eval script and binds its digest to the decision id', () => {
+    const { deps, records } = makeDeps()
+    const service = new AuditService(deps)
+    const script = 'throw new Error("AUTO-DENY-SECRET")'
+
+    service.recordAutomaticApprovalDecision(
+      'kimi',
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'canvasEval',
+      '/workspace',
+      {
+        method: 'kimi-mcp/canvas_eval',
+        title: 'Canvas eval denied',
+        body: 'canvas_eval',
+        preview: {
+          kind: 'tool',
+          toolName: 'canvas_eval',
+          params: { canvasId: 'canvas-1', script }
+        }
+      },
+      'autoDeny',
+      'policy',
+      'request'
+    )
+
+    expect(JSON.stringify(records[0])).not.toContain('AUTO-DENY-SECRET')
+    expect(records[0]).toMatchObject({
+      approvalId: 'autoDeny-canvasEval-1778900400000-fixedsuffix',
+      preview: {
+        scriptRedacted: true,
+        canvasEvalReceipt: {
+          approvalId: 'autoDeny-canvasEval-1778900400000-fixedsuffix',
+          schemaVersion: 2,
+          scriptHashAlgorithm: 'sha256-utf16le',
+          scriptLength: script.length,
+          scriptByteLength: Buffer.byteLength(script, 'utf8')
+        }
       }
     })
   })

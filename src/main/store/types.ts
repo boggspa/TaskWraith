@@ -163,17 +163,11 @@ export type ComposerStyle =
    * Pairs natively with the `alabaster` theme.
    */
   | 'alabaster'
-// All seven providers below are FIRST-CLASS and permanent. There is no
-// experimental/eligibility gate for any of them: Grok and Cursor are accepted
-// unconditionally at every trust boundary (validation Sets, IPC, adapter
-// registry), exactly like gemini/codex/claude/kimi/ollama. The old per-provider
-// eligibility flags and their TASKWRAITH_DISABLE_* / TASKWRAITH_EXPERIMENTAL_*
-// kill-switches were removed 2026-06 once Grok + Cursor matured — do NOT
-// reintroduce a gate that hides a ProviderId from the accept-sets. (All seven
-// are write-capable, gated by approval mode. Per-provider CAPABILITY nuances —
-// e.g. Grok using diff-reviewed writes instead of per-tool approval cards, or
-// Cursor's read-only plan seat carrying no MCP tools — are enforced elsewhere
-// via CLI args / approval posture, never by membership in this union.)
+// ProviderId is a stable persistence/decode identity, not a promise that a
+// provider is currently selectable or runnable. Historical records keep every
+// id; `shared/retiredProviders.ts` owns the canonical offer/run set. Source-ahead
+// Cursor is deliberately excluded there and fails before process launch pending
+// exact-build startup-containment qualification.
 export type ProviderId = 'gemini' | 'codex' | 'claude' | 'kimi' | 'grok' | 'cursor' | 'ollama'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
@@ -726,18 +720,18 @@ export interface EnsembleParticipant {
   /** See EnsembleStageRole — absent means pre-stage dispatch behavior. */
   stageRole?: EnsembleStageRole
   linkedProviderSessionId?: string | null
-  /** Kimi Code seat state is persisted and can be rehydrated via ACP session/resume. */
+  /** Legacy decode/UI marker. Never authorizes resume without the exact posture version. */
   kimiAcpNativeSession?: boolean
+  /** Main-authored Kimi ACP containment generation for linkedProviderSessionId. */
+  kimiAcpPostureVersion?: string
   /** TaskWraith MCP profile pinned to linkedProviderSessionId. */
   taskWraithMcpProfileReceipt?: TaskWraithMcpProfileReceipt
   /** Provider-specific continuity generation and honest cache evidence. */
   seatGeneration?: ProviderSeatGeneration
   /**
    * Host-side SEAT compaction (src/shared/contextCompaction.ts) — the stored
-   * session summary for Cursor and legacy/unmarked Kimi participants.
-   * Cursor seats bloat because every round re-embeds the tagged transcript
-   * into the seat's native session: compaction stores this summary AND clears
-   * `linkedProviderSessionId` above (fresh seat session next round). Legacy Kimi
+   * session summary for legacy/unmarked Kimi participants. Historical Cursor
+   * records may retain an older summary for decode/display only. Legacy Kimi
    * seats keep their token (injection-bounded) — the summary is durable
    * memory of rounds that fell off the tagged-transcript budget.
    * EnsemblePrompt injects it above the tagged transcript. Transcript pruning
@@ -1816,9 +1810,9 @@ export interface ProviderApprovalCapability {
 export interface ProviderMcpCapability {
   state: ProviderCapabilityState
   // 'provider-managed': the provider resolves its own tools and TaskWraith does
-  // not expose a structured bridge. 'taskwraith web bridge' and 'unsupported'
-  // are retained for back-compat fixtures but no longer produced for active
-  // Cursor/Grok capability contracts.
+  // not expose a structured bridge. 'taskwraith web bridge' is retained for
+  // back-compat fixtures; 'unsupported' is used when a known provider has no
+  // qualified MCP attachment (including the no-spawn Cursor posture).
   source:
     | 'taskwraith'
     | 'provider'
@@ -1861,7 +1855,7 @@ export type ProviderAdapterTransport =
   | 'gemini-cli'
   | 'codex-app-server'
   | 'claude-sdk-or-cli'
-  | 'kimi-wire-or-cli'
+  | 'kimi-acp-authenticated-http-mcp'
   | 'grok-cli'
   | 'cursor-cli'
   | 'ollama-http'
@@ -2054,12 +2048,11 @@ export interface ProviderApiKeyStatus {
   encryptionAvailable: boolean
   version?: string
   binaryPath?: string | null
-  /** Positively-identified CLI generation for providers with a generation
-   *  probe (Kimi: 'legacy-wire' | 'kimi-code' | 'unsupported'). */
+  /** Admitted CLI family marker (Kimi: 'kimi-code' only after reviewed runtime
+   *  admission, otherwise 'unsupported'). */
   cliFlavour?: string
-  /** False when the resolved binary's generation cannot be driven by the
-   *  current transport: the binary is installed, but runs fail closed as
-   *  setup-required until the matching transport migration lands. */
+  /** False when the resolved binary is not admitted for the current managed
+   *  transport. Binary presence alone never makes a provider run-ready. */
   transportSupported?: boolean
 }
 
@@ -3431,9 +3424,8 @@ export interface ChatRecord {
   /**
    * Host-side context compaction (src/shared/contextCompaction.ts) — the
    * stored session summary for providers with no native compaction lever.
-   * Cursor: written when the host summarize-and-reset flow completes (the
-   * session id above is cleared so the next turn starts fresh and
-   * composeRunPrompt injects this block once). Kimi: written without a
+   * Historical Cursor records may retain an older summarize-and-reset result
+   * for decode/display only. Kimi writes this without a
    * session reset for legacy/unmarked seats (their context is injection-
    * bounded); the block upgrades the lossy recent-transcript window. Transcript pruning is
    * fail-open and requires exact contiguous-prefix provenance.
@@ -4054,14 +4046,14 @@ export interface WorkflowLimits {
   timeoutSeconds?: number
   /**
    * Cumulative cost cap (USD). Mid-run kill for live-signal providers
-   * (claude/kimi/codex); POST-HOC for grok/cursor (checked at run end → the
+   * (claude/kimi/codex); POST-HOC for grok (checked at run end → the
    * finished run is marked failed if it exceeded). Best-effort: most providers
    * report cost only at the terminal result.
    */
   maxCostUsd?: number
   /**
-   * Cumulative token cap. Mid-run kill for claude/kimi/codex; grok/cursor have no
-   * live token signal, so their token budget is enforced POST-HOC (the finished
+   * Cumulative token cap. Mid-run kill for claude/kimi/codex; grok has no
+   * live token signal, so its token budget is enforced POST-HOC (the finished
    * run is marked failed if it exceeded the cap).
    */
   maxTokens?: number

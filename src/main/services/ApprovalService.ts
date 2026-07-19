@@ -7,7 +7,7 @@ import type {
   RunEventPhase
 } from '../store/types'
 import type { AgentRunRoute } from '../run/AgentRunTypes'
-import type { RunManager } from '../RunManager'
+import { isActiveRunSessionStatus, type RunManager } from '../RunManager'
 import type { PermissionService } from '../PermissionService'
 import type { ApprovalTimeoutScheduler, ApprovalTimeoutReason } from '../ApprovalTimeoutScheduler'
 import type { BridgeApnsPusher } from '../BridgeApnsPusher'
@@ -76,6 +76,7 @@ export interface PendingMainApproval {
   provider: ProviderId
   workspacePath?: string
   runId?: string
+  appChatId?: string
   allowedActions?: AgentApprovalAction[]
   resolveAction?: (action: AgentApprovalAction) => void
   resolve: (allowed: boolean) => void
@@ -130,6 +131,17 @@ export interface PendingKimiApproval {
   externalPathDetection?: PendingExternalPathDetection
 }
 
+function approvalActionResumesExecution(action: AgentApprovalAction): boolean {
+  return (
+    action === 'accept' ||
+    action === 'acceptForSession' ||
+    action === 'acceptForWorkspace' ||
+    action === 'grantExternalPathRead' ||
+    action === 'grantExternalPathEdit' ||
+    action === 'useProviderNative'
+  )
+}
+
 export interface PendingHostCommandApproval {
   sender: Electron.WebContents
   provider: 'codex'
@@ -161,6 +173,9 @@ export interface ResolveOptions {
   decisionSource?: 'user' | 'system'
   /** Phase E1.2: merged into the ledger record. */
   extraMetadata?: Record<string, unknown>
+  /** Paired-device resolutions cannot accept approvals whose exact review
+   * material exists only in the transient desktop card. */
+  origin?: 'desktop' | 'remote'
 }
 
 export interface ScheduleTimeoutArgs {
@@ -190,6 +205,12 @@ export interface ApprovalRunEvent {
 // ──────────────────────────────────────────────────────────────────
 
 export interface ApprovalServiceDeps {
+  /** Main-owned all-history transaction admission fence. */
+  isApprovalAdmissionBlocked?: (
+    runId?: string,
+    workspacePath?: string,
+    appChatId?: string
+  ) => boolean
   /** Run-state tracking (resolveApproval, get, clearApproval). */
   runManager: RunManager<unknown>
   /** Per-action decision + grant management. */
@@ -205,6 +226,13 @@ export interface ApprovalServiceDeps {
   ) => void
   /** Ledger response writer (Phase E1.2 thread-through). */
   resolveApprovalLedger: (
+    approvalId: string,
+    action: AgentApprovalAction,
+    decisionSource: 'user' | 'system',
+    extraMetadata: Record<string, unknown>
+  ) => void
+  /** Throwing, existence-checking ledger writer for signed-elevated accepts. */
+  resolveApprovalLedgerStrict?: (
     approvalId: string,
     action: AgentApprovalAction,
     decisionSource: 'user' | 'system',
@@ -284,28 +312,36 @@ export class ApprovalService {
 
   // ──── registration ─────────────────────────────────────────────
 
-  registerMain(approvalId: string, info: PendingMainApproval): void {
+  registerMain(approvalId: string, info: PendingMainApproval): boolean {
+    if (this.registrationBlocked(approvalId, info.runId, info.workspacePath, true, info.appChatId))
+      return false
     this.pendingMain.set(approvalId, info)
     this.emitApprovalRunEvent('approval_pending', approvalId, info.provider, {
       appRunId: info.runId,
+      appChatId: info.appChatId,
       workspacePath: info.workspacePath
     })
+    return true
   }
 
-  registerGeminiTool(approvalId: string, info: PendingGeminiToolApproval): void {
+  registerGeminiTool(approvalId: string, info: PendingGeminiToolApproval): boolean {
+    if (this.registrationBlocked(approvalId, info.runId, info.workspacePath)) return false
     this.pendingGeminiTool.set(approvalId, info)
     this.emitApprovalRunEvent('approval_pending', approvalId, info.provider, {
       appRunId: info.runId,
       workspacePath: info.workspacePath
     })
+    return true
   }
 
-  registerCodex(approvalId: string, info: PendingCodexApproval): void {
+  registerCodex(approvalId: string, info: PendingCodexApproval): boolean {
+    if (this.registrationBlocked(approvalId, info.runId, info.workspacePath)) return false
     this.pendingCodex.set(approvalId, info)
     this.emitApprovalRunEvent('approval_pending', approvalId, 'codex', {
       appRunId: info.runId,
       workspacePath: info.workspacePath
     })
+    return true
   }
 
   /**
@@ -324,15 +360,18 @@ export class ApprovalService {
     )
   }
 
-  registerKimi(approvalId: string, info: PendingKimiApproval): void {
+  registerKimi(approvalId: string, info: PendingKimiApproval): boolean {
+    if (this.registrationBlocked(approvalId, info.runId, info.workspacePath)) return false
     this.pendingKimi.set(approvalId, info)
     this.emitApprovalRunEvent('approval_pending', approvalId, 'kimi', {
       appRunId: info.runId,
       workspacePath: info.workspacePath
     })
+    return true
   }
 
-  registerHostCommand(approvalId: string, info: PendingHostCommandApproval): void {
+  registerHostCommand(approvalId: string, info: PendingHostCommandApproval): boolean {
+    if (this.registrationBlocked(approvalId, info.appRunId, info.workspacePath)) return false
     this.pendingHostCommand.set(approvalId, info)
     this.emitApprovalRunEvent('approval_pending', approvalId, info.provider, {
       appRunId: info.appRunId,
@@ -340,6 +379,7 @@ export class ApprovalService {
       workspacePath: info.workspacePath,
       threadId: info.threadId
     })
+    return true
   }
 
   // ──── accessors for callers that need to peek at registry state ──
@@ -350,9 +390,7 @@ export class ApprovalService {
 
   hasPendingHostCommandForRun(appRunId: string | undefined): boolean {
     if (!appRunId) return false
-    return [...this.pendingHostCommand.values()].some(
-      (approval) => approval.appRunId === appRunId
-    )
+    return [...this.pendingHostCommand.values()].some((approval) => approval.appRunId === appRunId)
   }
 
   deleteHostCommand(approvalId: string): void {
@@ -369,14 +407,68 @@ export class ApprovalService {
     )
   }
 
+  /**
+   * Synchronously settle every approval owned by a run without granting it.
+   * Terminal transitions and history deletion use this before their durable
+   * state disappears, so an old renderer response cannot resume a waiting tool.
+   */
+  cancelForRun(runId: string, reason = 'run-terminal'): number {
+    const normalizedRunId = runId.trim()
+    if (!normalizedRunId) return 0
+    return this.cancelMatching((candidateRunId) => candidateRunId === normalizedRunId, reason)
+  }
+
+  /**
+   * Settle approvals whose effective workspace belongs to a scoped history
+   * clear. The pending record's explicit path wins; otherwise the live run
+   * session supplies it. Unrelated workspaces remain usable.
+   */
+  cancelForWorkspace(workspaceId: string, reason = 'workspace-history-cleared'): number {
+    const normalizedWorkspaceId = workspaceId.trim()
+    if (!normalizedWorkspaceId) return 0
+    return this.cancelMatching((runId, workspacePath) => {
+      const session = runId ? this.deps.runManager.get(runId) : undefined
+      return (
+        this.deps.workspaceIdForPath(workspacePath ?? session?.workspacePath) ===
+        normalizedWorkspaceId
+      )
+    }, reason)
+  }
+
+  /** Settle every approval owned by a chat before delete/truncate awaits. */
+  cancelForChat(chatId: string, reason = 'chat-history-cleared'): number {
+    const normalizedChatId = chatId.trim()
+    if (!normalizedChatId) return 0
+    return this.cancelMatching((runId, _workspacePath, pendingChatId) => {
+      if (pendingChatId === normalizedChatId) return true
+      return Boolean(runId && this.deps.runManager.get(runId)?.appChatId === normalizedChatId)
+    }, reason)
+  }
+
+  /** Settle one stale approval without allowing its provider lane to resume. */
+  cancelApproval(approvalId: string, reason = 'approval-admission-revoked'): boolean {
+    const normalizedApprovalId = approvalId.trim()
+    if (!normalizedApprovalId) return false
+    return (
+      this.cancelMatching(
+        (_runId, _workspacePath, _chatId, candidateApprovalId) =>
+          candidateApprovalId === normalizedApprovalId,
+        reason
+      ) === 1
+    )
+  }
+
+  /** Cancel every pending approval before a global history purge. */
+  cancelAll(reason = 'history-cleared'): number {
+    return this.cancelMatching(() => true, reason)
+  }
+
   /** Scope (workspace/thread) of a pending approval — for the bridge
    * ownership validator. An allowlisted device must not resolve a tool-call
    * approval outside the workspace/thread it presented (the approval id is
    * resolved GLOBALLY by the executor, so the boundary lives here). Reuses
    * the exact projection derivation. Returns null if the id isn't pending. */
-  approvalScope(
-    approvalId: string
-  ): { workspaceId?: string; threadId?: string } | null {
+  approvalScope(approvalId: string): { workspaceId?: string; threadId?: string } | null {
     const card = this.listProjectionCards().find((c) => c.toolCallId === approvalId)
     if (!card) return null
     return {
@@ -392,6 +484,7 @@ export class ApprovalService {
         this.projectApprovalCard(approvalId, info.provider, {
           workspacePath: info.workspacePath,
           runId: info.runId,
+          threadId: info.appChatId,
           title: 'Approval requested',
           body: 'Main-process approval is waiting for a decision.',
           allowedActions: info.allowedActions
@@ -399,35 +492,62 @@ export class ApprovalService {
       )
     }
     for (const [approvalId, info] of this.pendingGeminiTool.entries()) {
+      const requiresDesktopExactReview = info.service === 'canvasEval'
       cards.push(
         this.projectApprovalCard(approvalId, info.provider, {
           workspacePath: info.workspacePath,
           runId: info.runId,
-          title: `${info.service} approval requested`,
-          body: 'Gemini requested a gated tool or workspace action.',
-          allowedActions: info.allowedActions
+          title: requiresDesktopExactReview
+            ? 'Canvas eval requires desktop review'
+            : `${info.service} approval requested`,
+          body: requiresDesktopExactReview
+            ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
+            : 'Gemini requested a gated tool or workspace action.',
+          allowedActions: requiresDesktopExactReview
+            ? (info.allowedActions || []).filter(
+                (action) => action === 'decline' || action === 'cancel'
+              )
+            : info.allowedActions
         })
       )
     }
     for (const [approvalId, info] of this.pendingCodex.entries()) {
+      const requiresDesktopExactReview = info.service === 'canvasEval'
       cards.push(
         this.projectApprovalCard(approvalId, 'codex', {
           workspacePath: info.workspacePath,
           runId: info.runId,
-          title: String(info.method || info.service || 'Codex approval requested'),
-          body: compactJSON(info.params),
-          allowedActions: info.allowedActions
+          title: requiresDesktopExactReview
+            ? 'Canvas eval requires desktop review'
+            : String(info.method || info.service || 'Codex approval requested'),
+          body: requiresDesktopExactReview
+            ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
+            : compactJSON(info.params),
+          allowedActions: requiresDesktopExactReview
+            ? (info.allowedActions || []).filter(
+                (action) => action === 'decline' || action === 'cancel'
+              )
+            : info.allowedActions
         })
       )
     }
     for (const [approvalId, info] of this.pendingKimi.entries()) {
+      const requiresDesktopExactReview = info.service === 'canvasEval'
       cards.push(
         this.projectApprovalCard(approvalId, 'kimi', {
           workspacePath: info.workspacePath,
           runId: info.runId,
-          title: 'Kimi approval requested',
-          body: compactJSON(info.params),
-          allowedActions: info.allowedActions
+          title: requiresDesktopExactReview
+            ? 'Canvas eval requires desktop review'
+            : 'Kimi approval requested',
+          body: requiresDesktopExactReview
+            ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
+            : compactJSON(info.params),
+          allowedActions: requiresDesktopExactReview
+            ? (info.allowedActions || []).filter(
+                (action) => action === 'decline' || action === 'cancel'
+              )
+            : info.allowedActions
         })
       )
     }
@@ -454,7 +574,11 @@ export class ApprovalService {
     const main = this.pendingMain.get(approvalId)
     if (main) {
       const session = this.deps.runManager.get(main.runId)
-      return { provider: main.provider, appRunId: main.runId, appChatId: session?.appChatId }
+      return {
+        provider: main.provider,
+        appRunId: main.runId,
+        appChatId: main.appChatId ?? session?.appChatId
+      }
     }
     const gemini = this.pendingGeminiTool.get(approvalId)
     if (gemini) {
@@ -607,6 +731,37 @@ export class ApprovalService {
     const decisionSource = options?.decisionSource ?? 'user'
     const extraMetadata = options?.extraMetadata ?? {}
 
+    const remotelyAcceptedCanvasEval =
+      options?.origin === 'remote' &&
+      (this.pendingGeminiTool.get(requestId)?.service === 'canvasEval' ||
+        this.pendingCodex.get(requestId)?.service === 'canvasEval' ||
+        this.pendingKimi.get(requestId)?.service === 'canvasEval') &&
+      (action === 'accept' || action === 'acceptForSession' || action === 'acceptForWorkspace')
+    if (remotelyAcceptedCanvasEval) {
+      this.deps.log(
+        `[ApprovalService] blocked remote acceptance of signed-elevated canvas_eval approval ${requestId}; exact script review is desktop-only`
+      )
+      return false
+    }
+
+    const admissionContext = this.pendingAdmissionContext(requestId)
+    const resumesExecution = approvalActionResumesExecution(action)
+    if (
+      admissionContext &&
+      resumesExecution &&
+      this.deps.isApprovalAdmissionBlocked?.(
+        admissionContext.runId,
+        admissionContext.workspacePath,
+        admissionContext.appChatId
+      ) === true
+    ) {
+      this.deps.log(
+        `[ApprovalService] blocked approval acceptance ${requestId}: history clear is in progress for this scope`
+      )
+      this.cancelApproval(requestId, 'history-clear-admission-revoked')
+      return false
+    }
+
     // ── Main authority approval ─────────────────────────────────
     const pendingMain = this.pendingMain.get(requestId)
     if (pendingMain) {
@@ -624,7 +779,10 @@ export class ApprovalService {
         this.deps.runManager.get(pendingMain.runId)
       this.deps.appendDurableRunEventForRoute(
         pendingMain.provider,
-        { appRunId: session?.runId || pendingMain.runId, appChatId: session?.appChatId },
+        {
+          appRunId: session?.runId || pendingMain.runId,
+          appChatId: pendingMain.appChatId ?? session?.appChatId
+        },
         'approval_response',
         'control',
         `Main approval response: ${action}`,
@@ -633,7 +791,7 @@ export class ApprovalService {
       this.deps.resolveApprovalLedger(requestId, action, decisionSource, extraMetadata)
       this.emitApprovalRunEvent('approval_resolved', requestId, pendingMain.provider, {
         appRunId: session?.runId || pendingMain.runId,
-        appChatId: session?.appChatId,
+        appChatId: pendingMain.appChatId ?? session?.appChatId,
         workspacePath: pendingMain.workspacePath,
         action,
         decisionSource
@@ -661,12 +819,26 @@ export class ApprovalService {
       )
       if (!effectiveToolAction) return false
       action = effectiveToolAction
-      this.scheduler?.cancel(requestId)
       const resolvedAction =
         pendingGeminiTool.requestOnly &&
         (action === 'acceptForSession' || action === 'acceptForWorkspace')
           ? 'accept'
           : action
+      const ledgerMetadata = {
+        ...extraMetadata,
+        ...(resolvedAction !== action ? { requestedAction: action, requestOnly: true } : {})
+      }
+      const strictCanvasAccept = this.isSignedElevatedAccept(
+        pendingGeminiTool.service,
+        resolvedAction
+      )
+      if (
+        strictCanvasAccept &&
+        !this.persistSignedElevatedAccept(requestId, resolvedAction, decisionSource, ledgerMetadata)
+      ) {
+        return false
+      }
+      this.scheduler?.cancel(requestId)
       const session =
         this.deps.runManager.resolveApproval(requestId) ||
         this.deps.runManager.get(pendingGeminiTool.runId)
@@ -685,10 +857,9 @@ export class ApprovalService {
           requestOnly: pendingGeminiTool.requestOnly
         }
       )
-      this.deps.resolveApprovalLedger(requestId, resolvedAction, decisionSource, {
-        ...extraMetadata,
-        ...(resolvedAction !== action ? { requestedAction: action, requestOnly: true } : {})
-      })
+      if (!strictCanvasAccept) {
+        this.deps.resolveApprovalLedger(requestId, resolvedAction, decisionSource, ledgerMetadata)
+      }
       this.emitApprovalRunEvent('approval_resolved', requestId, pendingGeminiTool.provider, {
         appRunId: session?.runId || pendingGeminiTool.runId,
         appChatId: session?.appChatId,
@@ -773,6 +944,13 @@ export class ApprovalService {
       )
       if (!effectiveKimiAction) return false
       action = effectiveKimiAction
+      const strictCanvasAccept = this.isSignedElevatedAccept(pendingKimi.service, action)
+      if (
+        strictCanvasAccept &&
+        !this.persistSignedElevatedAccept(requestId, action, decisionSource, extraMetadata)
+      ) {
+        return false
+      }
       this.scheduler?.cancel(requestId)
       const session =
         this.deps.runManager.resolveApproval(requestId) ||
@@ -787,12 +965,16 @@ export class ApprovalService {
           requestId,
           action,
           rpcId: pendingKimi.rpcId,
-          params: pendingKimi.params,
+          ...(pendingKimi.service === 'canvasEval'
+            ? { paramsRedacted: true }
+            : { params: pendingKimi.params }),
           service: pendingKimi.service,
           workspacePath: pendingKimi.workspacePath
         }
       )
-      this.deps.resolveApprovalLedger(requestId, action, decisionSource, extraMetadata)
+      if (!strictCanvasAccept) {
+        this.deps.resolveApprovalLedger(requestId, action, decisionSource, extraMetadata)
+      }
       this.emitApprovalRunEvent('approval_resolved', requestId, 'kimi', {
         appRunId: session?.runId || pendingKimi.runId,
         appChatId: session?.appChatId,
@@ -841,6 +1023,13 @@ export class ApprovalService {
     )
     if (!effectiveCodexAction) return false
     action = effectiveCodexAction
+    const strictCanvasAccept = this.isSignedElevatedAccept(pending.service, action)
+    if (
+      strictCanvasAccept &&
+      !this.persistSignedElevatedAccept(requestId, action, decisionSource, extraMetadata)
+    ) {
+      return false
+    }
     this.scheduler?.cancel(requestId)
     const session =
       this.deps.runManager.resolveApproval(requestId) || this.deps.runManager.get(pending.runId)
@@ -859,7 +1048,9 @@ export class ApprovalService {
         workspacePath: pending.workspacePath
       }
     )
-    this.deps.resolveApprovalLedger(requestId, action, decisionSource, extraMetadata)
+    if (!strictCanvasAccept) {
+      this.deps.resolveApprovalLedger(requestId, action, decisionSource, extraMetadata)
+    }
     this.emitApprovalRunEvent('approval_resolved', requestId, 'codex', {
       appRunId: session?.runId || pending.runId,
       appChatId: session?.appChatId,
@@ -943,6 +1134,247 @@ export class ApprovalService {
       kimi: this.pendingKimi.size,
       hostCommand: this.pendingHostCommand.size
     }
+  }
+
+  private isSignedElevatedAccept(
+    service: AgenticServiceId | undefined,
+    action: AgentApprovalAction
+  ): boolean {
+    return service === 'canvasEval' && this.deps.permissionService.isApprovedAction(action)
+  }
+
+  private pendingAdmissionContext(approvalId: string): {
+    runId?: string
+    workspacePath?: string
+    appChatId?: string
+  } | null {
+    const main = this.pendingMain.get(approvalId)
+    if (main) {
+      return {
+        runId: main.runId,
+        workspacePath: main.workspacePath,
+        appChatId: main.appChatId
+      }
+    }
+    const gemini = this.pendingGeminiTool.get(approvalId)
+    if (gemini) {
+      return {
+        runId: gemini.runId,
+        workspacePath: gemini.workspacePath,
+        appChatId: gemini.externalPathDetection?.appChatId
+      }
+    }
+    const kimi = this.pendingKimi.get(approvalId)
+    if (kimi) {
+      return {
+        runId: kimi.runId,
+        workspacePath: kimi.workspacePath,
+        appChatId: kimi.externalPathDetection?.appChatId
+      }
+    }
+    const codex = this.pendingCodex.get(approvalId)
+    if (codex) {
+      return {
+        runId: codex.runId,
+        workspacePath: codex.workspacePath,
+        appChatId: codex.externalPathDetection?.appChatId
+      }
+    }
+    const host = this.pendingHostCommand.get(approvalId)
+    return host
+      ? {
+          runId: host.appRunId,
+          workspacePath: host.workspacePath,
+          appChatId: host.appChatId || host.threadId
+        }
+      : null
+  }
+
+  private registrationBlocked(
+    approvalId: string,
+    runId?: string,
+    workspacePath?: string,
+    allowMissingRun = false,
+    appChatId?: string
+  ): boolean {
+    const historyClear =
+      this.deps.isApprovalAdmissionBlocked?.(runId, workspacePath, appChatId) === true
+    const session = runId ? this.deps.runManager.get(runId) : undefined
+    const inactiveRun = Boolean(
+      runId &&
+      (!session
+        ? !allowMissingRun
+        : !isActiveRunSessionStatus(session.status) ||
+          this.deps.runManager.getClaimedTerminalStatus?.(runId))
+    )
+    if (!historyClear && !inactiveRun) return false
+    this.deps.log(
+      `[ApprovalService] blocked approval registration ${approvalId}: ${historyClear ? 'history clear is in progress for this scope' : 'run authority is no longer active'}`
+    )
+    return true
+  }
+
+  /** Persist the accepted decision before any provider or execution lane resumes. */
+  private persistSignedElevatedAccept(
+    approvalId: string,
+    action: AgentApprovalAction,
+    decisionSource: 'user' | 'system',
+    extraMetadata: Record<string, unknown>
+  ): boolean {
+    const resolveStrict = this.deps.resolveApprovalLedgerStrict
+    if (!resolveStrict) {
+      this.deps.log(
+        `[ApprovalService] blocked canvas_eval acceptance ${approvalId}: strict approval-ledger writer is unavailable`
+      )
+      return false
+    }
+    try {
+      resolveStrict(approvalId, action, decisionSource, extraMetadata)
+      return true
+    } catch (error) {
+      this.deps.log(
+        `[ApprovalService] blocked canvas_eval acceptance ${approvalId}: durable approval decision failed: ${error instanceof Error ? error.message : String(error)}`
+      )
+      return false
+    }
+  }
+
+  private cancelMatching(
+    matchesRun: (
+      runId: string | undefined,
+      workspacePath?: string,
+      chatId?: string,
+      approvalId?: string
+    ) => boolean,
+    reason: string
+  ): number {
+    let cancelled = 0
+    const settle = (
+      approvalId: string,
+      provider: ProviderId,
+      context: {
+        appRunId?: string
+        appChatId?: string
+        workspacePath?: string
+        threadId?: string
+      }
+    ) => {
+      this.scheduler?.cancel(approvalId)
+      this.deps.runManager.clearApproval(approvalId)
+      try {
+        this.deps.resolveApprovalLedger(approvalId, 'cancel', 'system', {
+          cancelledByLifecycle: true,
+          reason
+        })
+      } catch (error) {
+        this.deps.log(
+          `[ApprovalService] lifecycle cancellation ledger write failed for ${approvalId}: ${error instanceof Error ? error.message : String(error)}`
+        )
+      }
+      this.emitApprovalRunEvent('approval_resolved', approvalId, provider, {
+        ...context,
+        action: 'cancel',
+        decisionSource: 'system'
+      })
+      cancelled += 1
+    }
+
+    for (const [approvalId, pending] of [...this.pendingMain]) {
+      if (!matchesRun(pending.runId, pending.workspacePath, pending.appChatId, approvalId)) continue
+      this.pendingMain.delete(approvalId)
+      settle(approvalId, pending.provider, {
+        appRunId: pending.runId,
+        appChatId: pending.appChatId,
+        workspacePath: pending.workspacePath
+      })
+      pending.resolveAction?.('cancel')
+      pending.resolve(false)
+    }
+    for (const [approvalId, pending] of [...this.pendingGeminiTool]) {
+      if (
+        !matchesRun(
+          pending.runId,
+          pending.workspacePath,
+          pending.externalPathDetection?.appChatId,
+          approvalId
+        )
+      )
+        continue
+      this.pendingGeminiTool.delete(approvalId)
+      settle(approvalId, pending.provider, {
+        appRunId: pending.runId,
+        workspacePath: pending.workspacePath
+      })
+      pending.resolve(false)
+    }
+    for (const [approvalId, pending] of [...this.pendingKimi]) {
+      if (
+        !matchesRun(
+          pending.runId,
+          pending.workspacePath,
+          pending.externalPathDetection?.appChatId,
+          approvalId
+        )
+      )
+        continue
+      this.pendingKimi.delete(approvalId)
+      settle(approvalId, 'kimi', {
+        appRunId: pending.runId,
+        workspacePath: pending.workspacePath
+      })
+      try {
+        const params = pending.params as { payload?: { id?: string } } | null
+        this.deps.respondToKimiWireRequest(pending.child, pending.rpcId, {
+          request_id: params?.payload?.id || approvalId,
+          response: 'reject',
+          feedback: `TaskWraith cancelled this approval because ${reason}.`
+        })
+      } catch {
+        // The provider transport is commonly already closed at this point.
+      }
+    }
+    for (const [approvalId, pending] of [...this.pendingCodex]) {
+      if (
+        !matchesRun(
+          pending.runId,
+          pending.workspacePath,
+          pending.externalPathDetection?.appChatId,
+          approvalId
+        )
+      )
+        continue
+      this.pendingCodex.delete(approvalId)
+      settle(approvalId, 'codex', {
+        appRunId: pending.runId,
+        workspacePath: pending.workspacePath
+      })
+      try {
+        this.deps
+          .getCodexClient()
+          ?.reject(pending.rpcId, `TaskWraith cancelled this approval because ${reason}.`)
+      } catch {
+        // The provider transport is commonly already closed at this point.
+      }
+    }
+    for (const [approvalId, pending] of [...this.pendingHostCommand]) {
+      if (
+        !matchesRun(
+          pending.appRunId,
+          pending.workspacePath,
+          pending.appChatId || pending.threadId,
+          approvalId
+        )
+      )
+        continue
+      this.pendingHostCommand.delete(approvalId)
+      settle(approvalId, pending.provider, {
+        appRunId: pending.appRunId,
+        appChatId: pending.appChatId,
+        workspacePath: pending.workspacePath,
+        threadId: pending.threadId
+      })
+    }
+    return cancelled
   }
 
   private emitApprovalRunEvent(

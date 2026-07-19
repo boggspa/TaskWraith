@@ -917,9 +917,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       // matcher uses — and prefers the role + first model alias
       // because those are the unambiguous forms. The bare provider
       // name is intentionally NOT included in the hint: agents
-      // can still write `@gemini` and it will resolve (to one of
-      // the Gemini participants, non-deterministically), but the
-      // prompt nudges them toward the deterministic forms.
+      // can still write `@gemini`, but when multiple Gemini seats
+      // are eligible TaskWraith classifies it as ambiguous and
+      // fails routing closed. The prompt nudges agents toward a
+      // unique form instead of making them discover that at send.
       const roleHint = (participant.role || '').trim()
       const aliases = getParticipantAliases(participant)
       // Aliases come back lowercased + space-normalised. Filter out
@@ -1017,12 +1018,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         }
       )
     : null
-  // Host-side SEAT compaction (wave 3): a compacted cursor/kimi seat carries a
-  // durable summary of a bounded prompt window (or, for Cursor, of the provider
-  // session that was reset). Inject it ABOVE the transcript and fund it from
-  // the seat's transcript char budget so the prompt does not grow. Only an
-  // exact contiguous-prefix provenance claim may prune transcript rows;
-  // current bounded/session summaries and legacy timestamps fail open.
+  // Host-side SEAT compaction: current Kimi/Grok seats can carry a durable
+  // bounded summary. Historical Cursor records may retain an older summary for
+  // decode/render only; no source-ahead Cursor compaction runs. Inject the block
+  // ABOVE the transcript and fund it from the seat's transcript char budget.
+  // Only exact contiguous-prefix provenance may prune transcript rows; bounded
+  // or legacy summaries fail open.
   const seatCompactionSummary = input.participant.contextCompactionSummary
   const seatSummaryBlock = buildSeatCompactionSummaryBlock(input.participant)
   const seatTranscriptMessages = pruneContiguousCompactionPrefix(
@@ -1138,7 +1139,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // (which don't have this failure mode) get no extra prompt.
     ...(isOllamaParticipant
       ? [
-          `You are a LOCAL model running through Ollama${selfModelLabel ? ` (${selfModelLabel})` : ''}. You are NOT Claude, Codex, Gemini, Kimi, Grok, or Cursor — those are OTHER participants in the roster below. Never sign, tag, or speak as them, and never claim to be a cloud model; respond only as ${selfToken ? `#${selfToken}` : 'yourself'}.`
+          `You are a LOCAL model running through Ollama${selfModelLabel ? ` (${selfModelLabel})` : ''}. Other names in the participant roster identify peer seats, not you. Never sign, tag, or speak as another seat, and never claim to be a cloud model; respond only as ${selfToken ? `#${selfToken}` : 'yourself'}.`
         ]
       : []),
     `Round id: ${input.roundId}`,
@@ -1208,9 +1209,9 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // rule reinforces them. Pre-EW18 agents reached for `@codex`
     // / `@gemini` / `@claude` even when the panel had 3 same-
     // provider participants, producing ambiguous "@gemini,
-    // @gemini, @gemini" addresses that resolved non-
-    // deterministically. The role and model forms are
-    // unambiguous and route directly to the intended participant.
+    // @gemini, @gemini" addresses. Current routing fails those
+    // aliases closed; role and model forms are unambiguous and
+    // route directly to the intended participant.
     // 1.0.7 — sharpened from "prefer X / use provider only when" to
     // an imperative address-by-name rule with provider tags framed
     // as the exception. The polite form still left agents reaching
@@ -1220,7 +1221,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // what the prompt visually models. Provider tags stay legal for
     // the genuinely unambiguous case so agents don't treat them as
     // banned, just exceptional.
-    '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers a provider tag resolves non-deterministically and your message may reach the wrong panelist.',
+    '- Address participants by their **participant (role) name** (e.g. `@Farmer`, `@Merchant`) or **model name** (e.g. `@Sonnet 4.6`, `@Flash Lite`) exactly as shown in the roster — these route deterministically to the participant you mean. Do NOT address peers by bare provider name (`@gemini`, `@claude`) unless that provider has exactly one participant on this panel: with same-provider peers the alias is ambiguous and TaskWraith fails it closed. An in-round mention emits a warning and changes no routing; a new-round directed send is rejected. Use the participant picker or a unique role/model alias.',
     '- If another participant should handle this turn, call ensemble_yield with a short reason and optional target.',
     '- Ensemble yield is a directly advertised lifecycle tool: call `ensemble_yield` itself with the target and optional reason. Do not run `capability_search`, `capability_invoke`, generic tool discovery, or an alternate broker to find it. When the user explicitly instructs your role to yield, the tool call is mandatory before ending the turn; a tool call is not response prose and does not violate an exact-output instruction. Never replace the call with a narrated handoff.',
     ...(input.participant.provider === 'grok'
@@ -1981,21 +1982,19 @@ export function providerLabel(provider: ProviderId): string {
  * 1.0.4 same-provider disambiguation note injected just below the
  * participant roster.
  *
- * Real-world repro: an ensemble with "Codex / Brodex" and
+ * Historical older-build repro: an ensemble with "Codex / Brodex" and
  * "Codex / Chodex #2" both present. Kimi writes `@codex / Brodex —
  * you had the best view…` because that's the natural way to address
- * a Codex peer. The orchestrator's resolver picks ONE of the two
- * deterministically (ensemble order), but the model didn't know
- * that — it thought `@codex` was unambiguous. The user can't see
- * the routing choice until the wrong participant speaks.
+ * a Codex peer. The old route picked one seat by ensemble order,
+ * although the model thought `@codex` was unambiguous. Current
+ * routing instead reports the complete ambiguity and fails closed:
+ * no in-round promotion, and no new-round directed dispatch.
  *
  * The fix: tell the dispatched agent up-front that same-provider
  * peers exist, list them, and suggest the explicit forms the
- * resolver supports (`@<role>` or `@<short-model>`). This shifts
- * the disambiguation burden from the user-facing transcript
- * (where the orchestrator can only emit a warning after the fact)
- * to the agent's prompt context (where the agent can pick the
- * explicit form on the first try).
+ * resolver supports (`@<role>` or `@<short-model>`) or the exact
+ * participant picker. This gives the agent a valid unique form on
+ * the first try while retaining the host's fail-closed boundary.
  *
  * Returns `''` when no provider has 2+ enabled participants — the
  * single-provider-per-role ensembles (the 1.0.3 common case) see
@@ -2105,8 +2104,8 @@ export function formatSameProviderDisambiguationNote(participants: EnsembleParti
   lines.push('')
   lines.push(
     hints
-      ? `When addressing a specific participant, use their role name or model identifier (e.g. ${hints}). Plain \`@${providerName}\` resolves to a single participant but the choice is non-deterministic across same-provider peers.`
-      : `When addressing a specific participant, use an explicit identifier. Plain \`@${providerName}\` resolves to a single participant but the choice is non-deterministic across same-provider peers.`
+      ? `When addressing a specific participant, use the participant picker or a unique role/model identifier (e.g. ${hints}). Plain \`@${providerName}\` is ambiguous across same-provider peers and TaskWraith fails it closed: no in-round promotion occurs, and a new-round directed send is rejected.`
+      : `When addressing a specific participant, use the participant picker or another unique identifier. Plain \`@${providerName}\` is ambiguous across same-provider peers and TaskWraith fails it closed: no in-round promotion occurs, and a new-round directed send is rejected.`
   )
   return lines.join('\n')
 }

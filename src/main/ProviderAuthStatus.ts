@@ -28,7 +28,8 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   kimi: 'cli',
   // Grok (gated, G3) runs via the local headless CLI stream.
   grok: 'cli',
-  // Cursor (gated, CR) runs via the cursor-agent headless stream-json CLI.
+  // Historical Cursor auth records used the headless CLI transport. Source-ahead
+  // TaskWraith starts no Cursor process.
   cursor: 'cli',
   // Ollama runs through the local HTTP API rather than a cloud auth flow.
   ollama: 'http'
@@ -41,8 +42,7 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   kimi: true,
   // Read-only G3 has no approval flow yet (G5 will add write-capable runs).
   grok: false,
-  // CR4 ships read-only; CR6 flips this true when write mode routes through the
-  // approval ledger.
+  // Cursor managed runs are disabled before launch.
   cursor: false,
   // Phase 1 local chat is read-only/no-tools.
   ollama: false
@@ -52,10 +52,13 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   gemini: false,
   codex: true,
   claude: false,
-  kimi: false,
+  // Admitted Kimi seats receive TaskWraith's mandatory authenticated HTTP MCP
+  // gateway. This reports the managed gateway surface, never provider-native
+  // MCP configuration.
+  kimi: true,
   // No TaskWraith MCP for Grok until G5.
   grok: false,
-  // Cursor MCP is workspace-config-based (CR6), not a live status surface.
+  // Cursor has no source-ahead MCP status surface because no process starts.
   cursor: false,
   // Ollama exposes a TaskWraith-local read-only tool loop through the adapter.
   ollama: true
@@ -160,7 +163,29 @@ function deriveAuthState(
     return { authState: 'authenticated' }
   }
 
-  // kimi
-  if (apiKeyConfigured) return { authState: 'authenticated' }
-  return { authState: 'missing', authReason: 'No Kimi API key stored' }
+  // Managed Kimi ACP auth is observed from the admitted runtime's CURRENT
+  // ~/.kimi-code home: OAuth or a provider key in that home's config.toml.
+  // `apiKeyConfigured` describes the separate encrypted Settings key used for
+  // usage queries; it must never authenticate a managed run by implication.
+  const normalized = String(rawAuthState || '')
+    .trim()
+    .toLowerCase()
+  if (normalized === 'oauth' || normalized === 'api-key' || normalized === 'authenticated') {
+    return { authState: 'authenticated' }
+  }
+  if (
+    normalized === 'missing' ||
+    normalized === 'unauthenticated' ||
+    normalized === 'not authenticated' ||
+    normalized === 'not logged in'
+  ) {
+    return {
+      authState: 'missing',
+      authReason: 'Kimi Code reports no current OAuth login or config.toml provider API key'
+    }
+  }
+  return {
+    authState: 'not-observable',
+    authReason: 'Kimi credential state was not observed from the admitted runtime'
+  }
 }

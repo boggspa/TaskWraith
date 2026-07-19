@@ -70,4 +70,37 @@ describe('pre-approval validation integration contracts', () => {
     expect(preflight).toBeLessThan(source.indexOf('nativeProviderApprovalPriority('))
     expect(preflight).toBeLessThan(source.indexOf('requestAgenticServiceApproval('))
   })
+
+  it('binds Claude canvas_eval approval to the canonical exact script and rechecks lifecycle after review', () => {
+    const start = indexSource.indexOf('async function canUseClaudeSdkTool(')
+    const end = indexSource.indexOf('\nasync function tryRunClaudeSdk(', start)
+    const source = indexSource.slice(start, end)
+    const canonicalPreview = source.indexOf(
+      'const approvalPreview = claudeToolApprovalPreview(toolName, normalizedInput, service)'
+    )
+    const canonicalScript = source.indexOf(
+      "typeof approvalPreview.params.script === 'string'"
+    )
+    const receipt = source.indexOf(
+      'claudeCanvasEvalApproval = createCanvasEvalApprovalReceipt('
+    )
+    const receiptScript = source.indexOf('exactCanvasEvalScript,', receipt)
+    const receiptApprovalId = source.indexOf('approvalId', receiptScript)
+    const correlation = source.indexOf('primeNativeCanvasCompatCorrelation({', receipt)
+    const request = source.indexOf('const allowed = await requestAgenticServiceApproval(')
+    const postReviewRecheck = source.indexOf('if (!claudeRunAcceptsTools())', request)
+
+    expect(canonicalPreview).toBeGreaterThanOrEqual(0)
+    expect(canonicalScript).toBeGreaterThan(canonicalPreview)
+    expect(receipt).toBeGreaterThan(canonicalScript)
+    expect(receipt).toBeGreaterThan(request)
+    expect(receiptScript).toBeGreaterThan(receipt)
+    expect(receiptApprovalId).toBeGreaterThan(receiptScript)
+    expect(correlation).toBeGreaterThan(receiptApprovalId)
+    expect(postReviewRecheck).toBeGreaterThan(correlation)
+    expect(source).toContain('runManager.getClaimedTerminalStatus(route.appRunId)')
+    expect(source).toContain(
+      'historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId)'
+    )
+  })
 })

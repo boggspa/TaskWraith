@@ -58,6 +58,7 @@ function createExecutor(input: {
   chats: ChatRecord[]
   replays?: Record<string, RunEventReplay>
   rawEvents?: RunEventRecord[]
+  providerAuth?: DesktopToolExecutorDeps['providerAuth']
 }) {
   const chats = new Map(input.chats.map((item) => [item.appChatId, item]))
   const getRunEventReplay = vi.fn(
@@ -84,7 +85,8 @@ function createExecutor(input: {
     shell: {
       showItemInFolder: () => undefined,
       openPath: async () => ''
-    }
+    },
+    ...(input.providerAuth ? { providerAuth: input.providerAuth } : {})
   }
   return { executor: createDesktopToolExecutors(deps), getRunEventReplay, getRunEvents }
 }
@@ -213,5 +215,85 @@ describe('DesktopToolExecutors run history scope', () => {
       }
     ])
     expect(JSON.stringify(result)).not.toContain(privateArtifactPath)
+  })
+})
+
+describe('DesktopToolExecutors Kimi auth projection', () => {
+  function providerAuth(
+    status: { available: boolean; authState: string; error?: string },
+    storedKimiApiKey: unknown = null
+  ): NonNullable<DesktopToolExecutorDeps['providerAuth']> {
+    return {
+      getGeminiAuthStatusSnapshot: async () => {
+        throw new Error('not used by Kimi projection')
+      },
+      getCliProviderStatus: async () => status,
+      getStoredClaudeApiKey: () => null,
+      getStoredKimiApiKey: () => storedKimiApiKey,
+      encryptionAvailable: () => true,
+      isCodexClientStarted: () => false
+    }
+  }
+
+  it('distinguishes OAuth-only, provider-key, and unqualified Kimi states', async () => {
+    const oauth = createExecutor({
+      chats: [],
+      providerAuth: providerAuth({ available: true, authState: 'oauth' })
+    })
+    await expect(oauth.executor.executeProviderAuthStatus({ provider: 'kimi' })).resolves.toMatchObject(
+      {
+        providers: {
+          kimi: {
+            authState: 'authenticated',
+            apiKeyConfigured: false,
+            mcpStatusSupport: true
+          }
+        }
+      }
+    )
+
+    const managedProviderKey = createExecutor({
+      chats: [],
+      providerAuth: providerAuth({ available: true, authState: 'api-key' })
+    })
+    await expect(
+      managedProviderKey.executor.executeProviderAuthStatus({ provider: 'kimi' })
+    ).resolves.toMatchObject({
+      providers: {
+        kimi: { authState: 'authenticated', apiKeyConfigured: false }
+      }
+    })
+
+    const settingsUsageKey = createExecutor({
+      chats: [],
+      providerAuth: providerAuth({ available: true, authState: 'unknown' }, 'stored-key')
+    })
+    await expect(
+      settingsUsageKey.executor.executeProviderAuthStatus({ provider: 'kimi' })
+    ).resolves.toMatchObject({
+      providers: {
+        kimi: { authState: 'not-observable', apiKeyConfigured: true }
+      }
+    })
+
+    const unqualified = createExecutor({
+      chats: [],
+      providerAuth: providerAuth({
+        available: false,
+        authState: 'oauth',
+        error: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
+      })
+    })
+    await expect(
+      unqualified.executor.executeProviderAuthStatus({ provider: 'kimi' })
+    ).resolves.toMatchObject({
+      providers: {
+        kimi: {
+          serverState: 'unavailable',
+          authState: 'missing',
+          authReason: expect.stringContaining('embedded reviewed roster')
+        }
+      }
+    })
   })
 })

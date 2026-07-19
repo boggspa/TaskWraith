@@ -1,5 +1,4 @@
 import { describe, expect, it } from 'vitest'
-import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { buildProviderCapabilityContract } from './ProviderCapabilities'
 import type { AgenticServicesSettings, AppSettings } from './store/types'
@@ -176,7 +175,7 @@ describe('ProviderCapabilities', () => {
     expect(contract.mcp.message).toContain('TaskWraith MCP bridge is disabled')
   })
 
-  it('marks Claude and Kimi provider-native tools as delegated', () => {
+  it('keeps Claude tools delegated and Kimi native tools unavailable without its gateway', () => {
     const claude = buildProviderCapabilityContract({
       provider: 'claude',
       settings: settings(),
@@ -190,9 +189,10 @@ describe('ProviderCapabilities', () => {
 
     expect(claude.tools.shellCommands.state).toBe('delegated')
     expect(claude.approvals.inAppApprovals).toBe(false)
-    expect(kimi.tools.fileChanges.state).toBe('delegated')
+    expect(kimi.tools.fileChanges.state).toBe('unavailable')
+    expect(kimi.tools.fileChanges.source).toBe('bridge')
     expect(kimi.approvals.inAppApprovals).toBe(true)
-    expect(kimi.warnings.map((warning) => warning.id)).toContain('kimi-provider-managed-tools')
+    expect(kimi.approvals.supportsWorkspaceGrants).toBe(true)
     // Without an available TaskWraith MCP bridge (no mcpStatus), Claude/Kimi
     // elicit/delegate are unavailable rather than delegated, mirroring how
     // their bridge-backed tooling falls closed.
@@ -202,7 +202,7 @@ describe('ProviderCapabilities', () => {
     expect(kimi.tools.delegate.state).toBe('unavailable')
   })
 
-  it('marks Claude/Kimi elicit/delegate available once the TaskWraith MCP bridge is up', () => {
+  it('marks Claude/Kimi gateway tooling available once the TaskWraith MCP bridge is up', () => {
     const claude = buildProviderCapabilityContract({
       provider: 'claude',
       settings: settings(),
@@ -214,11 +214,28 @@ describe('ProviderCapabilities', () => {
         tools: ['ask_user_question', 'delegate_to_subthread']
       }
     })
+    const kimi = buildProviderCapabilityContract({
+      provider: 'kimi',
+      settings: settings(),
+      status: { provider: 'kimi', available: true, version: 'reviewed-runtime' },
+      mcpStatus: {
+        enabled: true,
+        available: true,
+        serverName: 'TaskWraith',
+        tools: [...GATEWAY_MCP_ADVERTISE_TOOLS]
+      }
+    })
 
     expect(claude.tools.elicit.state).toBe('available')
     expect(claude.tools.elicit.requiresApproval).toBe(false)
     expect(claude.tools.delegate.state).toBe('gated')
     expect(claude.tools.delegate.policy).toBe('ask')
+    expect(kimi.mcp.source).toBe('bridge')
+    expect(kimi.tools.shellCommands.source).toBe('bridge')
+    expect(kimi.tools.fileChanges.source).toBe('bridge')
+    expect(kimi.tools.fileChanges.enforcedByTaskWraith).toBe(true)
+    expect(kimi.approvals.providerMode).toContain('ACP governed authenticated')
+    expect(kimi.approvals.supportsWorkspaceGrants).toBe(true)
   })
 
   it('does not expose TaskWraith elicit/delegate rows for Claude user MCP servers only', () => {
@@ -255,65 +272,64 @@ describe('ProviderCapabilities', () => {
     expect(claude.tools.delegate.state).toBe('unavailable')
   })
 
-  it('treats read-only grok/cursor elicit/delegate as provider-delegated when the bridge is off', () => {
-    for (const provider of ['cursor', 'grok'] as const) {
-      const contract = buildProviderCapabilityContract({
-        provider,
-        settings: settings(),
-        approvalMode: 'plan',
-        status: { provider, available: true, version: '1.0.0' }
-      })
+  it('treats read-only Grok elicit/delegate as provider-delegated when the bridge is off', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'grok',
+      settings: settings(),
+      approvalMode: 'plan',
+      status: { provider: 'grok', available: true, version: '1.0.0' }
+    })
 
-      expect(contract.tools.elicit.state).toBe('delegated')
-      expect(contract.tools.elicit.enforcedByTaskWraith).toBe(false)
-      expect(contract.tools.delegate.state).toBe('delegated')
-      expect(contract.tools.delegate.enforcedByTaskWraith).toBe(false)
-    }
+    expect(contract.tools.elicit.state).toBe('delegated')
+    expect(contract.tools.elicit.enforcedByTaskWraith).toBe(false)
+    expect(contract.tools.delegate.state).toBe('delegated')
+    expect(contract.tools.delegate.enforcedByTaskWraith).toBe(false)
   })
 
-  it('auto-marks Cursor and Grok as TaskWraith MCP bridge-backed for write-capable runs', () => {
-    for (const provider of ['cursor', 'grok'] as const) {
-      const contract = buildProviderCapabilityContract({
-        provider,
-        settings: settings(),
-        approvalMode: 'default',
-        status: { provider, available: true, version: '1.0.0' }
-      })
+  it('reports Cursor managed runs and approvals as unavailable', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'cursor',
+      settings: { ...settings(), geminiMcpBridgeEnabled: true },
+      approvalMode: 'default',
+      status: { provider: 'cursor', available: true, version: '1.0.0' }
+    })
 
-      expect(contract.mcp.state).toBe('available')
-      expect(contract.mcp.source).toBe('bridge')
-      if (provider === 'cursor') {
-        expect(contract.mcp.serverName).toBe(CURSOR_MCP_SERVER_NAME)
-      }
-      expect(contract.mcp.message).toContain('no manual')
-      expect(contract.tools.shellCommands.source).toBe('bridge')
-      expect(contract.tools.fileChanges.source).toBe('bridge')
-      expect(contract.tools.elicit.state).toBe('available')
-      expect(contract.tools.delegate.state).toBe('gated')
-    }
+    expect(contract.availability.available).toBe(false)
+    expect(contract.availability.setupRequired).toBe(true)
+    expect(contract.availability.error).toContain('Cursor managed runs are disabled')
+    expect(contract.mcp.state).toBe('unavailable')
+    expect(contract.mcp.source).toBe('unsupported')
+    expect(contract.mcp.serverName).toBe('not connected')
+    expect(contract.mcp.tools).toEqual([])
+    expect(contract.tools.shellCommands.state).toBe('unavailable')
+    expect(contract.tools.fileChanges.state).toBe('unavailable')
+    expect(contract.tools.mcpTools.state).toBe('unavailable')
+    expect(contract.tools.elicit.state).toBe('unavailable')
+    expect(contract.tools.delegate.state).toBe('unavailable')
+    expect(contract.approvals).toMatchObject({
+      effectiveMode: 'unavailable',
+      providerMode: 'unavailable',
+      inAppApprovals: false,
+      supportsWorkspaceGrants: false
+    })
+    expect(contract.approvals.notes.join(' ')).toContain('starts no Cursor process')
+    expect(contract.warnings.map((item) => item.id)).toContain('cursor-tool-mode-unqualified')
   })
 
-  it('marks Cursor and Grok as TaskWraith MCP bridge-backed when the bridge is enabled', () => {
-    for (const provider of ['cursor', 'grok'] as const) {
-      const contract = buildProviderCapabilityContract({
-        provider,
-        settings: { ...settings(), geminiMcpBridgeEnabled: true },
-        status: { provider, available: true, version: '1.0.0' }
-      })
+  it('marks write-capable Grok as TaskWraith MCP bridge-backed', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'grok',
+      settings: { ...settings(), geminiMcpBridgeEnabled: true },
+      status: { provider: 'grok', available: true, version: '1.0.0' }
+    })
 
-      expect(contract.mcp.state).toBe('available')
-      expect(contract.mcp.source).toBe('bridge')
-      if (provider === 'cursor') {
-        expect(contract.mcp.serverName).toBe(CURSOR_MCP_SERVER_NAME)
-      }
-      expect(contract.mcp.tools).toContain('write_file')
-      expect(contract.tools.shellCommands.source).toBe('bridge')
-      expect(contract.tools.shellCommands.enforcedByTaskWraith).toBe(true)
-      expect(contract.tools.fileChanges.source).toBe('bridge')
-      expect(contract.tools.fileChanges.enforcedByTaskWraith).toBe(true)
-      expect(contract.tools.elicit.state).toBe('available')
-      expect(contract.tools.delegate.state).toBe('gated')
-    }
+    expect(contract.mcp.state).toBe('available')
+    expect(contract.mcp.source).toBe('bridge')
+    expect(contract.mcp.tools).toContain('write_file')
+    expect(contract.tools.shellCommands.source).toBe('bridge')
+    expect(contract.tools.fileChanges.source).toBe('bridge')
+    expect(contract.tools.elicit.state).toBe('available')
+    expect(contract.tools.delegate.state).toBe('gated')
   })
 
   it('advertises Ollama with the compact TaskWraith gateway surface in workspace chats', () => {

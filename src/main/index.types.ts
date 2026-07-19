@@ -1,4 +1,6 @@
 import type { ProviderId, TranscriptMediaRef } from './store/types'
+import type { CanvasEvalApprovalReceipt } from './canvas/canvasTypes'
+import type { PendingToolMediaPersistence } from './services/ToolMediaPersistenceGate'
 export type McpToolContentBlock =
   | { type: 'text'; text: string }
   | { type: 'image'; mimeType: string; data: string }
@@ -8,6 +10,10 @@ export type McpToolExecutionResult = {
   isError?: boolean
   structuredContent?: Record<string, unknown>
   content?: McpToolContentBlock[]
+  /** Main-only execution/approval join; never projected by the MCP transport. */
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
+  /** Main-only produced-media rollback authority; stripped before provider projection. */
+  pendingToolMediaPersistence?: PendingToolMediaPersistence
   // S1b-3: main-built AV media refs that ride a TRUSTED channel — the host injects
   // these straight into run state, bypassing the image-only provider sanitizer (which
   // hard-drops kind!=='image'). Un-forgeable because only main-side executor code can

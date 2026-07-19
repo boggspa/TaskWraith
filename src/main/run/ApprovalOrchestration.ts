@@ -18,6 +18,15 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
+import {
+  assertCanvasEvalApprovalReceipt,
+  canvasEvalApprovalPayloadForDurableStorage,
+  type CanvasEvalApprovalReceipt
+} from '../canvas/CanvasEvalAudit'
+
+export interface ApprovalPromptReceipt {
+  approvalId: string
+}
 
 /**
  * ApprovalOrchestration — M3-3b orchestration-facade extraction (per
@@ -63,6 +72,12 @@ export interface RequestAgenticServiceApprovalDeps {
   // whenReady. A by-value capture here freezes null → the terminal approval
   // registration silently no-ops (a security regression on the trust choke point).
   getApprovalService: () => ApprovalService | null
+  /** History-clear admission fence, scoped by run/workspace where possible. */
+  isApprovalAdmissionBlocked?: (
+    runId?: string,
+    workspacePath?: string,
+    appChatId?: string
+  ) => boolean
   getSettings: () => AppSettings
   appendDurableRunEventForRoute: (
     provider: ProviderId,
@@ -71,7 +86,8 @@ export interface RequestAgenticServiceApprovalDeps {
     phase: RunEventInput['phase'],
     summary: string,
     payload?: unknown,
-    source?: RunEventInput['source']
+    source?: RunEventInput['source'],
+    canvasEvalApproval?: CanvasEvalApprovalReceipt
   ) => void
   recordApprovalLedgerRequest: (
     provider: ProviderId,
@@ -91,6 +107,7 @@ export interface RequestAgenticServiceApprovalDeps {
       service?: AgenticServiceId
       workspacePath?: string
       metadata?: Record<string, unknown>
+      canvasEvalApproval?: CanvasEvalApprovalReceipt
     }
   ) => void
   safeSendToSender: (
@@ -176,6 +193,7 @@ export type RequestMainApprovalDeps = Pick<
   | 'safeSendToSender'
   | 'notifyPairedDevicesOfApproval'
   | 'workspaceIdForApprovalPush'
+  | 'isApprovalAdmissionBlocked'
 >
 
 export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
@@ -193,19 +211,31 @@ export function createMainApprovalOrchestration(deps: RequestMainApprovalDeps) {
       resolveAction?: (action: AgentApprovalAction) => void
     }
   ): Promise<boolean> => {
+    if (deps.isApprovalAdmissionBlocked?.(route?.appRunId, request.workspacePath, route?.appChatId))
+      return false
     if (!sender || sender.isDestroyed()) return false
     const routed = routeWithRunId(provider, route)
     const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
     const actions: AgentApprovalAction[] = request.actions || ['accept', 'decline', 'cancel']
     return new Promise((resolveApproval) => {
-      deps.getApprovalService()?.registerMain(approvalId, {
+      const approvalService = deps.getApprovalService()
+      if (!approvalService) {
+        resolveApproval(false)
+        return
+      }
+      const registered = approvalService.registerMain(approvalId, {
         provider,
         workspacePath: request.workspacePath,
         runId: routed.appRunId,
+        appChatId: routed.appChatId,
         allowedActions: actions,
         resolveAction: request.resolveAction,
         resolve: resolveApproval
       })
+      if (registered === false) {
+        resolveApproval(false)
+        return
+      }
       deps.runManager.registerApproval(routed.appRunId, approvalId)
       deps.scheduleApprovalTimeout({
         approvalId,
@@ -263,10 +293,21 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       runId?: string
       forcePrompt?: boolean
       externalPathDetection?: PendingExternalPathDetection
+      /**
+       * Main-process-only receipt hook. It exposes the generated prompt id to
+       * the executor so signed-elevated operations can bind execution to the
+       * exact approval. The callback itself is never copied into durable data.
+       */
+      onApprovalPromptCreated?: (receipt: ApprovalPromptReceipt) => CanvasEvalApprovalReceipt | void
     }
   ): Promise<boolean> => {
-    const settings = deps.getSettings()
     const session = deps.runManager.get(request.runId)
+    if (deps.isApprovalAdmissionBlocked?.(request.runId, workspacePath, session?.appChatId))
+      return false
+    const settings = deps.getSettings()
+    if (request.runId && (!session || deps.runManager.getClaimedTerminalStatus?.(request.runId))) {
+      return false
+    }
     const effectivePermissions = session?.state?.effectivePermissions as
       | EffectiveRunPermissions
       | undefined
@@ -287,7 +328,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
         ? request.preview.toolName
         : undefined
-    const networkBlockedTool = deps.networkAccessBlockedToolName(previewToolName, effectivePermissions)
+    const networkBlockedTool = deps.networkAccessBlockedToolName(
+      previewToolName,
+      effectivePermissions
+    )
     if (networkBlockedTool) {
       deps.auditService.recordAutomaticApprovalDecision(
         provider,
@@ -428,7 +472,11 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         workspacePath,
         request,
         'autoAllow',
-        workspaceGrantAllowed ? 'workspace_grant' : sessionGrantAllowed ? 'session_grant' : 'policy',
+        workspaceGrantAllowed
+          ? 'workspace_grant'
+          : sessionGrantAllowed
+            ? 'session_grant'
+            : 'policy',
         workspaceGrantAllowed ? 'workspace' : sessionGrantAllowed ? 'session' : 'request',
         { policy, ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}) }
       )
@@ -465,10 +513,43 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     if (!sender || sender.isDestroyed()) {
       return false
     }
+    if (deps.isApprovalAdmissionBlocked?.(request.runId, workspacePath, session?.appChatId))
+      return false
 
     const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
+    let canvasEvalApproval: CanvasEvalApprovalReceipt | undefined
+    if (service === 'canvasEval') {
+      const preview = isRecord(request.preview) ? request.preview : null
+      const params = preview && isRecord(preview.params) ? preview.params : null
+      const exactScript = params && typeof params.script === 'string' ? params.script : null
+      if (exactScript === null || !request.onApprovalPromptCreated) {
+        deps.safeSendToSender(sender, 'agent-error', {
+          provider,
+          error:
+            'canvas_eval was blocked because its exact-script approval receipt could not be created.'
+        })
+        return false
+      }
+      try {
+        const createdReceipt = request.onApprovalPromptCreated({ approvalId })
+        canvasEvalApproval = assertCanvasEvalApprovalReceipt(
+          exactScript,
+          createdReceipt || undefined
+        )
+      } catch {
+        deps.safeSendToSender(sender, 'agent-error', {
+          provider,
+          error:
+            'canvas_eval was blocked because its approval receipt did not match the exact reviewed script.'
+        })
+        return false
+      }
+    } else {
+      request.onApprovalPromptCreated?.({ approvalId })
+    }
     const externalPathDetection = request.externalPathDetection
-    const requestOnly = request.forcePrompt === true && !externalPathDetection
+    const requestOnly =
+      service === 'canvasEval' || (request.forcePrompt === true && !externalPathDetection)
     const actions: AgentApprovalAction[] = externalPathDetection
       ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
       : requestOnly
@@ -481,7 +562,12 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
     const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
     return new Promise((resolveApproval) => {
-      deps.getApprovalService()?.registerGeminiTool(approvalId, {
+      const approvalService = deps.getApprovalService()
+      if (!approvalService) {
+        resolveApproval(false)
+        return
+      }
+      const registered = approvalService.registerGeminiTool(approvalId, {
         provider,
         service,
         workspacePath,
@@ -491,6 +577,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         allowedActions: actions,
         resolve: resolveApproval
       })
+      if (registered === false) {
+        resolveApproval(false)
+        return
+      }
       deps.runManager.registerApproval(request.runId, approvalId)
       deps.scheduleApprovalTimeout({
         approvalId,
@@ -512,6 +602,13 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         body,
         preview: {
           ...(request.preview || {}),
+          ...(service === 'canvasEval'
+            ? {
+                securityClass: 'signed-elevated',
+                requiresExactDesktopReview: true,
+                toolName: 'canvas_eval'
+              }
+            : {}),
           actions,
           ...(requestOnly
             ? {
@@ -529,28 +626,50 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         },
         actions
       }
+      const durableApprovalPayload = canvasEvalApprovalPayloadForDurableStorage(
+        service,
+        approvalPayload,
+        approvalId,
+        canvasEvalApproval || undefined
+      )
+      const durableCanvasPreview = isRecord(durableApprovalPayload.preview)
+        ? durableApprovalPayload.preview
+        : null
+      const liveApprovalPayload =
+        service === 'canvasEval' && durableCanvasPreview?.canvasEvalReceipt
+          ? {
+              ...approvalPayload,
+              preview: {
+                ...approvalPayload.preview,
+                canvasEvalReceipt: durableCanvasPreview.canvasEvalReceipt
+              }
+            }
+          : approvalPayload
       deps.appendDurableRunEventForRoute(
         provider,
         { appRunId: session?.runId, appChatId: session?.appChatId },
         'approval_request',
         'control',
         title,
-        approvalPayload
+        durableApprovalPayload,
+        undefined,
+        canvasEvalApproval || undefined
       )
       deps.recordApprovalLedgerRequest(
         provider,
         { appRunId: session?.runId, appChatId: session?.appChatId },
-        approvalPayload,
+        durableApprovalPayload,
         {
           service,
           workspacePath,
           metadata: {
             policy,
             ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
-          }
+          },
+          canvasEvalApproval: canvasEvalApproval || undefined
         }
       )
-      deps.safeSendToSender(sender, 'agent-approval-request', approvalPayload)
+      deps.safeSendToSender(sender, 'agent-approval-request', liveApprovalPayload)
       // Fan out a wake-push to any paired iOS device so the user can
       // approve the agentic-service request away from the desktop.
       deps.notifyPairedDevicesOfApproval({

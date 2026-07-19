@@ -61,7 +61,14 @@ export interface GrokAcpRunOptions {
   onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
 }
 
-export type GrokAcpRunHandle = AcpTurnHandle
+export interface GrokAcpRunHandle extends AcpTurnHandle {
+  /**
+   * Resolves only after the one-shot child emits its real `close` event and the
+   * caller's terminal projection/cleanup callback has returned. A kill request
+   * or RunManager terminal state is not close evidence.
+   */
+  closed: Promise<void>
+}
 
 export const GROK_DENIED_TOOL_RECOVERY_PROMPT =
   'Your previous native tool request was denied by TaskWraith policy. Continue this same turn ' +
@@ -111,7 +118,11 @@ export const formatGrokProcessError = (err: Error): string => {
  * one-shot recovery, and the ENOENT setup copy.
  */
 export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
-  return runAcpTurn({
+  let resolveClosed!: () => void
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve
+  })
+  const handle = runAcpTurn({
     prompt: options.prompt,
     cwd: options.cwd,
     spawnProcess: options.spawnProcess,
@@ -129,7 +140,17 @@ export function runGrokAcpTurn(options: GrokAcpRunOptions): GrokAcpRunHandle {
       prompt: GROK_DENIED_TOOL_RECOVERY_PROMPT
     },
     formatProcessError: formatGrokProcessError,
-    onClose: options.onClose,
+    // Grok receives a bounded graceful termination request first. The neutral
+    // ACP core sends SIGKILL after its grace window if no close event arrives.
+    endProcess: (child) => child.kill('SIGTERM'),
+    onClose: (code, turnComplete, terminalStatus) => {
+      try {
+        options.onClose?.(code, turnComplete, terminalStatus)
+      } finally {
+        resolveClosed()
+      }
+    },
     onRawFrame: options.onRawFrame
   })
+  return { ...handle, closed }
 }

@@ -7,6 +7,7 @@ import {
 import { TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES } from '../services/TranscriptMediaAssetStore'
 import { buildAvMediaRef } from '../media/AvMediaRef'
 import type { TranscriptMediaThumbnail } from '../store/types'
+import type { PendingToolMediaPersistence } from '../services/ToolMediaPersistenceGate'
 
 /**
  * audio_render_wav MCP tool executor — the first "in-house media surface" proving
@@ -217,6 +218,7 @@ export interface WindowClipProduction {
   thumbnail?: TranscriptMediaThumbnail
   transcript?: string
   segments?: Array<{ text: string; startMs: number; endMs: number; confidence: number }>
+  pendingToolMediaPersistence: PendingToolMediaPersistence
 }
 
 export interface AudioToolExecutorDeps {
@@ -254,7 +256,8 @@ export interface AudioToolExecutorDeps {
   produceWindowClip?: (
     sourcePath: string,
     startMs: number,
-    endMs: number
+    endMs: number,
+    ctx: AudioToolContext
   ) => Promise<WindowClipProduction>
 }
 
@@ -495,8 +498,10 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
     const jailed = await jailAudio(args, ctx)
     if (!jailed.ok) return fail('inspect_audio_segment', `could not read audio: ${jailed.reason}`)
 
+    let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
     try {
-      const produced = await produceWindowClip(jailed.realPath, startMs, endMs)
+      const produced = await produceWindowClip(jailed.realPath, startMs, endMs, ctx)
+      pendingToolMediaPersistence = produced.pendingToolMediaPersistence
       const windowLabel = `${formatMsLabel(startMs)}–${formatMsLabel(endMs)}`
       const ref = buildAvMediaRef({
         sha256: produced.sha256,
@@ -511,7 +516,12 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
       })
       // buildAvMediaRef only returns null on a non-AV mime — unreachable here (mimeType is
       // the fixed 'audio/wav'), but fail LOUDLY rather than strand the persisted asset.
-      if (!ref) return fail('inspect_audio_segment', 'internal: unsupported output mime audio/wav')
+      if (!ref) {
+        return {
+          ...fail('inspect_audio_segment', 'internal: unsupported output mime audio/wav'),
+          pendingToolMediaPersistence
+        }
+      }
 
       // Text answer: the window range + a clip-duration line, plus the windowed transcript
       // when the best-effort transcribe succeeded (omitted on a permission/locale miss).
@@ -525,10 +535,14 @@ export function createAudioToolExecutors(deps: AudioToolExecutorDeps): AudioTool
       return {
         text,
         content: [{ type: 'text', text }],
-        trustedMediaRefs: [ref]
+        trustedMediaRefs: [ref],
+        pendingToolMediaPersistence
       }
     } catch (error) {
-      return fail('inspect_audio_segment', error instanceof Error ? error.message : String(error))
+      return {
+        ...fail('inspect_audio_segment', error instanceof Error ? error.message : String(error)),
+        ...(pendingToolMediaPersistence ? { pendingToolMediaPersistence } : {})
+      }
     } finally {
       try {
         jailed.cleanup()

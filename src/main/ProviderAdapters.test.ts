@@ -39,7 +39,7 @@ describe('ProviderAdapters', () => {
   it('provides stable labels and descriptors for every provider boundary', () => {
     // 1.0.4-AC — `providerLabel` is the canonical title-building
     // helper used by the MCP approval-prompt builder (see
-    // `previewForGeminiMcpTool` in `src/main/index.ts`). The bug
+    // `McpToolApprovalPreview.ts`). The bug
     // pre-1.0.4-AC was that approval titles hardcoded "Gemini"
     // even when Codex / Claude / Kimi was the parent provider on a
     // cross-provider MCP call. Verifying the label is correct for
@@ -128,10 +128,12 @@ describe('defaultProviderDescriptor capabilities', () => {
   for (const provider of allProviders) {
     it(`${provider} declares a non-empty approvalModes list`, () => {
       const cap = defaultProviderDescriptor(provider).capabilities
-      expect(cap.approvalModes.length).toBeGreaterThan(0)
-      if (provider === 'ollama') {
+      if (provider === 'cursor') {
+        expect(cap.approvalModes).toEqual([])
+      } else if (provider === 'ollama') {
         expect(cap.approvalModes).toEqual(['plan'])
       } else {
+        expect(cap.approvalModes.length).toBeGreaterThan(0)
         // Must always include 'default' — every CLI provider's runtime accepts
         // the baseline approval prompt mode.
         expect(cap.approvalModes).toContain('default')
@@ -174,35 +176,50 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.speedTiers).toEqual(['fast'])
   })
 
-  it('kimi advertises its HighSpeed tier with the default-only capability set', () => {
-    const cap = defaultProviderDescriptor('kimi').capabilities
-    expect(cap.approvalModes).toEqual(['default'])
+  it('kimi advertises governed default/plan modes and its HighSpeed tier', () => {
+    const descriptor = defaultProviderDescriptor('kimi')
+    const cap = descriptor.capabilities
+    expect(cap.approvalModes).toEqual(['default', 'plan'])
     expect(cap.reasoningEffort).toBe(false)
     expect(cap.speedTiers).toEqual(['fast'])
-    expect(cap.imageAttachments).toBe(true)
+    expect(cap.imageAttachments).toBe(false)
+    expect(descriptor.transport).toBe('kimi-acp-authenticated-http-mcp')
+    expect(descriptor.features.workspaceGrants).toBe(true)
+    expect(descriptor.features.agentBenchMcpBridge).toBe(true)
+    expect(descriptor.features.providerManagedMcp).toBe(false)
+    expect(cap.perThreadMcp).toBe(true)
   })
 
-  it('pins Cursor and Grok mode-scoped TaskWraith bridge caveats', () => {
-    for (const provider of ['cursor', 'grok'] as const) {
-      const descriptor = defaultProviderDescriptor(provider)
-      expect(descriptor.features.agentBenchMcpBridge).toBe(false)
-      expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
-
-      const caveat = descriptor.capabilityCaveats?.find(
-        (entry) => entry.id === `${provider}-taskwraith-bridge-write-mode-only`
-      )
-      expect(caveat).toMatchObject({
-        severity: 'info',
-        capability: 'taskwraithMcpBridge',
-        title: 'TaskWraith MCP bridge is mode-scoped'
+  it('pins Cursor to unavailable with no approval or resume surface', () => {
+    const descriptor = defaultProviderDescriptor('cursor')
+    expect(descriptor.features.persistentSessions).toBe(false)
+    expect(descriptor.features.agentBenchMcpBridge).toBe(false)
+    expect(descriptor.capabilities.approvalModes).toEqual([])
+    expect(descriptor.capabilities.sessionResumption).toBe(false)
+    expect(descriptor.capabilityCaveats).toContainEqual(
+      expect.objectContaining({
+        id: 'cursor-tool-mode-unqualified',
+        severity: 'warning',
+        title: 'Cursor managed runs are temporarily unavailable'
       })
-      expect(caveat?.message).toContain('write-capable')
-      expect(caveat?.message).toContain('TaskWraith approvals')
+    )
+  })
 
-      const projected = providerAdapterDescriptor(descriptor)
-      expect(projected.capabilityCaveats).toEqual(descriptor.capabilityCaveats)
-      expect(projected.capabilityCaveats).not.toBe(descriptor.capabilityCaveats)
-    }
+  it('pins Grok mode-scoped TaskWraith bridge caveat', () => {
+    const descriptor = defaultProviderDescriptor('grok')
+    expect(descriptor.features.agentBenchMcpBridge).toBe(false)
+    expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
+
+    const caveat = descriptor.capabilityCaveats?.find(
+      (entry) => entry.id === 'grok-taskwraith-bridge-write-mode-only'
+    )
+    expect(caveat).toMatchObject({
+      severity: 'info',
+      capability: 'taskwraithMcpBridge',
+      title: 'TaskWraith MCP bridge is mode-scoped'
+    })
+    const projected = providerAdapterDescriptor(descriptor)
+    expect(projected.capabilityCaveats).toEqual(descriptor.capabilityCaveats)
   })
 
   it('declares Ollama as token-streaming after HTTP chunk forwarding', () => {

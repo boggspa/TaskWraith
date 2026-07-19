@@ -164,12 +164,10 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       }
     ]
   },
-  // Cursor / Composer 2.5 (gated, CR). TaskWraith drives Cursor through the
-  // cursor-agent CLI on the user's Cursor subscription. Individual plans bill
-  // via a Composer usage pool; team/enterprise pass API rates through. Public
-  // Fast-tier list pricing (default interactive tier) is published on Cursor's
-  // model docs — we project ALL Cursor token rows against composer-2.5-fast
-  // as a conservative interactive-session proxy (estimated, not billed).
+  // Historical/external Cursor reporting. Source-ahead TaskWraith starts no
+  // managed Cursor process, but retained run records and IDE-native activity
+  // can still appear in usage views. Public Fast-tier pricing is used only as
+  // a conservative API-equivalent estimate, never as a dispatch claim.
   cursor: {
     provider: 'cursor',
     pricingUrl: 'https://cursor.com/docs/models-and-pricing',

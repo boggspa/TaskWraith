@@ -34,8 +34,31 @@ function makeStoreHarness() {
       _inputs: Parameters<TranscriptMediaOwnershipBatchStore['grantMany']>[0]
     ): ReturnType<TranscriptMediaOwnershipBatchStore['grantMany']> => ({ ok: true })
   )
-  const store: TranscriptMediaOwnershipBatchStore = { write, owns, grantMany }
-  return { store, write, owns, grantMany }
+  const writeOwnedMany = vi.fn(
+    (
+      inputs: Parameters<TranscriptMediaOwnershipBatchStore['writeOwnedMany']>[0]
+    ): ReturnType<TranscriptMediaOwnershipBatchStore['writeOwnedMany']> => {
+      for (let index = 0; index < inputs.length; index += 1) {
+        const input = inputs[index]
+        const written = write({
+          sha256: input.sha256,
+          mimeType: input.mimeType,
+          buffer: input.buffer
+        })
+        if (!written.ok) return { ok: false, reason: written.reason, failedAt: index }
+      }
+      const granted = grantMany(
+        inputs.map((input) => ({
+          sha256: input.sha256,
+          mimeType: input.mimeType,
+          appChatId: input.appChatId
+        }))
+      )
+      return granted.ok ? { ok: true, assets: [] } : granted
+    }
+  )
+  const store: TranscriptMediaOwnershipBatchStore = { write, writeOwnedMany, owns, grantMany }
+  return { store, write, writeOwnedMany, owns, grantMany }
 }
 
 function storeRef(
@@ -244,7 +267,7 @@ describe('createOwnedToolResultMediaRefs', () => {
     expect(refs.every((ref) => ref.status === 'available' && Boolean(ref.sha256))).toBe(true)
   })
 
-  it('excludes an individually failed write and redacts only that ref', () => {
+  it('rolls back the atomic batch when one asset write fails', () => {
     const { store, write, grantMany } = makeStoreHarness()
     write
       .mockReturnValueOnce({ ok: true })
@@ -258,15 +281,8 @@ describe('createOwnedToolResultMediaRefs', () => {
       thumbnailer: () => ({ dataBase64: 'thumbnail', mimeType: 'image/png' })
     })
 
-    expect(grantMany).toHaveBeenCalledTimes(1)
-    expect(grantMany.mock.calls[0][0]).toEqual([
-      {
-        sha256: refs[0].sha256,
-        mimeType: 'image/png',
-        appChatId: 'chat-1'
-      }
-    ])
-    expect(refs[0]).toMatchObject({ status: 'available', sha256: expect.any(String) })
+    expect(grantMany).not.toHaveBeenCalled()
+    expect(refs[0]).toMatchObject({ status: 'denied' })
     expect(refs[1]).toMatchObject({
       status: 'denied',
       thumbnail: { dataBase64: 'thumbnail', mimeType: 'image/png' }
@@ -276,7 +292,7 @@ describe('createOwnedToolResultMediaRefs', () => {
     expect(refs[1]).not.toHaveProperty('path')
   })
 
-  it('retries one atomic grant without a precisely missing asset', () => {
+  it('redacts the whole owned-write batch when its single atomic grant fails', () => {
     const { store, grantMany } = makeStoreHarness()
     grantMany
       .mockReturnValueOnce({ ok: false, reason: 'missing', failedAt: 1 })
@@ -290,10 +306,9 @@ describe('createOwnedToolResultMediaRefs', () => {
       thumbnailer: () => ({ dataBase64: 'thumbnail', mimeType: 'image/png' })
     })
 
-    expect(grantMany).toHaveBeenCalledTimes(2)
+    expect(grantMany).toHaveBeenCalledTimes(1)
     expect(grantMany.mock.calls[0][0]).toHaveLength(2)
-    expect(grantMany.mock.calls[1][0]).toEqual([grantMany.mock.calls[0][0][0]])
-    expect(refs[0]).toMatchObject({ status: 'available', sha256: expect.any(String) })
+    expect(refs[0]).toMatchObject({ status: 'denied' })
     expect(refs[1]).toMatchObject({ status: 'denied' })
     expect(refs[1]).not.toHaveProperty('sha256')
     expect(refs[1]).not.toHaveProperty('assetId')
@@ -357,11 +372,8 @@ describe('createOwnedToolResultMediaRefs', () => {
     })
   })
 
-  it('fails closed when an asset write or the grant call throws', () => {
-    const { store, write, grantMany } = makeStoreHarness()
-    write.mockImplementationOnce(() => {
-      throw new Error('write failed')
-    })
+  it('fails closed when the atomic grant call throws', () => {
+    const { store, grantMany } = makeStoreHarness()
     grantMany.mockImplementationOnce(() => {
       throw new Error('grant failed')
     })

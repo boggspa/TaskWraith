@@ -10,6 +10,7 @@ import {
   type CapabilityGatewayToolName
 } from '../mcp/McpToolGateway'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import type { HostCommandProjectionHandle } from '../run/HostCommandOperationRegistry'
 import type { RunManager, RunSessionStatus } from '../RunManager'
 import type { AppSettings, OllamaToolControlTier, ProviderCapabilityContract } from '../store/types'
 import {
@@ -47,6 +48,7 @@ import {
 } from './OllamaHarnessGates'
 import { summarizeOllamaToolResult } from './OllamaToolResultSummary'
 import { buildOllamaWorkspaceIndexBlock } from './OllamaWorkspaceIndex'
+import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 import {
   classifyOllamaPromptIntent,
   extractOllamaCurrentRequestText,
@@ -179,6 +181,9 @@ export interface OllamaProviderDeps {
     options?: { excludeIds?: string[] }
   ) => Promise<void>
   executeTool?: (request: OllamaToolExecutionRequest) => Promise<OllamaToolExecutionResult>
+  createHostCommandProjection?: (
+    request: OllamaToolExecutionRequest
+  ) => HostCommandProjectionHandle | null
   getOllamaSessionMemory?: (
     chatId: string,
     memoryKey?: string
@@ -329,6 +334,8 @@ export interface OllamaToolExecutionResult {
   ok: boolean
   output: string
   structuredContent?: unknown
+  /** Out-of-band approval proof for privacy-safe durable canvas_eval memory. */
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
   tierBumpRequired?: boolean
   /** Set when the call failed pre-execution arg validation (missing required
    * field) — the run loop routes this to a narrow schema-repair nudge, distinct
@@ -3001,6 +3008,15 @@ export async function runOllamaProvider(
           route
         )
         let toolResult: OllamaToolExecutionResult
+        const toolExecutionRequest: OllamaToolExecutionRequest = {
+          toolName: toolRequest.toolName,
+          arguments: toolRequest.arguments,
+          workspacePath: payload.workspace!,
+          appChatId: route.appChatId || payload.appChatId,
+          appRunId: route.appRunId || payload.appRunId,
+          toolControlTier
+        }
+        const hostCommandProjection = deps.createHostCommandProjection?.(toolExecutionRequest)
         const harnessGate = harnessEnabled
           ? evaluateOllamaHarnessGate({
               modelId: model,
@@ -3010,52 +3026,52 @@ export async function runOllamaProvider(
               args: toolRequest.arguments
             })
           : { blocked: false as const }
-        if (harnessGate.blocked) {
-          toolResult = {
-            ok: false,
-            output: harnessGate.message || 'Harness gate blocked this tool call.'
+        try {
+          if (harnessGate.blocked) {
+            toolResult = {
+              ok: false,
+              output: harnessGate.message || 'Harness gate blocked this tool call.'
+            }
+          } else {
+            const executeTool = () => deps.executeTool!(toolExecutionRequest)
+            toolResult = hostCommandProjection
+              ? await hostCommandProjection.run(executeTool)
+              : await executeTool()
           }
-        } else {
-          toolResult = await deps.executeTool!({
-            toolName: toolRequest.toolName,
-            arguments: toolRequest.arguments,
-            workspacePath: payload.workspace!,
-            appChatId: route.appChatId || payload.appChatId,
-            appRunId: route.appRunId || payload.appRunId,
-            toolControlTier
-          })
-        }
-        // Progress = a tool that ACTUALLY executed. A harness-gate block and an
-        // arg-invalid (validationError) result are both pre-execution redirects
-        // with their own repair message — no tool ran, so they count as
-        // non-productive and feed the retry ceiling. Otherwise a model that
-        // re-hits the harness gate every turn would reset the counter forever.
-        if (!harnessGate.blocked && !toolResult.validationError) {
-          productiveToolRanThisTurn = true
-        }
-        if (harnessEnabled) {
-          harnessState = recordOllamaHarnessToolResult(
-            harnessState,
-            toolRequest.toolName,
-            toolRequest.arguments,
-            toolResult.ok
+          // Progress = a tool that ACTUALLY executed. A harness-gate block and an
+          // arg-invalid (validationError) result are both pre-execution redirects
+          // with their own repair message — no tool ran, so they count as
+          // non-productive and feed the retry ceiling. Otherwise a model that
+          // re-hits the harness gate every turn would reset the counter forever.
+          if (!harnessGate.blocked && !toolResult.validationError) {
+            productiveToolRanThisTurn = true
+          }
+          if (harnessEnabled) {
+            harnessState = recordOllamaHarnessToolResult(
+              harnessState,
+              toolRequest.toolName,
+              toolRequest.arguments,
+              toolResult.ok
+            )
+          }
+          deps.sendAgentCompatLine(
+            event.sender,
+            'ollama',
+            {
+              type: 'tool_result',
+              tool_id: toolId,
+              tool_name: toolRequest.toolName,
+              status: toolResult.ok ? 'success' : 'error',
+              output: toolResult.output,
+              result: toolResult.structuredContent,
+              provider: 'ollama',
+              server: OLLAMA_LOCAL_TOOL_SERVER
+            },
+            route
           )
+        } finally {
+          hostCommandProjection?.complete()
         }
-        deps.sendAgentCompatLine(
-          event.sender,
-          'ollama',
-          {
-            type: 'tool_result',
-            tool_id: toolId,
-            tool_name: toolRequest.toolName,
-            status: toolResult.ok ? 'success' : 'error',
-            output: toolResult.output,
-            result: toolResult.structuredContent,
-            provider: 'ollama',
-            server: OLLAMA_LOCAL_TOOL_SERVER
-          },
-          route
-        )
         const truncatedOutput = truncateOllamaToolResultOutput(
           toolResult.output,
           OLLAMA_TOOL_RESULT_MAX_CHARS,
@@ -3095,7 +3111,8 @@ export async function runOllamaProvider(
           toolName: toolRequest.toolName,
           args: toolRequest.arguments,
           ok: toolResult.ok,
-          resultSummary: truncatedOutput
+          resultSummary: truncatedOutput,
+          canvasEvalApproval: toolResult.canvasEvalApproval
         })
         goalLifecycleStopContent = toolResult.ok
           ? ollamaGoalLifecycleStopContent(toolRequest.toolName)

@@ -9,21 +9,23 @@
 // kimi/ollama. The old `experimentalGrokProviderEnabled()` flag and its
 // `TASKWRAITH_DISABLE_GROK` / `TASKWRAITH_EXPERIMENTAL_GROK` kill-switch were
 // removed 2026-06 once Grok matured — do NOT reintroduce an eligibility gate.
-// The sub-gates below tune HOW Grok runs (transport, MCP advertise), never
-// WHETHER it is a valid provider.
+// The remaining sub-gates tune MCP advertising and experimental seat reuse,
+// never WHETHER Grok is valid or WHICH one-shot transport it uses.
 
 /**
- * 1.0.6-G4/G6 — Sub-gate routing Grok runs through the ACP transport
- * (`grok agent stdio`, bidirectional JSON-RPC) instead of the headless
- * streaming-json path (G3). Default ON so TaskWraith can register its MCP
- * bridge and mediate native permission requests; set TASKWRAITH_GROK_ACP=0
- * (or false/no) to fall back to the older headless path for emergency triage.
- * Only meaningful when the provider gate is also on.
+ * Managed Grok runs use only the joined ACP transport (`grok agent stdio`,
+ * bidirectional JSON-RPC). The legacy `TASKWRAITH_GROK_ACP=0` emergency
+ * fallback is retired: its headless child did not publish exact close evidence
+ * to history deletion. A recognized false value now makes Grok unavailable
+ * rather than reopening the unjoined transport.
  */
 export function grokAcpEnabled(): boolean {
-  const value = process.env.TASKWRAITH_GROK_ACP
-  return value !== '0' && value !== 'false' && value !== 'no'
+  const value = process.env.TASKWRAITH_GROK_ACP?.trim().toLowerCase()
+  return value !== '0' && value !== 'false' && value !== 'no' && value !== 'off'
 }
+
+export const GROK_ACP_REQUIRED_MESSAGE =
+  'Managed Grok runs require TaskWraith\'s joined ACP transport. The legacy headless fallback is retired because it cannot provide exact process-close evidence for history deletion. Unset TASKWRAITH_GROK_ACP or set it to 1 to run Grok.'
 
 /**
  * 1.0.72-G5b — Sub-gate that advertises TaskWraith's read-only MCP tools (the
@@ -50,17 +52,11 @@ export function grokReadOnlyMcpAdvertiseEnabled(): boolean {
  * session alive across its turns (GrokSeatSession), giving it provider-native
  * cross-turn memory instead of a fresh `session/new` per turn.
  *
- * Default ON (user opt-in, 2026-07-02) with TASKWRAITH_GROK_SEAT_SESSIONS=0
- * as the kill switch. One protocol assumption remains live-unverified: grok's
- * ACP accepting a SECOND `session/prompt` on one session. The failure mode is
- * contained — a rejected second prompt fails that turn closed and the seat
- * respawns fresh next turn (never hangs a round) — but if Grok ensemble seats
- * start failing every second turn, flip the kill switch and check a
- * TASKWRAITH_GROK_DEBUG=1 capture. Never applies to seats that advertise
- * TaskWraith MCP servers (the bridge env bakes per-run routing identity into
- * session/new) or write seats.
+ * Disabled for new runs until a persistent child has durable PID/birth
+ * identity and a joined close receipt usable by history deletion and crash
+ * recovery. Environment flags cannot reopen this safety boundary. Native Grok
+ * session ids may still resume provider context in a fresh per-turn process.
  */
 export function grokSeatSessionsEnabled(): boolean {
-  const value = process.env.TASKWRAITH_GROK_SEAT_SESSIONS
-  return value !== '0' && value !== 'false' && value !== 'no'
+  return false
 }

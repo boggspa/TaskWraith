@@ -2,8 +2,8 @@ import { describe, expect, it } from 'vitest'
 import { normalizeBrokerParentProvider } from './McpBridgeRuntime'
 
 describe('normalizeBrokerParentProvider', () => {
-  it('preserves Cursor and Grok provider stamps for broker-routed MCP calls', () => {
-    expect(normalizeBrokerParentProvider('cursor')).toBe('cursor')
+  it('rejects Cursor and preserves Grok provider stamps for broker-routed MCP calls', () => {
+    expect(normalizeBrokerParentProvider('cursor')).toBe('gemini')
     expect(normalizeBrokerParentProvider('grok')).toBe('grok')
   })
 

@@ -181,8 +181,8 @@ export function sanitizeTaskWraithMcpPromptClaims(
         : null
       const reroutedRuntimeProviderMismatch = Boolean(
         input.crossProviderReroute &&
-          expectedTargetPrefix &&
-          !sanitized.startsWith(expectedTargetPrefix)
+        expectedTargetPrefix &&
+        !sanitized.startsWith(expectedTargetPrefix)
       )
       if (reroutedRuntimeProviderMismatch || !input.advertised) {
         sanitized = sanitized.slice(blockEnd + 2)
@@ -245,7 +245,7 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
 
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
- * preamble (gemini/claude/kimi/codex/cursor/grok). Plan-mode/read-only runs
+ * preamble (gemini/claude/kimi/codex/grok). Plan-mode/read-only runs
  * never reach these preambles, so this only governs runs that can actually
  * mutate the workspace. Encodes the inner read→edit→verify loop the way
  * Cursor/Cline/Codex/Devin do: read first, verify after, never fake a pass.
@@ -287,13 +287,10 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   taskWraithMcpAdvertised: boolean
   nativeSessionResume?: boolean
 }): boolean {
+  if (args.provider === 'cursor') return false
   if (args.isGlobalRun || args.approvalMode === 'plan') return false
   if (!args.taskWraithMcpAdvertised) return false
-  if (
-    (args.provider === 'kimi' && !args.nativeSessionResume) ||
-    args.provider === 'cursor' ||
-    args.provider === 'grok'
-  ) {
+  if ((args.provider === 'kimi' && !args.nativeSessionResume) || args.provider === 'grok') {
     return true
   }
   if (
@@ -312,10 +309,10 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
 }
 
 function exampleDelegationProvider(provider: ProviderId): ProviderId {
-  if (provider === 'gemini') return 'kimi'
-  if (provider === 'claude') return 'gemini'
+  if (provider === 'gemini') return 'codex'
+  if (provider === 'claude') return 'codex'
   if (provider === 'kimi') return 'claude'
-  if (provider === 'codex') return 'gemini'
+  if (provider === 'codex') return 'claude'
   return 'codex'
 }
 
@@ -338,23 +335,19 @@ function buildTaskWraithRuntimePreamble(args: {
     `TaskWraith runtime note (${TASKWRAITH_RUNTIME_PREAMBLE_VERSION}): this ${args.providerLabel} workspace run has access to the TaskWraith MCP server.`,
     'Route workspace reads, edits, git, and checks through TaskWraith MCP so its approval, path checks, and audit logging govern side effects.',
     `${taskWraithToolNamespaceHint(args.provider)} Examples: ${searchTool}, ${patchTool}, ${statusTool}, ${taskTool}, ${delegateTool}.`,
-    ...(args.coreMcpProfile
-      ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE]
-      : []),
+    ...(args.coreMcpProfile ? [TASKWRAITH_CORE_MCP_PROFILE_NOTE] : []),
     ...(args.gatewayMcpProfile ? [TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE] : []),
     ...(!args.coreMcpProfile &&
-      !args.gatewayMcpProfile &&
-      promptNeedsImageToolsHint(args.finalPrompt)
+    !args.gatewayMcpProfile &&
+    promptNeedsImageToolsHint(args.finalPrompt)
       ? [TASKWRAITH_RUNTIME_IMAGE_TOOLS_NOTE]
       : []),
     CLOUD_EDIT_DISCIPLINE_NOTE,
     `For CROSS-PROVIDER delegation, call ${delegateTool}({ provider, prompt, returnResult }) through TaskWraith; do not use provider-native Task/invoke_agent/subagent paths.`,
     `To ask the user, call ${questionTool}; native question/elicitation UI is not connected here. This is the route that reaches desktop and iOS.`,
-    ...(args.provider === 'cursor' || args.provider === 'grok'
+    ...(args.provider === 'grok'
       ? [
-          args.provider === 'cursor'
-            ? 'Use TaskWraith MCP for edits and shell commands. Do not call native Cursor Write or Shell tools; they are intentionally denied. For Cursor, call the per-run taskwraith-broker MCP tools, commonly mcp_taskwraith-broker-write_file, mcp_taskwraith-broker-replace, mcp_taskwraith-broker-apply_patch, and mcp_taskwraith-broker-run_shell_command. If this Cursor build exposes them as mcp_taskwraith-<tool> or taskwraith__<tool> instead, use those aliases. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
-            : 'Use TaskWraith MCP for edits and shell commands. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
+          'Use TaskWraith MCP for edits and shell commands. Native provider write/shell paths are constrained so TaskWraith can apply permission policy, workspace/path checks, and transcript/audit logging.'
         ]
       : []),
     ...(args.nativeSubAgentInstruction ? [args.nativeSubAgentInstruction] : [])
@@ -706,9 +699,7 @@ export function buildConversationCompactionProjection(
     carriedForwardMessageIds,
     remainingUncoveredMessageCount: Math.max(
       0,
-      relevantMessages.length -
-        carriedForwardMessageIds.length -
-        rendered.suppliedMessageIds.length
+      relevantMessages.length - carriedForwardMessageIds.length - rendered.suppliedMessageIds.length
     )
   }
 }
@@ -771,7 +762,7 @@ export interface ComposeRunPromptInput {
   resumeSessionId?: string
   /**
    * The resume target is backed by a provider-native history store. Kimi ACP
-   * sets this for `session/resume`; legacy Kimi Wire leaves it false.
+   * sets this only for an exact production-posture `session/resume`.
    */
   nativeSessionResume?: boolean
   /** For Codex model-handoff detection. The last completed Codex model in
@@ -816,10 +807,9 @@ export interface ComposeRunPromptInput {
   /**
    * Host-side compaction summary stored on the chat (ChatRecord field of the
    * same name). Injected as a "Prior session summary" block for providers
-   * whose cross-turn context is host-fed: Cursor only on a FRESH session (the
-   * compaction flow cleared the session id; once the new session resumes
-   * natively its own history carries the summary), legacy Kimi/Grok on every
-   * turn (their context IS the injected block). Only exact, resolvable
+   * whose cross-turn context is host-fed: cold Kimi ACP and Grok on every turn
+   * (their context IS the injected block). Source-ahead Cursor starts no managed
+   * session. Only exact, resolvable
    * `contiguous_prompt_prefix` provenance may prune recent transcript rows;
    * legacy timestamps and bounded/session summaries remain non-pruning. A
    * native Kimi ACP resume carries its compacted history provider-side and does
@@ -904,7 +894,9 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
   const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
-  const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
+  // Cursor managed runs are unavailable. Clamp stale callers here as well as
+  // at admission so no generated prompt advertises broker aliases or tools.
+  const taskWraithMcpAdvertised = provider !== 'cursor' && input.taskWraithMcpAdvertised !== false
   const nativeKimiSessionResume =
     provider === 'kimi' && Boolean(input.nativeSessionResume && resumeSessionId)
 
@@ -926,8 +918,8 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   }
 
   // (1) Decide whether to append the generic conversation-context block.
-  // Kimi's legacy Wire-protocol --resume restores only a session token, not the
-  // transcript, while Kimi Code ACP session/resume restores native history.
+  // A cold Kimi ACP session receives host context, while an exact contained
+  // Kimi Code ACP session/resume restores native history.
   // Gemini's CLI resume restores context properly. Codex/Claude rely on their
   // own session continuity (with a special Codex handoff branch below).
   //
@@ -953,9 +945,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   ) as ChatMessage[]
   const compactionSummaryBlock =
     compactionSummary?.text &&
-    ((provider === 'kimi' && !nativeKimiSessionResume) ||
-      provider === 'grok' ||
-      (provider === 'cursor' && !resumeSessionId))
+    ((provider === 'kimi' && !nativeKimiSessionResume) || provider === 'grok')
       ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
       : ''
   const kimiNeedsContextInjection = provider === 'kimi' && !nativeKimiSessionResume
@@ -965,10 +955,11 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   // process). So — exactly like Kimi — the host must re-inject a compact
   // transcript or the run is context-blind across turns. UNCONDITIONAL (not gated
   // on `!resumeSessionId`) because the ACP path has no usable resume to defer to.
-  // Gated to the ACP transport: when ACP is off (TASKWRAITH_GROK_ACP=0) the
-  // headless `--resume` restores history natively and injecting here would
-  // double-feed. (Does not affect ensemble Grok — that path builds its own tagged
-  // transcript via EnsemblePrompt and never reaches composeRunPrompt.)
+  // The legacy TASKWRAITH_GROK_ACP=0 headless fallback is retired. A recognized
+  // false value now rejects the managed run instead of selecting headless, so
+  // this conditional describes ACP prompt composition only. (Does not affect
+  // ensemble Grok — that path builds its own tagged transcript via EnsemblePrompt
+  // and never reaches composeRunPrompt.)
   const grokNeedsContextInjection = provider === 'grok' && grokAcpEnabled()
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
@@ -1084,7 +1075,7 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
   // the active MCP catalog is available through tool metadata, while the prompt
   // only carries the provider namespace, edit discipline, and cross-provider
   // delegation guardrails. Gemini/Claude/Codex skip on resumable sessions;
-  // Legacy Kimi/Cursor/Grok keep injecting; native Kimi ACP resumes like the
+  // Cold Kimi ACP/Grok keep injecting; resumed Kimi ACP behaves like the
   // other history-bearing sessions.
   let runtimePreambleInjected = false
   if (

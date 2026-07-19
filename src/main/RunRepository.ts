@@ -164,9 +164,12 @@ export class RunRepository {
     this.options.emitRunQueueChanged()
   }
 
-  appendRunEvent(input: RunEventInput): RunEventRecord | null {
+  appendRunEvent(
+    input: RunEventInput,
+    options: { durability?: 'batched' | 'strict' } = {}
+  ): RunEventRecord | null {
     try {
-      const record = AppStore.appendRunEvent(input)
+      const record = AppStore.appendRunEvent(input, options)
       this.options.emitRunEventsChanged(record)
       return record
     } catch (error) {

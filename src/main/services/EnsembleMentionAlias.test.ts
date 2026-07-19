@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../store/types'
 import {
   buildParticipantAliasMap,
+  ensembleDmTargetResolutionError,
   findAllMentions,
   findFirstMention,
   generateModelAliases,
@@ -10,6 +11,7 @@ import {
   isReservedMentionToken,
   isUserMentionToken,
   normalizeAlias,
+  resolveEnsembleDmTargetForDispatch,
   resolvePhraseToParticipant,
   resolveSingleEnsembleDmTarget
 } from './EnsembleMentionAlias'
@@ -556,5 +558,167 @@ describe('resolveSingleEnsembleDmTarget', () => {
       stageRole: 'background' as EnsembleParticipant['stageRole']
     })
     expect(resolveSingleEnsembleDmTarget('@BG run tests', [CODEX, background])).toBeNull()
+  })
+})
+
+describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => {
+  const CLAUDE_WRITE = participant({
+    id: 'claude-write',
+    provider: 'claude',
+    role: 'Builder',
+    model: 'claude-fable-5',
+    order: 1,
+    permissionPresetId: 'workspace_write'
+  })
+  const CLAUDE_READ = participant({
+    id: 'claude-read',
+    provider: 'claude',
+    role: 'Reviewer',
+    model: 'claude-opus-4-7',
+    order: 2,
+    permissionPresetId: 'read_only'
+  })
+
+  it.each([
+    ['write-first', [CLAUDE_WRITE, CLAUDE_READ]],
+    ['read-first', [CLAUDE_READ, CLAUDE_WRITE]]
+  ])(
+    'rejects an ambiguous provider alias and ignores the renderer advisory (%s)',
+    (_label, roster) => {
+      expect(
+        resolveEnsembleDmTargetForDispatch({
+          text: '@claude review this',
+          participants: roster,
+          advisoryParticipantId: roster[0].id
+        })
+      ).toMatchObject({ kind: 'ambiguous' })
+    }
+  )
+
+  it.each([
+    ['write-first', [CLAUDE_WRITE, CLAUDE_READ]],
+    ['read-first', [CLAUDE_READ, CLAUDE_WRITE]]
+  ])('resolves unique model aliases independently of roster order (%s)', (_label, roster) => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Fable 5 take this',
+        participants: roster,
+        advisoryParticipantId: CLAUDE_READ.id
+      })
+    ).toEqual({ kind: 'target', participantId: CLAUDE_WRITE.id, source: 'plain' })
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Opus 4.7 review this',
+        participants: roster,
+        advisoryParticipantId: CLAUDE_WRITE.id
+      })
+    ).toEqual({ kind: 'target', participantId: CLAUDE_READ.id, source: 'plain' })
+  })
+
+  it('preserves an exact structured picker target when display aliases collide', () => {
+    const duplicateRoleWrite = { ...CLAUDE_WRITE, role: 'Reviewer' }
+    for (const roster of [
+      [duplicateRoleWrite, CLAUDE_READ],
+      [CLAUDE_READ, duplicateRoleWrite]
+    ]) {
+      expect(
+        resolveEnsembleDmTargetForDispatch({
+          text: 'Please [@Reviewer](ensemble-dm://claude-read) check this',
+          participants: roster,
+          advisoryParticipantId: duplicateRoleWrite.id
+        })
+      ).toEqual({ kind: 'target', participantId: CLAUDE_READ.id, source: 'structured' })
+    }
+  })
+
+  it('accepts an advisory exact id only when the prompt has no participant routing signal', () => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: 'Retry the last request',
+        participants: [CLAUDE_WRITE, CLAUDE_READ],
+        advisoryParticipantId: CLAUDE_READ.id
+      })
+    ).toEqual({ kind: 'target', participantId: CLAUDE_READ.id, source: 'advisory' })
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Builder take this',
+        participants: [CLAUDE_WRITE, CLAUDE_READ],
+        advisoryParticipantId: CLAUDE_READ.id
+      })
+    ).toEqual({ kind: 'target', participantId: CLAUDE_WRITE.id, source: 'plain' })
+  })
+
+  it('does not infer a plain alias to a disabled participant', () => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '@Builder take this',
+        participants: [{ ...CLAUDE_WRITE, enabled: false }, CLAUDE_READ]
+      })
+    ).toEqual({ kind: 'none' })
+  })
+
+  it('rejects an unknown structured id without widening', () => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: '[@Missing](ensemble-dm://removed-seat)',
+        participants: [CLAUDE_WRITE, CLAUDE_READ]
+      })
+    ).toEqual({
+      kind: 'invalid-structured-target',
+      participantId: 'removed-seat',
+      reason: 'missing'
+    })
+  })
+
+  it('rejects a structured target that became disabled after picker insertion', () => {
+    const resolution = resolveEnsembleDmTargetForDispatch({
+      text: '[@Builder](ensemble-dm://claude-write) take this',
+      participants: [{ ...CLAUDE_WRITE, enabled: false }, CLAUDE_READ]
+    })
+    expect(resolution).toEqual({
+      kind: 'invalid-structured-target',
+      participantId: CLAUDE_WRITE.id,
+      reason: 'disabled'
+    })
+    expect(
+      ensembleDmTargetResolutionError(resolution, [
+        { ...CLAUDE_WRITE, enabled: false },
+        CLAUDE_READ
+      ])
+    ).toContain('is disabled')
+  })
+
+  it.each([
+    ['missing', 'removed-seat', [CLAUDE_WRITE, CLAUDE_READ]],
+    ['disabled', CLAUDE_WRITE.id, [{ ...CLAUDE_WRITE, enabled: false }, CLAUDE_READ]],
+    [
+      'background',
+      CLAUDE_WRITE.id,
+      [{ ...CLAUDE_WRITE, stageRole: 'background' as const }, CLAUDE_READ]
+    ]
+  ])('rejects a %s no-signal advisory target', (reason, advisoryParticipantId, roster) => {
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: 'Retry the last request',
+        participants: roster,
+        advisoryParticipantId
+      })
+    ).toEqual({
+      kind: 'invalid-advisory-target',
+      participantId: advisoryParticipantId,
+      reason
+    })
+  })
+
+  it('rejects a mixed ambiguous plus unique prompt instead of routing the unique seat', () => {
+    const resolution = resolveEnsembleDmTargetForDispatch({
+      text: '@claude compare with @Builder',
+      participants: [CLAUDE_WRITE, CLAUDE_READ],
+      advisoryParticipantId: CLAUDE_WRITE.id
+    })
+    expect(resolution).toMatchObject({ kind: 'ambiguous' })
+    expect(
+      ensembleDmTargetResolutionError(resolution, [CLAUDE_WRITE, CLAUDE_READ])
+    ).toContain('Use the participant picker or a unique role/model alias.')
   })
 })

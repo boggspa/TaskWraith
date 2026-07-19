@@ -32,7 +32,8 @@ type ArgSpec =
   | 'optionalCanvasSketchArgs'
   | 'canvasBounds'
 
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Structural IPC/decode allowlist only. Live run/authority admission is enforced
+// downstream by the canonical selectable-provider contract.
 const PROVIDERS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
 const APPROVAL_ACTIONS = new Set([
   'accept',
@@ -360,7 +361,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'list-gemini-sessions': [],
   'select-workspace': [],
   'select-image-files': [],
-  'save-clipboard-image-attachment': [],
+  'save-clipboard-image-attachment': ['chatId', 'any'],
   'composer-audio:transcribe': ['object'],
   'read-image-preview': ['string'],
   'image-generation:get-status': [],

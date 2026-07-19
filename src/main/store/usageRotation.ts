@@ -2,12 +2,11 @@ import type { UsageRecord } from './types'
 
 /**
  * Retention window for the hot usage.json file. Records older than this are
- * rotated to the append-only usage-archive.jsonl on write.
+ * rotated to the append-only usage-archive.jsonl during journal compaction.
  *
- * usage.json is synchronously read-modify-rewritten (with fsync) on EVERY
- * turn completion — and once per participant per ensemble round — so its
- * size is a direct, ever-growing tax on the main process. Rotation bounds
- * that cost without deleting history.
+ * Completed records land in the fsync'd usage journal and periodically compact
+ * into usage.json. Rotation bounds the hot checkpoint and replay set without
+ * deleting history.
  *
  * 200 days is a deliberate safety margin over the LONGEST window any live
  * reader requests: the UI usage surfaces top out at 90d, and

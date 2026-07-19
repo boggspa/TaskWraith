@@ -12,6 +12,7 @@ import {
   TRANSCRIPT_MEDIA_OWNERSHIP_MAX_ASSETS,
   TRANSCRIPT_MEDIA_OWNERSHIP_MAX_CHATS_PER_ASSET,
   TRANSCRIPT_MEDIA_OWNERSHIP_MAX_FILE_BYTES,
+  TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE,
   TranscriptMediaAssetStore,
   maxTranscriptMediaBytesForMime,
   transcriptMediaAssetPath
@@ -586,7 +587,103 @@ describe('TranscriptMediaAssetStore', () => {
       reason: 'persistence_failed'
     })
     expect(store.owns({ sha256, mimeType: 'image/png', appChatId: 'chat-1' })).toBe(false)
+    expect(fs.existsSync(transcriptMediaAssetPath(root, sha256, 'image/png'))).toBe(false)
     expect(fs.readdirSync(root).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+  })
+
+  it('removes new bytes when the shard directory cannot be fsynced before ownership', () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const buffer = Buffer.from('shard-directory-fsync-failure')
+    const sha256 = createHash('sha256').update(buffer).digest('base64url')
+    const realFsync = fs.fsyncSync.bind(fs)
+    let directorySyncs = 0
+    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
+      if (fs.fstatSync(fd).isDirectory()) {
+        directorySyncs += 1
+        if (directorySyncs === 1) throw new Error('simulated shard directory fsync failure')
+      }
+      return realFsync(fd)
+    })
+
+    expect(store.write({ sha256, mimeType: 'image/png', buffer, appChatId: 'chat-a' }))
+      .toEqual({ ok: false, reason: 'simulated shard directory fsync failure' })
+    expect(fs.existsSync(transcriptMediaAssetPath(root, sha256, 'image/png'))).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))).toBe(false)
+  })
+
+  it('restores the prior ownership ledger and removes new bytes on ledger-directory fsync failure', () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const buffer = Buffer.from('ledger-directory-fsync-failure')
+    const sha256 = createHash('sha256').update(buffer).digest('base64url')
+    const realFsync = fs.fsyncSync.bind(fs)
+    let directorySyncs = 0
+    vi.spyOn(fs, 'fsyncSync').mockImplementation((fd) => {
+      if (fs.fstatSync(fd).isDirectory()) {
+        directorySyncs += 1
+        // writeAssetBytes syncs shard + media root first. The third directory
+        // fsync is the ownership-ledger rename durability boundary.
+        if (directorySyncs === 3) throw new Error('simulated ledger directory fsync failure')
+      }
+      return realFsync(fd)
+    })
+
+    expect(store.write({ sha256, mimeType: 'image/png', buffer, appChatId: 'chat-a' }))
+      .toEqual({ ok: false, reason: 'persistence_failed' })
+    expect(directorySyncs).toBeGreaterThanOrEqual(5)
+    expect(fs.existsSync(transcriptMediaAssetPath(root, sha256, 'image/png'))).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))).toBe(false)
+    expect(fs.readdirSync(root).some((entry) => entry.endsWith('.tmp'))).toBe(false)
+    expect(
+      new TranscriptMediaAssetStore(root).owns({
+        sha256,
+        mimeType: 'image/png',
+        appChatId: 'chat-a'
+      })
+    ).toBe(false)
+  })
+
+  it('rolls back only newly created owned-batch bytes when the atomic grant cannot persist', () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const sharedBuffer = Buffer.from('pre-existing-shared-bytes')
+    const sharedSha256 = createHash('sha256').update(sharedBuffer).digest('base64url')
+    expect(
+      store.write({ sha256: sharedSha256, mimeType: 'image/png', buffer: sharedBuffer })
+    ).toEqual({ ok: true })
+    const newBuffer = Buffer.from('new-owned-batch-bytes')
+    const newSha256 = createHash('sha256').update(newBuffer).digest('base64url')
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('simulated ownership ledger replacement failure')
+    })
+
+    expect(
+      store.writeOwnedMany([
+        {
+          sha256: sharedSha256,
+          mimeType: 'image/png',
+          buffer: sharedBuffer,
+          appChatId: 'chat-a'
+        },
+        {
+          sha256: newSha256,
+          mimeType: 'image/png',
+          buffer: newBuffer,
+          appChatId: 'chat-a'
+        }
+      ])
+    ).toEqual({ ok: false, reason: 'persistence_failed' })
+
+    expect(fs.existsSync(transcriptMediaAssetPath(root, sharedSha256, 'image/png'))).toBe(true)
+    expect(fs.existsSync(transcriptMediaAssetPath(root, newSha256, 'image/png'))).toBe(false)
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(
+      restarted.owns({ sha256: sharedSha256, mimeType: 'image/png', appChatId: 'chat-a' })
+    ).toBe(false)
+    expect(
+      restarted.owns({ sha256: newSha256, mimeType: 'image/png', appChatId: 'chat-a' })
+    ).toBe(false)
   })
 
   it.each([
@@ -1176,6 +1273,294 @@ describe('TranscriptMediaAssetStore', () => {
     expect(fs.readdirSync(root).some((entry) => entry.startsWith('.ingest-'))).toBe(false)
   })
 
+  it('atomically owns an asynchronous file ingest before returning its locator', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'owned-async.wav')
+    fs.writeFileSync(sourcePath, Buffer.from('owned-async-file-ingest'))
+    const store = new TranscriptMediaAssetStore(root)
+
+    const result = await store.writeOwnedContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-a'
+    })
+
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(
+      store.owns({ sha256: result.sha256, mimeType: result.mimeType, appChatId: 'chat-a' })
+    ).toBe(true)
+    expect(
+      new TranscriptMediaAssetStore(root).owns({
+        sha256: result.sha256,
+        mimeType: result.mimeType,
+        appChatId: 'chat-a'
+      })
+    ).toBe(true)
+    expect(store.commitOwnedFileWrite(result.ownershipReceipt)).toBe(true)
+    await expect(store.rollbackOwnedFileWriteStrict(result.ownershipReceipt)).resolves.toBeNull()
+  })
+
+  it('validates every owned-file receipt before atomically committing a batch', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const firstSource = path.join(sourceRoot, 'batch-first.png')
+    const secondSource = path.join(sourceRoot, 'batch-second.png')
+    fs.writeFileSync(firstSource, Buffer.from('batch-first-page'))
+    fs.writeFileSync(secondSource, Buffer.from('batch-second-page'))
+    const store = new TranscriptMediaAssetStore(root)
+    const first = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: firstSource,
+      mimeType: 'image/png',
+      appChatId: 'chat-a'
+    })
+    const second = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: secondSource,
+      mimeType: 'image/png',
+      appChatId: 'chat-a'
+    })
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+
+    expect(store.commitOwnedFileWrite(first.ownershipReceipt)).toBe(true)
+    expect(
+      store.commitOwnedFileWrites([first.ownershipReceipt, second.ownershipReceipt])
+    ).toBe(false)
+    await expect(store.rollbackOwnedFileWriteStrict(second.ownershipReceipt)).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    expect(fs.existsSync(first.path)).toBe(true)
+    expect(fs.existsSync(second.path)).toBe(false)
+  })
+
+  it('rolls back only the grant added by an owned async ingest receipt', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const newSource = path.join(sourceRoot, 'rollback-new.wav')
+    const sharedSource = path.join(sourceRoot, 'rollback-shared.wav')
+    fs.writeFileSync(newSource, Buffer.from('rollback-new-owned-ingest'))
+    fs.writeFileSync(sharedSource, Buffer.from('rollback-shared-owned-ingest'))
+    const store = new TranscriptMediaAssetStore(root)
+    const shared = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: sharedSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-a'
+    })
+    expect(shared.ok).toBe(true)
+    if (!shared.ok) return
+    expect(store.commitOwnedFileWrite(shared.ownershipReceipt)).toBe(true)
+
+    const sharedReplay = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: sharedSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-a'
+    })
+    const added = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: newSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-a'
+    })
+    expect(sharedReplay.ok).toBe(true)
+    expect(added.ok).toBe(true)
+    if (!sharedReplay.ok || !added.ok) return
+
+    await expect(store.rollbackOwnedFileWriteStrict(sharedReplay.ownershipReceipt)).resolves
+      .toEqual({ revokedChats: 0, revokedGrants: 0, deletedAssets: 0 })
+    expect(fs.existsSync(shared.path)).toBe(true)
+    expect(
+      store.owns({ sha256: shared.sha256, mimeType: shared.mimeType, appChatId: 'chat-a' })
+    ).toBe(true)
+
+    await expect(store.rollbackOwnedFileWriteStrict(added.ownershipReceipt)).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    expect(fs.existsSync(added.path)).toBe(false)
+    expect(
+      store.owns({ sha256: added.sha256, mimeType: added.mimeType, appChatId: 'chat-a' })
+    ).toBe(false)
+  })
+
+  it('serializes concurrent owned-file receipt rollbacks without abandoning either grant', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const firstSource = path.join(sourceRoot, 'rollback-concurrent-a.wav')
+    const secondSource = path.join(sourceRoot, 'rollback-concurrent-b.wav')
+    fs.writeFileSync(firstSource, Buffer.from('rollback-concurrent-owned-ingest-a'))
+    fs.writeFileSync(secondSource, Buffer.from('rollback-concurrent-owned-ingest-b'))
+    const store = new TranscriptMediaAssetStore(root)
+    const first = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: firstSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-a'
+    })
+    const second = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: secondSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-b'
+    })
+    expect(first.ok).toBe(true)
+    expect(second.ok).toBe(true)
+    if (!first.ok || !second.ok) return
+
+    await expect(
+      Promise.all([
+        store.rollbackOwnedFileWriteStrict(first.ownershipReceipt),
+        store.rollbackOwnedFileWriteStrict(second.ownershipReceipt)
+      ])
+    ).resolves.toEqual([
+      { revokedChats: 1, revokedGrants: 1, deletedAssets: 1 },
+      { revokedChats: 1, revokedGrants: 1, deletedAssets: 1 }
+    ])
+    expect(fs.existsSync(first.path)).toBe(false)
+    expect(fs.existsSync(second.path)).toBe(false)
+    expect(
+      store.owns({ sha256: first.sha256, mimeType: first.mimeType, appChatId: 'chat-a' })
+    ).toBe(false)
+    expect(
+      store.owns({ sha256: second.sha256, mimeType: second.mimeType, appChatId: 'chat-b' })
+    ).toBe(false)
+  })
+
+  it('waits for an active history purge before rolling back an owned-file receipt', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const historySource = path.join(sourceRoot, 'history-purge-owner.wav')
+    const rollbackSource = path.join(sourceRoot, 'rollback-after-history.wav')
+    const activeIngestSource = path.join(sourceRoot, 'history-purge-active-ingest.mp4')
+    fs.writeFileSync(historySource, Buffer.from('history-purge-owner'))
+    fs.writeFileSync(rollbackSource, Buffer.from('rollback-after-history-owner'))
+    fs.writeFileSync(activeIngestSource, Buffer.alloc(1024 * 1024 + 17, 0x41))
+    const store = new TranscriptMediaAssetStore(root)
+    const historyOwned = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: historySource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-history'
+    })
+    const rollbackOwned = await store.writeOwnedContentAddressedFromFile({
+      sourcePath: rollbackSource,
+      mimeType: 'audio/wav',
+      appChatId: 'chat-rollback'
+    })
+    expect(historyOwned.ok).toBe(true)
+    expect(rollbackOwned.ok).toBe(true)
+    if (!historyOwned.ok || !rollbackOwned.ok) return
+    expect(store.commitOwnedFileWrite(historyOwned.ownershipReceipt)).toBe(true)
+
+    const activeIngest = store.writeContentAddressedFromFile({
+      sourcePath: activeIngestSource,
+      mimeType: 'video/mp4'
+    })
+    const historyPurge = store.revokeChatOwnershipStrict(['chat-history'])
+    const receiptRollback = store.rollbackOwnedFileWriteStrict(rollbackOwned.ownershipReceipt)
+
+    await expect(historyPurge).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    await expect(activeIngest).resolves.toEqual({ ok: false, reason: 'history_cleared' })
+    await expect(receiptRollback).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    expect(fs.existsSync(historyOwned.path)).toBe(false)
+    expect(fs.existsSync(rollbackOwned.path)).toBe(false)
+    expect(
+      store.owns({
+        sha256: rollbackOwned.sha256,
+        mimeType: rollbackOwned.mimeType,
+        appChatId: 'chat-rollback'
+      })
+    ).toBe(false)
+  })
+
+  it('rechecks exact output authority before granting an async file ingest', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'authority-loss.wav')
+    const bytes = Buffer.from('owned-async-authority-loss')
+    fs.writeFileSync(sourcePath, bytes)
+    const sha256 = createHash('sha256').update(bytes).digest('base64url')
+    const target = transcriptMediaAssetPath(fs.realpathSync.native(root), sha256, 'audio/wav')
+    const store = new TranscriptMediaAssetStore(root)
+    let checks = 0
+
+    await expect(
+      store.writeOwnedContentAddressedFromFile({
+        sourcePath,
+        mimeType: 'audio/wav',
+        appChatId: 'chat-a',
+        isAuthorized: () => {
+          checks += 1
+          return checks === 1
+        }
+      })
+    ).resolves.toEqual({ ok: false, reason: 'authority_lost' })
+    expect(checks).toBe(2)
+    expect(fs.existsSync(target)).toBe(false)
+    expect(store.owns({ sha256, mimeType: 'audio/wav', appChatId: 'chat-a' })).toBe(false)
+  })
+
+  it('rolls back a newly published async inode when scoped history begins before its grant', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'owned-race.mp4')
+    const bytes = Buffer.from('owned-async-history-race')
+    fs.writeFileSync(sourcePath, bytes)
+    const sha256 = createHash('sha256').update(bytes).digest('base64url')
+    const target = transcriptMediaAssetPath(fs.realpathSync.native(root), sha256, 'video/mp4')
+    const store = new TranscriptMediaAssetStore(root)
+    const realLink = fs.promises.link.bind(fs.promises)
+    let hold: ReturnType<TranscriptMediaAssetStore['beginHistoryMutation']> | null = null
+    vi.spyOn(fs.promises, 'link').mockImplementation(async (existingPath, newPath) => {
+      await realLink(existingPath, newPath)
+      hold = store.beginHistoryMutation({ kind: 'chat', appChatIds: ['chat-a'] })
+    })
+
+    await expect(
+      store.writeOwnedContentAddressedFromFile({
+        sourcePath,
+        mimeType: 'video/mp4',
+        appChatId: 'chat-a'
+      })
+    ).resolves.toEqual({ ok: false, reason: 'history_cleared' })
+    expect(hold).not.toBeNull()
+    expect(fs.existsSync(target)).toBe(false)
+    expect(store.owns({ sha256, mimeType: 'video/mp4', appChatId: 'chat-a' })).toBe(false)
+    if (hold) expect(store.endHistoryMutation(hold)).toBe(true)
+  })
+
+  it('removes a newly ingested async file when its ownership ledger cannot publish', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'owned-ledger-failure.wav')
+    const bytes = Buffer.from('owned-async-ledger-failure')
+    fs.writeFileSync(sourcePath, bytes)
+    const sha256 = createHash('sha256').update(bytes).digest('base64url')
+    const target = transcriptMediaAssetPath(fs.realpathSync.native(root), sha256, 'audio/wav')
+    const store = new TranscriptMediaAssetStore(root)
+    vi.spyOn(fs, 'renameSync').mockImplementationOnce(() => {
+      throw new Error('simulated async ownership ledger failure')
+    })
+
+    await expect(
+      store.writeOwnedContentAddressedFromFile({
+        sourcePath,
+        mimeType: 'audio/wav',
+        appChatId: 'chat-a'
+      })
+    ).resolves.toEqual({ ok: false, reason: 'persistence_failed' })
+    expect(fs.existsSync(target)).toBe(false)
+    expect(store.owns({ sha256, mimeType: 'audio/wav', appChatId: 'chat-a' })).toBe(false)
+  })
+
   it('publishes concurrent identical ingests atomically without transient collisions', async () => {
     const root = makeRoot()
     const sourceRoot = makeRoot()
@@ -1405,5 +1790,453 @@ describe('TranscriptMediaAssetStore', () => {
       })
     ).resolves.toEqual({ ok: false, reason: 'simulated_write_failure' })
     expect(fs.readdirSync(root)).toEqual([])
+  })
+
+  it('revokes exact chat owners and deletes bytes only after the last owner is removed', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const shared = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('shared-purge-image'),
+      appChatId: 'chat-a'
+    })
+    const privateAsset = store.writeContentAddressed({
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF private-purge'),
+      appChatId: 'chat-a'
+    })
+    expect(shared.ok).toBe(true)
+    expect(privateAsset.ok).toBe(true)
+    if (!shared.ok || !privateAsset.ok) return
+    expect(
+      store.grant({ sha256: shared.sha256, mimeType: shared.mimeType, appChatId: 'chat-b' })
+    ).toEqual({ ok: true })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 2,
+      deletedAssets: 1
+    })
+
+    expect(fs.existsSync(shared.path)).toBe(true)
+    expect(fs.existsSync(privateAsset.path)).toBe(false)
+    expect(store.owns({ sha256: shared.sha256, mimeType: shared.mimeType, appChatId: 'chat-a' }))
+      .toBe(false)
+    expect(store.owns({ sha256: shared.sha256, mimeType: shared.mimeType, appChatId: 'chat-b' }))
+      .toBe(true)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(restarted.owns({ sha256: shared.sha256, mimeType: shared.mimeType, appChatId: 'chat-b' }))
+      .toBe(true)
+    await expect(restarted.revokeChatOwnershipStrict(['chat-b'])).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    expect(fs.existsSync(shared.path)).toBe(false)
+  })
+
+  it('rolls back bytes and ownership when replacement-ledger publication fails', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const persisted = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('purge-rollback-image'),
+      appChatId: 'chat-a'
+    })
+    expect(persisted.ok).toBe(true)
+    if (!persisted.ok) return
+    const originalLedger = fs.readFileSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))
+    const realLink = fs.linkSync.bind(fs)
+    vi.spyOn(fs, 'linkSync').mockImplementation((existingPath, newPath) => {
+      if (newPath === path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)) {
+        throw new Error('simulated replacement-ledger publication failure')
+      }
+      return realLink(existingPath, newPath)
+    })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow(
+      'Transcript media chat purge failed before history commit.'
+    )
+
+    expect(fs.readFileSync(persisted.path, 'utf8')).toBe('purge-rollback-image')
+    expect(fs.readFileSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)).equals(originalLedger))
+      .toBe(true)
+    expect(store.owns({ sha256: persisted.sha256, mimeType: persisted.mimeType, appChatId: 'chat-a' }))
+      .toBe(true)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+    expect(fs.readdirSync(root).some((entry) => entry.startsWith('.purge-ledger-'))).toBe(false)
+  })
+
+  it.each(['hardlink', 'symlink'] as const)(
+    'rejects a %s asset substitution without revoking ownership or deleting the target',
+    async (mode) => {
+      const root = makeRoot()
+      const outside = makeRoot()
+      const store = new TranscriptMediaAssetStore(root)
+      const persisted = store.writeContentAddressed({
+        mimeType: 'image/png',
+        buffer: Buffer.from(`purge-${mode}-image`),
+        appChatId: 'chat-a'
+      })
+      expect(persisted.ok).toBe(true)
+      if (!persisted.ok) return
+      const outsidePath = path.join(outside, `${mode}.png`)
+      if (mode === 'hardlink') {
+        fs.linkSync(persisted.path, outsidePath)
+      } else {
+        fs.writeFileSync(outsidePath, 'outside-symlink-target')
+        fs.unlinkSync(persisted.path)
+        fs.symlinkSync(outsidePath, persisted.path)
+      }
+
+      await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow(
+        /unsafe|changed/i
+      )
+
+      expect(fs.readFileSync(outsidePath, 'utf8')).toBe(
+        mode === 'hardlink' ? `purge-${mode}-image` : 'outside-symlink-target'
+      )
+      expect(store.owns({ sha256: persisted.sha256, mimeType: persisted.mimeType, appChatId: 'chat-a' }))
+        .toBe(true)
+      expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+    }
+  )
+
+  it('detects a shard-directory swap at rename time and never unlinks the substituted file', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const persisted = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('directory-race-original'),
+      appChatId: 'chat-a'
+    })
+    expect(persisted.ok).toBe(true)
+    if (!persisted.ok) return
+    const shard = path.dirname(persisted.path)
+    const movedShard = path.join(root, 'moved-original-shard')
+    const originalRename = fs.renameSync.bind(fs)
+    let swapped = false
+    vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
+      if (!swapped && oldPath === persisted.path) {
+        swapped = true
+        originalRename(shard, movedShard)
+        fs.mkdirSync(shard, { mode: 0o700 })
+        fs.writeFileSync(persisted.path, 'substituted-race-file', { mode: 0o600 })
+      }
+      return originalRename(oldPath, newPath)
+    })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow()
+
+    expect(swapped).toBe(true)
+    expect(fs.readFileSync(path.join(movedShard, path.basename(persisted.path)), 'utf8'))
+      .toBe('directory-race-original')
+    const substitutedEntries = fs.readdirSync(shard)
+    expect(substitutedEntries).toHaveLength(1)
+    expect(fs.readFileSync(path.join(shard, substitutedEntries[0]), 'utf8'))
+      .toBe('substituted-race-file')
+  })
+
+  it('finishes a committed purge from its fsynced journal after restart', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const persisted = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('restart-recovery-image'),
+      appChatId: 'chat-a'
+    })
+    expect(persisted.ok).toBe(true)
+    if (!persisted.ok) return
+    const realUnlink = fs.unlinkSync.bind(fs)
+    let interrupted = false
+    const unlink = vi.spyOn(fs, 'unlinkSync').mockImplementation((filePath) => {
+      if (
+        !interrupted &&
+        typeof filePath === 'string' &&
+        path.dirname(filePath) === path.dirname(persisted.path) &&
+        path.basename(filePath).startsWith('.purge-')
+      ) {
+        interrupted = true
+        throw new Error('simulated post-commit quarantine unlink failure')
+      }
+      return realUnlink(filePath)
+    })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow(
+      'Transcript media chat purge failed before history commit.'
+    )
+    expect(interrupted).toBe(true)
+    expect(fs.existsSync(persisted.path)).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(true)
+
+    unlink.mockRestore()
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(fs.existsSync(persisted.path)).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+    expect(restarted.owns({ sha256: persisted.sha256, mimeType: persisted.mimeType, appChatId: 'chat-a' }))
+      .toBe(false)
+    await expect(restarted.revokeChatOwnershipStrict(['chat-a'])).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 0,
+      deletedAssets: 0
+    })
+  })
+
+  it('rolls back a pre-commit quarantine journal with a distinct prepared ledger on restart', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const persisted = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('precommit-restart-image'),
+      appChatId: 'chat-a'
+    })
+    expect(persisted.ok).toBe(true)
+    if (!persisted.ok) return
+    const realRename = fs.renameSync.bind(fs)
+    let assetQuarantined = false
+    let rollbackBlocked = false
+    const rename = vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
+      if (oldPath === persisted.path) {
+        assetQuarantined = true
+        return realRename(oldPath, newPath)
+      }
+      if (
+        assetQuarantined &&
+        oldPath === path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE)
+      ) {
+        throw new Error('simulated crash before ownership commit')
+      }
+      if (
+        assetQuarantined &&
+        typeof oldPath === 'string' &&
+        path.dirname(oldPath) === path.dirname(persisted.path) &&
+        path.basename(oldPath).startsWith('.purge-')
+      ) {
+        rollbackBlocked = true
+        throw new Error('simulated unavailable rollback during process exit')
+      }
+      return realRename(oldPath, newPath)
+    })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow(
+      /rollback requires restart recovery/
+    )
+    expect(assetQuarantined).toBe(true)
+    expect(rollbackBlocked).toBe(true)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(true)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))).toBe(true)
+    expect(fs.readdirSync(root).some((entry) => entry.startsWith('.purge-ledger-'))).toBe(true)
+
+    rename.mockRestore()
+    const restarted = new TranscriptMediaAssetStore(root)
+    expect(fs.readFileSync(persisted.path, 'utf8')).toBe('precommit-restart-image')
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+    expect(fs.readdirSync(root).some((entry) => entry.startsWith('.purge-ledger-'))).toBe(false)
+    expect(
+      restarted.owns({ sha256: persisted.sha256, mimeType: persisted.mimeType, appChatId: 'chat-a' })
+    ).toBe(true)
+  })
+
+  it('globally erases owned and unowned media, recovery artifacts, shards, and the ledger', async () => {
+    const root = makeRoot()
+    const store = new TranscriptMediaAssetStore(root)
+    const owned = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('global-owned-image'),
+      appChatId: 'chat-a'
+    })
+    const unowned = store.writeContentAddressed({
+      mimeType: 'application/pdf',
+      buffer: Buffer.from('%PDF global-unowned')
+    })
+    expect(owned.ok).toBe(true)
+    expect(unowned.ok).toBe(true)
+    if (!owned.ok || !unowned.ok) return
+    fs.writeFileSync(path.join(root, 'ownership-v1.json.123.stale.tmp'), 'stale-ledger-image', {
+      mode: 0o600
+    })
+
+    await expect(store.clearAllStrict()).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 3
+    })
+
+    expect(fs.existsSync(owned.path)).toBe(false)
+    expect(fs.existsSync(unowned.path)).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_OWNERSHIP_FILE))).toBe(false)
+    expect(fs.existsSync(path.join(root, TRANSCRIPT_MEDIA_PURGE_JOURNAL_FILE))).toBe(false)
+    expect(fs.readdirSync(root)).toEqual([])
+    expect(
+      new TranscriptMediaAssetStore(root).owns({
+        sha256: owned.sha256,
+        mimeType: owned.mimeType,
+        appChatId: 'chat-a'
+      })
+    ).toBe(false)
+  })
+
+  it('reserves an async ingest before its first await so a same-tick missing-root clear wins', async () => {
+    const container = makeRoot()
+    const root = path.join(container, 'not-yet-created-media-root')
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'late.mp4')
+    fs.writeFileSync(sourcePath, Buffer.from('late-global-media'))
+    const store = new TranscriptMediaAssetStore(root)
+
+    const ingest = store.writeContentAddressedFromFile({ sourcePath, mimeType: 'video/mp4' })
+    const clear = store.clearAllStrict()
+    const [ingestResult, clearResult] = await Promise.all([ingest, clear])
+
+    expect(ingestResult).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(clearResult).toEqual({ revokedChats: 0, revokedGrants: 0, deletedAssets: 0 })
+    expect(fs.existsSync(root)).toBe(false)
+  })
+
+  it('joins and invalidates a deferred file ingest before scoped chat purge commits', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'late-scoped.mp4')
+    fs.writeFileSync(sourcePath, Buffer.from('late-scoped-media'))
+    const store = new TranscriptMediaAssetStore(root)
+    const owned = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('scoped-owner'),
+      appChatId: 'chat-a'
+    })
+    expect(owned.ok).toBe(true)
+    if (!owned.ok) return
+
+    const ingest = store.writeContentAddressedFromFile({ sourcePath, mimeType: 'video/mp4' })
+    const purge = store.revokeChatOwnershipStrict(['chat-a'])
+    const [ingestResult, purgeResult] = await Promise.all([ingest, purge])
+
+    expect(ingestResult).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(purgeResult).toEqual({ revokedChats: 1, revokedGrants: 1, deletedAssets: 1 })
+    expect(fs.existsSync(owned.path)).toBe(false)
+    expect(
+      fs.readdirSync(root).some(
+        (entry) => entry.startsWith('.ingest-') || entry.endsWith('.mp4')
+      )
+    ).toBe(false)
+  })
+
+  it('keeps scoped media admission closed after the purge receipt until history commit', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'after-receipt.mp4')
+    fs.writeFileSync(sourcePath, Buffer.from('after-receipt-ingest'))
+    const store = new TranscriptMediaAssetStore(root)
+    const removed = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('removed-before-history-commit'),
+      appChatId: 'chat-a'
+    })
+    const grantCandidate = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('existing-unowned-before-hold')
+    })
+    expect(removed.ok).toBe(true)
+    expect(grantCandidate.ok).toBe(true)
+    if (!removed.ok || !grantCandidate.ok) return
+
+    const hold = store.beginHistoryMutation({
+      kind: 'workspace',
+      workspaceId: 'workspace-a',
+      appChatIds: ['chat-a']
+    })
+    const activeIngest = store.writeContentAddressedFromFile({
+      sourcePath,
+      mimeType: 'video/mp4'
+    })
+
+    await expect(store.revokeChatOwnershipStrict(['chat-a'])).resolves.toEqual({
+      revokedChats: 1,
+      revokedGrants: 1,
+      deletedAssets: 1
+    })
+    await expect(activeIngest).resolves.toEqual({ ok: false, reason: 'history_cleared' })
+
+    const stagedBytes = Buffer.from('scheduled-after-media-receipt')
+    const stagedSha256 = createHash('sha256').update(stagedBytes).digest('base64url')
+    const stagedPath = transcriptMediaAssetPath(
+      fs.realpathSync.native(root),
+      stagedSha256,
+      'image/png'
+    )
+    expect(
+      store.writeOwnedMany([
+        {
+          sha256: stagedSha256,
+          mimeType: 'image/png',
+          buffer: stagedBytes,
+          appChatId: 'chat-a'
+        }
+      ])
+    ).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(
+      store.grantMany([
+        {
+          sha256: grantCandidate.sha256,
+          mimeType: grantCandidate.mimeType,
+          appChatId: 'chat-a'
+        }
+      ])
+    ).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(
+      store.writeContentAddressed({
+        mimeType: 'application/pdf',
+        buffer: Buffer.from('%PDF unowned-after-receipt')
+      })
+    ).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(fs.existsSync(stagedPath)).toBe(false)
+    expect(
+      store.owns({ sha256: stagedSha256, mimeType: 'image/png', appChatId: 'chat-a' })
+    ).toBe(false)
+
+    const unrelated = store.writeContentAddressed({
+      mimeType: 'image/png',
+      buffer: Buffer.from('unrelated-chat-during-scoped-hold'),
+      appChatId: 'chat-b'
+    })
+    expect(unrelated.ok).toBe(true)
+
+    expect(store.endHistoryMutation(hold)).toBe(true)
+    expect(store.endHistoryMutation(hold)).toBe(false)
+    expect(
+      store.writeOwnedMany([
+        {
+          sha256: stagedSha256,
+          mimeType: 'image/png',
+          buffer: stagedBytes,
+          appChatId: 'chat-a'
+        }
+      ])
+    ).toMatchObject({ ok: true })
+    expect(fs.existsSync(stagedPath)).toBe(true)
+  })
+
+  it('invalidates a same-tick ingest and blocks every owner under a global history hold', async () => {
+    const root = makeRoot()
+    const sourceRoot = makeRoot()
+    const sourcePath = path.join(sourceRoot, 'global-hold.wav')
+    fs.writeFileSync(sourcePath, Buffer.from('global-hold-ingest'))
+    const store = new TranscriptMediaAssetStore(root)
+
+    const ingest = store.writeContentAddressedFromFile({ sourcePath, mimeType: 'audio/wav' })
+    const hold = store.beginHistoryMutation({ kind: 'global' })
+
+    await expect(ingest).resolves.toEqual({ ok: false, reason: 'history_cleared' })
+    expect(
+      store.writeContentAddressed({
+        mimeType: 'image/png',
+        buffer: Buffer.from('blocked-global-owner'),
+        appChatId: 'chat-b'
+      })
+    ).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(store.grantMany([])).toEqual({ ok: false, reason: 'history_cleared' })
+    expect(store.endHistoryMutation(hold)).toBe(true)
   })
 })

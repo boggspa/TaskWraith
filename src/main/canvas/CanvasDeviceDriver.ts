@@ -17,7 +17,7 @@
  * without Xcode.
  */
 import { execFile } from 'child_process'
-import { readFile, stat, unlink } from 'fs/promises'
+import { chmod, mkdtemp, readFile, rm, stat, unlink } from 'fs/promises'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { createHash } from 'crypto'
@@ -38,7 +38,12 @@ import type {
   CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
-import { isSafeAppBundlePath, isValidBundleId, isValidSimUdid, readPngDimensions } from './canvasTypes'
+import {
+  isSafeAppBundlePath,
+  isValidBundleId,
+  isValidSimUdid,
+  readPngDimensions
+} from './canvasTypes'
 
 export interface SimctlResult {
   stdout: string
@@ -52,9 +57,28 @@ export interface CanvasDeviceDriverDeps {
   readScreenshot?: (path: string) => Promise<Buffer>
   statPath?: (path: string) => Promise<{ isDirectory: () => boolean }>
   removeFile?: (path: string) => Promise<void>
+  removeDirectory?: (path: string) => Promise<void>
+  makeTempDirectory?: (prefix: string) => Promise<string>
+  setPathMode?: (path: string, mode: number) => Promise<void>
   now?: () => string
+  /** Test-only legacy hook. Production creates a private 0700 directory. */
   tmpFile?: () => string
   platform?: NodeJS.Platform
+}
+
+const SCREENSHOT_CANCELLED_MESSAGE = 'Device screenshot was cancelled because the Canvas closed.'
+const OPEN_CANCELLED_MESSAGE = 'Device canvas open was cancelled because the Canvas closed.'
+
+interface OwnedScreenshotTemp {
+  path: string
+  rootDir: string | null
+}
+
+interface PendingOpenResources {
+  udid: string
+  bundleId: string
+  bootedByUs: boolean
+  launched: boolean
 }
 
 const SIMCTL_TIMEOUT_MS = 60000
@@ -88,13 +112,24 @@ export class CanvasDeviceDriver implements CanvasDriver {
   private bundleId: string | null = null
   private bootedByUs = false
   private launched = false
+  private closeRequested = false
+  private lifecycleGeneration = 0
+  private readonly inFlightScreenshots = new Set<Promise<CanvasFrame>>()
+  private readonly inFlightOpens = new Set<Promise<CanvasSessionHandle>>()
+  private readonly ownedTempFiles = new Set<OwnedScreenshotTemp>()
+  private readonly pendingOpenResources = new Set<PendingOpenResources>()
+  private closePromise: Promise<void> | null = null
 
   private readonly run: SimctlRunner
   private readonly readShot: (path: string) => Promise<Buffer>
   private readonly statPath: (path: string) => Promise<{ isDirectory: () => boolean }>
   private readonly removeFile: (path: string) => Promise<void>
+  private readonly removeDirectory: (path: string) => Promise<void>
+  private readonly makeTempDirectory: (prefix: string) => Promise<string>
+  private readonly setPathMode: (path: string, mode: number) => Promise<void>
   private readonly nowFn: () => string
-  private readonly tmpFileFn: () => string
+  private readonly tmpFileFn: (() => string) | null
+  private readonly tempPrefix: string
   private readonly platform: NodeJS.Platform
 
   constructor(sessionId: string, deps: CanvasDeviceDriverDeps = {}) {
@@ -102,14 +137,32 @@ export class CanvasDeviceDriver implements CanvasDriver {
     this.readShot = deps.readScreenshot ?? ((p) => readFile(p))
     this.statPath = deps.statPath ?? ((p) => stat(p))
     this.removeFile = deps.removeFile ?? ((p) => unlink(p))
+    this.removeDirectory = deps.removeDirectory ?? ((p) => rm(p))
+    this.makeTempDirectory = deps.makeTempDirectory ?? ((prefix) => mkdtemp(prefix))
+    this.setPathMode = deps.setPathMode ?? ((path, mode) => chmod(path, mode))
     this.nowFn = deps.now ?? (() => new Date().toISOString())
-    this.tmpFileFn =
-      deps.tmpFile ??
-      (() => join(tmpdir(), `canvas-shot-${sessionId}-${Date.now()}.png`))
+    this.tmpFileFn = deps.tmpFile ?? null
+    const safeSessionId = sessionId.replace(/[^a-zA-Z0-9_-]/g, '').slice(0, 32) || 'session'
+    this.tempPrefix = join(tmpdir(), `canvas-shot-${safeSessionId}-`)
     this.platform = deps.platform ?? process.platform
   }
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
+    if (this.closeRequested) throw new Error('Device canvas is closed.')
+    const generation = this.lifecycleGeneration
+    const operation = this.performOpen(input, generation)
+    this.inFlightOpens.add(operation)
+    try {
+      return await operation
+    } finally {
+      this.inFlightOpens.delete(operation)
+    }
+  }
+
+  private async performOpen(
+    input: CanvasOpenInput,
+    generation: number
+  ): Promise<CanvasSessionHandle> {
     if (this.platform !== 'darwin') {
       throw new Error('The Canvas device driver requires macOS with Xcode simulators.')
     }
@@ -125,45 +178,88 @@ export class CanvasDeviceDriver implements CanvasDriver {
       throw new Error('Invalid simulator `udid` (expected a UUID or "booted").')
     }
 
-    const udid = await this.resolveDevice(wantUdid)
-    this.udid = udid
-    this.bundleId = bundleId
-
-    const appPath = (input.appPath || '').trim()
-    if (appPath) {
-      if (!isSafeAppBundlePath(appPath)) {
-        throw new Error('Invalid `appPath` (must be an absolute path to a .app bundle).')
-      }
-      await this.assertAppExists(appPath)
-      await this.run(['install', udid, appPath])
+    const resources: PendingOpenResources = {
+      udid: '',
+      bundleId,
+      bootedByUs: false,
+      launched: false
     }
+    try {
+      await this.resolveDevice(wantUdid, generation, resources)
+      const { udid } = resources
+      const appPath = (input.appPath || '').trim()
+      if (appPath) {
+        if (!isSafeAppBundlePath(appPath)) {
+          throw new Error('Invalid `appPath` (must be an absolute path to a .app bundle).')
+        }
+        await this.assertAppExists(appPath)
+        this.assertOpenActive(generation)
+        await this.run(['install', udid, appPath])
+        this.assertOpenActive(generation)
+      }
 
-    await this.run(['launch', udid, bundleId])
-    this.launched = true
+      await this.run(['launch', udid, bundleId])
+      resources.launched = true
+      this.assertOpenActive(generation)
 
-    const frame = await this.screenshot()
-    return {
-      url: `device://${udid}/${bundleId}`,
-      title: bundleId,
-      viewport: { width: frame.width, height: frame.height }
+      // Transfer ownership only after launch and its post-await generation
+      // check. Before this point a close-raced open cleans its local resources.
+      this.udid = udid
+      this.bundleId = bundleId
+      this.bootedByUs = resources.bootedByUs
+      this.launched = true
+      this.pendingOpenResources.delete(resources)
+
+      const frame = await this.screenshot()
+      this.assertOpenActive(generation)
+      return {
+        url: `device://${udid}/${bundleId}`,
+        title: bundleId,
+        viewport: { width: frame.width, height: frame.height }
+      }
+    } catch (error) {
+      let cleanupError: unknown
+      if (this.pendingOpenResources.has(resources)) {
+        try {
+          await this.cleanupPendingOpenResource(resources)
+        } catch (caught) {
+          cleanupError = caught
+        }
+      }
+      if (this.openWasCancelled(generation)) {
+        throw new Error(OPEN_CANCELLED_MESSAGE)
+      }
+      if (cleanupError) {
+        throw new AggregateError(
+          [error, cleanupError],
+          'Device canvas open failed and its local resources could not be cleaned.'
+        )
+      }
+      throw error
     }
   }
 
-  private async resolveDevice(want: string): Promise<string> {
+  private async resolveDevice(
+    want: string,
+    generation: number,
+    resources: PendingOpenResources
+  ): Promise<void> {
     const booted = await this.listBooted()
-    if (want !== 'booted') {
-      if (!booted.includes(want)) {
-        await this.run(['boot', want])
-        this.bootedByUs = true
-      }
-      return want
-    }
-    if (booted.length === 0) {
+    this.assertOpenActive(generation)
+    resources.udid = want === 'booted' ? (booted[0] ?? '') : want
+    if (!resources.udid) {
       throw new Error(
         'No booted simulator found. Boot one in Simulator.app, or pass `device.udid`.'
       )
     }
-    return booted[0]
+    this.pendingOpenResources.add(resources)
+    if (want !== 'booted') {
+      if (!booted.includes(want)) {
+        await this.run(['boot', want])
+        resources.bootedByUs = true
+        this.assertOpenActive(generation)
+      }
+    }
   }
 
   private async listBooted(): Promise<string[]> {
@@ -194,47 +290,269 @@ export class CanvasDeviceDriver implements CanvasDriver {
   }
 
   async screenshot(): Promise<CanvasFrame> {
-    if (!this.udid) throw new Error('Device canvas is not open.')
-    const out = this.tmpFileFn()
-    await this.run(['io', this.udid, 'screenshot', out])
-    let png: Buffer
+    if (!this.udid || this.closeRequested) throw new Error('Device canvas is not open.')
+    const generation = this.lifecycleGeneration
+    const operation = this.captureScreenshot(generation)
+    this.inFlightScreenshots.add(operation)
     try {
-      png = await this.readShot(out)
+      return await operation
     } finally {
-      // Best-effort cleanup of the temp PNG — we keep only the in-memory bytes.
-      this.removeFile(out).catch(() => {})
-    }
-    const { width, height } = readPngDimensions(png)
-    return {
-      mimeType: 'image/png',
-      data: png.toString('base64'),
-      width,
-      height,
-      byteLength: png.byteLength,
-      hash: createHash('sha256').update(png).digest('hex'),
-      capturedAt: this.nowFn()
+      this.inFlightScreenshots.delete(operation)
     }
   }
 
-  async close(): Promise<void> {
-    const { udid, bundleId, launched, bootedByUs } = this
-    this.udid = null
-    this.launched = false
-    if (udid && bundleId && launched) {
-      // Terminate only the app we launched — never the user's other apps.
+  private async captureScreenshot(generation: number): Promise<CanvasFrame> {
+    const udid = this.udid
+    if (!udid) throw new Error('Device canvas is not open.')
+    let temp: OwnedScreenshotTemp
+    try {
+      temp = await this.allocateScreenshotTemp()
+    } catch (error) {
+      if (this.screenshotWasCancelled(generation)) {
+        throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
+      }
+      throw error
+    }
+    const out = temp.path
+    let cleanupError: unknown
+    let result: CanvasFrame | undefined
+    let operationError: unknown
+    try {
+      if (this.screenshotWasCancelled(generation)) {
+        throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
+      }
+      await this.run(['io', udid, 'screenshot', out])
+      if (this.screenshotWasCancelled(generation)) throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
+      const png = await this.readShot(out)
+      if (this.screenshotWasCancelled(generation)) throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
+      const { width, height } = readPngDimensions(png)
+      result = {
+        mimeType: 'image/png',
+        data: png.toString('base64'),
+        width,
+        height,
+        byteLength: png.byteLength,
+        hash: createHash('sha256').update(png).digest('hex'),
+        capturedAt: this.nowFn()
+      }
+    } catch (error) {
+      operationError = error
+    }
+    try {
+      await this.removeOwnedTempFile(temp)
+    } catch (error) {
+      cleanupError = error
+    }
+    // close() may begin while unlink is pending. Re-check after the final await
+    // so a valid frame can never escape after close has taken ownership.
+    if (this.screenshotWasCancelled(generation)) {
+      throw new Error(SCREENSHOT_CANCELLED_MESSAGE)
+    }
+    if (cleanupError) {
+      throw new Error(`Device screenshot temp cleanup failed: ${String(cleanupError)}`)
+    }
+    if (operationError) throw operationError
+    return result!
+  }
+
+  private screenshotWasCancelled(generation: number): boolean {
+    return this.closeRequested || generation !== this.lifecycleGeneration
+  }
+
+  private openWasCancelled(generation: number): boolean {
+    return this.closeRequested || generation !== this.lifecycleGeneration
+  }
+
+  private assertOpenActive(generation: number): void {
+    if (this.openWasCancelled(generation)) throw new Error(OPEN_CANCELLED_MESSAGE)
+  }
+
+  private async allocateScreenshotTemp(): Promise<OwnedScreenshotTemp> {
+    let temp: OwnedScreenshotTemp
+    if (this.tmpFileFn) {
+      temp = { path: this.tmpFileFn(), rootDir: null }
+    } else {
+      const rootDir = await this.makeTempDirectory(this.tempPrefix)
+      temp = { path: join(rootDir, 'screenshot.png'), rootDir }
+      this.ownedTempFiles.add(temp)
       try {
-        await this.run(['terminate', udid, bundleId])
-      } catch {
-        // App may already be gone.
+        await this.setPathMode(rootDir, 0o700)
+      } catch (error) {
+        try {
+          await this.removeOwnedTempFile(temp)
+        } catch (cleanupError) {
+          throw new AggregateError(
+            [error, cleanupError],
+            `Could not secure or remove screenshot temp allocation "${temp.path}".`
+          )
+        }
+        throw error
       }
     }
-    if (udid && bootedByUs) {
-      // Only shut down a simulator WE booted; never one the user already had up.
-      try {
-        await this.run(['shutdown', udid])
-      } catch {
-        // Best effort.
+    const collision = [...this.ownedTempFiles].some(
+      (owned) => owned !== temp && owned.path === temp.path
+    )
+    if (collision) {
+      if (temp.rootDir) {
+        try {
+          await this.removeOwnedTempFile(temp)
+        } catch {
+          // The allocation remains tracked for close to retry.
+        }
       }
+      throw new Error(`Device screenshot temp path collision: ${temp.path}`)
+    }
+    this.ownedTempFiles.add(temp)
+    return temp
+  }
+
+  private async removeOwnedTempFile(temp: OwnedScreenshotTemp): Promise<void> {
+    const failures: unknown[] = []
+    try {
+      await this.removeFile(temp.path)
+    } catch (error) {
+      if (!isMissingFileError(error)) failures.push(error)
+    }
+    if (temp.rootDir) {
+      try {
+        await this.removeDirectory(temp.rootDir)
+      } catch (error) {
+        if (!isMissingFileError(error)) failures.push(error)
+      }
+    }
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures,
+        `Could not remove screenshot temp allocation "${temp.path}".`
+      )
+    }
+    this.ownedTempFiles.delete(temp)
+  }
+
+  close(): Promise<void> {
+    if (this.closePromise) return this.closePromise
+    this.closeRequested = true
+    this.lifecycleGeneration += 1
+    const attempt = this.performClose()
+    this.closePromise = attempt
+    void attempt.then(
+      () => {},
+      () => {
+        // Lifecycle close remains terminal, but a later close call must retry
+        // any exact temp/resource path retained after strict cleanup failed.
+        if (this.closePromise === attempt) this.closePromise = null
+      }
+    )
+    return attempt
+  }
+
+  private async performClose(): Promise<void> {
+    await Promise.allSettled([...this.inFlightOpens])
+    await Promise.allSettled([...this.inFlightScreenshots])
+
+    const cleanupFailures: Error[] = []
+    const pendingOpenResources = [...this.pendingOpenResources]
+    const openCleanupOutcomes = await Promise.allSettled(
+      pendingOpenResources.map((resources) => this.cleanupPendingOpenResource(resources))
+    )
+    openCleanupOutcomes.forEach((outcome, index) => {
+      if (outcome.status === 'rejected') {
+        appendCleanupFailures(
+          cleanupFailures,
+          `Device open cleanup failed for "${pendingOpenResources[index].bundleId}" on ${pendingOpenResources[index].udid}`,
+          outcome.reason
+        )
+      }
+    })
+
+    // A capture always attempts its own unlink. Any path left in this set had a
+    // failed cleanup, so close retries every one and reports all final failures.
+    const remainingTempFiles = [...this.ownedTempFiles]
+    const cleanupOutcomes = await Promise.allSettled(
+      remainingTempFiles.map((temp) => this.removeOwnedTempFile(temp))
+    )
+    cleanupOutcomes.forEach((outcome, index) => {
+      if (outcome.status === 'rejected') {
+        appendCleanupFailures(
+          cleanupFailures,
+          `Device screenshot temp cleanup failed for "${remainingTempFiles[index].path}"`,
+          outcome.reason
+        )
+      }
+    })
+
+    if (this.udid && this.bundleId) {
+      const activeResources: PendingOpenResources = {
+        udid: this.udid,
+        bundleId: this.bundleId,
+        launched: this.launched,
+        bootedByUs: this.bootedByUs
+      }
+      try {
+        await this.cleanupOwnedSimulatorResources(activeResources)
+      } catch (error) {
+        appendCleanupFailures(
+          cleanupFailures,
+          `Device active-resource cleanup failed for "${activeResources.bundleId}" on ${activeResources.udid}`,
+          error
+        )
+      }
+      this.launched = activeResources.launched
+      this.bootedByUs = activeResources.bootedByUs
+      if (!this.launched && !this.bootedByUs) {
+        this.udid = null
+        this.bundleId = null
+      }
+    }
+    if (cleanupFailures.length > 0) {
+      throw new AggregateError(
+        cleanupFailures,
+        `Device Canvas close encountered ${cleanupFailures.length} cleanup failure${cleanupFailures.length === 1 ? '' : 's'}.`
+      )
+    }
+  }
+
+  private async cleanupPendingOpenResource(resources: PendingOpenResources): Promise<void> {
+    await this.cleanupOwnedSimulatorResources(resources)
+    this.pendingOpenResources.delete(resources)
+  }
+
+  private async cleanupOwnedSimulatorResources(resources: PendingOpenResources): Promise<void> {
+    const failures: unknown[] = []
+    let terminateFailure: unknown
+    if (resources.launched) {
+      try {
+        await this.run(['terminate', resources.udid, resources.bundleId])
+        resources.launched = false
+      } catch (error) {
+        if (isAlreadyCleanSimctlError('terminate', error)) {
+          resources.launched = false
+        } else {
+          terminateFailure = error
+        }
+      }
+    }
+    let shutdownFailure: unknown
+    if (resources.bootedByUs) {
+      try {
+        await this.run(['shutdown', resources.udid])
+        resources.bootedByUs = false
+        resources.launched = false
+      } catch (error) {
+        if (isAlreadyCleanSimctlError('shutdown', error)) {
+          resources.bootedByUs = false
+          resources.launched = false
+        } else {
+          shutdownFailure = error
+        }
+      }
+    }
+    // A successful/known-already-complete shutdown also guarantees the app is
+    // gone, so only report cleanup errors for resources that remain live.
+    if (resources.launched && terminateFailure) failures.push(terminateFailure)
+    if (resources.bootedByUs && shutdownFailure) failures.push(shutdownFailure)
+    if (failures.length > 0) {
+      throw new AggregateError(failures, 'Could not clean owned simulator resources.')
     }
   }
 
@@ -272,4 +590,32 @@ export class CanvasDeviceDriver implements CanvasDriver {
   async reload(): Promise<void> {
     return unsupported('reload')
   }
+}
+
+function isMissingFileError(error: unknown): boolean {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as { code?: unknown }).code === 'ENOENT'
+  )
+}
+
+function isAlreadyCleanSimctlError(operation: 'terminate' | 'shutdown', error: unknown): boolean {
+  const message = String(error)
+  if (/invalid device(?: or device pair| identifier)?\s*:|no devices? found/i.test(message)) {
+    return true
+  }
+  if (operation === 'terminate') {
+    return /no such process|not (?:currently )?running|current state:\s*shutdown/i.test(message)
+  }
+  return /already (?:in )?(?:the )?shutdown|current state:\s*shutdown/i.test(message)
+}
+
+function appendCleanupFailures(target: Error[], context: string, error: unknown): void {
+  if (error instanceof AggregateError) {
+    for (const cause of error.errors) appendCleanupFailures(target, context, cause)
+    return
+  }
+  target.push(new Error(`${context}: ${String(error)}`))
 }

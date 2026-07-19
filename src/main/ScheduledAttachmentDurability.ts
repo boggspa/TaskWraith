@@ -1,3 +1,4 @@
+import { createHash } from 'crypto'
 import type {
   ExternalPathGrant,
   PersistedAttachmentRef,
@@ -85,7 +86,7 @@ export const rejectUnconfiguredScheduledAttachmentResolution: ResolveScheduledAt
 export interface MainOwnedScheduledAttachmentPersistenceDeps {
   getAssetStore: () => Pick<
     TranscriptMediaAssetStore,
-    'grantMany' | 'owns' | 'resolvePersistedAttachment' | 'writeContentAddressed'
+    'owns' | 'resolvePersistedAttachment' | 'writeOwnedMany'
   >
   getAuthorizedFilePaths?: () => readonly string[]
 }
@@ -97,8 +98,16 @@ export function createMainOwnedScheduledAttachmentPersistence(
   resolve: ResolveScheduledAttachments
 } {
   const stage: StageScheduledAttachments = (input) => {
-    const persisted: PersistedAttachmentRef[] = []
-    const pendingOwnership: Array<{ sha256: string; mimeType: string; appChatId: string }> = []
+    const slots: Array<
+      | { kind: 'persisted'; attachment: PersistedAttachmentRef }
+      | { kind: 'pending'; index: number; id: string; name: string }
+    > = []
+    const pendingWrites: Array<{
+      sha256: string
+      mimeType: string
+      buffer: Buffer
+      appChatId: string
+    }> = []
     try {
       if (input.attachments.length > MAX_DURABLE_ATTACHMENT_REFS) {
         return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
@@ -119,10 +128,13 @@ export function createMainOwnedScheduledAttachmentPersistence(
           ) {
             return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
           }
-          persisted.push({
-            ...resolved.attachment,
-            id: attachment.id,
-            name: attachment.name
+          slots.push({
+            kind: 'persisted',
+            attachment: {
+              ...resolved.attachment,
+              id: attachment.id,
+              name: attachment.name
+            }
           })
           continue
         }
@@ -135,35 +147,41 @@ export function createMainOwnedScheduledAttachmentPersistence(
         if (!snapshot.ok) {
           return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
         }
-        const written = store.writeContentAddressed({
+        const pendingIndex = pendingWrites.length
+        pendingWrites.push({
+          sha256: createHash('sha256').update(snapshot.buffer).digest('base64url'),
           mimeType: snapshot.mimeType,
-          buffer: snapshot.buffer
-        })
-        if (!written.ok) {
-          return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
-        }
-        persisted.push({
-          persistenceVersion: 1,
-          id: attachment.id,
-          path: written.path,
-          name: attachment.name,
-          sha256: written.sha256,
-          mimeType: written.mimeType,
-          byteLength: written.byteLength
-        })
-        pendingOwnership.push({
-          sha256: written.sha256,
-          mimeType: written.mimeType,
+          buffer: snapshot.buffer,
           appChatId: input.appChatId
         })
+        slots.push({
+          kind: 'pending',
+          index: pendingIndex,
+          id: attachment.id,
+          name: attachment.name
+        })
       }
-      if (pendingOwnership.length > 0) {
-        const granted = store.grantMany(pendingOwnership)
-        if (!granted.ok) {
-          return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
-        }
+      const written =
+        pendingWrites.length > 0
+          ? store.writeOwnedMany(pendingWrites)
+          : { ok: true as const, assets: [] }
+      if (!written.ok) return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
+      return {
+        ok: true,
+        attachments: slots.map((slot) => {
+          if (slot.kind === 'persisted') return slot.attachment
+          const asset = written.assets[slot.index]
+          return {
+            persistenceVersion: 1,
+            id: slot.id,
+            path: asset.path,
+            name: slot.name,
+            sha256: asset.sha256,
+            mimeType: asset.mimeType,
+            byteLength: asset.byteLength
+          }
+        })
       }
-      return { ok: true, attachments: persisted }
     } catch {
       return { ok: false, reason: SCHEDULED_ATTACHMENT_RESELECT_REASON }
     }

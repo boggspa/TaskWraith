@@ -1,9 +1,10 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'fs'
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+import { existsSync, mkdtempSync, rmSync } from 'fs'
 import { tmpdir } from 'os'
 import { join } from 'path'
 import { CanvasService, type CanvasServiceDeps } from './CanvasService'
 import { CanvasStore } from './CanvasStore'
+import { createCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import type {
   CanvasActionInput,
   CanvasActResult,
@@ -25,11 +26,27 @@ import type {
 
 const IMAGE_SHA = 'a'.repeat(43)
 
+function deferred<T>(): {
+  promise: Promise<T>
+  resolve: (value: T) => void
+  reject: (reason?: unknown) => void
+} {
+  let resolve!: (value: T) => void
+  let reject!: (reason?: unknown) => void
+  const promise = new Promise<T>((resolvePromise, rejectPromise) => {
+    resolve = resolvePromise
+    reject = rejectPromise
+  })
+  return { promise, resolve, reject }
+}
+
 class FakeDriver implements CanvasDriver {
   readonly kind = 'web' as const
   opened = false
   closed = false
   failOpen = false
+  closeCalls = 0
+  closeFailuresRemaining = 0
 
   async open(input: CanvasOpenInput): Promise<CanvasSessionHandle> {
     if (this.failOpen) throw new Error('boom')
@@ -112,15 +129,30 @@ class FakeDriver implements CanvasDriver {
     return this.sketchDoc
   }
   lastScript?: string
+  evalResult?: CanvasEvalResult
+  evalError?: Error
   async evaluate(args: { script: string }): Promise<CanvasEvalResult> {
     this.lastScript = args.script
-    return { ok: true, valueType: 'string', value: 'EVAL-RESULT-SENTINEL', truncated: false }
+    if (this.evalError) throw this.evalError
+    return (
+      this.evalResult || {
+        ok: true,
+        valueType: 'string',
+        value: 'EVAL-RESULT-SENTINEL',
+        truncated: false
+      }
+    )
   }
   reloaded = false
   async reload(): Promise<void> {
     this.reloaded = true
   }
   async close(): Promise<void> {
+    this.closeCalls += 1
+    if (this.closeFailuresRemaining > 0) {
+      this.closeFailuresRemaining -= 1
+      throw new Error('close failed')
+    }
     this.closed = true
   }
 }
@@ -283,6 +315,108 @@ describe('CanvasService', () => {
     expect(fake.closed).toBe(true)
   })
 
+  it('does not publish a live session when active-record persistence fails', async () => {
+    const upsert = store.upsertSession.bind(store)
+    vi.spyOn(store, 'upsertSession').mockImplementation((record) => {
+      if (record.status === 'active') throw new Error('active session fsync failed')
+      return upsert(record)
+    })
+
+    await expect(service.open({ url: 'http://localhost:3000' }, {})).rejects.toThrow(
+      'active session fsync failed'
+    )
+    expect(fake.closed).toBe(true)
+    expect(service.list({})).toEqual([])
+    await expect(service.snapshot('id-1', {})).rejects.toThrow(/No open canvas/)
+    expect(store.getSession('id-1')?.status).toBe('error')
+  })
+
+  it('retires the generation when initial opening-record persistence fails', async () => {
+    vi.spyOn(store, 'upsertSession').mockImplementation(() => {
+      throw new Error('opening session fsync failed')
+    })
+
+    await expect(service.open({ url: 'http://localhost:3000' }, {})).rejects.toThrow(
+      'opening session fsync failed'
+    )
+    expect(fake.opened).toBe(false)
+    expect(service.list({})).toEqual([])
+    expect(service.openChatIds()).toEqual(new Set())
+    await expect(service.snapshot('id-1', {})).rejects.toThrow(/No open canvas/)
+  })
+
+  it('retires the generation and replaces opening state when driver construction throws', async () => {
+    service = new CanvasService({
+      createDriver: () => {
+        throw new Error('driver construction failed')
+      },
+      store,
+      uuid: () => 'id-1',
+      now: () => '2026-06-21T00:00:00.000Z'
+    })
+
+    await expect(service.open({ url: 'http://localhost:3000' }, {})).rejects.toThrow(
+      'driver construction failed'
+    )
+    expect(service.list({})).toEqual([])
+    await expect(service.snapshot('id-1', {})).rejects.toThrow(/No open canvas/)
+    expect(store.getSession('id-1')?.status).toBe('error')
+  })
+
+  it('keeps the active registry coherent when best-effort opened-event sinks throw', async () => {
+    vi.spyOn(store, 'appendEvent').mockImplementation(() => {
+      throw new Error('event append failed')
+    })
+    service = new CanvasService({
+      createDriver: () => fake,
+      store,
+      uuid: (() => {
+        let seq = 0
+        return () => `id-${++seq}`
+      })(),
+      now: () => '2026-06-21T00:00:00.000Z',
+      broadcast: () => {
+        throw new Error('renderer disappeared')
+      }
+    })
+
+    const opened = await service.open({ url: 'http://localhost:3000' }, {})
+    expect(service.list({})).toHaveLength(1)
+    expect(service.status(opened.canvasId, {})?.status).toBe('active')
+    await service.close(opened.canvasId, {})
+    expect(service.list({})).toEqual([])
+  })
+
+  it('retains a failed-open driver whose cleanup failed so history clear retries it', async () => {
+    fake.failOpen = true
+    fake.closeFailuresRemaining = 1
+
+    await expect(
+      service.open(
+        { url: 'http://localhost:3000' },
+        { chatId: 'chat-failed-open', workspacePath: '/workspace/a' }
+      )
+    ).rejects.toThrow('boom')
+
+    expect(fake.closeCalls).toBe(1)
+    expect(service.openChatIds()).toContain('chat-failed-open')
+
+    const authority = {
+      chatIds: ['chat-failed-open'],
+      workspacePaths: ['/workspace/a']
+    }
+    try {
+      await service.beginAuthorityHistoryClear(authority)
+    } finally {
+      service.endAuthorityHistoryClear(authority)
+    }
+
+    expect(fake.closeCalls).toBe(2)
+    expect(fake.closed).toBe(true)
+    expect(service.openChatIds()).not.toContain('chat-failed-open')
+    expect(store.listSessions()).toEqual([])
+  })
+
   it('click/fill emit interaction events; the typed value never enters the audit', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     await service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})
@@ -305,30 +439,240 @@ describe('CanvasService', () => {
     ).rejects.toThrow(/budget/)
   })
 
-  it('eval emits an event recording only the script hash — never the script text or result', async () => {
+  it('eval persists approval-bound pre/post receipts — never the script text or result', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const script = 'document.cookie + "SECRET-SCRIPT"'
+    const approval = createCanvasEvalApprovalReceipt(script, 'approval-1')
     const res = await service.evaluate(
       c.canvasId,
-      { script: 'document.cookie + "SECRET-SCRIPT"' },
-      {}
+      { script },
+      { canvasEvalApproval: approval }
     )
     expect(res.ok).toBe(true)
     // The driver did receive the real script…
     expect(fake.lastScript).toContain('SECRET-SCRIPT')
-    const evt = events.find((e) => e.kind === 'eval')
-    expect(typeof evt?.detail?.scriptHash).toBe('string')
-    expect(evt?.detail?.ok).toBe(true)
+    const evalEvents = events.filter((event) => event.kind.startsWith('eval.'))
+    expect(evalEvents.map((event) => event.kind)).toEqual(['eval.started', 'eval.completed'])
+    expect(evalEvents[0]).toMatchObject({
+      approvalId: 'approval-1',
+      detail: {
+        approvalId: 'approval-1',
+        scriptHash: approval.scriptHash,
+        scriptLength: script.length,
+        scriptByteLength: Buffer.byteLength(script, 'utf8')
+      }
+    })
+    expect(evalEvents[1]).toMatchObject({
+      approvalId: 'approval-1',
+      detail: { outcome: 'success', ok: true }
+    })
     // …but neither the script text NOR the returned value ever enters the audit.
     expect(JSON.stringify(events)).not.toContain('SECRET-SCRIPT')
     expect(JSON.stringify(events)).not.toContain('EVAL-RESULT-SENTINEL')
+    const reopened = new CanvasStore(dir).listEvents(c.canvasId).filter((event) =>
+      event.kind.startsWith('eval.')
+    )
+    expect(reopened).toHaveLength(2)
+    expect(JSON.stringify(reopened)).not.toContain('SECRET-SCRIPT')
+    expect(JSON.stringify(reopened)).not.toContain('EVAL-RESULT-SENTINEL')
+  })
+
+  it('records script and host failure outcomes without persisting error text', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const scriptErrorScript = 'throw new Error("SCRIPT-ERROR-SECRET")'
+    fake.evalResult = { ok: false, error: 'SCRIPT-ERROR-SECRET' }
+    await service.evaluate(c.canvasId, { script: scriptErrorScript }, {
+      canvasEvalApproval: createCanvasEvalApprovalReceipt(scriptErrorScript, 'approval-script-error')
+    })
+
+    const hostErrorScript = 'location.reload()'
+    fake.evalResult = undefined
+    fake.evalError = new Error('HOST-ERROR-SECRET')
+    await expect(
+      service.evaluate(c.canvasId, { script: hostErrorScript }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt(hostErrorScript, 'approval-host-error')
+      })
+    ).rejects.toThrow('HOST-ERROR-SECRET')
+
+    const completed = events.filter((event) => event.kind === 'eval.completed')
+    expect(completed.map((event) => event.detail?.outcome)).toEqual([
+      'script_error',
+      'host_error'
+    ])
+    expect(JSON.stringify(events)).not.toContain('SCRIPT-ERROR-SECRET')
+    expect(JSON.stringify(events)).not.toContain('HOST-ERROR-SECRET')
+  })
+
+  it('fails closed before driver execution when the receipt is absent, mismatched, or cannot persist', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    await expect(service.evaluate(c.canvasId, { script: '1' }, {})).rejects.toThrow(
+      /bound approval receipt/
+    )
+    await expect(
+      service.evaluate(c.canvasId, { script: '2' }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt('different', 'approval-mismatch')
+      })
+    ).rejects.toThrow(/does not match/)
+    expect(fake.lastScript).toBeUndefined()
+
+    vi.spyOn(store, 'appendEventStrict').mockImplementationOnce(() => {
+      throw new Error('disk full')
+    })
+    await expect(
+      service.evaluate(c.canvasId, { script: '3' }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt('3', 'approval-disk-full')
+      })
+    ).rejects.toThrow(/blocked.*pre-execution audit receipt/)
+    expect(fake.lastScript).toBeUndefined()
+  })
+
+  it.each(['resolve', 'reject'] as const)(
+    'purgeHistory fences a deferred eval that later %ss from recreating files or events',
+    async (outcome) => {
+      const c = await service.open({ url: 'http://localhost:3000' }, {})
+      const script = 'globalThis.__late_canvas_eval = "PURGE-SENTINEL"'
+      const evaluationGate = deferred<CanvasEvalResult>()
+      vi.spyOn(fake, 'evaluate').mockImplementationOnce(() => evaluationGate.promise)
+
+      const evaluation = service.evaluate(c.canvasId, { script }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt(script, 'approval-late-eval')
+      })
+      expect(store.listEvents(c.canvasId).map((event) => event.kind)).toContain('eval.started')
+
+      await service.purgeHistory()
+      expect(existsSync(dir)).toBe(true)
+      expect(store.listSessions()).toEqual([])
+      expect(store.listEvents()).toEqual([])
+      const broadcastCountAfterPurge = events.length
+
+      if (outcome === 'resolve') {
+        evaluationGate.resolve({ ok: true, valueType: 'undefined', truncated: false })
+      } else {
+        evaluationGate.reject(new Error('PURGE-SENTINEL-HOST-ERROR'))
+      }
+
+      await expect(evaluation).rejects.toThrow(/discarded because history was cleared/)
+      expect(store.listEvents()).toEqual([])
+      expect(events).toHaveLength(broadcastCountAfterPurge)
+    }
+  )
+
+  it('purgeHistory fences an open that began in the retired generation', async () => {
+    const openGate = deferred<CanvasSessionHandle>()
+    vi.spyOn(fake, 'open').mockImplementationOnce(() => openGate.promise)
+
+    const opening = service.open({ url: 'http://localhost:3000' }, {})
+    expect(store.listSessions()).toHaveLength(1)
+
+    const purge = service.purgeHistory()
+    const openingRejected = expect(opening).rejects.toThrow(/history was cleared/)
+    openGate.resolve({
+      url: 'http://localhost:3000',
+      title: 'Late open',
+      viewport: { width: 1280, height: 800 }
+    })
+    await openingRejected
+    await purge
+    const broadcastCountAfterPurge = events.length
+    expect(fake.closed).toBe(true)
+    expect(existsSync(dir)).toBe(true)
+    expect(store.listSessions()).toEqual([])
+    expect(store.listEvents()).toEqual([])
+    expect(events).toHaveLength(broadcastCountAfterPurge)
+  })
+
+  it('purgeHistory fences deferred direct writes from resize, annotate, and sketch update', async () => {
+    const c = await service.open({ driver: 'sketch' }, {})
+    const resizeGate = deferred<CanvasViewport>()
+    const annotateGate = deferred<{ count: number }>()
+    const sketchGate = deferred<CanvasSketchDocument>()
+    vi.spyOn(fake, 'resize').mockImplementationOnce(() => resizeGate.promise)
+    vi.spyOn(fake, 'annotate').mockImplementationOnce(() => annotateGate.promise)
+    vi.spyOn(fake, 'sketchUpdate').mockImplementationOnce(() => sketchGate.promise)
+
+    const resizing = service.resize(c.canvasId, { width: 900, height: 600 }, {})
+    const annotating = service.annotate(c.canvasId, [{ ref: 'e1', label: 'late' }], {})
+    const sketching = service.sketchUpdate(c.canvasId, { mode: 'clear' }, {})
+
+    await service.purgeHistory()
+    expect(existsSync(dir)).toBe(true)
+    expect(store.listSessions()).toEqual([])
+    expect(store.listEvents()).toEqual([])
+    const broadcastCountAfterPurge = events.length
+    const discarded = [
+      expect(resizing).rejects.toThrow(/history was cleared/),
+      expect(annotating).rejects.toThrow(/history was cleared/),
+      expect(sketching).rejects.toThrow(/history was cleared/)
+    ]
+
+    resizeGate.resolve({ width: 900, height: 600 })
+    annotateGate.resolve({ count: 1 })
+    sketchGate.resolve({
+      schemaVersion: 1,
+      title: 'Late sketch',
+      viewport: { width: 1280, height: 800 },
+      elements: [],
+      updatedAt: 'late'
+    })
+    await Promise.all(discarded)
+
+    expect(store.listEvents()).toEqual([])
+    expect(store.getSketchDocument('global')).toBeNull()
+    expect(events).toHaveLength(broadcastCountAfterPurge)
+  })
+
+  it('rejects canvas_open during an in-flight purge and preserves a new post-purge canvas', async () => {
+    await service.open({ driver: 'sketch' }, {})
+    const staleSketchCallback = lastDriverOpts?.onSketchDocumentChange
+    expect(staleSketchCallback).toBeTypeOf('function')
+    const closeGate = deferred<void>()
+    vi.spyOn(fake, 'close').mockImplementationOnce(() => closeGate.promise)
+
+    const purge = service.purgeHistory()
+    const concurrentPurge = service.purgeHistory()
+    await expect(service.open({ url: 'http://localhost:3000/during-purge' }, {})).rejects.toThrow(
+      /history is being cleared/
+    )
+
+    closeGate.resolve()
+    await Promise.all([purge, concurrentPurge])
+    expect(existsSync(dir)).toBe(true)
+    expect(store.listSessions()).toEqual([])
+    expect(store.listEvents()).toEqual([])
+
+    const fresh = await service.open({ url: 'http://localhost:3000/fresh' }, {})
+    staleSketchCallback?.({
+      schemaVersion: 1,
+      title: 'Stale callback',
+      viewport: { width: 1280, height: 800 },
+      elements: [{ kind: 'text', text: 'MUST-NOT-PERSIST' }],
+      updatedAt: 'late'
+    })
+    expect(store.listSessions()).toMatchObject([
+      { id: fresh.canvasId, status: 'active', url: 'http://localhost:3000/fresh' }
+    ])
+    expect(store.listEvents().map((event) => event.canvasId)).toEqual([fresh.canvasId])
+    expect(store.getSketchDocument('global')).toBeNull()
+
+    // Both callers observed the same completed purge; no delayed cleanup may
+    // race this new generation and delete its newly persisted records.
+    await Promise.resolve()
+    expect(store.getSession(fresh.canvasId)?.status).toBe('active')
+    expect(store.listEvents(fresh.canvasId).map((event) => event.kind)).toEqual(['session.opened'])
   })
 
   it('caps eval per session with its own (separate) budget', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     for (let i = 0; i < 3; i++) {
-      await service.evaluate(c.canvasId, { script: '1' }, {})
+      await service.evaluate(c.canvasId, { script: '1' }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt('1', `approval-${i}`)
+      })
     }
-    await expect(service.evaluate(c.canvasId, { script: '1' }, {})).rejects.toThrow(/budget/)
+    await expect(
+      service.evaluate(c.canvasId, { script: '1' }, {
+        canvasEvalApproval: createCanvasEvalApprovalReceipt('1', 'approval-over-budget')
+      })
+    ).rejects.toThrow(/budget/)
   })
 
   it('reload re-navigates the driver and emits a reload event (chat-scoped)', async () => {
@@ -364,5 +708,30 @@ describe('CanvasService', () => {
     // Chat A still owns it.
     expect(service.list({ chatId: 'A' })).toHaveLength(1)
     expect(service.status(a.canvasId, { chatId: 'A' })?.status).toBe('active')
+  })
+
+  it('a chat-only history clear preserves sibling Canvas state in the same workspace', async () => {
+    const a = await service.open(
+      { url: 'http://localhost:3000/a' },
+      { chatId: 'A', workspacePath: '/shared-workspace' }
+    )
+    const b = await service.open(
+      { url: 'http://localhost:3000/b' },
+      { chatId: 'B', workspacePath: '/shared-workspace' }
+    )
+    const authority = { chatIds: ['A'] }
+
+    try {
+      await service.beginAuthorityHistoryClear(authority)
+    } finally {
+      service.endAuthorityHistoryClear(authority)
+    }
+
+    expect(service.status(a.canvasId, { chatId: 'A' })).toBeNull()
+    expect(service.status(b.canvasId, { chatId: 'B' })?.status).toBe('active')
+    expect(store.getSession(a.canvasId)).toBeNull()
+    expect(store.getSession(b.canvasId)?.chatId).toBe('B')
+    expect(store.listEvents(a.canvasId)).toEqual([])
+    expect(store.listEvents(b.canvasId).map((entry) => entry.kind)).toContain('session.opened')
   })
 })

@@ -277,9 +277,9 @@ describe('IpcValidation', () => {
     }
   })
 
-  it('accepts Cursor at the IPC trust boundary by default (first-class)', () => {
-    // CR — Cursor is first-class (gate lifted): admitted at the IPC boundary
-    // with no env opt-in (internal dev build).
+  it('accepts Cursor structurally at IPC before downstream live admission', () => {
+    // Historical Cursor payloads remain decodable; run normalization rejects
+    // Cursor through the separate canonical live-provider gate.
     expect(() =>
       validateIpcArgs('run-agent', [
         { provider: 'cursor', workspace: '/tmp/workspace', prompt: 'hello' }
@@ -296,9 +296,9 @@ describe('IpcValidation', () => {
     )
   })
 
-  it('keeps accepting Cursor even with the removed kill-switch env var set', () => {
-    // Cursor is permanently first-class (eligibility gate removed 2026-06): the
-    // old TASKWRAITH_DISABLE_CURSOR env var no longer hides it.
+  it('keeps structural Cursor decoding independent of the removed kill switch', () => {
+    // The obsolete flag does not alter historical IPC decoding. It also cannot
+    // make Cursor live; downstream admission remains unconditionally closed.
     const previous = process.env.TASKWRAITH_DISABLE_CURSOR
     process.env.TASKWRAITH_DISABLE_CURSOR = '1'
     try {
@@ -414,6 +414,12 @@ describe('IpcValidation', () => {
     expect(() => validateIpcArgs('get-pinned-messages', ['workspace-1'])).not.toThrow()
     expect(() => validateIpcArgs('get-chat', ['../settings'])).toThrow(/safe chat id/)
     expect(() => validateIpcArgs('delete-chat', ['../settings'])).toThrow(/safe chat id/)
+    expect(() =>
+      validateIpcArgs('save-clipboard-image-attachment', ['chat-1', 'intent-token'])
+    ).not.toThrow()
+    expect(() =>
+      validateIpcArgs('save-clipboard-image-attachment', ['../settings', 'intent-token'])
+    ).toThrow(/safe chat id/)
     expect(() =>
       validateIpcArgs('rebind-chat-workspace', [
         {

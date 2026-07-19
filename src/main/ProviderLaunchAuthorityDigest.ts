@@ -98,6 +98,12 @@ export interface ClaudeLaunchControls {
   readonly fallbackPolicy: 'forbid'
 }
 
+/**
+ * Historical Wire/print authority shape retained for strict decoding and
+ * migration tests only. It cannot authorize the source-ahead ACP production
+ * composition. ScheduledOccurrenceSeal rejects Kimi until a new signed schema
+ * binds runtime admission, synthetic cwd, and authenticated HTTP gateway state.
+ */
 export interface KimiLaunchControls {
   readonly transport: 'wire' | 'cli-print'
   readonly wireProtocolVersion: string | null

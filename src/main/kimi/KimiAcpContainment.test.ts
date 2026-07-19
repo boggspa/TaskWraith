@@ -55,6 +55,73 @@ describe('stripAllowPermissionRules', () => {
     const input = "[[permission.rules]]\ndecision = 'allow'\npattern = \"X\""
     expect(stripAllowPermissionRules(input)).not.toContain('pattern = "X"')
   })
+
+  it('strips allow rules with valid TOML spacing, quoted keys, and comments', () => {
+    const input = [
+      '[[ "permission" . rules ]] # migrated',
+      'decision = "allow"',
+      'pattern = "Read"',
+      '',
+      '[[ permission . rules ]] # keep this deny',
+      'decision = "deny"',
+      'pattern = "Write"'
+    ].join('\n')
+    const out = stripAllowPermissionRules(input)
+    expect(out).not.toContain('pattern = "Read"')
+    expect(out).toContain('pattern = "Write"')
+  })
+
+  it('fails closed on permission-rule syntax outside the bounded parser', () => {
+    expect(() =>
+      stripAllowPermissionRules('[[permission["rules"]]]\ndecision = "allow"\npattern = "Bash"')
+    ).toThrow('Unsupported Kimi permission.rules table syntax')
+  })
+
+  it('fails closed on TOML-equivalent inline and dotted permission rules', () => {
+    expect(() =>
+      stripAllowPermissionRules(
+        'permission.rules = [{ decision = "allow", pattern = "Bash" }]'
+      )
+    ).toThrow('Unsupported inline or dotted Kimi permission syntax')
+    expect(() =>
+      stripAllowPermissionRules(
+        'permission = { rules = [{ decision = "allow", pattern = "Bash" }] }'
+      )
+    ).toThrow('Unsupported inline or dotted Kimi permission syntax')
+    expect(() => stripAllowPermissionRules('[permission]\nrules = []')).toThrow(
+      'Unsupported Kimi permission.rules table syntax'
+    )
+  })
+
+  it('fails closed on escaped keys that the bounded parser cannot canonicalize', () => {
+    expect(() =>
+      stripAllowPermissionRules(
+        '"permis\\u0073ion" = { rules = [{ decision = "allow", pattern = "Bash" }] }'
+      )
+    ).toThrow('Escaped TOML keys are unsupported')
+  })
+
+  it('fails closed on missing, duplicate, or quoted decision syntax', () => {
+    expect(() => stripAllowPermissionRules('[[permission.rules]]\npattern = "Bash"')).toThrow(
+      'no supported decision'
+    )
+    expect(() =>
+      stripAllowPermissionRules(
+        '[[permission.rules]]\ndecision = "deny"\ndecision = "allow"\npattern = "Bash"'
+      )
+    ).toThrow('duplicate decisions')
+    expect(() =>
+      stripAllowPermissionRules(
+        '[[permission.rules]]\n"decision" = "allow"\npattern = "Bash"'
+      )
+    ).toThrow('unsupported decision syntax')
+  })
+
+  it('fails closed on multiline TOML instead of mis-parsing table-like string content', () => {
+    expect(() =>
+      stripAllowPermissionRules('banner = """\n[provider]\ntelemetry = true\n"""')
+    ).toThrow('Multiline TOML strings are unsupported')
+  })
 })
 
 describe('forceTelemetryOff', () => {
@@ -74,6 +141,20 @@ describe('forceTelemetryOff', () => {
 
   it('appends when there is no table header at all', () => {
     expect(forceTelemetryOff('default_model = "x"')).toContain('telemetry = false')
+  })
+
+  it('does not mistake a table-scoped telemetry key for the top-level setting', () => {
+    const out = forceTelemetryOff('[provider]\ntelemetry = true')
+    expect(out.indexOf('telemetry = false')).toBeLessThan(out.indexOf('[provider]'))
+    expect(out).toContain('[provider]\ntelemetry = true')
+  })
+
+  it('fails closed on quoted/duplicate telemetry and multiline TOML', () => {
+    expect(() => forceTelemetryOff('"telemetry" = true')).toThrow('Quoted telemetry keys')
+    expect(() => forceTelemetryOff('telemetry = true\ntelemetry = false')).toThrow(
+      'Duplicate top-level telemetry'
+    )
+    expect(() => forceTelemetryOff('note = """\n[x]\n"""')).toThrow('Multiline TOML')
   })
 })
 

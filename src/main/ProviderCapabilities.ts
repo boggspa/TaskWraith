@@ -16,7 +16,6 @@ import type {
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { providerLabel } from './ProviderAdapters'
-import { CURSOR_MCP_SERVER_NAME } from './cursor/CursorMcpBridge'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -436,34 +435,8 @@ function ollamaLocalMcpCapability(input: {
   }
 }
 
-/** Cursor write-mode runs register a transient workspace TaskWraith MCP broker
- * backed by the shared TaskWraith broker. Native Cursor shell/write tools are
- * constrained so side effects go through the brokered tools and TaskWraith
- * approval/path checks. */
 function bridgeRequiredForWriteMode(approvalMode: string | null | undefined): boolean {
   return typeof approvalMode === 'string' && approvalMode.trim() !== '' && approvalMode.trim() !== 'plan'
-}
-
-function cursorMcpCapability(input: {
-  enabledBySetting: boolean
-  requiredForRun: boolean
-}): ProviderMcpCapability {
-  const enabled = input.requiredForRun
-  return {
-    state: enabled ? 'available' : 'unavailable',
-    source: 'bridge',
-    available: enabled,
-    enabled,
-    installed: enabled,
-    serverName: CURSOR_MCP_SERVER_NAME,
-    tools: enabled ? [...GATEWAY_MCP_ADVERTISE_TOOLS] : [],
-    message:
-      input.requiredForRun
-        ? 'TaskWraith will register a transient brokered MCP server for this Cursor write-mode run. Native Cursor shell/write tools are constrained so workspace side effects go through TaskWraith approvals; no manual Cursor MCP install is required.'
-        : input.enabledBySetting
-          ? 'TaskWraith MCP bridge preference is on, but read-only Cursor runs do not need a scoped broker. Write-capable Cursor runs auto-inject it when needed.'
-          : 'TaskWraith MCP registration for Cursor is off for this read-only run; write-capable Cursor runs auto-inject the scoped bridge when needed.'
-  }
 }
 
 /** Grok ACP runs can receive the shared TaskWraith MCP bridge directly in
@@ -532,6 +505,18 @@ function approvalContract(
   requestedMode: string,
   effectiveMode: string
 ): ProviderApprovalCapability {
+  if (provider === 'cursor') {
+    return {
+      requestedMode,
+      effectiveMode: 'unavailable',
+      providerMode: 'unavailable',
+      inAppApprovals: false,
+      supportsWorkspaceGrants: false,
+      notes: [
+        'TaskWraith starts no Cursor process. Authentication, Plan mode, tool mode, approvals, grants, and resume remain unavailable pending exact-build startup-containment qualification.'
+      ]
+    }
+  }
   if (provider === 'ollama') {
     // Ollama receives the same compact gateway profile as remote providers;
     // canonical targets still use the standard permission role and approvals.
@@ -577,11 +562,14 @@ function approvalContract(
     return {
       requestedMode,
       effectiveMode,
-      providerMode: requestedMode === 'plan' ? 'wire plan mode' : 'wire provider approvals',
+      providerMode:
+        requestedMode === 'plan'
+          ? 'ACP read-only with authenticated TaskWraith gateway'
+          : 'ACP governed authenticated TaskWraith gateway',
       inAppApprovals: true,
-      supportsWorkspaceGrants: false,
+      supportsWorkspaceGrants: true,
       notes: [
-        'Kimi Wire approval requests are routed through TaskWraith, but provider-native tool coverage depends on Kimi CLI events.'
+        'Managed Kimi turns deny native filesystem, shell, egress, and fan-out tools. Workspace actions use the authenticated per-run TaskWraith HTTP MCP gateway and its approval/workspace-grant policy.'
       ]
     }
   }
@@ -617,9 +605,16 @@ export function buildProviderCapabilityContract({
   const label = providerLabel(provider)
   const requestedMode = approvalMode || 'default'
   const effectiveMode =
-    provider === 'gemini' ? effectiveGeminiMode(requestedMode, services) : requestedMode
+    provider === 'gemini'
+      ? effectiveGeminiMode(requestedMode, services)
+      : provider === 'cursor'
+        ? 'unavailable'
+        : requestedMode
   const statusRecord = asRecord(status)
-  const setupRequired = Boolean(statusRecord.setupRequired)
+  const cursorSecurityUnavailable = provider === 'cursor'
+  const cursorSecurityUnavailableMessage =
+    'Cursor managed runs are disabled until an exact-build containment canary covers provider-managed account/team hooks, skills, plugins, and MCP startup sources.'
+  const setupRequired = Boolean(statusRecord.setupRequired) || cursorSecurityUnavailable
   const explicitlyUnavailable = statusRecord.available === false || setupRequired
 
   const availability = {
@@ -631,7 +626,11 @@ export function buildProviderCapabilityContract({
     version: typeof statusRecord.version === 'string' ? statusRecord.version : undefined,
     authState: typeof statusRecord.authState === 'string' ? statusRecord.authState : undefined,
     appServer: typeof statusRecord.appServer === 'string' ? statusRecord.appServer : undefined,
-    error: typeof statusRecord.error === 'string' ? statusRecord.error : undefined
+    error: cursorSecurityUnavailable
+      ? cursorSecurityUnavailableMessage
+      : typeof statusRecord.error === 'string'
+        ? statusRecord.error
+        : undefined
   }
 
   if (explicitlyUnavailable) {
@@ -800,6 +799,37 @@ export function buildProviderCapabilityContract({
         )
       )
     }
+  } else if (provider === 'cursor') {
+    const unqualifiedMessage = cursorSecurityUnavailableMessage
+    mcp = {
+      state: 'unavailable',
+      source: 'unsupported',
+      available: false,
+      enabled: false,
+      installed: false,
+      serverName: 'not connected',
+      tools: [],
+      message: unqualifiedMessage
+    }
+    shellCommands = unavailableCapability('shellCommands', 'taskwraith', unqualifiedMessage)
+    fileChanges = unavailableCapability('fileChanges', 'taskwraith', unqualifiedMessage)
+    externalPublish = unavailableCapability('externalPublish', 'taskwraith', unqualifiedMessage)
+    mcpTools = unavailableCapability('mcpTools', 'bridge', unqualifiedMessage)
+    elicit = elicitCapability('taskwraith', false, unqualifiedMessage)
+    delegate = delegateCapability(
+      'taskwraith',
+      services.subThreadDelegation,
+      false,
+      unqualifiedMessage
+    )
+    warnings.push(
+      warning(
+        'cursor-tool-mode-unqualified',
+        'warning',
+        'Cursor managed runs are temporarily unavailable',
+        `${unqualifiedMessage} TaskWraith will not start Cursor, including in plan mode.`
+      )
+    )
   } else if (provider === 'ollama') {
     // Ollama advertises the same compact gateway profile as remote providers;
     // hidden canonical tools remain reachable on demand through the gateway.
@@ -889,19 +919,15 @@ export function buildProviderCapabilityContract({
     mcp =
       provider === 'claude' || provider === 'kimi'
         ? cliTaskWraithMcpCapability(provider, mcpStatus)
-        : provider === 'cursor'
-          ? cursorMcpCapability({
-              enabledBySetting: Boolean(settings.geminiMcpBridgeEnabled),
-              requiredForRun: bridgeRequired
-            })
-          : provider === 'grok'
+        : provider === 'grok'
             ? grokMcpCapability({
                 enabledBySetting: Boolean(settings.geminiMcpBridgeEnabled),
                 requiredForRun: bridgeRequired
               })
             : providerManagedMcpCapability(provider)
     const taskWraithBridgeProvider =
-      (provider === 'cursor' || provider === 'grok') && mcp.available
+      (provider === 'kimi' || provider === 'grok') && mcp.available
+    const kimiGatewayUnavailable = provider === 'kimi' && !mcp.available
     shellCommands = taskWraithBridgeProvider
       ? serviceCapability(
           'shellCommands',
@@ -910,12 +936,18 @@ export function buildProviderCapabilityContract({
           ['run_shell_command', 'get_diagnostics'],
           `${label} should use the TaskWraith MCP bridge for host shell commands.`
         )
-      : delegatedCapability(
-          'shellCommands',
-          services.shellCommands,
-          provider === 'claude' ? ['provider_shell'] : ['provider_shell_or_wire_tool'],
-          `${label} shell command handling is delegated to the provider CLI.`
-        )
+      : kimiGatewayUnavailable
+        ? unavailableCapability(
+            'shellCommands',
+            'bridge',
+            `${label} managed runs fail closed until the mandatory authenticated per-run TaskWraith gateway is available.`
+          )
+        : delegatedCapability(
+            'shellCommands',
+            services.shellCommands,
+            provider === 'claude' ? ['provider_shell'] : ['provider_shell_or_native_tool'],
+            `${label} shell command handling is delegated to the provider CLI.`
+          )
     fileChanges = taskWraithBridgeProvider
       ? serviceCapability(
           'fileChanges',
@@ -932,12 +964,18 @@ export function buildProviderCapabilityContract({
           ],
           `${label} should use the TaskWraith MCP bridge for workspace file changes.`
         )
-      : delegatedCapability(
-          'fileChanges',
-          services.fileChanges,
-          provider === 'claude' ? ['provider_file_edit'] : ['provider_file_edit_or_wire_tool'],
-          `${label} file edit handling is delegated to the provider CLI.`
-        )
+      : kimiGatewayUnavailable
+        ? unavailableCapability(
+            'fileChanges',
+            'bridge',
+            `${label} native file tools are denied; file changes require the mandatory authenticated per-run TaskWraith gateway.`
+          )
+        : delegatedCapability(
+            'fileChanges',
+            services.fileChanges,
+            provider === 'claude' ? ['provider_file_edit'] : ['provider_file_edit_or_native_tool'],
+            `${label} file edit handling is delegated to the provider CLI.`
+          )
     externalPublish = taskWraithBridgeProvider
       ? serviceCapability(
           'externalPublish',
@@ -946,28 +984,40 @@ export function buildProviderCapabilityContract({
           ['git_push', 'git_create_pr'],
           `${label} should use the TaskWraith MCP bridge for external publishing.`
         )
-      : delegatedCapability(
-          'externalPublish',
-          services.externalPublish,
-          ['provider_git_or_release_tool'],
-          `${label} external publishing is delegated to the provider CLI but gated by TaskWraith when observable.`
-        )
+      : kimiGatewayUnavailable
+        ? unavailableCapability(
+            'externalPublish',
+            'bridge',
+            `${label} native publishing tools are denied; publishing requires the governed TaskWraith gateway.`
+          )
+        : delegatedCapability(
+            'externalPublish',
+            services.externalPublish,
+            ['provider_git_or_release_tool'],
+            `${label} external publishing is delegated to the provider CLI but gated by TaskWraith when observable.`
+          )
     mcpTools =
-      provider === 'claude' || provider === 'kimi' || taskWraithBridgeProvider
-        ? mcp.source === 'provider'
-          ? delegatedCapability(
+      kimiGatewayUnavailable
+        ? unavailableCapability(
+            'mcpTools',
+            'bridge',
+            'The mandatory authenticated per-run TaskWraith gateway is unavailable, so managed Kimi execution is not launched.'
+          )
+        : provider === 'claude' || provider === 'kimi' || taskWraithBridgeProvider
+          ? mcp.source === 'provider'
+            ? delegatedCapability(
+                'mcpTools',
+                services.mcpTools,
+                mcp.tools,
+                mcp.message || `${label} MCP servers are provider-managed.`
+              )
+            : serviceCapability('mcpTools', services.mcpTools, 'bridge', mcp.tools, mcp.message)
+          : delegatedCapability(
               'mcpTools',
               services.mcpTools,
               mcp.tools,
-              mcp.message || `${label} MCP servers are provider-managed.`
+              mcp.message || `${label} MCP status is unavailable.`
             )
-          : serviceCapability('mcpTools', services.mcpTools, 'bridge', mcp.tools, mcp.message)
-        : delegatedCapability(
-            'mcpTools',
-            services.mcpTools,
-            mcp.tools,
-            mcp.message || `${label} MCP status is unavailable.`
-          )
     const taskWraithMcpToolsAvailable =
       taskWraithBridgeProvider ||
       mcp.tools.includes('ask_user_question') ||

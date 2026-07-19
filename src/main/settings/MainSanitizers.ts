@@ -40,7 +40,11 @@ import { sanitizeRendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRen
 import type { RendererScheduledTaskLifecyclePatch } from '../ScheduledTaskRendererAuthority'
 import { sanitizeProviderRunPauses } from '../ProviderRunPause'
 import { normalizePromptCacheSettings } from '../PromptCachePolicy'
-import { coerceLiveProvider, isRetiredProvider } from '../../shared/retiredProviders'
+import {
+  coerceLiveProvider,
+  isLiveSelectableProvider,
+  LIVE_SELECTABLE_PROVIDER_IDS
+} from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
 import {
@@ -50,7 +54,9 @@ import {
   type StageScheduledAttachments
 } from '../ScheduledAttachmentDurability'
 
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Known provider ids include historical/temporarily unavailable providers so
+// persisted records remain decodable. New-run eligibility is narrower; see
+// `selectableProviderIds` and `assertLiveProviderId` below.
 const PROVIDER_IDS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -197,24 +203,24 @@ export function availableProviderIds(): ProviderId[] {
 
 /**
  * The subset of KNOWN providers that may be OFFERED or RUN — excludes retired
- * providers (e.g. gemini). Use this for pickers, MCP tool enums, run-command
+ * or security-unqualified providers. Use this for pickers, MCP tool enums, run-command
  * parsing, and "supported provider" error lists. `availableProviderIds()` stays
  * the full known set so decode/validation of historical data keeps working.
  */
 export function selectableProviderIds(): ProviderId[] {
-  return availableProviderIds().filter((provider) => !isRetiredProvider(provider))
+  return [...LIVE_SELECTABLE_PROVIDER_IDS]
 }
 
 /**
- * Like `assertProviderId`, but also rejects RETIRED providers. Use at run
- * DISPATCH so a retired/historical provider can never start a new run, while
+ * Like `assertProviderId`, but also rejects unavailable providers. Use at run
+ * DISPATCH so a historical/unqualified provider can never start a new run, while
  * read/validate paths keep `assertProviderId` (which still accepts it).
  */
 export function assertLiveProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
-  if (isRetiredProvider(provider)) {
+  if (!isLiveSelectableProvider(provider)) {
     throw new Error(
-      `${provider} has been retired and can no longer start runs. Chat history is preserved.`
+      `${provider} is unavailable for new runs. Choose ${selectableProviderIds().join(', ')}.`
     )
   }
   return provider
@@ -476,9 +482,8 @@ export function sanitizeAgenticNetworkPolicy(
 }
 
 const AUDIT_ROLES: readonly AuditRole[] = ['recon', 'reviewer', 'skeptic', 'synthesis']
-// Audit policy accepts ANY structural provider (incl. gated grok/cursor) —
-// the capability resolver excludes unconfigured/unavailable ones at runtime,
-// so storing a preference for a provider the user later enables is harmless.
+// Audit policy accepts any structural provider. This preserves historical
+// preferences only; it is not a signal that the provider is runnable.
 const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -840,7 +845,7 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       workspaceId: workspace.id,
       workspacePath,
       chatId: appChatId,
-      provider: assertProviderId(input.provider),
+      provider: assertLiveProviderId(input.provider),
       prompt,
       displayPrompt: optionalString(input.displayPrompt),
       selectedModelType: optionalString(input.selectedModelType) || 'default',

@@ -1,5 +1,5 @@
 import type { PermissionPresetId, ProviderId } from './store/types'
-import { isRetiredProvider } from '../shared/retiredProviders'
+import { isLiveSelectableProvider } from '../shared/retiredProviders'
 
 /**
  * Pure decision logic for an auto-failover reroute's permission posture and
@@ -106,7 +106,11 @@ export interface SelectFailoverTargetInput {
 export function selectFailoverTarget(input: SelectFailoverTargetInput): ProviderId | null {
   const live = new Set(input.liveProviders)
   const eligible = (p: ProviderId | null | undefined): p is ProviderId =>
-    !!p && p !== input.failedProvider && !isRetiredProvider(p) && live.has(p) && !input.isPaused(p)
+    !!p &&
+    p !== input.failedProvider &&
+    isLiveSelectableProvider(p) &&
+    live.has(p) &&
+    !input.isPaused(p)
   if (eligible(input.preferred)) return input.preferred
   for (const p of input.order && input.order.length ? input.order : input.liveProviders) {
     if (eligible(p)) return p

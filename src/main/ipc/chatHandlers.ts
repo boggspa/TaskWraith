@@ -17,6 +17,69 @@ export type SenderChatReadScope =
   | { kind: 'all' }
   | { kind: 'chat'; chatId: string; workspaceId?: string }
 
+interface ChatDeletionLifecycleDeps {
+  getChats: () => ChatRecord[]
+  deleteChat: (chatId: string) => void
+  beginChatHistoryMutation: (chatId: string) => void | Promise<void>
+  finishChatHistoryMutation: (chatId: string) => void
+  revokeApprovalsForChat: (chatId: string) => void
+  deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
+}
+
+function deletionCascadeIds(chats: ChatRecord[], rootChatId: string): string[] {
+  const ids = new Set<string>([rootChatId])
+  let changed = true
+  while (changed) {
+    changed = false
+    for (const chat of chats) {
+      if (chat.parentChatId && ids.has(chat.parentChatId) && !ids.has(chat.appChatId)) {
+        ids.add(chat.appChatId)
+        changed = true
+      }
+    }
+  }
+  return [...ids]
+}
+
+/**
+ * One deletion choke for renderer, remote-draft, and reaper paths. Every
+ * descendant is fenced synchronously before the first await, then receives the
+ * same approval/run and graph cleanup as the requested root.
+ */
+export async function deleteChatCascadeWithLifecycle(
+  deps: ChatDeletionLifecycleDeps,
+  rootChatId: string
+): Promise<string[]> {
+  const held: string[] = []
+  const prepared = new Set<string>()
+  try {
+    // Repeat defensively before commit. Relationship-creation callsites also
+    // reject a held parent, so a second pass should normally be empty.
+    while (true) {
+      const next = deletionCascadeIds(deps.getChats(), rootChatId).filter(
+        (chatId) => !prepared.has(chatId)
+      )
+      if (next.length === 0) break
+      const preparations: Promise<void>[] = []
+      for (const chatId of next) {
+        const preparation = deps.beginChatHistoryMutation(chatId)
+        held.push(chatId)
+        prepared.add(chatId)
+        preparations.push(Promise.resolve(preparation))
+      }
+      for (const chatId of next) deps.revokeApprovalsForChat(chatId)
+      // All holds and revocations above were raised synchronously before this
+      // first await; a pending modal cannot win while Canvas close stalls.
+      await Promise.all(preparations)
+      await Promise.all(next.map((chatId) => deps.deleteExecutionGraphHistoryForChat(chatId)))
+    }
+    deps.deleteChat(rootChatId)
+    return [...prepared]
+  } finally {
+    for (const chatId of held.reverse()) deps.finishChatHistoryMutation(chatId)
+  }
+}
+
 export interface ChatHandlerDeps {
   chatService: Pick<
     ChatService,
@@ -26,7 +89,11 @@ export interface ChatHandlerDeps {
     | 'getChat'
     | 'saveChat'
     | 'deleteChat'
+    | 'truncateChatHistory'
     | 'clearChats'
+    | 'prepareClearChats'
+    | 'commitClearChats'
+    | 'finishClearChats'
     | 'createChat'
     | 'createGlobalChat'
     | 'createEnsembleChat'
@@ -39,6 +106,18 @@ export interface ChatHandlerDeps {
   >
   /** Main-owned graph cleanup must settle live graph work before chat deletion. */
   deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
+  /** Revoke/claim provider approval authority synchronously before graph awaits. */
+  revokeApprovalsForChat: (chatId: string) => void
+  /** Fence new run/tool/approval admission for delete/truncate transaction. */
+  beginChatHistoryMutation: (chatId: string) => void | Promise<void>
+  /** Release the chat-scoped admission fence after commit/failure. */
+  finishChatHistoryMutation: (chatId: string) => void
+  /** Shared recursive lifecycle choke used by every chat-deletion path. */
+  deleteChatWithLifecycle: (chatId: string) => Promise<unknown>
+  /** Shared strict lifecycle choke used by every chat-truncation path. */
+  truncateChatWithLifecycle: (chatId: string) => Promise<ChatRecord | null>
+  /** Reject child/side-chat persistence while a parent/ancestor is mutating. */
+  assertParentChatCreationAllowed: (parentChatId: string) => void
   /** Global clear erases the entire graph repository; scoped clear erases that workspace. */
   clearExecutionGraphHistory: (workspaceId?: string) => Promise<void>
   getSettings: () => AppSettings
@@ -69,6 +148,7 @@ export interface ChatHandlerDeps {
    * authority for protecting an open empty chat from create-time cleanup.
    */
   getOpenChatPopoutIds: () => Set<string>
+  getOpenCanvasChatIds: () => Set<string>
   /**
    * Main may read the complete chat collection. A chat popout receives only
    * its main-owned chat/workspace identity; non-chat secondary renderers must
@@ -261,7 +341,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   )
   ipcMain.handle(
     'create-sub-thread',
-    (
+    async (
       event,
       args: {
         parentChatId: string
@@ -273,6 +353,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
     ) => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-sub-thread')
+      deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSubThread(args)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
@@ -298,6 +379,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       }
     ) => {
       deps.assertSenderChatScope(event, args.parentChatId, 'create-side-chat')
+      deps.assertParentChatCreationAllowed(args.parentChatId)
       const chat = deps.chatService.createSideChat(args)
       deps.broadcastThreadUpdate(chat?.appChatId)
       return chat
@@ -403,8 +485,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('delete-chat', (event, chatId: string) => {
     deps.assertSenderChatScope(event, chatId, 'delete-chat')
     return (async () => {
-      await deps.deleteExecutionGraphHistoryForChat(chatId)
-      deps.chatService.deleteChat(chatId)
+      await deps.deleteChatWithLifecycle(chatId)
       deps.broadcastThreadList()
     })()
   })
@@ -421,7 +502,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
    */
   ipcMain.handle(
     'reap-abandoned-chats',
-    (
+    async (
       event,
       renderer: { protectedChatIds?: string[]; draftChatIds?: string[]; keepChatId?: string } = {}
     ) => {
@@ -429,23 +510,29 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       try {
         const openChatPopoutIds = deps.getOpenChatPopoutIds()
         const effectiveRenderer =
-          openChatPopoutIds.size > 0
+          openChatPopoutIds.size > 0 || deps.getOpenCanvasChatIds().size > 0
             ? {
                 ...(renderer ?? {}),
                 protectedChatIds: Array.from(
-                  new Set([...(renderer?.protectedChatIds ?? []), ...openChatPopoutIds])
+                  new Set([
+                    ...(renderer?.protectedChatIds ?? []),
+                    ...openChatPopoutIds,
+                    ...deps.getOpenCanvasChatIds()
+                  ])
                 )
               }
             : renderer ?? {}
+        const candidates: string[] = []
         const reaped = deps.reapAbandonedChats(
           {
             getChats: () => deps.chatService.getChats(),
             getWorkflowChatIds: deps.getWorkflowChatIds,
             getScheduledChatIds: deps.getScheduledChatIds,
-            deleteChat: (id) => deps.chatService.deleteChat(id)
+            deleteChat: (id) => candidates.push(id)
           },
           effectiveRenderer
         )
+        await Promise.all(candidates.map((id) => deps.deleteChatWithLifecycle(id)))
         if (reaped.length > 0) deps.broadcastThreadList()
         return { ok: true, reaped }
       } catch (error) {
@@ -464,28 +551,19 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
   ipcMain.handle('truncate-chat', (event, chatId: string) => {
     deps.assertSenderChatScope(event, chatId, 'truncate-chat')
     return (async () => {
-      if (!deps.chatService.getChat(chatId)) return null
-      await deps.deleteExecutionGraphHistoryForChat(chatId)
-      const current = deps.chatService.getChat(chatId)
-      if (!current) return null
-      const truncated: ChatRecord = {
-        ...current,
-        messages: [],
-        runs: [],
-        updatedAt: Date.now()
+      const truncated = await deps.truncateChatWithLifecycle(chatId)
+      if (truncated) {
+        deps.broadcastChatUpdated(truncated)
+        deps.broadcastThreadUpdate(chatId)
       }
-      const saved = deps.chatService.saveChat(truncated)
-      deps.broadcastChatUpdated(saved)
-      deps.broadcastThreadUpdate(chatId)
-      return saved
+      return truncated
     })()
   })
 
   ipcMain.handle('clear-chats', (event, workspaceId?: string) => {
     deps.assertSenderCanManageChatCollection(event, 'clear-chats')
     return (async () => {
-      await deps.clearExecutionGraphHistory(workspaceId)
-      deps.chatService.clearChats(workspaceId)
+      await deps.chatService.clearChats(workspaceId)
       deps.broadcastThreadList()
     })()
   })

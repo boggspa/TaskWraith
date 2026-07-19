@@ -4,8 +4,8 @@
  * Used by:
  *   - `src/renderer/src/lib/mentionHighlight.ts` — composer overlay,
  *     transcript user-bubble, queued-row body tokenisation.
- *   - `src/renderer/src/lib/ComposerMentionTrigger.ts` — send-side
- *     `dmTargetParticipantId` resolution.
+ *   - `src/renderer/src/lib/ComposerMentionTrigger.ts` — advisory
+ *     send-side `dmTargetParticipantId` resolution.
  *   - `src/main/services/EnsembleOrchestrator.ts` — auto-promotion
  *     in `runRound` when one participant tags another mid-round.
  *
@@ -353,14 +353,12 @@ export interface ParticipantMentionMatch extends BaseMentionMatch {
    * after `excludeIds` (the speaker) has been filtered out. Empty /
    * undefined when the resolution was unambiguous.
    *
-   * Populated for 1.0.4 same-provider ensembles: when Kimi writes
-   * `@codex` and two Codex participants both claim the `codex` alias,
-   * the resolver still picks `eligible[0]` deterministically (ensemble
-   * order), but stashes the rest here so the orchestrator can (a)
-   * decide whether to re-pick based on round state (e.g. prefer a
-   * candidate still in `remaining`) and (b) emit a transcript
-   * disambiguation warning so the user sees that the routing choice
-   * was non-deterministic from the agent's perspective.
+   * Populated for same-provider ensembles: when Kimi writes `@codex`
+   * and two Codex participants both claim the `codex` alias, the
+   * match retains `eligible[0]` only as a representative and exposes
+   * every other candidate here. Routing callers must treat that full
+   * set as ambiguous: the in-round orchestrator warns and makes no
+   * promotion, while new-round dispatch rejects before launch.
    */
   ambiguousAmong?: EnsembleParticipant[]
 }
@@ -467,28 +465,201 @@ export function findAllMentions(
 }
 
 /**
- * The single DM target for a steer/send: the participant id when `text`
- * @-tags EXACTLY ONE participant, else null (0 or 2+ tags = a panel round,
- * not a DM). Mirrors the renderer's `extractFirstEnsembleDmTarget` participant
- * branch so the bridge steer path scopes the round identically — this is what
- * narrows the "Participants reachable" card to the tagged participant (iOS
- * parity: the phone sends raw "@Role …" text and the Mac resolves it here).
+ * Resolve the authoritative DM routing state for a round dispatch.
+ *
+ * Resolution order:
+ *   1. A structured `ensemble-dm://<participant-id>` composer link. The link
+ *      preserves an exact picker selection even when multiple seats share a
+ *      role, provider, or model alias.
+ *   2. Plain `@alias` tokens resolved against MAIN's current enabled roster.
+ *
+ * The result is deliberately typed instead of nullable: an ambiguous alias is
+ * a rejected routing request, while no mention and an intentional multi-target
+ * prompt are valid panel rounds. A renderer-supplied `dmTargetParticipantId`
+ * cannot override any prompt routing signal; MAIN accepts it only for a prompt
+ * with no participant signal and only after validating a current, enabled,
+ * foreground seat. Picker/retry gestures can instead place an exact structured
+ * link in the prompt, which MAIN also validates against the current roster.
+ */
+export type EnsembleDmTargetResolution =
+  | {
+      kind: 'target'
+      participantId: string
+      source: 'structured' | 'plain' | 'advisory'
+    }
+  | {
+      kind: 'ambiguous'
+      mentions: Array<{
+        text: string
+        participantIds: string[]
+      }>
+    }
+  | {
+      kind: 'invalid-structured-target'
+      participantId: string
+      reason: 'missing' | 'disabled'
+    }
+  | {
+      kind: 'invalid-advisory-target'
+      participantId: string
+      reason: 'missing' | 'disabled' | 'background'
+    }
+  | { kind: 'multiple' }
+  | { kind: 'background' }
+  | { kind: 'none' }
+
+export function resolveEnsembleDmTargetForDispatch(input: {
+  text: string
+  participants: EnsembleParticipant[]
+  advisoryParticipantId?: string
+}): EnsembleDmTargetResolution {
+  const structuredTargets = Array.from(
+    input.text.matchAll(/\]\(ensemble-dm:\/\/([^)\s]+)\)/g)
+  )
+    .map((match) => match[1])
+    .filter(Boolean)
+  const uniqueStructuredTargets = [...new Set(structuredTargets)]
+  if (uniqueStructuredTargets.length > 1) return { kind: 'multiple' }
+  if (uniqueStructuredTargets.length === 1) {
+    const participant = input.participants.find(
+      (candidate) => candidate.id === uniqueStructuredTargets[0]
+    )
+    if (!participant) {
+      return {
+        kind: 'invalid-structured-target',
+        participantId: uniqueStructuredTargets[0],
+        reason: 'missing'
+      }
+    }
+    if (participant.enabled === false) {
+      return {
+        kind: 'invalid-structured-target',
+        participantId: participant.id,
+        reason: 'disabled'
+      }
+    }
+    if (participant.stageRole === 'background') return { kind: 'background' }
+    return {
+      kind: 'target',
+      participantId: participant.id,
+      source: 'structured'
+    }
+  }
+
+  // Plain aliases address the active panel only. Disabled seats must never win
+  // either a text alias or a stale structured picker link merely by appearing
+  // in the persisted roster.
+  const participantMentions = findAllMentions(
+    input.text,
+    input.participants.filter((participant) => participant.enabled !== false)
+  ).filter(isParticipantMention)
+  const ambiguousMentions = participantMentions.filter((match) => match.ambiguousAmong?.length)
+  if (ambiguousMentions.length > 0) {
+    return {
+      kind: 'ambiguous',
+      mentions: ambiguousMentions.map((match) => ({
+        text: match.text,
+        participantIds: [
+          match.participant.id,
+          ...(match.ambiguousAmong || []).map((participant) => participant.id)
+        ]
+      }))
+    }
+  }
+  // BG is an allocation signal, not a request to collapse the whole panel
+  // into a single-seat DM. Main routes it to a detached lane while foreground
+  // participants retain their normal round.
+  if (participantMentions.some((match) => match.participant.stageRole === 'background')) {
+    return { kind: 'background' }
+  }
+  const ids = [...new Set(participantMentions.map((match) => match.participant.id))]
+  if (ids.length > 1) return { kind: 'multiple' }
+  if (ids.length === 1) {
+    return { kind: 'target', participantId: ids[0], source: 'plain' }
+  }
+
+  // A no-signal advisory preserves explicit Cmd/Ctrl selected-chip sends. It
+  // is never consulted when the prompt contains a unique, multi-target, or
+  // ambiguous participant signal, and MAIN validates the exact current seat
+  // before accepting it.
+  const advisoryParticipantId = input.advisoryParticipantId?.trim()
+  if (advisoryParticipantId) {
+    const participant = input.participants.find(
+      (candidate) => candidate.id === advisoryParticipantId
+    )
+    if (!participant) {
+      return {
+        kind: 'invalid-advisory-target',
+        participantId: advisoryParticipantId,
+        reason: 'missing'
+      }
+    }
+    if (participant.enabled === false) {
+      return {
+        kind: 'invalid-advisory-target',
+        participantId: advisoryParticipantId,
+        reason: 'disabled'
+      }
+    }
+    if (participant.stageRole === 'background') {
+      return {
+        kind: 'invalid-advisory-target',
+        participantId: advisoryParticipantId,
+        reason: 'background'
+      }
+    }
+    return {
+      kind: 'target',
+      participantId: participant.id,
+      source: 'advisory'
+    }
+  }
+  return { kind: 'none' }
+}
+
+export function ensembleDmTargetResolutionError(
+  resolution: EnsembleDmTargetResolution,
+  participants: EnsembleParticipant[]
+): string | null {
+  if (resolution.kind === 'invalid-structured-target') {
+    return `Directed Ensemble target "${resolution.participantId}" is ${
+      resolution.reason === 'missing' ? 'no longer in the roster' : 'disabled'
+    }.`
+  }
+  if (resolution.kind === 'invalid-advisory-target') {
+    return `Directed Ensemble target "${resolution.participantId}" is ${
+      resolution.reason === 'missing'
+        ? 'no longer in the roster'
+        : resolution.reason === 'disabled'
+          ? 'disabled'
+          : 'a background-only seat'
+    }.`
+  }
+  if (resolution.kind !== 'ambiguous') return null
+  const details = resolution.mentions.map((mention) => {
+    const candidates = mention.participantIds.map((participantId) => {
+      const participant = participants.find((candidate) => candidate.id === participantId)
+      if (!participant) return participantId
+      const role = participant.role?.trim() || participant.provider
+      const model = participant.model?.trim()
+      return model ? `${role} (${model})` : role
+    })
+    return `@${mention.text} matches ${candidates.join(', ')}`
+  })
+  return `Ambiguous Ensemble mention: ${details.join('; ')}. Use the participant picker or a unique role/model alias.`
+}
+
+/**
+ * Plain/structured prompt-only convenience used by remote steer and legacy
+ * callers. Desktop IPC uses `resolveEnsembleDmTargetForDispatch` directly so
+ * it can pass the renderer's advisory id without making it authoritative.
  */
 export function resolveSingleEnsembleDmTarget(
   text: string,
   participants: EnsembleParticipant[]
 ): string | null {
-  const participantMentions = findAllMentions(text, participants)
-    .filter(isParticipantMention)
-    .filter((match) => !match.ambiguousAmong || match.ambiguousAmong.length === 0)
-  // BG is an allocation signal, not a request to collapse the whole panel
-  // into a single-seat DM. Main routes it to a detached lane while foreground
-  // participants retain their normal round.
-  if (participantMentions.some((match) => match.participant.stageRole === 'background')) {
-    return null
-  }
-  const ids = [...new Set(participantMentions.map((match) => match.participant.id))]
-  return ids.length === 1 ? ids[0] : null
+  const resolution = resolveEnsembleDmTargetForDispatch({ text, participants })
+  return resolution.kind === 'target' ? resolution.participantId : null
 }
 
 /**

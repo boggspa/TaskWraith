@@ -1,22 +1,16 @@
-import { promises as fsp } from 'fs'
 import type { AppSettings, ProviderId } from './store/types'
 import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
-import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
 
-/** True when a Kimi OAuth credential is present (Kimi Code home first, legacy
- *  fallback) — i.e. the user is signed in via `kimi login` even without an API
- *  key or an explicit binary path in settings. */
-async function kimiOAuthCredentialPresent(): Promise<boolean> {
-  for (const path of kimiCredentialCandidatePaths()) {
-    try {
-      await fsp.access(path)
-      return true
-    } catch {
-      // Try the next candidate.
-    }
-  }
-  return false
+export interface DetectConfiguredProvidersDependencies {
+  /** Authoritative managed-run snapshot. Omit to exclude Kimi fail-closed. */
+  getKimiManagedStatus?: () => Promise<{ available: boolean; authState?: string }>
+  resolveProviderBinary?: (
+    provider: ProviderId
+  ) => Promise<{ binaryPath: string | null | undefined }>
+  getOllamaStatus?: (
+    settings: AppSettings
+  ) => Promise<{ available: boolean; modelCount: number }>
 }
 
 /**
@@ -24,54 +18,57 @@ async function kimiOAuthCredentialPresent(): Promise<boolean> {
  * used to seed a new ensemble's default roster with only usable providers
  * instead of all six.
  *
- *  - claude / codex / gemini / kimi: gated by their auth field in settings
- *    (API key, CLI binary path, OAuth profile, or imported credential).
- *  - grok / cursor: no settings auth (they're CLI-based), so we probe the CLI
- *    the SAME way the runner resolves it — `resolveCliProviderBinary` checks the
- *    runtime profile, `~/.grok/bin` / `~/.local/bin`, common install dirs, and
- *    PATH. A non-null binary path means it's present and runnable.
+ *  - claude / codex / gemini: gated by their auth field in settings.
+ *  - kimi: included only when the exact runtime is admitted AND its admitted
+ *    snapshot reports OAuth or provider-key authentication. Raw key,
+ *    credential, or binary presence is never managed-run readiness.
+ *  - grok: no settings auth, so we probe the CLI the same way the runner
+ *    resolves it. Cursor is deliberately excluded: binary presence is not a
+ *    containment qualification and managed Cursor runs are disabled.
  *
- * Async because the grok/cursor probe stats the filesystem; callers pre-compute
+ * Async because the Grok probe stats the filesystem; callers pre-compute
  * the set and pass it into the (synchronous) ensemble-creation path.
  */
-export async function detectConfiguredProviders(settings: AppSettings): Promise<Set<ProviderId>> {
+export async function detectConfiguredProviders(
+  settings: AppSettings,
+  dependencies: DetectConfiguredProvidersDependencies = {}
+): Promise<Set<ProviderId>> {
   const configured = new Set<ProviderId>()
+  const resolveProviderBinary = dependencies.resolveProviderBinary ?? resolveCliProviderBinary
+  const getOllamaStatus = dependencies.getOllamaStatus ?? getOllamaStatusSnapshot
 
   if (settings.claudeApiKey || settings.claudeBinaryPath) configured.add('claude')
   if (settings.codexUsageCredential?.encryptedAccessToken) configured.add('codex')
   if ((settings.geminiAuthProfiles?.length ?? 0) > 0 || settings.defaultGeminiAuthProfileId) {
     configured.add('gemini')
   }
-  // kimi: an API key or explicit binary path, OR an OAuth-signed-in Kimi Code
-  // install — the binary auto-resolves (~/.kimi-code/bin) and a credential file
-  // exists, with neither field set in settings (dossier slice 3 OAuth-aware arm).
-  if (settings.kimiApiKey || settings.kimiBinaryPath) {
-    configured.add('kimi')
-  } else {
+  if (dependencies.getKimiManagedStatus) {
     try {
-      const resolvedKimi = await resolveCliProviderBinary('kimi')
-      if (resolvedKimi.binaryPath && (await kimiOAuthCredentialPresent())) configured.add('kimi')
+      const status = await dependencies.getKimiManagedStatus()
+      const authState = String(status.authState || '').trim().toLowerCase()
+      if (
+        status.available === true &&
+        ['oauth', 'api-key', 'authenticated'].includes(authState)
+      ) {
+        configured.add('kimi')
+      }
     } catch {
-      // Unresolved binary / probe error → treat as not configured.
+      // Admission/status failure → exclude Kimi fail-closed.
     }
   }
   try {
-    const ollamaStatus = await getOllamaStatusSnapshot(settings)
+    const ollamaStatus = await getOllamaStatus(settings)
     if (ollamaStatus.available && ollamaStatus.modelCount > 0) configured.add('ollama')
   } catch {
     // Unreachable local service -> not configured.
   }
 
-  await Promise.all(
-    (['grok', 'cursor'] as const).map(async (provider) => {
-      try {
-        const resolved = await resolveCliProviderBinary(provider)
-        if (resolved.binaryPath) configured.add(provider)
-      } catch {
-        // Unresolved / probe error → treat as not configured.
-      }
-    })
-  )
+  try {
+    const resolved = await resolveProviderBinary('grok')
+    if (resolved.binaryPath) configured.add('grok')
+  } catch {
+    // Unresolved / probe error → treat as not configured.
+  }
 
   return configured
 }

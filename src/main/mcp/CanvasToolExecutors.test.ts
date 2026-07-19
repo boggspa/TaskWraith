@@ -5,6 +5,8 @@ import {
   isCanvasMcpToolName
 } from './CanvasToolExecutors'
 import type { CanvasController, CanvasSketchDocument } from '../canvas/canvasTypes'
+import { CANVAS_EVAL_SCRIPT_CAP } from '../canvas/canvasTypes'
+import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
 import type { LaunchAttempt } from '../launch/types'
 
 function fakeController(over: Partial<CanvasController> = {}): CanvasController {
@@ -603,10 +605,11 @@ describe('executeCanvasTool', () => {
 
   it('canvas_eval rejects an oversized script before it reaches the page', async () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller: fakeController() })
-    const huge = 'a'.repeat(100001)
+    const huge = 'a'.repeat(CANVAS_EVAL_SCRIPT_CAP + 1)
     const r = await executeCanvasTool('canvas_eval', { canvasId: 'c1', script: huge }, ctx, 'claude')
     expect(r.isError).toBe(true)
     expect(r.text).toContain('too large')
+    expect(r.text).toContain(`max ${CANVAS_EVAL_SCRIPT_CAP} chars`)
   })
 
   it('canvas_eval runs the script and returns its result', async () => {
@@ -614,7 +617,10 @@ describe('executeCanvasTool', () => {
     const r = await executeCanvasTool(
       'canvas_eval',
       { canvasId: 'c1', script: '1 + 1' },
-      ctx,
+      {
+        ...ctx,
+        canvasEvalApproval: createCanvasEvalApprovalReceipt('1 + 1', 'approval-1')
+      },
       'claude'
     )
     expect(r.isError).toBeFalsy()
@@ -622,7 +628,43 @@ describe('executeCanvasTool', () => {
     expect(r.structuredContent?.value).toBe('evaluated:1 + 1')
   })
 
-  it('surfaces controller errors as isError', async () => {
+  it('canvas_eval fails closed without a per-call approval receipt', async () => {
+    const controller = fakeController()
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const r = await executeCanvasTool(
+      'canvas_eval',
+      { canvasId: 'c1', script: '1 + 1' },
+      ctx,
+      'claude'
+    )
+    expect(r.isError).toBe(true)
+    expect(r.text).toContain('bound per-call approval receipt')
+  })
+
+  it('classifies a host-side canvas_eval failure without returning raw error text', async () => {
+    const script = '1 + 1'
+    const controller = fakeController({
+      evaluate: async () => {
+        throw new Error('E'.repeat(20_000))
+      }
+    })
+    const { executeCanvasTool } = createCanvasToolExecutors({ controller })
+    const r = await executeCanvasTool(
+      'canvas_eval',
+      { canvasId: 'c1', script },
+      {
+        ...ctx,
+        canvasEvalApproval: createCanvasEvalApprovalReceipt(script, 'approval-error-cap')
+      },
+      'claude'
+    )
+
+    expect(r.isError).toBe(true)
+    expect(r.structuredContent?.error).toBe('Canvas operation failed (operation_failed).')
+    expect(r.text).not.toContain('x'.repeat(100))
+  })
+
+  it('surfaces controller errors as classified isError results', async () => {
     const controller = fakeController({
       snapshot: async () => {
         throw new Error('kaboom')
@@ -631,7 +673,8 @@ describe('executeCanvasTool', () => {
     const { executeCanvasTool } = createCanvasToolExecutors({ controller })
     const result = await executeCanvasTool('canvas_snapshot', { canvasId: 'c1' }, ctx, 'claude')
     expect(result.isError).toBe(true)
-    expect(result.text).toContain('kaboom')
+    expect(result.text).toContain('Canvas operation failed (operation_failed).')
+    expect(result.text).not.toContain('kaboom')
   })
 
   it('threads provider/chat/run context to the controller', async () => {

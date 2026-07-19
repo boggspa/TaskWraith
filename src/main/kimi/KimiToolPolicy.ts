@@ -1,16 +1,14 @@
-// Per-tool approval policy for a Kimi Code ACP seat, matching the stdio
-// providers' model: read-only / safe tools auto-allow (no prompt), mutating
-// tools are gated by the approval ledger on a write-capable seat and denied on
-// a read-only / plan seat.
-//
-// Kimi's built-in Read/Grep/Glob already route through the ACP client fs
-// handlers without a permission ask; this classifier governs the tools that DO
-// emit session/request_permission — Bash, Write/Edit, and MCP tools. Before
-// this, every such tool was gated coarsely (a prompt even for a read-only
-// capability_search), which is noisier than the other providers.
+// Defense-in-depth permission policy for a contained Kimi Code ACP seat.
+// Production statically denies every native fs/exec/egress/fan-out tool; this
+// classifier repeats that exact wall if a provider build asks anyway. Only
+// sanctioned read-only TaskWraith MCP tools auto-allow. Other broker requests
+// are gated on write-capable seats and denied on read-only seats.
 
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
+import { KIMI_ACP_DENY_TOOLS } from './KimiAcpContainment'
+
+const KIMI_NATIVE_DENY_NAMES = new Set(KIMI_ACP_DENY_TOOLS.map((name) => name.toLowerCase()))
 
 /**
  * Strip the `mcp__<server>__` namespace Kimi puts on MCP tools (the standard
@@ -61,8 +59,21 @@ export interface KimiToolPolicyOptions {
   writeCapable: boolean
   /** True for a read-only / safe TaskWraith MCP tool (or capability gateway). */
   isSafeMcpTool: (request: KimiToolPolicyRequest) => boolean
-  /** True for a provably read-only shell command (ls, cat, rg, git status…). */
+  /** @deprecated Native shell is denied in production; retained for callers compiled against v1. */
   isReadOnlyShell: (request: KimiToolPolicyRequest) => boolean
+}
+
+/** True only for an exact native tool name in the production deny wall. */
+export function isKimiDeniedNativeTool(request: KimiToolPolicyRequest): boolean {
+  const raw = request.rawToolCall as
+    | { rawInput?: { tool_name?: unknown; name?: unknown } }
+    | undefined
+  return [request.toolName, raw?.rawInput?.tool_name, raw?.rawInput?.name].some(
+    (candidate) =>
+      typeof candidate === 'string' &&
+      !candidate.startsWith('mcp__') &&
+      KIMI_NATIVE_DENY_NAMES.has(candidate.toLowerCase())
+  )
 }
 
 /**
@@ -79,9 +90,7 @@ export function classifyKimiToolPermission(
   request: KimiToolPolicyRequest,
   options: KimiToolPolicyOptions
 ): KimiToolDecision {
+  if (isKimiDeniedNativeTool(request)) return 'deny'
   if (options.isSafeMcpTool(request)) return 'allow'
-  if (options.isReadOnlyShell(request)) return 'allow'
-  const kind = (request.toolKind || '').toLowerCase()
-  if (kind === 'read' || kind === 'search') return 'allow'
   return options.writeCapable ? 'gate' : 'deny'
 }

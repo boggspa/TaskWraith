@@ -81,16 +81,73 @@ describe('provider dispatch integration', () => {
     expect(budgetGuard).not.toContain('workflowBudgetRegistry.onExit(')
   })
 
-  it('keeps global Kimi ACP sessions out of HOME project-local MCP discovery', () => {
+  it('uses the private fs-free mandatory-gateway production composition for Kimi ACP', () => {
     const kimiAcpProvider = sourceBetween(
       'async function runKimiAcpProvider(',
       'async function runKimiProvider('
     )
 
-    expect(kimiAcpProvider).toContain(
-      "payload.scope === 'global' ? globalKimiCwd() : payload.workspace || os.homedir()"
+    expect(kimiAcpProvider).toContain('prepareKimiPrivateRunCwd')
+    expect(kimiAcpProvider).toContain('launchKimiProductionAcp')
+    expect(kimiAcpProvider).toContain('assertRuntimeReadyForSpawn')
+    expect(kimiAcpProvider).toContain('buildKimiContainedProcessEnv')
+    expect(kimiAcpProvider).toContain('formatKimiProductionAcpDebugFrame')
+    expect(kimiAcpProvider).toContain('finalizeKimiRunAfterCleanup')
+    expect(kimiAcpProvider).toContain('const registeredSession = registerRunSession(')
+    expect(kimiAcpProvider).toContain('if (!registeredSession)')
+    expect(kimiAcpProvider.indexOf('if (!registeredSession)')).toBeLessThan(
+      kimiAcpProvider.indexOf('launchKimiProductionAcp')
     )
-    expect(kimiAcpProvider).toContain('cwd: kimiCwd')
-    expect(kimiAcpProvider).not.toContain('cwd: payload.workspace || os.homedir()')
+    expect(kimiAcpProvider).toContain('cwd: production.cwd')
+    expect(kimiAcpProvider).toContain('initializeParams: production.initializeParams')
+    expect(kimiAcpProvider).toContain('mcpServers: production.mcpServers')
+    expect(kimiAcpProvider).not.toContain('cwd: payload.workspace')
+    expect(kimiAcpProvider).not.toContain('fsRoots')
+    expect(kimiAcpProvider).not.toContain('continuing with Kimi\'s built-in tools only')
+  })
+
+  it('keeps host-summary subprocess compaction structurally Grok-only', () => {
+    const hostSummary = sourceBetween(
+      'async function runHostSeatSummaryProcess(',
+      'function persistHostSeatCompactionCheckpoint('
+    )
+    const cliCompaction = sourceBetween(
+      'async function compactCliSeatContext(',
+      '/**\n * Unified entry for the `compact-provider-context` IPC.'
+    )
+
+    expect(hostSummary).toContain("provider: 'grok'")
+    expect(hostSummary).not.toContain("provider: 'kimi'")
+    expect(hostSummary).not.toContain('Kimi')
+    expect(hostSummary).not.toContain('writeKimi')
+    expect(cliCompaction).toContain("provider: 'grok'")
+    expect(cliCompaction).not.toContain("provider: 'kimi'")
+  })
+
+  it('admits Kimi runtime before ensemble preflight reports the seat reachable', () => {
+    const preflight = sourceBetween(
+      'async function probeCliParticipant(',
+      'function registerRunSession('
+    )
+
+    expect(preflight).toContain("participant.provider === 'kimi'")
+    expect(preflight).toContain('admitKimiRuntime({')
+    expect(preflight).toContain('isPackaged: app.isPackaged')
+    expect(preflight.indexOf('admitKimiRuntime({')).toBeLessThan(
+      preflight.indexOf('? { reachable: true }')
+    )
+  })
+
+  it('uses admitted runtime and OAuth-aware status when selecting Kimi for audit roles', () => {
+    const auditSignals = sourceBetween(
+      'const resolveAuditProviderSignals = async',
+      'auditOrchestratorRef = new AuditOrchestrator'
+    )
+
+    expect(auditSignals).toContain("if (provider === 'kimi')")
+    expect(auditSignals).toContain('await getKimiAdmittedStatusSnapshot()')
+    expect(auditSignals).toContain('configured = status.available === true')
+    expect(auditSignals).toContain("['api-key', 'oauth', 'authenticated'].includes(kimiAuthState)")
+    expect(auditSignals).not.toContain('authenticated = Boolean(settings.kimiApiKey)')
   })
 })

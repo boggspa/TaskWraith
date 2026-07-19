@@ -38,6 +38,7 @@ import type {
   CanvasSketchUpdateInput,
   CanvasViewport
 } from './canvasTypes'
+import { assertCanvasEvalApprovalReceipt } from './CanvasEvalAudit'
 import {
   isValidBundleId,
   redactUrlQuery,
@@ -75,6 +76,27 @@ interface LiveSession {
   record: CanvasSessionRecord
   interactions: number
   evals: number
+  generation: number
+}
+
+interface PendingOpen {
+  driver: CanvasDriver
+  record: CanvasSessionRecord
+  ctx: CanvasCallContext
+  generation: number
+  settled: Promise<void>
+  markSettled: () => void
+}
+
+interface ClosingSession {
+  session: LiveSession
+  ctx: CanvasCallContext
+  closePromise: Promise<void>
+}
+
+export interface CanvasHistoryAuthority {
+  chatIds?: Iterable<string>
+  workspacePaths?: Iterable<string>
 }
 
 const SUPPORTED_DRIVERS: ReadonlySet<CanvasDriverKind> = new Set([
@@ -104,10 +126,180 @@ function toSummary(record: CanvasSessionRecord): CanvasSessionSummary {
   }
 }
 
+function canvasOpenAuditError(error: unknown): { code: string; message: string } {
+  const raw = error instanceof Error ? error.message : String(error)
+  const lower = raw.toLowerCase()
+  const code = lower.includes('timed out')
+    ? 'navigation_timeout'
+    : lower.includes('dns') || lower.includes('private') || lower.includes('ssrf')
+      ? 'network_policy_rejected'
+      : lower.includes('navigation failed') || lower.includes('load')
+        ? 'navigation_failed'
+        : 'open_failed'
+  return { code, message: `Canvas open failed (${code}).` }
+}
+
+function canvasTargetAudit(args: { ref?: string; selector?: string }): Record<string, unknown> {
+  const digest = (value: string): string =>
+    createHash('sha256').update(value, 'utf8').digest('hex')
+  return {
+    targetKind: args.ref ? 'ref' : args.selector ? 'selector' : 'none',
+    ...(args.ref ? { targetHash: digest(args.ref) } : {}),
+    ...(!args.ref && args.selector ? { targetHash: digest(args.selector) } : {})
+  }
+}
+
 export class CanvasService implements CanvasController {
   private readonly sessions = new Map<string, LiveSession>()
+  private readonly pendingOpens = new Map<string, PendingOpen>()
+  private readonly closingSessions = new Map<string, ClosingSession>()
+  private readonly failedCloses = new Map<
+    string,
+    { session: LiveSession; ctx: CanvasCallContext }
+  >()
+  private readonly canvasGenerations = new Map<string, number>()
+  private generation = 0
+  private purging = false
+  private purgeInFlight: Promise<void> | null = null
+  private historyClearHolds = 0
+  private readonly chatHistoryClearHolds = new Map<string, number>()
+  private readonly workspaceHistoryClearHolds = new Map<string, number>()
+  private readonly chatHistoryRevisions = new Map<string, number>()
+  private readonly workspaceHistoryRevisions = new Map<string, number>()
+  private historyStoreMutationQueue: Promise<void> = Promise.resolve()
+  private readonly scopedClearOperations = new Set<Promise<void>>()
 
   constructor(private readonly deps: CanvasServiceDeps) {}
+
+  private enqueueHistoryStoreMutation(task: () => void | Promise<void>): Promise<void> {
+    const result = this.historyStoreMutationQueue.then(task, task)
+    this.historyStoreMutationQueue = result.then(
+      () => undefined,
+      () => undefined
+    )
+    return result
+  }
+
+  private normalizedAuthority(input: CanvasHistoryAuthority): {
+    chatIds: Set<string>
+    workspacePaths: Set<string>
+  } {
+    return {
+      chatIds: new Set([...(input.chatIds ?? [])].map((value) => value.trim()).filter(Boolean)),
+      workspacePaths: new Set(
+        [...(input.workspacePaths ?? [])].map((value) => value.trim()).filter(Boolean)
+      )
+    }
+  }
+
+  private contextHistoryBlocked(ctx: CanvasCallContext): boolean {
+    return Boolean(
+      this.purging ||
+        (ctx.chatId && (this.chatHistoryClearHolds.get(ctx.chatId) ?? 0) > 0) ||
+        (ctx.workspacePath &&
+          (this.workspaceHistoryClearHolds.get(ctx.workspacePath) ?? 0) > 0)
+    )
+  }
+
+  private captureHistoryRevision(ctx: CanvasCallContext): {
+    chat: number
+    workspace: number
+  } {
+    return {
+      chat: ctx.chatId ? (this.chatHistoryRevisions.get(ctx.chatId) ?? 0) : 0,
+      workspace: ctx.workspacePath
+        ? (this.workspaceHistoryRevisions.get(ctx.workspacePath) ?? 0)
+        : 0
+    }
+  }
+
+  private historyRevisionChanged(
+    ctx: CanvasCallContext,
+    captured: { chat: number; workspace: number }
+  ): boolean {
+    return Boolean(
+      (ctx.chatId && (this.chatHistoryRevisions.get(ctx.chatId) ?? 0) !== captured.chat) ||
+        (ctx.workspacePath &&
+          (this.workspaceHistoryRevisions.get(ctx.workspacePath) ?? 0) !== captured.workspace)
+    )
+  }
+
+  private recordMatchesAuthority(
+    record: CanvasSessionRecord,
+    authority: { chatIds: Set<string>; workspacePaths: Set<string> }
+  ): boolean {
+    return Boolean(
+      (record.chatId && authority.chatIds.has(record.chatId)) ||
+        (record.workspacePath && authority.workspacePaths.has(record.workspacePath))
+    )
+  }
+
+  private assertLiveAfterAwait(
+    canvasId: string,
+    session: LiveSession,
+    ctx: CanvasCallContext,
+    operation: string
+  ): void {
+    if (
+      this.contextHistoryBlocked(ctx) ||
+      session.generation !== this.generation ||
+      this.canvasGenerations.get(canvasId) !== session.generation ||
+      this.sessions.get(canvasId) !== session
+    ) {
+      throw new Error(`Canvas ${operation} was cancelled because history was cleared.`)
+    }
+  }
+
+  private async settleAndClosePendingOpen(
+    canvasId: string,
+    open: PendingOpen,
+    reason: string
+  ): Promise<void> {
+    try {
+      await open.driver.close()
+    } catch (error) {
+      this.deps.logger?.warn?.(
+        `canvas: initial pending driver close failed ${reason} for ${canvasId}: ${String(error)}`
+      )
+    }
+    // This await is unconditional: a driver that cannot abort its underlying
+    // platform open may acquire a resource after the first close returns.
+    await open.settled
+    try {
+      await open.driver.close()
+    } catch (error) {
+      this.deps.logger?.warn?.(
+        `canvas: final pending driver close failed ${reason} for ${canvasId}: ${String(error)}`
+      )
+      throw new Error(`Canvas pending resource could not be closed ${reason}.`)
+    }
+  }
+
+  private async retryFailedClose(
+    canvasId: string,
+    entry: { session: LiveSession; ctx: CanvasCallContext }
+  ): Promise<void> {
+    await entry.session.driver.close()
+    if (this.failedCloses.get(canvasId) === entry) {
+      this.failedCloses.delete(canvasId)
+      if (this.canvasGenerations.get(canvasId) === entry.session.generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+    }
+  }
+
+  private async closeRetiredSession(
+    canvasId: string,
+    session: LiveSession,
+    ctx: CanvasCallContext
+  ): Promise<void> {
+    try {
+      await session.driver.close()
+    } catch (error) {
+      this.failedCloses.set(canvasId, { session, ctx })
+      throw error
+    }
+  }
 
   private emit(
     canvasId: string,
@@ -115,6 +307,7 @@ export class CanvasService implements CanvasController {
     ctx: CanvasCallContext,
     detail?: Record<string, unknown>
   ): void {
+    if (this.canvasGenerations.get(canvasId) !== this.generation) return
     const event: CanvasEventRecord = {
       schemaVersion: 1,
       id: this.deps.uuid(),
@@ -122,7 +315,9 @@ export class CanvasService implements CanvasController {
       kind,
       provider: ctx.provider,
       chatId: ctx.chatId,
+      workspacePath: ctx.workspacePath,
       runId: ctx.runId,
+      approvalId: ctx.canvasEvalApproval?.approvalId,
       detail,
       createdAt: this.deps.now()
     }
@@ -139,6 +334,40 @@ export class CanvasService implements CanvasController {
   }
 
   /**
+   * Signed-elevated audit write. Unlike ordinary canvas telemetry this must
+   * propagate persistence failures so execution can fail closed.
+   */
+  private emitStrict(
+    canvasId: string,
+    kind: CanvasEventKind,
+    ctx: CanvasCallContext,
+    detail?: Record<string, unknown>
+  ): void {
+    if (this.canvasGenerations.get(canvasId) !== this.generation) {
+      throw new Error('Canvas operation belongs to an expired history generation.')
+    }
+    const event: CanvasEventRecord = {
+      schemaVersion: 1,
+      id: this.deps.uuid(),
+      canvasId,
+      kind,
+      provider: ctx.provider,
+      chatId: ctx.chatId,
+      workspacePath: ctx.workspacePath,
+      runId: ctx.runId,
+      approvalId: ctx.canvasEvalApproval?.approvalId,
+      detail,
+      createdAt: this.deps.now()
+    }
+    this.deps.store.appendEventStrict(event)
+    try {
+      this.deps.broadcast?.(event)
+    } catch {
+      // Durability, not renderer availability, is the execution gate.
+    }
+  }
+
+  /**
    * Chat-scoped ownership: a session is reachable only from the chat that
    * opened it (sessions opened in a global-scope run share the no-chat scope).
    * This stops an agent in chat A from inspecting/closing chat B's canvas even
@@ -149,8 +378,16 @@ export class CanvasService implements CanvasController {
   }
 
   private require(canvasId: string, ctx: CanvasCallContext): LiveSession {
+    if (this.contextHistoryBlocked(ctx)) {
+      throw new Error('Canvas history is being cleared; try again afterwards.')
+    }
     const session = this.sessions.get(canvasId)
-    if (!session || !this.owns(session.record, ctx)) {
+    if (
+      !session ||
+      session.generation !== this.generation ||
+      this.canvasGenerations.get(canvasId) !== session.generation ||
+      !this.owns(session.record, ctx)
+    ) {
       // Same message whether absent or cross-chat — never reveal another chat's id.
       throw new Error(`No open canvas with id "${canvasId}". Call canvas_open first.`)
     }
@@ -164,6 +401,7 @@ export class CanvasService implements CanvasController {
   }
 
   private persistSketchDocument(scope: string, document: CanvasSketchDocument): void {
+    if (this.purging) return
     try {
       this.deps.store.upsertSketchDocument(scope, document)
     } catch (err) {
@@ -175,6 +413,10 @@ export class CanvasService implements CanvasController {
     input: CanvasOpenInput,
     ctx: CanvasCallContext
   ): Promise<{ canvasId: string } & CanvasSessionHandle> {
+    if (this.contextHistoryBlocked(ctx)) {
+      throw new Error('Canvas history is being cleared; try again afterwards.')
+    }
+    const generation = this.generation
     const driverKind = input.driver ?? 'web'
     if (!SUPPORTED_DRIVERS.has(driverKind)) {
       throw new Error(`Canvas driver "${driverKind}" is not available in this build.`)
@@ -228,6 +470,7 @@ export class CanvasService implements CanvasController {
     }
 
     const canvasId = this.deps.uuid()
+    this.canvasGenerations.set(canvasId, generation)
     const nowIso = this.deps.now()
     const viewport = resolveViewport({
       width: input.viewport?.width,
@@ -240,7 +483,9 @@ export class CanvasService implements CanvasController {
       url: recordUrl,
       title: '',
       viewport,
-      originAllowlist: input.originAllowlist ?? [],
+      // The allowlist is live driver policy, not useful durable history. Never
+      // persist arbitrary caller strings in the session record.
+      originAllowlist: [],
       status: 'opening',
       chatId: ctx.chatId,
       runId: ctx.runId,
@@ -248,23 +493,78 @@ export class CanvasService implements CanvasController {
       createdAt: nowIso,
       updatedAt: nowIso
     }
-    this.deps.store.upsertSession(baseRecord)
+    try {
+      this.deps.store.upsertSession(baseRecord)
+    } catch (error) {
+      if (this.canvasGenerations.get(canvasId) === generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+      throw error
+    }
 
     // Embed is web-only and renderer-initiated; the agent's executor never sets it.
     const embedded = driverKind === 'web' && input.embed === true
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
-    const driver = this.deps.createDriver(driverKind, canvasId, {
-      embedded,
-      appChatId: imageAppChatId,
-      initialSketchDocument: sketchScope
-        ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
-        : undefined,
-      onSketchDocumentChange: sketchScope
-        ? (document) => this.persistSketchDocument(sketchScope, document)
-        : undefined
+    let driver: CanvasDriver
+    try {
+      driver = this.deps.createDriver(driverKind, canvasId, {
+        embedded,
+        appChatId: imageAppChatId,
+        initialSketchDocument: sketchScope
+          ? this.deps.store.getSketchDocument(sketchScope) ?? undefined
+          : undefined,
+        onSketchDocumentChange: sketchScope
+          ? (document) => {
+              if (
+                generation === this.generation &&
+                this.canvasGenerations.get(canvasId) === generation &&
+                !this.contextHistoryBlocked(ctx)
+              ) {
+                this.persistSketchDocument(sketchScope, document)
+              }
+            }
+          : undefined
+      })
+    } catch (error) {
+      if (this.canvasGenerations.get(canvasId) === generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+      const auditError = canvasOpenAuditError(error)
+      try {
+        this.deps.store.upsertSession({
+          ...baseRecord,
+          status: 'error',
+          error: auditError.message,
+          updatedAt: this.deps.now()
+        })
+      } catch {
+        // Preserve the construction failure; the store may itself be unavailable.
+      }
+      throw error
+    }
+    let markSettled!: () => void
+    const settled = new Promise<void>((resolve) => {
+      markSettled = resolve
     })
+    const pendingOpen: PendingOpen = {
+      driver,
+      record: baseRecord,
+      ctx,
+      generation,
+      settled,
+      markSettled
+    }
+    this.pendingOpens.set(canvasId, pendingOpen)
     try {
       const handle = await driver.open(input)
+      if (
+        generation !== this.generation ||
+        this.canvasGenerations.get(canvasId) !== generation ||
+        this.pendingOpens.get(canvasId) !== pendingOpen ||
+        this.contextHistoryBlocked(ctx)
+      ) {
+        throw new Error('Canvas open was cancelled because history was cleared.')
+      }
       const record: CanvasSessionRecord = {
         ...baseRecord,
         status: 'active',
@@ -273,8 +573,12 @@ export class CanvasService implements CanvasController {
         viewport: handle.viewport,
         updatedAt: this.deps.now()
       }
-      this.sessions.set(canvasId, { driver, record, interactions: 0, evals: 0 })
+      // Persist the active record before publishing the live registry entry.
+      // A strict store failure therefore cannot leave a closed-but-reachable
+      // session in list/status/require.
       this.deps.store.upsertSession(record)
+      this.pendingOpens.delete(canvasId)
+      this.sessions.set(canvasId, { driver, record, interactions: 0, evals: 0, generation })
       this.emit(canvasId, 'session.opened', ctx, {
         driver: driverKind,
         host: eventHost,
@@ -282,46 +586,102 @@ export class CanvasService implements CanvasController {
       })
       return { canvasId, ...handle }
     } catch (err) {
-      const message = err instanceof Error ? err.message : String(err)
-      this.deps.store.upsertSession({
-        ...baseRecord,
-        status: 'error',
-        error: message,
-        updatedAt: this.deps.now()
-      })
-      this.emit(canvasId, 'session.error', ctx, { error: message })
+      this.sessions.delete(canvasId)
+      const auditError = canvasOpenAuditError(err)
+      if (
+        generation === this.generation &&
+        this.canvasGenerations.get(canvasId) === generation &&
+        !this.contextHistoryBlocked(ctx)
+      ) {
+        try {
+          this.deps.store.upsertSession({
+            ...baseRecord,
+            status: 'error',
+            error: auditError.message,
+            updatedAt: this.deps.now()
+          })
+          this.emit(canvasId, 'session.error', ctx, { errorCode: auditError.code })
+        } catch {
+          // Never let audit persistence failure skip driver containment or
+          // replace the original open failure.
+        }
+      }
+      let closeFailed = false
       try {
         await driver.close()
-      } catch {
-        // Best effort — the open already failed.
+      } catch (closeError) {
+        closeFailed = true
+        // A failed open can still have acquired a BrowserWindow, simulator, or
+        // temporary screenshot resource before rejecting. Keep that driver in
+        // the same retry registry as an ordinary failed close so a later
+        // scoped/global clear cannot false-green while the resource survives.
+        this.failedCloses.set(canvasId, {
+          session: {
+            driver,
+            record: baseRecord,
+            interactions: 0,
+            evals: 0,
+            generation
+          },
+          ctx
+        })
+        this.deps.logger?.warn?.(
+          `canvas: failed-open driver close failed for ${canvasId}: ${String(closeError)}`
+        )
+      }
+      if (!closeFailed && this.canvasGenerations.get(canvasId) === generation) {
+        this.canvasGenerations.delete(canvasId)
       }
       throw err
+    } finally {
+      if (this.pendingOpens.get(canvasId) === pendingOpen) {
+        this.pendingOpens.delete(canvasId)
+      }
+      pendingOpen.markSettled()
     }
   }
 
   list(ctx: CanvasCallContext): CanvasSessionSummary[] {
+    if (this.contextHistoryBlocked(ctx)) return []
     return [...this.sessions.values()]
-      .filter((session) => this.owns(session.record, ctx))
+      .filter(
+        (session) =>
+          session.generation === this.generation &&
+          this.canvasGenerations.get(session.record.id) === session.generation &&
+          this.owns(session.record, ctx)
+      )
       .map((session) => toSummary(session.record))
   }
 
   status(canvasId: string, ctx: CanvasCallContext): CanvasSessionSummary | null {
+    if (this.contextHistoryBlocked(ctx)) return null
     const live = this.sessions.get(canvasId)
-    if (live) return this.owns(live.record, ctx) ? toSummary(live.record) : null
+    if (
+      live &&
+      live.generation === this.generation &&
+      this.canvasGenerations.get(canvasId) === live.generation
+    ) {
+      return this.owns(live.record, ctx) ? toSummary(live.record) : null
+    }
     const persisted = this.deps.store.getSession(canvasId)
     return persisted && this.owns(persisted, ctx) ? toSummary(persisted) : null
   }
 
   async snapshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasElementTree> {
-    const { driver } = this.require(canvasId, ctx)
-    const tree = await driver.snapshot()
-    this.emit(canvasId, 'snapshot', ctx, { nodeCount: tree.nodeCount, url: tree.url })
+    const session = this.require(canvasId, ctx)
+    const tree = await session.driver.snapshot()
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'snapshot')
+    this.emit(canvasId, 'snapshot', ctx, {
+      nodeCount: tree.nodeCount,
+      url: redactUrlQuery(tree.url)
+    })
     return tree
   }
 
   async screenshot(canvasId: string, ctx: CanvasCallContext): Promise<CanvasFrame> {
-    const { driver } = this.require(canvasId, ctx)
-    const frame = await driver.screenshot()
+    const session = this.require(canvasId, ctx)
+    const frame = await session.driver.screenshot()
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'screenshot')
     this.emit(canvasId, 'screenshot', ctx, {
       frameHash: frame.hash,
       width: frame.width,
@@ -336,11 +696,11 @@ export class CanvasService implements CanvasController {
     args: { ref?: string; selector?: string; styles?: string[] },
     ctx: CanvasCallContext
   ): Promise<CanvasElementDetail> {
-    const { driver } = this.require(canvasId, ctx)
-    const detail = await driver.inspect(args)
+    const session = this.require(canvasId, ctx)
+    const detail = await session.driver.inspect(args)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'inspect')
     this.emit(canvasId, 'inspect', ctx, {
-      ref: args.ref,
-      selector: args.selector,
+      ...canvasTargetAudit(args),
       found: detail.found
     })
     return detail
@@ -351,8 +711,9 @@ export class CanvasService implements CanvasController {
     args: { filter?: 'all' | 'failed'; requestId?: number },
     ctx: CanvasCallContext
   ): Promise<CanvasNetworkEntry[]> {
-    const { driver } = this.require(canvasId, ctx)
-    const entries = await driver.network(args)
+    const session = this.require(canvasId, ctx)
+    const entries = await session.driver.network(args)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'network inspection')
     this.emit(canvasId, 'network', ctx, { count: entries.length, filter: args.filter ?? 'all' })
     return entries
   }
@@ -362,8 +723,9 @@ export class CanvasService implements CanvasController {
     args: { level?: 'all' | 'warn' | 'error'; lines?: number },
     ctx: CanvasCallContext
   ): Promise<CanvasConsoleEntry[]> {
-    const { driver } = this.require(canvasId, ctx)
-    const entries = await driver.console(args)
+    const session = this.require(canvasId, ctx)
+    const entries = await session.driver.console(args)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'console inspection')
     this.emit(canvasId, 'console', ctx, { count: entries.length, level: args.level ?? 'all' })
     return entries
   }
@@ -375,6 +737,7 @@ export class CanvasService implements CanvasController {
   ): Promise<CanvasViewport> {
     const session = this.require(canvasId, ctx)
     const applied = await session.driver.resize(viewport)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'resize')
     session.record = { ...session.record, viewport: applied, updatedAt: this.deps.now() }
     this.deps.store.upsertSession(session.record)
     this.emit(canvasId, 'resize', ctx, { width: applied.width, height: applied.height })
@@ -405,10 +768,10 @@ export class CanvasService implements CanvasController {
     const session = this.require(canvasId, ctx)
     this.chargeInteraction(session)
     const result = await session.driver.act({ ...args, kind: 'click' })
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'click')
     this.emit(canvasId, 'interaction', ctx, {
       action: 'click',
-      ref: args.ref,
-      selector: args.selector,
+      ...canvasTargetAudit(args),
       found: result.found
     })
     return result
@@ -422,11 +785,11 @@ export class CanvasService implements CanvasController {
     const session = this.require(canvasId, ctx)
     this.chargeInteraction(session)
     const result = await session.driver.act({ ...args, kind: 'fill' })
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'fill')
     // Audit records the field targeted, NEVER the value typed.
     this.emit(canvasId, 'interaction', ctx, {
       action: 'fill',
-      ref: args.ref,
-      selector: args.selector,
+      ...canvasTargetAudit(args),
       found: result.found
     })
     return result
@@ -442,10 +805,14 @@ export class CanvasService implements CanvasController {
     // flush the capped canvas audit-event history.
     this.chargeInteraction(session)
     await session.driver.annotate(marks)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'annotation')
     const annotation: CanvasAnnotation = {
       schemaVersion: 1,
       id: this.deps.uuid(),
       canvasId,
+      chatId: ctx.chatId,
+      workspacePath: ctx.workspacePath,
+      runId: ctx.runId,
       marks,
       author: 'agent',
       createdAt: this.deps.now()
@@ -456,8 +823,9 @@ export class CanvasService implements CanvasController {
   }
 
   async sketchDocument(canvasId: string, ctx: CanvasCallContext): Promise<CanvasSketchDocument> {
-    const { driver } = this.require(canvasId, ctx)
-    const document = await driver.sketchDocument()
+    const session = this.require(canvasId, ctx)
+    const document = await session.driver.sketchDocument()
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'sketch read')
     this.emit(canvasId, 'sketch.read', ctx, { elementCount: document.elements.length })
     return document
   }
@@ -470,6 +838,7 @@ export class CanvasService implements CanvasController {
     const session = this.require(canvasId, ctx)
     this.chargeInteraction(session)
     const document = await session.driver.sketchUpdate(update)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'sketch update')
     this.persistSketchDocument(this.sketchScope(ctx), document)
     session.record = {
       ...session.record,
@@ -491,21 +860,73 @@ export class CanvasService implements CanvasController {
     ctx: CanvasCallContext
   ): Promise<CanvasEvalResult> {
     const session = this.require(canvasId, ctx)
+    const approval = assertCanvasEvalApprovalReceipt(args.script, ctx.canvasEvalApproval)
     this.chargeEval(session)
-    const result = await session.driver.evaluate(args)
-    // Audit records only the script's sha256 + length + outcome — NEVER the script
-    // text (could embed secrets the agent read) and NEVER the returned value.
-    this.emit(canvasId, 'eval', ctx, {
-      scriptHash: createHash('sha256').update(args.script).digest('hex'),
-      scriptLength: args.script.length,
-      ok: result.ok
-    })
+    const receiptDetail = {
+      approvalId: approval.approvalId,
+      scriptHashAlgorithm: approval.scriptHashAlgorithm,
+      scriptHash: approval.scriptHash,
+      scriptLength: approval.scriptLength,
+      scriptByteLength: approval.scriptByteLength
+    }
+    try {
+      this.emitStrict(canvasId, 'eval.started', ctx, receiptDetail)
+    } catch {
+      throw new Error(
+        'canvas_eval was blocked because its pre-execution audit receipt could not be persisted.'
+      )
+    }
+
+    let result: CanvasEvalResult
+    try {
+      result = await session.driver.evaluate(args)
+    } catch (error) {
+      if (
+        this.contextHistoryBlocked(ctx) ||
+        session.generation !== this.generation ||
+        this.canvasGenerations.get(canvasId) !== session.generation ||
+        this.sessions.get(canvasId) !== session
+      ) {
+        throw new Error('canvas_eval completion was discarded because history was cleared.')
+      }
+      try {
+        this.emitStrict(canvasId, 'eval.completed', ctx, {
+          ...receiptDetail,
+          outcome: 'host_error',
+          ok: false
+        })
+      } catch {
+        throw new Error(
+          'canvas_eval may have executed, but its post-execution audit receipt could not be persisted; do not retry automatically.'
+        )
+      }
+      throw error
+    }
+
+    try {
+      this.assertLiveAfterAwait(canvasId, session, ctx, 'eval completion')
+    } catch {
+      throw new Error('canvas_eval completion was discarded because history was cleared.')
+    }
+
+    try {
+      this.emitStrict(canvasId, 'eval.completed', ctx, {
+        ...receiptDetail,
+        outcome: result.ok ? 'success' : 'script_error',
+        ok: result.ok
+      })
+    } catch {
+      throw new Error(
+        'canvas_eval executed, but its post-execution audit receipt could not be persisted; do not retry automatically.'
+      )
+    }
     return result
   }
 
   async reload(canvasId: string, ctx: CanvasCallContext): Promise<void> {
-    const { driver } = this.require(canvasId, ctx)
-    await driver.reload()
+    const session = this.require(canvasId, ctx)
+    await session.driver.reload()
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'reload')
     this.emit(canvasId, 'reload', ctx)
   }
 
@@ -521,23 +942,262 @@ export class CanvasService implements CanvasController {
     ctx: CanvasCallContext
   ): Promise<void> {
     this.sessions.delete(canvasId)
+    const historyRevision = this.captureHistoryRevision(ctx)
+    const closePromise = session.driver.close()
+    const closing: ClosingSession = { session, ctx, closePromise }
+    this.closingSessions.set(canvasId, closing)
     try {
-      await session.driver.close()
-    } catch (err) {
-      this.deps.logger?.warn?.(`canvas: driver close failed for ${canvasId}: ${String(err)}`)
+      await closePromise
+    } catch (error) {
+      this.deps.logger?.warn?.(`canvas: driver close failed for ${canvasId}: ${String(error)}`)
+      this.failedCloses.set(canvasId, { session, ctx })
+      throw error
+    } finally {
+      if (this.closingSessions.get(canvasId) === closing) {
+        this.closingSessions.delete(canvasId)
+      }
     }
-    this.deps.store.upsertSession({
-      ...session.record,
-      status: 'closed',
-      closedAt: this.deps.now(),
-      updatedAt: this.deps.now()
-    })
-    this.emit(canvasId, 'session.closed', ctx)
+    if (
+      session.generation === this.generation &&
+      !this.purging &&
+      !this.contextHistoryBlocked(ctx) &&
+      !this.historyRevisionChanged(ctx, historyRevision) &&
+      this.canvasGenerations.get(canvasId) === session.generation
+    ) {
+      this.deps.store.upsertSession({
+        ...session.record,
+        status: 'closed',
+        closedAt: this.deps.now(),
+        updatedAt: this.deps.now()
+      })
+      this.emit(canvasId, 'session.closed', ctx)
+    }
+    if (this.canvasGenerations.get(canvasId) === session.generation) {
+      this.canvasGenerations.delete(canvasId)
+    }
   }
 
   /** Close every live session regardless of owner — call on app shutdown. */
   async closeAll(): Promise<void> {
     const entries = [...this.sessions.entries()]
-    await Promise.all(entries.map(([id, session]) => this.teardown(id, session, {})))
+    const pending = [...this.pendingOpens.entries()]
+    const closing = [...this.closingSessions.values()]
+    const failed = [...this.failedCloses.entries()]
+    for (const [canvasId, open] of pending) {
+      this.pendingOpens.delete(canvasId)
+      if (this.canvasGenerations.get(canvasId) === open.generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+    }
+    const outcomes = await Promise.allSettled([
+      ...entries.map(([id, session]) => this.teardown(id, session, {})),
+      ...pending.map(async ([canvasId, open]) => {
+        await this.settleAndClosePendingOpen(canvasId, open, 'during close-all')
+      }),
+      ...closing.map((entry) => entry.closePromise),
+      ...failed.map(([canvasId, entry]) => this.retryFailedClose(canvasId, entry))
+    ])
+    const failures = outcomes.filter(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+    )
+    if (failures.length > 0) {
+      throw new AggregateError(
+        failures.map((failure) => failure.reason),
+        'One or more Canvas resources could not be closed during history clear.'
+      )
+    }
+  }
+
+  /** Main-owned chat ids with a live Canvas; used to protect empty chats from reaping. */
+  openChatIds(): Set<string> {
+    return new Set(
+      [
+        ...this.sessions.values(),
+        ...this.pendingOpens.values(),
+        ...[...this.closingSessions.values()].map((entry) => entry.session),
+        ...[...this.failedCloses.values()].map((entry) => entry.session)
+      ]
+        .map((session) => session.record.chatId)
+        .filter((chatId): chatId is string => Boolean(chatId))
+    )
+  }
+
+  /**
+   * Raise scoped admission holds and synchronously retire matching live
+   * sessions before the first await. The returned promise closes drivers and
+   * purges their durable state; callers release the holds in a matching finally.
+   */
+  beginAuthorityHistoryClear(input: CanvasHistoryAuthority): Promise<void> {
+    const operation = this.beginAuthorityHistoryClearInner(input)
+    this.scopedClearOperations.add(operation)
+    void operation.finally(() => this.scopedClearOperations.delete(operation)).catch(() => {})
+    return operation
+  }
+
+  private async beginAuthorityHistoryClearInner(
+    input: CanvasHistoryAuthority
+  ): Promise<void> {
+    const authority = this.normalizedAuthority(input)
+    const generationAtStart = this.generation
+    const startedDuringGlobalClear = this.purging
+    for (const chatId of authority.chatIds) {
+      this.chatHistoryClearHolds.set(chatId, (this.chatHistoryClearHolds.get(chatId) ?? 0) + 1)
+      this.chatHistoryRevisions.set(chatId, (this.chatHistoryRevisions.get(chatId) ?? 0) + 1)
+    }
+    for (const workspacePath of authority.workspacePaths) {
+      this.workspaceHistoryClearHolds.set(
+        workspacePath,
+        (this.workspaceHistoryClearHolds.get(workspacePath) ?? 0) + 1
+      )
+      this.workspaceHistoryRevisions.set(
+        workspacePath,
+        (this.workspaceHistoryRevisions.get(workspacePath) ?? 0) + 1
+      )
+    }
+
+    const retired = [...this.sessions.entries()].filter(([, session]) =>
+      this.recordMatchesAuthority(session.record, authority)
+    )
+    const retiredPending = [...this.pendingOpens.entries()].filter(([, open]) =>
+      this.recordMatchesAuthority(open.record, authority)
+    )
+    const retiredClosing = [...this.closingSessions.entries()].filter(([, entry]) =>
+      this.recordMatchesAuthority(entry.session.record, authority)
+    )
+    const retiredFailed = [...this.failedCloses.entries()].filter(([, entry]) =>
+      this.recordMatchesAuthority(entry.session.record, authority)
+    )
+    // Retire first: every in-flight post-await check observes the missing exact
+    // session/generation even if a driver close stalls.
+    for (const [canvasId, session] of retired) {
+      this.sessions.delete(canvasId)
+      if (this.canvasGenerations.get(canvasId) === session.generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+    }
+    for (const [canvasId, open] of retiredPending) {
+      this.pendingOpens.delete(canvasId)
+      if (this.canvasGenerations.get(canvasId) === open.generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+    }
+    for (const [canvasId, entry] of retiredClosing) {
+      if (this.canvasGenerations.get(canvasId) === entry.session.generation) {
+        this.canvasGenerations.delete(canvasId)
+      }
+    }
+    const closeOutcomes = await Promise.allSettled(
+      [
+        ...retired.map(([canvasId, session]) =>
+          this.closeRetiredSession(canvasId, session, {
+            chatId: session.record.chatId,
+            workspacePath: session.record.workspacePath,
+            runId: session.record.runId
+          })
+        ),
+        ...retiredPending.map(([canvasId, open]) =>
+          this.settleAndClosePendingOpen(canvasId, open, 'during scoped history clear')
+        ),
+        ...retiredClosing.map(([, entry]) => entry.closePromise),
+        ...retiredFailed.map(([canvasId, entry]) =>
+          this.retryFailedClose(canvasId, entry)
+        )
+      ]
+    )
+    const closeFailures = closeOutcomes.filter(
+      (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+    )
+    if (closeFailures.length > 0) {
+      for (const failure of closeFailures) {
+        this.deps.logger?.warn?.(
+          `canvas: driver close failed during scoped history clear: ${String(failure.reason)}`
+        )
+      }
+      throw new AggregateError(
+        closeFailures.map((failure) => failure.reason),
+        'One or more Canvas resources could not be closed during scoped history clear.'
+      )
+    }
+    await this.enqueueHistoryStoreMutation(() => {
+      // A global clear that began before or during this scoped transaction owns
+      // the broader durable erase. Never recreate scoped JSON files afterwards.
+      if (
+        startedDuringGlobalClear ||
+        generationAtStart !== this.generation ||
+        this.purging
+      ) {
+        return
+      }
+      this.deps.store.purgeAuthoritiesStrict(authority)
+    })
+  }
+
+  endAuthorityHistoryClear(input: CanvasHistoryAuthority): void {
+    const authority = this.normalizedAuthority(input)
+    for (const chatId of authority.chatIds) {
+      const next = (this.chatHistoryClearHolds.get(chatId) ?? 0) - 1
+      if (next > 0) this.chatHistoryClearHolds.set(chatId, next)
+      else this.chatHistoryClearHolds.delete(chatId)
+    }
+    for (const workspacePath of authority.workspacePaths) {
+      const next = (this.workspaceHistoryClearHolds.get(workspacePath) ?? 0) - 1
+      if (next > 0) this.workspaceHistoryClearHolds.set(workspacePath, next)
+      else this.workspaceHistoryClearHolds.delete(workspacePath)
+    }
+  }
+
+  /**
+   * Begin a global history-clear transaction. The Canvas admission fence stays
+   * raised after the physical purge finishes and is released only by the
+   * matching `endHistoryClear`, after every other durable store commits.
+   */
+  async beginHistoryClear(): Promise<void> {
+    this.historyClearHolds += 1
+    if (!this.purging) {
+      this.purging = true
+      this.generation += 1
+    }
+    if (!this.purgeInFlight) {
+      this.purgeInFlight = (async () => {
+        await this.closeAll()
+        while (this.scopedClearOperations.size > 0) {
+          const outcomes = await Promise.allSettled([...this.scopedClearOperations])
+          const failures = outcomes.filter(
+            (outcome): outcome is PromiseRejectedResult => outcome.status === 'rejected'
+          )
+          if (failures.length > 0) {
+            throw new AggregateError(
+              failures.map((failure) => failure.reason),
+              'A scoped Canvas history clear did not settle safely.'
+            )
+          }
+        }
+        // A scoped close can fail and move its driver into failedCloses while
+        // the first closeAll snapshot is already in flight. Re-scan after the
+        // scoped join so global clear either closes it or fails closed.
+        await this.closeAll()
+        await this.enqueueHistoryStoreMutation(() => this.deps.store.clearAll())
+        this.canvasGenerations.clear()
+      })().finally(() => {
+        this.purgeInFlight = null
+        if (this.historyClearHolds === 0) this.purging = false
+      })
+    }
+    return this.purgeInFlight
+  }
+
+  /** Release one global history-clear admission hold. */
+  endHistoryClear(): void {
+    if (this.historyClearHolds > 0) this.historyClearHolds -= 1
+    if (this.historyClearHolds === 0 && !this.purgeInFlight) this.purging = false
+  }
+
+  /** Standalone purge used outside the multi-store clear transaction. */
+  async purgeHistory(): Promise<void> {
+    try {
+      await this.beginHistoryClear()
+    } finally {
+      this.endHistoryClear()
+    }
   }
 }

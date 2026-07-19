@@ -30,16 +30,16 @@ function grant(
 }
 
 describe('ExternalPathGrants metadata helpers', () => {
-  it('dispatches grants to every live provider and keeps retired Gemini historical-only', () => {
+  it('dispatches grants only to live providers and keeps unavailable ids historical-only', () => {
     expect([...EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS]).toEqual([
       'codex',
       'claude',
-      'cursor',
       'grok',
       'kimi',
       'ollama'
     ])
     expect(isExternalPathGrantDispatchProvider('gemini')).toBe(false)
+    expect(isExternalPathGrantDispatchProvider('cursor')).toBe(false)
   })
 
   it('reads canonical and legacy grant keys into one coalesced list', () => {

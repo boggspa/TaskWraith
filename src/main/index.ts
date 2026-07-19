@@ -30,8 +30,11 @@ import {
   nativeProviderBrokerOnlyMessage,
   nativeProviderToolRequiresBroker
 } from './NativeProviderToolContainment'
-import { buildKimiBrokerOnlyAgentYaml } from './KimiAgentContainment'
 import { FaviconService } from './services/FaviconService'
+import {
+  BackgroundProcessRegistry,
+  type BackgroundProcessHistoryHold
+} from './services/BackgroundProcessRegistry'
 import {
   listWorkspaceFiles as listWorkspaceFilesForEditor,
   deleteWorkspaceFile as deleteWorkspaceFileForEditor,
@@ -41,7 +44,7 @@ import {
 import { basename, dirname, isAbsolute, join, parse, relative, resolve, sep } from 'path'
 import { electronApp, optimizer, is } from '@electron-toolkit/utils'
 import { spawn, ChildProcess, execFile } from 'child_process'
-import { randomBytes, randomUUID } from 'crypto'
+import { createHash, randomBytes, randomUUID } from 'crypto'
 import { AsyncLocalStorage } from 'node:async_hooks'
 import { promises as fs } from 'fs'
 import * as fsSync from 'fs'
@@ -74,36 +77,35 @@ import {
   shouldBreakThinkingChronology
 } from './providers/CliProviderThinking'
 import { claudeSdkThinkingConfigForEffort } from './providers/ClaudeThinkingConfig'
-import {
-  KIMI_FLAVOUR_PROBE_TIMEOUT_MS,
-  buildKimiFlavourGateMessage,
-  probeKimiFlavour
-} from './providers/KimiFlavour'
 import { kimiAcpEnabled } from './kimiGate'
-import { wireResumeSessionId } from './kimi/KimiSessionGeneration'
-import {
-  startKimiHttpMcpBridge,
-  type KimiHttpMcpBridgeHandle
-} from './kimi/KimiHttpMcpBridge'
+import { startKimiHttpMcpBridge } from './kimi/KimiHttpMcpBridge'
 import { createKimiMcpDispatch } from './kimi/KimiMcpDispatch'
+import { flushKimiThinkingChunks, queueKimiThinkingChunk } from './kimi/KimiThinkingBatcher'
 import {
-  flushKimiThinkingChunks,
-  queueKimiThinkingChunk
-} from './kimi/KimiThinkingBatcher'
-import {
+  detectKimiManagedAuthState,
   prepareKimiIsolatedHome,
-  findUnsafeWorkspaceKimiConfig,
   type KimiHomeFs
 } from './kimi/KimiAcpHome'
-import { buildKimiWorkspaceConfigRefusalMessage } from './kimi/KimiAcpContainment'
-import { kimiAcpSeatStatePath } from './kimi/KimiAcpSeatState'
-import { kimiCredentialCandidatePaths } from './providers/KimiCredential'
-import { runKimiAcpTurn, type KimiAcpFs } from './kimi/KimiAcpClient'
-import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
+import { kimiAcpSeatStatePath, kimiAcpSeatStateRoot } from './kimi/KimiAcpSeatState'
+import { acquireKimiOAuthCredentialLease } from './kimi/KimiOAuthCredentialLease'
+import { runKimiAcpTurn } from './kimi/KimiAcpClient'
 import {
-  estimateKimiAcpTokenUsage,
-  kimiAcpVisiblePayloadChars
-} from './kimi/KimiAcpUsage'
+  KIMI_ACP_PRODUCTION_POSTURE_VERSION,
+  assertKimiSpawnAuthority,
+  buildKimiContainedProcessEnv,
+  buildKimiProductionSessionPlan,
+  createJoinedKimiCleanup,
+  finalizeKimiRunAfterCleanup,
+  formatKimiProductionAcpDebugFrame,
+  launchKimiProductionAcp,
+  prepareKimiPrivateRunCwd,
+  type KimiPrivateCwdFs,
+  type KimiPrivateRunCwd
+} from './kimi/KimiProductionContainment'
+import { isKimiAcpProductionPosture } from '../shared/kimiAcpPosture'
+import { admitKimiRuntime, type AdmittedKimiRuntime } from './kimi/KimiRuntimeAdmission'
+import { classifyKimiToolPermission, isKimiSafeMcpTool } from './kimi/KimiToolPolicy'
+import { estimateKimiAcpTokenUsage, kimiAcpVisiblePayloadChars } from './kimi/KimiAcpUsage'
 import { createAcpTurnAbortController } from './acp/AcpTurnClient'
 import type {
   CodexRunState,
@@ -119,22 +121,13 @@ import {
   resolveGeminiMcpPath,
   toWorkspaceRelativePath
 } from './PathScope'
-import {
-  stripAnsi,
-  appendLimitedOutput,
-  stringifyJsonFragment,
-  asRecord,
-  readStringField
-} from './gemini/GeminiCapabilityParsing'
+import { stripAnsi, appendLimitedOutput, asRecord } from './gemini/GeminiCapabilityParsing'
 import {
   GEMINI_CAPABILITY_KINDS,
   GEMINI_CAPABILITY_COMMANDS,
-  GEMINI_CAPABILITY_TIMEOUT_MS,
   type GeminiCapabilityKind,
-  type GeminiCapabilityItem,
   type GeminiCapabilitySection,
-  type GeminiCapabilitiesState,
-  type GeminiCapabilityProcessResult
+  type GeminiCapabilitiesState
 } from './geminiCapabilityTypes'
 import {
   mcpJson,
@@ -171,10 +164,7 @@ import {
   codexGitMetadataRootsForWorkspace,
   normalizeCodexTurnStatus
 } from './codex/CodexRunPolicy'
-import {
-  concurrentWriteLanesEnabled,
-  ensembleWakeupsEnabled
-} from './featureGates'
+import { concurrentWriteLanesEnabled, ensembleWakeupsEnabled } from './featureGates'
 import {
   GEMINI_MCP_SERVER_NAME,
   GEMINI_MCP_BRIDGE_ENV,
@@ -186,8 +176,6 @@ import {
   MAX_SCHEDULE_TIMER_DELAY_MS,
   GROK_USAGE_FRESH_TTL_MS,
   GROK_SCOPED_MCP_SERVER_NAME,
-  KIMI_WIRE_PROTOCOL_FALLBACK,
-  KIMI_WIRE_PROTOCOL_INFO_TIMEOUT_MS,
   PROBE_TIMEOUT_MS,
   KNOWN_OFF_PATH_CODEX_BINARIES,
   LIGHT_THEME_POPOUT_BACKDROPS,
@@ -221,10 +209,7 @@ import {
   dispatchWithAuthorizedAttachmentPaths,
   resolveAuthorizedRendererAttachmentPaths
 } from './RendererAttachmentAuthorization'
-import {
-  bindRuntimeWorktreeBaseWorkspace,
-  derivePopoutRunPayload
-} from './RendererRunAuthority'
+import { bindRuntimeWorktreeBaseWorkspace, derivePopoutRunPayload } from './RendererRunAuthority'
 import { resolveComposerRunAuthority } from './ComposerRunAuthority'
 import { appendGeminiCliWorktreeArgs } from './gemini/GeminiCliArgs'
 import {
@@ -233,15 +218,25 @@ import {
   codexConfigParseUserMessage,
   compareCodexVersions,
   isCodexAppServerThreadId,
+  isCodexAppServerRequestTimeout,
   isCodexConfigParseError
 } from './CodexAppServerClient'
+import {
+  codexCompactionFailureProvesNoLiveTurn,
+  updateCodexCompactionLaunchEvidence
+} from './codex/CodexMaintenanceCompactionActivity'
+import {
+  codexProviderOperationId,
+  codexTerminalMethodMatchesAdmission,
+  CodexThreadAdmissionRegistry,
+  type CodexThreadAdmissionHistoryHold,
+  type CodexThreadAdmissionReservation
+} from './codex/CodexThreadAdmission'
 import {
   isSameCodexAppServerThreadId,
   shouldBlockCodexExecFallbackForSlimEnsemblePrompt
 } from './CodexSessionIdentity'
 import {
-  buildUserMcpCursorAllowRules,
-  buildUserMcpCursorServerEntry,
   buildUserMcpLaunchServers,
   type UserMcpLaunchAllowlistPolicy,
   type UserMcpLaunchPolicyDecision
@@ -266,10 +261,7 @@ import {
   resolveCodexOutboundReasoning,
   resolvePersistedCodexModelSelection
 } from './codex/CodexOutboundReasoning'
-import {
-  resolveCodexMcpRouteHint,
-  type CodexMcpRouteHint
-} from './codex/CodexMcpRouting'
+import { resolveCodexMcpRouteHint, type CodexMcpRouteHint } from './codex/CodexMcpRouting'
 import { BridgeDaemonClient } from './BridgeDaemonClient'
 import { bridgeResultDiffStats } from './bridge/BridgeToolDiffStats'
 import { foldBridgeRunText, isTaggedCumulativeRestatement } from './bridge/BridgeTextFold'
@@ -279,7 +271,11 @@ import {
   buildBridgeToolActivity
 } from './bridge/BridgeTranscriptActivity'
 import { backfillRunDiffCounts, toolEvidenceFromActivities } from '../shared/runDiffBackfill'
-import { coerceLiveProvider, DEFAULT_PROVIDER, isRetiredProvider } from '../shared/retiredProviders'
+import {
+  DEFAULT_PROVIDER,
+  isRetiredProvider,
+  LIVE_SELECTABLE_PROVIDER_IDS
+} from '../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
 import {
   isClaudeWorkflowSystemEvent,
@@ -287,9 +283,7 @@ import {
   shouldEmitClaudeWorkflowTelemetry
 } from '../shared/claudeWorkflow'
 import {
-  buildHostCompactionSummaryPrompt,
   CONTEXT_COMPACTION_MESSAGE_KIND,
-  CONTEXT_COMPACTION_SUMMARY_MAX_CHARS,
   contextCompactionDedupeKey,
   contextCompactionMessageId,
   codexContextCompactionItemId,
@@ -424,10 +418,7 @@ import {
   parseTailscaleWssRelayUrl
 } from './remote/relayAdvertise'
 import { createRelayServer, type RelayServerHandle } from '../../relay/src/server'
-import {
-  type BridgeApnsPusher,
-  type BridgeRemoteAttentionFailureKind
-} from './BridgeApnsPusher'
+import { type BridgeApnsPusher, type BridgeRemoteAttentionFailureKind } from './BridgeApnsPusher'
 import { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { RemoteAttentionApnsFanout } from './RemoteAttentionApnsFanout'
 import { isUserAtDesktop as pureIsUserAtDesktop } from './ApnsIdleGate'
@@ -472,6 +463,12 @@ import {
   type PendingExternalPathDetection
 } from './services/ApprovalService'
 import { ChatService } from './services/ChatService'
+import {
+  HistoryClearAdmissionGate,
+  type HistoryClearDispatchAuthority,
+  type HistoryClearDispatchReservation,
+  type HistoryClearRunPersistenceAuthority
+} from './HistoryClearAdmissionGate'
 import { HumanCollaborationStore } from './collaboration/HumanCollaborationStore'
 import { HumanCollaborationAuditLog } from './collaboration/HumanCollaborationAuditLog'
 import { HumanCollaborationIdentityStore } from './collaboration/HumanCollaborationIdentityStore'
@@ -493,6 +490,21 @@ import {
   type RequestAgenticServiceApprovalDeps,
   type RequestMainApprovalDeps
 } from './run/ApprovalOrchestration'
+import {
+  createProviderTerminalProjectionOperation,
+  createProviderTransportCloseOperation,
+  providerTransportAdmissionStillAuthorized,
+  ProviderOperationRegistry,
+  waitForProviderOperationSettlement
+} from './run/ProviderOperationRegistry'
+import {
+  DEFAULT_HOST_COMMAND_KILL_GRACE_MS,
+  HostCommandOperationRegistry,
+  type HostCommandOperationController,
+  type HostCommandProjectionHandle,
+  type HostCommandOperationScope
+} from './run/HostCommandOperationRegistry'
+import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
 import { gateBlocksActiveGoal } from './ReviewGateScope'
@@ -529,10 +541,7 @@ import {
 } from './WorkflowLoopEngine'
 import type { WorkflowLoopConfig } from './WorkflowLoopModel'
 import type { WorkflowRunEventInput } from './WorkflowRunStore'
-import {
-  armScheduledLoopStepTimeout,
-  scheduledHeadlessComposeFields
-} from './ScheduledHeadlessRun'
+import { armScheduledLoopStepTimeout, scheduledHeadlessComposeFields } from './ScheduledHeadlessRun'
 import {
   ComposerService,
   getDefaultModelForProvider,
@@ -545,9 +554,16 @@ import {
 } from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
-import { resolveSingleEnsembleDmTarget } from './services/EnsembleMentionAlias'
+import {
+  ensembleDmTargetResolutionError,
+  resolveEnsembleDmTargetForDispatch
+} from './services/EnsembleMentionAlias'
 import { WakeupTimerService, classifyWakeupRecovery } from './WakeupTimerService'
-import { SoloChatWakeupService } from './SoloChatWakeupService'
+import {
+  SoloChatWakeupService,
+  type SoloWakeupHistoryClearScope,
+  type SoloWakeupHistoryHold
+} from './SoloChatWakeupService'
 import {
   createDefaultSessionCheckpointStore,
   formatSessionCheckpointResumePrompt,
@@ -559,8 +575,14 @@ import {
 } from './EnsembleRosterMutation'
 import { appendBugReport } from './services/BugReportService'
 import { RunCoordinator } from './services/RunCoordinator'
-import { ProjectReferenceArtifactStore } from './services/ProjectReferenceArtifactStore'
-import { ProjectReferenceContextAuditService } from './services/ProjectReferenceContextAuditService'
+import {
+  ProjectReferenceArtifactStore,
+  type ProjectReferenceHistoryMutationHold
+} from './services/ProjectReferenceArtifactStore'
+import {
+  ProjectReferenceContextAuditService,
+  projectReferenceOwnedArtifactRefsFromRunEvents
+} from './services/ProjectReferenceContextAuditService'
 import { ProjectReferenceProposalService } from './services/ProjectReferenceProposalService'
 import { RunLifecycleCoordinator } from './services/RunLifecycleCoordinator'
 import { RunQueueService } from './services/RunQueueService'
@@ -632,11 +654,7 @@ import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
-import type {
-  GitPrReadiness,
-  GitPrSummary,
-  GitRepositorySnapshot
-} from './services/GitService'
+import type { GitPrReadiness, GitPrSummary, GitRepositorySnapshot } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
 import { getCachedHostWeather } from './services/HostWeatherService'
 import { getCurrentFxRates, refreshFxRates, startFxRateScheduler } from './services/FxRateService'
@@ -687,7 +705,9 @@ import {
   validateWorkspaceImagePath,
   validateWorkspaceAudioPath,
   stageWorkspaceMediaSnapshot,
-  TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES
+  TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES,
+  type StageWorkspaceMediaSnapshotOptions,
+  type StagedWorkspaceMediaSnapshotResult
 } from './services/TranscriptMediaService'
 import {
   createOwnedToolResultMediaRefs,
@@ -700,9 +720,53 @@ import {
   TRANSCRIPT_MEDIA_ASSET_DIR,
   TRANSCRIPT_MEDIA_MAX_FULL_IMAGE_BYTES,
   maxTranscriptMediaBytesForMime,
-  TranscriptMediaAssetStore
+  TranscriptMediaAssetStore,
+  type TranscriptMediaHistoryMutationHold,
+  type TranscriptMediaOwnedFileWriteReceipt
 } from './services/TranscriptMediaAssetStore'
+import {
+  RegenerableHistoryByteStore,
+  type RegenerableHistoryByteHistoryHold,
+  type RegenerableHistoryByteReservation
+} from './services/RegenerableHistoryByteStore'
+import { completeRegenerableHistoryByteOperation } from './services/RegenerableHistoryByteCompletion'
 import { sanitizeTranscriptMediaOwnershipClaims } from './services/TranscriptMediaOwnershipClaims'
+import { persistAuthorizedProviderMedia } from './services/ProviderMediaPersistenceGate'
+import { persistAuthorizedProviderSessionMetadata } from './services/ProviderSessionMetadataPersistenceGate'
+import {
+  projectAndCommitToolMediaPersistence,
+  rollbackPendingToolMediaPersistence,
+  settleToolMediaPersistence,
+  stripPendingToolMediaPersistence,
+  toolMediaPublicationAuthorized,
+  type PendingToolMediaPersistence,
+  type ToolMediaPersistOutput
+} from './services/ToolMediaPersistenceGate'
+import {
+  MaintenanceCompactionAdmissionError,
+  MaintenanceCompactionRegistry,
+  type MaintenanceCompactionDeletionScope,
+  type MaintenanceCompactionHistoryHold,
+  type MaintenanceCompactionReservation
+} from './services/MaintenanceCompactionRegistry'
+import {
+  persistRemoteImageAttachments,
+  purgeLegacyRemoteAttachmentTempRoot
+} from './RemoteAttachmentPersistence'
+import {
+  quiescePreparedHistoryDeletion,
+  requireReacquiredHistoryDeletionHolds
+} from './services/HistoryDeletionQuiescence'
+import {
+  UsageHistoryDeletionTarget,
+  type UsageHistoryDeletionHold
+} from './services/UsageHistoryDeletionTarget'
+import { HistoryDeletionTransactionCoordinator } from './HistoryDeletionTransactionCoordinator'
+import type {
+  HistoryDeletionPreparation,
+  HistoryDeletionQuiescenceTarget,
+  UsageHistoryMutationHold
+} from './store'
 import {
   defaultPdfAttachmentRenderCacheDir,
   isPdfAttachmentPath,
@@ -825,7 +889,6 @@ import type { CliProviderRuntimeDependencies } from './providers/CliProviderRunt
 import {
   activeCodexModelRows,
   appendKimiModelArgs,
-  appendKimiThinkingArgs,
   claudePermissionModeForApproval,
   codexReasoningEffortsForModel,
   getStaticProviderModels,
@@ -859,20 +922,14 @@ import {
   verifyRunPermissionPosture,
   type RunPermissionPostureContext
 } from './RunPermissionPosture'
-import {
-  normalizeAgentRunPayload,
-  type AgentRunNormalizerDeps
-} from './run/AgentRunNormalizer'
+import { normalizeAgentRunPayload, type AgentRunNormalizerDeps } from './run/AgentRunNormalizer'
 import {
   buildUnattendedElevationAck,
   isUnattendedElevationAckCurrent,
   type UnattendedElevationAck,
   type UnattendedElevationLevel
 } from './UnattendedPostureGate'
-import {
-  signUnattendedElevation,
-  verifyUnattendedElevation
-} from './UnattendedElevationSignature'
+import { signUnattendedElevation, verifyUnattendedElevation } from './UnattendedElevationSignature'
 import { workflowAuthorityDigest } from './WorkflowAuthorityDigest'
 import {
   applyRuntimeProfileToPayload as applyRuntimeProfileToPayloadViaCliRuntime,
@@ -909,7 +966,6 @@ import {
   ensureGeminiAuthProfileMaterialized as ensureGeminiAuthProfileMaterializedViaProviderAuth,
   fetchClaudeUsageSnapshot,
   fetchCodexUsageSnapshot,
-  fetchCursorUsageSnapshot,
   fetchKimiUsageSnapshot,
   getDefaultGeminiAuthProfileId,
   getGeminiAuthProfiles,
@@ -931,8 +987,6 @@ import {
 } from './providers/ProviderAuthUsage'
 import {
   createWorkspaceToolExecutors,
-  formatScopedPath as formatWorkspaceToolScopedPath,
-  resolveMcpScopedPath as resolveWorkspaceToolScopedPath,
   summarizeTestOutput,
   WORKSPACE_MCP_TOOL_NAMES,
   type WorkspaceMcpToolName,
@@ -942,10 +996,7 @@ import {
   createWorkspaceBoardToolExecutors,
   isWorkspaceBoardMcpToolName
 } from './mcp/WorkspaceBoardToolExecutors'
-import {
-  createEvidenceToolExecutors,
-  isEvidenceMcpToolName
-} from './mcp/EvidenceToolExecutors'
+import { createEvidenceToolExecutors, isEvidenceMcpToolName } from './mcp/EvidenceToolExecutors'
 import {
   buildProviderSignals,
   createAuditRoleDispatcher,
@@ -967,11 +1018,8 @@ import {
 import { AuditOrchestrator } from './audit/AuditOrchestrator'
 import { AuditRunTracker } from './audit/AuditRunTracker'
 import { createAuditGatesRunner } from './audit/AuditGatesRunner'
-import {
-  createDesktopToolExecutors,
-  isDesktopMcpToolName
-} from './mcp/DesktopToolExecutors'
-import { CanvasService } from './canvas/CanvasService'
+import { createDesktopToolExecutors, isDesktopMcpToolName } from './mcp/DesktopToolExecutors'
+import { CanvasService, type CanvasHistoryAuthority } from './canvas/CanvasService'
 import { CanvasStore } from './canvas/CanvasStore'
 import { CanvasWebDriver } from './canvas/CanvasWebDriver'
 import { CanvasDeviceDriver } from './canvas/CanvasDeviceDriver'
@@ -983,9 +1031,22 @@ import { registerCanvasEmbedIpc } from './canvas/CanvasEmbedIpc'
 import { asEmbedParent, createElectronEmbedView } from './canvas/CanvasEmbedView'
 import type {
   CanvasDriverKind,
+  CanvasEvalApprovalReceipt,
   CanvasEventRecord,
   CanvasSketchDocument
 } from './canvas/canvasTypes'
+import {
+  canvasEvalApprovalPayloadForDurableStorage,
+  createCanvasEvalApprovalReceipt,
+  createCanvasEvalApprovalReceiptFromCanonicalArgs,
+  createCanvasEvalCompatSanitizer,
+  createCanvasEvalJsonLineSanitizer,
+  sanitizeCanvasEvalProviderText
+} from './canvas/CanvasEvalAudit'
+import {
+  createNativeCanvasCompatSanitizer,
+  nativeCanvasCompatToolIds
+} from './canvas/NativeCanvasCompatSanitizer'
 import type { LaunchAttempt } from './launch/types'
 import {
   CANVAS_IMAGE_MAX_DECODE_PIXELS,
@@ -1060,7 +1121,9 @@ import {
 import {
   brokerRequest as mcpBridgeBrokerRequest,
   applyMcpBridgeProfileArgvToEnv,
+  beginBridgeSubprocessLogHistoryClear,
   createMcpBridgeRuntime,
+  endBridgeSubprocessLogHistoryClear,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
@@ -1108,17 +1171,12 @@ import {
   shouldRestartCodexAppServerForMcpConfig,
   shouldRouteCodexRunSession
 } from './CodexRunRouting'
-import {
-  decideKimiContentFilterRetry,
-  decideKimiWireClose,
-  mergeKimiWireTerminalEvidence,
-  resolveKimiWireTerminalStatus,
-  type KimiContentFilterRetryPass
-} from './KimiWireExitDecision'
+import { mergeKimiWireTerminalEvidence } from './KimiWireExitDecision'
 import { RunRepository } from './RunRepository'
 import { PermissionService } from './PermissionService'
 import { ProviderPreflightService } from './ProviderPreflightService'
 import {
+  GROK_ACP_REQUIRED_MESSAGE,
   grokAcpEnabled,
   grokReadOnlyMcpAdvertiseEnabled,
   grokSeatSessionsEnabled
@@ -1127,7 +1185,6 @@ import {
   grokWriteCapable,
   buildGrokAcpCliArgs,
   buildGrokCliArgs,
-  buildGrokProviderCliArgs,
   buildGrokProviderPrompt
 } from './grok/GrokCliArgs'
 import { grokToolKindToService, type AcpPermissionRequest } from './grok/GrokAcpProtocol'
@@ -1138,43 +1195,14 @@ import {
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
+import { cursorDebugEnabled } from './cursorGate'
 import {
-  cursorDebugEnabled,
-  cursorForceMcpEnabled,
-  cursorGlobalBrokerEnabled,
-  cursorReadOnlyMcpEnabled
-} from './cursorGate'
-import { buildCursorCliArgs, buildCursorProviderCliArgs, cursorWriteCapable } from './cursor/CursorCliArgs'
-import {
-  assertCursorWriteMcpPosture,
-  cursorMcpToolsDenied,
-  resolveCursorUserMcpLaunchServers
-} from './cursor/CursorMcpPolicy'
-import {
-  cursorEffectiveExitCode,
   cursorEventToRunEvents,
   cursorTerminalCompatOutcome,
   cursorTerminalFailureText,
   type NormalizedCursorRunEvent
 } from './cursor/CursorStreamJson'
-import {
-  applyCursorWriteModeConfig,
-  cursorWriteModeSetupFailureMessage,
-  ensureGlobalCursorBrokerRegistered
-} from './cursor/CursorWorkspaceConfig'
-import {
-  buildCursorBrokerMcpServerEntry,
-  buildCursorMcpServerEntry,
-  buildCursorReadOnlyMcpServerEntry,
-  CURSOR_BROKER_MCP_ALLOW_RULES,
-  CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
-  CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
-  CURSOR_LEGACY_WEB_MCP_SERVER_NAME,
-  CURSOR_MCP_ALLOW_RULES,
-  CURSOR_MCP_SERVER_NAME,
-  CURSOR_READONLY_MCP_ALLOW_RULES,
-  CURSOR_SCOPED_MCP_SERVER_NAME
-} from './cursor/CursorMcpBridge'
+import { cursorManagedRunAdmission } from './cursor/CursorManagedRunGate'
 import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
@@ -1195,24 +1223,21 @@ import {
   providerLabel,
   type ProviderAdapter
 } from './ProviderAdapters'
-import type { OllamaModelPreflightResult } from './ollama/OllamaModelPreflight'
+import {
+  createProviderCapabilityProbe,
+  parseCapabilityJsonItems,
+  parseCapabilityRawItems
+} from './providers/ProviderCapabilityProbe'
 import {
   fetchOllamaModels,
   getOllamaCapabilityContract,
   getOllamaStatusSnapshot,
   OLLAMA_TOOL_HELP_NAME,
-  runOllamaProvider,
-  validateOllamaToolArguments,
-  type OllamaToolExecutionRequest,
-  type OllamaToolExecutionResult
+  runOllamaProvider
 } from './ollama/OllamaProvider'
-import { buildOllamaToolDocSection } from './ollama/OllamaToolsDoc'
+import { createOllamaMainRuntime } from './ollama/OllamaMainRuntime'
 import { OLLAMA_ADVERTISED_TOOL_NAMES } from './ollama/OllamaToolTiers'
-import {
-  normalizeOllamaSessionMemory,
-  normalizeOllamaSessionMemoryMap,
-  upsertOllamaSessionMemory
-} from './ollama/OllamaRunMemory'
+import { normalizeOllamaSessionMemory } from './ollama/OllamaRunMemory'
 import {
   assertOllamaMutationIntent,
   assertOllamaProtectedWritePaths,
@@ -1243,6 +1268,7 @@ import { discoverLaunchTargets } from './launchTargets/discovery'
 import { registerLocalServersHandlers } from './ipc/localServersHandlers'
 import { createMainRuntimeContext } from './runtime/MainRuntimeContext'
 import { registerChatHandlers } from './ipc/chatHandlers'
+import { ScopedHistoryDeletionCoordinator } from './ScopedHistoryDeletionCoordinator'
 import { registerHumanCollaborationHandlers } from './ipc/humanCollaborationHandlers'
 import { registerWorkspaceHandlers } from './ipc/workspaceHandlers'
 import { registerProjectHandlers } from './ipc/projectHandlers'
@@ -1267,10 +1293,7 @@ import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGra
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
 import { createMainOwnedScheduledAttachmentPersistence } from './ScheduledAttachmentDurability'
-import {
-  registerRunQueueHandlers,
-  type RendererRunQueueMutation
-} from './ipc/runQueueHandlers'
+import { registerRunQueueHandlers, type RendererRunQueueMutation } from './ipc/runQueueHandlers'
 import { registerApprovalLedgerHandlers } from './ipc/approvalLedgerHandlers'
 import { registerIntrospectionHandlers } from './ipc/introspectionHandlers'
 import { applyMemoryProposal } from './introspection/IntrospectionApplyService'
@@ -1340,9 +1363,6 @@ import { resolveGeminiCliResumePolicy } from './GeminiSessionPolicy'
 // Kimi process sees the prompt). Module + tests live in
 // `src/main/lib/kimiSanitiser.ts`.
 import {
-  classifyAndRedactForKimi,
-  formatKimiRetryDiagnostic,
-  formatKimiRetryFailureDiagnostic,
   formatKimiSanitiserDiagnostic,
   isKimiContentFilterRejection,
   parseCustomKeywords,
@@ -1363,7 +1383,6 @@ import {
 import {
   canDisposeGrokSeatAfterCompaction,
   convergeHostSeatCompaction,
-  HOST_SEAT_COMPACTION_DEADLINE_MS,
   hostSeatCompactionRequestSucceeded,
   validateHostSeatCheckpointFreshness,
   type HostSeatCompactionChunkResult,
@@ -1392,6 +1411,7 @@ import {
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from './TaskWraithMcpTools'
+import { createMcpToolApprovalPreviewer } from './McpToolApprovalPreview'
 import {
   applyLaneTodoWrite,
   isTodoToolName,
@@ -1491,11 +1511,6 @@ import {
   extendClaudeCliArgsWithTaskWraithMcp,
   type ClaudeTaskWraithMcpInput
 } from './ClaudeTaskWraithMcp'
-import {
-  buildKimiRunMcpConfig,
-  buildKimiWirePromptRequest,
-  extendKimiCliArgsWithMcpConfig
-} from './KimiMcpBridge'
 import { tryRunGeminiApi } from './GeminiApiProvider'
 import { handleEnsembleContinue } from './EnsembleContinue'
 import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
@@ -1534,19 +1549,13 @@ const workspacePopoutOwners = new Map<
   }
 >()
 
-type RendererFilesystemCapability =
-  | 'external-grant'
-  | 'git'
-  | 'workspace-diff'
-  | 'workspace-file'
+type RendererFilesystemCapability = 'external-grant' | 'git' | 'workspace-diff' | 'workspace-file'
 
 type RendererSenderEvent = Pick<IpcMainInvokeEvent, 'sender'>
 
 function isMainRendererSender(event: RendererSenderEvent): boolean {
   return Boolean(
-    mainWindow &&
-      !mainWindow.isDestroyed() &&
-      mainWindow.webContents.id === event.sender.id
+    mainWindow && !mainWindow.isDestroyed() && mainWindow.webContents.id === event.sender.id
   )
 }
 
@@ -1590,9 +1599,7 @@ function assertRendererFilesystemScope(
   if (input.capability === 'workspace-file' && input.operation === 'write') {
     const editorOwner = owner.kind === 'file-editor' || owner.kind === 'workbench'
     const externalDiffOwner =
-      owner.kind === 'diff-studio' &&
-      Boolean(owner.chatId) &&
-      owner.externalWriteAllowed === true
+      owner.kind === 'diff-studio' && Boolean(owner.chatId) && owner.externalWriteAllowed === true
     if (!editorOwner && !externalDiffOwner) {
       throw new Error('Renderer does not own workspace file-write authority.')
     }
@@ -1647,6 +1654,7 @@ let codexExecProcess: ChildProcess | null = null
 let codexNewerBinaryWarned = false
 let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
 let scheduledOccurrenceRecoveryBlockedReason: string | null = null
+let historyDeletionStartupRecoveryBlockedReason: string | null = null
 // ~10-min floor sweep so a 'due'/'pending'/'running' wedge self-heals even when
 // no occurrence is being materialized (the piggyback path is event-driven).
 let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
@@ -2001,8 +2009,6 @@ const mcpBrowserConsoleBuffer: Array<{
   url?: string
 }> = []
 
-
-
 // Legacy process-wide YOLO state. New user-facing Trusted Session is
 // lane-scoped and backed by `trustedSessionGrants`; enabling this global switch
 // now fails closed in setSessionYoloMode(true). We keep the state/read/disable
@@ -2024,9 +2030,7 @@ function managedPolicyBlocksSessionYolo(): boolean {
   const enforced = Array.isArray(snapshot.enforcedSettings) ? snapshot.enforcedSettings : []
   return [...locked, ...enforced].some(
     (key) =>
-      key === 'agenticServices' ||
-      key === 'agenticWorkspaceGrants' ||
-      key === 'approvalTimeouts'
+      key === 'agenticServices' || key === 'agenticWorkspaceGrants' || key === 'approvalTimeouts'
   )
 }
 
@@ -2091,9 +2095,7 @@ function resolveTrustedSessionScope(
   rawScope: TrustedSessionScope
 ): { ok: true; scope: TrustedSessionScope } | { ok: false; error: string } {
   const chatId =
-    typeof rawScope?.chatId === 'string' && rawScope.chatId.trim()
-      ? rawScope.chatId.trim()
-      : ''
+    typeof rawScope?.chatId === 'string' && rawScope.chatId.trim() ? rawScope.chatId.trim() : ''
   if (!chatId) return { ok: false, error: 'Trusted Session needs a chat id.' }
   const chat = AppStore.getChat(chatId)
   if (!chat) return { ok: false, error: 'Trusted Session chat was not found.' }
@@ -2102,8 +2104,7 @@ function resolveTrustedSessionScope(
   }
 
   const requestedParticipantId =
-    typeof rawScope?.ensembleParticipantId === 'string' &&
-    rawScope.ensembleParticipantId.trim()
+    typeof rawScope?.ensembleParticipantId === 'string' && rawScope.ensembleParticipantId.trim()
       ? rawScope.ensembleParticipantId.trim()
       : ''
   const participant = requestedParticipantId
@@ -2115,9 +2116,9 @@ function resolveTrustedSessionScope(
 
   let provider: ProviderId
   try {
-    provider = participant
-      ? participant.provider
-      : assertLiveProviderId(rawScope?.provider || chat.provider || DEFAULT_PROVIDER)
+    provider = assertLiveProviderId(
+      participant ? participant.provider : rawScope?.provider || chat.provider || DEFAULT_PROVIDER
+    )
   } catch {
     return { ok: false, error: 'Trusted Session provider is not available.' }
   }
@@ -2151,10 +2152,7 @@ function getTrustedSession(scope: TrustedSessionScope): TrustedSessionSetResult 
   return trustedSessionGrants.get(resolved.scope)
 }
 
-function setTrustedSession(
-  scope: TrustedSessionScope,
-  enabled: boolean
-): TrustedSessionSetResult {
+function setTrustedSession(scope: TrustedSessionScope, enabled: boolean): TrustedSessionSetResult {
   const resolved = resolveTrustedSessionScope(scope)
   if (!resolved.ok) return { enabled: false, error: resolved.error }
   return enabled
@@ -2176,8 +2174,7 @@ let appliedNativeGlassState: string | null = null
 // suffix sends it to bridge-mode (where it fails to connect + exits) instead of
 // booting the FULL app, which would re-probe the bridge and self-spawn
 // exponentially — the root cause of the 1.0.74 "100s of dev apps" loop.
-const isGeminiMcpBridgeProcess =
-  isTaskWraithHelperProcess(process.argv, process.env)
+const isGeminiMcpBridgeProcess = isTaskWraithHelperProcess(process.argv, process.env)
 if (shouldSuppressMacAppPresentation(process.argv, process.env)) {
   try {
     app.setActivationPolicy('prohibited')
@@ -2195,7 +2192,11 @@ const externalGrantSigningSecret = loadOrCreateExternalGrantSigningSecret()
 const externalPathGrantExecutionRegistry = new ExternalPathGrantExecutionRegistry()
 const geminiMcpBrokerToken = randomBytes(32).toString('hex')
 
-function taskwraithMcpBridgeCommandStatus(): { command: string; available: boolean; error?: string } {
+function taskwraithMcpBridgeCommandStatus(): {
+  command: string
+  available: boolean
+  error?: string
+} {
   const command = process.execPath
   try {
     fsSync.accessSync(command, fsSync.constants.X_OK)
@@ -2210,10 +2211,21 @@ function taskwraithMcpBridgeCommandStatus(): { command: string; available: boole
 }
 
 function taskwraithMcpBridgeUnavailableMessage(
-  status: { command: string; available: boolean; error?: string } = taskwraithMcpBridgeCommandStatus()
+  status: {
+    command: string
+    available: boolean
+    error?: string
+  } = taskwraithMcpBridgeCommandStatus()
 ): string {
   return `TaskWraith MCP bridge executable is not available at ${status.command}: ${status.error || 'not executable'}`
 }
+
+const providerCapabilityProbe = createProviderCapabilityProbe({
+  resolveGeminiBinary: () => resolveCliProviderBinary('gemini'),
+  createCliEnv,
+  spawnProcess: spawn
+})
+const runGeminiCapabilityCommand = providerCapabilityProbe.runGeminiCapabilityCommand
 
 const mcpBridgeRuntime = createMcpBridgeRuntime({
   getSettings: () => AppStore.getSettings(),
@@ -2294,6 +2306,136 @@ let macIdentitySeedRef: Buffer | null = null
 // `workspaceIdForApprovalPush` helpers are thin proxies that no-op
 // until the service is ready.
 let approvalService: ApprovalService | null = null
+const historyClearAdmissionGate = new HistoryClearAdmissionGate()
+const providerRunPersistenceAuthorities = new Map<string, HistoryClearRunPersistenceAuthority>()
+// Exact adapter promises are the transport-join authority for destructive
+// history deletion. RunManager terminal state alone is insufficient because a
+// provider abort/kill can settle before the adapter's close/cleanup callback.
+const providerAdapterRunsInFlight = new Map<string, Promise<void>>()
+const providerTransportOperations = new ProviderOperationRegistry()
+const hostCommandOperations = new HostCommandOperationRegistry()
+interface ProviderDispatchReservation {
+  authority: HistoryClearDispatchAuthority
+  gateReservation: HistoryClearDispatchReservation
+}
+let deleteChatWithLifecycleRef: ((chatId: string) => Promise<string[]>) | null = null
+
+function providerDispatchAuthorityForPayload(
+  payload: AgentRunPayload
+): HistoryClearDispatchAuthority {
+  const appChatId = requireNonEmptyString(payload.appChatId, 'Dispatch chat id')
+  const authority = currentProviderRunPersistenceAuthority(
+    appChatId,
+    payload.scope === 'global' ? undefined : payload.workspace
+  )
+  if (!authority) throw new Error('Dispatch chat has no durable persistence authority.')
+  return authority
+}
+
+function reserveProviderDispatchForPayload(payload: AgentRunPayload): ProviderDispatchReservation {
+  const authority = providerDispatchAuthorityForPayload(payload)
+  return Object.freeze({
+    authority,
+    gateReservation: historyClearAdmissionGate.reserveDispatch(authority)
+  })
+}
+
+function releaseProviderDispatchReservation(reservation: object): void {
+  const providerReservation = reservation as ProviderDispatchReservation
+  historyClearAdmissionGate.releaseDispatch(providerReservation.gateReservation)
+}
+
+function validateProviderDispatchReservation(
+  payload: AgentRunPayload,
+  reservation: ProviderDispatchReservation | undefined
+): HistoryClearDispatchAuthority {
+  const currentAuthority = providerDispatchAuthorityForPayload(payload)
+  if (
+    !reservation ||
+    !sameProviderDispatchIncarnation(reservation.authority, currentAuthority) ||
+    !historyClearAdmissionGate.authorizeDispatch(reservation.gateReservation, currentAuthority)
+  ) {
+    throw new Error('Dispatch chat authority changed while provider preflight was pending.')
+  }
+  return currentAuthority
+}
+
+function promoteProviderRunPersistenceAuthority(
+  payload: AgentRunPayload,
+  reservation: ProviderDispatchReservation
+): void {
+  const appRunId = requireNonEmptyString(payload.appRunId, 'Provider dispatch run id')
+  const currentAuthority = validateProviderDispatchReservation(payload, reservation)
+  const persistenceAuthority = historyClearAdmissionGate.promoteDispatch(
+    reservation.gateReservation,
+    currentAuthority
+  )
+  if (!persistenceAuthority) {
+    throw new Error('Dispatch chat authority changed before output admission.')
+  }
+  releaseProviderRunPersistenceAuthority(appRunId)
+  providerRunPersistenceAuthorities.set(appRunId, persistenceAuthority)
+}
+
+function currentProviderRunPersistenceAuthority(
+  appChatId: string,
+  workspacePath?: string
+): HistoryClearDispatchAuthority | null {
+  const normalizedChatId = appChatId.trim()
+  if (!normalizedChatId) return null
+  const chat = AppStore.getChat(normalizedChatId)
+  if (!chat) return null
+  if (durableHistoryDeletionBlocks(normalizedChatId, chat.workspaceId)) return null
+  const persistenceRevision = chat.persistenceRevision
+  if (!Number.isSafeInteger(persistenceRevision) || (persistenceRevision ?? -1) < 0) return null
+  return {
+    appChatId: normalizedChatId,
+    workspaceId: chat.workspaceId || workspaceIdForApprovalPush(workspacePath),
+    persistenceRevision: persistenceRevision as number
+  }
+}
+
+function sameProviderDispatchIncarnation(
+  left: HistoryClearDispatchAuthority,
+  right: HistoryClearDispatchAuthority
+): boolean {
+  return left.appChatId === right.appChatId && left.workspaceId === right.workspaceId
+}
+
+function providerRunPersistenceAuthorized(
+  provider: ProviderId,
+  route: AgentRunRoute | null | undefined,
+  options: { allowTerminal?: boolean } = {}
+): boolean {
+  const appRunId = route?.appRunId?.trim()
+  const appChatId = route?.appChatId?.trim()
+  if (!appRunId || !appChatId) return false
+  const expected = providerRunPersistenceAuthorities.get(appRunId)
+  const session = runManager.get(appRunId)
+  if (
+    !expected ||
+    !session ||
+    (!isActiveRunSessionStatus(session.status) &&
+      !(options.allowTerminal && isTerminalRunSessionStatus(session.status))) ||
+    session.provider !== provider ||
+    session.appChatId !== appChatId
+  )
+    return false
+  const current = currentProviderRunPersistenceAuthority(appChatId, session.workspacePath)
+  return Boolean(current && historyClearAdmissionGate.authorizeRunPersistence(expected, current))
+}
+
+function releaseProviderRunPersistenceAuthority(appRunId: string | undefined): void {
+  const normalizedRunId = appRunId?.trim()
+  if (!normalizedRunId) return
+  const authority = providerRunPersistenceAuthorities.get(normalizedRunId)
+  if (authority) historyClearAdmissionGate.releaseRunPersistence(authority)
+  providerRunPersistenceAuthorities.delete(normalizedRunId)
+}
+
+function globalHistoryClearInProgress(): boolean {
+  return historyClearAdmissionGate.isGlobalBlocked()
+}
 
 // Phase F3: late-bound RunCoordinator ref. The coordinator is
 // constructed in whenReady (it needs the in-scope `providerAdapters`
@@ -2430,12 +2572,13 @@ function recordWorkflowBudgetBreach(
 // status — it rides alongside the terminal lifecycle event the sync path already
 // wrote). `route` is the run state carried into sendAgentCompatExit (tokenUsage +
 // startedAt). Best-effort; skipped for a non-workflow task or when there's nothing
-// to record (no token signal AND no start time — e.g. a grok/cursor mid-run exit).
+// to record (no token signal AND no start time — e.g. a Grok mid-run exit).
 function recordWorkflowRunHarvest(scheduledTaskId: string, runId: string, route: unknown): void {
   const task = AppStore.getScheduledTasks().find((t) => t.id === scheduledTaskId)
   if (!task?.workflowExecutionId || !task.workflowId) return
-  const usage = (route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null)
-    ?.tokenUsage
+  const usage = (
+    route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null
+  )?.tokenUsage
   const tokens = typeof usage?.total_tokens === 'number' ? usage.total_tokens : undefined
   const costUsd = typeof usage?.total_cost_usd === 'number' ? usage.total_cost_usd : undefined
   // durationMs: prefer the provider stream's startedAt (most precise), else the
@@ -2453,7 +2596,9 @@ function recordWorkflowRunHarvest(scheduledTaskId: string, runId: string, route:
         : task.firedAt
           ? Date.parse(task.firedAt)
           : Number.NaN
-  const durationMs = Number.isFinite(startedAtMs) ? Math.max(0, Date.now() - startedAtMs) : undefined
+  const durationMs = Number.isFinite(startedAtMs)
+    ? Math.max(0, Date.now() - startedAtMs)
+    : undefined
   if (tokens === undefined && costUsd === undefined && durationMs === undefined) return
   try {
     AppStore.appendWorkflowRunEvent({
@@ -2671,33 +2816,6 @@ function validateUserMcpPluginProvenance(server: UserMcpServerConfig): string | 
   return result.ok ? undefined : result.reason || 'plugin provenance is not current'
 }
 
-const BACKGROUND_PROCESS_LOG_LIMIT = 500_000
-const BACKGROUND_PROCESS_ENTRY_LIMIT = 80
-
-type BackgroundProcessStreamName = 'stdout' | 'stderr' | 'both'
-type BackgroundProcessSignalName = 'SIGTERM' | 'SIGKILL'
-
-interface BackgroundProcessEntry {
-  processId: string
-  appChatId: string
-  name?: string
-  command: string
-  cwd: string
-  child: ChildProcess
-  pid?: number
-  startedAt: string
-  endedAt?: string
-  exitCode?: number | null
-  signal?: NodeJS.Signals | null
-  error?: string
-  stdout: string
-  stderr: string
-  stdoutBase: number
-  stderrBase: number
-  stdoutLength: number
-  stderrLength: number
-}
-
 function packageScriptsForCwd(cwd: string): Record<string, unknown> | null {
   try {
     const packageJsonPath = join(cwd, 'package.json')
@@ -2720,251 +2838,120 @@ interface HostCommandRunOptions {
 
 type HostCommandRunArgument = number | HostCommandRunOptions
 
-class BackgroundProcessRegistry {
-  private entries = new Map<string, BackgroundProcessEntry>()
+interface HostCommandProjectionScope {
+  readonly source:
+    | 'codex-host-rerun'
+    | 'brokered-mcp'
+    | 'ollama-local-tool'
+    | 'audit-gate'
+  readonly appRunId: string
+  readonly appChatId: string
+  readonly workspaceId?: string
+  readonly workspacePath?: string
+  readonly operations: Set<HostCommandOperationController>
+}
 
-  async start(
-    command: string,
-    cwd: string,
-    options: {
-      appChatId: string
-      name?: string
-      initialWaitMs: number
-      maxInitialChars: number
-      releaseApproval?: ReleaseCommandCheckOptions
+const hostCommandProjectionContext = new AsyncLocalStorage<HostCommandProjectionScope>()
+
+function createHostCommandProjectionScope(input: {
+  source: HostCommandProjectionScope['source']
+  appRunId?: string | null
+  appChatId?: string | null
+  workspaceId?: string | null
+  workspacePath?: string | null
+}): HostCommandProjectionScope | null {
+  const appRunId = input.appRunId?.trim()
+  const appChatId = input.appChatId?.trim()
+  if (!appRunId || !appChatId) return null
+  const workspacePath = input.workspacePath?.trim() || undefined
+  const chat = AppStore.getChat(appChatId)
+  const workspaceId =
+    input.workspaceId?.trim() ||
+    chat?.workspaceId ||
+    (workspacePath ? workspaceIdForApprovalPush(workspacePath) || undefined : undefined)
+  return {
+    source: input.source,
+    appRunId,
+    appChatId,
+    ...(workspaceId ? { workspaceId } : {}),
+    ...(workspacePath ? { workspacePath } : {}),
+    operations: new Set<HostCommandOperationController>()
+  }
+}
+
+function runWithHostCommandProjectionScope<T>(
+  scope: HostCommandProjectionScope | null,
+  run: () => Promise<T>
+): Promise<T> {
+  return scope ? hostCommandProjectionContext.run(scope, run) : run()
+}
+
+function completeHostCommandTerminalProjection(scope: HostCommandProjectionScope | null): void {
+  if (!scope) return
+  for (const operation of scope.operations) operation.markTerminalProjectionComplete()
+  scope.operations.clear()
+}
+
+function hostCommandProjectionHandle(
+  scope: HostCommandProjectionScope | null
+): HostCommandProjectionHandle | null {
+  if (!scope) return null
+  return {
+    run: <T>(operation: () => Promise<T>) =>
+      runWithHostCommandProjectionScope(scope, operation),
+    complete: () => completeHostCommandTerminalProjection(scope)
+  }
+}
+
+function hostCommandHistoryCancellationScope(
+  preparation: HistoryDeletionPreparation
+): HostCommandOperationScope {
+  if (preparation.kind === 'global') return { kind: 'global' }
+  if (preparation.kind === 'workspace') {
+    const workspace = AppStore.getWorkspaces().find(
+      (candidate) => candidate.id === preparation.workspaceId
+    )
+    return {
+      kind: 'workspace',
+      workspaceId: preparation.workspaceId,
+      workspacePath: workspace?.path,
+      chatIds: preparation.chatIds
     }
-  ): Promise<Record<string, unknown>> {
-    const startedAt = new Date().toISOString()
-    const processId = `bg-${Date.now()}-${randomBytes(4).toString('hex')}`
-    const blockedReleaseCommand =
-      releaseCommandBlockReason(command, options.releaseApproval) ||
-      releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), options.releaseApproval)
-    if (blockedReleaseCommand) {
-      return {
-        ok: false,
-        processId,
-        command,
-        cwd,
-        startedAt,
-        error: blockedReleaseCommand
-      }
-    }
+  }
+  return { kind: 'chat', chatIds: preparation.chatIds }
+}
+
+const backgroundProcessRegistry = new BackgroundProcessRegistry({
+  spawnProcess: (command, cwd) => {
     const shellCommand =
       process.env.SHELL || (process.platform === 'win32' ? 'powershell.exe' : '/bin/zsh')
     const shellArgs =
       process.platform === 'win32' ? ['-NoProfile', '-Command', command] : ['-lc', command]
-
-    let child: ChildProcess
-    try {
-      child = spawn(shellCommand, shellArgs, {
-        cwd,
-        shell: false,
-        detached: true,
-        windowsHide: true,
-        env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, shellCommand)
-      })
-    } catch (error) {
-      return {
-        ok: false,
-        processId,
-        command,
-        cwd,
-        startedAt,
-        error: error instanceof Error ? error.message : String(error)
-      }
-    }
-
-    const entry: BackgroundProcessEntry = {
-      processId,
-      appChatId: options.appChatId,
-      name: options.name,
-      command,
+    return spawn(shellCommand, shellArgs, {
       cwd,
-      child,
-      pid: child.pid,
-      startedAt,
-      stdout: '',
-      stderr: '',
-      stdoutBase: 0,
-      stderrBase: 0,
-      stdoutLength: 0,
-      stderrLength: 0
-    }
-    this.entries.set(processId, entry)
-    this.prune()
-
+      shell: false,
+      detached: true,
+      windowsHide: true,
+      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, shellCommand)
+    })
+  },
+  signalProcess: (child, signal) => {
     if (child.pid) {
-      spawnRegistry.track({
-        pid: child.pid,
-        pgid: child.pid,
-        startedAt,
-        workspacePath: cwd
-      })
-    }
-
-    child.stdout?.on('data', (chunk) => this.append(entry, 'stdout', chunk.toString()))
-    child.stderr?.on('data', (chunk) => this.append(entry, 'stderr', chunk.toString()))
-    child.on('error', (error) => {
-      entry.error = error.message
-    })
-    child.on('close', (code, signal) => {
-      entry.exitCode = code
-      entry.signal = signal
-      entry.endedAt = new Date().toISOString()
-      if (entry.pid) spawnRegistry.untrack(entry.pid)
-    })
-
-    if (options.initialWaitMs > 0) {
-      await new Promise((resolveWait) => setTimeout(resolveWait, options.initialWaitMs))
-    }
-
-    return this.read(processId, {
-      appChatId: options.appChatId,
-      stdoutOffset: 0,
-      stderrOffset: 0,
-      maxChars: options.maxInitialChars,
-      stream: 'both'
-    })
-  }
-
-  list(filter: { appChatId: string }): Record<string, unknown> {
-    const processes = [...this.entries.values()]
-      .filter((entry) => entry.appChatId === filter.appChatId)
-      .sort((a, b) => b.startedAt.localeCompare(a.startedAt))
-      .map((entry) => this.summary(entry))
-    return { ok: true, count: processes.length, processes }
-  }
-
-  read(
-    processId: string,
-    options: {
-      appChatId: string
-      stdoutOffset?: number
-      stderrOffset?: number
-      maxChars: number
-      stream: BackgroundProcessStreamName
-    }
-  ): Record<string, unknown> {
-    const entry = this.entryFor(processId, options.appChatId)
-    if (!entry) return { ok: false, processId, error: 'Background process not found for this chat.' }
-    const stdout =
-      options.stream === 'stdout' || options.stream === 'both'
-        ? this.readStream(entry, 'stdout', options.stdoutOffset, options.maxChars)
-        : undefined
-    const stderr =
-      options.stream === 'stderr' || options.stream === 'both'
-        ? this.readStream(entry, 'stderr', options.stderrOffset, options.maxChars)
-        : undefined
-    return {
-      ok: true,
-      ...this.summary(entry),
-      stdout,
-      stderr
-    }
-  }
-
-  async kill(
-    processId: string,
-    options: { appChatId: string; signal: BackgroundProcessSignalName }
-  ): Promise<Record<string, unknown>> {
-    const entry = this.entryFor(processId, options.appChatId)
-    if (!entry) return { ok: false, processId, error: 'Background process not found for this chat.' }
-    if (entry.endedAt) {
-      return { ok: true, alreadyExited: true, ...this.summary(entry) }
-    }
-    try {
-      if (entry.pid) {
-        try {
-          process.kill(-entry.pid, options.signal)
-        } catch {
-          entry.child.kill(options.signal)
-        }
-      } else {
-        entry.child.kill(options.signal)
-      }
-      return { ok: true, signal: options.signal, ...this.summary(entry) }
-    } catch (error) {
-      return {
-        ok: false,
-        ...this.summary(entry),
-        error: error instanceof Error ? error.message : String(error)
+      try {
+        process.kill(-child.pid, signal)
+        return
+      } catch {
+        // Fall through to the exact child when process groups are unavailable.
       }
     }
-  }
-
-  private append(entry: BackgroundProcessEntry, stream: 'stdout' | 'stderr', chunk: string): void {
-    if (!chunk) return
-    const bufferKey = stream
-    const baseKey = stream === 'stdout' ? 'stdoutBase' : 'stderrBase'
-    const lengthKey = stream === 'stdout' ? 'stdoutLength' : 'stderrLength'
-    entry[bufferKey] += chunk
-    entry[lengthKey] += chunk.length
-    if (entry[bufferKey].length > BACKGROUND_PROCESS_LOG_LIMIT) {
-      entry[bufferKey] = entry[bufferKey].slice(-BACKGROUND_PROCESS_LOG_LIMIT)
-      entry[baseKey] = entry[lengthKey] - entry[bufferKey].length
-    }
-  }
-
-  private readStream(
-    entry: BackgroundProcessEntry,
-    stream: 'stdout' | 'stderr',
-    offset: number | undefined,
-    maxChars: number
-  ): Record<string, unknown> {
-    const buffer = entry[stream]
-    const base = stream === 'stdout' ? entry.stdoutBase : entry.stderrBase
-    const total = stream === 'stdout' ? entry.stdoutLength : entry.stderrLength
-    const requestedOffset = typeof offset === 'number' ? offset : Math.max(base, total - maxChars)
-    const startOffset = Math.max(base, Math.min(total, requestedOffset))
-    const startIndex = Math.max(0, startOffset - base)
-    const text = buffer.slice(startIndex, startIndex + maxChars)
-    const cursor = startOffset + text.length
-    return {
-      text,
-      offset: startOffset,
-      cursor,
-      length: total,
-      truncatedBefore: requestedOffset < base,
-      truncatedAfter: cursor < total
-    }
-  }
-
-  private summary(entry: BackgroundProcessEntry): Record<string, unknown> {
-    return {
-      processId: entry.processId,
-      name: entry.name,
-      command: entry.command.length > 500 ? `${entry.command.slice(0, 500)}...` : entry.command,
-      cwd: entry.cwd,
-      pid: entry.pid,
-      running: !entry.endedAt,
-      startedAt: entry.startedAt,
-      endedAt: entry.endedAt,
-      exitCode: entry.exitCode,
-      signal: entry.signal,
-      error: entry.error,
-      stdoutLength: entry.stdoutLength,
-      stderrLength: entry.stderrLength
-    }
-  }
-
-  private entryFor(processId: string, appChatId: string): BackgroundProcessEntry | undefined {
-    const entry = this.entries.get(processId)
-    if (!entry || entry.appChatId !== appChatId) return undefined
-    return entry
-  }
-
-  private prune(): void {
-    if (this.entries.size <= BACKGROUND_PROCESS_ENTRY_LIMIT) return
-    const entries = [...this.entries.values()].sort((a, b) => a.startedAt.localeCompare(b.startedAt))
-    for (const entry of entries) {
-      if (this.entries.size <= BACKGROUND_PROCESS_ENTRY_LIMIT) break
-      if (!entry.endedAt) continue
-      this.entries.delete(entry.processId)
-    }
-  }
-}
-
-const backgroundProcessRegistry = new BackgroundProcessRegistry()
+    child.kill(signal)
+  },
+  commandBlockReason: (command, cwd, releaseApproval) =>
+    releaseCommandBlockReason(command, releaseApproval) ||
+    releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), releaseApproval),
+  trackProcess: (tracked) => spawnRegistry.track(tracked),
+  untrackProcess: (pid) => spawnRegistry.untrack(pid)
+})
 let faviconServiceRef: FaviconService | null = null
 // 1.0.5-EW37 — Solo-chat wakeup service. Extends the Phase N
 // wakeup infrastructure off the ensemble-only path so a solo chat
@@ -2981,7 +2968,6 @@ function getFaviconService(): FaviconService {
   }
   return faviconServiceRef
 }
-
 
 /**
  * 1.0.5-C0 — Feature gates for the C-series work absorbed from the
@@ -3104,6 +3090,7 @@ const canvasEmbedController = new CanvasEmbedController({
 // JS-off, egress-cut rasterizer.
 const offscreenImageEngine = createNativeImageEngine()
 const CANVAS_HTML_RENDER_TIMEOUT_MS = 15_000
+const canvasStore = new CanvasStore(join(app.getPath('userData'), 'canvas'))
 const canvasService = new CanvasService({
   createDriver: (
     kind: CanvasDriverKind,
@@ -3169,7 +3156,7 @@ const canvasService = new CanvasService({
     }
     throw new Error(`Canvas driver "${kind}" is not available in this build.`)
   },
-  store: new CanvasStore(join(app.getPath('userData'), 'canvas')),
+  store: canvasStore,
   uuid: () => randomUUID(),
   now: () => new Date().toISOString(),
   broadcast: (event: CanvasEventRecord) => {
@@ -3223,11 +3210,10 @@ const audioToolExecutors = createAudioToolExecutors({
     const sourcePath = typeof args.sourcePath === 'string' ? args.sourcePath.trim() : ''
     if (!sourcePath) return { ok: false, reason: 'provide sourcePath (a workspace audio file)' }
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = await stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
-      stagingDirectory: MEDIA_STAGING_DIR,
       kind: 'audio'
     })
     return staged.ok
@@ -3240,12 +3226,12 @@ const audioToolExecutors = createAudioToolExecutors({
   // windowed slice (Item 2 — caught here so a Speech-permission/locale failure NEVER fails
   // the call). Mirrors the audio_mix producer lane (same staging→file persistence→
   // generateAvPoster→finally removeFile), but with one source + a transcript step.
-  produceWindowClip: async (sourcePath, startMs, endMs) => {
+  produceWindowClip: async (sourcePath, startMs, endMs, ctx) => {
     const daemon = bridgeDaemonRef
     if (!daemon) throw new Error('audio bridge daemon is not running')
     const mimeType = 'audio/wav'
-    const outputPath = join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.wav`)
-    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
+    const outputPath = allocateProducedMediaStagingPath('wav')
+    let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
     try {
       // Round the integer-typed bounds: the daemon decodes startMs/endMs as Swift Int and
       // rejects a fractional JSON value (12500.5) with invalidParams.
@@ -3259,14 +3245,10 @@ const audioToolExecutors = createAudioToolExecutors({
       // Stream the staged WAV into the content-addressed store under the shared media
       // limiter. The returned canonical path is immutable and remains valid after this
       // function's staging cleanup.
-      const persisted = await persistMediaOutputFile(outputPath, mimeType)
+      const persisted = await persistMediaOutputFile(outputPath, mimeType, ctx)
       if (!persisted.ok) throw new Error(`Failed to persist clip: ${persisted.reason}`)
-      const poster = await generateAvPoster(
-        persisted.path,
-        'audio',
-        mimeType,
-        persisted.byteLength
-      )
+      pendingToolMediaPersistence = persisted.pendingToolMediaPersistence
+      const poster = await generateAvPoster(persisted.path, 'audio', mimeType, persisted.byteLength)
       // Best-effort WINDOWED transcript (Item 2): transcribe the canonical WAV. NEVER fail
       // the call — a denied Speech permission / undownloaded locale model just omits it.
       let transcript: string | undefined
@@ -3296,14 +3278,23 @@ const audioToolExecutors = createAudioToolExecutors({
         peaks: poster?.peaks,
         thumbnail: poster?.thumbnail,
         transcript,
-        segments
+        segments,
+        pendingToolMediaPersistence
       }
-    } finally {
+    } catch (error) {
+      if (!pendingToolMediaPersistence) throw error
       try {
-        fsSync.unlinkSync(outputPath)
-      } catch {
-        // best-effort staging cleanup
+        await rollbackPendingToolMediaPersistence(pendingToolMediaPersistence)
+        pendingToolMediaPersistence = undefined
+      } catch (rollbackError) {
+        throw new AggregateError(
+          [error, rollbackError],
+          'Audio clip production failed and its owned media could not be rolled back.'
+        )
       }
+      throw error
+    } finally {
+      releaseProducedMediaStagingPath(outputPath)
     }
   }
 })
@@ -3316,13 +3307,106 @@ const vtToolCallBudget = new ImageToolCallBudget()
 // Bound concurrent ffmpeg encoders (CPU-heavy transcode/thumbnail); ffprobe is
 // metadata-only and stays uncapped. Output stages in a dir WE own.
 const mediaProcessLimiter = createSemaphore(2)
-const MEDIA_STAGING_DIR = join(app.getPath('userData'), 'media-staging')
+const MEDIA_STAGING_ROOT = join(app.getPath('userData'), 'media-staging')
+const PDF_ATTACHMENT_RENDER_CACHE_ROOT = defaultPdfAttachmentRenderCacheDir(app.getPath('userData'))
+const regenerableHistoryByteStore = new RegenerableHistoryByteStore({
+  roots: {
+    media: MEDIA_STAGING_ROOT,
+    pdf: PDF_ATTACHMENT_RENDER_CACHE_ROOT
+  },
+  journalPath: join(app.getPath('userData'), '.regenerable-history-bytes-purge-v1.json')
+})
+const producedMediaStagingReservations = new Map<string, RegenerableHistoryByteReservation>()
 const COMPOSER_AUDIO_TRANSCRIPTION_MAX_BYTES = 32 * 1024 * 1024
+
+function endRegenerableHistoryByteReservation(
+  reservation: RegenerableHistoryByteReservation
+): void {
+  if (!regenerableHistoryByteStore.end(reservation)) {
+    throw new Error('Regenerable history-byte reservation was no longer active.')
+  }
+}
+
+async function stageWorkspaceMediaSnapshotInHistoryStore(
+  options: Omit<StageWorkspaceMediaSnapshotOptions, 'stagingDirectory'>
+): Promise<StagedWorkspaceMediaSnapshotResult> {
+  const reservation = regenerableHistoryByteStore.begin('media')
+  let reservationActive = true
+  const releaseReservation = (): void => {
+    if (!reservationActive) return
+    reservationActive = false
+    endRegenerableHistoryByteReservation(reservation)
+  }
+  try {
+    const staged = await stageWorkspaceMediaSnapshot({
+      ...options,
+      stagingDirectory: reservation.root
+    })
+    if (!staged.ok) {
+      releaseReservation()
+      return staged
+    }
+    if (!regenerableHistoryByteStore.isCurrent(reservation)) {
+      try {
+        staged.cleanup()
+      } finally {
+        releaseReservation()
+      }
+      return { ok: false, reason: 'snapshot_failed' }
+    }
+    return {
+      ...staged,
+      cleanup: () => {
+        try {
+          return staged.cleanup()
+        } finally {
+          releaseReservation()
+        }
+      }
+    }
+  } catch (error) {
+    releaseReservation()
+    throw error
+  }
+}
+
+function allocateProducedMediaStagingPath(extension: string): string {
+  if (!/^[a-z0-9]{1,10}$/i.test(extension)) {
+    throw new Error('Produced-media staging extension is invalid.')
+  }
+  const reservation = regenerableHistoryByteStore.begin('media')
+  const outputPath = join(reservation.root, `tw-${randomUUID()}.${extension.toLowerCase()}`)
+  if (producedMediaStagingReservations.has(outputPath)) {
+    endRegenerableHistoryByteReservation(reservation)
+    throw new Error('Produced-media staging path collided with an active reservation.')
+  }
+  producedMediaStagingReservations.set(outputPath, reservation)
+  return outputPath
+}
+
+function releaseProducedMediaStagingPath(outputPath: string): void {
+  const reservation = producedMediaStagingReservations.get(outputPath)
+  if (!reservation || reservation.root !== dirname(outputPath)) {
+    throw new Error('Produced-media staging path has no active reservation.')
+  }
+  producedMediaStagingReservations.delete(outputPath)
+  try {
+    fsSync.unlinkSync(outputPath)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException)?.code !== 'ENOENT') throw error
+  } finally {
+    endRegenerableHistoryByteReservation(reservation)
+  }
+}
 
 async function readDescriptorAnchoredMediaFile(
   filePath: string,
   maxBytes: number
 ): Promise<Buffer> {
+  const reservation = producedMediaStagingReservations.get(filePath)
+  if (reservation && !regenerableHistoryByteStore.isCurrent(reservation)) {
+    throw new Error('Produced-media output was revoked by history deletion.')
+  }
   if (!Number.isSafeInteger(maxBytes) || maxBytes <= 0) {
     throw new Error('invalid output byte limit')
   }
@@ -3331,6 +3415,8 @@ async function readDescriptorAnchoredMediaFile(
     throw new Error('output is not a regular file')
   }
   const handle = await fs.open(filePath, fsSync.constants.O_RDONLY | fsSync.constants.O_NOFOLLOW)
+  let output: Buffer | null = null
+  let failure: unknown = null
   try {
     const stat = await handle.stat()
     const uid = typeof process.getuid === 'function' ? process.getuid() : null
@@ -3369,19 +3455,75 @@ async function readDescriptorAnchoredMediaFile(
     ) {
       throw new Error('output changed during read')
     }
-    return buffer
-  } finally {
-    await handle.close().catch(() => undefined)
+    if (reservation && !regenerableHistoryByteStore.isCurrent(reservation)) {
+      throw new Error('Produced-media output was revoked during read.')
+    }
+    output = buffer
+  } catch (error) {
+    failure = error
   }
+  return completeRegenerableHistoryByteOperation({
+    cleanup: () => handle.close().catch(() => undefined),
+    isCurrent: () =>
+      !reservation || regenerableHistoryByteStore.isCurrent(reservation),
+    onCurrent: () => {
+      if (failure) throw failure
+      if (!output) throw new Error('Produced-media output read completed without bytes.')
+      return output
+    },
+    onRevoked: () => {
+      throw new Error('Produced-media output was revoked before read completion.')
+    }
+  })
 }
 
-async function persistMediaOutputFile(filePath: string, mimeType: string) {
-  return mediaProcessLimiter.run(() =>
-    getTranscriptMediaAssetStore().writeContentAddressedFromFile({
+interface ProducedMediaToolContext {
+  appChatId?: string
+  appRunId?: string
+}
+
+async function persistMediaOutputFile(
+  filePath: string,
+  mimeType: string,
+  ctx: ProducedMediaToolContext
+): Promise<ToolMediaPersistOutput> {
+  const stagingReservation = producedMediaStagingReservations.get(filePath)
+  if (stagingReservation && !regenerableHistoryByteStore.isCurrent(stagingReservation)) {
+    return { ok: false, reason: 'authority_lost' }
+  }
+  const appChatId = ctx.appChatId?.trim()
+  const appRunId = ctx.appRunId?.trim()
+  if (!appChatId || !appRunId) return { ok: false, reason: 'authority_lost' }
+  const session = runManager.get(appRunId)
+  if (!session || session.appChatId !== appChatId) {
+    return { ok: false, reason: 'authority_lost' }
+  }
+  const route = { appChatId, appRunId }
+  const provider = session.provider
+  const isAuthorized = (): boolean => providerRunPersistenceAuthorized(provider, route)
+  const mediaStore = getTranscriptMediaAssetStore()
+  const persisted = await mediaProcessLimiter.run(() =>
+    mediaStore.writeOwnedContentAddressedFromFile({
       sourcePath: filePath,
-      mimeType
+      mimeType,
+      appChatId,
+      isAuthorized
     })
   )
+  if (!persisted.ok) return persisted
+  const { ownershipReceipt, ...result } = persisted
+  return {
+    ...result,
+    pendingToolMediaPersistence: {
+      commit: () => mediaStore.commitOwnedFileWrite(ownershipReceipt),
+      rollback: async () => {
+        const rolledBack = await mediaStore.rollbackOwnedFileWriteStrict(ownershipReceipt)
+        if (!rolledBack) {
+          throw new Error('Produced-media persistence receipt was no longer active at rollback.')
+        }
+      }
+    }
+  }
 }
 
 type ComposerAudioTranscriptionResult =
@@ -3432,12 +3574,25 @@ async function transcribeComposerAudioPayload(
   if (wav.length > COMPOSER_AUDIO_TRANSCRIPTION_MAX_BYTES) {
     return { ok: false, error: 'Microphone recording is too long to transcribe.' }
   }
-  if (!isPcmWavBuffer(wav)) return { ok: false, error: 'Microphone recording was not valid WAV audio.' }
+  if (!isPcmWavBuffer(wav))
+    return { ok: false, error: 'Microphone recording was not valid WAV audio.' }
   const daemon = bridgeDaemonRef
   if (!daemon) return { ok: false, error: 'Audio transcription service is not running.' }
 
-  fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
-  const sourcePath = join(MEDIA_STAGING_DIR, `composer-dictation-${randomUUID()}.wav`)
+  let reservation: RegenerableHistoryByteReservation
+  try {
+    reservation = regenerableHistoryByteStore.begin('media')
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof Error
+          ? error.message
+          : 'Local dictation storage is unavailable during history deletion.'
+    }
+  }
+  const sourcePath = join(reservation.root, `composer-dictation-${randomUUID()}.wav`)
+  let outcome: ComposerAudioTranscriptionResult
   try {
     await fs.writeFile(sourcePath, wav, { mode: 0o600 })
     const result = await mediaProcessLimiter.run(() =>
@@ -3452,64 +3607,57 @@ async function transcribeComposerAudioPayload(
         { timeoutMs: 120_000 }
       )
     )
-    if (result.onDevice !== true) {
-      return { ok: false, error: 'Local dictation refused a non-local transcription result.' }
-    }
-    return {
-      ok: true,
-      text: typeof result.text === 'string' ? result.text : '',
-      segments: Array.isArray(result.segments)
-        ? result.segments
-            .filter((segment) => segment && typeof segment.text === 'string')
-            .map((segment) => ({
-              text: segment.text,
-              startMs: Number.isFinite(segment.startMs) ? segment.startMs : 0,
-              endMs: Number.isFinite(segment.endMs) ? segment.endMs : 0,
-              confidence: Number.isFinite(segment.confidence) ? segment.confidence : 0
-            }))
-        : [],
-      localeIdentifier:
-        typeof result.localeIdentifier === 'string' ? result.localeIdentifier : 'en-US',
-      onDevice: true
+    if (!regenerableHistoryByteStore.isCurrent(reservation)) {
+      outcome = {
+        ok: false,
+        error: 'Local dictation was cancelled because history was cleared.'
+      }
+    } else if (result.onDevice !== true) {
+      outcome = { ok: false, error: 'Local dictation refused a non-local transcription result.' }
+    } else {
+      outcome = {
+        ok: true,
+        text: typeof result.text === 'string' ? result.text : '',
+        segments: Array.isArray(result.segments)
+          ? result.segments
+              .filter((segment) => segment && typeof segment.text === 'string')
+              .map((segment) => ({
+                text: segment.text,
+                startMs: Number.isFinite(segment.startMs) ? segment.startMs : 0,
+                endMs: Number.isFinite(segment.endMs) ? segment.endMs : 0,
+                confidence: Number.isFinite(segment.confidence) ? segment.confidence : 0
+              }))
+          : [],
+        localeIdentifier:
+          typeof result.localeIdentifier === 'string' ? result.localeIdentifier : 'en-US',
+        onDevice: true
+      }
     }
   } catch (error) {
-    return {
+    outcome = {
       ok: false,
       error: error instanceof Error ? error.message : 'Local dictation failed.'
     }
-  } finally {
-    await fs.rm(sourcePath, { force: true }).catch(() => undefined)
   }
-}
-// Reclaim orphaned media-staging outputs: a daemon encode that finishes AFTER its
-// RPC timed out (the late result is dropped, no cancel sent) writes its MP4 to
-// staging with no one to delete it; ffmpeg crash-orphans land here too. Sweep
-// tw-* files older than 1h at startup + periodically (adversarial review).
-function sweepMediaStagingDir(): void {
-  try {
-    const cutoff = Date.now() - 60 * 60 * 1000
-    for (const entry of fsSync.readdirSync(MEDIA_STAGING_DIR, { withFileTypes: true })) {
-      if (!entry.isFile() || !entry.name.startsWith('tw-')) continue
-      const filePath = join(MEDIA_STAGING_DIR, entry.name)
-      try {
-        if (fsSync.statSync(filePath).mtimeMs < cutoff) fsSync.unlinkSync(filePath)
-      } catch {
-        // best-effort — file may be mid-write or already gone
-      }
-    }
-  } catch {
-    // staging dir not created yet — nothing to sweep
-  }
+  return completeRegenerableHistoryByteOperation({
+    cleanup: () => fs.rm(sourcePath, { force: true }).catch(() => undefined),
+    isCurrent: () => regenerableHistoryByteStore.isCurrent(reservation),
+    release: () => endRegenerableHistoryByteReservation(reservation),
+    onCurrent: () => outcome,
+    onRevoked: () => ({
+      ok: false,
+      error: 'Local dictation was cancelled because history was cleared.'
+    })
+  })
 }
 const ffmpegToolExecutors = createFfmpegToolExecutors({
   jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = await stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
-      stagingDirectory: MEDIA_STAGING_DIR,
       kind: 'audio_video'
     })
     return staged.ok
@@ -3570,8 +3718,7 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
         })
     ),
   stagingPath: (ext) => {
-    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
-    return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
+    return allocateProducedMediaStagingPath(ext)
   },
   // Only the bounded PNG thumbnail lane still materializes producer output.
   // Descriptor anchoring rejects symlinks/path replacement and the image cap is
@@ -3579,11 +3726,7 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
   readOutput: (filePath, mimeType) =>
     readDescriptorAnchoredMediaFile(filePath, maxTranscriptMediaBytesForMime(mimeType)),
   removeFile: (filePath) => {
-    try {
-      fsSync.unlinkSync(filePath)
-    } catch {
-      // best-effort staging cleanup
-    }
+    releaseProducedMediaStagingPath(filePath)
   },
   // S1b-3 — bounded async copy+hash into the content-addressed store. The helper
   // runs under the shared media limiter and returns the durable canonical path.
@@ -3603,11 +3746,10 @@ const vtToolExecutors = createVtToolExecutors({
   jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve sourcePath' }
-    const staged = await stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
       workspacePath: chat.workspacePath,
       candidatePath: sourcePath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
-      stagingDirectory: MEDIA_STAGING_DIR,
       kind: 'audio_video'
     })
     return staged.ok
@@ -3621,12 +3763,11 @@ const vtToolExecutors = createVtToolExecutors({
   jailOverlay: async (overlayPath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
     if (!chat?.workspacePath) return { ok: false, reason: 'no workspace to resolve overlayPath' }
-    const staged = await stageWorkspaceMediaSnapshot({
+    const staged = await stageWorkspaceMediaSnapshotInHistoryStore({
       workspacePath: chat.workspacePath,
       candidatePath: overlayPath,
       externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId),
       maxBytes: TRANSCRIPT_MEDIA_MAX_WORKSPACE_IMAGE_BYTES,
-      stagingDirectory: MEDIA_STAGING_DIR,
       kind: 'image'
     })
     return staged.ok
@@ -3715,23 +3856,18 @@ const vtToolExecutors = createVtToolExecutors({
       }>('audio.transcribe', params, { timeoutMs: 120_000 })
     )
   },
-  // The output-file deps mirror the ffmpeg factory exactly (same MEDIA_STAGING_DIR
+  // The output-file deps mirror the ffmpeg factory exactly (same generation-fenced staging root
   // and content-addressed store) so a daemon-produced MP4 rides the
   // identical persist→buildAvMediaRef→trustedMediaRefs lane as transcode_video.
   stagingPath: (ext) => {
-    fsSync.mkdirSync(MEDIA_STAGING_DIR, { recursive: true })
-    return join(MEDIA_STAGING_DIR, `tw-${randomUUID()}.${ext}`)
+    return allocateProducedMediaStagingPath(ext)
   },
   persistOutputFile: persistMediaOutputFile,
   // Quick-win — a small poster/waveform so the AV card isn't blank. Fail-tolerant
   // (undefined on any error); see generateAvPoster.
   generatePoster: generateAvPoster,
   removeFile: (filePath) => {
-    try {
-      fsSync.unlinkSync(filePath)
-    } catch {
-      // best-effort staging cleanup
-    }
+    releaseProducedMediaStagingPath(filePath)
   }
 })
 
@@ -3812,9 +3948,13 @@ async function generateImageViaApi(input: {
       IMAGE_GEN_REQUEST_TIMEOUT_MS
     )
   } catch (error) {
-    return { ok: false, reason: `request failed: ${error instanceof Error ? error.message : String(error)}` }
+    return {
+      ok: false,
+      reason: `request failed: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
-  if (!response.ok) return { ok: false, reason: `${input.provider} image API returned HTTP ${response.status}` }
+  if (!response.ok)
+    return { ok: false, reason: `${input.provider} image API returned HTTP ${response.status}` }
   const parsed = parseImageGenResponse(await response.json().catch(() => null))
   if (!parsed.ok) return { ok: false, reason: parsed.reason }
   if (parsed.b64) {
@@ -3849,7 +3989,10 @@ async function generateImageViaApi(input: {
     }
     return { ok: true, buffer, mimeType: 'image/png' }
   } catch (error) {
-    return { ok: false, reason: `image fetch failed: ${error instanceof Error ? error.message : String(error)}` }
+    return {
+      ok: false,
+      reason: `image fetch failed: ${error instanceof Error ? error.message : String(error)}`
+    }
   }
 }
 const imageGenExecutor = createImageGenExecutor({
@@ -3861,10 +4004,7 @@ const imageGenExecutor = createImageGenExecutor({
 // Live remote-workspace allowlist (set at main-init below). Recall from a
 // remote/phone-issued run is scoped to the workspaces this device may monitor.
 let recallBridgeAllowlist: RemoteWorkspaceAllowlist | null = null
-let externalPublishReceiptLedger:
-  | ExternalPublishReceiptWriter
-  | null
-  | undefined
+let externalPublishReceiptLedger: ExternalPublishReceiptWriter | null | undefined
 
 function getExternalPublishReceiptLedger(): ExternalPublishReceiptWriter | null {
   if (externalPublishReceiptLedger !== undefined) return externalPublishReceiptLedger
@@ -4029,7 +4169,10 @@ const recallToolExecutors = createRecallToolExecutors({
         }
       }
       if (!items.length) return null
-      return { done: items.filter((item) => item.status === 'completed').length, total: items.length }
+      return {
+        done: items.filter((item) => item.status === 'completed').length,
+        total: items.length
+      }
     } catch {
       return null
     }
@@ -4056,7 +4199,10 @@ const recallToolExecutors = createRecallToolExecutors({
     if (isRemoteOriginRun(ctx.appRunId)) {
       const decision =
         targetWorkspaceId && recallBridgeAllowlist
-          ? recallBridgeAllowlist.evaluate({ workspaceId: targetWorkspaceId, capability: 'monitor' })
+          ? recallBridgeAllowlist.evaluate({
+              workspaceId: targetWorkspaceId,
+              capability: 'monitor'
+            })
           : { allowed: false }
       if (!decision.allowed) {
         return { allowed: false, reason: 'not_allowlisted' }
@@ -4163,7 +4309,6 @@ async function writeJsonFile(filePath: string, value: any): Promise<void> {
   await fs.writeFile(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8')
 }
 
-
 const backgroundSubThreadTranscripts = new Map<string, BackgroundSubThreadTranscriptState>()
 
 // Cross-provider reroutes are intentionally ephemeral: the destination
@@ -4178,8 +4323,7 @@ function suppressProviderSessionPersistenceForRun(runId: string): void {
   providerSessionPersistenceSuppressedRunIds.delete(runId)
   providerSessionPersistenceSuppressedRunIds.set(runId, true)
   while (
-    providerSessionPersistenceSuppressedRunIds.size >
-    MAX_PROVIDER_SESSION_PERSISTENCE_DECISIONS
+    providerSessionPersistenceSuppressedRunIds.size > MAX_PROVIDER_SESSION_PERSISTENCE_DECISIONS
   ) {
     const oldestRunId = providerSessionPersistenceSuppressedRunIds.keys().next().value
     if (typeof oldestRunId !== 'string') break
@@ -4257,7 +4401,9 @@ function bridgeRunRouteMatches(
   chatId: string | undefined
 ): boolean {
   if (state.provider !== provider) return false
-  return state.owner === 'execution_graph' ? chatId === state.chatId : !chatId || chatId === state.chatId
+  return state.owner === 'execution_graph'
+    ? chatId === state.chatId
+    : !chatId || chatId === state.chatId
 }
 let pushBridgeRunSnapshot: ((chat: ChatRecord) => void) | null = null
 let pushBridgeRunTaskCardDelta: ((chatId: string) => void) | null = null
@@ -4357,6 +4503,89 @@ function workspaceIdForApprovalPush(workspacePath: string | undefined): string |
   }
 }
 
+function workspaceIdForHistoryClearAuthority(
+  runId?: string,
+  explicitWorkspacePath?: string
+): string | null {
+  const session = runId ? runManager.get(runId) : undefined
+  const chatId = session?.appChatId
+  if (chatId) {
+    const chat = AppStore.getChat(chatId)
+    if (chat?.workspaceId) return chat.workspaceId
+  }
+  const workspacePath = explicitWorkspacePath || session?.workspacePath
+  return workspacePath ? workspaceIdForApprovalPush(workspacePath) : null
+}
+
+function durableHistoryDeletionBlocks(
+  chatId?: string | null,
+  workspaceId?: string | null
+): boolean {
+  let pending: HistoryDeletionPreparation | null
+  try {
+    pending = AppStore.getPendingHistoryDeletion()
+  } catch {
+    // An unreadable destructive intent is not evidence that a scope is safe.
+    return true
+  }
+  if (!pending) return false
+  if (pending.kind === 'global') return true
+  if (chatId && pending.chatIds.includes(chatId)) return true
+  return Boolean(pending.kind === 'workspace' && workspaceId && pending.workspaceId === workspaceId)
+}
+
+function historyClearAdmissionBlocked(
+  runId?: string,
+  workspacePath?: string,
+  chatId?: string
+): boolean {
+  if (historyClearAdmissionGate.isGlobalBlocked()) return true
+  const session = runId ? runManager.get(runId) : undefined
+  const authoritativeChatId = chatId || session?.appChatId
+  const chat = authoritativeChatId ? AppStore.getChat(authoritativeChatId) : null
+  const pathWorkspaceId = workspacePath
+    ? workspaceIdForApprovalPush(workspacePath)
+    : session?.workspacePath
+      ? workspaceIdForApprovalPush(session.workspacePath)
+      : null
+  if (durableHistoryDeletionBlocks(authoritativeChatId, chat?.workspaceId || pathWorkspaceId)) {
+    return true
+  }
+  return historyClearAdmissionGate.isAuthorityBlocked({
+    chatId: authoritativeChatId,
+    chatWorkspaceId: chat?.workspaceId,
+    pathWorkspaceId
+  })
+}
+
+function assertParentChatRelationshipCreationAllowed(parentChatId: string): void {
+  const seen = new Set<string>()
+  let chat = AppStore.getChat(parentChatId)
+  if (!chat) throw new Error('Parent chat authority is unavailable.')
+  while (chat && !seen.has(chat.appChatId)) {
+    seen.add(chat.appChatId)
+    if (historyClearAdmissionBlocked(undefined, chat.workspacePath, chat.appChatId)) {
+      throw new Error('Parent chat is being deleted or cleared.')
+    }
+    chat = chat.parentChatId ? AppStore.getChat(chat.parentChatId) : null
+  }
+}
+
+function historyClearBlocksRunPayload(payload: AgentRunPayload): boolean {
+  if (historyClearAdmissionGate.isGlobalBlocked()) return true
+  const chat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
+  const pathWorkspaceId =
+    payload.scope === 'global' ? null : workspaceIdForApprovalPush(payload.workspace)
+  if (durableHistoryDeletionBlocks(payload.appChatId, chat?.workspaceId || pathWorkspaceId)) {
+    return true
+  }
+  return historyClearAdmissionGate.isAuthorityBlocked({
+    chatId: payload.appChatId,
+    chatWorkspaceId: chat?.workspaceId,
+    pathWorkspaceId
+  })
+}
+
 installIpcValidation(ipcMain, (channel, event) => {
   if (ipcChannelRequiresMainRenderer(channel)) {
     assertMainRendererSender(event)
@@ -4366,7 +4595,18 @@ installIpcValidation(ipcMain, (channel, event) => {
 // Renderer canvas-pane (live-embed) IPC: register only after the global
 // validation/renderer-authority wrapper is installed. The driver additionally
 // enforces its URL/SSRF policy once a validated main-renderer request arrives.
-registerCanvasEmbedIpc(ipcMain, { controller: canvasService, embed: canvasEmbedController })
+const canvasEmbedIpcAuthority = registerCanvasEmbedIpc(ipcMain, {
+  controller: canvasService,
+  embed: canvasEmbedController,
+  resolveContext: (event, chatId) => {
+    assertRendererChatScope(event, chatId)
+    const chat = AppStore.getChat(chatId)
+    if (!chat || historyClearAdmissionBlocked(undefined, chat.workspacePath, chatId)) {
+      throw new Error('Canvas chat authority is unavailable.')
+    }
+    return { chatId, workspacePath: chat.workspacePath }
+  }
+})
 
 // Ask Chromium to keep expensive renderer visuals on the GPU raster path where supported.
 app.commandLine.appendSwitch('enable-gpu-rasterization')
@@ -4393,7 +4633,6 @@ process.stdout.on('error', (err) => {
   throw err
 })
 
-
 function loadOrCreateExternalGrantSigningSecret(): Buffer {
   const secretPath = join(app.getPath('userData'), 'external-grant-signing-secret')
   try {
@@ -4415,8 +4654,6 @@ function loadOrCreateExternalGrantSigningSecret(): Buffer {
   }
   return secret
 }
-
-
 
 // Phase B3: the five pending-approval registries (pendingCodexApprovals,
 // pendingKimiApprovals, pendingGeminiToolApprovals, pendingHostCommandApprovals,
@@ -4505,42 +4742,6 @@ function globalGeminiCwd(): string {
     // full), fall back to `$HOME` rather than crashing the run.
     // Worst case the user is back where they were before EW17.
     return globalRunCwd()
-  }
-  return canonicalPath(dir)
-}
-
-/**
- * Kimi Code treats `<cwd>/.kimi-code/mcp.json` as project-local MCP config.
- * A global chat used to launch from `$HOME`, which made the user's
- * `~/.kimi-code/mcp.json` visible a second time even though KIMI_CODE_HOME was
- * isolated. That could resurrect a stale TaskWraith socket registration beside
- * the per-run HTTP bridge. Keep global Kimi sessions in their own stable,
- * TaskWraith-managed cwd so native resume remains stable without loading any
- * user/project MCP config.
- */
-function globalKimiCwd(): string {
-  const dir = join(app.getPath('userData'), 'global-kimi-cwd-v1')
-  try {
-    fsSync.mkdirSync(dir, { recursive: true, mode: 0o700 })
-    fsSync.chmodSync(dir, 0o700)
-    const marker = join(dir, '.taskwraith-global-cwd')
-    if (!fsSync.existsSync(marker)) {
-      fsSync.writeFileSync(
-        marker,
-        'TaskWraith-managed isolated cwd for global-mode Kimi Code runs. ' +
-          'Do not add .mcp.json or .kimi-code configuration here.\n',
-        { mode: 0o600 }
-      )
-    }
-  } catch (error) {
-    // Unlike Gemini's performance-only cwd isolation, falling back to $HOME
-    // here would cross a containment boundary by re-enabling project-local MCP
-    // discovery. Fail closed and let the provider adapter surface the reason.
-    throw new Error(
-      `Could not prepare Kimi's isolated global-chat directory: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    )
   }
   return canonicalPath(dir)
 }
@@ -4712,7 +4913,11 @@ async function generateAvPoster(
               timestampSeconds: number
               codec: string
               usedHardware: boolean
-            }>('video.decodeFrame', { inputPath: outputPath, timestampSeconds: 0 }, { timeoutMs: 30_000 })
+            }>(
+              'video.decodeFrame',
+              { inputPath: outputPath, timestampSeconds: 0 },
+              { timeoutMs: 30_000 }
+            )
           )
           if (!decoded?.pngBase64) return undefined
           const png = Buffer.from(decoded.pngBase64, 'base64')
@@ -4725,10 +4930,7 @@ async function generateAvPoster(
         if (byteLength > POSTER_AUDIO_MAX_BYTES) return undefined
         let audioBuffer: Buffer
         try {
-          audioBuffer = await readDescriptorAnchoredMediaFile(
-            outputPath,
-            POSTER_AUDIO_MAX_BYTES
-          )
+          audioBuffer = await readDescriptorAnchoredMediaFile(outputPath, POSTER_AUDIO_MAX_BYTES)
         } catch {
           return undefined
         }
@@ -4776,7 +4978,7 @@ function prepareIosComposerPromptChat(args: {
   imageThumbnails?: Array<{ dataBase64: string; mimeType: string; width?: number; height?: number }>
 }): ChatRecord {
   const { action, workspace } = args
-  const provider = assertProviderId(action.provider)
+  const provider = assertLiveProviderId(action.provider)
   const now = Date.now()
   const timestamp = new Date(now).toISOString()
   const prompt = action.text.trim()
@@ -4812,9 +5014,7 @@ function prepareIosComposerPromptChat(args: {
       ? {
           metadata: {
             ...(args.imagePaths?.length ? { imagePaths: args.imagePaths } : {}),
-            ...(args.imageThumbnails?.length
-              ? { imageThumbnails: args.imageThumbnails }
-              : {})
+            ...(args.imageThumbnails?.length ? { imageThumbnails: args.imageThumbnails } : {})
           }
         }
       : {})
@@ -4929,7 +5129,8 @@ function sanitizeRunAnalystSignals(value: unknown): RunAnalystSignal[] {
 function sanitizeRunAnalystRequest(input: unknown): RunAnalystRequest {
   const record = requireRecord(input, 'Run analyst request')
   const provider =
-    typeof record.provider === 'string' && availableProviderIds().includes(record.provider as ProviderId)
+    typeof record.provider === 'string' &&
+    availableProviderIds().includes(record.provider as ProviderId)
       ? (record.provider as ProviderId)
       : undefined
   const timeline = Array.isArray(record.timeline)
@@ -4964,15 +5165,15 @@ function normalizeRunAnalystResult(
   generatedAt: string
 ): RunAnalystSnapshot {
   const record = asRecord(result) || {}
-  const status = record.status === 'error' || record.status === 'unavailable' ? record.status : 'ready'
+  const status =
+    record.status === 'error' || record.status === 'unavailable' ? record.status : 'ready'
   return {
     runId: request.runId,
     generatedAt,
     source: 'foundationModels',
     status,
     summary:
-      compactRunAnalystText(record.summary, 1400) ||
-      'Foundation Models returned no run summary.',
+      compactRunAnalystText(record.summary, 1400) || 'Foundation Models returned no run summary.',
     risks: stringArray(record.risks).slice(0, 6),
     nextSteps: stringArray(record.nextSteps).slice(0, 6),
     signals: sanitizeRunAnalystSignals(record.signals),
@@ -5104,7 +5305,8 @@ function issueExternalPathGrant(
   return normalizedGrant
 }
 
-const RUN_NATIVE_IMAGE_ATTACHMENT_EXT = /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
+const RUN_NATIVE_IMAGE_ATTACHMENT_EXT =
+  /\.(png|jpe?g|gif|webp|bmp|heic|avif|tiff|tif|svg|jfif)(\?.*)?$/i
 let pdfAttachmentRenderCachePruned = false
 
 function runAttachmentPath(rawPath: unknown): string | null {
@@ -5127,10 +5329,10 @@ function isNativeImageRunAttachment(rawPath: unknown): boolean {
   return attachmentPath ? RUN_NATIVE_IMAGE_ATTACHMENT_EXT.test(attachmentPath) : false
 }
 
-function prunePdfAttachmentRenderCacheOnce(): void {
+async function prunePdfAttachmentRenderCacheOnce(cacheDir: string): Promise<void> {
   if (pdfAttachmentRenderCachePruned) return
   pdfAttachmentRenderCachePruned = true
-  void prunePdfAttachmentRenderCache(getPdfAttachmentRenderCacheDir()).catch(() => undefined)
+  await prunePdfAttachmentRenderCache(cacheDir).catch(() => undefined)
 }
 
 function compactPdfRenderedPageAttachment(page: PdfRenderedPageAttachment): {
@@ -5141,27 +5343,179 @@ function compactPdfRenderedPageAttachment(page: PdfRenderedPageAttachment): {
   return { id: page.id, path: page.path, name: page.name }
 }
 
+class PdfAttachmentPreparationError extends Error {
+  readonly code:
+    | 'authority_revoked'
+    | 'no_rendered_pages'
+    | 'incomplete_render'
+    | 'persistence_failed'
+  readonly retryable: boolean
+
+  constructor(
+    code: PdfAttachmentPreparationError['code'],
+    message: string,
+    options?: { cause?: unknown; retryable?: boolean }
+  ) {
+    super(message, options?.cause === undefined ? undefined : { cause: options.cause })
+    this.name = 'PdfAttachmentPreparationError'
+    this.code = code
+    this.retryable = options?.retryable === true
+  }
+}
+
+function assertPdfRenderReservationCurrent(
+  reservation: RegenerableHistoryByteReservation,
+  stage: string
+): void {
+  if (regenerableHistoryByteStore.isCurrent(reservation)) return
+  throw new PdfAttachmentPreparationError(
+    'authority_revoked',
+    `PDF attachment preparation was interrupted by history deletion ${stage}; retry the dispatch after deletion completes.`,
+    { retryable: true }
+  )
+}
+
+function pdfAttachmentNoPagesError(): PdfAttachmentPreparationError {
+  return new PdfAttachmentPreparationError(
+    'no_rendered_pages',
+    'PDF attachment preparation produced no verified page images; the run was not dispatched with the PDF silently omitted.'
+  )
+}
+
+function pdfAttachmentIncompleteRenderError(): PdfAttachmentPreparationError {
+  return new PdfAttachmentPreparationError(
+    'incomplete_render',
+    'One or more PDF attachments could not be rendered into verified page images; the run was not dispatched with any PDF silently omitted.'
+  )
+}
+
 async function renderPdfPagesForAttachments(
-  attachments: PdfAttachmentLike[]
+  attachments: PdfAttachmentLike[],
+  appChatId: string
 ): Promise<PdfRenderedPageAttachment[]> {
   if (!attachments.some((attachment) => isPdfAttachmentPath(attachment?.path))) return []
-  prunePdfAttachmentRenderCacheOnce()
-  const result = await renderPdfAttachmentPages(attachments, {
-    cacheDir: getPdfAttachmentRenderCacheDir()
-  })
-  for (const skipped of result.skipped) {
-    console.warn(
-      `[pdf-attachments] skipped ${skipped.name || skipped.path}: ${skipped.reason}`
+  const ownerChatId = appChatId.trim()
+  if (!ownerChatId) {
+    throw new PdfAttachmentPreparationError(
+      'persistence_failed',
+      'PDF attachment preparation requires an owning chat.'
     )
   }
-  return result.rendered
+  const reservation = regenerableHistoryByteStore.begin('pdf')
+  try {
+    await prunePdfAttachmentRenderCacheOnce(reservation.root)
+    assertPdfRenderReservationCurrent(reservation, 'before rendering')
+    const result = await renderPdfAttachmentPages(attachments, {
+      cacheDir: reservation.root
+    })
+    assertPdfRenderReservationCurrent(reservation, 'during rendering')
+    for (const skipped of result.skipped) {
+      console.warn(`[pdf-attachments] skipped ${skipped.name || skipped.path}: ${skipped.reason}`)
+    }
+    if (result.skipped.length > 0) {
+      throw result.rendered.length === 0
+        ? pdfAttachmentNoPagesError()
+        : pdfAttachmentIncompleteRenderError()
+    }
+    if (result.rendered.length === 0) return []
+
+    // Generated page PNGs can outlive this render call (Ensemble queues,
+    // scheduled work, graph dispatch). Promote them into the chat-owned
+    // transcript-media store before releasing the regenerable cache lease;
+    // another chat's scoped history deletion may then purge its staging/cache
+    // generation without invalidating these durable paths.
+    const mediaStore = getTranscriptMediaAssetStore()
+    const persisted: Array<{
+      page: PdfRenderedPageAttachment
+      path: string
+      receipt: TranscriptMediaOwnedFileWriteReceipt
+    }> = []
+    const isAuthorized = (): boolean => {
+      const chat = AppStore.getChat(ownerChatId)
+      return Boolean(
+        chat &&
+          regenerableHistoryByteStore.isCurrent(reservation) &&
+          !historyClearAdmissionGate.isAuthorityBlocked({
+            chatId: ownerChatId,
+            chatWorkspaceId: chat.workspaceId,
+            pathWorkspaceId: chat.workspaceId
+          })
+      )
+    }
+    try {
+      for (const page of result.rendered) {
+        const owned = await mediaStore.writeOwnedContentAddressedFromFile({
+          sourcePath: page.path,
+          mimeType: 'image/png',
+          appChatId: ownerChatId,
+          isAuthorized
+        })
+        if (!owned.ok) {
+          throw new Error(`PDF page persistence failed: ${owned.reason}`)
+        }
+        persisted.push({
+          page,
+          path: owned.path,
+          receipt: owned.ownershipReceipt
+        })
+      }
+      if (!isAuthorized()) {
+        throw new Error('PDF page persistence authority was revoked before publication.')
+      }
+      if (!mediaStore.commitOwnedFileWrites(persisted.map((entry) => entry.receipt))) {
+        throw new Error('PDF page persistence batch was no longer active at commit.')
+      }
+      return persisted.map(({ page, path: durablePath }) => ({
+        ...page,
+        path: durablePath
+      }))
+    } catch (error) {
+      const rollbackErrors: unknown[] = []
+      for (const entry of [...persisted].reverse()) {
+        try {
+          await mediaStore.rollbackOwnedFileWriteStrict(entry.receipt)
+        } catch (rollbackError) {
+          rollbackErrors.push(rollbackError)
+        }
+      }
+      if (rollbackErrors.length > 0) {
+        throw new AggregateError(
+          [error, ...rollbackErrors],
+          'PDF page persistence failed and could not roll back every owned page.'
+        )
+      }
+      console.warn(
+        `[pdf-attachments] generated pages were not published: ${error instanceof Error ? error.message : String(error)}`
+      )
+      if (error instanceof PdfAttachmentPreparationError) throw error
+      if (!regenerableHistoryByteStore.isCurrent(reservation)) {
+        throw new PdfAttachmentPreparationError(
+          'authority_revoked',
+          'PDF attachment preparation was interrupted by history deletion during durable publication; retry the dispatch after deletion completes.',
+          { cause: error, retryable: true }
+        )
+      }
+      throw new PdfAttachmentPreparationError(
+        'persistence_failed',
+        'PDF page images could not be durably published; the run was not dispatched with the PDF silently omitted.',
+        { cause: error }
+      )
+    }
+  } finally {
+    endRegenerableHistoryByteReservation(reservation)
+  }
 }
 
 async function expandPdfAttachmentsForDispatch<T extends PdfAttachmentLike>(
-  attachments: T[]
+  attachments: T[],
+  appChatId: string
 ): Promise<Array<T | { id: string; path: string; name: string }>> {
-  const rendered = await renderPdfPagesForAttachments(attachments)
-  if (rendered.length === 0) return attachments
+  const hasPdf = attachments.some((attachment) => isPdfAttachmentPath(attachment?.path))
+  const rendered = await renderPdfPagesForAttachments(attachments, appChatId)
+  if (rendered.length === 0) {
+    if (hasPdf) throw pdfAttachmentNoPagesError()
+    return attachments
+  }
   return [...attachments, ...rendered.map(compactPdfRenderedPageAttachment)]
 }
 
@@ -5169,13 +5523,16 @@ async function expandPdfImagePathsForPayload(payload: AgentRunPayload): Promise<
   const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
   const pdfPaths = imagePaths.filter((imagePath) => isPdfAttachmentPath(imagePath))
   if (pdfPaths.length === 0) return
+  const appChatId = requireNonEmptyString(payload.appChatId, 'PDF dispatch chat id')
   const rendered = await renderPdfPagesForAttachments(
     pdfPaths.map((pdfPath, index) => ({
       id: `pdf-image-path-${index + 1}`,
       path: pdfPath,
       name: basename(runAttachmentPath(pdfPath) || pdfPath)
-    }))
+    })),
+    appChatId
   )
+  if (rendered.length === 0) throw pdfAttachmentNoPagesError()
   const nextPaths = [
     ...imagePaths.filter((imagePath) => !isPdfAttachmentPath(imagePath)),
     ...rendered.map((page) => page.path)
@@ -5258,8 +5615,8 @@ function resolveRegisteredOrChatGrantedWorkspacePath(
   const chat = chatId ? AppStore.getChat(chatId) : null
   if (
     !chat ||
-    !executableExternalPathGrantsForChat(chat).some((grant) =>
-      grant.kind === 'directory' && externalGrantAllowsPath(grant, normalized, access)
+    !executableExternalPathGrantsForChat(chat).some(
+      (grant) => grant.kind === 'directory' && externalGrantAllowsPath(grant, normalized, access)
     )
   ) {
     throw new Error(`${label} requires a signed external-path grant from its originating chat.`)
@@ -5426,13 +5783,7 @@ function resolveWorkflowUnattendedElevation(
     ack.signature
   )
   if (!verified) return null
-  if (
-    !isUnattendedElevationAckCurrent(
-      ack,
-      wf.template.approvalMode,
-      currentAuthorityDigest
-    )
-  ) {
+  if (!isUnattendedElevationAckCurrent(ack, wf.template.approvalMode, currentAuthorityDigest)) {
     return null
   }
   return { ack, templateApprovalMode: wf.template.approvalMode }
@@ -5489,18 +5840,20 @@ function buildScheduledTaskPostureForRecord(
 function scheduledTaskHasSignedPosture(task: ScheduledTask): boolean {
   return Boolean(
     task.permissionPosture?.signaturePresent &&
-      task.permissionPosture.signature &&
-      task.dispatchReceipt?.permissionPostureSignaturePresent
+    task.permissionPosture.signature &&
+    task.dispatchReceipt?.permissionPostureSignaturePresent
   )
 }
 
 function ensureScheduledTaskSignedPosture(task: ScheduledTask): ScheduledTask {
   if (scheduledTaskHasSignedPosture(task)) return task
   const permissionPosture = buildScheduledTaskPostureForRecord(task)
-  return AppStore.updateScheduledTask(task.id, { permissionPosture }) || {
-    ...task,
-    permissionPosture
-  }
+  return (
+    AppStore.updateScheduledTask(task.id, { permissionPosture }) || {
+      ...task,
+      permissionPosture
+    }
+  )
 }
 
 function saveScheduledTaskWithSignedPosture(
@@ -5691,9 +6044,7 @@ function scheduledOccurrenceOwnerForPayload(
   payload: AgentRunPayload
 ): ScheduledOccurrenceOwner | undefined {
   const appRunId = optionalString(payload.appRunId)
-  const rootOwner = appRunId
-    ? scheduledOccurrenceOwners.lookupByOwnerRunId(appRunId)
-    : undefined
+  const rootOwner = appRunId ? scheduledOccurrenceOwners.lookupByOwnerRunId(appRunId) : undefined
   const loopOwner = appRunId
     ? scheduledOccurrenceOwners.lookupLoopChildRun(appRunId, payload.provider)
     : undefined
@@ -5730,12 +6081,73 @@ function scheduledOccurrenceOwnerForPayload(
   return owner
 }
 
+function sendProviderPreflightError(
+  sender: Electron.WebContents,
+  provider: ProviderId,
+  error: string,
+  route: AgentRunRoute,
+  reservation?: object
+): void {
+  const providerReservation = reservation as ProviderDispatchReservation | undefined
+  const appChatId = route.appChatId?.trim()
+  const currentAuthority = appChatId ? currentProviderRunPersistenceAuthority(appChatId) : null
+  if (
+    !providerReservation ||
+    !currentAuthority ||
+    !sameProviderDispatchIncarnation(providerReservation.authority, currentAuthority) ||
+    !historyClearAdmissionGate.authorizeDispatch(
+      providerReservation.gateReservation,
+      currentAuthority
+    )
+  )
+    return
+  const safeError = sanitizeCanvasEvalProviderText(error)
+  const routed = enrichAgentPayload(provider, { error: safeError }, route)
+  runEventBus.publish({ channel: 'agent-error', provider, payload: routed, sender })
+  if (provider === 'gemini') {
+    runEventBus.publish({ channel: 'gemini-error', provider, payload: routed, sender })
+  }
+}
+
+function sendProviderPreflightExit(
+  sender: Electron.WebContents,
+  provider: ProviderId,
+  code: number,
+  route: AgentRunRoute,
+  reservation?: object
+): void {
+  const providerReservation = reservation as ProviderDispatchReservation | undefined
+  const appChatId = route.appChatId?.trim()
+  const currentAuthority = appChatId ? currentProviderRunPersistenceAuthority(appChatId) : null
+  if (
+    !providerReservation ||
+    !currentAuthority ||
+    !sameProviderDispatchIncarnation(providerReservation.authority, currentAuthority) ||
+    !historyClearAdmissionGate.authorizeDispatch(
+      providerReservation.gateReservation,
+      currentAuthority
+    )
+  )
+    return
+  const routed = enrichAgentPayload(provider, { code }, route)
+  runEventBus.publish({ channel: 'agent-exit', provider, payload: routed, sender })
+  if (provider === 'gemini') {
+    runEventBus.publish({ channel: 'gemini-exit', provider, payload: routed, sender })
+  }
+}
+
 async function ensureProviderRunPreflight(
   sender: Electron.WebContents,
-  payload: AgentRunPayload
+  payload: AgentRunPayload,
+  reservation?: object
 ): Promise<boolean> {
   const route = routeWithRunId(payload.provider, payload)
   payload.appRunId = route.appRunId
+  const failPreflight = (message: string): false => {
+    sendProviderPreflightError(sender, payload.provider, message, route, reservation)
+    sendProviderPreflightExit(sender, payload.provider, -1, route, reservation)
+    return false
+  }
   const routedRunId = optionalString(route.appRunId)
   let scheduledOwner: ScheduledOccurrenceOwner | undefined
   try {
@@ -5747,14 +6159,7 @@ async function ensureProviderRunPreflight(
       throw new Error('Scheduled occurrence ownership ended before provider preflight.')
     }
   } catch (error) {
-    sendAgentCompatError(
-      sender,
-      payload.provider,
-      error instanceof Error ? error.message : String(error),
-      route
-    )
-    sendAgentCompatExit(sender, payload.provider, -1, route)
-    return false
+    return failPreflight(error instanceof Error ? error.message : String(error))
   }
   if (scheduledOwner) {
     try {
@@ -5780,28 +6185,14 @@ async function ensureProviderRunPreflight(
       }
       validateChatWorkspaceIdentity(payload.appChatId, workspaceRecord)
     } catch (error) {
-      sendAgentCompatError(
-        sender,
-        payload.provider,
-        error instanceof Error ? error.message : String(error),
-        route
-      )
-      sendAgentCompatExit(sender, payload.provider, -1, route)
-      return false
+      return failPreflight(error instanceof Error ? error.message : String(error))
     }
   } else if (payload.scope === 'global') {
     try {
       requireGlobalChat(payload.appChatId, 'Run global chat')
       payload.workspace = globalRunCwd()
     } catch (error) {
-      sendAgentCompatError(
-        sender,
-        payload.provider,
-        error instanceof Error ? error.message : String(error),
-        route
-      )
-      sendAgentCompatExit(sender, payload.provider, -1, route)
-      return false
+      return failPreflight(error instanceof Error ? error.message : String(error))
     }
   } else {
     try {
@@ -5810,18 +6201,11 @@ async function ensureProviderRunPreflight(
       validateChatWorkspaceIdentity(payload.appChatId, workspaceRecord)
       payload.workspace = await resolveRuntimeWorktreeWorkspace(payload, registeredWorkspace)
     } catch (error) {
-      sendAgentCompatError(
-        sender,
-        payload.provider,
-        error instanceof Error ? error.message : String(error),
-        route
-      )
-      sendAgentCompatExit(sender, payload.provider, -1, route)
-      return false
+      return failPreflight(error instanceof Error ? error.message : String(error))
     }
   }
 
-  if (!(await ensureWorkspaceTrustForRun(sender, payload))) {
+  if (!(await ensureWorkspaceTrustForRun(sender, payload, reservation))) {
     return false
   }
 
@@ -5829,14 +6213,7 @@ async function ensureProviderRunPreflight(
     try {
       payload.workspace = assertScheduledOccurrenceWorkspace(scheduledOwner)
     } catch (error) {
-      sendAgentCompatError(
-        sender,
-        payload.provider,
-        error instanceof Error ? error.message : String(error),
-        route
-      )
-      sendAgentCompatExit(sender, payload.provider, -1, route)
-      return false
+      return failPreflight(error instanceof Error ? error.message : String(error))
     }
   }
 
@@ -5864,21 +6241,12 @@ async function ensureProviderRunPreflight(
         // before RunCoordinator enters the provider adapter.
         payload.workspace = assertScheduledOccurrenceWorkspace(scheduledOwner)
       } catch (error) {
-        sendAgentCompatError(
-          sender,
-          payload.provider,
-          error instanceof Error ? error.message : String(error),
-          route
-        )
-        sendAgentCompatExit(sender, payload.provider, -1, route)
-        return false
+        return failPreflight(error instanceof Error ? error.message : String(error))
       }
     }
     return true
   }
-  sendAgentCompatError(sender, payload.provider, preflight.reason, route)
-  sendAgentCompatExit(sender, payload.provider, -1, route)
-  return false
+  return failPreflight(preflight.reason)
 }
 
 async function resolveRuntimeWorktreeWorkspace(
@@ -5903,9 +6271,7 @@ async function resolveRuntimeWorktreeWorkspace(
   if (!list.ok) {
     throw new Error(list.error || 'Could not list linked git worktrees.')
   }
-  const linked = list.data.worktrees.some(
-    (worktree) => canonicalPath(worktree.path) === targetPath
-  )
+  const linked = list.data.worktrees.some((worktree) => canonicalPath(worktree.path) === targetPath)
   if (!linked) {
     throw new Error('Selected worktree is not linked to the registered workspace repository.')
   }
@@ -5953,14 +6319,16 @@ function codexModelPickerRank(id?: string): number {
   return index >= 0 ? index : CODEX_PICKER_LEAD_ORDER.length
 }
 
-function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boolean; disabled?: boolean }>(
-  models: T[]
-): T[] {
+function normalizeCodexDefaultModelRows<
+  T extends { id?: string; isDefault?: boolean; disabled?: boolean }
+>(models: T[]): T[] {
   const hasGpt55 = models.some((model) => model.id === 'gpt-5.5' && model.disabled !== true)
   const normalized = models
     .map((model) => ({
       ...model,
-      isDefault: hasGpt55 ? model.id === 'gpt-5.5' : Boolean(model.isDefault && model.disabled !== true)
+      isDefault: hasGpt55
+        ? model.id === 'gpt-5.5'
+        : Boolean(model.isDefault && model.disabled !== true)
     }))
     // Order the picker rows (trio first, 5.5 next); the DEFAULT is carried by
     // `isDefault` above, not by array position, so 5.5 stays default even
@@ -5969,7 +6337,6 @@ function normalizeCodexDefaultModelRows<T extends { id?: string; isDefault?: boo
   return normalized as T[]
 }
 
-
 const runManager = new RunManager<any>()
 let settingsServiceRef: SettingsService | null = null
 const permissionService = new PermissionService({
@@ -5977,7 +6344,9 @@ const permissionService = new PermissionService({
   sessionGrants: agenticSessionGrants,
   getSettings: () => settingsServiceRef?.getSettings() ?? AppStore.getSettings(),
   updateSettings: (partial) =>
-    settingsServiceRef ? settingsServiceRef.updateSettings(partial) : AppStore.updateSettings(partial)
+    settingsServiceRef
+      ? settingsServiceRef.updateSettings(partial)
+      : AppStore.updateSettings(partial)
 })
 const providerPreflightService = new ProviderPreflightService()
 let runRepository: RunRepository | null = null
@@ -6009,7 +6378,6 @@ const executionGraphAdapterContext = new AsyncLocalStorage<{
   readonly admission?: ExecutionGraphComposedPayloadEntry
 }>()
 const providerAdapterInvocationTokens = new Map<string, object>()
-const hostCommandRerunsInFlight = new Set<string>()
 const remoteComposerInternalDispatches = new WeakMap<
   BridgeComposerPromptAction,
   { appRunId: string; queueRunId: string }
@@ -6032,9 +6400,7 @@ function executionGraphOwnsAttemptRunId(runId: string | undefined): boolean {
     executionGraphCoordinatorRef
       ?.listExecutions({ includeTerminal: true })
       .some((projection) =>
-        Object.values(projection.attempts).some(
-          (attempt) => attempt.providerRunRef === runId
-        )
+        Object.values(projection.attempts).some((attempt) => attempt.providerRunRef === runId)
       )
   )
 }
@@ -6055,8 +6421,8 @@ function armExecutionGraphTerminalJoinWatchdog(runId: string): void {
       const decision = decideExecutionGraphTerminalJoinWatchdog({
         active: Boolean(
           session &&
-            isActiveRunSessionStatus(session.status) &&
-            executionGraphOwnsAttemptRunId(runId)
+          isActiveRunSessionStatus(session.status) &&
+          executionGraphOwnsAttemptRunId(runId)
         ),
         nowMs: Date.now(),
         state: runManager.getTerminalJoinState(runId)
@@ -6087,15 +6453,14 @@ function isExecutionGraphIsolatedPayload(payload: AgentRunPayload): boolean {
   const job = AppStore.getRunQueueJob(runId)
   return Boolean(
     admission &&
-      job?.executionGraph &&
-      job.runId === runId &&
-      admission.executionId === job.executionGraph.executionId &&
-      admission.attemptId === job.executionGraph.attemptId &&
-      admission.payload.provider === payload.provider &&
-      admission.payload.appChatId === payload.appChatId
+    job?.executionGraph &&
+    job.runId === runId &&
+    admission.executionId === job.executionGraph.executionId &&
+    admission.attemptId === job.executionGraph.attemptId &&
+    admission.payload.provider === payload.provider &&
+    admission.payload.appChatId === payload.appChatId
   )
 }
-
 
 function getActiveTaskWraithThreadCount(): number {
   const chatIds = new Set<string>()
@@ -6169,8 +6534,13 @@ const projectReferenceToolExecutors = createProjectReferenceToolExecutors({
 const workspaceToolExecutors = createWorkspaceToolExecutors({
   host: {
     runHostCommand,
-    startBackgroundProcess: (command, cwd, options) =>
-      backgroundProcessRegistry.start(command, cwd, options),
+    startBackgroundProcess: (command, cwd, options) => {
+      const workspaceId = AppStore.getChat(options.appChatId)?.workspaceId
+      return backgroundProcessRegistry.start(command, cwd, {
+        ...options,
+        ...(workspaceId ? { workspaceId } : {})
+      })
+    },
     listBackgroundProcesses: (filter) => backgroundProcessRegistry.list(filter),
     readBackgroundProcess: (processId, options) =>
       backgroundProcessRegistry.read(processId, options),
@@ -6271,8 +6641,9 @@ const AUDIT_ROLE_RUN_TIMEOUT_MS = 15 * 60 * 1000
 const WORKFLOW_LOOP_STEP_TIMEOUT_MS = 30 * 60 * 1000
 
 // v1: providers whose plan-mode runs can actually reach the MCP bridge to record
-// audit_* artifacts. gemini/grok/cursor keep the --sandbox seatbelt in plan mode
-// (the bridge subprocess can't reach the broker), and codex's primary app-server
+// audit_* artifacts. gemini/grok keep the --sandbox seatbelt in plan mode (the
+// bridge subprocess can't reach the broker), Cursor is disabled before process
+// launch, and codex's primary app-server
 // path doesn't stamp TASKWRAITH_RUN_ID (so an audit_* call wouldn't route back to
 // the role-run's context). Assigning any of them a recording role yields a run
 // that exits ok but records NOTHING — a silently-empty audit. Restrict audit
@@ -6340,6 +6711,7 @@ function finalizePendingEnsembleRosterPresetForTerminalRun(session: {
 
 runManager.onChange((event) => {
   if (event.type === 'removed') {
+    approvalService?.cancelForRun(event.session.runId, 'run-removed')
     clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
     executionGraphComposedPayloads.delete(event.session.runId)
     executionGraphDispatchesInFlight.delete(event.session.runId)
@@ -6347,12 +6719,39 @@ runManager.onChange((event) => {
     projectReferenceContextAuditServiceRef?.release(event.session.runId)
     externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
     cancelPendingAgentQuestionsForRun(event.session.runId, 'run-removed')
+    releaseProviderRunPersistenceAuthority(event.session.runId)
     void appShellStatsService.refresh().catch((err) => {
       console.warn(
         '[AppShellStats] refresh after run removal failed:',
         err instanceof Error ? err.message : String(err)
       )
     })
+    return
+  }
+  if (isTerminalRunSessionStatus(event.session.status)) {
+    approvalService?.cancelForRun(event.session.runId, `run-${event.session.status}`)
+  }
+  if (
+    !providerRunPersistenceAuthorized(
+      event.session.provider,
+      { appRunId: event.session.runId, appChatId: event.session.appChatId },
+      { allowTerminal: true }
+    )
+  ) {
+    if (isTerminalRunSessionStatus(event.session.status)) {
+      clearExecutionGraphTerminalJoinWatchdog(event.session.runId)
+      executionGraphComposedPayloads.delete(event.session.runId)
+      executionGraphDispatchesInFlight.delete(event.session.runId)
+      executionGraphAdapterAdmissions.delete(event.session.runId)
+      discardExecutionGraphRunTranscript(event.session.runId)
+      backgroundSubThreadTranscripts.delete(event.session.runId)
+      projectReferenceContextAuditServiceRef?.release(event.session.runId)
+      externalPathGrantExecutionRegistry.revokeRun(event.session.runId)
+      cancelPendingAgentQuestionsForRun(event.session.runId, `run-${event.session.status}`)
+      releaseProviderSessionPersistenceDecision(event.session.runId)
+      releaseProviderRunPersistenceAuthority(event.session.runId)
+      cleanupRunItemEventState(event.session.runId)
+    }
     return
   }
   const graphJobCandidate = AppStore.getRunQueueJob(event.session.runId)
@@ -6406,10 +6805,8 @@ runManager.onChange((event) => {
   let graphDisposition: ReturnType<ExecutionGraphCoordinator['onRunSessionChange']> = 'unclaimed'
   try {
     graphDisposition =
-      executionGraphCoordinatorRef?.onRunSessionChange(
-        event,
-        executionGraphTerminalReceipt
-      ) ?? 'unclaimed'
+      executionGraphCoordinatorRef?.onRunSessionChange(event, executionGraphTerminalReceipt) ??
+      'unclaimed'
   } catch (error) {
     console.error(
       `[ExecutionGraph] run-state reconciliation failed for runId=${event.session.runId}:`,
@@ -6463,6 +6860,7 @@ runManager.onChange((event) => {
     // renderer already applied it).
     finalizePendingEnsembleRosterPresetForTerminalRun(event.session)
     recordProviderSeatCacheEvidenceForRun(event.session)
+    releaseProviderRunPersistenceAuthority(event.session.runId)
   }
   void appShellStatsService.refresh().catch((err) => {
     console.warn(
@@ -6598,9 +6996,9 @@ async function maybePropagateSubThreadResult(
       const canonicalSource = AppStore.getChat(sourceAppChatId)
       return Boolean(
         canonicalSource &&
-          canonicalSource.parentChatId === targetAppChatId &&
-          (canonicalSource.parentChatRelation === undefined ||
-            canonicalSource.parentChatRelation === 'subThread')
+        canonicalSource.parentChatId === targetAppChatId &&
+        (canonicalSource.parentChatRelation === undefined ||
+          canonicalSource.parentChatRelation === 'subThread')
       )
     }
   )
@@ -6941,9 +7339,7 @@ function deliverableSubThreadMailboxEvents(
 
 function parentChatHasActiveRun(parentChatId: string): boolean {
   return availableProviderIds().some((provider) =>
-    runManager
-      .getActiveByProvider(provider)
-      .some((session) => session.appChatId === parentChatId)
+    runManager.getActiveByProvider(provider).some((session) => session.appChatId === parentChatId)
   )
 }
 
@@ -6989,9 +7385,7 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
   // acknowledge/release it before a later terminal-run drain proceeds.
   if (pending.some((event) => event.deliveryRunId)) return
   let deliverable = deliverableSubThreadMailboxEvents(parentChatId, pending)
-  const refreshedPending = pendingSubThreadMailboxEvents(
-    AppStore.getSubThreadMailbox(parentChatId)
-  )
+  const refreshedPending = pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId))
   if (refreshedPending.length !== pending.length) {
     pending = refreshedPending
     deliverable = deliverableSubThreadMailboxEvents(parentChatId, pending)
@@ -7061,8 +7455,8 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
       model: parent.requestedModel || 'cli-default',
       providerSessionId:
         parent.provider === 'gemini'
-          ? parent.linkedGeminiSessionId ?? null
-          : parent.linkedProviderSessionId ?? null,
+          ? (parent.linkedGeminiSessionId ?? null)
+          : (parent.linkedProviderSessionId ?? null),
       // Automatic coordination is never a Trusted Session.
       sessionTrust: false,
       ...(continuationEffectivePermissions
@@ -7465,7 +7859,11 @@ function registerRendererCapabilityCleanup(sender: Electron.WebContents): void {
 
 function authorizeImagePreviewPath(
   rawPath: unknown,
-  options: { sender?: Electron.WebContents; mainAuthority?: boolean } = {}
+  options: {
+    sender?: Electron.WebContents
+    mainAuthority?: boolean
+    appChatId?: string
+  } = {}
 ): void {
   if (typeof rawPath !== 'string' || !rawPath) return
   try {
@@ -7476,7 +7874,9 @@ function authorizeImagePreviewPath(
       registerRendererCapabilityCleanup(options.sender)
     }
     if (options.mainAuthority === true) {
-      attachmentCapabilityRegistry.authorizeMainPath(real)
+      attachmentCapabilityRegistry.authorizeMainPath(real, {
+        ...(options.appChatId ? { appChatId: options.appChatId } : {})
+      })
     }
   } catch {
     // Unresolvable path — never authorize.
@@ -7489,10 +7889,7 @@ function rendererAttachmentCapabilityPaths(event: RendererSenderEvent): string[]
   })
 }
 
-function resolveRendererAttachmentPaths(
-  event: RendererSenderEvent,
-  rawPaths: unknown
-): string[] {
+function resolveRendererAttachmentPaths(event: RendererSenderEvent, rawPaths: unknown): string[] {
   return resolveAuthorizedRendererAttachmentPaths(
     rawPaths,
     rendererAttachmentCapabilityPaths(event),
@@ -7548,10 +7945,6 @@ function getTranscriptMediaAssetStore(): TranscriptMediaAssetStore {
   return transcriptMediaAssetStore
 }
 
-function getPdfAttachmentRenderCacheDir(): string {
-  return defaultPdfAttachmentRenderCacheDir(app.getPath('userData'))
-}
-
 function saveAndBroadcastChat(chat: ChatRecord): ChatRecord {
   const normalized = normalizeTranscriptMarkdownMediaForChat(chat)
   const previous = AppStore.getChat(normalized.appChatId)
@@ -7585,7 +7978,10 @@ function saveEnsembleChatWithScheduledHeartbeat(chat: ChatRecord): ChatRecord {
   return saved
 }
 
-function providerForTranscriptMessage(chat: ChatRecord, message: ChatMessage): ProviderId | undefined {
+function providerForTranscriptMessage(
+  chat: ChatRecord,
+  message: ChatMessage
+): ProviderId | undefined {
   const metadata = message.metadata || {}
   const metadataProvider =
     typeof metadata.subThreadProvider === 'string'
@@ -7718,7 +8114,9 @@ function fullWorkspaceTranscriptMedia(
   mediaRef: TranscriptMediaRef,
   maxBytes: number,
   externalPathGrants: ExternalPathGrant[] = executableExternalPathGrantsForChat(chat)
-): { ok: true; dataBase64: string; byteLength: number; mimeType: string } | { ok: false; reason: string } {
+):
+  | { ok: true; dataBase64: string; byteLength: number; mimeType: string }
+  | { ok: false; reason: string } {
   if (!chat.workspacePath || !mediaRef.path) {
     return { ok: false, reason: 'Workspace media path is unavailable' }
   }
@@ -7736,7 +8134,8 @@ function fullWorkspaceTranscriptMedia(
     return { ok: false, reason: 'Workspace media changed after it was attached' }
   }
   const buffer = validation.buffer
-  if (buffer.length > maxBytes) return { ok: false, reason: 'Workspace media exceeds requested byte limit' }
+  if (buffer.length > maxBytes)
+    return { ok: false, reason: 'Workspace media exceeds requested byte limit' }
   return {
     ok: true,
     dataBase64: buffer.toString('base64'),
@@ -7776,8 +8175,7 @@ async function resolveImageRasterSource(
             )
           : fullTranscriptMediaFromAsset(chat.appChatId, ref, maxBytes)
       if (!read.ok) return { ok: false, reason: read.reason }
-      const mimeType =
-        (read as { mimeType?: string }).mimeType || ref.mimeType || 'image/png'
+      const mimeType = (read as { mimeType?: string }).mimeType || ref.mimeType || 'image/png'
       return { ok: true, buffer: Buffer.from(read.dataBase64, 'base64'), mimeType }
     }
     return { ok: false, reason: `no image with id "${mediaId}" in this chat` }
@@ -7908,13 +8306,7 @@ function broadcastChatOwnedWorkspacePopoutRefresh(chatId: string, reason: string
   if (!chatId || workspacePopoutWindows.size === 0) return
   for (const [key, win] of workspacePopoutWindows.entries()) {
     const owner = workspacePopoutOwners.get(key)
-    if (
-      !owner ||
-      owner.kind === 'chat' ||
-      owner.chatId !== chatId ||
-      !owner.workspacePath
-    )
-      continue
+    if (!owner || owner.kind === 'chat' || owner.chatId !== chatId || !owner.workspacePath) continue
     const externalWriteAllowed = externalWorkspaceWriteAllowedForChat(
       owner.chatId,
       owner.workspacePath
@@ -8011,7 +8403,8 @@ function broadcastChatPopoutUpdate(chat: ChatRecord): void {
 function maybeAppendAuditTranscriptMessage(run: AuditRunRecord): void {
   const kind = auditTranscriptMessageKind(run)
   if (!kind) return
-  const seen = auditTranscriptMessageKindsByRunId.get(run.id) ?? new Set<AuditTranscriptMessageKind>()
+  const seen =
+    auditTranscriptMessageKindsByRunId.get(run.id) ?? new Set<AuditTranscriptMessageKind>()
   if (seen.has(kind)) return
   const parentChat = AppStore.getChat(run.chatId)
   if (!parentChat) return
@@ -8081,13 +8474,17 @@ function tryResumePersistedEnsembleWakeup(wakeup: EnsembleWakeupRecord): boolean
   return Boolean(ensembleOrchestratorRef?.resumePersistedWakeup(wakeup, sender))
 }
 
-function handleEnsembleWakeupTimerFired(wakeupId: string): void {
+function handleEnsembleWakeupTimerFired(wakeupId: string): void | Promise<void> {
   if (ensembleOrchestratorRef?.handleWakeupFired(wakeupId)) return
   const wakeup = findPersistedEnsembleWakeup(wakeupId)
   if (!wakeup || wakeup.status !== 'pending') {
     // 1.0.5-EW37 — Not an ensemble wakeup. Try the solo lane.
-    void handleSoloWakeupTimerFired(wakeupId)
-    return
+    return handleSoloWakeupTimerFired(wakeupId).catch((error) => {
+      console.error(
+        `Solo wakeup handler failed for ${wakeupId}:`,
+        error instanceof Error ? error.message : String(error)
+      )
+    })
   }
   if (tryResumePersistedEnsembleWakeup(wakeup)) return
   expirePersistedEnsembleWakeup(
@@ -8174,8 +8571,9 @@ function composeDelegatedProviderPrompts(args: {
   // ensemble turns.
   const kimiNativeSessionResume = Boolean(
     args.provider === 'kimi' &&
-      args.resumeSessionId?.startsWith('session_') &&
-      args.subThread.providerMetadata?.kimiAcpNativeSession === true
+    args.resumeSessionId?.startsWith('session_') &&
+    args.subThread.providerMetadata?.kimiAcpNativeSession === true &&
+    isKimiAcpProductionPosture(args.subThread.providerMetadata?.kimiAcpPostureVersion)
   )
   const needsHostTranscriptInjection =
     (args.provider === 'kimi' && !kimiNativeSessionResume) ||
@@ -8281,9 +8679,7 @@ function seedAgentDrivenSubThreadTranscript(args: {
     requestedModel,
     approvalMode,
     status: 'running',
-    ...(args.providerMetadataPatch
-      ? { providerMetadata: { ...args.providerMetadataPatch } }
-      : {}),
+    ...(args.providerMetadataPatch ? { providerMetadata: { ...args.providerMetadataPatch } } : {}),
     ...(args.runtimeProfileId ? { runtimeProfileId: args.runtimeProfileId } : {})
   }
   const current = AppStore.getChat(subThread.appChatId) || subThread
@@ -8347,6 +8743,17 @@ function seedAgentDrivenSubThreadTranscript(args: {
 function flushBackgroundSubThreadTranscript(runId: string, final = false): void {
   const state = backgroundSubThreadTranscripts.get(runId)
   if (!state) return
+  if (
+    !providerRunPersistenceAuthorized(state.provider, {
+      appRunId: state.runId,
+      appChatId: state.chatId
+    })
+  ) {
+    if (state.flushTimer) clearTimeout(state.flushTimer)
+    backgroundSubThreadTranscripts.delete(runId)
+    releaseProviderSessionPersistenceDecision(runId)
+    return
+  }
   if (state.flushTimer) {
     clearTimeout(state.flushTimer)
     state.flushTimer = undefined
@@ -8459,11 +8866,7 @@ function flushBackgroundSubThreadTranscript(runId: string, final = false): void 
     if (state.returnResultToParent) {
       void maybePropagateSubThreadResult(state.chatId, {
         outcome:
-          finalStatus === 'success'
-            ? 'done'
-            : finalStatus === 'cancelled'
-              ? 'cancelled'
-              : 'failed',
+          finalStatus === 'success' ? 'done' : finalStatus === 'cancelled' ? 'cancelled' : 'failed',
         sourceRunId: state.runId,
         errorMessage: state.errorMessage
       }).catch((err) => {
@@ -8814,9 +9217,9 @@ function recoverSubThreadWorkerQueues(): void {
         Boolean(run.runId && runManager.get(run.runId)) ||
         Boolean(
           run.runId &&
-            [...backgroundSubThreadTranscripts.values()].some(
-              (state) => state.chatId === chat.appChatId && state.runId === run.runId
-            )
+          [...backgroundSubThreadTranscripts.values()].some(
+            (state) => state.chatId === chat.appChatId && state.runId === run.runId
+          )
         )
       return !live && isActiveSubThreadRunStatus(run.status)
         ? { ...run, status: 'failed', endedAt: recoveredAt, exitCode: run.exitCode ?? 1 }
@@ -8992,9 +9395,7 @@ function recordExecutionGraphProviderTerminalCandidate(
   const effectiveCandidate = claimedStatus ?? candidate
   const merged = mergeExecutionGraphProviderTerminalCandidate(
     {
-      ...(state.providerTerminalCandidate
-        ? { candidate: state.providerTerminalCandidate }
-        : {}),
+      ...(state.providerTerminalCandidate ? { candidate: state.providerTerminalCandidate } : {}),
       conflict: state.providerTerminalCandidateConflict ?? false
     },
     effectiveCandidate
@@ -9088,15 +9489,11 @@ function sealExecutionGraphRunTranscript(
         ? 'Provider terminal signals conflicted; manual review is required.'
         : status === 'completed' && !state.providerTerminalCandidate
           ? 'Provider completed without a terminal result or exit signal; manual review is required.'
-        : candidateMismatch
-        ? `Provider result reported ${state.providerTerminalCandidate}, but RunManager reported ${status}.`
-        : errorMessage || (status === 'completed' ? undefined : state.errorMessage)
+          : candidateMismatch
+            ? `Provider result reported ${state.providerTerminalCandidate}, but RunManager reported ${status}.`
+            : errorMessage || (status === 'completed' ? undefined : state.errorMessage)
   )
-  const projected = projectAndPersistExecutionGraphRunTranscript(
-    state,
-    status,
-    terminalError
-  )
+  const projected = projectAndPersistExecutionGraphRunTranscript(state, status, terminalError)
   if (!state.providerTerminalCandidate) {
     throw new Error(
       'Execution graph terminal settlement is waiting for an exact provider result or exit signal.'
@@ -9149,6 +9546,17 @@ function sealExecutionGraphRunTranscript(
 function flushBridgeRunTranscript(runId: string, final = false): void {
   const state = bridgeRunTranscripts.get(runId)
   if (!state) return
+  if (
+    !providerRunPersistenceAuthorized(state.provider, {
+      appRunId: state.runId,
+      appChatId: state.chatId
+    })
+  ) {
+    if (state.flushTimer) clearTimeout(state.flushTimer)
+    bridgeRunTranscripts.delete(runId)
+    releaseProviderSessionPersistenceDecision(runId)
+    return
+  }
   if (state.flushTimer) {
     clearTimeout(state.flushTimer)
     state.flushTimer = undefined
@@ -9304,9 +9712,7 @@ function flushBridgeRunTranscript(runId: string, final = false): void {
   // same-provider model/reasoning tweak keeps the live session. Desktop-origin
   // runs finalize in the renderer, which applies the same helper there.
   const finalizedChat = final
-    ? applyPendingProviderChangeOnFinalize(
-        applyPendingEnsembleRosterPresetOnFinalize(updated)
-      )
+    ? applyPendingProviderChangeOnFinalize(applyPendingEnsembleRosterPresetOnFinalize(updated))
     : updated
   const saved = saveAndBroadcastChat(finalizedChat)
   if (final) {
@@ -9331,10 +9737,7 @@ function scheduleBridgeRunFlush(runId: string): void {
     try {
       flushBridgeRunTranscript(runId)
     } catch (error) {
-      console.error(
-        `[ExecutionGraph] live transcript flush failed for runId=${runId}:`,
-        error
-      )
+      console.error(`[ExecutionGraph] live transcript flush failed for runId=${runId}:`, error)
     }
   }, 250)
 }
@@ -9368,8 +9771,7 @@ function finalizeBridgeRunTranscript(
   state.status = resolvedStatus
   if (resolvedStatus === 'success' || resolvedStatus === 'cancelled') {
     state.errorMessage = undefined
-  }
-  else if (resolvedErrorMessage) state.errorMessage = resolvedErrorMessage
+  } else if (resolvedErrorMessage) state.errorMessage = resolvedErrorMessage
   // Chain link 3/3 (see registerBridgeRunTranscript).
   console.log(
     `[bridge-run] finalized run=${runId} status=${resolvedStatus} chars=${state.content.length}${resolvedErrorMessage ? ` error="${resolvedErrorMessage}"` : ''}`
@@ -9467,8 +9869,7 @@ function appendBridgeRunJsonLine(state: BridgeRunTranscriptState, line: string):
       if (parsed.stats && typeof parsed.stats === 'object') {
         state.stats = parsed.stats as Record<string, unknown>
       }
-      const status =
-        parsed.status === 'failed' || parsed.subtype === 'error' ? 'failed' : 'success'
+      const status = parsed.status === 'failed' || parsed.subtype === 'error' ? 'failed' : 'success'
       finalizeBridgeRunTranscript(state.runId, status)
     }
   } catch {
@@ -9564,7 +9965,8 @@ function prepareForkMessagesWithMediaOwnership(input: {
         !canonicalTarget ||
         canonicalSource.appChatId !== input.sourceChat.appChatId ||
         canonicalTarget.appChatId !== input.targetFork.appChatId
-      ) return false
+      )
+        return false
       return isVerifiedEmulatedForkMediaTransfer({
         canonicalSource,
         canonicalTargetShell: canonicalTarget,
@@ -9634,8 +10036,7 @@ function injectTrustedMediaRefs(
   // has no side effects, so doing it before the inject is safe and cheap (two
   // O(1) map lookups). A miss here means NO map owns the run — the caller's
   // false return drives the dedicated solo-Codex IPC fallback.
-  const ownedByEnsemble =
-    ensembleOrchestratorRef?.getParticipantIdForRun(appRunId) != null
+  const ownedByEnsemble = ensembleOrchestratorRef?.getParticipantIdForRun(appRunId) != null
   if (ownedByEnsemble) {
     ensembleOrchestratorRef?.appendTrustedMediaRefs(appRunId, refs)
     return true
@@ -9682,8 +10083,12 @@ function ingestBridgeRunToolUse(state: BridgeRunTranscriptState, payload: any): 
 
 function ingestBridgeRunToolResult(state: BridgeRunTranscriptState, payload: any): void {
   const id = String(
-    payload.tool_id || payload.id || payload.call_id || payload.tool_call_id ||
-      payload.toolCallId || ''
+    payload.tool_id ||
+      payload.id ||
+      payload.call_id ||
+      payload.tool_call_id ||
+      payload.toolCallId ||
+      ''
   )
   const failed =
     payload.is_error === true ||
@@ -9814,7 +10219,10 @@ function bridgeResultTerminalStatus(
   payload: Record<string, unknown>
 ): 'completed' | 'failed' | 'cancelled' {
   const rawStatus = typeof payload.status === 'string' ? payload.status : payload.subtype
-  const status = String(rawStatus || '').trim().toLowerCase().replace(/[\s_-]+/g, '')
+  const status = String(rawStatus || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_-]+/g, '')
   if (status === 'cancelled' || status === 'canceled') return 'cancelled'
   return bridgeResultFailed(payload) ? 'failed' : 'completed'
 }
@@ -10069,6 +10477,37 @@ function appendDurableRunEvent(input: RunEventInput): void {
 }
 
 const runItemEventCompatMapper = new RunItemEventCompatMapper()
+const canvasEvalCompatSanitizer = createCanvasEvalCompatSanitizer()
+const nativeCanvasCompatSanitizer = createNativeCanvasCompatSanitizer()
+
+function primeNativeCanvasCompatCorrelation(input: {
+  provider: ProviderId
+  route: AgentRunRoute
+  toolName: string
+  source: unknown
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
+}): void {
+  const canonical = canonicalTaskWraithToolName(input.toolName)
+  if (!isCanvasMcpToolName(canonical)) return
+  const scope = `${input.provider}:${input.route.appRunId || input.route.appChatId || 'unrouted'}`
+  const ids = nativeCanvasCompatToolIds(input.source)
+  nativeCanvasCompatSanitizer.prime(scope, canonical, ids)
+  const projectedToolId = nativeCanvasCompatSanitizer.projectedToolId(scope, ids)
+  if (canonical === 'canvas_eval' && projectedToolId && input.canvasEvalApproval) {
+    // Prime the stricter eval receipt correlator too. This synthetic payload is
+    // never emitted; it only binds a later name-less native ToolResult to the
+    // host-minted receipt shown in the exact-review approval.
+    canvasEvalCompatSanitizer.sanitize(
+      {
+        type: 'tool_use',
+        tool_name: canonical,
+        tool_id: projectedToolId
+      },
+      input.canvasEvalApproval,
+      scope
+    )
+  }
+}
 
 const runEventChatMetadataCache = new Map<
   string,
@@ -10098,7 +10537,8 @@ function appendDurableRunEventForRoute(
   phase: RunEventInput['phase'],
   summary: string,
   payload?: unknown,
-  source: RunEventInput['source'] = 'main'
+  source: RunEventInput['source'] = 'main',
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
 ): void {
   const session = runManager.get(route?.appRunId) || getRuntimeSession(provider, route)
   const runId = route?.appRunId || session?.runId
@@ -10106,6 +10546,18 @@ function appendDurableRunEventForRoute(
 
   const chatId = route?.appChatId || session?.appChatId
   const chatMetadata = getRunEventChatMetadata(chatId)
+  let durablePayload = payload
+  if (kind === 'approval_request' && isRecord(payload)) {
+    const approvalId = String(payload.approvalId || payload.id || '').trim()
+    if (approvalId) {
+      durablePayload = canvasEvalApprovalPayloadForDurableStorage(
+        typeof payload.service === 'string' ? payload.service : undefined,
+        payload,
+        approvalId,
+        canvasEvalApproval
+      )
+    }
+  }
   appendDurableRunEvent({
     runId,
     chatId,
@@ -10118,7 +10570,7 @@ function appendDurableRunEventForRoute(
     phase,
     source,
     summary,
-    payload
+    payload: durablePayload
   })
 }
 
@@ -10361,10 +10813,17 @@ function recordApprovalLedgerRequest(
     service?: AgenticServiceId
     workspacePath?: string
     metadata?: Record<string, unknown>
+    canvasEvalApproval?: CanvasEvalApprovalReceipt
   } = {}
 ): void {
   const approvalId = String(payload.approvalId || payload.id || '').trim()
   if (!approvalId) return
+  const durablePayload = canvasEvalApprovalPayloadForDurableStorage(
+    options.service,
+    payload,
+    approvalId,
+    options.canvasEvalApproval
+  )
   const context = approvalRouteContext(provider, route)
   let recorded = false
   try {
@@ -10372,12 +10831,12 @@ function recordApprovalLedgerRequest(
       approvalId,
       provider,
       service: options.service,
-      method: payload.method || 'approval/request',
-      title: payload.title || 'Approval requested',
-      body: payload.body,
-      preview: payload.preview,
-      params: payload.params,
-      actions: Array.isArray(payload.actions) ? payload.actions : [],
+      method: durablePayload.method || 'approval/request',
+      title: durablePayload.title || 'Approval requested',
+      body: durablePayload.body,
+      preview: durablePayload.preview,
+      params: durablePayload.params,
+      actions: Array.isArray(durablePayload.actions) ? durablePayload.actions : [],
       runId: context.runId,
       chatId: context.chatId,
       workspaceId: context.workspaceId,
@@ -10433,7 +10892,6 @@ function expireRunScopedApprovalLedger(session: {
     console.error('Failed to expire run-scoped approval ledger records', error)
   }
 }
-
 
 function getAgenticServicePolicy(
   service: AgenticServiceId,
@@ -10619,9 +11077,10 @@ function ensembleApprovalContext(
   }
 }
 
-function bossmanAutoApprovalPrimaryState(
-  chat: ChatRecord
-): { unavailable: boolean; reason?: string } {
+function bossmanAutoApprovalPrimaryState(chat: ChatRecord): {
+  unavailable: boolean
+  reason?: string
+} {
   const ensemble = chat.ensemble
   if (!ensemble) {
     return { unavailable: true, reason: 'no Ensemble is configured' }
@@ -10653,7 +11112,10 @@ function bossmanAutoApprovalPrimaryState(
     ) {
       return {
         unavailable: true,
-        reason: state.lastFailureReason || state.reason || `${boss.role || boss.provider} is ${state.status}`
+        reason:
+          state.lastFailureReason ||
+          state.reason ||
+          `${boss.role || boss.provider} is ${state.status}`
       }
     }
     // C1 — quota-aware soft failover, twin of
@@ -10762,7 +11224,9 @@ function planArtifactWriteApprovalMetadata(input: {
   }
 }
 
-function planArtifactRelativePathFromMetadata(metadata: Record<string, unknown> | null): string | null {
+function planArtifactRelativePathFromMetadata(
+  metadata: Record<string, unknown> | null
+): string | null {
   const relativePath = metadata?.relativePath
   return typeof relativePath === 'string' && relativePath.trim() ? relativePath.trim() : null
 }
@@ -10835,6 +11299,7 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
   permissionService,
   auditService,
   getApprovalService: () => approvalService,
+  isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
   getSettings: () => AppStore.getSettings(),
   appendDurableRunEventForRoute,
   recordApprovalLedgerRequest,
@@ -10859,6 +11324,7 @@ const requestAgenticServiceApproval = createApprovalOrchestration(requestAgentic
 
 const requestMainApprovalDeps: RequestMainApprovalDeps = {
   getApprovalService: () => approvalService,
+  isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
   runManager,
   scheduleApprovalTimeout,
   appendDurableRunEventForRoute,
@@ -10876,7 +11342,8 @@ function trustStatusAllowsRun(status: string | undefined): boolean {
 
 async function ensureWorkspaceTrustForRun(
   sender: Electron.WebContents,
-  payload: AgentRunPayload
+  payload: AgentRunPayload,
+  reservation?: object
 ): Promise<boolean> {
   if (payload.scope === 'global') return true
   if (payload.provider !== 'gemini') return true
@@ -10902,19 +11369,16 @@ async function ensureWorkspaceTrustForRun(
     if (approved) return true
   }
 
-  sendAgentCompatError(
+  sendProviderPreflightError(
     sender,
     'gemini',
     `Gemini run blocked because workspace trust is ${trust.status}${trust.reason ? `: ${trust.reason}` : '.'}`,
-    route
+    route,
+    reservation
   )
-  sendAgentCompatExit(sender, 'gemini', -1, route)
+  sendProviderPreflightExit(sender, 'gemini', -1, route, reservation)
   return false
 }
-
-
-
-
 
 function resolveGeminiMcpScopedPath(context: GeminiToolContext, filePath: string): string {
   if (typeof filePath !== 'string' || !filePath.trim()) {
@@ -10966,13 +11430,8 @@ function resolveGeminiMcpGrantAwarePath(
   access: 'read' | 'write',
   options: { allowWorkspaceRoot?: boolean } = {}
 ): string {
-  return resolveGeminiMcpGrantAwarePathAuthority(
-    context,
-    provider,
-    filePath,
-    access,
-    options
-  ).targetPath
+  return resolveGeminiMcpGrantAwarePathAuthority(context, provider, filePath, access, options)
+    .targetPath
 }
 
 function resolveGeminiMcpGrantAwarePathAuthority(
@@ -11125,22 +11584,17 @@ function acquireMcpWorkspaceWriteLocks(input: {
   toolName: TaskWraithMcpToolName
   cwd: string
   resourcePath?: string
-}):
-  | { ok: true; tokens: WriteIntentToken[] }
-  | { ok: false; text: string; reason: string } {
+}): { ok: true; tokens: WriteIntentToken[] } | { ok: false; text: string; reason: string } {
   const laneId = input.context.ensembleRun?.laneId
   if (!laneId || !concurrentWriteLanesEnabled() || input.context.scope === 'global') {
     return { ok: true, tokens: [] }
   }
   const workspacePath = resolve(input.context.workspacePath || input.context.cwd || input.cwd)
-  const scopeCheck = ensembleOrchestratorRef?.validateLaneWriteScopeForRun(
-    input.context.appRunId,
-    {
-      toolName: input.toolName,
-      workspacePath,
-      ...(input.resourcePath ? { resourcePath: input.resourcePath } : {})
-    }
-  )
+  const scopeCheck = ensembleOrchestratorRef?.validateLaneWriteScopeForRun(input.context.appRunId, {
+    toolName: input.toolName,
+    workspacePath,
+    ...(input.resourcePath ? { resourcePath: input.resourcePath } : {})
+  })
   if (scopeCheck && !scopeCheck.ok) {
     ensembleOrchestratorRef?.markLaneBlockedForRun(input.context.appRunId, scopeCheck.reason)
     return {
@@ -11215,499 +11669,17 @@ function acquireMcpWorkspaceWriteLocks(input: {
  * Generic, provider-agnostic titles ("Approve task run", "Approve
  * git stage", "Capture attached window") are unchanged.
  */
-function previewForGeminiMcpTool(
-  toolName: TaskWraithMcpToolName,
-  args: Record<string, any>,
-  cwd: string,
-  context: GeminiToolContext,
-  parentProvider: ProviderId = 'gemini'
-) {
-  const providerName = providerDisplayName(parentProvider)
-  const intent = optionalString(args.intent || args.summary || args.reason || args.description)
-  const intentBody = intent ? `Intent: ${intent}\n\n` : ''
-  const intentPreview = intent ? { intent } : {}
-  // Audio/video media tools route to the dedicated `mediaEditing` agentic service
-  // on the Gemini + Grok MCP path too (mirrors taskWraithToolAgenticService and the
-  // Claude classifier). Without this branch the ffmpeg/audio tools would classify
-  // `fileChanges` and the native VtTools (video_decode_frame/encode_clip/concat_clips
-  // /audio_mix) would fall through to `mcpTools` — so `mediaEditing:'deny'` would be
-  // ignored (media riding fileChanges) and decisions would be audit-tagged wrong.
-  // `toolName` is the BARE `TaskWraithMcpToolName` the set holds (the gate site passes
-  // the un-prefixed name), so no canonicalization is needed here. Must precede the
-  // ffmpeg/audio/default branches below.
-  if (MEDIA_EDITING_TOOLS.has(toolName)) {
-    const isAnalyze = toolName === 'audio_analyze'
-    const isRender = toolName === 'audio_render_wav'
-    return {
-      title: `Approve ${providerName} media ${
-        isAnalyze ? 'analysis' : isRender ? 'render' : 'edit'
-      }`,
-      // Gated as mediaEditing: an external-subprocess / native compute tool that
-      // reads or produces a media asset — denied under the read-only preset, like
-      // write_file / image_edit.
-      body: `${intentBody}${toolName} ${String(
-        args.sourcePath || args.waveform || ''
-      )}`.trim(),
-      service: 'mediaEditing' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args,
-        ...intentPreview
-      }
-    }
-  }
-  if (toolName === 'run_shell_command') {
-    const command = String(args.command || '')
-    const ollamaShellMetadata =
-      parentProvider === 'ollama' ? ollamaShellApprovalPreviewMetadata(command) : {}
-    return {
-      title: `Approve ${providerName} shell command`,
-      body: `${intentBody}${command}\n${cwd}`,
-      service: 'shellCommands' as AgenticServiceId,
-      preview: {
-        kind: 'command',
-        command,
-        cwd,
-        ...ollamaShellMetadata,
-        ...intentPreview
-      }
-    }
-  }
-
-  if (toolName === 'run_task') {
-    const command = Array.isArray(args.command)
-      ? args.command.map((part) => String(part)).join(' ')
-      : String(args.command || args.task || args.script || '')
-    return {
-      title: 'Approve task run',
-      body: `${command}\n${cwd}`,
-      service: 'shellCommands' as AgenticServiceId,
-      preview: {
-        kind: 'command',
-        command,
-        cwd
-      }
-    }
-  }
-
-  if (toolName === 'start_background_process') {
-    const command = String(args.command || '')
-    return {
-      title: `Approve ${providerName} background process`,
-      body: `${intentBody}${command}\n${cwd}`,
-      service: 'shellCommands' as AgenticServiceId,
-      preview: {
-        kind: 'command',
-        command,
-        cwd,
-        ...intentPreview
-      }
-    }
-  }
-
-  // Run-Button launch start/stop spawn / terminate processes — route them to the
-  // shellCommands gate (denied under read-only, never the softer mcpTools). The
-  // EXACT resolved command is shown by LaunchManager.startTarget's own
-  // shellCommands+forcePrompt approval (the command isn't known here, pre-discovery).
-  if (toolName === 'launch_start' || toolName === 'launch_stop') {
-    const ref = String(args.targetId || args.attemptId || '')
-    return {
-      title: toolName === 'launch_start' ? 'Approve Run-Button launch' : 'Approve stopping a launch',
-      body: `${toolName}${ref ? ` ${ref}` : ''}`,
-      service: 'shellCommands' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  if (toolName === 'get_diagnostics') {
-    const source = String(args.source || args.kind || (args.includeLint ? 'all' : 'typescript'))
-    const target = String(args.path || args.file || args.project || '.')
-    return {
-      title: 'Approve diagnostics run',
-      body: `${intentBody}${source} diagnostics for ${target}\n${cwd}`,
-      service: 'shellCommands' as AgenticServiceId,
-      preview: {
-        kind: 'command',
-        command: `get_diagnostics ${source} ${target}`.trim(),
-        cwd,
-        ...intentPreview
-      }
-    }
-  }
-
-  if (
-    toolName === 'image_edit' ||
-    toolName === 'svg_rasterize' ||
-    toolName === 'image_generate'
-  ) {
-    let title: string
-    let summary: string
-    if (toolName === 'image_generate') {
-      const prov = String(args.provider || '')
-      // Surface WHERE the prompt is going + WHAT is being sent: a generation
-      // request is a potential prompt-injection exfil channel, so the user must
-      // see the endpoint + prompt before approving.
-      const endpoint =
-        prov === 'xai' ? 'api.x.ai' : prov === 'openai' ? 'api.openai.com' : 'the configured image provider'
-      title = `Approve ${providerName} image generation`
-      summary = `Generate via ${endpoint}\nPrompt: ${String(args.prompt || '').slice(0, 2000)}`
-    } else if (toolName === 'image_edit') {
-      title = `Approve ${providerName} image edit`
-      summary = `op=${String(args.op || '?')} ${String(args.sourceMediaId || args.sourcePath || '')}`.trim()
-    } else {
-      title = `Approve ${providerName} SVG rasterize`
-      summary = `${String(args.width || 1024)}x${String(args.height || 768)} SVG -> PNG`
-    }
-    return {
-      title,
-      // Gated as fileChanges: a mutating/compute tool that produces an image —
-      // denied under the read-only preset, like write_file.
-      body: `${intentBody}${summary}`,
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args,
-        ...intentPreview
-      }
-    }
-  }
-
-  if (toolName === 'write_file' || toolName === 'replace') {
-    const filePath = String(args.path || args.file_path || '')
-    const previewPath = filePath ? previewGeminiMcpPath(context, filePath) : filePath
-    const content = String(args.content || '')
-    const oldString = String(args.old_string || args.oldString || '')
-    const newString = String(args.new_string || args.newString || '')
-    const patchPreview =
-      parentProvider === 'ollama'
-        ? toolName === 'write_file'
-          ? ollamaTextDiffPreview(
-              previewPath || filePath || 'file',
-              readApprovalPreviewFileContent(context, filePath),
-              content
-            )
-          : ollamaTextDiffPreview(previewPath || filePath || 'file', oldString, newString)
-        : toolName === 'replace'
-          ? [
-              `--- old_string`,
-              oldString.slice(0, 2000),
-              `+++ new_string`,
-              newString.slice(0, 2000)
-            ].join('\n')
-          : content.slice(0, 2000)
-    return {
-      title:
-        toolName === 'write_file'
-          ? `Approve ${providerName} file write`
-          : `Approve ${providerName} file edit`,
-      body: `${intentBody}${previewPath || toolName}`,
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'fileChange',
-        toolName,
-        planArtifactRawPath: filePath,
-        changes: [{ kind: toolName === 'write_file' ? 'write' : 'replace', path: previewPath }],
-        ...intentPreview,
-        patchPreview
-      }
-    }
-  }
-
-  if (
-    toolName === 'create_directory' ||
-    toolName === 'delete_path' ||
-    toolName === 'move_path' ||
-    toolName === 'rename_path'
-  ) {
-    const previewPath = (rawPath: unknown): string => {
-      const filePath = typeof rawPath === 'string' ? rawPath : ''
-      return filePath ? previewGeminiMcpPath(context, filePath) : ''
-    }
-    const source = previewPath(
-      args.path || args.from || args.source || args.sourcePath || args.directory || args.file
-    )
-    const destination = previewPath(args.to || args.destination || args.destinationPath || args.target)
-    const newName = optionalString(args.newName || args.name)
-    const actionLabel =
-      toolName === 'create_directory'
-        ? 'directory create'
-        : toolName === 'delete_path'
-          ? 'path delete'
-          : toolName === 'move_path'
-            ? 'path move'
-            : 'path rename'
-    const changes =
-      toolName === 'move_path'
-        ? [
-            { kind: 'move', path: source },
-            { kind: 'move', path: destination }
-          ]
-        : toolName === 'rename_path'
-          ? [{ kind: 'rename', path: `${source} -> ${newName || ''}`.trim() }]
-          : [{ kind: toolName === 'delete_path' ? 'delete' : 'mkdir', path: source }]
-    const detail =
-      toolName === 'move_path'
-        ? `${source} -> ${destination}`
-        : toolName === 'rename_path'
-          ? `${source} -> ${newName || ''}`
-          : source
-    return {
-      title: `Approve ${providerName} ${actionLabel}`,
-      body: `${intentBody}${detail || toolName}`,
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'fileChange',
-        changes,
-        ...intentPreview
-      }
-    }
-  }
-
-  if (toolName === 'apply_patch') {
-    const patch = String(args.patch || args.diff || '')
-    return {
-      title:
-        args.dryRun === true || args.check === true
-          ? 'Preview patch application'
-          : 'Approve patch application',
-      body: `${intentBody}${cwd}\n${patch.slice(0, 1000)}`,
-      service: 'fileChanges' as AgenticServiceId,
-      preview: {
-        kind: 'fileChange',
-        changes: [],
-        ...intentPreview,
-        patchPreview: patch.slice(0, 4000)
-      }
-    }
-  }
-
-  if (
-    toolName === 'git_stage' ||
-    toolName === 'git_commit' ||
-    toolName === 'git_push' ||
-    toolName === 'git_create_pr'
-  ) {
-    const actionLabel =
-      toolName === 'git_stage'
-        ? 'git stage'
-        : toolName === 'git_commit'
-          ? 'git commit'
-          : toolName === 'git_push'
-            ? 'git push'
-            : 'GitHub pull request'
-    const body =
-      toolName === 'git_stage'
-        ? JSON.stringify(args)
-        : toolName === 'git_commit'
-          ? String(args.message || '')
-          : toolName === 'git_push'
-            ? `remote=${String(args.remote || 'upstream/default')} setUpstream=${args.setUpstream === true}`
-            : `title=${String(args.title || '(fill from commits)').slice(0, 300)} draft=${args.draft === true}`
-    return {
-      title: `Approve ${actionLabel}`,
-      body,
-      service:
-        toolName === 'git_push' || toolName === 'git_create_pr'
-          ? ('externalPublish' as AgenticServiceId)
-          : ('fileChanges' as AgenticServiceId),
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  if (toolName === 'workspace_board_apply_plan') {
-    const plan = isRecord(args.plan) ? args.plan : args
-    const cards = Array.isArray(plan.cards) ? plan.cards.length : 0
-    const boardLabel = String(plan.name || plan.boardId || 'active workspace board')
-    return {
-      title: `Approve ${providerName} workspace board update`,
-      body: `${intentBody}${boardLabel}\n${cards} card proposal${cards === 1 ? '' : 's'}`,
-      service: 'mcpTools' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: {
-          boardId: plan.boardId,
-          name: plan.name,
-          cards
-        },
-        ...intentPreview
-      }
-    }
-  }
-
-  if (toolName === 'cancel_subthread') {
-    return {
-      title: 'Approve sub-thread cancellation',
-      body: `Sub-thread: ${String(args.subThreadId || args.id || '')}`,
-      service: 'subThreadDelegation' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: {
-          subThreadId: args.subThreadId || args.id,
-          reason: args.reason
-        }
-      }
-    }
-  }
-
-  if (toolName === 'web_search' || toolName === 'web_fetch' || toolName === 'github_ci_status') {
-    const queryOrUrl =
-      toolName === 'web_search'
-        ? String(args.query || args.q || '')
-        : toolName === 'web_fetch'
-          ? String(args.url || args.uri || '')
-          : String(args.pr || args.branch || args.commitSha || 'current PR/branch')
-    return {
-      title:
-        toolName === 'web_search'
-          ? `Approve ${providerName} web search`
-          : toolName === 'web_fetch'
-            ? `Approve ${providerName} web fetch`
-            : `Approve ${providerName} GitHub CI status check`,
-      body: queryOrUrl,
-      service: 'mcpTools' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  if (toolName === 'attached_window_capture') {
-    const meta = attachedWindowSnapshot?.windowMeta
-    const label = meta
-      ? `${meta.applicationName || meta.bundleID || 'window'}: ${meta.title || '(untitled)'}`
-      : 'no window attached'
-    return {
-      title: 'Capture attached window',
-      body: label,
-      service: 'mcpTools' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: { windowMeta: meta || null, args }
-      }
-    }
-  }
-
-  // Phase M1 — Appwatch approval prompts. The user already approved sharing
-  // the window at attach time, but Appwatch escalates from a one-shot
-  // snapshot to a continuous low-fps stream. Worth a fresh modal so the
-  // user can see the fps/buffer config the agent picked before it goes
-  // live. `appwatch_stop` doesn't strictly need approval (it's a teardown,
-  // and the user can always detach to abort), but keeping it gated mirrors
-  // the start path and makes the agent's intent legible.
-  if (
-    toolName === 'appwatch_start' ||
-    toolName === 'appwatch_stop' ||
-    toolName === 'appwatch_latest_frame' ||
-    toolName === 'appwatch_frames'
-  ) {
-    const meta = attachedWindowSnapshot?.windowMeta
-    const label = meta
-      ? `${meta.applicationName || meta.bundleID || 'window'}: ${meta.title || '(untitled)'}`
-      : 'no window attached'
-    const title =
-      toolName === 'appwatch_start'
-        ? 'Start live window capture'
-        : toolName === 'appwatch_stop'
-          ? 'Stop live window capture'
-          : toolName === 'appwatch_frames'
-            ? 'Pull live frame batch'
-            : 'Pull latest live frame'
-    return {
-      title,
-      body: label,
-      service: 'mcpTools' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: { windowMeta: meta || null, args }
-      }
-    }
-  }
-
-  // Canvas click/fill mutate the previewed app — route them to the dedicated
-  // `canvasInteraction` grant service so a prior `mcpTools` session/workspace
-  // grant can't silently auto-allow them (and so the read-only preset denies
-  // them via canvasInteraction:'deny').
-  if (
-    toolName === 'canvas_click' ||
-    toolName === 'canvas_fill' ||
-    toolName === 'canvas_sketch_update'
-  ) {
-    return {
-      title: `Approve ${providerName} canvas interaction`,
-      body: toolName,
-      service: 'canvasInteraction' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  // Cross-thread reads (tw_recall_find/read/read_events) read another
-  // thread/provider/workspace's run history — route them to the dedicated
-  // `crossThreadRead` grant service (grantable; denied under read-only) so a
-  // prior `mcpTools` grant can't silently auto-allow cross-thread reads.
-  if (
-    toolName === 'tw_recall_find' ||
-    toolName === 'tw_recall_read' ||
-    toolName === 'tw_recall_read_events'
-  ) {
-    return {
-      title: `Approve ${providerName} cross-thread read`,
-      body: toolName,
-      service: 'crossThreadRead' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  // Arbitrary canvas_eval runs agent-supplied JavaScript in the previewed app
-  // (RCE). Route it to the signed-elevated `canvasEval` service so it can NEVER
-  // be auto-allowed by a grant, preset, or session-YOLO — it prompts every time.
-  if (toolName === 'canvas_eval') {
-    return {
-      title: `Approve ${providerName} canvas eval (runs JavaScript)`,
-      body: toolName,
-      service: 'canvasEval' as AgenticServiceId,
-      preview: {
-        kind: 'tool',
-        toolName,
-        params: args
-      }
-    }
-  }
-
-  return {
-    title: `Approve ${providerName} tool call`,
-    body: toolName,
-    service: 'mcpTools' as AgenticServiceId,
-    preview: {
-      kind: 'tool',
-      toolName,
-      params: args
-    }
-  }
-}
+const previewForGeminiMcpTool = createMcpToolApprovalPreviewer({
+  mediaEditingTools: MEDIA_EDITING_TOOLS,
+  providerDisplayName,
+  optionalString,
+  isRecord,
+  ollamaShellApprovalPreviewMetadata,
+  ollamaTextDiffPreview,
+  previewPath: previewGeminiMcpPath,
+  readApprovalPreviewFileContent,
+  getAttachedWindowMeta: () => attachedWindowSnapshot?.windowMeta
+})
 
 function runHostCommand(
   command: unknown,
@@ -11725,25 +11697,68 @@ function runHostCommand(
 ): Promise<HostCommandResult> {
   return new Promise((resolveRun) => {
     const startedAt = Date.now()
-    const timeoutMs = typeof options === 'number' ? options : options.timeoutMs ?? 600_000
+    const timeoutMs = typeof options === 'number' ? options : (options.timeoutMs ?? 600_000)
     const releaseApproval = typeof options === 'number' ? undefined : options.releaseApproval
+    const projectionScope = hostCommandProjectionContext.getStore()
+    const operationSource = projectionScope?.source ?? 'internal-host-command'
+    const historyOperation = hostCommandOperations.register(
+      {
+        operationId: `${operationSource}:${projectionScope?.appRunId ?? 'unowned'}:${randomUUID()}`,
+        appRunId: projectionScope?.appRunId,
+        appChatId: projectionScope?.appChatId,
+        workspaceId: projectionScope?.workspaceId,
+        workspacePath: projectionScope?.workspacePath
+      },
+      { killGraceMs: DEFAULT_HOST_COMMAND_KILL_GRACE_MS }
+    )
+    if (projectionScope) projectionScope.operations.add(historyOperation)
     let stdout = ''
     let stderr = ''
     let settled = false
     let child: ChildProcess
+    let childError: Error | undefined
+    let timedOut = false
+    let timeout: NodeJS.Timeout | undefined
+    let timeoutKill: NodeJS.Timeout | undefined
     const commandText = codexCommandText(command)
+    const resolveCommand = (result: HostCommandResult): void => {
+      // Scope-less/internal callers have no later transcript projection seam.
+      // Resolving their runner promise is the terminal result delivery. Resolve
+      // it first so its awaiting continuation is queued before a global-history
+      // join can continue from the projection latch.
+      resolveRun(result)
+      if (!projectionScope) historyOperation.markTerminalProjectionComplete()
+    }
+    const resolveWithoutChild = (error: string): void => {
+      historyOperation.markNoChild()
+      resolveCommand({
+        stdout,
+        stderr,
+        exitCode: null,
+        error,
+        timedOut: false,
+        durationMs: Date.now() - startedAt
+      })
+    }
+    // The route operation is registered before this admission check. The
+    // destructive-history gate is raised synchronously before its cancellation
+    // snapshot and remains held through commit, so a command that arrives after
+    // that snapshot proves no-child instead of escaping as a late spawn.
+    if (
+      historyClearAdmissionBlocked(
+        projectionScope?.appRunId,
+        projectionScope?.workspacePath,
+        projectionScope?.appChatId
+      )
+    ) {
+      resolveWithoutChild('TaskWraith is clearing history; this command was not started.')
+      return
+    }
     const blockedReleaseCommand =
       releaseCommandBlockReason(command, releaseApproval) ||
       releasePackageScriptBlockReason(command, packageScriptsForCwd(cwd), releaseApproval)
     if (blockedReleaseCommand) {
-      resolveRun({
-        stdout,
-        stderr,
-        exitCode: null,
-        error: blockedReleaseCommand,
-        timedOut: false,
-        durationMs: Date.now() - startedAt
-      })
+      resolveWithoutChild(blockedReleaseCommand)
       return
     }
     // When enabled (Settings → Local servers), run agent commands in their own
@@ -11778,14 +11793,7 @@ function runHostCommand(
         })
       }
     } catch (error) {
-      resolveRun({
-        stdout,
-        stderr,
-        exitCode: null,
-        error: error instanceof Error ? error.message : String(error),
-        timedOut: false,
-        durationMs: Date.now() - startedAt
-      })
+      resolveWithoutChild(error instanceof Error ? error.message : String(error))
       return
     }
 
@@ -11803,30 +11811,18 @@ function runHostCommand(
     const untrackChild = (): void => {
       if (child?.pid) spawnRegistry.untrack(child.pid)
     }
-
-    const timeout = setTimeout(() => {
-      if (settled) return
-      settled = true
-      untrackChild()
+    const signalChild = (signal: 'SIGTERM' | 'SIGKILL'): boolean => {
       if (detachSpawns && child.pid) {
         // Group-kill the whole tree the detached spawn leads.
         try {
-          process.kill(-child.pid, 'SIGTERM')
+          process.kill(-child.pid, signal)
+          return true
         } catch {
-          child.kill('SIGTERM')
+          return child.kill(signal)
         }
-      } else {
-        child.kill('SIGTERM')
       }
-      resolveRun({
-        stdout,
-        stderr,
-        exitCode: null,
-        error: 'Command timed out.',
-        timedOut: true,
-        durationMs: Date.now() - startedAt
-      })
-    }, timeoutMs)
+      return child.kill(signal)
+    }
 
     child.stdout?.on('data', (chunk) => {
       stdout += chunk.toString()
@@ -11837,32 +11833,56 @@ function runHostCommand(
       if (stderr.length > 500_000) stderr = stderr.slice(-500_000)
     })
     child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      untrackChild()
-      resolveRun({
-        stdout,
-        stderr,
-        exitCode: null,
-        error: error.message,
-        timedOut: false,
-        durationMs: Date.now() - startedAt
-      })
+      // Node reports spawn failures here before `close`. Error delivery is not
+      // process-close evidence, so retain the exact join and surface it only
+      // when the child emits its real close event.
+      childError = error
     })
-    child.on('close', (code) => {
+    child.on('close', (code, signal) => {
       if (settled) return
       settled = true
-      clearTimeout(timeout)
+      if (timeout) clearTimeout(timeout)
+      if (timeoutKill) clearTimeout(timeoutKill)
       untrackChild()
-      resolveRun({
+      const cancellationReason = historyOperation.cancellationReason
+      const error = timedOut
+        ? 'Command timed out.'
+        : cancellationReason
+          ? `Command cancelled: ${cancellationReason}.`
+          : childError?.message || (signal ? `Command terminated by ${signal}.` : undefined)
+      resolveCommand({
         stdout,
         stderr,
         exitCode: code,
-        timedOut: false,
+        ...(error ? { error } : {}),
+        timedOut,
         durationMs: Date.now() - startedAt
       })
     })
+
+    historyOperation.attachChild({
+      once: (_event, listener) => child.once('close', listener),
+      kill: signalChild
+    })
+
+    timeout = setTimeout(() => {
+      if (settled || timedOut) return
+      timedOut = true
+      try {
+        signalChild('SIGTERM')
+      } catch {
+        // Signal delivery is not close evidence. Keep waiting and escalate.
+      }
+      timeoutKill = setTimeout(() => {
+        if (settled) return
+        try {
+          signalChild('SIGKILL')
+        } catch {
+          // A failed SIGKILL still is not close evidence; the join stays pending.
+        }
+      }, DEFAULT_HOST_COMMAND_KILL_GRACE_MS)
+      timeoutKill.unref?.()
+    }, timeoutMs)
   })
 }
 
@@ -12015,9 +12035,7 @@ function assertScheduledOccurrenceWorkspace(owner: ScheduledOccurrenceOwner): st
   ) {
     throw new Error('Scheduled occurrence chat authority changed after claim.')
   }
-  const workspace = AppStore.getWorkspaces().find(
-    (candidate) => candidate.id === owner.workspaceId
-  )
+  const workspace = AppStore.getWorkspaces().find((candidate) => candidate.id === owner.workspaceId)
   if (!workspace) throw new Error('Scheduled occurrence workspace is no longer registered.')
   const workflow = owner.workflowOccurrence
     ? AppStore.getWorkflowDefinition(owner.workflowOccurrence.workflowId)
@@ -12054,9 +12072,7 @@ function isScheduledOccurrenceChatBusy(task: ScheduledTask): boolean {
   }
   if (
     RUN_MANAGER_PROVIDERS.some((provider) =>
-      runManager
-        .getActiveByProvider(provider)
-        .some((session) => session.appChatId === task.chatId)
+      runManager.getActiveByProvider(provider).some((session) => session.appChatId === task.chatId)
     )
   ) {
     return true
@@ -12073,9 +12089,7 @@ function isScheduledOccurrenceChatBusy(task: ScheduledTask): boolean {
   if (chat?.ensemble?.activeRound?.status === 'running') return true
   return AppStore.getScheduledTasks().some(
     (candidate) =>
-      candidate.id !== task.id &&
-      candidate.chatId === task.chatId &&
-      candidate.status === 'running'
+      candidate.id !== task.id && candidate.chatId === task.chatId && candidate.status === 'running'
   )
 }
 
@@ -12130,10 +12144,7 @@ function failScheduledEnsembleOccurrenceAndAbort(
 function publishScheduledOccurrenceSettlement(): void {
   try {
     mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
-    mainWindow?.webContents.send(
-      'workflow-definitions-changed',
-      AppStore.getWorkflowDefinitions()
-    )
+    mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
   } catch (error) {
     console.error(
       '[scheduled-occurrence] durable settlement renderer publication failed',
@@ -12248,9 +12259,7 @@ async function cancelScheduledOccurrence(
       .catch(() => false)
   } else {
     await Promise.allSettled(
-      exactTransportTargets.map((target) =>
-        cancelProviderRun(target.provider, target.runId)
-      )
+      exactTransportTargets.map((target) => cancelProviderRun(target.provider, target.runId))
     )
   }
   if (owner.rootOwner === 'solo') {
@@ -12267,11 +12276,9 @@ function scheduledOccurrenceOwnerForCancellationRunId(
   const root = scheduledOccurrenceOwners.lookupByOwnerRunId(runId)
   const loop = scheduledOccurrenceOwners.lookupLoopChildRun(runId, provider)
   const ensemble = scheduledOccurrenceOwners.lookupEnsembleChildRun(runId, provider)
-  const candidates = [
-    root && root.provider === provider ? root : undefined,
-    loop,
-    ensemble
-  ].filter((candidate): candidate is ScheduledOccurrenceOwner => Boolean(candidate))
+  const candidates = [root && root.provider === provider ? root : undefined, loop, ensemble].filter(
+    (candidate): candidate is ScheduledOccurrenceOwner => Boolean(candidate)
+  )
   return new Set(candidates).size === 1 ? candidates[0] : undefined
 }
 
@@ -12375,13 +12382,34 @@ async function dispatchDueEnsembleScheduledTaskHeadless(
     // orchestrator clamps every participant read-only (P1b).
     const elevation = resolveUnattendedElevation(task.id)
     const scheduledImageAttachments = imageAttachmentSnapshots(task.imageAttachments)
-    const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(scheduledImageAttachments)
+    const dispatchImageAttachments = await expandPdfAttachmentsForDispatch(
+      scheduledImageAttachments,
+      task.chatId
+    )
     const scheduledExternalPathGrants = normalizeExternalPathGrants(task.externalPathGrants)
     // Async attachment preparation can race a workspace retarget. Re-read every
     // main-owned binding and pin the current real directory immediately before
     // the synchronous round reservation/launch.
     assertScheduledOccurrenceWorkspace(owner)
     const scheduledSnapshot = task.ensembleSnapshot
+    const scheduledRoutingRoster = scheduledSnapshot?.participants ?? chat.ensemble.participants
+    const scheduledDmTargetResolution = resolveEnsembleDmTargetForDispatch({
+      text: task.prompt,
+      participants: scheduledRoutingRoster,
+      advisoryParticipantId: scheduledSnapshot?.dmTargetParticipantId
+    })
+    const scheduledDmTargetError = ensembleDmTargetResolutionError(
+      scheduledDmTargetResolution,
+      scheduledRoutingRoster
+    )
+    if (scheduledDmTargetError) {
+      failScheduledOccurrence(owner, `Scheduled ensemble dispatch: ${scheduledDmTargetError}`)
+      return
+    }
+    const scheduledDmTargetParticipantId =
+      scheduledDmTargetResolution.kind === 'target'
+        ? scheduledDmTargetResolution.participantId
+        : undefined
     const scheduledFanoutPolicy = scheduledSnapshot
       ? normalizeScheduledFanoutPolicy(
           scheduledSnapshot.fanoutPolicy,
@@ -12389,7 +12417,7 @@ async function dispatchDueEnsembleScheduledTaskHeadless(
         )
       : undefined
     const scheduledConcurrentMode = scheduledSnapshot
-      ? scheduledSnapshot.concurrentModeEnabled ?? scheduledFanoutPolicy !== 'off'
+      ? (scheduledSnapshot.concurrentModeEnabled ?? scheduledFanoutPolicy !== 'off')
       : undefined
     const sender =
       mainWindow && !mainWindow.webContents.isDestroyed()
@@ -12407,8 +12435,8 @@ async function dispatchDueEnsembleScheduledTaskHeadless(
         ? { concurrentMode: Boolean(scheduledConcurrentMode) }
         : {}),
       ...(scheduledFanoutPolicy !== undefined ? { fanoutPolicy: scheduledFanoutPolicy } : {}),
-      ...(scheduledSnapshot?.dmTargetParticipantId
-        ? { dmTargetParticipantId: scheduledSnapshot.dmTargetParticipantId }
+      ...(scheduledDmTargetParticipantId
+        ? { dmTargetParticipantId: scheduledDmTargetParticipantId }
         : {}),
       ...(scheduledExternalPathGrants.length > 0
         ? { externalPathGrants: scheduledExternalPathGrants }
@@ -12645,14 +12673,9 @@ async function dispatchDueScheduledLoopHeadless(
         childKind: 'loop',
         childProvider: composeProvider
       })
-      scheduledOccurrenceOwners.bindLoopChildRun(
-        input.runId,
-        owner.ownerRunId,
-        composeProvider
-      )
+      scheduledOccurrenceOwners.bindLoopChildRun(input.runId, owner.ownerRunId, composeProvider)
     } catch (error) {
-      ownershipLost =
-        scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner
+      ownershipLost = scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner
       return { failed: true, error: error instanceof Error ? error.message : String(error) }
     }
     const completion = auditRunTracker.track(input.runId)
@@ -12671,9 +12694,7 @@ async function dispatchDueScheduledLoopHeadless(
     // The loop root owns terminal settlement; each child is bound process-locally
     // and receives a one-shot MAIN authorization at the dedicated dispatch seam.
     const failDispatch = async (): Promise<void> => {
-      if (
-        scheduledOccurrenceOwners.lookupLoopChildRun(input.runId, composeProvider) === owner
-      ) {
+      if (scheduledOccurrenceOwners.lookupLoopChildRun(input.runId, composeProvider) === owner) {
         await terminateExactProviderSession(composeProvider, input.runId, 'failed')
       }
       auditRunTracker.handleExit(input.runId, -1)
@@ -12725,8 +12746,7 @@ async function dispatchDueScheduledLoopHeadless(
     now: () => Date.now(),
     uuid: () => `loop-${task.provider}-${randomUUID()}`,
     isCancelled: () =>
-      ownershipLost ||
-      scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner,
+      ownershipLost || scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner,
     onState: (snap) => {
       // Keep the stall reconciler's basis fresh per iteration: each completed
       // iteration re-stamps runningSince so the 6h backstop measures time-since-last-
@@ -12738,10 +12758,7 @@ async function dispatchDueScheduledLoopHeadless(
       if (snap.status !== 'running') return
       if (!scheduledOccurrenceTransaction.heartbeat(owner, new Date().toISOString())) {
         ownershipLost = true
-        failScheduledOccurrence(
-          owner,
-          'Scheduled workflow loop heartbeat could not be persisted.'
-        )
+        failScheduledOccurrence(owner, 'Scheduled workflow loop heartbeat could not be persisted.')
         return
       }
       // 7c — LIVE per-iteration progress: refresh the cached count/spend on the
@@ -12752,7 +12769,9 @@ async function dispatchDueScheduledLoopHeadless(
       if (task.workflowId) {
         AppStore.updateWorkflowDefinition(task.workflowId, {
           lastRunIterationCount: snap.iterationsCompleted,
-          ...(typeof snap.budget.spentTokens === 'number' ? { lastRunTokens: snap.budget.spentTokens } : {})
+          ...(typeof snap.budget.spentTokens === 'number'
+            ? { lastRunTokens: snap.budget.spentTokens }
+            : {})
         })
         broadcastWorkflowProgress()
       }
@@ -12773,10 +12792,7 @@ async function dispatchDueScheduledLoopHeadless(
   // An external cancel or failed heartbeat can release/poison authority while
   // the current child transport unwinds. Do not append a second terminal event
   // or try to overwrite the already-settled durable outcome.
-  if (
-    ownershipLost ||
-    scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner
-  ) {
+  if (ownershipLost || scheduledOccurrenceOwners.lookupByOwnerRunId(owner.ownerRunId) !== owner) {
     return
   }
 
@@ -12798,9 +12814,7 @@ async function dispatchDueScheduledLoopHeadless(
     ...(outcome.lastError ? { lastError: outcome.lastError } : {})
   })
   if (!settled && !ownershipLost) {
-    console.error(
-      `[scheduled-occurrence] exact loop settlement rejected for task ${owner.taskId}`
-    )
+    console.error(`[scheduled-occurrence] exact loop settlement rejected for task ${owner.taskId}`)
   }
   if (!settled) return
 
@@ -12814,7 +12828,9 @@ async function dispatchDueScheduledLoopHeadless(
     AppStore.updateWorkflowDefinition(task.workflowId, {
       lastRunIterationCount: snap.iterationsCompleted,
       ...(snap.stopReason ? { lastRunStopReason: snap.stopReason } : {}),
-      ...(typeof snap.budget.spentTokens === 'number' ? { lastRunTokens: snap.budget.spentTokens } : {})
+      ...(typeof snap.budget.spentTokens === 'number'
+        ? { lastRunTokens: snap.budget.spentTokens }
+        : {})
     })
     // 7c — final state to both surfaces (was iOS-only); the Electron row now shows the
     // terminal "Nx · <reason>" live instead of waiting for the next scheduler tick.
@@ -12882,10 +12898,7 @@ function seedScheduledSoloTranscript(
       if (transcript) transcript.preSnapshot = snapshot
     })
     .catch((error) => {
-      console.warn(
-        `[scheduled-occurrence] pre-run snapshot failed for ${owner.ownerRunId}:`,
-        error
-      )
+      console.warn(`[scheduled-occurrence] pre-run snapshot failed for ${owner.ownerRunId}:`, error)
     })
   bridgeBroadcasterRef?.broadcastThreadUpdated(updated.appChatId)
   pushRemoteThreadSnapshotForChat?.(updated)
@@ -13022,10 +13035,7 @@ function emitDueScheduledTasks() {
 
     let dueTasks: ScheduledTask[] = []
     try {
-      dueTasks = AppStore.getDueScheduledTasks(
-        Date.now(),
-        scheduledAttachmentPersistence.resolve
-      )
+      dueTasks = AppStore.getDueScheduledTasks(Date.now(), scheduledAttachmentPersistence.resolve)
     } catch (error) {
       console.error('[scheduled-occurrence] due-task listing failed', error)
     }
@@ -13249,10 +13259,15 @@ function reconcileStalledScheduledTasks(): void {
 
 function scheduleNextTaskTimer() {
   clearScheduledTaskTimer()
-  if (scheduledOccurrenceRecoveryBlockedReason) return
+  if (scheduledOccurrenceRecoveryBlockedReason || historyDeletionStartupRecoveryBlockedReason) {
+    return
+  }
   const nowMs = Date.now()
   const nextRunAtMs = getNextScheduledTaskRunAtMs({
-    tasks: AppStore.getScheduledTasks(),
+    // Pending history-deletion scopes are deliberately absent from the
+    // dispatchable projection. Using the raw durable list here can otherwise
+    // re-arm a zero-delay timer forever while the deletion remains fenced.
+    tasks: AppStore.getDispatchableScheduledTasks(),
     nextWorkflowRunAtMs: AppStore.getNextWorkflowRunAtMs(),
     nextIntrospectionRunAtMs: AppStore.getNextIntrospectionScheduleRunAtMs(nowMs),
     nowMs
@@ -13316,13 +13331,83 @@ async function getCodexMcpStatusSnapshotForCliRuntime(): Promise<any> {
   )
 }
 
+async function getKimiAdmittedStatusSnapshot(): Promise<any> {
+  const resolved = await resolveCliProviderBinary('kimi')
+  if (!resolved.binaryPath) {
+    return {
+      provider: 'kimi',
+      label: providerLabel('kimi'),
+      available: false,
+      version: 'missing',
+      appServer: 'unsupported',
+      authState: 'unknown',
+      setupRequired: true,
+      binaryPath: null,
+      binarySource: resolved.source,
+      error: resolved.error
+    }
+  }
+  const admission = await admitKimiRuntime({
+    binaryPath: resolved.binaryPath,
+    isPackaged: app.isPackaged,
+    environment: process.env
+  })
+  if (!admission.admitted) {
+    return {
+      provider: 'kimi',
+      label: providerLabel('kimi'),
+      available: false,
+      version: 'security-unavailable',
+      appServer: 'unsupported',
+      authState: 'unknown',
+      setupRequired: true,
+      binaryPath: resolved.binaryPath,
+      binarySource: resolved.source,
+      error: admission.message,
+      supportsSessions: false,
+      supportsApprovals: false,
+      supportsQuota: false,
+      supportsMcpStatus: false
+    }
+  }
+  const managedAuthState = await detectKimiManagedAuthState(
+    join(os.homedir(), '.kimi-code'),
+    kimiHomeFsAdapter
+  )
+  return {
+    provider: 'kimi',
+    label: providerLabel('kimi'),
+    available: true,
+    version: admission.capability.version,
+    appServer: 'acp',
+    authState: managedAuthState,
+    setupRequired: false,
+    binaryPath: admission.binaryPath,
+    binarySource: resolved.source,
+    supportsSessions: true,
+    supportsApprovals: true,
+    supportsQuota: false,
+    // The admitted seat has a mandatory per-run authenticated HTTP gateway.
+    // This is not a provider-native/global MCP installation claim.
+    supportsMcpStatus: true,
+    runtimeAdmissionMode: admission.mode
+  }
+}
+
+function detectManagedRunConfiguredProviders(settings: AppSettings): Promise<Set<ProviderId>> {
+  return detectConfiguredProviders(settings, {
+    getKimiManagedStatus: getKimiAdmittedStatusSnapshot
+  })
+}
+
 const cliProviderRuntimeDeps: CliProviderRuntimeDependencies = {
   getSettings: () => AppStore.getSettings(),
   getRuntimeProfiles: (provider?: ProviderId) => AppStore.getRuntimeProfiles(provider),
   getGeminiAuthStatusSnapshot: () => getGeminiAuthStatusSnapshot(),
   getGeminiMcpBridgeStatus: (options) => getGeminiMcpBridgeStatus(options),
   getCodexStatusSnapshot: getCodexStatusSnapshotForCliRuntime,
-  getCodexMcpStatusSnapshot: getCodexMcpStatusSnapshotForCliRuntime
+  getCodexMcpStatusSnapshot: getCodexMcpStatusSnapshotForCliRuntime,
+  getKimiStatusSnapshot: getKimiAdmittedStatusSnapshot
 }
 
 function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
@@ -13351,9 +13436,8 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
   const ensembleParticipantId = payload.ensembleRun?.participantId
   const participant =
     chat?.ensemble && ensembleParticipantId
-      ? chat.ensemble.participants.find(
-          (candidate) => candidate.id === ensembleParticipantId
-        ) || null
+      ? chat.ensemble.participants.find((candidate) => candidate.id === ensembleParticipantId) ||
+        null
       : null
   const missingEnsembleParticipant = !isTaskWraithMcpEnsembleLanePresent({
     chatIsEnsemble: Boolean(chat?.ensemble),
@@ -13363,32 +13447,34 @@ function taskWraithMcpProfileStoreStateForPayload(payload: AgentRunPayload): {
   const routeOwnerProvider = participant ? participant.provider : chat?.provider
   const rawRouteProviderMismatch = Boolean(
     routeOwnerProvider &&
-      !isTaskWraithMcpRouteProviderMatch({
-        payloadProvider: payload.provider,
-        ownerProvider: routeOwnerProvider
-      })
+    !isTaskWraithMcpRouteProviderMatch({
+      payloadProvider: payload.provider,
+      ownerProvider: routeOwnerProvider
+    })
   )
   const ephemeralProviderReroute = Boolean(
     chat &&
-      !missingEnsembleParticipant &&
-      isTaskWraithMcpAuthorizedEphemeralReroute({
-        payloadProvider: payload.provider,
-        providerReroute: payload.providerReroute
-      })
+    !missingEnsembleParticipant &&
+    isTaskWraithMcpAuthorizedEphemeralReroute({
+      payloadProvider: payload.provider,
+      providerReroute: payload.providerReroute
+    })
   )
   const routeProviderMismatch = rawRouteProviderMismatch && !ephemeralProviderReroute
   const storeWritable = Boolean(chat && !missingEnsembleParticipant && !ephemeralProviderReroute)
   return {
-    storeSessionId: missingEnsembleParticipant || ephemeralProviderReroute
-      ? null
-      : participant
-        ? participant.linkedProviderSessionId ?? null
-        : chat?.linkedProviderSessionId ?? null,
-    storeReceipt: missingEnsembleParticipant || ephemeralProviderReroute
-      ? undefined
-      : participant
-        ? participant.taskWraithMcpProfileReceipt
-        : chat?.taskWraithMcpProfileReceipt,
+    storeSessionId:
+      missingEnsembleParticipant || ephemeralProviderReroute
+        ? null
+        : participant
+          ? (participant.linkedProviderSessionId ?? null)
+          : (chat?.linkedProviderSessionId ?? null),
+    storeReceipt:
+      missingEnsembleParticipant || ephemeralProviderReroute
+        ? undefined
+        : participant
+          ? participant.taskWraithMcpProfileReceipt
+          : chat?.taskWraithMcpProfileReceipt,
     chatFound: Boolean(chat),
     missingEnsembleParticipant,
     routeProviderMismatch,
@@ -13510,11 +13596,7 @@ function providerSeatGenerationInputForPayload(args: {
       ? payload.kimiThinking
       : undefined
   const reasoningEffort = previousRun
-    ? providerSeatMetadataString(
-        metadata,
-        'claudeReasoningEffort',
-        'reasoningEffort'
-      )
+    ? providerSeatMetadataString(metadata, 'claudeReasoningEffort', 'reasoningEffort')
     : payload.claudeReasoningEffort || payload.reasoningEffort
   const serviceTier = previousRun
     ? providerSeatMetadataString(metadata, 'serviceTier', 'claudeFastMode')
@@ -13618,15 +13700,16 @@ function applyProviderSeatGeneration(args: {
     taskWraithMcpAdvertised: args.desiredTaskWraithMcpAdvertised,
     capability
   })
-  const bootstrapInput = target.linkedProviderSessionId || args.payload.providerSessionId
-    ? providerSeatGenerationInputForPayload({
-        payload: args.payload,
-        taskWraithMcpProfileId: args.actualTaskWraithMcpProfileId,
-        taskWraithMcpAdvertised: args.actualTaskWraithMcpAdvertised,
-        capability,
-        previousRun: target.lastRun
-      })
-    : undefined
+  const bootstrapInput =
+    target.linkedProviderSessionId || args.payload.providerSessionId
+      ? providerSeatGenerationInputForPayload({
+          payload: args.payload,
+          taskWraithMcpProfileId: args.actualTaskWraithMcpProfileId,
+          taskWraithMcpAdvertised: args.actualTaskWraithMcpAdvertised,
+          capability,
+          previousRun: target.lastRun
+        })
+      : undefined
   const runtimePlan = planProviderSeatRuntime(target.generation, currentInput, {
     linkedProviderSessionId:
       target.linkedProviderSessionId || args.payload.providerSessionId || null,
@@ -13635,29 +13718,22 @@ function applyProviderSeatGeneration(args: {
   const { transition } = runtimePlan
   const storedSessionConfigMismatch = Boolean(
     (target.linkedProviderSessionId || args.payload.providerSessionId) &&
-      target.generation &&
-      bootstrapInput &&
-      (target.generation.config.provider !== bootstrapInput.provider ||
-        target.generation.config.model !== bootstrapInput.model ||
-        target.generation.config.transport !== bootstrapInput.transport ||
-        target.generation.config.toolsFingerprint !== bootstrapInput.toolsFingerprint ||
-        target.generation.config.taskWraithMcpProfileId !==
-          bootstrapInput.taskWraithMcpProfileId ||
-        target.generation.config.systemPromptFingerprint !==
-          bootstrapInput.systemPromptFingerprint)
+    target.generation &&
+    bootstrapInput &&
+    (target.generation.config.provider !== bootstrapInput.provider ||
+      target.generation.config.model !== bootstrapInput.model ||
+      target.generation.config.transport !== bootstrapInput.transport ||
+      target.generation.config.toolsFingerprint !== bootstrapInput.toolsFingerprint ||
+      target.generation.config.taskWraithMcpProfileId !== bootstrapInput.taskWraithMcpProfileId ||
+      target.generation.config.systemPromptFingerprint !== bootstrapInput.systemPromptFingerprint)
   )
-  const shouldRotateSession =
-    runtimePlan.shouldRotateSession || storedSessionConfigMismatch
+  const shouldRotateSession = runtimePlan.shouldRotateSession || storedSessionConfigMismatch
   const shouldPersist =
     !target.generation ||
     transition.causes.length > 0 ||
     target.generation.guaranteeTier !== transition.generation.guaranteeTier
   if (shouldPersist || shouldRotateSession) {
-    saveProviderSeatGeneration(
-      target,
-      transition.generation,
-      shouldRotateSession
-    )
+    saveProviderSeatGeneration(target, transition.generation, shouldRotateSession)
   }
   if (shouldRotateSession) args.payload.providerSessionId = null
   if (shouldPersist || shouldRotateSession) {
@@ -13710,8 +13786,7 @@ function recordProviderSeatCacheEvidenceForRun(
   const target = providerSeatStoreTarget(chat.appChatId, session.provider, participantId)
   if (!target?.generation) return
   const stats =
-    buildAgentExitStats(session.provider, state as AgentRunRoute | undefined) ||
-    persistedRun?.stats
+    buildAgentExitStats(session.provider, state as AgentRunRoute | undefined) || persistedRun?.stats
   const nextGeneration = recordProviderSeatCacheEvidence(target.generation, stats, {
     runId: session.runId
   })
@@ -13759,10 +13834,7 @@ function refreshTaskWraithMcpProfileFenceStoreIdentity(payload: AgentRunPayload)
 
 function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload {
   if (payload.provider === 'claude') {
-    canonicalizeClaudeRuntimeProfilePayload(
-      payload,
-      AppStore.getRuntimeProfiles('claude')
-    )
+    canonicalizeClaudeRuntimeProfilePayload(payload, AppStore.getRuntimeProfiles('claude'))
   }
   const applied = applyRuntimeProfileToPayloadViaCliRuntime(
     payload,
@@ -13799,7 +13871,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       provider: applied.provider,
       requestedProviderSessionId: applied.providerSessionId,
       storeProviderSessionId: storeState.storeSessionId,
-      storeIdentityKnown: storeState.chatFound,
+      storeIdentityKnown: storeState.chatFound
     })
   ) {
     throw new Error(
@@ -13830,8 +13902,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       : applied.provider === 'claude'
         ? Boolean(
             claudePinnedMcpReceipt ||
-              (AppStore.getSettings().geminiMcpBridgeEnabled &&
-                claudeBridgeCommandStatus?.available)
+            (AppStore.getSettings().geminiMcpBridgeEnabled && claudeBridgeCommandStatus?.available)
           )
         : true
   const desiredFreshTaskWraithMcpAdvertised =
@@ -13863,8 +13934,7 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
       applied.provider !== 'claude' ||
       storeState.executionGraphIsolated ||
       (storeState.chatFound && storeState.storeWritable),
-    grokMcpAdvertised:
-      applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined
+    grokMcpAdvertised: applied.provider === 'grok' ? desiredFreshTaskWraithMcpAdvertised : undefined
   })
   const providerSeat = applyProviderSeatGeneration({
     payload: applied,
@@ -13901,18 +13971,15 @@ function applyRuntimeProfileToPayload(payload: AgentRunPayload): AgentRunPayload
     applied.prompt = truthfulPrompt
   }
   if (applied.resumeFallbackPrompt) {
-    applied.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(
-      applied.resumeFallbackPrompt,
-      {
-        advertised: applied.taskWraithMcpAdvertised === true,
-        coreProfile: isCoreTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
-        gatewayProfile: isGatewayTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
-        injectCoreNote: applied.provider !== 'claude' || !applied.providerSessionId,
-        injectGatewayNote: applied.provider !== 'claude' || !applied.providerSessionId,
-        crossProviderReroute: storeState.ephemeralProviderReroute,
-        targetProvider: applied.provider
-      }
-    )
+    applied.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(applied.resumeFallbackPrompt, {
+      advertised: applied.taskWraithMcpAdvertised === true,
+      coreProfile: isCoreTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+      gatewayProfile: isGatewayTaskWraithMcpProfile(applied.taskWraithMcpProfileId),
+      injectCoreNote: applied.provider !== 'claude' || !applied.providerSessionId,
+      injectGatewayNote: applied.provider !== 'claude' || !applied.providerSessionId,
+      crossProviderReroute: storeState.ephemeralProviderReroute,
+      targetProvider: applied.provider
+    })
   }
   // Runtime-profile application, worktree selection intent, session rotation,
   // and prompt truthfulness all participate in the signed run context. Only a
@@ -13975,8 +14042,7 @@ async function getProviderCapabilityContract(
           approvalMode,
           {
             ...cliProviderRuntimeDeps,
-            getGeminiMcpBridgeStatus: () =>
-              getGeminiMcpBridgeStatus({ autoRepairIfEnabled: false })
+            getGeminiMcpBridgeStatus: () => getGeminiMcpBridgeStatus({ autoRepairIfEnabled: false })
           }
         )
       : await adapter.getCapabilityContract({ workspacePath, approvalMode })
@@ -14094,12 +14160,6 @@ function rebuildBridgeApnsPusherFromSettings(): void {
 // snapshots are cached; non-observed results fall through to a fresh probe.
 let grokUsageProbeCache: { snapshot: GrokUsageSnapshot; fetchedAt: number } | null = null
 
-
-
-
-
-
-
 function updateCliProviderSession(
   state: CliProviderStreamState,
   sessionId: string | null | undefined,
@@ -14107,6 +14167,12 @@ function updateCliProviderSession(
 ): boolean {
   const normalized = typeof sessionId === 'string' ? sessionId.trim() : ''
   if (!normalized || normalized === state.providerSessionId) return false
+  const sessionMetadataAuthorized = (): boolean =>
+    providerRunPersistenceAuthorized(state.provider, state)
+  // Native session ids and MCP-profile receipts are provider output. A late
+  // frame from an invalidated run must not mutate either durable chat state or
+  // the in-memory resume identity after a destructive history boundary.
+  if (!sessionMetadataAuthorized()) return false
   if (
     state.provider === 'claude' &&
     !shouldAcceptTaskWraithMcpSessionId({
@@ -14141,8 +14207,8 @@ function updateCliProviderSession(
     if (!participant && chat?.provider && chat.provider !== state.provider) return false
     if (chat) {
       const currentStoreSessionId = participant
-        ? participant.linkedProviderSessionId ?? null
-        : chat.linkedProviderSessionId ?? null
+        ? (participant.linkedProviderSessionId ?? null)
+        : (chat.linkedProviderSessionId ?? null)
       const currentReceipt = participant
         ? participant.taskWraithMcpProfileReceipt
         : chat.taskWraithMcpProfileReceipt
@@ -14185,7 +14251,13 @@ function updateCliProviderSession(
             taskWraithMcpProfileReceipt: transition.receipt,
             updatedAt: Date.now()
           }
-      saveAndBroadcastChat(updated)
+      const persisted = persistAuthorizedProviderSessionMetadata({
+        isAuthorized: sessionMetadataAuthorized,
+        readCurrent: () => updated,
+        buildUpdate: (candidate) => candidate,
+        saveAndPublish: saveAndBroadcastChat
+      })
+      if (!persisted) return false
       const nextIdentity = taskWraithMcpProfileStoreIdentity({
         providerSessionId: normalized,
         receipt: transition.receipt
@@ -14223,14 +14295,13 @@ function updateCliProviderSession(
   return true
 }
 
-/** Persist the fact that this Kimi seat is backed by the durable ACP home and
- * can use session/resume. The marker gates slim prompt composition; legacy Wire
- * session ids never set it. */
-function persistKimiAcpNativeSession(
-  state: CliProviderStreamState,
-  sessionId: string
-): void {
+/** Persist the fact that this Kimi seat was born under the current durable ACP
+ * containment generation. The exact posture marker gates session/resume; the
+ * legacy boolean remains decode/UI compatibility only. */
+function persistKimiAcpNativeSession(state: CliProviderStreamState, sessionId: string): void {
   if (!state.appChatId || !sessionId) return
+  const sessionMetadataAuthorized = (): boolean => providerRunPersistenceAuthorized('kimi', state)
+  if (!sessionMetadataAuthorized()) return
   if (executionGraphOwnsAttemptRunId(state.appRunId)) return
   if (state.appRunId && !shouldPersistProviderSessionForRun(state.appRunId)) return
   const participantId = state.ensembleRun?.participantId
@@ -14247,7 +14318,8 @@ function persistKimiAcpNativeSession(
               ? {
                   ...participant,
                   linkedProviderSessionId: sessionId,
-                  kimiAcpNativeSession: true
+                  kimiAcpNativeSession: true,
+                  kimiAcpPostureVersion: KIMI_ACP_PRODUCTION_POSTURE_VERSION
                 }
               : participant
           )
@@ -14259,11 +14331,17 @@ function persistKimiAcpNativeSession(
         linkedProviderSessionId: sessionId,
         providerMetadata: {
           ...(chat.providerMetadata || {}),
-          kimiAcpNativeSession: true
+          kimiAcpNativeSession: true,
+          kimiAcpPostureVersion: KIMI_ACP_PRODUCTION_POSTURE_VERSION
         },
         updatedAt: Date.now()
       }
-  saveAndBroadcastChat(updated)
+  persistAuthorizedProviderSessionMetadata({
+    isAuthorized: sessionMetadataAuthorized,
+    readCurrent: () => updated,
+    buildUpdate: (candidate) => candidate,
+    saveAndPublish: saveAndBroadcastChat
+  })
 }
 
 function claudeProgrammaticUsageWarning(
@@ -14313,14 +14391,23 @@ function emitCliProviderMediaRefs(state: CliProviderStreamState, event: unknown)
   if (providerEventIsToolResultLike(event)) return
   const blocks = extractProviderImageBlocksFromRawEvent(event)
   if (blocks.length === 0) return
-  const refs = createOwnedToolResultMediaRefs({
-    store: getTranscriptMediaAssetStore(),
-    appChatId: state.appChatId,
-    messageId: state.appRunId || state.runId || `${state.provider}-${state.startedAt}`,
-    runId: state.appRunId || state.runId || undefined,
-    toolName: `${state.provider} output`,
-    source: 'generated',
-    blocks
+  const store = getTranscriptMediaAssetStore()
+  const refs = persistAuthorizedProviderMedia({
+    isAuthorized: () => providerRunPersistenceAuthorized(state.provider, state),
+    persist: () =>
+      createOwnedToolResultMediaRefs({
+        store,
+        appChatId: state.appChatId,
+        messageId: state.appRunId || state.runId || `${state.provider}-${state.startedAt}`,
+        runId: state.appRunId || state.runId || undefined,
+        toolName: `${state.provider} output`,
+        source: 'generated',
+        blocks
+      }),
+    revokeOnLostAuthority: async () => {
+      const chatIds = [state.appChatId].filter((id): id is string => Boolean(id))
+      if (chatIds.length > 0) await store.revokeChatOwnershipStrict(chatIds)
+    }
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -14533,6 +14620,20 @@ function emitCliProviderThinkingEvent(
 // Fallback tool-id counter for Grok tool events that arrive without an id —
 // keeps each tool card distinct (so two id-less calls don't merge into one).
 let grokFallbackToolSeq = 0
+const grokCanvasEvalDiagnosticSanitizers = new WeakMap<
+  CliProviderStreamState,
+  ReturnType<typeof createCanvasEvalCompatSanitizer>
+>()
+
+function grokCanvasEvalDiagnosticSanitizer(state: CliProviderStreamState) {
+  let sanitizer = grokCanvasEvalDiagnosticSanitizers.get(state)
+  if (!sanitizer) {
+    sanitizer = createCanvasEvalCompatSanitizer()
+    grokCanvasEvalDiagnosticSanitizers.set(state, sanitizer)
+  }
+  return sanitizer
+}
+
 function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent) {
   if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
   if (evt.type === 'content' && evt.text) {
@@ -14546,6 +14647,25 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
   } else if (evt.type === 'thinking' && evt.text) {
     emitCliProviderThinkingEvent(state, evt.text)
   } else if (evt.type === 'tool_use') {
+    const toolId = evt.toolId || `grok-tool-${++grokFallbackToolSeq}`
+    const toolName = evt.toolName || 'tool'
+    const diagnosticToolName =
+      sanitizeCanvasEvalProviderText(toolName) === toolName ? toolName : 'canvas_eval'
+    // Keep an independent correlation lane for delayed diagnostics. The
+    // transcript sanitizer consumes its marker when the result is emitted;
+    // this second bounded sanitizer ensures grokLastToolError never caches the
+    // raw canvas_eval result before that projection runs.
+    grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_use',
+        tool_id: toolId,
+        tool_name: diagnosticToolName,
+        parameters: evt.toolInput || {},
+        raw: evt.raw
+      },
+      undefined,
+      `grok:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
     // Render Grok's tool invocation as an activity card (same shape the other
     // CLI providers emit, so the renderer is provider-agnostic).
     sendAgentCompatLine(
@@ -14553,8 +14673,8 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       'grok',
       {
         type: 'tool_use',
-        tool_id: evt.toolId || `grok-tool-${++grokFallbackToolSeq}`,
-        tool_name: evt.toolName || 'tool',
+        tool_id: toolId,
+        tool_name: toolName,
         // Canonical ACP kind (read|edit|execute|search|…); lets the renderer
         // resolve the category icon when tool_name is a freeform ACP title.
         tool_kind: evt.toolKind,
@@ -14564,16 +14684,32 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       state
     )
   } else if (evt.type === 'tool_result') {
+    const toolId = evt.toolId || `grok-tool-${grokFallbackToolSeq || ++grokFallbackToolSeq}`
+    const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
+      {
+        type: 'tool_result',
+        tool_id: toolId,
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        raw: evt.raw
+      },
+      undefined,
+      `grok:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
+    )
+    const diagnosticOutput =
+      isRecord(diagnosticProjection) && typeof diagnosticProjection.output === 'string'
+        ? diagnosticProjection.output
+        : ''
     if (evt.toolStatus === 'error') {
       state.grokToolErrorCount = (state.grokToolErrorCount || 0) + 1
-      if (evt.toolOutput) state.grokLastToolError = evt.toolOutput
+      if (evt.toolOutput) state.grokLastToolError = diagnosticOutput
     }
     sendAgentCompatLine(
       state.sender,
       'grok',
       {
         type: 'tool_result',
-        tool_id: evt.toolId || `grok-tool-${grokFallbackToolSeq || ++grokFallbackToolSeq}`,
+        tool_id: toolId,
         status: evt.toolStatus || 'success',
         output: evt.toolOutput || '',
         provider: 'grok'
@@ -14662,9 +14798,9 @@ function handleGrokStreamEvent(state: CliProviderStreamState, event: unknown) {
   emitCliProviderMediaRefs(state, event)
 }
 
-// CR4 — Cursor (Composer 2.5) read-only runtime stream handling. Mirrors the
-// Grok path: the pure, fixture-tested CursorStreamJson mapper turns cursor-agent
-// stream-json into normalized run events, and applyCursorRunEvent emits the
+// Historical Cursor stream decoding retained for old transcripts/fixtures.
+// The pure CursorStreamJson mapper turns archived cursor-agent stream-json into
+// normalized run events, and applyCursorRunEvent emits the
 // provider-agnostic compat lines (content / thinking / tool_use / tool_result)
 // the renderer already understands. Cursor reports REAL token usage in its
 // terminal result, so (unlike Grok) no projection is needed.
@@ -14791,7 +14927,8 @@ function maybeLogCursorRawEvent(event: unknown): void {
   }
   process.stderr.write(`[cursor-raw] ${serialized}\n`)
   try {
-    if (!cursorDebugLogPath) cursorDebugLogPath = join(os.tmpdir(), 'taskwraith-cursor-stream.jsonl')
+    if (!cursorDebugLogPath)
+      cursorDebugLogPath = join(os.tmpdir(), 'taskwraith-cursor-stream.jsonl')
     fsSync.appendFileSync(cursorDebugLogPath, `${serialized}\n`)
   } catch {
     // Best-effort; never throws.
@@ -15058,9 +15195,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
     if (state.deferTerminalResult) {
       const merged = mergeKimiWireTerminalEvidence(
         {
-          ...(state.deferredTerminalStatus
-            ? { status: state.deferredTerminalStatus }
-            : {}),
+          ...(state.deferredTerminalStatus ? { status: state.deferredTerminalStatus } : {}),
           conflict: state.deferredTerminalConflict ?? false
         },
         bridgeResultTerminalStatus({
@@ -15099,7 +15234,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
 
 function runCliProviderProcess(
   event: Electron.IpcMainInvokeEvent,
-  provider: ProviderId,
+  provider: 'claude' | 'kimi' | 'grok',
   command: string,
   args: string[],
   payload: AgentRunPayload,
@@ -15116,26 +15251,13 @@ function runCliProviderProcess(
         resolvedEnv: Readonly<Record<string, string>>
       }
   ) = { fallback: true }
-) {
+): Promise<void> {
   const route = routeWithRunId(provider, payload)
-  let onCompleteFired = false
-  const runOnComplete = (): void => {
-    if (onCompleteFired) return
-    onCompleteFired = true
-    if (!options.onComplete) return
-    try {
-      const result = options.onComplete()
-      if (result && typeof (result as Promise<void>).then === 'function') {
-        ;(result as Promise<void>).catch(() => {})
-      }
-    } catch {
-      // onComplete is best-effort cleanup; never let it crash the run.
-    }
-  }
+  const transportClose = createProviderTransportCloseOperation(options.onComplete)
   const existingSession = runManager.get(route.appRunId)
   if (!canStartRunTransport(existingSession?.status, options.requireExistingRun)) {
-    runOnComplete()
-    return
+    transportClose.markTransportClosed()
+    return transportClose.operation
   }
   const cwd = payload.workspace!
   const model = normalizeCliProviderModel(provider, payload.model)
@@ -15174,8 +15296,8 @@ function runCliProviderProcess(
     options.requireExistingRun
   )
   if (!registeredSession) {
-    runOnComplete()
-    return
+    transportClose.markTransportClosed()
+    return transportClose.operation
   }
   void emitProviderCapabilityWarnings(
     event.sender,
@@ -15213,34 +15335,63 @@ function runCliProviderProcess(
     state
   )
 
-  const child = spawn(command, args, {
-    cwd,
-    shell: false,
-    env:
-      options.resolvedEnv ??
-      createCliEnv(
-        {
-          FORCE_COLOR: '0',
-          NO_COLOR: '1',
-          TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-          TASKWRAITH_PARENT_PROVIDER: provider,
-          TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || '',
-          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-          // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
-          // child (it inherits the CLI's env). Set only for audit runs; a normal
-          // run never carries payload.auditRun, so the namespace stays hidden.
-          ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-          ...(options.extraEnv || {})
-        },
-        command
-      )
-  })
+  // Register the exact close+cleanup operation before the child is exposed to
+  // RunManager or any provider-global compatibility handle. Destructive
+  // history deletion can therefore never observe an active Claude child
+  // without also having a joinable transport authority.
+  const transportOperation = providerTransportOperations.track(
+    route.appRunId!,
+    transportClose.operation
+  )
+  let child: ChildProcess
+  try {
+    child = spawn(command, args, {
+      cwd,
+      shell: false,
+      env:
+        options.resolvedEnv ??
+        createCliEnv(
+          {
+            FORCE_COLOR: '0',
+            NO_COLOR: '1',
+            TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
+            TASKWRAITH_PARENT_PROVIDER: provider,
+            TASKWRAITH_RUN_ID: route.appRunId || '',
+            TASKWRAITH_CHAT_ID: route.appChatId || '',
+            TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
+            // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
+            // child (it inherits the CLI's env). Set only for audit runs; a normal
+            // run never carries payload.auditRun, so the namespace stays hidden.
+            ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
+            ...(options.extraEnv || {})
+          },
+          command
+        )
+    })
+  } catch (error) {
+    sendAgentCompatError(
+      event.sender,
+      provider,
+      `Failed to start ${providerDisplayName(provider)}: ${error instanceof Error ? error.message : String(error)}`,
+      state
+    )
+    sendAgentCompatExit(event.sender, provider, 1, state)
+    runManager.finish(route.appRunId, 'failed')
+    transportClose.markTransportClosed()
+    return transportOperation
+  }
   child.stdin?.end()
   runManager.attachProcess(route.appRunId!, child)
   cliProviderProcesses.set(provider, child)
 
   let stdoutBuffer = ''
+  const cliProviderStderrSanitizer = createCanvasEvalJsonLineSanitizer(
+    `${provider}:${route.appRunId || route.appChatId || 'unrouted'}:stderr`
+  )
+  const emitCliProviderStderr = (text: string): void => {
+    if (!text) return
+    sendAgentCompatError(event.sender, provider, sanitizeCanvasEvalProviderText(text), state)
+  }
   child.stdout?.on('data', (chunk) => {
     stdoutBuffer += chunk.toString()
     const lines = stdoutBuffer.split(/\r?\n/)
@@ -15256,7 +15407,7 @@ function runCliProviderProcess(
           provider,
           {
             type: 'content',
-            text: line + '\n',
+            text: sanitizeCanvasEvalProviderText(line + '\n'),
             provider,
             fallback: options.fallback
           },
@@ -15308,23 +15459,25 @@ function runCliProviderProcess(
         state
       )
     }
-    sendAgentCompatError(event.sender, provider, text, state)
+    emitCliProviderStderr(cliProviderStderrSanitizer.push(text))
   })
 
   child.on('error', (error) => {
+    emitCliProviderStderr(cliProviderStderrSanitizer.flush())
     sendAgentCompatError(
       event.sender,
       provider,
       `Failed to start ${providerDisplayName(provider)}: ${error.message}`,
       state
     )
-    sendAgentCompatExit(event.sender, provider, 1, state)
-    if (cliProviderProcesses.get(provider) === child) cliProviderProcesses.delete(provider)
-    runManager.finish(route.appRunId, 'failed')
-    runOnComplete()
+    // Node emits `close` after an `error` once the child/stdout lifecycle has
+    // actually ended. Keep the exact RunManager and compatibility handles live
+    // until that callback publishes the exit, terminalizes the run, and marks
+    // the tracked transport operation closed.
   })
 
   child.on('close', (code) => {
+    emitCliProviderStderr(cliProviderStderrSanitizer.flush())
     const trailing = stdoutBuffer.trim()
     if (trailing) {
       try {
@@ -15333,7 +15486,12 @@ function runCliProviderProcess(
         sendAgentCompatLine(
           event.sender,
           provider,
-          { type: 'content', text: trailing + '\n', provider, fallback: options.fallback },
+          {
+            type: 'content',
+            text: sanitizeCanvasEvalProviderText(trailing + '\n'),
+            provider,
+            fallback: options.fallback
+          },
           state
         )
       }
@@ -15349,10 +15507,7 @@ function runCliProviderProcess(
     // "Task complete / success". Surface the real reason + a short note instead.
     const grokStopped =
       provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
-    const effectiveExitCode =
-      provider === 'cursor'
-        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
-        : code
+    const effectiveExitCode = code
     if (grokStopped && !state.completed) {
       sendAgentCompatLine(
         event.sender,
@@ -15373,8 +15528,11 @@ function runCliProviderProcess(
         provider,
         {
           type: 'result',
-          status:
-            grokStopped ? state.grokStopReason! : effectiveExitCode === 0 ? 'success' : 'failed',
+          status: grokStopped
+            ? state.grokStopReason!
+            : effectiveExitCode === 0
+              ? 'success'
+              : 'failed',
           stats: {
             ...(state.tokenUsage || {}),
             duration_ms: Date.now() - state.startedAt
@@ -15389,8 +15547,10 @@ function runCliProviderProcess(
     sendAgentCompatExit(event.sender, provider, effectiveExitCode, state)
     if (cliProviderProcesses.get(provider) === child) cliProviderProcesses.delete(provider)
     runManager.finish(route.appRunId, effectiveExitCode === 0 ? 'completed' : 'failed')
-    runOnComplete()
+    transportClose.markTransportClosed()
   })
+
+  return transportOperation
 }
 
 async function loadOptionalClaudeSdk(): Promise<any | null> {
@@ -15413,8 +15573,7 @@ async function loadOptionalClaudeSdk(): Promise<any | null> {
 function claudeTaskWraithMcpInput(
   route?: AgentRunRoute | null,
   workspacePath?: string | null,
-  profileId: NonNullable<ClaudeTaskWraithMcpInput['profileId']> =
-    TASKWRAITH_FULL_MCP_PROFILE_ID,
+  profileId: NonNullable<ClaudeTaskWraithMcpInput['profileId']> = TASKWRAITH_FULL_MCP_PROFILE_ID,
   taskWraithMcpAdvertised = true
 ): ClaudeTaskWraithMcpInput {
   const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
@@ -15509,28 +15668,6 @@ function claudeAgenticServiceForTool(toolName: string): AgenticServiceId | null 
     return 'mcpTools'
   }
   return null
-}
-
-/**
- * 1.0.4-AR3 — Kimi wire-protocol approval analog of
- * `claudeAgenticServiceForTool`. Pre-AR3 the Kimi wire approval
- * path passed no `service` to the ledger, so Kimi rows came out
- * with `service: undefined` and weren't filterable by service
- * type. This helper mirrors the Claude classifier (same normalized
- * naming patterns) so the ledger row carries a useful service tag.
- *
- * Returns null for tool names that don't map to any known agentic
- * service — the caller leaves `service` unset in that case, which
- * matches the pre-AR3 behavior for unknown tools.
- */
-function kimiAgenticServiceForTool(toolName: string): AgenticServiceId | null {
-  // Kimi tools share the same naming conventions as the wider
-  // TaskWraith MCP surface (e.g. `taskwraith__ensemble_yield`,
-  // `taskwraith__create_handoff_card`) and the same generic
-  // shell/file-edit tool names as Claude.
-  const taskWraithService = taskWraithToolServiceIfKnown(toolName)
-  if (taskWraithService) return taskWraithService
-  return claudeAgenticServiceForTool(toolName)
 }
 
 function normalizeClaudeCanUseToolArgs(
@@ -15675,7 +15812,11 @@ async function canUseClaudeSdkTool(
     behavior: 'deny',
     message: 'TaskWraith denied this Claude tool because the run is no longer active.'
   })
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+  const claudeRunAcceptsTools = (): boolean =>
+    !historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId) &&
+    !runManager.getClaimedTerminalStatus(route.appRunId) &&
+    canStartRunTransport(runManager.get(route.appRunId)?.status, true)
+  if (!claudeRunAcceptsTools()) {
     return denyInactiveRun()
   }
   const { toolName, input: normalizedInput } = normalizeClaudeCanUseToolArgs(
@@ -15707,7 +15848,7 @@ async function canUseClaudeSdkTool(
     normalizedInput,
     updatedInput
   )
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+  if (!claudeRunAcceptsTools()) {
     return denyInactiveRun()
   }
   if (nativeSubAgentDecision) return nativeSubAgentDecision
@@ -15718,10 +15859,14 @@ async function canUseClaudeSdkTool(
   // harmless signals like `ensemble_yield`. Claude sees MCP tools
   // with their full prefix (e.g. `mcp__taskwraith__ensemble_yield`),
   // so strip any namespace before checking the allowlist.
-  const unprefixedToolName = toolName
-    .replace(/^mcp__/, '')
-    .replace(/^taskwraith__/, '')
+  const unprefixedToolName = toolName.replace(/^mcp__/, '').replace(/^taskwraith__/, '')
   const canonicalToolName = canonicalTaskWraithToolName(unprefixedToolName)
+  primeNativeCanvasCompatCorrelation({
+    provider: 'claude',
+    route,
+    toolName: canonicalToolName || unprefixedToolName,
+    source: toolNameOrRequest
+  })
   if (isTaskWraithMcpToolName(canonicalToolName)) {
     const argumentPreflight = validateMcpToolArgumentsBeforeApproval(
       canonicalToolName,
@@ -15770,6 +15915,14 @@ async function canUseClaudeSdkTool(
     params: normalizedInput,
     workspacePath: payload.scope === 'global' ? undefined : payload.workspace
   })
+  const approvalPreview = claudeToolApprovalPreview(toolName, normalizedInput, service)
+  const exactCanvasEvalScript =
+    gateService === 'canvasEval' &&
+    isRecord(approvalPreview.params) &&
+    typeof approvalPreview.params.script === 'string'
+      ? approvalPreview.params.script
+      : null
+  let claudeCanvasEvalApproval: CanvasEvalApprovalReceipt | undefined
   const allowed = await requestAgenticServiceApproval(
     sender,
     'claude',
@@ -15784,12 +15937,30 @@ async function canUseClaudeSdkTool(
             ? 'Approve Claude file change'
             : 'Approve Claude tool call',
       body: toolName,
-      preview: claudeToolApprovalPreview(toolName, normalizedInput, service),
+      preview: approvalPreview,
       runId: route.appRunId,
+      ...(gateService === 'canvasEval' && exactCanvasEvalScript !== null
+        ? {
+            onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) => {
+              claudeCanvasEvalApproval = createCanvasEvalApprovalReceipt(
+                exactCanvasEvalScript,
+                approvalId
+              )
+              primeNativeCanvasCompatCorrelation({
+                provider: 'claude',
+                route,
+                toolName: 'canvas_eval',
+                source: toolNameOrRequest,
+                canvasEvalApproval: claudeCanvasEvalApproval
+              })
+              return claudeCanvasEvalApproval
+            }
+          }
+        : {}),
       externalPathDetection
     }
   )
-  if (!canStartRunTransport(runManager.get(route.appRunId)?.status, true)) {
+  if (!claudeRunAcceptsTools()) {
     return denyInactiveRun()
   }
   return allowed
@@ -15969,52 +16140,52 @@ async function tryRunClaudeSdk(
     const stream = query({
       prompt: payload.prompt,
       options: {
-      cwd: payload.workspace!,
-      model: model === 'default' ? undefined : model,
-      // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
-      // Read-Only/Recon seats run in DEFAULT permission mode instead of
-      // Claude Code's native plan mode: plan mode installs a plan-shaped
-      // system prompt (+ ExitPlanMode) that turns review/recon turns into
-      // plan artifacts. Write containment does not change: every tool call
-      // (native Edit/Write/Bash included) routes through canUseClaudeSdkTool
-      // below, where the run's signed read_only effectivePermissions deny
-      // fileChanges/shellCommands hard — and the plan-artifact write
-      // carve-out requires workflowMode 'plan', which a recon run never
-      // carries. isReconRunPosture reads only post-clamp HMAC-covered
-      // fields. The CLI fallback (tryRunClaudeCli) has NO canUseTool and
-      // deliberately keeps native plan mode for recon seats.
-      permissionMode: isReconRunPosture(payload)
-        ? 'default'
-        : claudePermissionModeForApproval(payload.approvalMode),
-      // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
-      // MCP servers are configured separately and remain available.
-      tools: [],
-      resume: payload.providerSessionId || undefined,
-      abortController: controller,
-      canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
-        canUseClaudeSdkTool(event.sender, route, payload, toolNameOrRequest, input),
-      // 1.0.5-S1 — Streaming parity with Codex. Without this flag the
-      // SDK only yields a single cumulative `SDKAssistantMessage` per
-      // turn carrying the entire response — Claude appears to "think
-      // silently then dump the answer" while Codex scrolls past
-      // token-by-token. With it, the SDK also yields incremental
-      // `stream_event` frames (SDKPartialAssistantMessage) whose
-      // content_block_delta / text_delta events carry per-chunk text.
-      // extractProviderText reads those chunks; the existing dedup at
-      // the call site in handleCliProviderJsonEvent harmlessly slices
-      // the trailing cumulative `assistant` envelope to empty so we
-      // don't double-emit the final response.
-      includePartialMessages: true,
-      ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
-      ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
-      ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
-      ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
-      ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
-      ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
-        ? { allowedTools: claudeSdkAllowedTools }
-        : {}),
-      ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
-      env: environmentAuthority.env
+        cwd: payload.workspace!,
+        model: model === 'default' ? undefined : model,
+        // Spike 8 (docs/ensemble-posture-fanout-preamble-design.md) —
+        // Read-Only/Recon seats run in DEFAULT permission mode instead of
+        // Claude Code's native plan mode: plan mode installs a plan-shaped
+        // system prompt (+ ExitPlanMode) that turns review/recon turns into
+        // plan artifacts. Write containment does not change: every tool call
+        // (native Edit/Write/Bash included) routes through canUseClaudeSdkTool
+        // below, where the run's signed read_only effectivePermissions deny
+        // fileChanges/shellCommands hard — and the plan-artifact write
+        // carve-out requires workflowMode 'plan', which a recon run never
+        // carries. isReconRunPosture reads only post-clamp HMAC-covered
+        // fields. The CLI fallback (tryRunClaudeCli) has NO canUseTool and
+        // deliberately keeps native plan mode for recon seats.
+        permissionMode: isReconRunPosture(payload)
+          ? 'default'
+          : claudePermissionModeForApproval(payload.approvalMode),
+        // Built-ins cannot enforce TaskWraith's signed workspace/path boundary.
+        // MCP servers are configured separately and remain available.
+        tools: [],
+        resume: payload.providerSessionId || undefined,
+        abortController: controller,
+        canUseTool: (toolNameOrRequest: unknown, input?: unknown) =>
+          canUseClaudeSdkTool(event.sender, route, payload, toolNameOrRequest, input),
+        // 1.0.5-S1 — Streaming parity with Codex. Without this flag the
+        // SDK only yields a single cumulative `SDKAssistantMessage` per
+        // turn carrying the entire response — Claude appears to "think
+        // silently then dump the answer" while Codex scrolls past
+        // token-by-token. With it, the SDK also yields incremental
+        // `stream_event` frames (SDKPartialAssistantMessage) whose
+        // content_block_delta / text_delta events carry per-chunk text.
+        // extractProviderText reads those chunks; the existing dedup at
+        // the call site in handleCliProviderJsonEvent harmlessly slices
+        // the trailing cumulative `assistant` envelope to empty so we
+        // don't double-emit the final response.
+        includePartialMessages: true,
+        ...(pathToClaudeCodeExecutable ? { pathToClaudeCodeExecutable } : {}),
+        ...(payload.imagePaths?.length ? { images: payload.imagePaths } : {}),
+        ...(claudeSdkEffort ? { effort: claudeSdkEffort } : {}),
+        ...(claudeSdkThinking ? { thinking: claudeSdkThinking } : {}),
+        ...(claudeSdkMcpServers ? { mcpServers: claudeSdkMcpServers } : {}),
+        ...(claudeSdkAllowedTools && claudeSdkAllowedTools.length > 0
+          ? { allowedTools: claudeSdkAllowedTools }
+          : {}),
+        ...(claudeSdkSettings ? { settings: claudeSdkSettings } : {}),
+        env: environmentAuthority.env
       }
     })
 
@@ -16117,11 +16288,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   const sdk = await loadOptionalClaudeSdk()
   let environmentAuthority: ClaudeEnvironmentAuthoritySnapshot
   try {
-    environmentAuthority = await prepareClaudeRunEnvironmentAuthority(
-      payload,
-      route,
-      Boolean(sdk)
-    )
+    environmentAuthority = await prepareClaudeRunEnvironmentAuthority(payload, route, Boolean(sdk))
   } catch (error) {
     const message =
       error instanceof ClaudeEnvironmentAuthorityError
@@ -16228,7 +16395,8 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
       // here — this headless CLI path has no canUseTool callback, so plan
       // mode's own no-write behavior IS the containment. A recon turn that
       // degrades to the CLI fallback accepts plan-shaped output as the
-      // tradeoff (same accepted-degradation shape as Kimi's print fallback).
+      // tradeoff. Kimi has no equivalent print fallback; managed Kimi is
+      // admitted ACP-only.
       permissionMode: claudePermissionModeForApproval(payload.approvalMode),
       model,
       providerSessionId: payload.providerSessionId || null,
@@ -16335,7 +16503,7 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     }
     return
   }
-  runCliProviderProcess(event, 'claude', environmentAuthority.binaryPath, args, payload, {
+  await runCliProviderProcess(event, 'claude', environmentAuthority.binaryPath, args, payload, {
     fallback: true,
     requireExistingRun: true,
     warning: claudeUsageWarning
@@ -16354,462 +16522,63 @@ async function runClaudeProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   })
 }
 
-// 1.0.6-G3c — Gated, READ-ONLY Grok runtime. Reuses the shared CLI streaming
-// machinery (runCliProviderProcess → handleCliProviderJsonEvent), which already
-// parses Claude-Code-shaped events; Grok mirrors that schema. If a smoke run
-// shows Grok's streaming-json diverges, swap in the fixture-tested
-// src/main/grok/GrokStreamingJson.ts mapper via a `state.provider === 'grok'`
-// branch in handleCliProviderJsonEvent. No MCP / preamble in read-only G3
-// (composeRunPrompt already skips both for plan mode).
+// Managed Grok runs have one admissible one-shot transport: joined ACP. The
+// legacy TASKWRAITH_GROK_ACP=0 headless path was retired because its voided CLI
+// child could outlive the provider adapter and history-deletion receipt.
 async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
-  const route = routeWithRunId('grok', payload)
-  // 1.0.6-G4 — route through the ACP transport when its sub-gate is on; the
-  // headless streaming-json path below stays the default + fallback.
-  if (grokAcpEnabled()) {
-    await runGrokAcpProvider(event, payload)
-    return
-  }
-  const resolved = await resolveCliProviderBinary('grok', payload.runtimeProfile)
-  if (!resolved.binaryPath) {
+  if (!grokAcpEnabled()) {
+    const route = routeWithRunId('grok', payload)
     runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(
-      event.sender,
-      'grok',
-      resolved.error || 'Grok CLI is not configured.',
-      route
-    )
+    sendAgentCompatError(event.sender, 'grok', GROK_ACP_REQUIRED_MESSAGE, route)
     sendAgentCompatLine(
       event.sender,
       'grok',
-      { type: 'result', status: 'failed', stats: {}, provider: 'grok', setupRequired: true },
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'grok',
+        setupRequired: true,
+        securityUnavailable: true
+      },
       route
     )
     sendAgentCompatExit(event.sender, 'grok', 1, route)
     return
   }
-  // G5c — buildGrokCliArgs keys its permission posture off the approval mode:
-  // 'plan' → read-only (deny Bash/Edit/Write); anything else → file-write
-  // (acceptEdits + Edit/Write allowed, Bash still denied — diff/Create-PR is
-  // the review surface, mirroring Claude/Codex). Never --always-approve.
-  // G6 — pass the prior session id so follow-up turns resume the same Grok
-  // session (captured from the previous turn's terminal event).
-  const args = buildGrokProviderCliArgs({
-    prompt: payload.prompt,
-    workspace: payload.workspace!,
-    model: payload.model,
-    reasoningEffort: payload.reasoningEffort,
-    providerSessionId: payload.providerSessionId,
-    approvalMode: payload.approvalMode,
-    activeGoal: payload.activeGoal
-  })
-  runCliProviderProcess(event, 'grok', resolved.binaryPath, args, payload, {
-    fallback: false,
-    extraEnv: {
-      TASKWRAITH_PARENT_PROVIDER: 'grok',
-      TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
-    }
-  })
+  await runGrokAcpProvider(event, payload)
 }
 
-// Cursor approves MCP servers per workspace (~/.cursor/projects/<ws>/).
-// After writing the transient workspace `.cursor/mcp.json`, approve TaskWraith-owned
-// server names for that workspace via `cursor-agent mcp enable <server>`.
-// Idempotent ("already enabled") and cached in-process per workspace + server, so it
-// spawns at most once for each transient server name per session.
-//
-// LOUD FAILURE (was silently best-effort): `mcp enable` is the RELIABLE approval
-// recipe (headless `--approve-mcps` is documented-flaky — see cursorGate.ts), so
-// a non-zero exit / spawn error here means the run would otherwise fall back to
-// that flaky path and reject every MCP call ("User rejected MCP: …"). We now
-// REJECT with the real stderr so the caller can hard-fail loudly instead of
-// launching a run that silently can't use any TaskWraith tool. Only cache the
-// approval on ACTUAL success (never poison the cache on failure).
-const cursorMcpApprovedWorkspaceServers = new Set<string>()
-async function ensureCursorMcpApproved(
-  binaryPath: string,
-  workspace: string,
-  serverName = CURSOR_MCP_SERVER_NAME
-): Promise<void> {
-  const key = `${workspace}\0${serverName}`
-  if (cursorMcpApprovedWorkspaceServers.has(key)) return
-  await new Promise<void>((resolve, reject) => {
-    execFile(
-      binaryPath,
-      ['mcp', 'enable', serverName],
-      { cwd: workspace, timeout: 10000 },
-      (error, _stdout, stderr) => {
-        if (error) {
-          const detail = (String(stderr || '').trim() || error.message || '').slice(0, 300)
-          reject(
-            new Error(`cursor-agent mcp enable ${serverName} failed${detail ? `: ${detail}` : ''}`)
-          )
-          return
-        }
-        resolve()
-      }
-    )
-  })
-  cursorMcpApprovedWorkspaceServers.add(key)
-}
-
-// "B" mode paths: the user's GLOBAL Cursor MCP registry. This is the ONE place
-// TaskWraith writes global ~/.cursor for a Cursor run (additive, only its own
-// broker entries) — a per-run WORKSPACE server never reaches cursor-agent's
-// durable "ready" approval, so headless -p rejects its calls; a globally
-// registered + `mcp enable`d server does.
-function globalCursorMcpDir(): string {
-  return join(app.getPath('home'), '.cursor')
-}
-function globalCursorMcpPath(): string {
-  return join(globalCursorMcpDir(), 'mcp.json')
-}
-
-function cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath: string): boolean {
-  return canonicalPath(mcpPath) === canonicalPath(globalCursorMcpPath())
-}
-
-// CR4/CR6/CRUX parity — Cursor (Composer 2.5) runtime over the shared CLI streaming
-// machinery (runCliProviderProcess → handleCliProviderJsonEvent → the
-// state.provider==='cursor' branch → the fixture-tested CursorStreamJson mapper).
-// Read-only runs pass `--mode plan` (no edits, proven by CR3); write-capable runs
-// run in default mode contained by transient workspace `.cursor/cli.json` +
-// `.cursor/mcp.json` files: native shell/write are denied and the full
-// TaskWraith MCP bridge is allowed for governed side effects.
-// CursorCliArgs NEVER emits bare -p / --force / --yolo.
+// Cursor launch history lives in git and SECURITY_ENGINEERING_LEDGER.md.
+// Both tool and plan transports are unqualified because provider-managed
+// startup hooks/plugins/MCP load before a turn; production never spawns Cursor.
 async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('cursor', payload)
-  const resolved = await resolveCliProviderBinary('cursor', payload.runtimeProfile)
-  if (!resolved.binaryPath) {
-    runManager.finish(route.appRunId, 'failed')
-    sendAgentCompatError(
-      event.sender,
-      'cursor',
-      resolved.error ||
-        'Cursor CLI (cursor-agent) is not configured. Install it and run `cursor-agent login`.',
-      route
-    )
-    sendAgentCompatLine(
-      event.sender,
-      'cursor',
-      { type: 'result', status: 'failed', stats: {}, provider: 'cursor', setupRequired: true },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'cursor', 1, route)
-    return
-  }
-  // CR6/CRUX parity — TaskWraith-owned write mode. Cursor has no `--deny` argv
-  // flag, so a write-capable run writes transient workspace-local Cursor config:
-  //   - `.cursor/mcp.json` registers the brokered TaskWraith MCP server.
-  //   - `.cursor/cli.json` allows the TaskWraith MCP broker and denies native shell/write.
-  //
-  // File edits should therefore flow through TaskWraith MCP tools
-  // (write_file/replace/apply_patch), which enforce approval policy and workspace
-  // path checks before execution. The config is restored on completion. If the
-  // broker/config setup fails, the run is rejected rather than silently
-  // degrading to a different permission posture.
-  const writeCapable = cursorWriteCapable(payload.approvalMode)
-  const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
-  let restoreCursorConfig: (() => void) | undefined
-  let cursorTaskWraithMcpActive = false
-  let cursorTaskWraithReadOnlyMcpActive = false
-  if (writeCapable) {
-    try {
-      const workspace = payload.workspace
-      if (!workspace) {
-        throw new Error('Cursor write mode requires a workspace-bound TaskWraith MCP broker.')
-      }
-      assertCursorWriteMcpPosture(writeCapable, payload.effectivePermissions)
-      const settings = AppStore.getSettings()
-      const userMcpServers = resolveCursorUserMcpLaunchServers(
-        payload.effectivePermissions,
-        () =>
-          buildUserMcpLaunchServers(settings.userMcpServers, {
-            supportedTransports: ['stdio', 'http'],
-            allowlistPolicy: managedUserMcpLaunchAllowlistPolicy?.(),
-            resolveSecretValues: (refs) => AppStore.resolveExtensionSecretValues(refs),
-            validatePluginProvenance: validateUserMcpPluginProvenance
-          })
-      )
-      const cursorDir = join(workspace, '.cursor')
-      const cliPath = join(cursorDir, 'cli.json')
-      const mcpPath = join(cursorDir, 'mcp.json')
-      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-      if (!bridgeCommandStatus.available) {
-        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
-      }
-      await mcpBridgeRuntime.startGeminiMcpBroker()
-      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const brokerInvocation = {
-        command: bridgeCommandStatus.command,
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-          coreSubset,
-          gatewaySubset
-        }),
-        env: {
-          [GEMINI_MCP_BRIDGE_ENV]: '1',
-          TASKWRAITH_PARENT_PROVIDER: 'cursor',
-          TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || '',
-          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
-        }
-      }
-      // "B" mode (default): register the broker in the GLOBAL ~/.cursor/mcp.json —
-      // the only registration cursor-agent durably approves (`mcp list` → "ready");
-      // a per-run WORKSPACE server is never approved, so headless -p rejects its
-      // every call ("User rejected MCP"). No colliding legacy `taskwraith` alias.
-      // Grok 4.5 must use the one-server global path: legacy workspace mode
-      // registers a duplicate alias, and Cursor counts tools across aliases.
-      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset || gatewaySubset
-      if (useGlobalBroker) {
-        ensureGlobalCursorBrokerRegistered(
-          fsSync,
-          globalCursorMcpPath(),
-          globalCursorMcpDir(),
-          buildCursorBrokerMcpServerEntry(brokerInvocation),
-          // Migrate the old global read-only registration. Cursor's headless
-          // CLI can load it even when Home UI says disabled, adding 54 tools.
-          [CURSOR_SCOPED_MCP_SERVER_NAME]
-        )
-      }
-      // Workspace cli.json always denies native shell/write + allows the broker's
-      // tools. The workspace mcp.json still carries any USER MCP servers (and, in
-      // legacy "A" mode, the broker itself).
-      const userServerEntry = buildUserMcpCursorServerEntry(userMcpServers)
-      const workspaceServers = useGlobalBroker
-        ? userServerEntry
-        : { ...buildCursorMcpServerEntry(brokerInvocation), ...userServerEntry }
-      const hasWorkspaceServers = Object.keys(workspaceServers).length > 0
-      const taskWraithAllowRules = useGlobalBroker
-        ? CURSOR_BROKER_MCP_ALLOW_RULES
-        : CURSOR_MCP_ALLOW_RULES
-      restoreCursorConfig = applyCursorWriteModeConfig(
-        fsSync,
-        cliPath,
-        cursorDir,
-        {
-          allowRules: [...taskWraithAllowRules, ...buildUserMcpCursorAllowRules(userMcpServers)],
-          // Even B-mode writes a transient workspace config so reserved names
-          // cannot shadow the canonical global broker during this --force run.
-          ...(hasWorkspaceServers || useGlobalBroker
-            ? {
-                mcpConfigPath: mcpPath,
-                serverEntry: workspaceServers,
-                // Global chats normalize their workspace to $HOME. In that
-                // case `<workspace>/.cursor/mcp.json` IS the global registry;
-                // stripping reserved workspace names would remove the broker
-                // immediately before `cursor-agent mcp enable` looks it up.
-                ...(useGlobalBroker && cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
-                  ? { preserveExistingMcpServers: true }
-                  : {})
-              }
-            : {})
-        },
-        // Full Workspace Access → drop the native shell/write deny-list (see
-        // applyCursorWriteModeConfig). Gated on the post-clamp signed full_access
-        // posture; every other write run keeps native shell/writes contained.
-        { fullAccess: isFullShellAccessGranted(payload.effectivePermissions) }
-      )
-      await ensureCursorMcpApproved(resolved.binaryPath, workspace)
-      if (!useGlobalBroker) {
-        await ensureCursorMcpApproved(
-          resolved.binaryPath,
-          workspace,
-          CURSOR_LEGACY_WEB_MCP_SERVER_NAME
-        )
-      }
-      await Promise.all(
-        userMcpServers.map((server) =>
-          ensureCursorMcpApproved(resolved.binaryPath!, workspace, server.serverName)
-        )
-      )
-      cursorTaskWraithMcpActive = true
-    } catch (error) {
-      // HARD-FAIL, don't silently degrade. The old behavior fell back to
-      // `--mode plan` with NO broker, which then rejected EVERY MCP call
-      // ("User rejected MCP: …") while looking like a normal read-only run —
-      // a silent write-mode failure that burned hours of debugging. Write mode
-      // was explicitly requested and its TaskWraith MCP containment could not be
-      // established, so stop the run and surface the real reason instead.
-      restoreCursorConfig?.()
-      restoreCursorConfig = undefined
-      cursorTaskWraithMcpActive = false
-      runManager.finish(route.appRunId, 'failed')
-      sendAgentCompatError(
-        event.sender,
-        'cursor',
-        cursorWriteModeSetupFailureMessage(error),
-        route
-      )
-      sendAgentCompatLine(
-        event.sender,
-        'cursor',
-        { type: 'result', status: 'failed', stats: {}, provider: 'cursor' },
-        route
-      )
-      sendAgentCompatExit(event.sender, 'cursor', 1, route)
-      return
-    }
-  }
-  // Read-only seat (Grok parity): give it a scoped SAFE-SUBSET TaskWraith MCP
-  // broker so it can still read/inspect (read_file, grep, find_files, …) instead
-  // of getting ZERO tools. Cursor `--mode plan` executes no tools, so a read-only
-  // seat that should read must run in CONTAINED default mode:
-  // applyCursorWriteModeConfig still denies native `Shell(**)`/`Write(**)`, and
-  // the broker is launched `--safe-subset` so it advertises ONLY the non-mutating
-  // read tools — strictly more restrictive than the write path. Best-effort: if
-  // setup fails, the seat just runs `--mode plan` with no tools (the prior
-  // behavior), so nothing is lost and no write capability is ever at stake.
-  if (
-    !writeCapable &&
-    !cursorTaskWraithMcpActive &&
-    payload.workspace &&
-    !mcpToolsDenied &&
-    cursorReadOnlyMcpEnabled()
-  ) {
-    try {
-      const cursorDir = join(payload.workspace, '.cursor')
-      const cliPath = join(cursorDir, 'cli.json')
-      const mcpPath = join(cursorDir, 'mcp.json')
-      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
-      if (!bridgeCommandStatus.available) {
-        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
-      }
-      await mcpBridgeRuntime.startGeminiMcpBroker()
-      // Plan-tier seat: a plan-preset (not read_only) Cursor seat widens the safe
-      // subset to the plan instruments (canvas actuation + media), host-gated by the
-      // broker. A read_only seat keeps the strict subset. This block only runs for a
-      // non-write-capable seat, so presetId distinguishes plan from read_only.
-      const cursorPlanSeat = payload.effectivePermissions?.presetId === 'plan'
-      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
-      const brokerInvocation = {
-        command: bridgeCommandStatus.command,
-        // --safe-subset (+ --plan-subset for a plan seat): the broker advertises +
-        // executes ONLY the read-only tool set (fail-closed), widened to the
-        // host-gated plan instruments when the seat is on the plan preset.
-        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-          safeSubset: true,
-          planSubset: cursorPlanSeat,
-          coreSubset,
-          gatewaySubset
-        }),
-        env: {
-          [GEMINI_MCP_BRIDGE_ENV]: '1',
-          TASKWRAITH_PARENT_PROVIDER: 'cursor',
-          TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || '',
-          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
-        }
-      }
-      const scopedEntry = buildCursorReadOnlyMcpServerEntry(brokerInvocation)
-      // "B" mode (default): durable GLOBAL registration under the canonical
-      // broker name so cursor-agent reaches "ready" approval; else per-run scoped.
-      const useGlobalBroker = cursorGlobalBrokerEnabled() || coreSubset || gatewaySubset
-      if (useGlobalBroker) {
-        ensureGlobalCursorBrokerRegistered(
-          fsSync,
-          globalCursorMcpPath(),
-          globalCursorMcpDir(),
-          // Reuse the canonical broker name for read-only runs. A second global
-          // server would make Cursor add both tool catalogues together.
-          buildCursorBrokerMcpServerEntry(brokerInvocation),
-          [CURSOR_SCOPED_MCP_SERVER_NAME]
-        )
-      }
-      restoreCursorConfig = applyCursorWriteModeConfig(fsSync, cliPath, cursorDir, {
-        // Global rules name only the canonical TaskWraith-owned broker; the
-        // --safe-subset bridge also filters tools/list AND rejects non-safe
-        // tools/call before the main approval executor.
-        allowRules: [
-          ...(useGlobalBroker
-            ? cursorPlanSeat
-              ? CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
-              : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES
-            : CURSOR_READONLY_MCP_ALLOW_RULES)
-        ],
-        // Global mode still writes an empty broker entry map transiently: the
-        // merge strips reserved workspace names that could shadow the global
-        // TaskWraith broker, while preserving unrelated workspace servers.
-        mcpConfigPath: mcpPath,
-        serverEntry: useGlobalBroker ? {} : scopedEntry,
-        ...(useGlobalBroker && cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
-          ? { preserveExistingMcpServers: true }
-          : {})
-      })
-      await ensureCursorMcpApproved(
-        resolved.binaryPath,
-        payload.workspace,
-        useGlobalBroker ? CURSOR_MCP_SERVER_NAME : CURSOR_SCOPED_MCP_SERVER_NAME
-      )
-      cursorTaskWraithReadOnlyMcpActive = true
-    } catch (error) {
-      restoreCursorConfig?.()
-      restoreCursorConfig = undefined
-      cursorTaskWraithReadOnlyMcpActive = false
-      sendAgentCompatLine(
-        event.sender,
-        'cursor',
-        {
-          type: 'progress',
-          title: 'Cursor read-only tools unavailable',
-          summary: `Read-only TaskWraith MCP tools could not be set up; Cursor is running without them (plan mode). ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-          severity: 'warning',
-          provider: 'cursor'
-        },
-        route
-      )
-    }
-  }
-  const cursorTaskWraithMcpAdvertised = writeCapable
-    ? cursorTaskWraithMcpActive
-    : cursorTaskWraithReadOnlyMcpActive
-  if (!cursorTaskWraithMcpAdvertised) {
-    payload.taskWraithMcpAdvertised = false
-    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-      advertised: false,
-      coreProfile: false
-    })
-  }
-  const args = buildCursorProviderCliArgs({
-    prompt: payload.prompt,
-    workspace: payload.workspace!,
-    model: payload.model,
-    reasoningEffort: payload.reasoningEffort,
-    fastModeEnabled: payload.serviceTier === 'fast',
-    providerSessionId: payload.providerSessionId,
-    // Honor the chat's approval mode only when the WRITE containment config is in
-    // place; otherwise force read-only. A read-only seat with the safe-subset
-    // broker still runs (contained) in default mode via taskWraithReadOnlyMcpActive.
-    approvalMode: payload.approvalMode,
-    taskWraithMcpActive: cursorTaskWraithMcpActive,
-    taskWraithReadOnlyMcpActive: cursorTaskWraithReadOnlyMcpActive,
-    effectivePermissions: payload.effectivePermissions,
-    // --force (gated) so Cursor executes the broker's MCP tool CALLS headlessly;
-    // safe because the workspace deny-list keeps native shell/write blocked.
-    forceAllowMcpTools: cursorForceMcpEnabled()
-  })
-  runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
-    fallback: false,
-    extraEnv: {
-      TASKWRAITH_PARENT_PROVIDER: 'cursor',
-      TASKWRAITH_RUN_ID: route.appRunId || '',
-      TASKWRAITH_CHAT_ID: route.appChatId || '',
-      TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+  const admission = cursorManagedRunAdmission()
+  payload.taskWraithMcpAdvertised = false
+  payload.providerSessionId = null
+  runManager.finish(route.appRunId, 'failed')
+  sendAgentCompatError(event.sender, 'cursor', admission.message, route)
+  sendAgentCompatLine(
+    event.sender,
+    'cursor',
+    {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'cursor',
+      setupRequired: true,
+      securityUnavailable: admission.securityUnavailable
     },
-    // Restore (or remove) the workspace .cursor/cli.json after the run.
-    onComplete: () => restoreCursorConfig?.()
-  })
+    route
+  )
+  sendAgentCompatExit(event.sender, 'cursor', 1, route)
 }
 
 // 1.0.6-G4/G6 — Grok over ACP (`grok agent stdio`, bidirectional
 // JSON-RPC). GrokAcpClient drives initialize → session/new → session/prompt and
-// streams session/update onto the same run-event sink as the headless path
-// (applyGrokRunEvent). Gated behind grokAcpEnabled(); headless stays fallback.
+// streams session/update onto the shared Grok run-event sink
+// (applyGrokRunEvent). This is the only managed one-shot Grok transport.
 // Write-capable seats receive the brokered TaskWraith MCP server; read-only
 // scoped seats use a distinct server name so the permission-allow check below
 // can identify safe-subset tool calls.
@@ -16817,7 +16586,12 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
 function normalizeGrokStopReason(status: string | null | undefined): 'success' | string {
   const raw = typeof status === 'string' ? status.trim() : ''
   const normalized = raw.toLowerCase().replace(/[\s_-]+/g, '')
-  if (!normalized || normalized === 'success' || normalized === 'endturn' || normalized === 'stop') {
+  if (
+    !normalized ||
+    normalized === 'success' ||
+    normalized === 'endturn' ||
+    normalized === 'stop'
+  ) {
     return 'success'
   }
   return raw || 'failed'
@@ -16828,7 +16602,9 @@ function grokAcpNetworkReadRequested(request: {
   toolKind?: string
   rawToolCall?: unknown
 }): boolean {
-  const raw = request.rawToolCall as { rawInput?: { tool_name?: unknown; name?: unknown } } | undefined
+  const raw = request.rawToolCall as
+    | { rawInput?: { tool_name?: unknown; name?: unknown } }
+    | undefined
   const candidates = [
     request.toolKind,
     request.toolName,
@@ -16913,7 +16689,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     ...route
   }
   let grokOwnedProcess: ChildProcess | null = null
-  registerRunSession(
+  const registeredSession = registerRunSession(
     'grok',
     event.sender,
     route,
@@ -16921,6 +16697,7 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     state,
     payload.providerSessionId || null
   )
+  if (!registeredSession) return
   sendAgentCompatLine(
     event.sender,
     'grok',
@@ -16937,7 +16714,10 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
 
   if (payload.workspace) {
     try {
-      const sweep = sweepGrokProjectTaskWraithMcpRegistrations(app.getPath('home'), payload.workspace)
+      const sweep = sweepGrokProjectTaskWraithMcpRegistrations(
+        app.getPath('home'),
+        payload.workspace
+      )
       if (
         sweep.removed.length > 0 &&
         ['1', 'true', 'yes'].includes(String(process.env.TASKWRAITH_GROK_DEBUG || '').toLowerCase())
@@ -17103,46 +16883,52 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
   // The G5a transport seam turns 'deny' into a rejected outcome, so nothing
   // runs without an explicit allow — no silent shell.
   const grokPermissionHandler = async (request: AcpPermissionRequest) => {
-      // Grok may qualify this bridge as taskwraith-grok OR taskwraith-broker.
-      // Strip either trusted namespace, then fail closed against the immutable
-      // safe set before allowing it on a read-only seat.
-      if (grokTaskWraithSafeToolRequested(request)) return 'allow'
-      const networkRead = grokAcpNetworkReadRequested(request)
-      if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
-      if (nativeProviderToolRequiresBroker(request.toolName)) return 'deny'
-      if (!grokWriteCapable(payload.approvalMode)) {
-        if (networkRead) return 'allow'
-        // Read-only / recon: allow a shell tool call ONLY when it is a provably
-        // read-only command (ls, cat, find, rg, …). Native-shell Git is denied
-        // because inherited/repository config can execute external programs.
-        // This is what lets
-        // "investigate this repo" actually run under read-only posture instead of
-        // Grok hard-cancelling the turn on the denied tool. Mutating shell stays
-        // denied (fail-closed classifier). See GrokReadOnlyShell.
-        if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
-        return 'deny'
-      }
-      const service = grokToolKindToService(request.toolKind)
-      const allowed = await requestAgenticServiceApproval(
-        event.sender,
-        'grok',
-        service,
-        payload.scope === 'global' ? undefined : payload.workspace,
-        {
-          method: `grok/${request.toolKind || 'tool'}`,
-          title: `Grok wants to run: ${request.toolName}`,
-          body: `Grok requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
-          runId: route.appRunId
-        }
-      )
-      return allowed ? 'allow' : 'deny'
+    // Grok may qualify this bridge as taskwraith-grok OR taskwraith-broker.
+    // Strip either trusted namespace, then fail closed against the immutable
+    // safe set before allowing it on a read-only seat.
+    if (grokTaskWraithSafeToolRequested(request)) return 'allow'
+    const networkRead = grokAcpNetworkReadRequested(request)
+    if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
+    if (nativeProviderToolRequiresBroker(request.toolName)) return 'deny'
+    if (!grokWriteCapable(payload.approvalMode)) {
+      if (networkRead) return 'allow'
+      // Read-only / recon: allow a shell tool call ONLY when it is a provably
+      // read-only command (ls, cat, find, rg, …). Native-shell Git is denied
+      // because inherited/repository config can execute external programs.
+      // This is what lets
+      // "investigate this repo" actually run under read-only posture instead of
+      // Grok hard-cancelling the turn on the denied tool. Mutating shell stays
+      // denied (fail-closed classifier). See GrokReadOnlyShell.
+      if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+      return 'deny'
     }
+    const service = grokToolKindToService(request.toolKind)
+    const allowed = await requestAgenticServiceApproval(
+      event.sender,
+      'grok',
+      service,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      {
+        method: `grok/${request.toolKind || 'tool'}`,
+        title: `Grok wants to run: ${request.toolName}`,
+        body: `Grok requested a "${request.toolName}" tool call (${service}). Approve to let it run, or deny to block it.`,
+        runId: route.appRunId
+      }
+    )
+    return allowed ? 'allow' : 'deny'
+  }
 
+  let grokTransportCloseResolved = false
+  let resolveGrokTransportClose!: () => void
+  const grokTransportClose = new Promise<void>((resolve) => {
+    resolveGrokTransportClose = resolve
+  })
   const finishGrokAcpTurn = (
     code: number | null,
     turnComplete: boolean,
     terminalStatus?: string
   ): void => {
+    try {
       if (!state.completed) {
         state.completed = true
         const stopReason = normalizeGrokStopReason(terminalStatus)
@@ -17180,7 +16966,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
           },
           state
         )
-        sendAgentCompatExit(event.sender, 'grok', failed ? 1 : (turnComplete ? 0 : (code ?? 1)), state)
+        sendAgentCompatExit(
+          event.sender,
+          'grok',
+          failed ? 1 : turnComplete ? 0 : (code ?? 1),
+          state
+        )
       }
       deleteCliProviderProcessIfOwned(cliProviderProcesses, 'grok', grokOwnedProcess)
       grokOwnedProcess = null
@@ -17190,6 +16981,12 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         finalStopReason !== 'success' ||
         (state.assistantText.trim().length === 0 && (state.grokToolErrorCount || 0) > 0)
       runManager.finish(route.appRunId!, finalFailed ? 'failed' : 'completed')
+    } finally {
+      if (!grokTransportCloseResolved) {
+        grokTransportCloseResolved = true
+        resolveGrokTransportClose()
+      }
+    }
   }
 
   const grokProviderPrompt = buildGrokProviderPrompt(
@@ -17198,10 +16995,14 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     payload.activeGoal,
     { taskWraithQuestionToolAvailable: grokMcpServers.length > 0 }
   )
+  // Broker startup and prompt composition await after run registration. A
+  // destructive-history fence can terminalize that run while those awaits are
+  // pending; never spawn a fresh ACP child after its exact authority is gone.
+  if (!providerRunPersistenceAuthorized('grok', state)) return
 
-  // Spike 7 (docs/ensemble-posture-fanout-preamble-design.md) — persistent
-  // per-seat ACP session for ensemble Grok seats, behind
-  // TASKWRAITH_GROK_SEAT_SESSIONS (default ON). Eligibility is deliberately
+  // Legacy Spike 7 persistent per-seat ACP session implementation. The gate is
+  // hard-disabled until durable child identity + joined history-clear close
+  // evidence ships. Eligibility remains deliberately
   // narrow: an ensemble seat (stable participantId to key on), READ-ONLY, and
   // TOOLLESS (grokMcpServers empty — the bridge env bakes TASKWRAITH_RUN_ID
   // into session/new, so a reused session would route broker approvals to a
@@ -17239,10 +17040,8 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
       onTurnEnd: (turnComplete, terminalStatus, processExited) =>
         finishGrokAcpTurn(processExited && !turnComplete ? 1 : 0, turnComplete, terminalStatus)
     })
-    runManager.attachAbortController(
-      route.appRunId!,
-      createGrokTurnAbortController(seatTurnHandle)
-    )
+    runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(seatTurnHandle))
+    providerTransportOperations.track(route.appRunId!, grokTransportClose)
     return
   }
 
@@ -17271,6 +17070,11 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     onClose: finishGrokAcpTurn
   })
   runManager.attachAbortController(route.appRunId!, createGrokTurnAbortController(grokAcpHandle))
+  providerTransportOperations.track(route.appRunId!, grokAcpHandle.closed)
+  // Keep the adapter invocation itself live from dispatch registration through
+  // the real child close. History deletion may begin before the transport
+  // operation is published above; its adapter join must cover that setup race.
+  await grokAcpHandle.closed
 }
 
 /**
@@ -17293,1042 +17097,8 @@ function claudeTaskWraithMcpConfigPathForRun(runId: string): string {
   return join(tempDir, `taskwraith-claude-mcp-${safeRunId}.json`)
 }
 
-function kimiTaskWraithMcpConfigPathForRun(runId: string, purpose: string): string {
-  const tempDir = (() => {
-    try {
-      return app.getPath('temp')
-    } catch {
-      return os.tmpdir()
-    }
-  })()
-  const safeRunId = String(runId)
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .slice(0, 80)
-  const safePurpose = String(purpose)
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .slice(0, 24)
-  return join(tempDir, `taskwraith-kimi-mcp-${safeRunId}-${safePurpose}-${randomUUID()}.json`)
-}
-
-function kimiTaskWraithAgentPathForRun(runId: string, purpose: string): string {
-  const tempDir = (() => {
-    try {
-      return app.getPath('temp')
-    } catch {
-      return os.tmpdir()
-    }
-  })()
-  const safeRunId = String(runId)
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .slice(0, 80)
-  const safePurpose = String(purpose)
-    .replace(/[^A-Za-z0-9._-]/g, '_')
-    .slice(0, 24)
-  return join(tempDir, `taskwraith-kimi-agent-${safeRunId}-${safePurpose}-${randomUUID()}.yaml`)
-}
-
-async function assertKimiUserPluginToolsAbsent(): Promise<void> {
-  const pluginDirectory = join(os.homedir(), '.kimi', 'plugins')
-  try {
-    const entries = await fs.readdir(pluginDirectory)
-    const pluginEntries = entries.filter((entry) => entry !== '.DS_Store' && !entry.startsWith('.'))
-    if (pluginEntries.length > 0) {
-      throw new Error(
-        `Kimi user plugin tools are installed in ${pluginDirectory}. TaskWraith cannot bind those opaque tools to this run's workspace, so the run was not launched.`
-      )
-    }
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return
-    throw error
-  }
-}
-
-async function writeKimiBrokerOnlyAgentForRun(input: {
-  runId: string
-  purpose: string
-}): Promise<string> {
-  await assertKimiUserPluginToolsAbsent()
-  const agentPath = kimiTaskWraithAgentPathForRun(input.runId, input.purpose)
-  try {
-    await fs.writeFile(agentPath, buildKimiBrokerOnlyAgentYaml(), {
-      encoding: 'utf8',
-      mode: 0o600
-    })
-    return agentPath
-  } catch (error) {
-    await fs.unlink(agentPath).catch(() => {})
-    throw error
-  }
-}
-
-async function readKimiGlobalMcpConfig(): Promise<unknown> {
-  const configPath = join(os.homedir(), '.kimi', 'mcp.json')
-  try {
-    return JSON.parse(await fs.readFile(configPath, 'utf8'))
-  } catch (error) {
-    if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined
-    throw new Error(
-      `Could not read Kimi's global MCP config at ${configPath}: ${
-        error instanceof Error ? error.message : String(error)
-      }`
-    )
-  }
-}
-
-async function writeKimiMcpConfigForRun(input: {
-  runId: string
-  purpose: string
-  includeTaskWraith: boolean
-  preserveUserServers?: boolean
-}): Promise<string> {
-  const globalConfig =
-    input.preserveUserServers === true ? await readKimiGlobalMcpConfig() : undefined
-  const bridgeStatus = input.includeTaskWraith ? taskwraithMcpBridgeCommandStatus() : null
-  if (bridgeStatus && !bridgeStatus.available) {
-    throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeStatus))
-  }
-  const config = buildKimiRunMcpConfig({
-    globalConfig,
-    preserveUserServers: input.preserveUserServers === true,
-    ...(bridgeStatus
-      ? {
-          taskWraith: {
-            bridgeBinaryPath: bridgeStatus.command,
-            bridgeArgs: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
-              gatewaySubset: true
-            })
-          }
-        }
-      : {})
-  })
-  const configPath = kimiTaskWraithMcpConfigPathForRun(input.runId, input.purpose)
-  try {
-    await fs.writeFile(configPath, JSON.stringify(config), { encoding: 'utf8', mode: 0o600 })
-    return configPath
-  } catch (error) {
-    await fs.unlink(configPath).catch(() => {})
-    throw error
-  }
-}
-
-async function removeKimiMcpConfigFile(configPath: string | null): Promise<void> {
-  if (!configPath) return
-  await fs.unlink(configPath).catch(() => {})
-}
-
-async function removeKimiAgentFile(agentPath: string | null): Promise<void> {
-  if (!agentPath) return
-  await fs.unlink(agentPath).catch(() => {})
-}
-
 function respondToKimiWireRequest(child: ChildProcess, requestId: string | number, result: any) {
   child.stdin?.write(JSON.stringify({ jsonrpc: '2.0', id: requestId, result }) + '\n')
-}
-
-
-function extractKimiWireProtocol(value: unknown, depth = 0): string | null {
-  if (depth > 4 || !value) return null
-  if (typeof value === 'string') {
-    const trimmed = value.trim()
-    return /^\d+(?:\.\d+){0,2}$/.test(trimmed) ? trimmed : null
-  }
-  if (!isRecord(value)) return null
-  const directKeys = [
-    'wire_protocol_version',
-    'wireProtocolVersion',
-    'protocol_version',
-    'protocolVersion',
-    'wireVersion',
-    'wire_version'
-  ]
-  for (const key of directKeys) {
-    const extracted = extractKimiWireProtocol(value[key], depth + 1)
-    if (extracted) return extracted
-  }
-  for (const nestedKey of ['wire', 'protocol', 'capabilities']) {
-    const extracted = extractKimiWireProtocol(value[nestedKey], depth + 1)
-    if (extracted) return extracted
-  }
-  return null
-}
-
-async function resolveKimiWireProtocol(
-  binaryPath: string
-): Promise<{ protocolVersion: string; source: 'cli-info' | 'fallback'; error?: string }> {
-  return new Promise((resolveProtocol) => {
-    let stdout = ''
-    let stderr = ''
-    let settled = false
-    let child: ChildProcess | null = null
-    const finish = (protocolVersion: string, source: 'cli-info' | 'fallback', error?: string) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      resolveProtocol({ protocolVersion, source, error })
-    }
-    const timeout = setTimeout(() => {
-      child?.kill()
-      finish(
-        KIMI_WIRE_PROTOCOL_FALLBACK,
-        'fallback',
-        'Timed out reading Kimi Wire protocol metadata.'
-      )
-    }, KIMI_WIRE_PROTOCOL_INFO_TIMEOUT_MS)
-    try {
-      child = spawn(binaryPath, ['info', '--json'], {
-        shell: false,
-        env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, binaryPath)
-      })
-    } catch (error) {
-      finish(
-        KIMI_WIRE_PROTOCOL_FALLBACK,
-        'fallback',
-        error instanceof Error ? error.message : String(error)
-      )
-      return
-    }
-    const spawned = child
-    if (!spawned) {
-      finish(KIMI_WIRE_PROTOCOL_FALLBACK, 'fallback', 'Kimi CLI did not start.')
-      return
-    }
-    spawned.stdout?.on('data', (chunk) => {
-      stdout += chunk.toString()
-      if (stdout.length > 200_000) stdout = stdout.slice(-200_000)
-    })
-    spawned.stderr?.on('data', (chunk) => {
-      stderr += chunk.toString()
-      if (stderr.length > 20_000) stderr = stderr.slice(-20_000)
-    })
-    spawned.on('error', (error) => {
-      finish(KIMI_WIRE_PROTOCOL_FALLBACK, 'fallback', error.message)
-    })
-    spawned.on('close', () => {
-      try {
-        const parsed = stdout.trim() ? JSON.parse(stripAnsi(stdout)) : null
-        const protocolVersion = extractKimiWireProtocol(parsed)
-        if (protocolVersion) {
-          finish(protocolVersion, 'cli-info')
-          return
-        }
-      } catch {
-        // Non-JSON output is expected for older Kimi CLIs; fall back to the known-compatible protocol.
-      }
-      finish(
-        KIMI_WIRE_PROTOCOL_FALLBACK,
-        'fallback',
-        stderr.trim() || 'Kimi CLI did not expose Wire protocol metadata.'
-      )
-    })
-  })
-}
-
-async function runKimiWireProvider(
-  event: Electron.IpcMainInvokeEvent,
-  payload: AgentRunPayload,
-  binaryPath: string
-): Promise<boolean> {
-  const model = normalizeCliProviderModel('kimi', payload.model)
-  const route = routeWithRunId('kimi', payload)
-  const wireProtocol = await resolveKimiWireProtocol(binaryPath)
-  const state: CliProviderStreamState = {
-    provider: 'kimi',
-    sender: event.sender,
-    startedAt: Date.now(),
-    model,
-    fallback: false,
-    deferTerminalResult: true,
-    completed: false,
-    assistantText: '',
-    providerSessionId: payload.providerSessionId || null,
-    approvalMode: payload.approvalMode,
-    workflowMode: payload.workflowMode,
-    sessionTrust: Boolean(payload.sessionTrust),
-    externalPathGrants: payload.externalPathGrants,
-    runtimeProfileId: payload.runtimeProfileId,
-    taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
-    effectivePermissions: payload.effectivePermissions,
-    effectivePermissionsSignature: payload.effectivePermissionsSignature,
-    ensembleRun: payload.ensembleRun,
-    ...route
-  }
-  const registeredSession = registerRunSession(
-    'kimi',
-    event.sender,
-    route,
-    payload.scope === 'global' ? undefined : payload.workspace,
-    state,
-    payload.providerSessionId || null,
-    true
-  )
-  if (!registeredSession) return false
-  void emitProviderCapabilityWarnings(
-    event.sender,
-    'kimi',
-    payload.workspace,
-    payload.approvalMode,
-    state
-  )
-
-  sendAgentCompatLine(
-    event.sender,
-    'kimi',
-    {
-      type: 'init',
-      session_id: state.providerSessionId || '',
-      model,
-      timestamp: new Date().toISOString(),
-      provider: 'kimi',
-      fallback: false
-    },
-    state
-  )
-  sendAgentCompatLine(
-    event.sender,
-    'kimi',
-    {
-      type: 'provider_diagnostic',
-      provider: 'kimi',
-      message: `Using Kimi Wire protocol ${wireProtocol.protocolVersion}${wireProtocol.source === 'fallback' ? ' (fallback)' : ''}.`,
-      protocolVersion: wireProtocol.protocolVersion,
-      source: wireProtocol.source,
-      error: wireProtocol.error
-    },
-    state
-  )
-
-  let args = ['--wire', '--work-dir', payload.workspace!]
-  appendKimiModelArgs(args, model, payload.serviceTier)
-  appendKimiThinkingArgs(args, payload.kimiThinking)
-  // External grants remain broker-only; this deliberately contributes no
-  // native Kimi directory flags.
-  args.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
-  // Transport-generation fence: resume ONLY a Wire-minted session id. An
-  // ACP-minted `session_<uuid>` (from a kimi-code run) must never reach the
-  // legacy Wire `--resume`; refuse the crossing and start fresh (slice 5).
-  const wireResumeId = wireResumeSessionId(payload.providerSessionId)
-  if (wireResumeId) args.push('--resume', wireResumeId)
-
-  // Prepare this app's broker, then pin the exact server document to THIS
-  // Kimi process. The explicit file suppresses ~/.kimi/mcp.json, preventing a
-  // Release/Dev instance from stealing the other app's TaskWraith route and
-  // preventing opaque user MCP servers from bypassing the signed broker.
-  const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
-  if (!kimiMcpReady) {
-    payload.taskWraithMcpAdvertised = false
-    state.taskWraithMcpAdvertised = false
-    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-      advertised: false,
-      coreProfile: false
-    })
-  }
-  let kimiMcpConfigPath: string | null = null
-  let kimiAgentFilePath: string | null = null
-  try {
-    kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
-      runId: route.appRunId || 'unknown',
-      purpose: 'wire'
-    })
-    kimiMcpConfigPath = await writeKimiMcpConfigForRun({
-      runId: route.appRunId || 'unknown',
-      purpose: 'wire',
-      includeTaskWraith: kimiMcpReady,
-      preserveUserServers: false
-    })
-    args.push('--agent-file', kimiAgentFilePath)
-    args = extendKimiCliArgsWithMcpConfig(args, kimiMcpConfigPath)
-  } catch (error) {
-    await removeKimiAgentFile(kimiAgentFilePath)
-    await removeKimiMcpConfigFile(kimiMcpConfigPath)
-    const message = `Kimi's isolated broker-only runtime files could not be created; the run was not launched. ${
-      error instanceof Error ? error.message : String(error)
-    }`
-    sendAgentCompatError(event.sender, 'kimi', message, state)
-    sendAgentCompatLine(
-      event.sender,
-      'kimi',
-      { type: 'result', status: 'failed', stats: {}, provider: 'kimi' },
-      state
-    )
-    sendAgentCompatExit(event.sender, 'kimi', 1, state)
-    runManager.finish(route.appRunId, 'failed')
-    return true
-  }
-
-  const kimiKey = getStoredKimiApiKey()
-  return new Promise((resolveWire) => {
-    const finishWire = (result: boolean): void => {
-      const configPath = kimiMcpConfigPath
-      const agentPath = kimiAgentFilePath
-      kimiMcpConfigPath = null
-      kimiAgentFilePath = null
-      void Promise.all([removeKimiMcpConfigFile(configPath), removeKimiAgentFile(agentPath)])
-      resolveWire(result)
-    }
-    const child = spawn(binaryPath, args, {
-      cwd: payload.workspace!,
-      shell: false,
-      env: createCliEnv(
-        {
-          FORCE_COLOR: '0',
-          NO_COLOR: '1',
-          TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-          TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || '',
-          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-          // Belt-and-braces route stamp on the Kimi process itself. The
-          // isolated per-run server block also stamps the bridge child, but
-          // this keeps the route intact if Kimi inherits rather than merges
-          // that env block on a particular platform.
-          TASKWRAITH_PARENT_PROVIDER: 'kimi',
-          // Audit role-run: advertise the audit_* MCP tools to this run's
-          // bridge child (inherited via the Kimi CLI process env). Audit runs
-          // only; a normal Kimi run never carries payload.auditRun.
-          ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-          ...(kimiKey ? { MOONSHOT_API_KEY: kimiKey } : {})
-        },
-        binaryPath
-      )
-    })
-    cliProviderProcesses.set('kimi', child)
-    runManager.attachProcess(route.appRunId!, child)
-    let stdoutBuffer = ''
-    let settled = false
-    let promptSent = false
-    let planModeSent = false
-    let promptSequence = 0
-    let activePromptId = ''
-    let currentKimiPrompt = payload.prompt
-    const kimiRetryPasses: KimiContentFilterRetryPass[] = []
-    // Bug fix: every Kimi exit path MUST publish an `agent-exit` IPC
-    // event, otherwise the renderer never invokes `clearActiveRunContext`
-    // and the sidebar keeps painting "Running". `state.completed` flips
-    // true on the prompt-response branch AND on any `handleCliProviderJsonEvent`
-    // path that sees a `result`/`TurnEnd` notification, so the close
-    // handler used to early-return without sending exit when it raced
-    // in after a completion notification but before the final
-    // `prompt-${id}` response — leaving the sidebar stuck. Track exit
-    // emission explicitly so the close handler can backfill the IPC
-    // event without double-firing for the happy path. Other providers
-    // already publish exit unconditionally from their close handlers.
-    let exitSent = false
-    const emitKimiExit = (code: number | null): void => {
-      if (exitSent) return
-      exitSent = true
-      sendAgentCompatExit(event.sender, 'kimi', code, state)
-    }
-    const initializeId = `initialize-${Date.now()}`
-    const timeout = setTimeout(() => {
-      if (settled || promptSent) return
-      settled = true
-      child.kill()
-      if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      // Wire startup is a transport attempt, not the app-run outcome. Keep the
-      // app run live so the guarded print-mode fallback can reuse it.
-      runManager.update(route.appRunId!, { process: undefined })
-      finishWire(false)
-    }, 7_000)
-
-    const sendPrompt = (promptText: string): void => {
-      promptSent = true
-      promptSequence += 1
-      activePromptId = `prompt-${Date.now()}-${promptSequence}`
-      // Recon seats (Read-Only/Recon posture on a NORMAL-workflow run) must
-      // NOT flip on Kimi's native plan mode: plan mode installs a plan-shaped
-      // provider system prompt that outranks any in-prompt anti-plan rule,
-      // turning review/recon turns into plan artifacts. Write containment does
-      // not depend on it — the wire ApprovalRequest gate below auto-denies
-      // read-only-blocked services from the signed effectivePermissions either
-      // way. `isReconRunPosture` reads only post-clamp HMAC-covered fields
-      // (workflowMode + presetId), so this cannot be steered by the renderer.
-      // The print-mode fallback intentionally keeps `--plan` — that flag is
-      // what makes the non-interactive fallback safe.
-      if (payload.approvalMode === 'plan' && !planModeSent && !isReconRunPosture(payload)) {
-        planModeSent = true
-        child.stdin?.write(
-          JSON.stringify({
-            jsonrpc: '2.0',
-            id: `plan-${Date.now()}`,
-            method: 'set_plan_mode',
-            params: { enabled: true }
-          }) + '\n'
-        )
-      }
-      child.stdin?.write(
-        JSON.stringify(
-          buildKimiWirePromptRequest({
-            id: activePromptId,
-            prompt: promptText,
-            imagePaths: payload.imagePaths
-          })
-        ) + '\n'
-      )
-    }
-
-    const maybeRetryKimiContentFilter = (promptErrorMessage: string): boolean => {
-      if (!isKimiContentFilterRejection(promptErrorMessage)) return false
-      // A graph attempt's provider input was already durably bound and frozen.
-      // Retrying different bytes would create an unrecorded implicit branch.
-      if (executionGraphOwnsAttemptRunId(route.appRunId)) return false
-      const settings = AppStore.getSettings()
-      const keywordResult = !kimiRetryPasses.includes('keyword')
-        ? sanitiseForKimi(currentKimiPrompt, {
-            customKeywords: parseCustomKeywords(settings.kimiSanitiserCustomKeywords)
-          })
-        : null
-      const keywordCanRetry = Boolean(
-        keywordResult?.redacted && keywordResult.text !== currentKimiPrompt
-      )
-      const classifierResult = !kimiRetryPasses.includes('classifier')
-        ? classifyAndRedactForKimi(currentKimiPrompt, {
-            enabled: Boolean(settings.kimiClassifierEnabled)
-          })
-        : null
-      const classifierCanRetry = Boolean(
-        classifierResult?.redacted && classifierResult.text !== currentKimiPrompt
-      )
-      const retryDecision = decideKimiContentFilterRetry({
-        attemptedPasses: kimiRetryPasses,
-        keywordCanRetry,
-        classifierAvailable: Boolean(classifierResult?.classifierAvailable),
-        classifierCanRetry
-      })
-
-      if (retryDecision.action === 'retry' && retryDecision.pass === 'keyword' && keywordResult) {
-        kimiRetryPasses.push('keyword')
-        currentKimiPrompt = keywordResult.text
-        sendAgentCompatLine(event.sender, 'kimi', {
-          type: 'provider_warning',
-          provider: 'kimi',
-          severity: 'warning',
-          title: 'Kimi safety filter rejected this prompt; retrying',
-          message: formatKimiRetryDiagnostic('keyword', keywordResult),
-          source: 'kimi-retry-envelope',
-          pass: 'keyword',
-          attempt: kimiRetryPasses.length,
-          triggers: keywordResult.matches.map((m) => m.trigger)
-        })
-        sendPrompt(currentKimiPrompt)
-        return true
-      }
-
-      if (
-        retryDecision.action === 'retry' &&
-        retryDecision.pass === 'classifier' &&
-        classifierResult
-      ) {
-        kimiRetryPasses.push('classifier')
-        currentKimiPrompt = classifierResult.text
-        sendAgentCompatLine(event.sender, 'kimi', {
-          type: 'provider_warning',
-          provider: 'kimi',
-          severity: 'warning',
-          title: 'Kimi safety filter rejected this prompt; retrying',
-          message: formatKimiRetryDiagnostic('classifier', classifierResult),
-          source: 'kimi-retry-envelope',
-          pass: 'classifier',
-          attempt: kimiRetryPasses.length,
-          classifierSource: classifierResult.source,
-          triggers: classifierResult.matches.map((m) => m.trigger)
-        })
-        sendPrompt(currentKimiPrompt)
-        return true
-      }
-
-      const failureReason =
-        retryDecision.action === 'fail' ? retryDecision.reason : 'retry_passes_exhausted'
-      sendAgentCompatLine(event.sender, 'kimi', {
-        type: 'provider_warning',
-        provider: 'kimi',
-        severity: 'warning',
-        title: 'Kimi safety filter rejected this prompt',
-        message: formatKimiRetryFailureDiagnostic({
-          attemptedPasses: kimiRetryPasses,
-          reason: failureReason
-        }),
-        source: 'kimi-retry-envelope',
-        reason: failureReason
-      })
-      return false
-    }
-
-    child.stdout?.on('data', (chunk) => {
-      stdoutBuffer += chunk.toString()
-      const lines = stdoutBuffer.split(/\r?\n/)
-      stdoutBuffer = lines.pop() || ''
-      for (const line of lines) {
-        const trimmed = line.trim()
-        if (!trimmed) continue
-        try {
-          const message = JSON.parse(trimmed)
-          if (message.id === initializeId) {
-            updateCliProviderSession(state, extractProviderSessionId(message), true)
-            sendPrompt(currentKimiPrompt)
-            continue
-          }
-          if (message.id === activePromptId) {
-            const promptError = message.error
-            const promptErrorMessage = promptError
-              ? typeof promptError === 'string'
-                ? promptError
-                : typeof promptError.message === 'string'
-                  ? promptError.message
-                  : JSON.stringify(promptError)
-              : ''
-            if (promptErrorMessage && maybeRetryKimiContentFilter(promptErrorMessage)) {
-              updateCliProviderSession(state, extractProviderSessionId(message), false)
-              continue
-            }
-            if (promptErrorMessage) {
-              sendAgentCompatError(event.sender, 'kimi', promptErrorMessage, state)
-            }
-            updateCliProviderSession(state, extractProviderSessionId(message), false)
-            state.completed = true
-            const merged = mergeKimiWireTerminalEvidence(
-              {
-                ...(state.deferredTerminalStatus
-                  ? { status: state.deferredTerminalStatus }
-                  : {}),
-                conflict: state.deferredTerminalConflict ?? false
-              },
-              bridgeResultTerminalStatus({
-                status: message.result?.status || 'success',
-                error: promptErrorMessage || undefined,
-                is_error: Boolean(message.error)
-              })
-            )
-            state.deferredTerminalStatus = merged.status
-            state.deferredTerminalConflict = merged.conflict
-            state.terminalResultFailed = merged.status === 'failed' || merged.conflict
-            // The JSON-RPC response is provisional until the transport closes.
-            // A later non-zero close must be able to override apparent success.
-            child.kill()
-            clearTimeout(timeout)
-            continue
-          }
-          if (message.method === 'request') {
-            const requestType = message.params?.type
-            if (requestType === 'ApprovalRequest') {
-              const approvalId = Date.now() + '-' + Math.random().toString(36).slice(2)
-              const kimiToolName = String(
-                message.params?.payload?.sender || message.params?.payload?.action || 'kimi_action'
-              )
-              const kimiCanonicalToolName = canonicalTaskWraithToolName(kimiToolName)
-              // C2b-ii — best-effort tool-args for the exact reviewer-verdict
-              // exception; fail-closed when the ApprovalRequest payload carries no
-              // plain-object args (classifier sees undefined → stays gated).
-              const kimiToolArgs = message.params?.payload?.arguments
-              // Auto-approve side-effect-free tools at the Kimi wire-
-              // protocol layer. The generic MCP-level gate (line ~14078)
-              // already skips these for the dispatch path, but Kimi
-              // surfaces a separate provider-level approval BEFORE the
-              // tool call reaches the MCP server — without this short-
-              // circuit, the user gets prompted to approve harmless
-              // signals like `ensemble_yield` (which only tells the
-              // orchestrator the participant is passing their turn —
-              // no files, no shell; web reads are network-gated before
-              // this fast path). Gateway wrappers also pass this provider-only
-              // prompt: main unwraps capability_invoke and applies the target's
-              // real approval policy, so the wrapper itself is never granted.
-              // Reuses `MCP_AUTO_ALLOWED_TOOLS` for the ordinary safe set.
-              const approvalPriority = nativeProviderApprovalPriority(
-                kimiToolName,
-                isCapabilityGatewayToolName(kimiCanonicalToolName) ||
-                  isMcpAutoAllowedForRun(
-                    kimiCanonicalToolName,
-                    state.effectivePermissions,
-                    kimiToolArgs,
-                    { appRunId: route.appRunId, appChatId: route.appChatId }
-                  )
-              )
-              if (approvalPriority === 'deny-native') {
-                const feedback = nativeProviderBrokerOnlyMessage('Kimi', kimiToolName)
-                respondToKimiWireRequest(child, message.id, {
-                  request_id: message.params?.payload?.id || message.id,
-                  response: 'reject',
-                  feedback
-                })
-                sendAgentCompatError(event.sender, 'kimi', feedback, state)
-                continue
-              }
-              if (approvalPriority === 'allow-auto') {
-                respondToKimiWireRequest(child, message.id, {
-                  request_id: message.params?.payload?.id || message.id,
-                  response: 'approve'
-                })
-                continue
-              }
-              const externalPathDetection = detectExternalPathForProviderApproval({
-                provider: 'kimi',
-                appChatId: route.appChatId,
-                appRunId: route.appRunId,
-                toolName: kimiToolName,
-                method: 'request/ApprovalRequest',
-                params: message.params?.payload,
-                workspacePath: payload.scope === 'global' ? undefined : payload.workspace
-              })
-              const kimiResolvedService = kimiAgenticServiceForTool(kimiToolName)
-              const kimiGateService =
-                kimiResolvedService === 'mcpTools' &&
-                isReadOnlyBlockedTool(kimiCanonicalToolName, state.effectivePermissions, kimiToolArgs)
-                  ? ('shellCommands' as AgenticServiceId)
-                  : kimiResolvedService
-              const workspacePathForKimiApproval =
-                payload.scope === 'global' ? undefined : payload.workspace
-              const nativePreflight = resolveNativeApprovalPreflight({
-                provider: 'kimi',
-                service: kimiGateService || undefined,
-                workspacePath: workspacePathForKimiApproval,
-                runId: route.appRunId,
-                externalPathDetection,
-                toolName: kimiCanonicalToolName || kimiToolName
-              })
-              const actions: AgentApprovalAction[] = externalPathDetection
-                ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
-                : nativePreflight.kind === 'ask'
-                  ? approvalActionsForPolicy(
-                      nativePreflight.policy,
-                      workspacePathForKimiApproval,
-                      kimiGateService || undefined
-                    )
-                  : ['accept', 'acceptForSession', 'decline', 'cancel']
-              const approvalTitle = externalPathDetection
-                ? externalPathApprovalTitle()
-                : 'Approve Kimi action'
-              const approvalBody = externalPathDetection
-                ? externalPathApprovalBody(externalPathDetection)
-                : message.params?.payload?.description ||
-                  message.params?.payload?.action ||
-                  'Kimi is requesting permission to continue.'
-              const kimiPlanArtifactRawPath = planArtifactRawPathFromToolInput(
-                message.params?.payload
-              )
-              const approvalPreview = {
-                kind: 'tool',
-                toolName: kimiToolName,
-                ...(kimiPlanArtifactRawPath
-                  ? { planArtifactRawPath: kimiPlanArtifactRawPath }
-                  : {}),
-                params: message.params?.payload,
-                actions,
-                ...(externalPathDetection
-                  ? { externalPathDetection: externalPathApprovalPreview(externalPathDetection) }
-                  : {})
-              }
-              const kimiPlanArtifactWriteMetadata =
-                kimiGateService && nativePreflight.kind === 'deny'
-                  ? planArtifactWriteApprovalMetadata({
-                      workflowMode: state.workflowMode,
-                      effectivePermissions: state.effectivePermissions,
-                      globalFileChangesPolicy: AppStore.getSettings().agenticServices?.fileChanges,
-                      service: kimiGateService,
-                      workspacePath: workspacePathForKimiApproval,
-                      request: { preview: approvalPreview }
-                    })
-                  : null
-              if (kimiGateService && nativePreflight.kind === 'deny' && kimiPlanArtifactWriteMetadata) {
-                auditService.recordAutomaticApprovalDecision(
-                  'kimi',
-                  route,
-                  kimiGateService,
-                  workspacePathForKimiApproval,
-                  {
-                    method: 'request/ApprovalRequest',
-                    title: approvalTitle,
-                    body: approvalBody,
-                    preview: approvalPreview
-                  },
-                  'autoAllow',
-                  'plan_artifact',
-                  'request',
-                  {
-                    policy: nativePreflight.policy,
-                    transport: 'kimi-wire',
-                    ...kimiPlanArtifactWriteMetadata
-                  }
-                )
-                stampPlanArtifactPathOnPendingPlan(route.appChatId, kimiPlanArtifactWriteMetadata)
-                respondToKimiWireRequest(child, message.id, {
-                  request_id: message.params?.payload?.id || message.id,
-                  response: 'approve'
-                })
-                continue
-              }
-              if (kimiGateService && nativePreflight.kind === 'deny') {
-                auditService.recordAutomaticApprovalDecision(
-                  'kimi',
-                  route,
-                  kimiGateService,
-                  workspacePathForKimiApproval,
-                  {
-                    method: 'request/ApprovalRequest',
-                    title: approvalTitle,
-                    body: approvalBody,
-                    preview: approvalPreview
-                  },
-                  'autoDeny',
-                  'policy',
-                  'request',
-                  {
-                    policy: nativePreflight.policy,
-                    transport: 'kimi-wire',
-                    ...(externalPathDetection ? { externalPathDetected: true } : {})
-                  }
-                )
-                respondToKimiWireRequest(child, message.id, {
-                  request_id: message.params?.payload?.id || message.id,
-                  response: 'reject',
-                  feedback: agenticServiceDisabledMessage(kimiGateService)
-                })
-                sendAgentCompatError(
-                  event.sender,
-                  'kimi',
-                  agenticServiceBlockedMessage(kimiGateService),
-                  state
-                )
-                continue
-              }
-              if (kimiGateService && nativePreflight.kind === 'allow') {
-                auditService.recordAutomaticApprovalDecision(
-                  'kimi',
-                  route,
-                  kimiGateService,
-                  workspacePathForKimiApproval,
-                  {
-                    method: 'request/ApprovalRequest',
-                    title: approvalTitle,
-                    body: approvalBody,
-                    preview: approvalPreview
-                  },
-                  'autoAllow',
-                  nativePreflight.reason,
-                  nativePreflight.scope,
-                  { policy: nativePreflight.policy, transport: 'kimi-wire' }
-                )
-                respondToKimiWireRequest(child, message.id, {
-                  request_id: message.params?.payload?.id || message.id,
-                  response:
-                    nativePreflight.scope === 'session' || nativePreflight.scope === 'workspace'
-                      ? 'approve_for_session'
-                      : 'approve'
-                })
-                continue
-              }
-              approvalService?.registerKimi(approvalId, {
-                child,
-                rpcId: message.id,
-                params: message.params,
-                service: kimiGateService || undefined,
-                workspacePath: workspacePathForKimiApproval,
-                runId: route.appRunId,
-                allowedActions: actions,
-                externalPathDetection
-              })
-              runManager.registerApproval(route.appRunId, approvalId)
-              scheduleApprovalTimeout({
-                approvalId,
-                provider: 'kimi',
-                route,
-                kind: 'request/ApprovalRequest'
-              })
-              const approvalPayload = {
-                provider: 'kimi',
-                appRunId: route.appRunId,
-                appChatId: route.appChatId,
-                id: approvalId,
-                approvalId,
-                requestId: message.id,
-                method: 'request/ApprovalRequest',
-                params: message.params,
-                title: approvalTitle,
-                body: approvalBody,
-                actions,
-                preview: approvalPreview
-              }
-              appendDurableRunEventForRoute(
-                'kimi',
-                route,
-                'approval_request',
-                'control',
-                approvalTitle,
-                approvalPayload
-              )
-              // 1.0.4-AR3 — pass the resolved agentic-service tag so
-              // Kimi wire-protocol ledger rows are filterable by
-              // service (shellCommands / fileChanges / mcpTools).
-              // `null` from the classifier falls through to undefined,
-              // matching pre-AR3 behavior for unknown tools.
-              recordApprovalLedgerRequest('kimi', route, approvalPayload, {
-                ...(kimiGateService ? { service: kimiGateService } : {}),
-                metadata: {
-                  requestType,
-                  transport: 'kimi-wire',
-                  ...(nativePreflight.kind === 'ask' ? { policy: nativePreflight.policy } : {})
-                }
-              })
-              safeSendToSender(event.sender, 'agent-approval-request', approvalPayload)
-              // Fan out a wake-push to any paired iOS device. Kimi's
-              // payload.description is the cleanest user-facing summary;
-              // fall back to action name or a generic phrase.
-              notifyPairedDevicesOfApproval({
-                approvalId,
-                workspaceId: workspaceIdForApprovalPush(
-                  payload.scope === 'global' ? undefined : payload.workspace
-                ),
-                // `appChatId` is optional on AgentRunRoute; fall back to the
-                // run id and finally the approval id so the push always has
-                // a routable identifier.
-                threadId: route.appChatId ?? route.appRunId ?? approvalId,
-                summary: externalPathDetection
-                  ? approvalTitle
-                  : message.params?.payload?.description ||
-                    message.params?.payload?.action ||
-                    'Kimi is requesting permission to continue.'
-              })
-            } else if (requestType === 'QuestionRequest') {
-              respondToKimiWireRequest(child, message.id, {
-                response: 'User input is not available in this non-interactive run.'
-              })
-            } else {
-              respondToKimiWireRequest(child, message.id, {
-                tool_call_id: message.params?.payload?.id,
-                return_value: {
-                  is_error: true,
-                  output: '',
-                  message: 'External app tools are not wired in v1.',
-                  display: []
-                }
-              })
-            }
-            continue
-          }
-          handleCliProviderJsonEvent(state, message)
-        } catch {
-          sendAgentCompatLine(
-            event.sender,
-            'kimi',
-            { type: 'content', text: line + '\n', provider: 'kimi', fallback: false },
-            state
-          )
-        }
-      }
-    })
-
-    child.stderr?.on('data', (chunk) => {
-      sendAgentCompatError(event.sender, 'kimi', chunk.toString(), state)
-    })
-
-    child.on('error', (error) => {
-      if (settled) return
-      settled = true
-      clearTimeout(timeout)
-      if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      if (promptSent) {
-        state.completed = true
-        state.terminalResultFailed = true
-        sendAgentCompatError(event.sender, 'kimi', error.message, state)
-        sendAgentCompatLine(
-          event.sender,
-          'kimi',
-          {
-            type: 'result',
-            status: 'failed',
-            stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-            provider: 'kimi',
-            providerThreadId: state.providerSessionId || undefined,
-            fallback: false
-          },
-          state
-        )
-        emitKimiExit(1)
-        runManager.finish(route.appRunId, 'failed')
-        finishWire(true)
-        return
-      }
-      runManager.update(route.appRunId!, { process: undefined })
-      finishWire(false)
-    })
-
-    child.on('close', (code) => {
-      const decision = decideKimiWireClose({
-        settled,
-        promptSent,
-        stateCompleted: state.completed,
-        exitAlreadyEmitted: exitSent,
-        code
-      })
-      if (decision.ignore) return
-      clearTimeout(timeout)
-      if (cliProviderProcesses.get('kimi') === child) cliProviderProcesses.delete('kimi')
-      const terminalStatus = resolveKimiWireTerminalStatus(
-        decision.terminalStatus,
-        {
-          ...(state.deferredTerminalStatus
-            ? { status: state.deferredTerminalStatus }
-            : {}),
-          conflict: state.deferredTerminalConflict ?? false
-        }
-      )
-      if (terminalStatus) {
-        state.completed = true
-        if (state.deferredTerminalConflict) {
-          sendAgentCompatError(
-            event.sender,
-            'kimi',
-            'Kimi reported conflicting terminal statuses before the Wire transport closed.',
-            state
-          )
-        }
-        sendAgentCompatLine(
-          event.sender,
-          'kimi',
-          {
-            type: 'result',
-            status:
-              terminalStatus === 'completed'
-                ? 'success'
-                : terminalStatus === 'cancelled'
-                  ? 'cancelled'
-                  : 'failed',
-            stats: { ...(state.tokenUsage || {}), duration_ms: Date.now() - state.startedAt },
-            provider: 'kimi',
-            providerThreadId: state.providerSessionId || undefined,
-            fallback: false
-          },
-          state
-        )
-        emitKimiExit(
-          terminalStatus === 'completed'
-            ? code === null
-              ? 0
-              : code
-            : terminalStatus === 'cancelled'
-              ? 130
-              : code === null || code === 0
-                ? 1
-                : code
-        )
-        runManager.finish(route.appRunId, terminalStatus)
-      } else {
-        runManager.update(route.appRunId!, { process: undefined })
-      }
-      settled = true
-      finishWire(decision.resolveWire)
-    })
-
-    child.stdin?.write(
-      JSON.stringify({
-        jsonrpc: '2.0',
-        id: initializeId,
-        method: 'initialize',
-        params: {
-          protocol_version: wireProtocol.protocolVersion,
-          client: { name: 'TaskWraith', version: app.getVersion() },
-          capabilities: { supports_question: false, supports_plan_mode: true }
-        }
-      }) + '\n'
-    )
-  })
 }
 
 /** Per-run isolated KIMI_CODE_HOME dir path for legacy/non-chat ACP probes. */
@@ -18386,19 +17156,24 @@ const kimiHomeFsAdapter: KimiHomeFs = {
     }
   },
   rm: (path) => fs.rm(path, { recursive: true, force: true }),
-  join: (...parts) => join(...parts)
+  join: (...parts) => join(...parts),
+  readdir: (path) => fs.readdir(path),
+  lstat: (path) => fs.lstat(path),
+  realpath: (path) => fs.realpath(path),
+  acquireOAuthCredentialLease: acquireKimiOAuthCredentialLease
 }
 
-/** node fs adapter for the ACP client's workspace-authority fs handlers. */
-const kimiAcpFsAdapter: KimiAcpFs = {
-  readTextFile: (path) => fs.readFile(path, 'utf8'),
-  writeTextFile: (path, content) => fs.writeFile(path, content, { encoding: 'utf8' }),
-  resolve: (path) => resolve(path),
-  relative: (from, to) => relative(from, to),
+/** Node fs adapter for the TaskWraith-owned per-run synthetic Kimi cwd. */
+const kimiPrivateCwdFsAdapter: KimiPrivateCwdFs = {
+  mkdir: async (path) => {
+    await fs.mkdir(path, { recursive: true, mode: 0o700 })
+  },
+  mkdtemp: (prefix) => fs.mkdtemp(prefix),
+  chmod: (path, mode) => fs.chmod(path, mode),
+  lstat: (path) => fs.lstat(path),
   realpath: (path) => fs.realpath(path),
-  dirname: (path) => dirname(path),
-  basename: (path) => basename(path),
-  join: (...parts) => join(...parts)
+  readdir: (path) => fs.readdir(path),
+  rm: (path) => fs.rm(path, { recursive: true, force: true })
 }
 
 /** Stream an ACP run event from a Kimi ACP turn to the renderer. Mirrors
@@ -18422,7 +17197,8 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
         timestamp: new Date().toISOString(),
         provider: 'kimi',
         fallback: false,
-        kimi_acp_native_session: true
+        kimi_acp_native_session: true,
+        kimi_acp_posture_version: KIMI_ACP_PRODUCTION_POSTURE_VERSION
       },
       state
     )
@@ -18430,12 +17206,15 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
     state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
-    sendAgentCompatLine(state.sender, 'kimi', { type: 'content', text: evt.text, provider: 'kimi' }, state)
+    sendAgentCompatLine(
+      state.sender,
+      'kimi',
+      { type: 'content', text: evt.text, provider: 'kimi' },
+      state
+    )
   } else if (evt.type === 'thinking' && evt.text) {
     state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
-    queueKimiThinkingChunk(state, evt.text, (text) =>
-      emitCliProviderThinkingEvent(state, text)
-    )
+    queueKimiThinkingChunk(state, evt.text, (text) => emitCliProviderThinkingEvent(state, text))
   } else if (evt.type === 'tool_use') {
     state.kimiUsageOutputChars =
       (state.kimiUsageOutputChars || 0) +
@@ -18476,68 +17255,20 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
 }
 
 /**
- * Kimi Code ACP provider (migration slice 4, gated behind kimiAcpEnabled()).
- * Runs a full-tool Kimi seat inside a seat-isolated KIMI_CODE_HOME (curated
- * config: telemetry off, allow-rules stripped, FetchURL/WebSearch/AgentSwarm
- * deny wall, seeded credential, empty plugins/skills) and drives it over ACP
- * with client fs workspace authority + ledger-mediated Bash/MCP approvals.
- * Runtime secrets remain per-process; only Kimi's native session state persists
- * for ACP session/resume. Containment was live-verified on kimi-code 0.24.1 and
- * the resume path on 0.26.0.
+ * Kimi Code ACP provider (gated behind kimiAcpEnabled()). The provider process
+ * and ACP session both receive a TaskWraith-owned empty synthetic cwd, advertise
+ * no client fs capability, and statically deny every native fs/exec/egress/
+ * fan-out tool. The real workspace is reachable only through the mandatory
+ * governed TaskWraith HTTP MCP gateway. Durable native sessions live in the v2
+ * seat-home namespace; v1 real-workspace-cwd sessions are never resumed.
  */
 async function runKimiAcpProvider(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload,
-  binaryPath: string
+  admittedRuntime: AdmittedKimiRuntime
 ): Promise<void> {
   const route = routeWithRunId('kimi', payload)
   const graphContextIsolated = isExecutionGraphIsolatedPayload(payload)
-
-  let kimiCwd: string
-  try {
-    kimiCwd = payload.scope === 'global' ? globalKimiCwd() : payload.workspace || os.homedir()
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    sendAgentCompatError(event.sender, 'kimi', message, route)
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi',
-      setupRequired: true
-    })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
-    return
-  }
-
-  // B3 (dossier): a project-level `.kimi-code/mcp.json` / `.kimi-code/plugins`
-  // in the workspace is loaded by Kimi Code from the ACP session cwd BEFORE any
-  // prompt or permission check — outside the isolated home, the deny wall, and
-  // the HTTP-only MCP surface — and executes arbitrary stdio servers (verified
-  // RCE). The session cwd must be the real workspace for the seat to function,
-  // so it cannot be relocated; a workspace carrying such config cannot be
-  // sandboxed. Refuse the run fail-closed BEFORE building the home or spawning.
-  if (payload.scope !== 'global' && payload.workspace) {
-    const unsafeProjectConfig = await findUnsafeWorkspaceKimiConfig(
-      payload.workspace,
-      kimiHomeFsAdapter
-    )
-    if (unsafeProjectConfig) {
-      const message = buildKimiWorkspaceConfigRefusalMessage(unsafeProjectConfig)
-      sendAgentCompatError(event.sender, 'kimi', message, route)
-      sendAgentCompatLine(event.sender, 'kimi', {
-        type: 'result',
-        status: 'failed',
-        stats: {},
-        provider: 'kimi',
-        setupRequired: true
-      })
-      sendAgentCompatExit(event.sender, 'kimi', 1, route)
-      runManager.finish(route.appRunId, 'failed')
-      return
-    }
-  }
 
   const model = normalizeCliProviderModel('kimi', payload.model)
   const kimiThinkingConfig = kimiAcpThinkingConfigValue(model, payload.reasoningEffort)
@@ -18546,9 +17277,14 @@ async function runKimiAcpProvider(
   // Build the isolated home BEFORE registering the run so a fail-closed
   // not-authenticated / build error surfaces as setup-required without a
   // half-started run.
+  const preserveKimiSessionState = !graphContextIsolated && Boolean(payload.appChatId)
+  const kimiHomeDir = kimiAcpSeatHomeDir(payload)
   const home = await prepareKimiIsolatedHome({
     runId: route.appRunId || 'unknown',
-    homeDir: kimiAcpSeatHomeDir(payload),
+    homeDir: kimiHomeDir,
+    boundaryRoot: preserveKimiSessionState
+      ? kimiAcpSeatStateRoot(app.getPath('userData'))
+      : kimiHomeDir,
     sourceHome: join(os.homedir(), '.kimi-code'),
     // Both current models advertise always_thinking. K3 additionally accepts
     // Low/High/Max, applied to fresh sessions through the isolated config and
@@ -18556,7 +17292,8 @@ async function runKimiAcpProvider(
     thinkingEnabled: true,
     ...(kimiThinkingConfig === 'on' ? {} : { thinkingEffort: kimiThinkingConfig }),
     selectedModelAlias: kimiModelConfig,
-    preserveSessionState: !graphContextIsolated && Boolean(payload.appChatId),
+    preserveSessionState: preserveKimiSessionState,
+    strictCleanup: preserveKimiSessionState,
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) {
@@ -18573,6 +17310,67 @@ async function runKimiAcpProvider(
     return
   }
 
+  let privateCwd: KimiPrivateRunCwd
+  try {
+    privateCwd = await prepareKimiPrivateRunCwd({
+      isolatedHome: home.home,
+      fs: kimiPrivateCwdFsAdapter
+    })
+  } catch (error) {
+    await home.cleanup()
+    const message = `Kimi's private runtime cwd could not be created; the provider was not started. ${
+      error instanceof Error ? error.message : String(error)
+    }`
+    sendAgentCompatError(event.sender, 'kimi', message, route)
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi'
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+
+  const persistedSeat = providerSeatStoreTarget(
+    payload.appChatId,
+    'kimi',
+    payload.ensembleRun?.participantId
+  )
+  const persistedPostureVersion = (() => {
+    if (!persistedSeat || persistedSeat.linkedProviderSessionId !== payload.providerSessionId) {
+      return undefined
+    }
+    if (persistedSeat.participantId) {
+      return persistedSeat.chat.ensemble?.participants.find(
+        (participant) => participant.id === persistedSeat.participantId
+      )?.kimiAcpPostureVersion
+    }
+    return persistedSeat.chat.providerMetadata?.kimiAcpPostureVersion
+  })()
+  const productionSession = buildKimiProductionSessionPlan({
+    prompt: payload.prompt,
+    resumeFallbackPrompt: payload.resumeFallbackPrompt,
+    requestedResumeSessionId: payload.providerSessionId,
+    persistedPostureVersion
+  })
+  if (productionSession.legacyResumeRejected && payload.prompt.trim() === '/compact') {
+    await Promise.allSettled([privateCwd.cleanup(), home.cleanup()])
+    const message =
+      'This Kimi session predates the synthetic-cwd containment boundary and cannot be resumed for native compaction. Start a new Kimi turn first.'
+    sendAgentCompatError(event.sender, 'kimi', message, route)
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'result',
+      status: 'failed',
+      stats: {},
+      provider: 'kimi'
+    })
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+
   const state: CliProviderStreamState = {
     provider: 'kimi',
     sender: event.sender,
@@ -18581,9 +17379,9 @@ async function runKimiAcpProvider(
     fallback: false,
     completed: false,
     assistantText: '',
-    kimiUsageInputChars: payload.prompt.length,
+    kimiUsageInputChars: productionSession.prompt.length,
     kimiUsageOutputChars: 0,
-    providerSessionId: payload.providerSessionId || null,
+    providerSessionId: productionSession.resumeSessionId,
     approvalMode: payload.approvalMode,
     workflowMode: payload.workflowMode,
     sessionTrust: Boolean(payload.sessionTrust),
@@ -18595,16 +17393,34 @@ async function runKimiAcpProvider(
     ensembleRun: payload.ensembleRun,
     ...route
   }
-  registerRunSession(
+  const registeredSession = registerRunSession(
     'kimi',
     event.sender,
     route,
     payload.scope === 'global' ? undefined : payload.workspace,
     state,
-    payload.providerSessionId || null
+    productionSession.resumeSessionId
   )
+  if (!registeredSession) {
+    // History clear or an exact terminal claim can land after the outer Kimi
+    // dispatch reservation but before contained transport admission. Keep this
+    // second registration load-bearing and release credentials/cwd without
+    // starting the gateway or provider.
+    const cleanup = createJoinedKimiCleanup(
+      () => privateCwd.cleanup(),
+      () => home.cleanup()
+    )
+    try {
+      await cleanup()
+    } catch {
+      await cleanup().catch(() => undefined)
+    }
+    return
+  }
   const kimiNativeCompactionStartedAt =
-    payload.prompt.trim() === '/compact' && payload.providerSessionId ? Date.now() : null
+    productionSession.prompt.trim() === '/compact' && productionSession.resumeSessionId
+      ? Date.now()
+      : null
   if (kimiNativeCompactionStartedAt !== null) {
     emitContextCompactionCompatLine(
       event.sender,
@@ -18614,59 +17430,18 @@ async function runKimiAcpProvider(
     )
   }
 
-  // The fs handlers serve the workspace plus any signed external path grants.
-  const fsRoots = [
-    ...(payload.scope === 'global' || !payload.workspace ? [] : [payload.workspace]),
-    ...(payload.externalPathGrants || []).map((grant) => grant.path).filter(Boolean)
-  ]
-
-  // Advertise the TaskWraith gateway to this Kimi session over a per-run
-  // localhost HTTP MCP bridge. Kimi ACP rejects stdio MCP servers (http/sse
-  // only), so unlike every other provider Kimi reaches the SAME in-process
-  // gateway (handleMcpJsonRpcMessage → broker → executeGeminiMcpTool) through a
-  // hand-rolled JSON HTTP endpoint. The isolated home keeps this the ONLY MCP
-  // Kimi sees. Best-effort: a bridge-start failure degrades to Kimi's built-in
-  // tools rather than failing the run.
-  let kimiMcpBridge: KimiHttpMcpBridgeHandle | null = null
-  let kimiMcpServers: unknown[] = []
-  if (payload.taskWraithMcpAdvertised !== false) {
-    try {
-      kimiMcpBridge = await startKimiHttpMcpBridge({
-        dispatch: createKimiMcpDispatch({
-          route,
-          workspace: payload.scope === 'global' ? undefined : payload.workspace,
-          appVersion: app.getVersion(),
-          brokerToken: geminiMcpBrokerToken,
-          getMcpToolDefinitions: () => mcpToolDefinitions(),
-          dispatchBrokerRequest: (request) =>
-            mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
-        })
-      })
-      kimiMcpServers = [
-        {
-          name: 'taskwraith',
-          type: 'http',
-          url: kimiMcpBridge.url,
-          headers: [{ name: kimiMcpBridge.headerName, value: kimiMcpBridge.headerValue }]
-        }
-      ]
-    } catch (error) {
-      sendAgentCompatLine(event.sender, 'kimi', {
-        type: 'provider_diagnostic',
-        provider: 'kimi',
-        message: `TaskWraith MCP tools are unavailable for this Kimi run (${
-          error instanceof Error ? error.message : String(error)
-        }); continuing with Kimi's built-in tools only.`
-      })
-    }
+  if (productionSession.legacyResumeRejected) {
+    sendAgentCompatLine(event.sender, 'kimi', {
+      type: 'provider_diagnostic',
+      provider: 'kimi',
+      message:
+        'The linked Kimi session was born before the synthetic-cwd containment boundary. TaskWraith started a new safe session with full authorized context instead of resuming it.'
+    })
   }
 
-  // Per-tool approval policy matching the stdio providers: read-only / safe
-  // tools auto-allow (read-only MCP + capability gateway, read-only shell,
-  // read/search native kinds), mutating tools are gated by the ledger on a
-  // write-capable seat and denied on a plan / read-only seat. Egress + sub-agent
-  // fan-out never reach the client (denied by the isolated-home deny wall); the
-  // per-instrument host gate for mutating MCP still applies inside the broker.
+  // Per-tool approval policy for the gateway MCP surface. Every native Kimi
+  // fs/exec/egress/fan-out tool is denied statically by the isolated profile;
+  // any mutating gateway request still crosses the signed host ledger.
   const kimiWriteCapable = payload.approvalMode !== 'plan'
   const kimiPermissionHandler = async (request: AcpPermissionRequest) => {
     const decision = classifyKimiToolPermission(request, {
@@ -18692,174 +17467,274 @@ async function runKimiAcpProvider(
     return allowed ? 'allow' : 'deny'
   }
 
-  let teardownDone = false
-  const teardown = async (): Promise<void> => {
-    if (teardownDone) return
-    teardownDone = true
-    await Promise.all([home.cleanup(), kimiMcpBridge ? kimiMcpBridge.close() : Promise.resolve()])
-  }
-
+  // Publish a joinable authority before gateway admission can reach the Kimi
+  // spawn callback. `runKimiAcpTurn` exposes the child synchronously through
+  // onProcess, so tracking only after launch returns would leave a deletion
+  // window with a live process but no exact transport operation.
+  const kimiTransportClose = createProviderTransportCloseOperation()
+  const kimiTransportOperation = providerTransportOperations.track(
+    route.appRunId!,
+    kimiTransportClose.operation
+  )
   let handle: ReturnType<typeof runKimiAcpTurn>
   try {
-    handle = runKimiAcpTurn({
-      prompt: payload.prompt,
-      resumeSessionId: payload.providerSessionId,
-      resumeFallbackPrompt: payload.resumeFallbackPrompt,
-      // `/compact` only makes sense against the linked native history. Never
-      // turn a stale compaction target into a new empty session.
-      allowResumeFallback: payload.prompt.trim() !== '/compact',
-      resumeConfigOptions: [
-        {
-          configId: 'model',
-          value: kimiModelConfig
-        },
-        {
-          configId: 'thinking',
-          value: kimiThinkingConfig
-        }
-      ],
-      cwd: kimiCwd,
-      fsRoots,
-      fs: kimiAcpFsAdapter,
-      mcpServers: kimiMcpServers,
-      spawnProcess: () => {
-        // Build the CLI model arg the same way every other Kimi path does:
-        // kimiCliModelArg omits `--model` for the default (kimi-code uses its
-        // config default_model) and maps the Fast/standard service tier to the
-        // real kimi-for-coding[-highspeed] alias. Passing the display id directly
-        // would send a non-existent CLI alias and never engage Fast mode. The
-        // root `--model` flag precedes the `acp` subcommand.
-        const modelArgs: string[] = []
-        appendKimiModelArgs(modelArgs, model, payload.serviceTier)
-        const args = [...modelArgs, 'acp']
-        return spawn(binaryPath, args, {
-          cwd: kimiCwd,
-          env: createCliEnv(
-            {
-              ...home.env,
-              TASKWRAITH_PARENT_PROVIDER: 'kimi',
-              TASKWRAITH_RUN_ID: route.appRunId || '',
-              TASKWRAITH_CHAT_ID: route.appChatId || ''
-            },
-            binaryPath
-          )
-        }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+    const launched = await launchKimiProductionAcp({
+      taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised !== false,
+      privateCwd,
+      assertRuntimeReadyForSpawn: async () => {
+        const binaryPath = await admittedRuntime.assertReadyForSpawn()
+        // Gateway/cwd/runtime admission all await. A destructive-history
+        // transaction can terminalize this exact run during those awaits, so
+        // re-check its promoted persistence authority after attestation. The
+        // synchronous launch callback repeats this check after the await
+        // continuation and owns the final no-spawn boundary.
+        assertKimiSpawnAuthority(() => providerRunPersistenceAuthorized('kimi', state))
+        return binaryPath
       },
-      onProcess: (child) => {
-        const proc = child as unknown as ChildProcess
-        runManager.attachProcess(route.appRunId!, proc)
-        cliProviderProcesses.set('kimi', proc)
-      },
-      onPermissionRequest: kimiPermissionHandler,
-      onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
-      onRawFrame: (direction, message) => {
-        const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
-        if (flag === '1' || flag === 'true' || flag === 'yes') {
-          try {
-            process.stderr.write(
-              `[kimi-acp] ${direction} ${JSON.stringify(message).slice(0, 300)}\n`
-            )
-          } catch {
-            /* ignore */
-          }
-        }
-      },
-      onClose: (code, turnComplete, terminalStatus) => {
-        void teardown()
-        if (!state.completed) {
-          flushKimiAcpThinking(state)
-          state.completed = true
-          const status = turnComplete ? terminalStatus || 'success' : 'failed'
-          const transportFailed = typeof code === 'number' && code !== 0
-          const failed =
-            transportFailed ||
-            !turnComplete ||
-            (status !== 'success' && status !== 'end_turn')
-          const stats = estimateKimiAcpTokenUsage({
-            inputChars: state.kimiUsageInputChars || 0,
-            outputChars: state.kimiUsageOutputChars || 0,
-            model,
-            serviceTier: payload.serviceTier,
-            durationMs: Date.now() - state.startedAt,
-            totalTokenLimit: home.modelContextWindow
+      startGateway: async () => {
+        const bridge = await startKimiHttpMcpBridge({
+          dispatch: createKimiMcpDispatch({
+            route,
+            workspace: payload.scope === 'global' ? undefined : payload.workspace,
+            appVersion: app.getVersion(),
+            brokerToken: geminiMcpBrokerToken,
+            getMcpToolDefinitions: () => mcpToolDefinitions(),
+            dispatchBrokerRequest: (request) =>
+              mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
           })
-          state.tokenUsage = stats
-          let usageRecorded = false
-          if (!state.ensembleRun && route.appChatId && route.appRunId) {
-            const chat = AppStore.getChat(route.appChatId)
-            if (chat) {
+        })
+        return {
+          server: {
+            name: 'taskwraith',
+            type: 'http',
+            url: bridge.url,
+            headers: [{ name: bridge.headerName, value: bridge.headerValue }]
+          },
+          close: () => bridge.close()
+        }
+      },
+      snapshot: {
+        appVersion: app.getVersion(),
+        prompt: payload.prompt,
+        resumeFallbackPrompt: payload.resumeFallbackPrompt,
+        requestedResumeSessionId: payload.providerSessionId,
+        persistedPostureVersion
+      },
+      launch: (production, transportCleanup, admittedBinaryPath) => {
+        // `launchKimiProductionAcp` resumes from an await before invoking this
+        // callback. Repeat the exact check as its first synchronous statement;
+        // no microtask can invalidate authority between here and child spawn.
+        assertKimiSpawnAuthority(() => providerRunPersistenceAuthorized('kimi', state))
+        const teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
+        return runKimiAcpTurn({
+          prompt: production.session.prompt,
+          resumeSessionId: production.session.resumeSessionId,
+          resumeFallbackPrompt: payload.resumeFallbackPrompt,
+          // `/compact` only makes sense against the linked native history. Never
+          // turn a stale compaction target into a new empty session.
+          allowResumeFallback: production.session.prompt.trim() !== '/compact',
+          resumeConfigOptions: [
+            {
+              configId: 'model',
+              value: kimiModelConfig
+            },
+            {
+              configId: 'thinking',
+              value: kimiThinkingConfig
+            }
+          ],
+          cwd: production.cwd,
+          initializeParams: production.initializeParams,
+          mcpServers: production.mcpServers,
+          spawnProcess: () => {
+            // Build the CLI model arg the same way every other Kimi path does:
+            // kimiCliModelArg omits `--model` for the default (kimi-code uses its
+            // config default_model) and maps the Fast/standard service tier to the
+            // real kimi-for-coding[-highspeed] alias. Passing the display id directly
+            // would send a non-existent CLI alias and never engage Fast mode. The
+            // root `--model` flag precedes the `acp` subcommand.
+            const modelArgs: string[] = []
+            appendKimiModelArgs(modelArgs, model, payload.serviceTier)
+            const args = [...modelArgs, 'acp']
+            return spawn(admittedBinaryPath, args, {
+              cwd: production.cwd,
+              env: buildKimiContainedProcessEnv(
+                createCliEnv(
+                  {
+                    ...home.env,
+                    HOME: home.home,
+                    USERPROFILE: home.home,
+                    TASKWRAITH_PARENT_PROVIDER: 'kimi',
+                    TASKWRAITH_RUN_ID: route.appRunId || '',
+                    TASKWRAITH_CHAT_ID: route.appChatId || ''
+                  },
+                  admittedBinaryPath
+                ),
+                production.cwd
+              )
+            }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+          },
+          onProcess: (child) => {
+            const proc = child as unknown as ChildProcess
+            runManager.attachProcess(route.appRunId!, proc)
+            cliProviderProcesses.set('kimi', proc)
+          },
+          beforeInitialize: async (child) => {
+            const proc = child as unknown as ChildProcess
+            await home.noteProviderProcess(proc.pid || 0)
+          },
+          onPermissionRequest: kimiPermissionHandler,
+          onEvent: (evt) => applyKimiAcpRunEvent(state, evt as NormalizedGrokRunEvent),
+          onRawFrame: (direction, message) => {
+            const flag = String(process.env.TASKWRAITH_KIMI_ACP_DEBUG || '').toLowerCase()
+            if (flag === '1' || flag === 'true' || flag === 'yes') {
               try {
-                AppStore.recordUsage({
-                  provider: 'kimi',
-                  workspaceId:
-                    chat.workspaceId ||
-                    (chat.scope === 'global' ? '__taskwraith_global_chats__' : ''),
-                  chatId: route.appChatId,
-                  runId: route.appRunId,
-                  usageKind: 'run',
-                  model,
-                  inputTokens: stats.input_tokens,
-                  outputTokens: stats.output_tokens,
-                  totalTokens: stats.total_tokens,
-                  tokenCountConfidence: 'estimated',
-                  costRateModel: stats._taskwraith_cost_rate_model,
-                  durationMs: stats.duration_ms,
-                  promptText: payload.prompt,
-                  responseText: state.assistantText
-                })
-                usageRecorded = true
+                process.stderr.write(formatKimiProductionAcpDebugFrame(direction, message))
               } catch {
-                // Renderer recording remains the fallback when persistence fails.
+                /* ignore */
+              }
+            }
+          },
+          onClose: async (code, turnComplete, terminalStatus) => {
+            // The provider slot must remain live until credential/config/cwd cleanup
+            // finishes. Releasing it earlier lets a back-to-back turn materialize a
+            // new durable seat while the old teardown is still deleting that home.
+            if (state.completed) return
+            state.completed = true
+            let finishStatus: 'failed' | 'completed' = 'failed'
+            try {
+              await finalizeKimiRunAfterCleanup({
+                cleanup: teardown,
+                projectTerminal: (cleanupError) => {
+                  flushKimiAcpThinking(state)
+                  const status = turnComplete ? terminalStatus || 'success' : 'failed'
+                  const transportFailed = typeof code === 'number' && code !== 0
+                  const failed =
+                    Boolean(cleanupError) ||
+                    transportFailed ||
+                    !turnComplete ||
+                    (status !== 'success' && status !== 'end_turn')
+                  finishStatus = failed ? 'failed' : 'completed'
+                  if (cleanupError) {
+                    sendAgentCompatError(
+                      event.sender,
+                      'kimi',
+                      `Kimi terminal cleanup failed after retry: ${
+                        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+                      }`,
+                      state
+                    )
+                  }
+                  const stats = estimateKimiAcpTokenUsage({
+                    inputChars: state.kimiUsageInputChars || 0,
+                    outputChars: state.kimiUsageOutputChars || 0,
+                    model,
+                    serviceTier: payload.serviceTier,
+                    durationMs: Date.now() - state.startedAt,
+                    totalTokenLimit: home.modelContextWindow
+                  })
+                  state.tokenUsage = stats
+                  let usageRecorded = false
+                  if (!state.ensembleRun && route.appChatId && route.appRunId) {
+                    const chat = AppStore.getChat(route.appChatId)
+                    if (chat) {
+                      try {
+                        AppStore.recordUsage({
+                          provider: 'kimi',
+                          workspaceId:
+                            chat.workspaceId ||
+                            (chat.scope === 'global' ? '__taskwraith_global_chats__' : ''),
+                          chatId: route.appChatId,
+                          runId: route.appRunId,
+                          usageKind: 'run',
+                          model,
+                          inputTokens: stats.input_tokens,
+                          outputTokens: stats.output_tokens,
+                          totalTokens: stats.total_tokens,
+                          tokenCountConfidence: 'estimated',
+                          costRateModel: stats._taskwraith_cost_rate_model,
+                          durationMs: stats.duration_ms,
+                          promptText: production.session.prompt,
+                          responseText: state.assistantText
+                        })
+                        usageRecorded = true
+                      } catch {
+                        // Renderer recording remains the fallback when persistence fails.
+                      }
+                    }
+                  }
+                  if (usageRecorded) {
+                    stats._taskwraith_usage_recorded = true
+                  }
+                  if (kimiNativeCompactionStartedAt !== null) {
+                    emitContextCompactionCompatLine(
+                      event.sender,
+                      'kimi',
+                      {
+                        kind: failed ? 'failed' : 'completed',
+                        telemetry: {
+                          provider: 'kimi',
+                          trigger: 'manual',
+                          durationMs: Date.now() - kimiNativeCompactionStartedAt,
+                          ...(failed
+                            ? { error: 'Kimi Code did not complete native compaction.' }
+                            : {})
+                        }
+                      },
+                      state
+                    )
+                  }
+                  sendAgentCompatLine(
+                    event.sender,
+                    'kimi',
+                    {
+                      type: 'result',
+                      status: failed ? 'failed' : 'completed',
+                      stats,
+                      provider: 'kimi',
+                      session_id: state.providerSessionId || ''
+                    },
+                    state
+                  )
+                  sendAgentCompatExit(
+                    event.sender,
+                    'kimi',
+                    failed ? (transportFailed ? code : 1) : 0,
+                    state
+                  )
+                },
+                finish: () => runManager.finish(route.appRunId, finishStatus)
+              })
+            } catch (error) {
+              try {
+                sendAgentCompatError(
+                  event.sender,
+                  'kimi',
+                  `Kimi terminal cleanup/projection failed: ${
+                    error instanceof Error ? error.message : String(error)
+                  }`,
+                  state
+                )
+              } catch {
+                /* terminal finish already ran in finally */
               }
             }
           }
-          if (usageRecorded) {
-            stats._taskwraith_usage_recorded = true
-          }
-          if (kimiNativeCompactionStartedAt !== null) {
-            emitContextCompactionCompatLine(
-              event.sender,
-              'kimi',
-              {
-                kind: failed ? 'failed' : 'completed',
-                telemetry: {
-                  provider: 'kimi',
-                  trigger: 'manual',
-                  durationMs: Date.now() - kimiNativeCompactionStartedAt,
-                  ...(failed ? { error: 'Kimi Code did not complete native compaction.' } : {})
-                }
-              },
-              state
-            )
-          }
-          sendAgentCompatLine(
-            event.sender,
-            'kimi',
-            {
-              type: 'result',
-              status: failed ? 'failed' : 'completed',
-              stats,
-              provider: 'kimi',
-              session_id: state.providerSessionId || ''
-            },
-            state
-          )
-          sendAgentCompatExit(
-            event.sender,
-            'kimi',
-            failed ? (transportFailed ? code : 1) : 0,
-            state
-          )
-          runManager.finish(route.appRunId, failed ? 'failed' : 'completed')
-        }
+        })
       }
     })
+    handle = launched.handle
+    runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
+    // This adapter invocation and the registered transport operation remain
+    // live through child close, gateway/private-cwd/home/OAuth cleanup, usage
+    // projection, terminal transcript publication, and RunManager finish.
+    await handle.closed
   } catch (error) {
     // A synchronous throw before the turn's onClose is wired (e.g. spawnProcess
     // throwing RuntimeProfileEnvironmentResolutionError inside runAcpTurn) would
     // otherwise leak the isolated home — a 0600 copy of the real OAuth token.
     // Tear it down and surface the failure.
-    await teardown()
+    await home.cleanup().catch(() => undefined)
     sendAgentCompatError(
       event.sender,
       'kimi',
@@ -18875,25 +17750,13 @@ async function runKimiAcpProvider(
     sendAgentCompatExit(event.sender, 'kimi', 1, route)
     runManager.finish(route.appRunId, 'failed')
     return
+  } finally {
+    // Normal flow reaches this point only after handle.closed; pre-spawn
+    // failures reach it after launchKimiProductionAcp and home cleanup. Either
+    // way, a destructive-history receipt cannot precede owned cleanup.
+    kimiTransportClose.markTransportClosed()
+    await kimiTransportOperation
   }
-  runManager.attachAbortController(route.appRunId!, createAcpTurnAbortController(handle))
-}
-
-/** Real-runtime wiring for the pure Kimi generation probe (results are
- *  cached inside the module per binary path+mtime+size). */
-function probeKimiFlavourForBinary(binaryPath: string) {
-  return probeKimiFlavour(binaryPath, {
-    capture: (command, args) =>
-      captureProcessOutput(command, args, undefined, KIMI_FLAVOUR_PROBE_TIMEOUT_MS),
-    statBinary: async (path) => {
-      try {
-        const stats = await fs.stat(path)
-        return { mtimeMs: stats.mtimeMs, size: stats.size }
-      } catch {
-        return null
-      }
-    }
-  })
 }
 
 async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
@@ -18951,182 +17814,68 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
       resolved.error || 'Kimi CLI is not configured.',
       route
     )
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi',
-      setupRequired: true
-    }, route)
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
-    return
-  }
-
-  // Slice 1b/4 of the Kimi Code migration (dossier §4): positively identify
-  // the CLI generation BEFORE any spawn and dispatch by generation. Kimi Code
-  // removed --wire AND renamed --print to -p/--prompt (auto-approve, no
-  // --agent-file sink — dossier B1/B6), so the legacy Wire + print paths must
-  // NEVER reach a kimi-code binary.
-  //   - legacy-wire  → the retained Wire path (bounded deprecation window).
-  //   - kimi-code    → the contained ACP transport when kimiAcpEnabled(), else
-  //                    fail closed as setup-required (the honest 1b gate).
-  //   - unsupported  → fail closed as setup-required.
-  const kimiFlavour = await probeKimiFlavourForBinary(resolved.binaryPath)
-  if (kimiFlavour.flavour === 'kimi-code' && kimiAcpEnabled()) {
-    await runKimiAcpProvider(event, payload, resolved.binaryPath)
-    return
-  }
-  if (kimiFlavour.flavour !== 'legacy-wire') {
-    sendAgentCompatError(
+    sendAgentCompatLine(
       event.sender,
       'kimi',
-      buildKimiFlavourGateMessage(kimiFlavour, resolved.binaryPath),
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'kimi',
+        setupRequired: true
+      },
       route
     )
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi',
-      setupRequired: true
-    }, route)
     sendAgentCompatExit(event.sender, 'kimi', 1, route)
     runManager.finish(route.appRunId, 'failed')
     return
   }
 
-  if (await runKimiWireProvider(event, payload, resolved.binaryPath)) {
-    return
-  }
-
-  const kimiSessionAfterWire = runManager.get(route.appRunId)
-  if (kimiSessionAfterWire && isTerminalRunSessionStatus(kimiSessionAfterWire.status)) return
-
-  if (payload.approvalMode !== 'plan') {
-    sendAgentCompatError(
-      event.sender,
-      'kimi',
-      'Kimi Wire mode did not complete startup. Print-mode fallback is skipped outside Plan/read-only because Kimi print mode is non-interactive and can auto-approve provider tool calls.',
-      route
-    )
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi',
-      fallback: true
-    }, route)
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
-    return
-  }
-
-  const model = normalizeCliProviderModel('kimi', payload.model)
-  // The print-mode fallback also needs a process-isolated TaskWraith bridge.
-  // Resolve it before copying payload.prompt into argv so a failed attachment
-  // can remove gateway claims from the exact bytes sent to Kimi.
-  const kimiMcpReady = await prepareKimiMcpBridgeForRun(event.sender)
-  if (!kimiMcpReady) {
-    payload.taskWraithMcpAdvertised = false
-    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-      advertised: false,
-      coreProfile: false
-    })
-  }
-  let kimiMcpConfigPath: string | null = null
-  let kimiAgentFilePath: string | null = null
-  try {
-    kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
-      runId: route.appRunId || 'unknown',
-      purpose: 'print'
-    })
-    kimiMcpConfigPath = await writeKimiMcpConfigForRun({
-      runId: route.appRunId || 'unknown',
-      purpose: 'print',
-      includeTaskWraith: kimiMcpReady,
-      preserveUserServers: false
-    })
-  } catch (error) {
-    await removeKimiAgentFile(kimiAgentFilePath)
-    await removeKimiMcpConfigFile(kimiMcpConfigPath)
-    const message = `Kimi's isolated broker-only runtime files could not be created; the print-mode fallback was not launched. ${
-      error instanceof Error ? error.message : String(error)
-    }`
-    sendAgentCompatError(event.sender, 'kimi', message, route)
-    sendAgentCompatLine(event.sender, 'kimi', {
-      type: 'result',
-      status: 'failed',
-      stats: {},
-      provider: 'kimi',
-      fallback: true
-    })
-    sendAgentCompatExit(event.sender, 'kimi', 1, route)
-    runManager.finish(route.appRunId, 'failed')
-    return
-  }
-  // `--plan` stays UNCONDITIONAL here — including for recon seats that the
-  // wire path deliberately runs without plan mode (isReconRunPosture). Print
-  // mode is non-interactive and auto-approves Kimi's provider tool calls, so
-  // the plan flag is the only thing making this fallback safe; a recon turn
-  // that degrades to print mode accepts plan-shaped output as the tradeoff.
-  const baseArgs = [
-    '--print',
-    '--plan',
-    '--output-format',
-    'stream-json',
-    '--work-dir',
-    payload.workspace!,
-    '--agent-file',
-    kimiAgentFilePath,
-    '--prompt',
-    payload.prompt
-  ]
-  appendKimiModelArgs(baseArgs, model, payload.serviceTier)
-  appendKimiThinkingArgs(baseArgs, payload.kimiThinking)
-  // 1.0.5-EW43b — Pre-EW43b the Kimi print-mode fallback ignored
-  // `payload.imagePaths` entirely. Wire mode handles attachments
-  // via structured `image_url` objects in the chat-completions
-  // request (line ~7349), but the print-mode CLI fallback is
-  // pure argv — so attachments were silently dropped if Wire mode
-  // failed to start. Kimi CLI is derived from Claude's CLI shape
-  // (same `--image <path>` flag), so we use the same translation
-  // as `buildClaudeCliArgs` does. If Kimi's CLI ever diverges
-  // from Claude's image flag, this is the single site to update.
-  for (const imagePath of payload.imagePaths || []) {
-    if (imagePath && imagePath.trim()) {
-      baseArgs.push('--image', imagePath.trim())
-    }
-  }
-  // External grants remain broker-only in print fallback too.
-  baseArgs.push(...externalPathGrantsToCliAddDirArgs(payload.externalPathGrants))
-  // Same transport-generation fence as the Wire path (slice 5): never resume an
-  // ACP-minted id under the legacy print fallback.
-  const printResumeId = wireResumeSessionId(payload.providerSessionId)
-  if (printResumeId) baseArgs.push('--resume', printResumeId)
-  const args = extendKimiCliArgsWithMcpConfig(baseArgs, kimiMcpConfigPath)
-  const kimiKey = getStoredKimiApiKey()
-  const fallbackRoute = routeWithRunId('kimi', payload)
-  runCliProviderProcess(event, 'kimi', resolved.binaryPath, args, payload, {
-    fallback: true,
-    requireExistingRun: true,
-    warning:
-      'Kimi Wire mode did not complete startup; using print-mode stream-json fallback for this one-shot run.',
-    // Phase I4: belt-and-braces parent-provider env stamp on the
-    // fallback CLI's spawn env. Matches the Wire-mode stamp.
-    extraEnv: {
-      TASKWRAITH_PARENT_PROVIDER: 'kimi',
-      TASKWRAITH_RUN_ID: fallbackRoute.appRunId || '',
-      TASKWRAITH_CHAT_ID: fallbackRoute.appChatId || '',
-      ...(kimiKey ? { MOONSHOT_API_KEY: kimiKey } : {})
-    },
-    onComplete: async () => {
-      await Promise.all([
-        removeKimiMcpConfigFile(kimiMcpConfigPath),
-        removeKimiAgentFile(kimiAgentFilePath)
-      ])
-    }
+  // Hash/platform/capability admission is the first operation allowed to
+  // execute the resolved Kimi path. Its bounded inventory replaces the legacy
+  // flavour probe; Wire and print fallbacks are outside the reviewed ACP scope.
+  const admission = await admitKimiRuntime({
+    binaryPath: resolved.binaryPath,
+    isPackaged: app.isPackaged,
+    environment: process.env
   })
+  if (!admission.admitted || !kimiAcpEnabled()) {
+    const message = admission.admitted
+      ? 'Kimi ACP is disabled in this build; legacy Wire/print execution is not permitted.'
+      : `Kimi runtime admission blocked execution: ${admission.message}`
+    sendAgentCompatError(event.sender, 'kimi', message, route)
+    sendAgentCompatLine(
+      event.sender,
+      'kimi',
+      {
+        type: 'result',
+        status: 'failed',
+        stats: {},
+        provider: 'kimi',
+        setupRequired: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'kimi', 1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+  if (admission.mode === 'unattested-development') {
+    sendAgentCompatLine(
+      event.sender,
+      'kimi',
+      {
+        type: 'provider_diagnostic',
+        provider: 'kimi',
+        source: 'kimi-runtime-admission',
+        message:
+          'Kimi is running under the explicit unattested-development bypass; this is not credentialed live-canary evidence.'
+      },
+      route
+    )
+  }
+  await runKimiAcpProvider(event, payload, admission)
+  return
 }
 
 function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerClient {
@@ -19181,7 +17930,6 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   return codexClient
 }
 
-
 /**
  * 1.0.4-AD — pre-flight reachability probe for an ensemble participant.
  * Called by the orchestrator BEFORE each per-participant dispatch in
@@ -19193,10 +17941,11 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
  *     a 1s timeout. When the proc is already alive (hot path)
  *     `ensureStarted` returns synchronously; when cold-starting it
  *     spawns the daemon, which we let race against the timeout.
- *   - **Claude / Gemini / Kimi** — verify the CLI binary is resolvable
- *     via `resolveCliProviderBinary`. This is the same shape
- *     `executeRun` would use moments later, so an empty path here is
- *     the strongest negative signal we can produce cheaply.
+ *   - **Claude / historical Gemini / Grok** — verify the CLI binary is
+ *     resolvable via `resolveCliProviderBinary`.
+ *   - **Kimi** — binary presence is insufficient. Resolve the path, then run
+ *     descriptor-bound runtime admission; only an admitted ACP tuple is
+ *     reachable. Packaged builds with an empty embedded roster fail closed.
  *
  * Any throw bubbles to the orchestrator's catch-and-classify path
  * which downgrades it to a generic unreachable signal — so the probe
@@ -19207,6 +17956,13 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
 async function probeEnsembleParticipant(
   participant: EnsembleParticipant
 ): Promise<ParticipantProbeResult> {
+  if (participant.provider === 'cursor') {
+    return {
+      reachable: false,
+      reason: cursorManagedRunAdmission().message,
+      underlyingCode: 'SECURITY_UNAVAILABLE'
+    }
+  }
   if (participant.provider === 'codex') {
     const runtimeProfile = participant.runtimeProfileId
       ? AppStore.getRuntimeProfiles('codex').find(
@@ -19255,6 +18011,20 @@ async function probeCliParticipant(
   participant: EnsembleParticipant
 ): Promise<ParticipantProbeResult> {
   const resolved = await resolveCliProviderBinary(participant.provider)
+  if (participant.provider === 'kimi' && resolved.binaryPath) {
+    const admission = await admitKimiRuntime({
+      binaryPath: resolved.binaryPath,
+      isPackaged: app.isPackaged,
+      environment: process.env
+    })
+    return admission.admitted
+      ? { reachable: true }
+      : {
+          reachable: false,
+          reason: admission.message,
+          underlyingCode: 'EACCES'
+        }
+  }
   if (resolved.binaryPath) {
     return { reachable: true }
   }
@@ -19266,8 +18036,6 @@ async function probeCliParticipant(
   }
 }
 
-
-
 function registerRunSession(
   provider: ProviderId,
   sender: Electron.WebContents,
@@ -19278,9 +18046,24 @@ function registerRunSession(
   requireExistingRun = false
 ) {
   const routed = routeWithRunId(provider, route)
-  const resolvedQueueIdentity = routed.appRunId
-    ? AppStore.getRunQueueJob(routed.appRunId)
+  const expectedPersistenceAuthority = routed.appRunId
+    ? providerRunPersistenceAuthorities.get(routed.appRunId)
+    : undefined
+  const currentPersistenceAuthority = routed.appChatId
+    ? currentProviderRunPersistenceAuthority(routed.appChatId, workspacePath)
     : null
+  if (
+    !expectedPersistenceAuthority ||
+    !currentPersistenceAuthority ||
+    !historyClearAdmissionGate.authorizeRunPersistence(
+      expectedPersistenceAuthority,
+      currentPersistenceAuthority
+    )
+  ) {
+    return undefined
+  }
+  if (runManager.getClaimedTerminalStatus(routed.appRunId)) return undefined
+  const resolvedQueueIdentity = routed.appRunId ? AppStore.getRunQueueJob(routed.appRunId) : null
   if (
     resolvedQueueIdentity?.runId &&
     resolvedQueueIdentity.runId !== routed.appRunId &&
@@ -19294,13 +18077,11 @@ function registerRunSession(
     (job) => job.runId === routed.appRunId && Boolean(job.executionGraph)
   )
   const graphClaims = executionGraphCoordinatorRef
-    ? executionGraphCoordinatorRef
-        .listExecutions({ includeTerminal: true })
-        .flatMap((projection) =>
-          Object.values(projection.attempts)
-            .filter((attempt) => attempt.providerRunRef === routed.appRunId)
-            .map((attempt) => ({ projection, attempt }))
-        )
+    ? executionGraphCoordinatorRef.listExecutions({ includeTerminal: true }).flatMap((projection) =>
+        Object.values(projection.attempts)
+          .filter((attempt) => attempt.providerRunRef === routed.appRunId)
+          .map((attempt) => ({ projection, attempt }))
+      )
     : []
   const graphAnchorClaims = executionGraphCoordinatorRef
     ? executionGraphCoordinatorRef
@@ -19315,14 +18096,14 @@ function registerRunSession(
     try {
       sameInvocation = Boolean(
         routed.appRunId &&
-          existing &&
-          adapterContext?.appRunId === routed.appRunId &&
-          providerAdapterInvocationTokens.get(routed.appRunId) === adapterContext.token &&
-          existing.provider === provider &&
-          existing.appChatId === routed.appChatId &&
-          existing.workspacePath &&
-          workspacePath &&
-          canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
+        existing &&
+        adapterContext?.appRunId === routed.appRunId &&
+        providerAdapterInvocationTokens.get(routed.appRunId) === adapterContext.token &&
+        existing.provider === provider &&
+        existing.appChatId === routed.appChatId &&
+        existing.workspacePath &&
+        workspacePath &&
+        canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
       )
     } catch {
       sameInvocation = false
@@ -19342,8 +18123,8 @@ function registerRunSession(
     try {
       workspaceMatches = Boolean(
         workspacePath &&
-          admission?.payload.workspace &&
-          canonicalPath(workspacePath) === canonicalPath(admission.payload.workspace)
+        admission?.payload.workspace &&
+        canonicalPath(workspacePath) === canonicalPath(admission.payload.workspace)
       )
     } catch {
       workspaceMatches = false
@@ -19353,10 +18134,10 @@ function registerRunSession(
       try {
         existingIdentityMatches = Boolean(
           existing.provider === provider &&
-            existing.appChatId === routed.appChatId &&
-            existing.workspacePath &&
-            workspacePath &&
-            canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
+          existing.appChatId === routed.appChatId &&
+          existing.workspacePath &&
+          workspacePath &&
+          canonicalPath(existing.workspacePath) === canonicalPath(workspacePath)
         )
       } catch {
         existingIdentityMatches = false
@@ -19450,9 +18231,7 @@ function isEnsembleCodexRunSession(
   if (!session) return false
   const state = getCodexStateFromSession(session)
   if (state?.ensembleRun) return true
-  return session.appChatId
-    ? AppStore.getChat(session.appChatId)?.chatKind === 'ensemble'
-    : false
+  return session.appChatId ? AppStore.getChat(session.appChatId)?.chatKind === 'ensemble' : false
 }
 
 function allowsTerminalCodexNativeGoalSession(
@@ -19463,9 +18242,9 @@ function allowsTerminalCodexNativeGoalSession(
   const chat = session.appChatId ? AppStore.getChat(session.appChatId) : null
   return Boolean(
     chat &&
-      chat.chatKind !== 'ensemble' &&
-      chat.activeGoal?.mode === 'codex_native' &&
-      (chat.activeGoal.status === 'active' || chat.activeGoal.status === 'blocked')
+    chat.chatKind !== 'ensemble' &&
+    chat.activeGoal?.mode === 'codex_native' &&
+    (chat.activeGoal.status === 'active' || chat.activeGoal.status === 'blocked')
   )
 }
 
@@ -19514,10 +18293,7 @@ function pruneCodexMcpRouteHints(nowMs: number): void {
   }
 }
 
-function resolveCodexMcpRouteFromHints(
-  toolName: string,
-  rawArgs: unknown
-): AgentRunRoute | null {
+function resolveCodexMcpRouteFromHints(toolName: string, rawArgs: unknown): AgentRunRoute | null {
   const nowMs = Date.now()
   pruneCodexMcpRouteHints(nowMs)
   return resolveCodexMcpRouteHint({
@@ -19529,6 +18305,16 @@ function resolveCodexMcpRouteFromHints(
   })
 }
 
+function isCodexTerminalProjectionNotification(method: unknown): boolean {
+  return (
+    method === 'turn/completed' ||
+    method === 'turn/failed' ||
+    method === 'review/completed' ||
+    method === 'review/failed' ||
+    method === 'error'
+  )
+}
+
 function findCodexRunStateForMessage(message: any): CodexRunState | null {
   const params = message?.params || {}
   const threadId =
@@ -19536,15 +18322,23 @@ function findCodexRunStateForMessage(message: any): CodexRunState | null {
   if (threadId) {
     const session = runManager.getByProviderSession('codex', String(threadId))
     const byThread = getCodexStateFromSession(session)
-    const exactSessionRoutable = Boolean(
-      byThread &&
+    const terminalProjectionRoutable = Boolean(
+      byThread?.terminalProjectionOperation &&
         session &&
-      shouldRouteCodexRunSession({
-        ensemble: isEnsembleCodexRunSession(session),
-        status: session.status,
-        stateCompleted: byThread.completed,
-        allowTerminalNativeGoal: allowsTerminalCodexNativeGoalSession(session)
-      })
+        isTerminalRunSessionStatus(session.status) &&
+        providerTransportOperations.get(session.runId) &&
+        isCodexTerminalProjectionNotification(message?.method)
+    )
+    const exactSessionRoutable = Boolean(
+      terminalProjectionRoutable ||
+        (byThread &&
+          session &&
+          shouldRouteCodexRunSession({
+            ensemble: isEnsembleCodexRunSession(session),
+            status: session.status,
+            stateCompleted: byThread.completed,
+            allowTerminalNativeGoal: allowsTerminalCodexNativeGoalSession(session)
+          }))
     )
     const childOwner = !session ? findCodexMultiAgentOwnerState(String(threadId)) : null
     const explicitRoute = resolveCodexExplicitThreadRoute({
@@ -19558,7 +18352,20 @@ function findCodexRunStateForMessage(message: any): CodexRunState | null {
     // terminal ensemble event into some other active Codex participant.
     return null
   }
-  return getActiveCodexRunState()
+  const active = getActiveCodexRunState()
+  if (active || !isCodexTerminalProjectionNotification(message?.method)) return active
+  const terminalProjectionStates = runManager
+    .getByProvider('codex')
+    .filter(
+      (session) =>
+        isTerminalRunSessionStatus(session.status) &&
+        providerTransportOperations.get(session.runId)
+    )
+    .map((session) => getCodexStateFromSession(session))
+    .filter(
+      (state): state is CodexRunState => Boolean(state?.terminalProjectionOperation)
+    )
+  return terminalProjectionStates.length === 1 ? terminalProjectionStates[0] : null
 }
 
 function getGeminiToolContext(route?: AgentRunRoute | null): GeminiToolContext | null {
@@ -19607,13 +18414,19 @@ function getAgentToolContext(
   route?: AgentRunRoute | null
 ): GeminiToolContext | null {
   if (parentProvider === 'gemini') {
-    return getGeminiToolContext(route)
+    const context = getGeminiToolContext(route)
+    if (context && historyClearAdmissionBlocked(context.appRunId, context.workspacePath)) {
+      return null
+    }
+    return context
   }
   const session = getRuntimeSession(parentProvider, route)
   if (
     session &&
-    isTerminalRunSessionStatus(session.status) &&
-    !allowsTerminalCodexNativeGoalSession(session)
+    (historyClearAdmissionBlocked(session.runId, session.workspacePath) ||
+      (isTerminalRunSessionStatus(session.status) &&
+        !allowsTerminalCodexNativeGoalSession(session)) ||
+      runManager.getClaimedTerminalStatus(session.runId))
   ) {
     return null
   }
@@ -19688,9 +18501,19 @@ function sendAgentCompatLine(
   sender: Electron.WebContents,
   provider: ProviderId,
   payload: any,
-  route?: AgentRunRoute | null
+  route?: AgentRunRoute | null,
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
 ) {
-  const routed = enrichAgentPayload(provider, payload, route)
+  const initialRoute = enrichAgentPayload(provider, payload, route)
+  const canvasEvalScope = `${provider}:${initialRoute.appRunId || initialRoute.appChatId || 'unrouted'}`
+  // Native providers echo MCP calls/results on their own event streams. Keep
+  // the full main-owned MCP return on the provider transport, but project any
+  // Canvas echo to metadata-only before the durable ledger or renderer sees it.
+  // The sanitizer also correlates result-only frames by opaque tool-call id.
+  payload = nativeCanvasCompatSanitizer.sanitize(payload, canvasEvalScope)
+  payload = canvasEvalCompatSanitizer.sanitize(payload, canvasEvalApproval, canvasEvalScope)
+  const routed = enrichAgentPayload(provider, payload, initialRoute)
+  if (!providerRunPersistenceAuthorized(provider, routed)) return
   const runItemEvents = runItemEventsForCompatPayload(provider, routed, payload)
   if (runItemEvents.length > 0) {
     appendDurableRunItemEvents(runItemEvents)
@@ -19699,14 +18522,13 @@ function sendAgentCompatLine(
   // for the chat transcript. Keep those durable, then stop before renderer /
   // bridge / ensemble materialization can turn them into visible tool rows.
   const transcriptVisible = payload?.transcriptVisible !== false
-  const durableKind =
-    !transcriptVisible
-      ? 'provider_raw'
-      : payload?.type === 'tool_use' || payload?.type === 'tool_result'
-        ? 'tool'
-        : payload?.type === 'compaction_event'
-          ? 'context_compaction'
-          : 'provider_raw'
+  const durableKind = !transcriptVisible
+    ? 'provider_raw'
+    : payload?.type === 'tool_use' || payload?.type === 'tool_result'
+      ? 'tool'
+      : payload?.type === 'compaction_event'
+        ? 'context_compaction'
+        : 'provider_raw'
   appendDurableRunEventForRoute(
     provider,
     routed,
@@ -19793,15 +18615,17 @@ function sendAgentCompatError(
   error: string,
   route?: AgentRunRoute | null
 ) {
-  const routed = enrichAgentPayload(provider, { error }, route)
-  ensembleOrchestratorRef?.noteProviderFailureText(provider, routed, error)
+  const safeError = sanitizeCanvasEvalProviderText(error)
+  const routed = enrichAgentPayload(provider, { error: safeError }, route)
+  if (!providerRunPersistenceAuthorized(provider, routed)) return
+  ensembleOrchestratorRef?.noteProviderFailureText(provider, routed, safeError)
   appendDurableRunEventForRoute(
     provider,
     routed,
     'provider_error',
     'raw',
     'Provider stderr/error',
-    { error },
+    { error: safeError },
     'provider'
   )
   if (routed.appRunId) {
@@ -19813,7 +18637,7 @@ function sendAgentCompatError(
       bridgeState.status === 'running' &&
       bridgeRunRouteMatches(bridgeState, provider, routed.appChatId)
     ) {
-      bridgeState.errorMessage = error
+      bridgeState.errorMessage = safeError
     }
   }
   // Auto-failover: classify the provider's error channel for a quota wall (429)
@@ -19829,7 +18653,6 @@ function sendAgentCompatError(
     publishRunEvent('gemini-error', provider, routed, sender)
   }
 }
-
 
 function sendAgentCompatExit(
   sender: Electron.WebContents,
@@ -19852,28 +18675,43 @@ function sendAgentCompatExit(
         })
       : undefined
   const claimedTerminalStatus = runManager.getClaimedTerminalStatus(routed.appRunId)
-  const pendingLifecycleStatus = runManager.getTerminalJoinState(
-    routed.appRunId
-  ).lifecycleStatus
+  const pendingLifecycleStatus = runManager.getTerminalJoinState(routed.appRunId).lifecycleStatus
   const runCancelled = Boolean(
     claimedTerminalStatus === 'cancelled' ||
-      pendingLifecycleStatus === 'cancelled' ||
-      (routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled')
+    pendingLifecycleStatus === 'cancelled' ||
+    (routed.appRunId && runManager.get(routed.appRunId)?.status === 'cancelled')
   )
-  const runFailed =
-    claimedTerminalStatus === 'failed' || pendingLifecycleStatus === 'failed'
-  const graphExitState = routed.appRunId
-    ? bridgeRunTranscripts.get(routed.appRunId)
-    : undefined
+  const runFailed = claimedTerminalStatus === 'failed' || pendingLifecycleStatus === 'failed'
+  const graphExitState = routed.appRunId ? bridgeRunTranscripts.get(routed.appRunId) : undefined
   const authorizedGraphExit = Boolean(
     graphExitState?.owner === 'execution_graph' &&
-      bridgeRunRouteMatches(graphExitState, provider, routed.appChatId)
+    bridgeRunRouteMatches(graphExitState, provider, routed.appChatId)
   )
   const graphTerminalStatus: 'completed' | 'failed' | 'cancelled' = runCancelled
     ? 'cancelled'
     : !runFailed && (code ?? -1) === 0
       ? 'completed'
       : 'failed'
+  if (!providerRunPersistenceAuthorized(provider, routed)) {
+    if (authorizedGraphExit && graphExitState) {
+      recordExecutionGraphProviderTerminalCandidate(graphExitState, graphTerminalStatus)
+    }
+    if (routed.appRunId) {
+      const bridgeState = bridgeRunTranscripts.get(routed.appRunId)
+      if (bridgeState?.flushTimer) clearTimeout(bridgeState.flushTimer)
+      bridgeRunTranscripts.delete(routed.appRunId)
+      const subThreadState = backgroundSubThreadTranscripts.get(routed.appRunId)
+      if (subThreadState?.flushTimer) clearTimeout(subThreadState.flushTimer)
+      backgroundSubThreadTranscripts.delete(routed.appRunId)
+      quotaWallSignalByRun.delete(routed.appRunId)
+      workflowBudgetRegistry.onExit(routed.appRunId)
+      runManager.finish(routed.appRunId, graphTerminalStatus)
+      releaseProviderSessionPersistenceDecision(routed.appRunId)
+      releaseProviderRunPersistenceAuthority(routed.appRunId)
+    }
+    cleanupRunItemEventState(routed.appRunId)
+    return
+  }
   const exitRunItemEvents = runItemEventsForDrafts(provider, routed, [
     {
       kind: 'run/completed',
@@ -19935,7 +18773,10 @@ function sendAgentCompatExit(
     // Evaluate BEFORE onExit drops the registration; onTerminalUsage marks the
     // task failed iff the final usage breached + no-ops for already-killed runs.
     const terminalUsage = (
-      route as { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } } | null | undefined
+      route as
+        | { tokenUsage?: { total_tokens?: number; total_cost_usd?: number } }
+        | null
+        | undefined
     )?.tokenUsage
     if (terminalUsage) workflowBudgetRegistry.onTerminalUsage(routed.appRunId, terminalUsage)
     const budgetKilled = workflowBudgetRegistry.isKilled(routed.appRunId)
@@ -19990,7 +18831,6 @@ function sendAgentCompatExit(
   cleanupRunItemEventState(routed.appRunId)
 }
 
-
 function codexApprovalPolicyForMode(
   approvalMode?: string,
   settings: AppSettings = AppStore.getSettings()
@@ -20002,7 +18842,6 @@ function codexApprovalPolicyForMode(
   return 'on-request'
 }
 
-
 function normalizeExternalPathGrants(grants?: ExternalPathGrant[]): ExternalPathGrant[] {
   if (!Array.isArray(grants)) return []
   const normalized: ExternalPathGrant[] = []
@@ -20011,8 +18850,9 @@ function normalizeExternalPathGrants(grants?: ExternalPathGrant[]): ExternalPath
   // `isMainIssuedExternalPathGrant` still guards integrity; the
   // provider field is part of the signed payload so a grant for one
   // provider cannot be smuggled in as another.
-  // 1.0.6-CRUX21 — include grok + cursor (first-class providers) so their
-  // signed grants normalize through rather than being dropped here.
+  // Only currently dispatchable providers may carry executable grants. Signed
+  // historical Cursor records remain decodable in storage but are dropped from
+  // run authority here.
   const allowedProviders = EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS
   for (const grant of grants) {
     if (!grant || typeof grant.path !== 'string') continue
@@ -20231,16 +19071,9 @@ function codexSandboxPolicyForMode(
   const gitMetadataRoots =
     scope === 'global' ? [] : codexGitMetadataRootsForWorkspace(workspaceRoot)
   const readableRoots =
-    scope === 'global'
-      ? [hostRoot]
-      : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
+    scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
   const writableRoots =
-    scope === 'global'
-      ? [hostRoot]
-      : uniqueRoots([
-          workspaceRoot,
-          ...gitMetadataRoots
-        ])
+    scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
   if (approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
   }
@@ -20263,8 +19096,6 @@ function codexSandboxPolicyForMode(
 function uniqueRoots(roots: string[]): string[] {
   return [...new Set(roots.map((root) => resolve(root)))]
 }
-
-
 
 function createCodexRunState(
   sender: Electron.WebContents,
@@ -20306,6 +19137,63 @@ function createCodexRunState(
     hostRerunRequestedItemIds: new Set(),
     completed: false
   }
+}
+
+/** Register the exact Codex app-server turn completion before its run state is
+ * exposed or a turn/review admission request is sent. The app-server daemon is
+ * shared and long-lived, so its process lifetime cannot prove that this turn
+ * stopped. */
+function trackCodexAppServerTurnOperation(state: CodexRunState): Promise<void> {
+  const runId = state.appRunId?.trim()
+  if (!runId) throw new Error('Codex app-server turn requires an exact run id.')
+  const completion = createProviderTerminalProjectionOperation()
+  state.terminalProjectionOperation = completion
+  return providerTransportOperations.track(runId, completion.operation)
+}
+
+/** Settle only after every synchronous main-owned terminal projection and the
+ * RunManager transition have completed. Idempotence covers defensive duplicate
+ * terminal notifications without weakening the exact first completion. */
+function completeCodexAppServerTurnProjection(state: CodexRunState): void {
+  const completion = state.terminalProjectionOperation
+  state.terminalProjectionOperation = undefined
+  completion?.markTerminalProjectionComplete()
+  if (state.turnId) state.admissionReservation?.releaseAfterExactTerminal(state.turnId)
+}
+
+const codexThreadAdmissionRegistry = new CodexThreadAdmissionRegistry()
+
+function bindCodexRunExactOperationId(state: CodexRunState, rawOperationId: unknown): boolean {
+  const operationId = codexString(rawOperationId)
+  if (!operationId) return false
+  if (state.turnId) return state.turnId === operationId
+  const reservation = state.admissionReservation
+  if (!reservation?.bindExactOperationId(operationId)) return false
+  state.turnId = operationId
+  if (state.appRunId) runManager.registerProviderRun(state.appRunId, operationId)
+  return true
+}
+
+function codexNotificationBelongsToRunState(state: CodexRunState, message: any): boolean {
+  const method = String(message?.method || '')
+  const operationId = codexProviderOperationId(message)
+  const isRetryableError = method === 'error' && message?.params?.willRetry === true
+  const isTerminal = isCodexTerminalProjectionNotification(method) && !isRetryableError
+  if (isTerminal) {
+    if (!state.admissionKind || !codexTerminalMethodMatchesAdmission(state.admissionKind, method)) {
+      return false
+    }
+    // A thread-scoped error/terminal frame cannot settle a per-operation join.
+    // A terminal frame is never first-admission evidence: it may be a delayed
+    // duplicate from the predecessor. Only turn/started or the RPC response can
+    // bind; terminal projection requires that already-bound exact id.
+    return Boolean(operationId && state.admissionReservation?.matchesExactOperationId(operationId))
+  }
+  if (method === 'turn/started') {
+    return Boolean(operationId && bindCodexRunExactOperationId(state, operationId))
+  }
+  if (operationId && state.turnId && operationId !== state.turnId) return false
+  return true
 }
 
 function sendCodexSyntheticToolUse(
@@ -20400,14 +19288,23 @@ function emitCodexReasoningDelta(state: CodexRunState, params: any, label: strin
 function emitCodexProviderMediaRefs(state: CodexRunState, raw: unknown): void {
   const blocks = extractProviderImageBlocksFromRawEvent(raw)
   if (blocks.length === 0) return
-  const refs = createOwnedToolResultMediaRefs({
-    store: getTranscriptMediaAssetStore(),
-    appChatId: state.appChatId,
-    messageId: state.appRunId || state.turnId || state.threadId,
-    runId: state.appRunId || state.turnId || undefined,
-    toolName: 'codex output',
-    source: 'generated',
-    blocks
+  const store = getTranscriptMediaAssetStore()
+  const refs = persistAuthorizedProviderMedia({
+    isAuthorized: () => providerRunPersistenceAuthorized('codex', state),
+    persist: () =>
+      createOwnedToolResultMediaRefs({
+        store,
+        appChatId: state.appChatId,
+        messageId: state.appRunId || state.turnId || state.threadId,
+        runId: state.appRunId || state.turnId || undefined,
+        toolName: 'codex output',
+        source: 'generated',
+        blocks
+      }),
+    revokeOnLostAuthority: async () => {
+      const chatIds = [state.appChatId].filter((id): id is string => Boolean(id))
+      if (chatIds.length > 0) await store.revokeChatOwnershipStrict(chatIds)
+    }
   })
   if (refs.length === 0) return
   const seen = state.providerMediaRefKeys ?? new Set<string>()
@@ -20509,14 +19406,21 @@ function emitCodexPlanItem(state: CodexRunState, item: any) {
   }
 }
 
-
-
 // ── Provider context compaction (Codex lane) ────────────────────────────────
 // Codex compactions arrive as `contextCompaction` thread items riding their own
 // turn (probe-verified on 0.139.0: `thread/compact/start` resolves immediately,
 // then turn/started → item/started → thread/tokenUsage/updated → item/completed
 // → turn/completed). Auto-compactions (the 850k `model_auto_compact_token_limit`
 // TaskWraith already configures for long-context models) use the same item lane.
+
+const maintenanceCompactionRegistry = new MaintenanceCompactionRegistry((input) => {
+  const chat = AppStore.getChat(input.chatId)
+  return Boolean(
+    chat &&
+    !historyClearAdmissionBlocked(undefined, chat.workspacePath, input.chatId) &&
+    (!input.workspaceId || !chat.workspaceId || input.workspaceId === chat.workspaceId)
+  )
+})
 
 function codexCurrentContextTokens(state: CodexRunState): number | undefined {
   const usage = state.tokenUsage
@@ -20574,7 +19478,9 @@ function emitCodexContextCompaction(
       pendingManual.settle({ ok: true })
     }
   }
-  emitContextCompactionCompatLine(state.sender, 'codex', { kind, telemetry }, state)
+  if (!pendingManual || maintenanceCompactionRegistry.canWrite(pendingManual.reservation)) {
+    emitContextCompactionCompatLine(state.sender, 'codex', { kind, telemetry }, state)
+  }
 }
 
 /**
@@ -20590,6 +19496,12 @@ interface PendingCodexManualCompaction {
   itemId?: string
   postTokens?: number
   itemSeen?: boolean
+  turnId?: string
+  nativeActivityStarted?: boolean
+  nativeActivityEnded?: boolean
+  settled?: boolean
+  reservation: MaintenanceCompactionReservation
+  admissionReservation: CodexThreadAdmissionReservation
   settle: (result: { ok: boolean; error?: string }) => void
   /** Resolves when the compaction settles — the dispatch path awaits this so
    * a turn started mid-compaction can't have the compaction turn's lifecycle
@@ -20597,6 +19509,42 @@ interface PendingCodexManualCompaction {
   completion?: Promise<{ ok: boolean; error?: string }>
 }
 const pendingCodexManualCompactions = new Map<string, PendingCodexManualCompaction>()
+const pendingCodexManualCompactionRequests = new Set<string>()
+
+function bindCodexManualCompactionOperationId(
+  pending: PendingCodexManualCompaction,
+  rawOperationId: unknown
+): boolean {
+  const operationId = codexString(rawOperationId)
+  if (!operationId) return false
+  if (pending.turnId) return pending.turnId === operationId
+  if (!pending.admissionReservation.bindExactOperationId(operationId)) return false
+  pending.turnId = operationId
+  return true
+}
+
+function codexNotificationBelongsToManualCompaction(
+  pending: PendingCodexManualCompaction,
+  message: any
+): boolean {
+  const method = String(message?.method || '')
+  const operationId = codexProviderOperationId(message)
+  if (method === 'turn/started') {
+    return Boolean(operationId && bindCodexManualCompactionOperationId(pending, operationId))
+  }
+  if (
+    method === 'turn/completed' ||
+    method === 'turn/failed' ||
+    method === 'error'
+  ) {
+    return Boolean(
+      operationId && pending.admissionReservation.matchesExactOperationId(operationId)
+    )
+  }
+  // App-server item/token frames carry turnId. Refuse thread-only attribution:
+  // another accepted user/review operation may use the same long-lived thread.
+  return Boolean(operationId && pending.turnId === operationId)
+}
 
 function handleCodexManualCompactionNotification(message: any): void {
   const params = message?.params || {}
@@ -20604,6 +19552,15 @@ function handleCodexManualCompactionNotification(message: any): void {
   if (!threadId) return
   const pending = pendingCodexManualCompactions.get(threadId)
   if (!pending) return
+  if (!codexNotificationBelongsToManualCompaction(pending, message)) return
+  if (message.method === 'error' && params.willRetry === true) return
+  if (message.method === 'turn/started') {
+    const turnId = pending.turnId
+    if (pending.reservation.signal.aborted && turnId) {
+      void issueCodexTurnInterrupt(threadId, turnId)
+    }
+    return
+  }
   if (message.method === 'thread/tokenUsage/updated') {
     const lastTotal = params.tokenUsage?.last?.totalTokens
     if (typeof lastTotal === 'number' && Number.isFinite(lastTotal)) {
@@ -20623,10 +19580,14 @@ function handleCodexManualCompactionNotification(message: any): void {
     pending.itemSeen = true
     return
   }
-  if (message.method === 'turn/completed') {
+  if (message.method === 'turn/completed' || message.method === 'turn/failed') {
+    if (pending.nativeActivityStarted && !pending.nativeActivityEnded) {
+      pending.nativeActivityEnded = true
+      maintenanceCompactionRegistry.endNativeActivity(pending.reservation)
+    }
     const status = codexString(params.turn?.status)
     const turnError = params.turn?.error
-    if (pending.itemSeen && status !== 'failed') {
+    if (pending.itemSeen && message.method !== 'turn/failed' && status !== 'failed') {
       pending.settle({ ok: true })
     } else {
       const detail = codexString(turnError?.message ?? turnError)
@@ -20635,11 +19596,19 @@ function handleCodexManualCompactionNotification(message: any): void {
         error: detail || `Codex compaction turn ${status || 'ended'} without compacting.`
       })
     }
+    if (pending.settled) pendingCodexManualCompactions.delete(threadId)
+    pending.admissionReservation.releaseAfterExactTerminal(pending.turnId)
     return
   }
   if (message.method === 'error') {
+    if (pending.nativeActivityStarted && !pending.nativeActivityEnded) {
+      pending.nativeActivityEnded = true
+      maintenanceCompactionRegistry.endNativeActivity(pending.reservation)
+    }
     const detail = codexString(params.error?.message ?? params.message ?? params)
     pending.settle({ ok: false, error: detail || 'Codex reported an error during compaction.' })
+    if (pending.settled) pendingCodexManualCompactions.delete(threadId)
+    pending.admissionReservation.releaseAfterExactTerminal(pending.turnId)
   }
 }
 
@@ -20763,6 +19732,7 @@ async function compactCodexProviderContext(payload: {
   /** Frozen ensemble-participant presentation for the card (see
    * resolveEnsembleCompactionTarget); absent on solo chats. */
   cardMetadata?: Record<string, unknown>
+  reservation: MaintenanceCompactionReservation
 }): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat) return { ok: false, error: 'Chat not found.' }
@@ -20802,12 +19772,41 @@ async function compactCodexProviderContext(payload: {
     payload.model || persistedSoloModel,
     payload.reasoningEffort !== undefined ? payload.reasoningEffort : persistedSoloReasoning
   )
-  // Review fix (TOCTOU): reserve the thread SYNCHRONOUSLY before any await —
-  // the old shape checked the guard here but registered after ensureStarted,
-  // so a double-click raced two compactions and orphaned the first record.
-  if (pendingCodexManualCompactions.has(threadId)) {
+  // Reject duplicate compact-now requests synchronously, but do not publish a
+  // pending provider operation until this request actually owns the shared
+  // thread admission lane. Publishing a queued request would deadlock an
+  // earlier normal/review owner that observes the pending map.
+  if (
+    pendingCodexManualCompactionRequests.has(threadId) ||
+    pendingCodexManualCompactions.has(threadId)
+  ) {
     return { ok: false, error: 'A compaction is already in progress for this chat.' }
   }
+  pendingCodexManualCompactionRequests.add(threadId)
+  let resolveCompactionInvocation!: () => void
+  const compactionInvocationCompletion = new Promise<void>((resolve) => {
+    resolveCompactionInvocation = resolve
+  })
+  const admissionReservation = codexThreadAdmissionRegistry.reserve({
+    threadId,
+    kind: 'manual_compaction',
+    scope: {
+      appChatId: payload.chatId,
+      workspaceId: chat.workspaceId,
+      joinAfterRelease: () => compactionInvocationCompletion
+    }
+  })
+  let pendingRecord: PendingCodexManualCompaction | null = null
+  let providerAdmissionMayBeLive = false
+  try {
+    const admissionAcquired = await admissionReservation.waitUntilAcquired()
+    if (!admissionAcquired) {
+      return { ok: false, error: 'Compaction admission was cancelled.' }
+    }
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      admissionReservation.releaseBeforeAdmission()
+      return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+    }
   const startedAtMs = Date.now()
   broadcastContextCompactionSignalProgress({
     chatId: payload.chatId,
@@ -20820,25 +19819,38 @@ async function compactCodexProviderContext(payload: {
     const finish = (result: { ok: boolean; error?: string }) => {
       if (settled) return
       settled = true
-      pendingCodexManualCompactions.delete(threadId)
+      if (pendingRecord) pendingRecord.settled = true
+      if (!pendingRecord?.nativeActivityStarted || pendingRecord.nativeActivityEnded) {
+        pendingCodexManualCompactions.delete(threadId)
+      }
       resolve(result)
     }
     const timer = setTimeout(
       () => finish({ ok: false, error: 'Timed out waiting for Codex to compact.' }),
       180_000
     )
-    pendingCodexManualCompactions.set(threadId, {
+    pendingRecord = {
       chatId: payload.chatId,
       threadId,
       startedAtMs,
+      reservation: payload.reservation,
+      admissionReservation,
       settle: (result) => {
         clearTimeout(timer)
         finish(result)
       }
-    })
+    }
+    pendingCodexManualCompactions.set(threadId, pendingRecord)
   })
   const pending = pendingCodexManualCompactions.get(threadId)!
   pending.completion = completion
+  payload.reservation.signal.addEventListener(
+    'abort',
+    () => {
+      if (pending.turnId) void issueCodexTurnInterrupt(threadId, pending.turnId)
+    },
+    { once: true }
+  )
   const client = getCodexClient()
   // Review fix: the notification handler is normally attached by the RUN path
   // (runCodexAppServer) — a manual compaction issued before the first codex
@@ -20853,23 +19865,91 @@ async function compactCodexProviderContext(payload: {
       error: `Codex app-server unavailable: ${error instanceof Error ? error.message : String(error)}`
     })
   }
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    pending.settle({ ok: false, error: 'Compaction was cancelled for history deletion.' })
+  }
+  let compactionLaunchMayBeLive = false
   try {
-    try {
-      await client.request('thread/compact/start', { threadId }, 30_000)
-    } catch (firstError) {
-      // A cold app-server may not have the thread loaded — resume, retry once.
-      await client.request(
-        'thread/resume',
-        buildCodexThreadResumeRequest(threadId, codexReasoning),
-        30_000
-      )
+    if (maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      if (!maintenanceCompactionRegistry.beginNativeActivity(payload.reservation)) {
+        throw new Error('Compaction was cancelled before its provider turn started.')
+      }
+      pending.nativeActivityStarted = true
+      providerAdmissionMayBeLive = true
+    }
+    if (pending.nativeActivityStarted) {
       try {
         await client.request('thread/compact/start', { threadId }, 30_000)
-      } catch {
-        throw firstError
+        compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+          compactionLaunchMayBeLive,
+          'accepted'
+        )
+      } catch (firstError) {
+        // A timeout is ambiguous: the server may have accepted the turn before
+        // its response was lost. A JSON-RPC rejection is definitive pre-start
+        // evidence unless a turn/started notification independently arrived.
+        if (isCodexAppServerRequestTimeout(firstError, 'thread/compact/start')) {
+          compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+            compactionLaunchMayBeLive,
+            'timeout'
+          )
+          // Timeout is admission-ambiguous. A retry could create a second
+          // compaction turn while the first is live, so retain the lane and
+          // await delayed start/terminal evidence instead.
+          throw firstError
+        } else {
+          compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+            compactionLaunchMayBeLive,
+            'rejected'
+          )
+        }
+        // A cold app-server may not have the thread loaded — resume, retry once.
+        if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
+        await client.request(
+          'thread/resume',
+          buildCodexThreadResumeRequest(threadId, codexReasoning),
+          30_000
+        )
+        if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) throw firstError
+        try {
+          await client.request('thread/compact/start', { threadId }, 30_000)
+          compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+            compactionLaunchMayBeLive,
+            'accepted'
+          )
+        } catch (secondError) {
+          if (isCodexAppServerRequestTimeout(secondError, 'thread/compact/start')) {
+            compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+              compactionLaunchMayBeLive,
+              'timeout'
+            )
+          } else {
+            compactionLaunchMayBeLive = updateCodexCompactionLaunchEvidence(
+              compactionLaunchMayBeLive,
+              'rejected'
+            )
+          }
+          throw secondError
+        }
       }
     }
   } catch (error) {
+    if (
+      pending.nativeActivityStarted &&
+      !pending.nativeActivityEnded &&
+      codexCompactionFailureProvesNoLiveTurn({
+        launchMayBeLive: compactionLaunchMayBeLive,
+        observedTurnId: pending.turnId
+      })
+    ) {
+      // Every compact/start attempt was synchronously rejected before a turn
+      // existed. Balance the reservation now; ambiguous timeouts deliberately
+      // remain active until a terminal notification (or recovery-required).
+      pending.nativeActivityEnded = true
+      providerAdmissionMayBeLive = false
+      maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+      admissionReservation.releaseBeforeAdmission()
+    }
     pending.settle({
       ok: false,
       error: `Codex rejected the compaction request: ${
@@ -20878,6 +19958,7 @@ async function compactCodexProviderContext(payload: {
     })
   }
   const result = await completion
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) return result
   const telemetry: ContextCompactionTelemetry = {
     provider: 'codex',
     trigger: 'manual',
@@ -20922,6 +20003,11 @@ async function compactCodexProviderContext(payload: {
     )
   }
   return result
+  } finally {
+    pendingCodexManualCompactionRequests.delete(threadId)
+    if (!providerAdmissionMayBeLive) admissionReservation.releaseBeforeAdmission()
+    resolveCompactionInvocation()
+  }
 }
 
 /**
@@ -20939,6 +20025,7 @@ async function compactClaudeProviderContext(payload: {
   participantId?: string
   model?: string
   cardMetadata?: Record<string, unknown>
+  reservation: MaintenanceCompactionReservation
 }): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat) return { ok: false, error: 'Chat not found.' }
@@ -20963,6 +20050,9 @@ async function compactClaudeProviderContext(payload: {
     return { ok: false, error: 'A compaction is already in progress for this session.' }
   }
   const sdk = await loadOptionalClaudeSdk()
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
   if (!sdk?.query) {
     return { ok: false, error: 'Claude Agent SDK is unavailable — cannot compact this seat.' }
   }
@@ -20976,10 +20066,9 @@ async function compactClaudeProviderContext(payload: {
       : chat.taskWraithMcpProfileReceipt,
     coreProfileOptIn: false
   })
-  const storedCompactionReceipt =
-    payload.participantId
-      ? participant?.taskWraithMcpProfileReceipt
-      : chat.taskWraithMcpProfileReceipt
+  const storedCompactionReceipt = payload.participantId
+    ? participant?.taskWraithMcpProfileReceipt
+    : chat.taskWraithMcpProfileReceipt
   const sessionWasBornWithTaskWraithMcp = isTaskWraithMcpProfileReceiptForSession(
     storedCompactionReceipt,
     { provider: 'claude', providerSessionId: payload.providerSessionId }
@@ -21002,6 +20091,9 @@ async function compactClaudeProviderContext(payload: {
   if (compactionMcpInput.enabled) {
     try {
       await startGeminiMcpBroker()
+      if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+      }
     } catch (error) {
       return {
         ok: false,
@@ -21020,6 +20112,8 @@ async function compactClaudeProviderContext(payload: {
     cardMetadata: payload.cardMetadata
   })
   const controller = new AbortController()
+  const abortForHistoryDeletion = (): void => controller.abort()
+  payload.reservation.signal.addEventListener('abort', abortForHistoryDeletion, { once: true })
   const timer = setTimeout(() => controller.abort(), 180_000)
   let observed: ContextCompactionSignal | null = null
   let streamError: string | undefined
@@ -21031,6 +20125,7 @@ async function compactClaudeProviderContext(payload: {
   })
   let compactionIdentityFailed = false
   let pathToClaudeCodeExecutable: string | undefined
+  let nativeActivityStarted = false
   try {
     const model = normalizeCliProviderModel('claude', payload.model)
     if (app.isPackaged) {
@@ -21039,6 +20134,13 @@ async function compactClaudeProviderContext(payload: {
         throw new Error(resolvedClaude.error || 'Claude Code CLI was not found.')
       }
       pathToClaudeCodeExecutable = resolvedClaude.binaryPath
+    }
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      throw new Error('Compaction was cancelled for history deletion.')
+    }
+    nativeActivityStarted = maintenanceCompactionRegistry.beginNativeActivity(payload.reservation)
+    if (!nativeActivityStarted) {
+      throw new Error('Compaction was cancelled before its provider process started.')
     }
     const stream = sdk.query({
       prompt: '/compact',
@@ -21057,6 +20159,10 @@ async function compactClaudeProviderContext(payload: {
       }
     })
     for await (const message of stream) {
+      if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        controller.abort()
+        break
+      }
       const nextSessionId = extractProviderSessionId(message)
       if (nextSessionId && nextSessionId !== compactionSessionId) {
         if (
@@ -21091,10 +20197,10 @@ async function compactClaudeProviderContext(payload: {
           : currentChat?.taskWraithMcpProfileReceipt
         const ownerMatches = Boolean(
           currentChat &&
-            (payload.participantId
-              ? currentParticipant?.provider === 'claude'
-              : currentChat.provider === 'claude') &&
-            ownerSessionId === compactionSessionId
+          (payload.participantId
+            ? currentParticipant?.provider === 'claude'
+            : currentChat.provider === 'claude') &&
+          ownerSessionId === compactionSessionId
         )
         const transition = ownerMatches
           ? transitionTaskWraithMcpProfileReceipt({
@@ -21155,31 +20261,37 @@ async function compactClaudeProviderContext(payload: {
     streamError ||= error instanceof Error ? error.message : String(error)
   } finally {
     clearTimeout(timer)
+    payload.reservation.signal.removeEventListener('abort', abortForHistoryDeletion)
+    if (nativeActivityStarted) {
+      maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+    }
     for (const sessionId of seenCompactionSessionIds) {
       activeClaudeManualCompactions.delete(sessionId)
     }
   }
-  const signal: ContextCompactionSignal =
-    compactionIdentityFailed
-      ? {
+  const signal: ContextCompactionSignal = compactionIdentityFailed
+    ? {
+        kind: 'failed',
+        telemetry: {
+          error: streamError || 'Claude did not report a compaction for this session.'
+        }
+      }
+    : observed && observed.kind === 'completed'
+      ? observed
+      : (observed ?? {
           kind: 'failed',
           telemetry: {
             error: streamError || 'Claude did not report a compaction for this session.'
           }
-        }
-      : observed && observed.kind === 'completed'
-        ? observed
-        : (observed ?? {
-            kind: 'failed',
-            telemetry: {
-              error: streamError || 'Claude did not report a compaction for this session.'
-            }
-          })
+        })
   signal.telemetry = {
     ...signal.telemetry,
     provider: 'claude',
     trigger: signal.telemetry.trigger || 'manual',
     durationMs: signal.telemetry.durationMs ?? Date.now() - startedAtMs
+  }
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
   }
   if (signal.kind === 'completed') {
     invalidateEnsemblePromptReceiptsForSession({
@@ -21212,9 +20324,7 @@ async function compactClaudeProviderContext(payload: {
       { compaction: signal, manual: true }
     )
   }
-  return signal.kind === 'completed'
-    ? { ok: true }
-    : { ok: false, error: signal.telemetry.error }
+  return signal.kind === 'completed' ? { ok: true } : { ok: false, error: signal.telemetry.error }
 }
 
 /** Kimi Code native compaction for an ensemble seat. Solo Kimi chats dispatch
@@ -21230,6 +20340,7 @@ async function compactKimiProviderContext(payload: {
   model?: string
   cardMetadata?: Record<string, unknown>
   trigger?: 'auto' | 'manual'
+  reservation: MaintenanceCompactionReservation
 }): Promise<{ ok: boolean; error?: string }> {
   const chat = AppStore.getChat(payload.chatId)
   if (!chat?.ensemble) return { ok: false, error: 'Ensemble chat not found.' }
@@ -21240,36 +20351,81 @@ async function compactKimiProviderContext(payload: {
     !participant ||
     participant.provider !== 'kimi' ||
     participant.linkedProviderSessionId !== payload.providerSessionId ||
-    participant.kimiAcpNativeSession !== true
+    participant.kimiAcpNativeSession !== true ||
+    !isKimiAcpProductionPosture(participant.kimiAcpPostureVersion)
   ) {
     return { ok: false, error: 'The Kimi native session changed before compaction.' }
   }
   if (activeKimiNativeCompactions.has(payload.providerSessionId)) {
     return { ok: false, error: 'A compaction is already in progress for this Kimi session.' }
   }
-  const workspace = chat.workspacePath || globalRunCwd()
-  const unsafeProjectConfig = await findUnsafeWorkspaceKimiConfig(workspace, kimiHomeFsAdapter)
-  if (unsafeProjectConfig) {
-    return { ok: false, error: buildKimiWorkspaceConfigRefusalMessage(unsafeProjectConfig) }
-  }
+  const workspace = chat.workspacePath
   const resolved = await resolveCliProviderBinary('kimi', undefined)
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
   if (!resolved.binaryPath) {
     return { ok: false, error: resolved.error || 'Kimi Code CLI was not found.' }
   }
-  const flavour = await probeKimiFlavourForBinary(resolved.binaryPath)
-  if (flavour.flavour !== 'kimi-code' || !kimiAcpEnabled()) {
-    return { ok: false, error: 'This Kimi seat is not running on the resumable ACP transport.' }
+  const admission = await admitKimiRuntime({
+    binaryPath: resolved.binaryPath,
+    isPackaged: app.isPackaged,
+    environment: process.env
+  })
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
+  if (!admission.admitted || !kimiAcpEnabled()) {
+    return {
+      ok: false,
+      error: admission.admitted
+        ? 'Kimi ACP is disabled; native compaction cannot use a legacy transport.'
+        : `Kimi runtime admission blocked native compaction: ${admission.message}`
+    }
   }
   const home = await prepareKimiIsolatedHome({
     runId: `compact-${payload.chatId}-${payload.participantId}`,
     homeDir: kimiAcpSeatHomeDirForIdentity(payload.chatId, payload.participantId),
+    boundaryRoot: kimiAcpSeatStateRoot(app.getPath('userData')),
     sourceHome: join(os.homedir(), '.kimi-code'),
     thinkingEnabled: participant.thinkingEnabled ?? true,
     preserveSessionState: true,
+    strictCleanup: true,
     fs: kimiHomeFsAdapter
   })
   if (!home.ok) return { ok: false, error: home.message }
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    await home.cleanup()
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
 
+  let privateCwd: KimiPrivateRunCwd
+  try {
+    privateCwd = await prepareKimiPrivateRunCwd({
+      isolatedHome: home.home,
+      fs: kimiPrivateCwdFsAdapter
+    })
+  } catch (error) {
+    await home.cleanup()
+    return {
+      ok: false,
+      error: `Kimi's private compaction cwd could not be created. ${
+        error instanceof Error ? error.message : String(error)
+      }`
+    }
+  }
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    await createJoinedKimiCleanup(
+      () => privateCwd.cleanup(),
+      () => home.cleanup()
+    )()
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
+
+  const compactionRoute: AgentRunRoute = {
+    appChatId: payload.chatId,
+    appRunId: `kimi-compact-${randomUUID()}`
+  }
   const trigger = payload.trigger || 'manual'
   const startedAtMs = Date.now()
   activeKimiNativeCompactions.add(payload.providerSessionId)
@@ -21283,69 +20439,238 @@ async function compactKimiProviderContext(payload: {
 
   let lastWarning: string | undefined
   let handle: ReturnType<typeof runKimiAcpTurn> | null = null
-  const outcome = await new Promise<{ ok: boolean; error?: string }>((resolveOutcome) => {
-    let settled = false
-    const finish = (result: { ok: boolean; error?: string }): void => {
-      if (settled) return
-      settled = true
-      clearTimeout(timer)
-      resolveOutcome(result)
-    }
-    const timer = setTimeout(() => {
-      handle?.cancel()
-      finish({ ok: false, error: 'Timed out waiting for Kimi Code to compact.' })
-    }, 180_000)
+  let child: import('./kimi/KimiAcpClient').AcpChildProcess | null = null
+  let nativeActivityStarted = false
+  let deletionForceKillTimer: ReturnType<typeof setTimeout> | null = null
+  const cancelForHistoryDeletion = (): void => {
+    handle?.cancel()
     try {
-      handle = runKimiAcpTurn({
-        prompt: '/compact',
-        resumeSessionId: payload.providerSessionId,
-        allowResumeFallback: false,
-        cwd: workspace,
-        fsRoots: [workspace],
-        fs: kimiAcpFsAdapter,
-        mcpServers: [],
-        spawnProcess: () => {
-          const modelArgs: string[] = []
-          appendKimiModelArgs(
-            modelArgs,
-            normalizeCliProviderModel('kimi', payload.model || participant.model),
-            participant.fastModeEnabled ? 'fast' : 'standard'
-          )
-          return spawn(resolved.binaryPath!, [...modelArgs, 'acp'], {
-            cwd: workspace,
-            env: createCliEnv(
-              {
-                ...home.env,
-                TASKWRAITH_PARENT_PROVIDER: 'kimi',
-                TASKWRAITH_CHAT_ID: payload.chatId
-              },
-              resolved.binaryPath!
-            )
-          }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
-        },
-        // Native compaction is provider-internal and must remain tool-free.
-        onPermissionRequest: () => 'deny',
-        onEvent: (event) => {
-          if (event.type === 'provider_warning' && event.text) lastWarning = event.text
-        },
-        onClose: (_code, turnComplete, terminalStatus) => {
-          const succeeded =
-            turnComplete && (terminalStatus === 'success' || terminalStatus === 'end_turn')
-          finish({
-            ok: succeeded,
-            ...(succeeded
-              ? {}
-              : { error: lastWarning || 'Kimi Code did not complete native compaction.' })
+      child?.kill()
+    } catch {
+      // Close evidence, not kill()'s return value, settles native activity.
+    }
+    deletionForceKillTimer = setTimeout(() => {
+      try {
+        child?.kill('SIGKILL')
+      } catch {
+        // The exact close callback remains the join authority.
+      }
+    }, 5_000)
+    deletionForceKillTimer.unref?.()
+  }
+  payload.reservation.signal.addEventListener('abort', cancelForHistoryDeletion, { once: true })
+  let teardown = createJoinedKimiCleanup(
+    () => privateCwd.cleanup(),
+    () => home.cleanup()
+  )
+  const outcome = await new Promise<{ ok: boolean; error?: string; quarantined?: boolean }>(
+    (resolveOutcome) => {
+      let settled = false
+      let timedOut = false
+      let quarantined = false
+      let timer: ReturnType<typeof setTimeout> | null = null
+      let forceTimer: ReturnType<typeof setTimeout> | null = null
+      let quarantineTimer: ReturnType<typeof setTimeout> | null = null
+      const clearTimers = (): void => {
+        if (timer) clearTimeout(timer)
+        if (forceTimer) clearTimeout(forceTimer)
+        if (quarantineTimer) clearTimeout(quarantineTimer)
+      }
+      const finish = (result: { ok: boolean; error?: string; quarantined?: boolean }): void => {
+        if (settled) return
+        settled = true
+        clearTimers()
+        resolveOutcome(result)
+      }
+      void launchKimiProductionAcp({
+        taskWraithMcpAdvertised: true,
+        privateCwd,
+        assertRuntimeReadyForSpawn: admission.assertReadyForSpawn,
+        startGateway: async () => {
+          const bridge = await startKimiHttpMcpBridge({
+            dispatch: createKimiMcpDispatch({
+              route: compactionRoute,
+              workspace,
+              appVersion: app.getVersion(),
+              brokerToken: geminiMcpBrokerToken,
+              getMcpToolDefinitions: () => mcpToolDefinitions(),
+              dispatchBrokerRequest: (request) =>
+                mcpBridgeRuntime.handleGeminiMcpBrokerRequest(request)
+            })
           })
+          return {
+            server: {
+              name: 'taskwraith',
+              type: 'http',
+              url: bridge.url,
+              headers: [{ name: bridge.headerName, value: bridge.headerValue }]
+            },
+            close: () => bridge.close()
+          }
+        },
+        snapshot: {
+          appVersion: app.getVersion(),
+          prompt: '/compact',
+          requestedResumeSessionId: payload.providerSessionId,
+          persistedPostureVersion: participant.kimiAcpPostureVersion
+        },
+        launch: (production, transportCleanup, admittedBinaryPath) => {
+          if (!production.session.resumeSessionId) {
+            throw new Error('The Kimi native session is not eligible for safe resume.')
+          }
+          teardown = createJoinedKimiCleanup(transportCleanup, () => home.cleanup())
+          handle = runKimiAcpTurn({
+            prompt: production.session.prompt,
+            resumeSessionId: production.session.resumeSessionId,
+            allowResumeFallback: false,
+            cwd: production.cwd,
+            initializeParams: production.initializeParams,
+            mcpServers: production.mcpServers,
+            spawnProcess: () => {
+              const modelArgs: string[] = []
+              appendKimiModelArgs(
+                modelArgs,
+                normalizeCliProviderModel('kimi', payload.model || participant.model),
+                participant.fastModeEnabled ? 'fast' : 'standard'
+              )
+              nativeActivityStarted = maintenanceCompactionRegistry.beginNativeActivity(
+                payload.reservation
+              )
+              if (!nativeActivityStarted) {
+                throw new Error('Compaction was cancelled before Kimi ACP spawn.')
+              }
+              try {
+                child = spawn(admittedBinaryPath, [...modelArgs, 'acp'], {
+                  cwd: production.cwd,
+                  env: buildKimiContainedProcessEnv(
+                    createCliEnv(
+                      {
+                        ...home.env,
+                        HOME: home.home,
+                        USERPROFILE: home.home,
+                        TASKWRAITH_PARENT_PROVIDER: 'kimi',
+                        TASKWRAITH_RUN_ID: compactionRoute.appRunId || '',
+                        TASKWRAITH_CHAT_ID: payload.chatId
+                      },
+                      admittedBinaryPath
+                    ),
+                    production.cwd
+                  )
+                }) as unknown as import('./kimi/KimiAcpClient').AcpChildProcess
+                return child
+              } catch (error) {
+                maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+                nativeActivityStarted = false
+                throw error
+              }
+            },
+            beforeInitialize: async (providerChild) => {
+              const proc = providerChild as unknown as ChildProcess
+              await home.noteProviderProcess(proc.pid || 0)
+            },
+            // Native compaction is provider-internal and must remain tool-free.
+            onPermissionRequest: () => 'deny',
+            onEvent: (event) => {
+              if (event.type === 'provider_warning' && event.text) lastWarning = event.text
+            },
+            onClose: (_code, turnComplete, terminalStatus) => {
+              if (deletionForceKillTimer) {
+                clearTimeout(deletionForceKillTimer)
+                deletionForceKillTimer = null
+              }
+              if (quarantined) {
+                // The provider process has finally closed, so the quarantined
+                // resources can be removed. Keep the seat reserved if strict
+                // cleanup still fails after retry; releasing it would allow a
+                // new compaction to overlap credential-bearing residue.
+                void (async () => {
+                  try {
+                    try {
+                      await teardown()
+                    } catch {
+                      await teardown()
+                    }
+                    if (nativeActivityStarted) {
+                      maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+                      nativeActivityStarted = false
+                    }
+                    activeKimiNativeCompactions.delete(payload.providerSessionId)
+                  } catch (error) {
+                    console.warn(
+                      '[Kimi ACP] quarantined compaction cleanup failed after retry:',
+                      error instanceof Error ? error.message : String(error)
+                    )
+                  }
+                })()
+                return
+              }
+              if (nativeActivityStarted) {
+                maintenanceCompactionRegistry.endNativeActivity(payload.reservation)
+                nativeActivityStarted = false
+              }
+              const succeeded =
+                !timedOut &&
+                turnComplete &&
+                (terminalStatus === 'success' || terminalStatus === 'end_turn')
+              finish({
+                ok: succeeded,
+                ...(succeeded
+                  ? {}
+                  : { error: lastWarning || 'Kimi Code did not complete native compaction.' })
+              })
+            }
+          })
+          return handle
         }
       })
-    } catch (error) {
-      finish({ ok: false, error: error instanceof Error ? error.message : String(error) })
+        .then((launched) => {
+          handle = launched.handle
+          if (payload.reservation.signal.aborted) {
+            handle.cancel()
+            child?.kill()
+          }
+          if (settled) return
+          timer = setTimeout(() => {
+            timedOut = true
+            lastWarning = 'Timed out waiting for Kimi Code to compact.'
+            handle?.cancel()
+            forceTimer = setTimeout(() => child?.kill('SIGKILL'), 5_000)
+            quarantineTimer = setTimeout(() => {
+              quarantined = true
+              finish({
+                ok: false,
+                error:
+                  'Kimi compaction did not close after forced termination; its seat resources remain quarantined.',
+                quarantined: true
+              })
+            }, 15_000)
+          }, 180_000)
+        })
+        .catch((error) => {
+          finish({ ok: false, error: error instanceof Error ? error.message : String(error) })
+        })
     }
-  })
+  )
 
-  await home.cleanup()
-  activeKimiNativeCompactions.delete(payload.providerSessionId)
+  if (!outcome.quarantined) {
+    let cleanupError: unknown
+    try {
+      await teardown()
+    } catch {
+      try {
+        await teardown()
+      } catch (error) {
+        cleanupError = error
+      }
+    }
+    activeKimiNativeCompactions.delete(payload.providerSessionId)
+    if (cleanupError) {
+      outcome.ok = false
+      outcome.error = `Kimi compaction cleanup failed after retry: ${
+        cleanupError instanceof Error ? cleanupError.message : String(cleanupError)
+      }`
+    }
+  }
   const telemetry: ContextCompactionTelemetry = {
     provider: 'kimi',
     trigger,
@@ -21355,6 +20680,9 @@ async function compactKimiProviderContext(payload: {
   const signal: ContextCompactionSignal = {
     kind: outcome.ok ? 'completed' : 'failed',
     telemetry
+  }
+  if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
   }
   if (outcome.ok) {
     invalidateEnsemblePromptReceiptsForSession({
@@ -21392,15 +20720,9 @@ async function compactKimiProviderContext(payload: {
 }
 
 /**
- * Host-side SEAT compaction for ensemble cursor/grok participants (wave 3) —
- * the providers with no native compaction lever. A maintenance-lane one-shot
+ * Host-side SEAT compaction for ensemble Grok participants (wave 3). A
+ * maintenance-lane one-shot
  * CLI spawn OUTSIDE the run registry (mirrors compactClaudeProviderContext):
- *  - cursor: `-p --mode plan --resume <seatSession>` with the summarize
- *    instruction — the seat's native session holds the accumulated context
- *    (every round re-embeds the tagged transcript into it, which is exactly
- *    why cursor seats bloat). On success the seat's linkedProviderSessionId
- *    is CLEARED so the next round starts a fresh session, seeded by the
- *    summary block EnsemblePrompt now injects.
  *  - grok: sequential fresh read-only children carry bounded transcript
  *    material in-prompt, chain and checkpoint the rolling summary after every
  *    exact-prefix advance, and stop at the shared deadline/source cap. Grok's
@@ -21428,45 +20750,37 @@ function seatRunPreTokens(chat: ChatRecord, participantId: string): number | und
 }
 
 async function runHostSeatSummaryProcess(input: {
-  provider: 'cursor' | 'kimi' | 'grok'
+  provider: 'grok'
   binaryPath: string
   args: string[]
   timeoutMs: number
+  reservation: MaintenanceCompactionReservation
 }): Promise<HostSeatCompactionChunkResult> {
   let summaryText = ''
   let timedOut = false
   let processError: string | undefined
   let exitCode = -1
-  let kimiMcpConfigPath: string | null = null
-  let kimiAgentFilePath: string | null = null
   try {
-    let processArgs = input.args
-    if (input.provider === 'kimi') {
-      // Maintenance has no reason to load tools. An explicit empty file also
-      // prevents Kimi from consulting a stale Release/Dev-global TaskWraith
-      // registration while it summarizes transcript text.
-      kimiMcpConfigPath = await writeKimiMcpConfigForRun({
-        runId: `seat-summary-${Date.now()}`,
-        purpose: 'maintenance',
-        includeTaskWraith: false,
-        preserveUserServers: false
-      })
-      kimiAgentFilePath = await writeKimiBrokerOnlyAgentForRun({
-        runId: `seat-summary-${Date.now()}`,
-        purpose: 'maintenance'
-      })
-      processArgs = extendKimiCliArgsWithMcpConfig(
-        [...processArgs, '--agent-file', kimiAgentFilePath],
-        kimiMcpConfigPath
-      )
-    }
-    const plan = createCliSpawnPlan(input.binaryPath, processArgs)
+    const plan = createCliSpawnPlan(input.binaryPath, input.args)
     exitCode = await new Promise<number>((resolve) => {
-      const child = spawn(plan.command, plan.args, {
-        shell: plan.shell,
-        stdio: ['ignore', 'pipe', 'pipe'],
-        env: createCliEnv({}, input.binaryPath)
-      })
+      if (!maintenanceCompactionRegistry.beginNativeActivity(input.reservation)) {
+        processError = 'Compaction was cancelled before its provider process started.'
+        resolve(-1)
+        return
+      }
+      let child: ReturnType<typeof spawn>
+      try {
+        child = spawn(plan.command, plan.args, {
+          shell: plan.shell,
+          stdio: ['ignore', 'pipe', 'pipe'],
+          env: createCliEnv({}, input.binaryPath)
+        })
+      } catch (error) {
+        maintenanceCompactionRegistry.endNativeActivity(input.reservation)
+        processError = error instanceof Error ? error.message : String(error)
+        resolve(-1)
+        return
+      }
       // Provider banners/warnings are not summary material, but the pipe must
       // still be drained or a noisy CLI can backpressure itself into a hang.
       child.stderr?.resume()
@@ -21477,18 +20791,47 @@ async function runHostSeatSummaryProcess(input: {
         clearTimeout(killTimer)
         resolve(code)
       }
-      const killTimer = setTimeout(() => {
-        timedOut = true
+      let nativeClosed = false
+      const recordNativeClose = (): void => {
+        if (nativeClosed) return
+        nativeClosed = true
+        maintenanceCompactionRegistry.endNativeActivity(input.reservation)
+      }
+      let deletionForceKillTimer: ReturnType<typeof setTimeout> | null = null
+      const cancelForHistoryDeletion = (): void => {
         try {
           child.kill()
         } catch {
-          // Already gone.
+          // Exact close remains the only native termination evidence.
         }
-        // A wedged child may never emit `close` after SIGTERM. End the accepted
-        // maintenance request at its hard deadline; timedOut prevents another
-        // chunk from spawning, and a later close is ignored by settle().
-        settle(-1)
-      }, Math.max(1, Math.trunc(input.timeoutMs)))
+        deletionForceKillTimer = setTimeout(() => {
+          try {
+            child.kill('SIGKILL')
+          } catch {
+            // Exact close remains the only native termination evidence.
+          }
+        }, 5_000)
+        deletionForceKillTimer.unref?.()
+      }
+      input.reservation.signal.addEventListener('abort', cancelForHistoryDeletion, {
+        once: true
+      })
+      if (input.reservation.signal.aborted) cancelForHistoryDeletion()
+      const killTimer = setTimeout(
+        () => {
+          timedOut = true
+          try {
+            child.kill()
+          } catch {
+            // Already gone.
+          }
+          // A wedged child may never emit `close` after SIGTERM. End the accepted
+          // maintenance request at its hard deadline; timedOut prevents another
+          // chunk from spawning, and a later close is ignored by settle().
+          settle(-1)
+        },
+        Math.max(1, Math.trunc(input.timeoutMs))
+      )
       let buffer = ''
       const handleLine = (line: string): void => {
         const trimmed = line.trim()
@@ -21499,25 +20842,8 @@ async function runHostSeatSummaryProcess(input: {
         } catch {
           return // banners / non-JSON noise — never summary material
         }
-        if (input.provider === 'cursor') {
-          for (const event of cursorEventToRunEvents({ json: parsed ?? undefined })) {
-            if (event.type !== 'content' || !event.text) continue
-            const rawType =
-              event.raw && typeof event.raw === 'object'
-                ? (event.raw as { type?: unknown }).type
-                : undefined
-            // Full-turn `assistant` frames are cumulative snapshots (replace);
-            // `text` frames are streamed deltas (append).
-            if (rawType === 'assistant') summaryText = event.text
-            else summaryText += event.text
-          }
-        } else if (input.provider === 'grok') {
-          for (const event of grokEventToRunEvents({ json: parsed ?? undefined })) {
-            if (event.type === 'content' && event.text) summaryText += event.text
-          }
-        } else {
-          const text = extractProviderText(parsed)
-          if (text) summaryText += text
+        for (const event of grokEventToRunEvents({ json: parsed ?? undefined })) {
+          if (event.type === 'content' && event.text) summaryText += event.text
         }
       }
       child.stdout?.on('data', (chunk: Buffer) => {
@@ -21531,15 +20857,15 @@ async function runHostSeatSummaryProcess(input: {
         settle(-1)
       })
       child.on('close', (code) => {
+        input.reservation.signal.removeEventListener('abort', cancelForHistoryDeletion)
+        if (deletionForceKillTimer) clearTimeout(deletionForceKillTimer)
+        recordNativeClose()
         if (buffer.trim()) handleLine(buffer)
         settle(typeof code === 'number' ? code : -1)
       })
     })
   } catch (error) {
     processError = error instanceof Error ? error.message : String(error)
-  } finally {
-    await removeKimiMcpConfigFile(kimiMcpConfigPath)
-    await removeKimiAgentFile(kimiAgentFilePath)
   }
   return {
     ok: exitCode === 0 && !timedOut,
@@ -21563,7 +20889,11 @@ function persistHostSeatCompactionCheckpoint(input: {
   nextSummary: HostSeatContextSummary
   claimedMessageIds?: readonly string[]
   clearProviderSession?: boolean
+  reservation: MaintenanceCompactionReservation
 }): { ok: true } | { ok: false; error: string } {
+  if (!maintenanceCompactionRegistry.canWrite(input.reservation)) {
+    return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+  }
   const fresh = AppStore.getChat(input.chatId)
   if (!fresh?.ensemble) return { ok: false, error: 'The chat or ensemble no longer exists.' }
   const currentWorkspace = fresh.workspacePath || globalRunCwd()
@@ -21605,11 +20935,12 @@ function persistHostSeatCompactionCheckpoint(input: {
 async function compactCliSeatContext(payload: {
   chatId: string
   participantId: string
-  provider: 'cursor' | 'kimi' | 'grok'
+  provider: 'grok'
   providerSessionId?: string | null
   model?: string
   cardMetadata?: Record<string, unknown>
   trigger?: 'auto' | 'manual'
+  reservation: MaintenanceCompactionReservation
 }): Promise<{ ok: boolean; error?: string }> {
   const pendingKey = seatCompactionKey(payload.chatId, payload.participantId)
   const existing = pendingSeatCompactions.get(pendingKey)
@@ -21639,7 +20970,6 @@ async function compactCliSeatContext(payload: {
     const previousSummary = seat.contextCompactionSummary
       ? (structuredClone(seat.contextCompactionSummary) as HostSeatContextSummary)
       : undefined
-    const previousSummaryText = previousSummary?.text?.trim() ? previousSummary.text : undefined
     const identity: HostSeatCompactionIdentity = {
       participantId: payload.participantId,
       provider: payload.provider,
@@ -21660,6 +20990,9 @@ async function compactCliSeatContext(payload: {
         : {})
     }
     const resolved = await resolveCliProviderBinary(payload.provider, undefined)
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+    }
     if (!resolved.binaryPath) {
       return {
         ok: false,
@@ -21671,166 +21004,75 @@ async function compactCliSeatContext(payload: {
     let failureError: string | undefined
     let checkpointCount = 0
     let coverageComplete = false
-    let finalSummary: HostSeatContextSummary | undefined
-    let maintenanceStopReason = payload.provider === 'cursor' ? 'cursor_one_shot' : 'no_progress'
-    let maintenanceStopError: string | undefined
+    let maintenanceStopReason = 'no_progress'
 
-    if (payload.provider === 'cursor') {
-      const providerSessionId = identity.linkedProviderSessionId || ''
-      if (!providerSessionId) {
-        failureError = 'This cursor seat has no provider session to compact yet.'
-        maintenanceStopReason = 'no_progress'
-      } else {
-        const run = await runHostSeatSummaryProcess({
-          provider: 'cursor',
-          binaryPath: resolved.binaryPath,
-          args: buildCursorCliArgs({
-            approvalMode: 'plan',
-            workspace,
-            providerSessionId,
-            model: identity.model,
-            prompt: buildHostCompactionSummaryPrompt({ previousSummaryText })
-          }),
-          timeoutMs: HOST_SEAT_COMPACTION_DEADLINE_MS
+    const convergence = await convergeHostSeatCompaction({
+      provider: payload.provider,
+      snapshotMessages,
+      initialSummary: previousSummary,
+      preTokens,
+      startedAtMs,
+      now: () => Date.now(),
+      nowIso: () => new Date().toISOString(),
+      summarize: async ({ prompt, timeoutMs }) => {
+        if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+          return {
+            ok: false,
+            text: '',
+            error: 'Compaction was cancelled for history deletion.'
+          }
+        }
+        const args = buildGrokCliArgs({
+          prompt,
+          workspace,
+          model: identity.model,
+          approvalMode: 'plan'
         })
-        const summaryText = (run.text || '')
-          .trim()
-          .slice(0, CONTEXT_COMPACTION_SUMMARY_MAX_CHARS)
-        if (!run.ok || run.timedOut) {
-          failureError = run.error || 'The cursor seat summarize turn failed.'
-          maintenanceStopReason = run.timedOut ? 'deadline' : 'summarizer_failed'
-        } else if (!summaryText) {
-          failureError = 'Seat summarize turn returned no summary.'
-          maintenanceStopReason = 'summarizer_failed'
-        } else {
-          const nextSummary: HostSeatContextSummary = {
-            text: summaryText,
-            createdAt: new Date().toISOString(),
-            provider: 'cursor',
-            ...(preTokens !== undefined ? { preTokens } : {}),
-            provenance: {
-              kind: 'provider_session',
-              providerSessionId,
-              observedMessageIds: [],
-              ...(previousSummaryText && previousSummary?.createdAt
-                ? { previousSummaryCreatedAt: previousSummary.createdAt }
-                : {})
-            }
-          }
-          const persisted = persistHostSeatCompactionCheckpoint({
-            chatId: payload.chatId,
-            identity,
-            snapshotEligibleRows,
-            expectedPreviousSummary: previousSummary,
-            nextSummary,
-            clearProviderSession: true
-          })
-          if (persisted.ok) {
-            succeeded = true
-            checkpointCount = 1
-            finalSummary = nextSummary
-            maintenanceStopReason = 'complete'
-          } else {
-            failureError = persisted.error
-            maintenanceStopReason = 'mutation'
-          }
-        }
-      }
-      maintenanceStopError = failureError
-    } else {
-      const boundedProvider = payload.provider
-      // Fence (review #5): the legacy print-mode compaction argv below
-      // (--print / --work-dir / --resume) is rejected at parse by a kimi-code
-      // binary, and its --resume would feed an ACP session id to legacy resume
-      // — crossing the transport-generation fence. Only a legacy-wire Kimi
-      // binary may run this path; marked kimi-code seats route to native ACP
-      // compaction before reaching this branch.
-      const kimiCompactionFenced =
-        boundedProvider === 'kimi' &&
-        (await probeKimiFlavourForBinary(resolved.binaryPath!)).flavour !== 'legacy-wire'
-      if (kimiCompactionFenced) {
-        failureError =
-          'This Kimi Code seat has no verified native ACP checkpoint, so compaction was skipped rather than guessing across session generations.'
-        maintenanceStopReason = 'no_progress'
-        maintenanceStopError = failureError
-      } else {
-      const convergence = await convergeHostSeatCompaction({
-        provider: boundedProvider,
-        snapshotMessages,
-        initialSummary: previousSummary,
-        preTokens,
-        startedAtMs,
-        now: () => Date.now(),
-        nowIso: () => new Date().toISOString(),
-        summarize: async ({ prompt, timeoutMs }) => {
-          let args: string[]
-          if (boundedProvider === 'grok') {
-            args = buildGrokCliArgs({
-              prompt,
-              workspace,
-              model: identity.model,
-              approvalMode: 'plan'
-            })
-          } else {
-            args = ['--print', '--plan', '--output-format', 'stream-json', '--work-dir', workspace]
-            appendKimiModelArgs(args, normalizeCliProviderModel('kimi', identity.model))
-            args.push('--prompt', prompt)
-            // Only resume a Wire-minted session id (this path is legacy-wire-
-            // fenced above; the wireResumeSessionId gate is belt-and-braces so
-            // an ACP session_<uuid> can never reach legacy --resume).
-            const compactionResumeId = wireResumeSessionId(identity.linkedProviderSessionId)
-            if (compactionResumeId) {
-              // Deliberate: Kimi's verified Wire contract treats --resume as a
-              // session identity token, not transcript restoration (the same
-              // invariant behind PromptComposition's unconditional Kimi
-              // context injection). Each fresh child therefore depends only on
-              // this prompt's prior durable summary + new material.
-              args.push('--resume', compactionResumeId)
-            }
-          }
-          return runHostSeatSummaryProcess({
-            provider: boundedProvider,
-            binaryPath: resolved.binaryPath!,
-            args,
-            timeoutMs
-          })
-        },
-        checkpoint: ({ expectedPreviousSummary, nextSummary, claimedMessageIds }) =>
-          persistHostSeatCompactionCheckpoint({
-            chatId: payload.chatId,
-            identity,
-            snapshotEligibleRows,
-            expectedPreviousSummary,
-            nextSummary,
-            claimedMessageIds
-          })
-      })
-      checkpointCount = convergence.checkpointCount
-      coverageComplete = convergence.coverageComplete
-      finalSummary = convergence.finalSummary
-      maintenanceStopReason = convergence.stopReason
-      maintenanceStopError = convergence.error
-      succeeded = hostSeatCompactionRequestSucceeded(convergence)
-      if (!succeeded) failureError = convergence.error || 'The seat summary made no durable progress.'
+        return runHostSeatSummaryProcess({
+          provider: payload.provider,
+          binaryPath: resolved.binaryPath!,
+          args,
+          timeoutMs,
+          reservation: payload.reservation
+        })
+      },
+      checkpoint: ({ expectedPreviousSummary, nextSummary, claimedMessageIds }) =>
+        persistHostSeatCompactionCheckpoint({
+          chatId: payload.chatId,
+          identity,
+          snapshotEligibleRows,
+          expectedPreviousSummary,
+          nextSummary,
+          claimedMessageIds,
+          reservation: payload.reservation
+        })
+    })
+    checkpointCount = convergence.checkpointCount
+    coverageComplete = convergence.coverageComplete
+    const finalSummary = convergence.finalSummary
+    maintenanceStopReason = convergence.stopReason
+    const maintenanceStopError = convergence.error
+    succeeded = hostSeatCompactionRequestSucceeded(convergence)
+    if (!succeeded) failureError = convergence.error || 'The seat summary made no durable progress.'
 
-      if (boundedProvider === 'grok' && coverageComplete && finalSummary) {
-        // Re-read after the controller returns. No await occurs between this
-        // exact-current-coverage fence and registry disposal, so a new eligible
-        // row, seat relink, or summary replacement blocks destructive reset.
-        const fresh = AppStore.getChat(payload.chatId)
-        if (
-          fresh &&
-          canDisposeGrokSeatAfterCompaction({
-            chat: fresh,
-            currentWorkspace: fresh.workspacePath || globalRunCwd(),
-            identity,
-            snapshotEligibleRows,
-            finalSummary
-          })
-        ) {
-          grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
-        }
-      }
+    if (coverageComplete && finalSummary) {
+      // Re-read after the controller returns. No await occurs between this
+      // exact-current-coverage fence and registry disposal, so a new eligible
+      // row, seat relink, or summary replacement blocks destructive reset.
+      const fresh = maintenanceCompactionRegistry.canWrite(payload.reservation)
+        ? AppStore.getChat(payload.chatId)
+        : null
+      if (
+        fresh &&
+        canDisposeGrokSeatAfterCompaction({
+          chat: fresh,
+          currentWorkspace: fresh.workspacePath || globalRunCwd(),
+          identity,
+          snapshotEligibleRows,
+          finalSummary
+        })
+      ) {
+        grokSeatSessionRegistry.disposeSeat(`${payload.chatId}:${payload.participantId}`)
       }
     }
 
@@ -21844,6 +21086,9 @@ async function compactCliSeatContext(payload: {
     const signal: ContextCompactionSignal = {
       kind: succeeded ? 'completed' : 'failed',
       telemetry
+    }
+    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+      return { ok: false, error: 'Compaction was cancelled for history deletion.' }
     }
     appendContextCompactionMessageToChat(
       payload.chatId,
@@ -21876,9 +21121,7 @@ async function compactCliSeatContext(payload: {
         }
       )
     }
-    return signal.kind === 'completed'
-      ? { ok: true }
-      : { ok: false, error: signal.telemetry.error }
+    return signal.kind === 'completed' ? { ok: true } : { ok: false, error: signal.telemetry.error }
   })()
   pendingSeatCompactions.set(pendingKey, work)
   try {
@@ -21903,15 +21146,67 @@ async function compactProviderContextForRequest(payload: {
   /** 'auto' only from the orchestrator's post-round trigger; IPC = manual. */
   trigger?: 'auto' | 'manual'
 }): Promise<{ ok: boolean; error?: string }> {
+  if (payload.provider === 'cursor') {
+    return {
+      ok: false,
+      error:
+        'Cursor host-seat compaction is unavailable because TaskWraith starts no managed Cursor process; both Plan and tool transports remain disabled and unqualified.'
+    }
+  }
+  const admissionChat = AppStore.getChat(payload.chatId)
+  if (!admissionChat) return { ok: false, error: 'Chat not found.' }
+  let reservation: MaintenanceCompactionReservation
+  try {
+    // This is deliberately before the request's first await. A durable or
+    // process-local deletion fence therefore wins without a TOCTOU window.
+    reservation = maintenanceCompactionRegistry.reserve({
+      chatId: payload.chatId,
+      ...(admissionChat.workspaceId ? { workspaceId: admissionChat.workspaceId } : {}),
+      provider: payload.provider,
+      ...(payload.participantId ? { participantId: payload.participantId } : {})
+    })
+  } catch (error) {
+    return {
+      ok: false,
+      error:
+        error instanceof MaintenanceCompactionAdmissionError
+          ? error.message
+          : 'Provider context compaction could not reserve maintenance authority.'
+    }
+  }
+  try {
+    return await compactProviderContextForReservedRequest(payload, reservation)
+  } finally {
+    maintenanceCompactionRegistry.finish(reservation)
+  }
+}
+
+async function compactProviderContextForReservedRequest(
+  payload: {
+    chatId: string
+    provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok'
+    providerSessionId?: string
+    participantId?: string
+    trigger?: 'auto' | 'manual'
+  },
+  reservation: MaintenanceCompactionReservation
+): Promise<{ ok: boolean; error?: string }> {
+  if (payload.provider === 'cursor') {
+    return {
+      ok: false,
+      error:
+        'Cursor host-seat compaction is unavailable because TaskWraith starts no managed Cursor process; both Plan and tool transports remain disabled and unqualified.'
+    }
+  }
   let providerSessionId = payload.providerSessionId
   let model: string | undefined
   let reasoningEffort: string | null | undefined
   let cardMetadata: Record<string, unknown> | undefined
   let kimiNativeSession = false
-  const isHostSeatProvider =
-    payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok'
-  // Host seat providers (cursor/kimi/grok) only compact as ENSEMBLE seats here.
-  // Solo cursor/kimi compact through the RENDERER's summarize-run lane (wave 2);
+  const isHostSeatProvider = payload.provider === 'kimi' || payload.provider === 'grok'
+  // Kimi/Grok host seats compact only as ENSEMBLE seats here. Cursor remains in
+  // the request union for historical decoding but is rejected above. Solo Kimi
+  // compacts through the renderer's summarize-run lane (wave 2);
   // solo grok has no host lever yet (its ACP default reinjects the transcript,
   // so a solo grok chat cannot overflow from accumulation).
   if (isHostSeatProvider && !payload.participantId) {
@@ -21952,7 +21247,9 @@ async function compactProviderContextForRequest(payload: {
       }
     }
     providerSessionId = participant.linkedProviderSessionId || undefined
-    kimiNativeSession = participant.kimiAcpNativeSession === true
+    kimiNativeSession =
+      participant.kimiAcpNativeSession === true &&
+      isKimiAcpProductionPosture(participant.kimiAcpPostureVersion)
     model = participant.model
     reasoningEffort = participant.reasoningEffort
     const presentation = resolveHealthEntryPresentation(
@@ -21982,7 +21279,8 @@ async function compactProviderContextForRequest(payload: {
       providerSessionId,
       model,
       cardMetadata,
-      trigger: payload.trigger || 'manual'
+      trigger: payload.trigger || 'manual',
+      reservation
     })
     pendingSeatCompactions.set(pendingKey, work)
     try {
@@ -21991,7 +21289,14 @@ async function compactProviderContextForRequest(payload: {
       pendingSeatCompactions.delete(pendingKey)
     }
   }
-  if (payload.provider === 'cursor' || payload.provider === 'kimi' || payload.provider === 'grok') {
+  if (payload.provider === 'kimi') {
+    return {
+      ok: false,
+      error:
+        'This Kimi seat does not have an exact admitted native ACP session eligible for compaction; host-summary Kimi execution is retired.'
+    }
+  }
+  if (payload.provider === 'grok') {
     return compactCliSeatContext({
       chatId: payload.chatId,
       participantId: payload.participantId!,
@@ -21999,7 +21304,8 @@ async function compactProviderContextForRequest(payload: {
       providerSessionId,
       model,
       cardMetadata,
-      trigger: payload.trigger || 'manual'
+      trigger: payload.trigger || 'manual',
+      reservation
     })
   }
   if (payload.provider === 'claude') {
@@ -22011,7 +21317,8 @@ async function compactProviderContextForRequest(payload: {
       providerSessionId,
       participantId: payload.participantId,
       model,
-      cardMetadata
+      cardMetadata,
+      reservation
     })
   }
   return compactCodexProviderContext({
@@ -22020,7 +21327,8 @@ async function compactProviderContextForRequest(payload: {
     participantId: payload.participantId,
     model,
     reasoningEffort,
-    cardMetadata
+    cardMetadata,
+    reservation
   })
 }
 
@@ -22202,6 +21510,19 @@ function handleCodexNotification(message: any) {
       message?.params?.turn?.threadId ||
       ''
   )
+  const maintenanceCompaction = notificationThreadId
+    ? pendingCodexManualCompactions.get(notificationThreadId)
+    : undefined
+  // A manual compaction and an ordinary/review run can share a persistent
+  // thread over time. Route by the exact operation id (or current admission
+  // ownership for its first turn/started), never merely by thread id.
+  if (
+    maintenanceCompaction &&
+    codexNotificationBelongsToManualCompaction(maintenanceCompaction, message)
+  ) {
+    handleCodexManualCompactionNotification(message)
+    return
+  }
   // Manual compactions are keyed strictly by threadId, and they must win over
   // findCodexRunStateForMessage's ACTIVE-STATE FALLBACK: compacting idle chat A
   // while a different codex chat B is running resolves to B's state, whose
@@ -22279,15 +21600,30 @@ function handleCodexNotification(message: any) {
     return
   }
 
+  if (
+    message.method === 'turn/started' &&
+    state.appRunId &&
+    allowsTerminalCodexNativeGoalSession(runManager.get(state.appRunId))
+  ) {
+    // A provider-native goal may start another turn after TaskWraith's exact
+    // run operation completed. That autonomous turn has no fresh RunManager
+    // identity or history-join authority, so explicitly fence it instead of
+    // silently adopting it into the predecessor state.
+    const autonomousTurnId = codexProviderOperationId(message)
+    if (autonomousTurnId) void issueCodexTurnInterrupt(state.threadId, autonomousTurnId)
+    return
+  }
+
+  if (!codexNotificationBelongsToRunState(state, message)) {
+    return
+  }
+
   if (syncCodexNativeGoalNotification(state, message)) {
     return
   }
 
   if (message.method === 'turn/started') {
-    state.turnId = params.turn?.id || params.turnId || state.turnId
-    if (state.appRunId && state.turnId) {
-      runManager.registerProviderRun(state.appRunId, state.turnId)
-    }
+    // Exact binding already occurred in codexNotificationBelongsToRunState.
     if (state.turnId) {
       const turnEvents = runItemEventsForDrafts('codex', state, [
         {
@@ -22300,7 +21636,11 @@ function handleCodexNotification(message: any) {
     }
     // Residual 1 — a cancel/budget-kill that fired before this turn started
     // recorded the threadId; now that we have a turnId, interrupt immediately.
-    if (shouldFlushPendingInterrupt(pendingCodexInterrupts, state) && state.threadId && state.turnId) {
+    if (
+      shouldFlushPendingInterrupt(pendingCodexInterrupts, state) &&
+      state.threadId &&
+      state.turnId
+    ) {
       pendingCodexInterrupts.delete(state.threadId)
       void issueCodexTurnInterrupt(state.threadId, state.turnId)
     }
@@ -22368,11 +21708,7 @@ function handleCodexNotification(message: any) {
     message.method === 'item/reasoning/summaryTextDelta' ||
     message.method === 'item/reasoning/summaryPartAdded'
   ) {
-    emitCodexReasoningDelta(
-      state,
-      params,
-      'Reasoning summary'
-    )
+    emitCodexReasoningDelta(state, params, 'Reasoning summary')
     return
   }
 
@@ -22642,45 +21978,36 @@ function handleCodexNotification(message: any) {
     return
   }
 
-  if (message.method === 'turn/completed' || message.method === 'review/completed') {
-    // Review fix: a contextCompaction item that STARTED in this turn but never
-    // completed means the compaction failed or was interrupted — settle the
-    // pending manual record here (success settles from item/completed in
-    // emitCodexContextCompaction) so the awaiting IPC doesn't phantom-timeout
-    // for 180s and then card a misleading generic timeout. Checked BEFORE the
-    // completed guard because the compaction turn can trail the run's own
-    // terminal turn when a compaction was requested against a busy thread.
-    const pendingManualAtTurnEnd = state.threadId
-      ? pendingCodexManualCompactions.get(state.threadId)
-      : undefined
-    if (pendingManualAtTurnEnd && state.contextCompactionStartedAtMs !== undefined) {
-      const turnAtEnd = params.turn || params.review || {}
-      const turnErrorDetail = codexString(turnAtEnd?.error?.message ?? turnAtEnd?.error)
-      pendingManualAtTurnEnd.settle({
-        ok: false,
-        error:
-          turnErrorDetail ||
-          `Codex compaction turn ${codexString(turnAtEnd.status) || 'ended'} before compacting.`
-      })
-      state.contextCompactionStartedAtMs = undefined
-      state.contextCompactionPreTokens = undefined
+  if (
+    message.method === 'turn/completed' ||
+    message.method === 'turn/failed' ||
+    message.method === 'review/completed' ||
+    message.method === 'review/failed'
+  ) {
+    if (state.completed) {
+      completeCodexAppServerTurnProjection(state)
+      return
     }
-    if (state.completed) return
     state.completed = true
     // Residual 1 — the run ended; drop any deferred interrupt for its thread.
     if (state.threadId) pendingCodexInterrupts.delete(state.threadId)
     const turn = params.turn || params.review || {}
     const durationMs = Number(turn.durationMs || turn.duration_ms || 0)
+    const providerFailed = message.method === 'turn/failed' || message.method === 'review/failed'
+    const providerTerminalStatus = turn.status || params.status || (providerFailed ? 'failed' : '')
     // Seal main's own AppStore copy of a SOLO Codex run before we notify the
     // renderer: the app-server never exits per-run, so nothing else writes
     // status/endedAt/stats here and the frozen copy would otherwise clobber the
     // renderer's live seal on the next runManager broadcast. Reviews and
     // ensemble seats are finalized on their own paths, so scope to plain turns.
-    if (message.method === 'turn/completed' && !state.ensembleRun) {
+    if (
+      (message.method === 'turn/completed' || message.method === 'turn/failed') &&
+      !state.ensembleRun
+    ) {
       sealSoloCodexRunOnCompletion({
         appChatId: state.appChatId,
         runId: state.appRunId,
-        status: normalizeCodexTurnStatus(turn.status || params.status),
+        status: normalizeCodexTurnStatus(providerTerminalStatus),
         stats: codexUsageToStats(state.tokenUsage, durationMs),
         endedAt: new Date().toISOString()
       })
@@ -22690,13 +22017,13 @@ function handleCodexNotification(message: any) {
       'codex',
       {
         type: 'result',
-        subtype: normalizeCodexTurnStatus(turn.status || params.status),
+        subtype: normalizeCodexTurnStatus(providerTerminalStatus),
         // The renderer's stream adapter derives run_finished's status from
         // `status` (it never reads `subtype`, which is Claude-CLI vocabulary), so
         // mirror the normalized turn status here too. Without it the adapter falls
         // back to 'unknown' and a solo Codex run's in-memory status + close-out
         // prose read "unknown" even though the persisted run now seals success.
-        status: normalizeCodexTurnStatus(turn.status || params.status),
+        status: normalizeCodexTurnStatus(providerTerminalStatus),
         stats: codexUsageToStats(state.tokenUsage, durationMs),
         provider: 'codex',
         providerThreadId: state.threadId,
@@ -22710,7 +22037,7 @@ function handleCodexNotification(message: any) {
       // and settle it. Coarse status only (Codex ships no structured findings).
       const reviewStats = codexUsageToStats(state.tokenUsage, durationMs)
       const reviewTelemetry = codexReviewCompletionTelemetry({
-        status: turn.status || params.status,
+        status: providerTerminalStatus,
         durationMs,
         totalTokens: reviewStats.total_tokens,
         error: turn.error || params.error
@@ -22718,7 +22045,12 @@ function handleCodexNotification(message: any) {
       sendAgentCompatLine(
         state.sender,
         'codex',
-        { type: 'review_event', tool_id: state.reviewActivityId, review: reviewTelemetry, provider: 'codex' },
+        {
+          type: 'review_event',
+          tool_id: state.reviewActivityId,
+          review: reviewTelemetry,
+          provider: 'codex'
+        },
         state
       )
       sendAgentCompatLine(
@@ -22735,20 +22067,24 @@ function handleCodexNotification(message: any) {
       )
     }
     settleCodexMultiAgentEpisode(state, {
-      rawStatus: turn.status || params.status,
+      rawStatus: providerTerminalStatus,
       durationMs,
       error: turn.error || params.error
     })
-    sendAgentCompatExit(state.sender, 'codex', 0, state)
-    runManager.finish(state.appRunId, 'completed')
+    sendAgentCompatExit(state.sender, 'codex', providerFailed ? 1 : 0, state)
+    runManager.finish(state.appRunId, providerFailed ? 'failed' : 'completed')
     if (activeCodexRunState === state) {
       setActiveCodexRunState(getCodexStateFromSession(getSingleActiveProviderSession('codex')))
     }
+    completeCodexAppServerTurnProjection(state)
     return
   }
 
   if (message.method === 'error') {
+    if (params.willRetry === true) return
     const error = params.message || params.error || 'Codex app-server error.'
+    state.completed = true
+    if (state.threadId) pendingCodexInterrupts.delete(state.threadId)
     settleCodexMultiAgentEpisode(state, { rawStatus: 'failed', error })
     sendAgentCompatError(state.sender, 'codex', error, state)
     sendAgentCompatExit(state.sender, 'codex', 1, state)
@@ -22756,6 +22092,7 @@ function handleCodexNotification(message: any) {
     if (activeCodexRunState === state) {
       setActiveCodexRunState(getCodexStateFromSession(getSingleActiveProviderSession('codex')))
     }
+    completeCodexAppServerTurnProjection(state)
   }
 }
 
@@ -22858,9 +22195,22 @@ function formatCodexApprovalRequest(method: string, params: any, state?: CodexRu
 function handleCodexServerRequest(message: any) {
   const state = findCodexRunStateForMessage(message)
   if (!codexClient) return
-  if (!state) {
+  const requestOperationId = codexProviderOperationId(message)
+  const liveCodexRun = state?.appRunId ? runManager.get(state.appRunId) : undefined
+  if (
+    !state ||
+    !requestOperationId ||
+    !state.admissionReservation?.matchesExactOperationId(requestOperationId) ||
+    historyClearAdmissionBlocked(state.appRunId, state.workspacePath) ||
+    !liveCodexRun ||
+    !isActiveRunSessionStatus(liveCodexRun.status) ||
+    runManager.getClaimedTerminalStatus(state.appRunId)
+  ) {
     if (message?.id !== undefined && message?.id !== null) {
-      codexClient.reject(message.id, 'TaskWraith run is no longer active; approval denied.')
+      codexClient.reject(
+        message.id,
+        'TaskWraith has no matching active Codex turn for this approval; request denied.'
+      )
     }
     return
   }
@@ -22900,15 +22250,18 @@ function handleCodexServerRequest(message: any) {
   // fail-closed when the ACP approval params carry no plain-object args
   // (classifier sees undefined → no auto-allow / no read-only exemption).
   const codexToolArgs =
-    (params as Record<string, unknown>)?.arguments ??
-    (params as Record<string, unknown>)?.input
+    (params as Record<string, unknown>)?.arguments ?? (params as Record<string, unknown>)?.input
+  primeNativeCanvasCompatCorrelation({
+    provider: 'codex',
+    route: state,
+    toolName: codexCanonicalToolName || probedToolName,
+    source: { ...params, request_id: message.id }
+  })
   if (
-    isMcpAutoAllowedForRun(
-      codexCanonicalToolName,
-      state.effectivePermissions,
-      codexToolArgs,
-      { appRunId: state.appRunId, appChatId: state.appChatId }
-    )
+    isMcpAutoAllowedForRun(codexCanonicalToolName, state.effectivePermissions, codexToolArgs, {
+      appRunId: state.appRunId,
+      appChatId: state.appChatId
+    })
   ) {
     if (method === 'mcpServer/elicitation/request' || method === 'mcp/elicitation/request') {
       codexClient.respond(message.id, { action: 'accept', content: null, _meta: null })
@@ -22946,6 +22299,26 @@ function handleCodexServerRequest(message: any) {
     isReadOnlyBlockedTool(codexCanonicalToolName, state.effectivePermissions, codexToolArgs)
       ? ('shellCommands' as AgenticServiceId)
       : service
+  const codexCanvasEvalApproval =
+    gateService === 'canvasEval'
+      ? createCanvasEvalApprovalReceiptFromCanonicalArgs(codexToolArgs, approvalId)
+      : undefined
+  if (gateService === 'canvasEval' && !codexCanvasEvalApproval) {
+    codexClient.reject(
+      message.id,
+      'TaskWraith blocked canvas_eval because no canonical script receipt was available.'
+    )
+    return
+  }
+  if (codexCanvasEvalApproval) {
+    primeNativeCanvasCompatCorrelation({
+      provider: 'codex',
+      route: state,
+      toolName: 'canvas_eval',
+      source: { ...params, request_id: message.id },
+      canvasEvalApproval: codexCanvasEvalApproval
+    })
+  }
   const nativePreflight = resolveNativeApprovalPreflight({
     provider: 'codex',
     service: gateService,
@@ -22957,9 +22330,15 @@ function handleCodexServerRequest(message: any) {
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
   const actions: AgentApprovalAction[] = externalPathDetection
     ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
-    : nativePreflight.kind === 'ask'
-      ? approvalActionsForPolicy(nativePreflight.policy, workspacePathForCodexApproval, gateService)
-      : ['accept', 'acceptForSession', 'decline', 'cancel']
+    : gateService === 'canvasEval'
+      ? ['accept', 'decline', 'cancel']
+      : nativePreflight.kind === 'ask'
+        ? approvalActionsForPolicy(
+            nativePreflight.policy,
+            workspacePathForCodexApproval,
+            gateService
+          )
+        : ['accept', 'acceptForSession', 'decline', 'cancel']
   const previewForDecision = {
     ...(formatted.preview || {}),
     actions,
@@ -22978,8 +22357,18 @@ function handleCodexServerRequest(message: any) {
   const codexApprovalBody = codexEnsembleApproval
     ? `${codexEnsembleApproval.bodyPrefix}\n\n${formatted.body}`
     : formatted.body
-  const codexApprovalPreview = {
+  const codexApprovalPreview: any = {
     ...previewForDecision,
+    ...(gateService === 'canvasEval'
+      ? {
+          toolName: 'canvas_eval',
+          params: codexToolArgs,
+          securityClass: 'signed-elevated',
+          requiresExactDesktopReview: true,
+          requestOnly: true,
+          ...(codexCanvasEvalApproval ? { canvasEvalReceipt: codexCanvasEvalApproval } : {})
+        }
+      : {}),
     ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
   }
   const codexPlanArtifactWriteMetadata =
@@ -23097,7 +22486,7 @@ function handleCodexServerRequest(message: any) {
 
   formatted.preview = codexApprovalPreview
 
-  approvalService?.registerCodex(approvalId, {
+  const registered = approvalService?.registerCodex(approvalId, {
     rpcId: message.id,
     method,
     params,
@@ -23107,6 +22496,10 @@ function handleCodexServerRequest(message: any) {
     allowedActions: actions,
     externalPathDetection
   })
+  if (registered !== true) {
+    codexClient.reject(message.id, 'TaskWraith is not accepting new approval requests.')
+    return
+  }
   runManager.registerApproval(state.appRunId, approvalId)
   scheduleApprovalTimeout({
     approvalId,
@@ -23122,7 +22515,7 @@ function handleCodexServerRequest(message: any) {
     approvalId,
     requestId: message.id,
     method,
-    params,
+    params: gateService === 'canvasEval' ? codexToolArgs : params,
     title: codexApprovalTitle,
     body: codexApprovalBody,
     preview: formatted.preview,
@@ -23134,7 +22527,9 @@ function handleCodexServerRequest(message: any) {
     'approval_request',
     'control',
     codexApprovalTitle,
-    approvalPayload
+    approvalPayload,
+    undefined,
+    codexCanvasEvalApproval
   )
   recordApprovalLedgerRequest(
     'codex',
@@ -23146,7 +22541,8 @@ function handleCodexServerRequest(message: any) {
       metadata: {
         policy,
         ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})
-      }
+      },
+      canvasEvalApproval: codexCanvasEvalApproval
     }
   )
   safeSendToSender(state.sender, 'agent-approval-request', approvalPayload)
@@ -23214,7 +22610,7 @@ function maybeRequestCodexHostRerun(
   const reason = swiftPmNestedSandbox
     ? 'SwiftPM attempted to apply its own sandbox from inside the Codex command sandbox.'
     : 'Codex command failed in the command sandbox with a Swift/Xcode-style sandbox/tooling collision.'
-  approvalService?.registerHostCommand(approvalId, {
+  const registered = approvalService?.registerHostCommand(approvalId, {
     sender: state.sender,
     provider: 'codex',
     command,
@@ -23230,6 +22626,10 @@ function maybeRequestCodexHostRerun(
     reason,
     output
   })
+  if (registered !== true) {
+    state.hostRerunRequestedItemIds.delete(itemId)
+    return
+  }
   runManager.registerApproval(state.appRunId, approvalId)
   scheduleApprovalTimeout({
     approvalId,
@@ -23313,101 +22713,33 @@ function maybeRequestCodexHostRerun(
   })
 }
 
-async function continueCodexAfterHostRerun(
+function continueCodexAfterHostRerun(
   approval: HostCommandApproval,
   result: HostCommandResult,
   resultText: string
-): Promise<void> {
-  if (!codexClient) return
-  const settings = AppStore.getSettings()
-  const codexReasoning = resolveCodexOutboundReasoning(
-    approval.model,
-    approval.reasoningEffort
-  )
-  const continuationState = createCodexRunState(
+): void {
+  // The approved host command result is already projected into the owning run
+  // immediately before this helper. Starting another native turn here used to
+  // reuse that SAME appRunId, which cannot own two exact terminal operations:
+  // the first turn could settle the shared registry entry while the
+  // continuation was still running, allowing destructive-history deletion to
+  // receipt early. Fail closed until continuation has a fresh independently
+  // reserved run identity and persistence authority.
+  void resultText
+  sendAgentCompatError(
     approval.sender,
-    approval.threadId,
-    approval.model,
-    approval.cwd,
-    approval.workspacePath,
-    approval.workspacePath ? 'workspace' : 'global',
+    'codex',
+    `The approved host rerun finished with exit code ${result.exitCode ?? (result.timedOut ? 'timeout' : 'unknown')}, but TaskWraith did not start an automatic Codex continuation because this run has no independent continuation identity. Start a new turn to continue from the recorded output.`,
     approval
   )
-  continuationState.reasoningEffort = codexReasoning.effort
-  const prompt = [
-    'TaskWraith reran a previously failed shell command once from the app host process after explicit user approval.',
-    `Command: ${approval.commandText}`,
-    `Cwd: ${approval.cwd}`,
-    `Exit code: ${result.exitCode ?? (result.timedOut ? 'timeout' : 'unknown')}`,
-    'Rerun output:',
-    resultText,
-    '',
-    'Continue from this real output. Do not rerun the command unless a new approval is needed.'
-  ].join('\n')
-  try {
-    const registeredContinuation = registerRunSession(
-      'codex',
-      approval.sender,
-      continuationState,
-      approval.workspacePath,
-      continuationState,
-      approval.threadId
-    )
-    if (!registeredContinuation) {
-      throw new Error('Codex continuation could not reserve its exact run identity.')
-    }
-    setActiveCodexRunState(continuationState)
-    sendAgentCompatLine(
-      approval.sender,
-      'codex',
-      {
-        type: 'init',
-        session_id: approval.threadId,
-        model: approval.model,
-        timestamp: new Date().toISOString(),
-        provider: 'codex',
-        continuation: true
-      },
-      continuationState
-    )
-    await codexClient.request(
-      'turn/start',
-      buildCodexTurnStartRequest(
-        {
-          threadId: approval.threadId,
-          input: buildCodexUserInput(prompt),
-          cwd: approval.cwd,
-          approvalPolicy: approval.workspacePath
-            ? codexApprovalPolicyForMode('default', settings)
-            : 'on-request',
-          sandboxPolicy: codexSandboxPolicyForMode(
-            'default',
-            approval.cwd,
-            [],
-            settings,
-            approval.workspacePath ? 'workspace' : 'global'
-          ),
-          model: approval.model
-        },
-        codexReasoning
-      ),
-      60_000
-    )
-  } catch (error) {
-    sendAgentCompatError(
-      approval.sender,
-      'codex',
-      `Codex continuation after approved host rerun failed: ${error instanceof Error ? error.message : String(error)}`,
-      continuationState
-    )
-  }
 }
 
 async function runApprovedHostCommand(requestId: string): Promise<boolean> {
   const approval = approvalService?.getHostCommand(requestId)
   if (!approval) return false
   const approvalRunId = approval.appRunId?.trim()
-  if (!approvalRunId) {
+  const approvalChatId = approval.appChatId?.trim()
+  if (!approvalRunId || !approvalChatId) {
     approvalService?.deleteHostCommand(requestId)
     runManager.clearApproval(requestId)
     return false
@@ -23422,17 +22754,17 @@ async function runApprovedHostCommand(requestId: string): Promise<boolean> {
     }
     approvalService?.deleteHostCommand(requestId)
     runManager.clearApproval(requestId)
-    sendAgentCompatError(
-      approval.sender,
-      'codex',
-      reason,
-      approval
-    )
+    sendAgentCompatError(approval.sender, 'codex', reason, approval)
     return false
   }
-  hostCommandRerunsInFlight.add(approvalRunId)
   approvalService?.deleteHostCommand(requestId)
   runManager.clearApproval(requestId)
+  const hostCommandProjection = createHostCommandProjectionScope({
+    source: 'codex-host-rerun',
+    appRunId: approvalRunId,
+    appChatId: approvalChatId,
+    workspacePath: approval.workspacePath
+  })
   try {
     const toolId = `${requestId}-result`
     sendAgentCompatLine(
@@ -23452,12 +22784,14 @@ async function runApprovedHostCommand(requestId: string): Promise<boolean> {
       },
       approval
     )
-    const result = await runHostCommand(approval.command, approval.cwd, {
-      releaseApproval: {
-        allowReleaseCommand: true,
-        approvalSource: 'approvedHostCommand'
-      }
-    })
+    const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
+      runHostCommand(approval.command, approval.cwd, {
+        releaseApproval: {
+          allowReleaseCommand: true,
+          approvalSource: 'approvedHostCommand'
+        }
+      })
+    )
     const resultText = formatHostCommandResult(result)
     sendAgentCompatLine(
       approval.sender,
@@ -23479,7 +22813,7 @@ async function runApprovedHostCommand(requestId: string): Promise<boolean> {
     await continueCodexAfterHostRerun(approval, result, resultText)
     return true
   } finally {
-    hostCommandRerunsInFlight.delete(approvalRunId)
+    completeHostCommandTerminalProjection(hostCommandProjection)
   }
 }
 
@@ -23515,10 +22849,9 @@ function syncCodexGoalCapabilityMetadata(
       : activeGoalSource
   const metadataUnchanged =
     Boolean(chat.providerMetadata?.codexGoalNativeAvailable) === nativeAvailable
-  const goalUnchanged =
-    !nativeGoalOverrideApplied
-      ? activeGoal === chat.activeGoal || activeGoal?.mode === chat.activeGoal?.mode
-      : JSON.stringify(activeGoal || null) === JSON.stringify(chat.activeGoal || null)
+  const goalUnchanged = !nativeGoalOverrideApplied
+    ? activeGoal === chat.activeGoal || activeGoal?.mode === chat.activeGoal?.mode
+    : JSON.stringify(activeGoal || null) === JSON.stringify(chat.activeGoal || null)
   if (metadataUnchanged && goalUnchanged) return
   const updated: ChatRecord = {
     ...chat,
@@ -23673,8 +23006,7 @@ function syncCodexNativeGoalNotification(state: CodexRunState, message: any): bo
 
 async function runCodexAppServer(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const codexTaskWraithMcpAdvertised = Boolean(
-    AppStore.getSettings().geminiMcpBridgeEnabled &&
-      taskwraithMcpBridgeCommandStatus().available
+    AppStore.getSettings().geminiMcpBridgeEnabled && taskwraithMcpBridgeCommandStatus().available
   )
   if (!codexTaskWraithMcpAdvertised) {
     payload.taskWraithMcpAdvertised = false
@@ -23708,7 +23040,8 @@ async function runCodexAppServerWithClient(
   })
 
   const persistedChat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
-  const taskWraithOwnsThisRun = Boolean(payload.ensembleRun) || persistedChat?.chatKind === 'ensemble'
+  const taskWraithOwnsThisRun =
+    Boolean(payload.ensembleRun) || persistedChat?.chatKind === 'ensemble'
   const resumableThreadId =
     payload.providerSessionId && isCodexAppServerThreadId(payload.providerSessionId)
       ? payload.providerSessionId
@@ -23730,7 +23063,37 @@ async function runCodexAppServerWithClient(
     taskWraithSteeredCodexThreadIds.add(resumableThreadId)
   }
 
-  await client.ensureStarted(app.getVersion())
+  let admissionReservation = resumableThreadId
+    ? codexThreadAdmissionRegistry.reserve({
+        threadId: resumableThreadId,
+        kind: 'turn',
+        scope: {
+          appChatId: payload.appChatId || '',
+          workspaceId: AppStore.getChat(payload.appChatId || '')?.workspaceId,
+          joinAfterRelease: () =>
+            payload.appRunId ? providerAdapterRunsInFlight.get(payload.appRunId) : undefined
+        }
+      })
+    : undefined
+  if (admissionReservation && !(await admissionReservation.waitUntilAcquired())) {
+    admissionReservation.releaseBeforeAdmission()
+    runManager.finish(payload.appRunId, 'cancelled')
+    return
+  }
+  if (
+    admissionReservation &&
+    historyClearAdmissionBlocked(payload.appRunId, payload.workspace, payload.appChatId)
+  ) {
+    admissionReservation.releaseBeforeAdmission()
+    runManager.finish(payload.appRunId, 'cancelled')
+    return
+  }
+  try {
+    await client.ensureStarted(app.getVersion())
+  } catch (error) {
+    admissionReservation?.releaseBeforeAdmission()
+    throw error
+  }
   if (!graphContextIsolated) {
     syncCodexGoalCapabilityMetadata(payload.appChatId, client.supportsNativeGoalControl())
   }
@@ -23756,18 +23119,6 @@ async function runCodexAppServerWithClient(
   }
 
   let threadResponse: any
-  // Review fix (critical): a turn dispatched while a manual compaction turn is
-  // in flight on this thread would register its run state and then adopt the
-  // COMPACTION turn's lifecycle — turn/started stamps the compaction turnId
-  // onto the new run and the compaction's turn/completed finalizes it, so the
-  // user's real reply streams into a dead run. Compactions take seconds; wait
-  // them out (the pending record's own 180s timer bounds this).
-  const pendingCompactionAtDispatch = resumableThreadId
-    ? pendingCodexManualCompactions.get(resumableThreadId)?.completion
-    : undefined
-  if (pendingCompactionAtDispatch) {
-    await pendingCompactionAtDispatch.catch(() => {})
-  }
   if (payload.providerSessionId && !resumableThreadId) {
     // A codex-exec fallback session id (`codex-exec-<ts>`) is not a valid
     // app-server thread UUID — resuming it throws "invalid thread id" and
@@ -23777,20 +23128,65 @@ async function runCodexAppServerWithClient(
       `[codex] non-UUID providerSessionId not resumable on app-server; starting a fresh thread (was: ${payload.providerSessionId})`
     )
   }
-  if (resumableThreadId) {
-    threadResponse = await client.request(
-      'thread/resume',
-      buildCodexThreadResumeRequest(resumableThreadId, codexReasoning),
-      30_000
-    )
-  } else {
-    threadResponse = await client.request('thread/start', startOrResumeParams, 30_000)
+  try {
+    if (resumableThreadId) {
+      threadResponse = await client.request(
+        'thread/resume',
+        buildCodexThreadResumeRequest(resumableThreadId, codexReasoning),
+        30_000
+      )
+    } else {
+      threadResponse = await client.request('thread/start', startOrResumeParams, 30_000)
+    }
+  } catch (error) {
+    admissionReservation?.releaseBeforeAdmission()
+    throw error
   }
 
   const thread = threadResponse?.thread || {}
   const threadId = thread.id || payload.providerSessionId
   if (!threadId) {
+    admissionReservation?.releaseBeforeAdmission()
     throw new Error('Codex app-server did not return a thread id.')
+  }
+  if (!admissionReservation) {
+    admissionReservation = codexThreadAdmissionRegistry.reserve({
+      threadId,
+      kind: 'turn',
+      scope: {
+        appChatId: payload.appChatId || '',
+        workspaceId: AppStore.getChat(payload.appChatId || '')?.workspaceId,
+        joinAfterRelease: () =>
+          payload.appRunId ? providerAdapterRunsInFlight.get(payload.appRunId) : undefined
+      }
+    })
+    if (!(await admissionReservation.waitUntilAcquired())) {
+      admissionReservation.releaseBeforeAdmission()
+      runManager.finish(payload.appRunId, 'cancelled')
+      return
+    }
+  } else if (admissionReservation.threadId !== threadId) {
+    admissionReservation.releaseBeforeAdmission()
+    admissionReservation = codexThreadAdmissionRegistry.reserve({
+      threadId,
+      kind: 'turn',
+      scope: {
+        appChatId: payload.appChatId || '',
+        workspaceId: AppStore.getChat(payload.appChatId || '')?.workspaceId,
+        joinAfterRelease: () =>
+          payload.appRunId ? providerAdapterRunsInFlight.get(payload.appRunId) : undefined
+      }
+    })
+    if (!(await admissionReservation.waitUntilAcquired())) {
+      admissionReservation.releaseBeforeAdmission()
+      runManager.finish(payload.appRunId, 'cancelled')
+      return
+    }
+  }
+  if (historyClearAdmissionBlocked(payload.appRunId, payload.workspace, payload.appChatId)) {
+    admissionReservation.releaseBeforeAdmission()
+    runManager.finish(payload.appRunId, 'cancelled')
+    return
   }
   if (
     payload.ensembleRun?.promptMode === 'slim' &&
@@ -23803,18 +23199,24 @@ async function runCodexAppServerWithClient(
       provider: 'codex',
       linkedProviderSessionId: resumableThreadId
     })
+    admissionReservation.releaseBeforeAdmission()
     throw new Error(
       'Codex app-server returned a different thread for a slim resumed prompt; refusing a context-poor fresh-session turn.'
     )
   }
 
   if (!graphContextIsolated) {
-    await syncCodexNativeGoalForRun(
-      client,
-      payload.appChatId,
-      threadId,
-      Boolean(payload.ensembleRun)
-    )
+    try {
+      await syncCodexNativeGoalForRun(
+        client,
+        payload.appChatId,
+        threadId,
+        Boolean(payload.ensembleRun)
+      )
+    } catch (error) {
+      admissionReservation.releaseBeforeAdmission()
+      throw error
+    }
   }
 
   const route = routeWithRunId('codex', payload)
@@ -23828,59 +23230,140 @@ async function runCodexAppServerWithClient(
     route,
     payload
   )
-  registerRunSession(
-    'codex',
-    event.sender,
-    codexState,
-    payload.scope === 'global' ? undefined : payload.workspace,
-    codexState,
-    threadId
-  )
-  setActiveCodexRunState(codexState)
-  void emitProviderCapabilityWarnings(
-    event.sender,
-    'codex',
-    payload.workspace,
-    payload.approvalMode,
-    codexState
-  )
-
-  sendAgentCompatLine(
-    event.sender,
-    'codex',
-    {
-      type: 'init',
-      session_id: threadId,
-      model: threadResponse?.model || model,
-      timestamp: new Date().toISOString(),
-      provider: 'codex'
-    },
-    codexState
-  )
-
-  await client.request(
-    'turn/start',
-    buildCodexTurnStartRequest(
-      {
-        threadId,
-        input: buildCodexUserInput(payload.prompt, payload.imagePaths),
-        cwd: payload.workspace!,
-        approvalPolicy,
-        sandboxPolicy: codexSandboxPolicyForMode(
-          payload.approvalMode,
-          payload.workspace!,
-          payload.externalPathGrants,
-          settings,
-          payload.scope,
-          fullAccessGranted
+  codexState.admissionKind = 'turn'
+  codexState.admissionReservation = admissionReservation
+  const sessionBeforeTurnRegistration = runManager.get(route.appRunId)
+  if (
+    !providerTransportAdmissionStillAuthorized({
+      historyBlocked: historyClearAdmissionBlocked(
+        route.appRunId,
+        payload.workspace,
+        route.appChatId
+      ),
+      sessionExists: Boolean(sessionBeforeTurnRegistration),
+      persistenceAuthorized: sessionBeforeTurnRegistration
+        ? providerRunPersistenceAuthorized('codex', route)
+        : false
+    })
+  ) {
+    runManager.finish(route.appRunId, 'cancelled')
+    admissionReservation.releaseBeforeAdmission()
+    return
+  }
+  // Register the per-turn terminal-notification authority before RunManager
+  // exposes the state and before turn/start can admit work on the shared
+  // daemon. The adapter promise remains live until the terminal projection,
+  // rather than resolving as soon as turn/start acknowledges admission.
+  const turnOperation = trackCodexAppServerTurnOperation(codexState)
+  try {
+    const registeredSession = registerRunSession(
+      'codex',
+      event.sender,
+      codexState,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      codexState,
+      threadId
+    )
+    if (!registeredSession) {
+      admissionReservation.releaseBeforeAdmission()
+      completeCodexAppServerTurnProjection(codexState)
+      await turnOperation
+      return
+    }
+    if (
+      !providerTransportAdmissionStillAuthorized({
+        historyBlocked: historyClearAdmissionBlocked(
+          route.appRunId,
+          payload.workspace,
+          route.appChatId
         ),
-        model,
-        ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
+        sessionExists: true,
+        persistenceAuthorized: providerRunPersistenceAuthorized('codex', route)
+      })
+    ) {
+      runManager.finish(route.appRunId, 'cancelled')
+      admissionReservation.releaseBeforeAdmission()
+      completeCodexAppServerTurnProjection(codexState)
+      await turnOperation
+      return
+    }
+    setActiveCodexRunState(codexState)
+    void emitProviderCapabilityWarnings(
+      event.sender,
+      'codex',
+      payload.workspace,
+      payload.approvalMode,
+      codexState
+    )
+
+    sendAgentCompatLine(
+      event.sender,
+      'codex',
+      {
+        type: 'init',
+        session_id: threadId,
+        model: threadResponse?.model || model,
+        timestamp: new Date().toISOString(),
+        provider: 'codex'
       },
-      codexReasoning
-    ),
-    60_000
-  )
+      codexState
+    )
+
+    const turnStartResult = await client.request(
+      'turn/start',
+      buildCodexTurnStartRequest(
+        {
+          threadId,
+          input: buildCodexUserInput(payload.prompt, payload.imagePaths),
+          cwd: payload.workspace!,
+          approvalPolicy,
+          sandboxPolicy: codexSandboxPolicyForMode(
+            payload.approvalMode,
+            payload.workspace!,
+            payload.externalPathGrants,
+            settings,
+            payload.scope,
+            fullAccessGranted
+          ),
+          model,
+          ...(payload.serviceTier ? { serviceTier: payload.serviceTier } : {})
+        },
+        codexReasoning
+      ),
+      60_000
+    )
+    const admittedTurnId = codexString(turnStartResult?.turn?.id || turnStartResult?.turnId)
+    if (admittedTurnId && !bindCodexRunExactOperationId(codexState, admittedTurnId)) {
+      throw new Error('Codex turn admission returned a conflicting exact turn id.')
+    }
+  } catch (error) {
+    if (isCodexAppServerRequestTimeout(error, 'turn/start')) {
+      // A request timeout is not a rejection: app-server may have admitted the
+      // turn and delayed both its response and turn/started notification. Arm
+      // an interrupt against the stable thread id, then retain the exact
+      // operation until delayed start + terminal projection arrive. Never
+      // launch exec fallback into that ambiguity window.
+      pendingCodexInterrupts.add(codexState.threadId)
+      await turnOperation
+      return
+    }
+    if (codexState.turnId) {
+      // A turn/started notification proves admission even when the matching
+      // JSON-RPC acknowledgement fails. Interrupt and join its real terminal
+      // notification instead of launching a second exec-fallback turn.
+      await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId)
+      await turnOperation
+      return
+    }
+    // No provider turn was admitted, so the rejected start request itself is
+    // terminal evidence for this attempted transport. The outer provider path
+    // may safely choose exec fallback after the registry releases this run id.
+    admissionReservation.releaseBeforeAdmission()
+    completeCodexAppServerTurnProjection(codexState)
+    await turnOperation
+    throw error
+  }
+  await turnOperation
 }
 
 async function runCodexExecFallback(
@@ -23889,6 +23372,10 @@ async function runCodexExecFallback(
   reason: string
 ) {
   const route = routeWithRunId('codex', payload)
+  if (historyClearAdmissionBlocked(route.appRunId, payload.workspace, route.appChatId)) {
+    runManager.finish(route.appRunId, 'cancelled')
+    return
+  }
   // The one-shot exec fallback does not own a route-stamped TaskWraith MCP
   // registration. Never retain gateway claims from the primary app-server path
   // or rely on a possibly stale user-global Codex MCP entry.
@@ -23917,6 +23404,7 @@ async function runCodexExecFallback(
       route
     )
     sendAgentCompatExit(event.sender, 'codex', 1, route)
+    runManager.finish(route.appRunId, 'failed')
     return
   }
 
@@ -23946,7 +23434,127 @@ async function runCodexExecFallback(
   }
   args.push(payload.prompt)
 
-  registerRunSession('codex', event.sender, route, payload.workspace, undefined)
+  const resolvedCodex = await resolveCliProviderBinary('codex', payload.runtimeProfile)
+  if (!resolvedCodex.binaryPath) {
+    sendAgentCompatError(
+      event.sender,
+      'codex',
+      resolvedCodex.error || 'Codex CLI was not found.',
+      route
+    )
+    sendAgentCompatExit(event.sender, 'codex', -1, route)
+    runManager.finish(route.appRunId, 'failed')
+    return
+  }
+  const sessionAfterBinaryResolution = runManager.get(route.appRunId)
+  if (
+    !providerTransportAdmissionStillAuthorized({
+      historyBlocked: historyClearAdmissionBlocked(
+        route.appRunId,
+        payload.workspace,
+        route.appChatId
+      ),
+      sessionExists: Boolean(sessionAfterBinaryResolution),
+      persistenceAuthorized: sessionAfterBinaryResolution
+        ? providerRunPersistenceAuthorized('codex', route)
+        : false
+    })
+  ) {
+    runManager.finish(route.appRunId, 'cancelled')
+    return
+  }
+  const codexCommand = resolvedCodex.binaryPath
+  const codexSpawnPlan = createCliSpawnPlan(codexCommand, args)
+  const codexExecStdoutSanitizer = createCanvasEvalJsonLineSanitizer(
+    `codex:${route.appRunId || route.appChatId || 'unrouted'}`
+  )
+  const codexExecStderrSanitizer = createCanvasEvalJsonLineSanitizer(
+    `codex:${route.appRunId || route.appChatId || 'unrouted'}:stderr`
+  )
+  const emitCodexExecStdout = (text: string): void => {
+    if (!text) return
+    appendDurableRunEventForRoute(
+      'codex',
+      route,
+      'provider_raw',
+      'raw',
+      'Codex exec stdout',
+      { data: text },
+      'provider'
+    )
+    publishRunEvent(
+      'agent-output',
+      'codex',
+      { provider: 'codex', data: text, ...route },
+      event.sender
+    )
+  }
+  const emitCodexExecStderr = (text: string): void => {
+    if (!text) return
+    sendAgentCompatError(event.sender, 'codex', sanitizeCanvasEvalProviderText(text), route)
+  }
+
+  let child: ChildProcess | null = null
+  let terminalCode: number | null = null
+  let spawnFailure: Error | null = null
+  const transportClose = createProviderTransportCloseOperation(() => {
+    // This callback is the provider-owned terminal projection. It runs only
+    // after child close (or a synchronous spawn failure, where no child ever
+    // existed), and the tracked operation remains live until it finishes.
+    emitCodexExecStdout(codexExecStdoutSanitizer.flush())
+    emitCodexExecStderr(codexExecStderrSanitizer.flush())
+    if (spawnFailure) {
+      sendAgentCompatError(
+        event.sender,
+        'codex',
+        `Failed to start codex exec fallback: ${spawnFailure.message}`,
+        route
+      )
+    }
+    const exitCode = spawnFailure ? -1 : (terminalCode ?? -1)
+    sendAgentCompatLine(
+      event.sender,
+      'codex',
+      {
+        type: 'result',
+        status: exitCode === 0 ? 'success' : 'failed',
+        stats: {},
+        timestamp: new Date().toISOString(),
+        provider: 'codex',
+        fallback: true
+      },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'codex', exitCode, route)
+    if (child && codexExecProcess === child) codexExecProcess = null
+    runManager.finish(route.appRunId, exitCode === 0 ? 'completed' : 'failed')
+  })
+  // Track before spawn: there is no interval in which RunManager can expose a
+  // live child without an exact close+projection promise for history deletion.
+  const transportOperation = providerTransportOperations.track(
+    route.appRunId!,
+    transportClose.operation
+  )
+  let registeredSession: ReturnType<typeof registerRunSession>
+  try {
+    registeredSession = registerRunSession(
+      'codex',
+      event.sender,
+      route,
+      payload.workspace,
+      undefined
+    )
+  } catch (error) {
+    spawnFailure = error instanceof Error ? error : new Error(String(error))
+    transportClose.markTransportClosed()
+    await transportOperation
+    throw error
+  }
+  if (!registeredSession) {
+    transportClose.markTransportClosed()
+    await transportOperation
+    return
+  }
   void emitProviderCapabilityWarnings(
     event.sender,
     'codex',
@@ -23982,63 +23590,54 @@ async function runCodexExecFallback(
     },
     route
   )
-
-  const resolvedCodex = await resolveCliProviderBinary('codex', payload.runtimeProfile)
-  if (!resolvedCodex.binaryPath) {
-    sendAgentCompatError(
-      event.sender,
-      'codex',
-      resolvedCodex.error || 'Codex CLI was not found.',
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', -1, route)
-    runManager.finish(route.appRunId, 'failed')
+  if (
+    !providerTransportAdmissionStillAuthorized({
+      historyBlocked: historyClearAdmissionBlocked(
+        route.appRunId,
+        payload.workspace,
+        route.appChatId
+      ),
+      sessionExists: true,
+      persistenceAuthorized: providerRunPersistenceAuthorized('codex', route)
+    })
+  ) {
+    runManager.finish(route.appRunId, 'cancelled')
+    transportClose.markTransportClosed()
+    await transportOperation
     return
   }
-  const codexCommand = resolvedCodex.binaryPath
-  const codexSpawnPlan = createCliSpawnPlan(codexCommand, args)
-  const child = spawn(codexSpawnPlan.command, codexSpawnPlan.args, {
-    cwd: payload.workspace!,
-    shell: codexSpawnPlan.shell,
-    stdio: ['ignore', 'pipe', 'pipe'],
-    env: createCliEnv({
-      FORCE_COLOR: '0',
-      NO_COLOR: '1',
-      TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-      // Audit role-run: advertise the audit_* MCP tools to this exec-fallback's
-      // bridge child. NOTE (v1 gap): Codex's PRIMARY path is the shared
-      // app-server daemon (runCodexAppServer), whose MCP bridge env is fixed at
-      // daemon start — there is no per-role-run injection point there, and the
-      // daemon does not stamp TASKWRAITH_RUN_ID, so audit tool calls from the
-      // app-server path would not route back to the role-run's audit context.
-      // Making Codex fully audit-capable needs daemon-scoped advertisement +
-      // per-turn run-id correlation, deferred to a follow-up. This exec path is
-      // only the fallback; threading the flag here is harmless and forward-looking.
-      ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {})
+  try {
+    child = spawn(codexSpawnPlan.command, codexSpawnPlan.args, {
+      cwd: payload.workspace!,
+      shell: codexSpawnPlan.shell,
+      stdio: ['ignore', 'pipe', 'pipe'],
+      env: createCliEnv({
+        FORCE_COLOR: '0',
+        NO_COLOR: '1',
+        TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
+        // Audit role-run: advertise the audit_* MCP tools to this exec-fallback's
+        // bridge child. NOTE (v1 gap): Codex's PRIMARY path is the shared
+        // app-server daemon (runCodexAppServer), whose MCP bridge env is fixed at
+        // daemon start — there is no per-role-run injection point there, and the
+        // daemon does not stamp TASKWRAITH_RUN_ID, so audit tool calls from the
+        // app-server path would not route back to the role-run's audit context.
+        // Making Codex fully audit-capable needs daemon-scoped advertisement +
+        // per-turn run-id correlation, deferred to a follow-up. This exec path is
+        // only the fallback; threading the flag here is harmless and forward-looking.
+        ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {})
+      })
     })
-  })
+  } catch (error) {
+    spawnFailure = error instanceof Error ? error : new Error(String(error))
+    transportClose.markTransportClosed()
+    await transportOperation
+    return
+  }
   codexExecProcess = child
   runManager.attachProcess(route.appRunId!, child)
 
   child.stdout?.on('data', (data) => {
-    const text = data.toString()
-    appendDurableRunEventForRoute(
-      'codex',
-      route,
-      'provider_raw',
-      'raw',
-      'Codex exec stdout',
-      { data: text },
-      'provider'
-    )
-    // Was: event.sender.send('agent-output', ...). Routed through the bus so
-    // additional sinks (debug logger, remote bridge) observe Codex stdout too.
-    publishRunEvent(
-      'agent-output',
-      'codex',
-      { provider: 'codex', data: text, ...route },
-      event.sender
-    )
+    emitCodexExecStdout(codexExecStdoutSanitizer.push(data.toString()))
   })
 
   let execConfigErrorSurfaced = false
@@ -24051,39 +23650,20 @@ async function runCodexExecFallback(
       execConfigErrorSurfaced = true
       sendAgentCompatError(event.sender, 'codex', codexConfigParseUserMessage(text), route)
     }
-    sendAgentCompatError(event.sender, 'codex', text, route)
+    emitCodexExecStderr(codexExecStderrSanitizer.push(text))
   })
 
   child.on('close', (code) => {
-    sendAgentCompatLine(
-      event.sender,
-      'codex',
-      {
-        type: 'result',
-        status: code === 0 ? 'success' : 'failed',
-        stats: {},
-        timestamp: new Date().toISOString(),
-        provider: 'codex',
-        fallback: true
-      },
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', code, route)
-    if (codexExecProcess === child) codexExecProcess = null
-    runManager.finish(route.appRunId, code === 0 ? 'completed' : 'failed')
+    terminalCode = code
+    transportClose.markTransportClosed()
   })
 
   child.on('error', (error) => {
-    sendAgentCompatError(
-      event.sender,
-      'codex',
-      `Failed to start codex exec fallback: ${error.message}`,
-      route
-    )
-    sendAgentCompatExit(event.sender, 'codex', -1, route)
-    if (codexExecProcess === child) codexExecProcess = null
-    runManager.finish(route.appRunId, 'failed')
+    // Error alone is not child-close evidence. Preserve it for the terminal
+    // projection; history deletion continues to wait for the close event.
+    spawnFailure = error
   })
+  await transportOperation
 }
 
 /**
@@ -24234,554 +23814,42 @@ async function runCodexProvider(
   }
 }
 
-function flattenOllamaWorkspaceSearchResult(result: unknown): string {
-  if (!isRecord(result) || !Array.isArray(result.matches)) return mcpJson(result)
-  const rows = result.matches
-    .map((match) => {
-      if (!isRecord(match)) return ''
-      const path = String(match.path || '').trim()
-      const line = Number(match.line)
-      const text = String(match.text || '').trim()
-      if (!path || !Number.isFinite(line)) return ''
-      return `${path}:${line}: ${text}`
-    })
-    .filter(Boolean)
-  if (rows.length === 0) return mcpJson(result)
-  if (result.truncated === true) {
-    rows.push(`[search truncated at ${String(result.count || rows.length)} results]`)
-  }
-  return rows.join('\n')
-}
-
-function flattenOllamaFindFilesResult(result: unknown): string {
-  if (!isRecord(result) || !Array.isArray(result.files)) return mcpJson(result)
-  const rows = result.files.map((file) => String(file || '').trim()).filter(Boolean)
-  if (rows.length === 0) return mcpJson(result)
-  if (result.truncated === true) {
-    rows.push(`[file list truncated at ${String(result.count || rows.length)} results]`)
-  }
-  return rows.join('\n')
-}
-
-function integerArg(value: unknown): number | null {
-  const numeric = Number(value)
-  if (!Number.isFinite(numeric)) return null
-  return Math.max(1, Math.trunc(numeric))
-}
-
-function sliceOllamaReadFileOutput(
-  content: string,
-  args: Record<string, unknown>
-): {
-  output: string
-  startLine: number
-  endLine: number
-  totalLines: number
-  truncated: boolean
-} {
-  const lines = content.split(/\r?\n/)
-  const totalLines = lines.length
-  const requestedStart = integerArg(args.startLine ?? args.start_line ?? args.lineStart)
-  const requestedEnd = integerArg(args.endLine ?? args.end_line ?? args.lineEnd)
-  const requestedMax = integerArg(args.maxLines ?? args.max_lines ?? args.limit)
-  const startLine = Math.min(totalLines, requestedStart || 1)
-  const endByMax = requestedMax ? startLine + requestedMax - 1 : totalLines
-  const endLine = Math.min(totalLines, requestedEnd || endByMax)
-  const safeEndLine = Math.max(startLine, endLine)
-  return {
-    output: lines.slice(startLine - 1, safeEndLine).join('\n'),
-    startLine,
-    endLine: safeEndLine,
-    totalLines,
-    truncated: startLine > 1 || safeEndLine < totalLines
-  }
-}
-
-function resolveOllamaReadToolScope(
-  request: OllamaToolExecutionRequest,
-  context: WorkspaceToolContext,
-  rawTarget: unknown
-): {
-  args: Record<string, unknown>
-  context: WorkspaceToolContext
-  cwd: string
-} {
-  const target = typeof rawTarget === 'string' && rawTarget.trim() ? rawTarget.trim() : '.'
-  const primaryCwd = context.workspacePath || context.cwd
-  if (!isAbsolute(target)) {
-    return { args: { ...request.arguments }, context, cwd: primaryCwd }
-  }
-
-  const runContext = getAgentToolContext('ollama', {
-    appRunId: request.appRunId,
-    appChatId: request.appChatId
-  })
-  if (!runContext) {
-    return { args: { ...request.arguments }, context, cwd: primaryCwd }
-  }
-
-  const targetPath = resolveGeminiMcpGrantAwarePath(
-    runContext,
-    'ollama',
-    target,
-    'read',
-    { allowWorkspaceRoot: true }
-  )
-  if (isPathInsideRoot(context.workspacePath || context.cwd, targetPath)) {
-    return {
-      args: { ...request.arguments, path: targetPath },
-      context,
-      cwd: primaryCwd
-    }
-  }
-
-  const grant = externalPathGrantForTarget(runContext, 'ollama', targetPath, 'read')
-  if (!grant) {
-    throw new Error('Path is outside the workspace and has no matching Ollama grant.')
-  }
-  const grantRoot = resolve(grant.path)
-  const scopedWorkspace = grant.kind === 'directory' ? grantRoot : targetPath
-  return {
-    args: { ...request.arguments, path: targetPath },
-    context: {
-      ...context,
-      cwd: grant.kind === 'directory' ? grantRoot : dirname(targetPath),
-      workspacePath: scopedWorkspace
-    },
-    cwd: grant.kind === 'directory' ? grantRoot : dirname(targetPath)
-  }
-}
-
-function resolveWorkspaceToolPathAuthority(
-  context: WorkspaceToolContext,
-  filePath: string,
-  options: { allowWorkspaceRoot?: boolean } = {}
-): ScopedPathAuthority {
-  const targetPath = resolveWorkspaceToolScopedPath(context, filePath, options)
-  if (context.scope === 'global') {
-    const canonicalTarget = canonicalExternalGrantPath(targetPath) || targetPath
-    return {
-      rootPath:
-        dirname(canonicalTarget) === canonicalTarget ? canonicalTarget : dirname(canonicalTarget),
-      targetPath: canonicalTarget
-    }
-  }
-  const rootPath = canonicalExternalGrantPath(context.workspacePath || context.cwd)
-  const canonicalTarget = canonicalExternalGrantPath(targetPath)
-  if (!rootPath || !canonicalTarget) {
-    throw new Error('Selected workspace path could not be resolved safely.')
-  }
-  return { rootPath, targetPath: canonicalTarget }
-}
-
-async function executeOllamaLocalTool(
-  request: OllamaToolExecutionRequest
-): Promise<OllamaToolExecutionResult> {
-  const workspacePath = canonicalPath(requireNonEmptyString(request.workspacePath, 'Workspace'))
-  // Tier retirement (2026-07): the Ollama tool surface is no longer narrowed by
-  // a per-run tier receipt. Every tool the model can name reaches its executor
-  // and is governed by the standard permission ROLE at the approval gate (the
-  // mutation routing below delegates to executeGeminiMcpTool → the shared
-  // requestAgenticServiceApproval gate). The tier-independent, defense-in-depth
-  // asserts below (mutation intent + protected .git/.env/key paths) still run.
-  const context: WorkspaceToolContext = {
-    scope: 'workspace',
-    cwd: workspacePath,
-    workspacePath,
-    appChatId: request.appChatId
-  }
-  try {
-    // Virtual `tool_help` (Ollama-only, read-only): return one catalog tool's arg
-    // schema so a text-protocol model can look up a long-tail tool on demand. No
-    // filesystem / approval — it's static doc text derived from the tool catalog.
-    if (request.toolName === OLLAMA_TOOL_HELP_NAME) {
-      const output = buildOllamaToolDocSection(
-        String(request.arguments.name ?? request.arguments.tool ?? '')
-      )
-      return { ok: true, output }
-    }
-    // Pre-execution argument validation: catch a missing required field HERE with
-    // a specific, repairable message before policy/path checks or executors throw
-    // an opaque error the model can't tell apart from a real tool failure.
-    const argCheck = validateOllamaToolArguments(request.toolName, request.arguments)
-    if (!argCheck.ok) {
-      return { ok: false, output: argCheck.message, validationError: true }
-    }
-
-    if (isCapabilityGatewayToolName(request.toolName)) {
-      const result = await executeGeminiMcpTool(
-        request.toolName,
-        request.arguments,
-        { appRunId: request.appRunId, appChatId: request.appChatId },
-        'ollama'
-      )
-      return {
-        ok: result.isError !== true,
-        output: result.text,
-        structuredContent: result.structuredContent
-      }
-    }
-
-    assertOllamaMutationIntent(request.toolName, request.arguments)
-    assertOllamaProtectedWritePaths(request.toolName, request.arguments, context, workspacePath)
-
-    if (request.toolName === 'find_files') {
-      const scope = resolveOllamaReadToolScope(
-        request,
-        context,
-        request.arguments.path || request.arguments.directory || '.'
-      )
-      const result = await workspaceToolExecutors.executeFindFiles(
-        scope.args,
-        scope.context,
-        scope.cwd
-      )
-      return {
-        ok:
-          isRecord(result) &&
-          (result.ok === true || result.exitCode === 0 || result.exitCode === 1) &&
-          result.timedOut !== true,
-        output: flattenOllamaFindFilesResult(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'workspace_search') {
-      const scope = resolveOllamaReadToolScope(
-        request,
-        context,
-        request.arguments.path || request.arguments.directory || '.'
-      )
-      const result = await workspaceToolExecutors.executeWorkspaceSearch(
-        scope.args,
-        scope.context,
-        scope.cwd
-      )
-      return {
-        ok:
-          isRecord(result) &&
-          (result.ok === true || result.exitCode === 0 || result.exitCode === 1) &&
-          result.timedOut !== true,
-        output: flattenOllamaWorkspaceSearchResult(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'workspace_symbols') {
-      const scope = resolveOllamaReadToolScope(
-        request,
-        context,
-        request.arguments.path || '.'
-      )
-      const result = await workspaceToolExecutors.executeWorkspaceSymbols(
-        scope.args,
-        scope.context,
-        scope.cwd
-      )
-      return {
-        ok: true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'git_status') {
-      const result = await workspaceToolExecutors.executeGitStatus(workspacePath)
-      return {
-        ok: isRecord(result) ? result.ok !== false : true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'git_diff') {
-      const result = await workspaceToolExecutors.executeGitDiff(
-        request.arguments,
-        context,
-        workspacePath
-      )
-      return {
-        ok: isRecord(result) ? result.ok !== false : true,
-        output: mcpJson(result),
-        structuredContent: result
-      }
-    }
-
-    if (request.toolName === 'read_file') {
-      const rawPath = String(request.arguments.path || request.arguments.file_path || '')
-      const runContext = getAgentToolContext('ollama', {
+const ollamaMainRuntime = createOllamaMainRuntime({
+  store: {
+    getSettings: () => AppStore.getSettings(),
+    updateSettings: (partial) => AppStore.updateSettings(partial),
+    getChat: (chatId) => AppStore.getChat(chatId),
+    saveChat: (chat) => AppStore.saveChat(chat),
+    getRunQueueJob: (runId) => (runId ? AppStore.getRunQueueJob(runId) : null)
+  },
+  canonicalPath,
+  canonicalExternalGrantPath,
+  isPathInsideRoot,
+  getAgentToolContext,
+  resolveGrantAwarePath: resolveGeminiMcpGrantAwarePath,
+  resolveGrantAwarePathAuthority: resolveGeminiMcpGrantAwarePathAuthority,
+  externalPathGrantForTarget,
+  workspaceToolExecutors,
+  createHostCommandProjection: (request) =>
+    hostCommandProjectionHandle(
+      createHostCommandProjectionScope({
+        source: 'ollama-local-tool',
         appRunId: request.appRunId,
-        appChatId: request.appChatId
+        appChatId: request.appChatId,
+        workspacePath: request.workspacePath
       })
-      const authority = runContext
-        ? resolveGeminiMcpGrantAwarePathAuthority(runContext, 'ollama', rawPath, 'read')
-        : resolveWorkspaceToolPathAuthority(context, rawPath)
-      const { buffer, stat } = await readScopedRegularFile(authority, {
-        maxBytes: MAX_EDITOR_FILE_BYTES,
-        sizeLimitErrorMessage: 'File is too large to read through the Ollama tool loop.'
-      })
-      const targetPath = authority.targetPath
-      assertTextBuffer(buffer)
-      const sliced = sliceOllamaReadFileOutput(buffer.toString('utf8'), request.arguments)
-      return {
-        ok: true,
-        output: sliced.output,
-        structuredContent: {
-          ok: true,
-          tool: 'read_file',
-          path: formatWorkspaceToolScopedPath(context, targetPath),
-          bytes: Number(stat.size),
-          startLine: sliced.startLine,
-          endLine: sliced.endLine,
-          totalLines: sliced.totalLines,
-          truncated: sliced.truncated
-        }
-      }
-    }
-
-    if (
-      request.toolName === 'write_file' ||
-      request.toolName === 'replace' ||
-      request.toolName === 'create_directory' ||
-      request.toolName === 'delete_path' ||
-      request.toolName === 'move_path' ||
-      request.toolName === 'apply_patch' ||
-      request.toolName === 'run_shell_command' ||
-      request.toolName === 'run_task' ||
-      request.toolName === 'todo_write'
-    ) {
-      const result = await executeGeminiMcpTool(
-        request.toolName as TaskWraithMcpToolName,
-        request.arguments,
-        { appRunId: request.appRunId, appChatId: request.appChatId },
-        'ollama'
-      )
-      return {
-        ok: result.isError !== true,
-        output: result.text,
-        structuredContent: result.structuredContent
-      }
-    }
-
-    if (request.toolName === 'list_directory') {
-      const rawPath = String(request.arguments.path || request.arguments.directory || '.')
-      const runContext = getAgentToolContext('ollama', {
-        appRunId: request.appRunId,
-        appChatId: request.appChatId
-      })
-      const authority = runContext
-        ? resolveGeminiMcpGrantAwarePathAuthority(runContext, 'ollama', rawPath, 'read', {
-            allowWorkspaceRoot: true
-          })
-        : resolveWorkspaceToolPathAuthority(context, rawPath, { allowWorkspaceRoot: true })
-      const targetPath = authority.targetPath
-      const entries = await readScopedDirectory(authority)
-      const rows = entries
-        .sort((a, b) => {
-          if (a.isDirectory() !== b.isDirectory()) return a.isDirectory() ? -1 : 1
-          return a.name.localeCompare(b.name)
-        })
-        .slice(0, 300)
-        .map((entry) => `${entry.isDirectory() ? 'directory' : 'file'}\t${entry.name}`)
-      return {
-        ok: true,
-        output: rows.join('\n'),
-        structuredContent: {
-          ok: true,
-          tool: 'list_directory',
-          path: formatWorkspaceToolScopedPath(context, targetPath),
-          count: rows.length,
-          truncated: entries.length > rows.length
-        }
-      }
-    }
-
-    // Full-surface catch-all (tier retirement): any remaining KNOWN TaskWraith
-    // MCP tool the model named — git_stage/commit/push, git_create_pr,
-    // background-process control, browser/creative/ensemble/recall, etc. — has no
-    // bespoke local fast-path above, so route it through the shared
-    // executeGeminiMcpTool gate exactly like every other provider. This replaces
-    // the old `tier === 'provider_parity'` disjunct: the standard permission role
-    // (not a tier) decides deny/prompt/allow there. An UNKNOWN tool name still
-    // throws (no silent fall-through to list_directory, which is why todo_write
-    // used to echo a directory listing).
-    if (isTaskWraithMcpToolName(request.toolName)) {
-      const result = await executeGeminiMcpTool(
-        request.toolName as TaskWraithMcpToolName,
-        request.arguments,
-        { appRunId: request.appRunId, appChatId: request.appChatId },
-        'ollama'
-      )
-      return {
-        ok: result.isError !== true,
-        output: result.text,
-        structuredContent: result.structuredContent
-      }
-    }
-    throw new Error(`Tool ${request.toolName} is not a recognized TaskWraith tool.`)
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error)
-    return {
-      ok: false,
-      output: message,
-      structuredContent: {
-        ok: false,
-        tool: request.toolName,
-        error: message
-      }
-    }
-  }
-}
-
-function markOllamaModelPreflightComplete(modelId: string): void {
-  const key = modelId.trim()
-  if (!key) return
-  const settings = AppStore.getSettings()
-  AppStore.updateSettings({
-    ollamaModelPreflightAt: {
-      ...(settings.ollamaModelPreflightAt || {}),
-      [key]: Date.now()
-    }
-  })
-}
-
-function emitOllamaModelPreflight(
-  sender: Electron.WebContents,
-  result: OllamaModelPreflightResult,
-  route?: AgentRunRoute | null
-): void {
-  appendDurableRunEventForRoute(
-    'ollama',
-    route,
-    'lifecycle',
-    'control',
-    `Ollama capability preflight: ${result.guidance}`,
-    { kind: 'ollamaModelPreflight', guidance: result.guidance, checks: result.checks }
-  )
-  for (const check of result.checks) {
-    appendDurableRunEventForRoute(
-      'ollama',
-      route,
-      'lifecycle',
-      'control',
-      `Preflight ${check.id}: ${check.detail}`,
-      { kind: 'ollamaModelPreflightCheck', check }
-    )
-  }
-  for (const item of result.warnings) {
-    if (item.severity === 'info') continue
-    sendAgentCompatLine(
-      sender,
-      'ollama',
-      {
-        type: 'provider_warning',
-        provider: 'ollama',
-        severity: item.severity,
-        title: item.title,
-        message: item.message,
-        capabilityWarning: item
-      },
-      route
-    )
-  }
-}
-
-async function runOllamaProviderAdapter(
-  event: Electron.IpcMainInvokeEvent,
-  payload: AgentRunPayload
-): Promise<void> {
-  const graphOwnedOllamaAttempt = Boolean(
-    payload.appRunId && AppStore.getRunQueueJob(payload.appRunId)?.executionGraph
-  )
-  const ollamaTaskWraithMcpAdvertised = Boolean(
-    payload.scope !== 'global' &&
-      payload.workspace &&
-      AppStore.getSettings().agenticServices?.mcpTools !== 'deny'
-  )
-  if (!ollamaTaskWraithMcpAdvertised) {
-    payload.taskWraithMcpAdvertised = false
-    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
-      advertised: false,
-      coreProfile: false
-    })
-  }
-  const route = routeWithRunId('ollama', payload)
-  registerRunSession(
-    'ollama',
-    event.sender,
-    route,
-    payload.scope === 'global' ? undefined : payload.workspace,
-    {
-      provider: 'ollama',
-      sender: event.sender,
-      startedAt: Date.now(),
-      model: payload.model,
-      // Tier retirement (2026-07): honor the standard permission role the
-      // composer resolved (Plan/Read-Only → 'plan'; Default → 'default'; Full
-      // Workspace Access → 'auto_edit'), exactly like the kimi/grok adapters —
-      // no more force-'plan'. The approval gate reads
-      // `session.state.effectivePermissions` (carried below), so read_only/plan
-      // DENY writes+shell, default PROMPTS, and workspace_write/full_access honor
-      // grants. approvalMode is not itself consulted by the gate; it drives the
-      // plan→read_only clamp (index.ts ~l.9700) and provider-native posture.
-      approvalMode: payload.approvalMode,
-      workflowMode: payload.workflowMode,
-      sessionTrust: Boolean(payload.sessionTrust),
-      externalPathGrants: payload.externalPathGrants,
-      runtimeProfileId: payload.runtimeProfileId,
-      taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
-      effectivePermissions: payload.effectivePermissions,
-      effectivePermissionsSignature: payload.effectivePermissionsSignature,
-      ensembleRun: payload.ensembleRun,
-      ...route
-    }
-  )
-  await runOllamaProvider(
-    {
-      getSettings: () => AppStore.getSettings(),
-      getTotalMemoryBytes: () => os.totalmem(),
-      markOllamaModelPreflightComplete,
-      emitOllamaModelPreflight,
-      sendAgentCompatLine,
-      sendAgentCompatError,
-      sendAgentCompatExit,
-      runManager,
-      emitProviderCapabilityWarnings,
-      executeTool: executeOllamaLocalTool,
-      getOllamaSessionMemory: (chatId, memoryKey) => {
-        if (graphOwnedOllamaAttempt) return null
-        const chat = AppStore.getChat(chatId)
-        if (!chat) return null
-        if (memoryKey) {
-          return normalizeOllamaSessionMemory(
-            normalizeOllamaSessionMemoryMap(chat.ollamaSessionMemories)[memoryKey]
-          )
-        }
-        return normalizeOllamaSessionMemory(chat.ollamaSessionMemory)
-      },
-      saveOllamaSessionMemory: (chatId, memory, memoryKey) => {
-        if (graphOwnedOllamaAttempt) return
-        const chat = AppStore.getChat(chatId)
-        if (!chat) return
-        if (memoryKey) {
-          AppStore.saveChat({
-            ...chat,
-            ollamaSessionMemories: upsertOllamaSessionMemory(
-              chat.ollamaSessionMemories,
-              memoryKey,
-              memory
-            )
-          })
-          return
-        }
-        AppStore.saveChat({ ...chat, ollamaSessionMemory: memory })
-      }
-    },
-    event,
-    payload,
-    route
-  )
-}
+    ),
+  executeMcpTool: executeGeminiMcpTool,
+  registerRunSession,
+  appendDurableRunEventForRoute,
+  sendAgentCompatLine,
+  sendAgentCompatError,
+  sendAgentCompatExit,
+  runManager,
+  emitProviderCapabilityWarnings,
+  runProvider: runOllamaProvider
+})
+const runOllamaProviderAdapter = ollamaMainRuntime.runProviderAdapter
 
 async function terminateExactProviderSession(
   provider: ProviderId,
@@ -24789,16 +23857,16 @@ async function terminateExactProviderSession(
   terminalStatus: 'failed' | 'cancelled'
 ): Promise<boolean> {
   const session = runManager.get(runId)
-  if (
-    !session ||
-    session.provider !== provider ||
-    !isActiveRunSessionStatus(session.status)
-  ) {
+  if (!session || session.provider !== provider || !isActiveRunSessionStatus(session.status)) {
     return false
   }
 
   const codexState = provider === 'codex' ? getCodexStateFromSession(session) : undefined
   const graphOwnedAttempt = executionGraphOwnsAttemptRunId(runId)
+  const deferEagerTerminalization = shouldDeferEagerProviderTerminalization({
+    graphOwnedAttempt,
+    exactTransportOperationTracked: Boolean(providerTransportOperations.get(runId))
+  })
   const exactAbortController = session.abortController
   const exactProcess = session.process
   if (
@@ -24833,18 +23901,19 @@ async function terminateExactProviderSession(
     if (provider === 'codex') {
       const decision = decideCancelInterrupt(codexState)
       if (decision.interruptNow && codexState?.threadId && codexState.turnId) {
-        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId).catch(
-          () => undefined
-        )
+        await issueCodexTurnInterrupt(codexState.threadId, codexState.turnId).catch(() => undefined)
       } else if (decision.deferThreadId) {
         pendingCodexInterrupts.add(decision.deferThreadId)
       }
     }
   } finally {
-    // A graph cancellation request is not terminal evidence. Its coordinator
-    // waits for the provider's real result/exit callback and committed receipt;
-    // ordinary runs retain the legacy eager terminal claim.
-    if (!graphOwnedAttempt) runManager.finish(runId, terminalStatus)
+    // A graph cancellation request is not terminal evidence. Likewise, every
+    // tracked exact transport owns its real close/projection callback. Retain
+    // the active RunManager session so a deletion begun after ordinary cancel
+    // can still discover, stop, and join that exact lifecycle authority.
+    if (!deferEagerTerminalization) {
+      runManager.finish(runId, terminalStatus)
+    }
   }
 
   if (provider === 'gemini' && !geminiSessionProcess) {
@@ -24856,10 +23925,60 @@ async function terminateExactProviderSession(
   return true
 }
 
-async function containExecutionGraphTerminalJoin(
-  runId: string,
-  reason: string
-): Promise<void> {
+/** Abort the exact provider transport and join the adapter's close/cleanup
+ * promise before a destructive-history receipt can be written. */
+async function terminateProviderRunForHistory(
+  provider: ProviderId,
+  runId: string
+): Promise<boolean> {
+  const session = runManager.get(runId)
+  const adapterOperation = providerAdapterRunsInFlight.get(runId)
+  const transportOperation = providerTransportOperations.get(runId)
+  const operations = [...new Set([adapterOperation, transportOperation].filter(Boolean))] as Array<
+    Promise<void>
+  >
+  if (!session) {
+    if (operations.length > 0) {
+      const joined = await Promise.all(
+        operations.map((operation) => waitForProviderOperationSettlement(operation, 10_000))
+      )
+      return joined.every(Boolean)
+    }
+    // A fresh process has lost the child PID/start-time identity needed to
+    // prove that a CLI/ACP transport died with Electron. Never manufacture a
+    // provider receipt from missing in-memory state; recovery remains fenced
+    // until launch supervision can supply durable parent-death/exit evidence.
+    return false
+  }
+  if (session.provider !== provider) return false
+
+  const stopped = isActiveRunSessionStatus(session.status)
+    ? await terminateExactProviderSession(provider, runId, 'cancelled')
+    : true
+  if (!stopped && isActiveRunSessionStatus(runManager.get(runId)?.status || 'cancelled')) {
+    return false
+  }
+
+  if (operations.length > 0) {
+    let settled = await Promise.all(
+      operations.map((operation) => waitForProviderOperationSettlement(operation, 5_000))
+    )
+    if (!settled.every(Boolean)) {
+      try {
+        session.process?.kill('SIGKILL')
+      } catch {
+        // The first termination may already have reaped the exact child.
+      }
+      settled = await Promise.all(
+        operations.map((operation) => waitForProviderOperationSettlement(operation, 5_000))
+      )
+    }
+    if (!settled.every(Boolean)) return false
+  }
+  return !isActiveRunSessionStatus(runManager.get(runId)?.status || 'cancelled')
+}
+
+async function containExecutionGraphTerminalJoin(runId: string, reason: string): Promise<void> {
   clearExecutionGraphTerminalJoinWatchdog(runId)
   const session = runManager.get(runId)
   if (
@@ -24903,17 +24022,18 @@ function hasCommittedExecutionGraphTerminalReceipt(
   const binding = job?.executionGraph
   const chat = job?.chatId ? AppStore.getChat(job.chatId) : null
   const run = chat?.runs?.find((candidate) => candidate.runId === runId)
-  const receipt = run?.providerMetadata
-    ?.executionGraphResultReceipt as ExecutionGraphAttemptTerminalReceipt | undefined
+  const receipt = run?.providerMetadata?.executionGraphResultReceipt as
+    | ExecutionGraphAttemptTerminalReceipt
+    | undefined
   return Boolean(
     binding &&
-      chat &&
-      receipt &&
-      receipt.status === status &&
-      receipt.binding.executionId === binding.executionId &&
-      receipt.binding.activationId === binding.activationId &&
-      receipt.binding.attemptId === binding.attemptId &&
-      verifyExecutionGraphAttemptReceiptOnChat(chat, receipt)
+    chat &&
+    receipt &&
+    receipt.status === status &&
+    receipt.binding.executionId === binding.executionId &&
+    receipt.binding.activationId === binding.activationId &&
+    receipt.binding.attemptId === binding.attemptId &&
+    verifyExecutionGraphAttemptReceiptOnChat(chat, receipt)
   )
 }
 
@@ -24945,9 +24065,7 @@ async function cancelExecutionGraphProviderRun(
           event.session.status === 'failed' ||
           event.session.status === 'cancelled')
       ) {
-        finish(
-          hasCommittedExecutionGraphTerminalReceipt(runId, event.session.status)
-        )
+        finish(hasCommittedExecutionGraphTerminalReceipt(runId, event.session.status))
       }
     })
     timeout = setTimeout(() => finish(false), 15_000)
@@ -24957,9 +24075,9 @@ async function cancelExecutionGraphProviderRun(
     const transcriptState = bridgeRunTranscripts.get(runId)
     const providerTerminalAlreadyObserved = Boolean(
       transcriptState?.owner === 'execution_graph' &&
-        transcriptState.provider === provider &&
-        transcriptState.chatId === job.chatId &&
-        transcriptState.providerTerminalCandidate
+      transcriptState.provider === provider &&
+      transcriptState.chatId === job.chatId &&
+      transcriptState.providerTerminalCandidate
     )
     if (!providerTerminalAlreadyObserved) {
       const requested = await cancelProviderRun(provider, runId)
@@ -24987,6 +24105,8 @@ async function cancelProviderRun(
   const queuedJob = runId ? AppStore.getRunQueueJob(runId) : null
   if (queuedJob && (queuedJob.status === 'queued' || queuedJob.status === 'paused')) {
     if (queuedJob.provider !== provider) return false
+    approvalService?.cancelForRun(queuedJob.runId, 'run-cancel-requested')
+    cancelPendingAgentQuestionsForRun(queuedJob.runId, 'run-cancel-requested')
     getRunRepository().markCancelled({
       runId: queuedJob.runId,
       provider: queuedJob.provider,
@@ -25005,6 +24125,12 @@ async function cancelProviderRun(
   if (runId && (!session || session.provider !== provider)) return false
   if (session) {
     if (!runId && wasScheduledOccurrenceRunIdObserved(session.runId)) return false
+    // Revoke pending approvals synchronously before the provider transport is
+    // asked to stop. A slow/failed cancellation must not leave a desktop card
+    // capable of resuming the run during that await window.
+    if (!runManager.claimTerminalStatus(session.runId, 'cancelled')) return false
+    approvalService?.cancelForRun(session.runId, 'run-cancel-requested')
+    cancelPendingAgentQuestionsForRun(session.runId, 'run-cancel-requested')
     return terminateExactProviderSession(provider, session.runId, 'cancelled')
   }
 
@@ -25412,6 +24538,59 @@ async function runGeminiProvider(
         }
       }
     : null
+  const geminiStdoutSanitizer = createCanvasEvalJsonLineSanitizer(
+    `gemini:${route.appRunId || route.appChatId || 'unrouted'}`
+  )
+  const geminiStderrSanitizer = createCanvasEvalJsonLineSanitizer(
+    `gemini:${route.appRunId || route.appChatId || 'unrouted'}:stderr`
+  )
+  const emitGeminiStdout = (text: string): void => {
+    if (!text) return
+    appendDurableRunEventForRoute(
+      'gemini',
+      route,
+      'provider_raw',
+      'raw',
+      'Gemini stdout',
+      { data: text },
+      'provider'
+    )
+    publishRunEvent(
+      'gemini-output',
+      'gemini',
+      { provider: 'gemini', data: text, ...route },
+      event.sender
+    )
+    feedOrchestrator?.(text)
+    // Phase I3.x — detect-and-redirect heuristic. If Gemini emits an
+    // invoke_agent tool_call when the user asked for cross-provider
+    // delegation, surface a single non-blocking warning chip so the
+    // user understands the call didn't reach TaskWraith's MCP bridge.
+    maybeEmitGeminiCrossProviderWarning(event.sender, route, payload.prompt, text)
+  }
+  const emitGeminiStderr = (text: string): void => {
+    if (!text) return
+    const error = sanitizeCanvasEvalProviderText(text)
+    if (payload.ensembleRun) {
+      const trimmed = error.trim()
+      if (trimmed) {
+        ensembleStderrTail.push(trimmed)
+        while (ensembleStderrTail.length > ENSEMBLE_STDERR_TAIL_MAX) {
+          ensembleStderrTail.shift()
+        }
+      }
+    }
+    appendDurableRunEventForRoute(
+      'gemini',
+      route,
+      'provider_error',
+      'raw',
+      'Gemini stderr',
+      { error },
+      'provider'
+    )
+    publishRunEvent('gemini-error', 'gemini', { provider: 'gemini', error, ...route }, event.sender)
+  }
   // Audit role-runs (payload.auditRun) get the same stuck-process killer as
   // ensemble runs: a Gemini run can emit init then sit forever without exiting,
   // which would otherwise never settle the AuditRunTracker and hang the audit.
@@ -25461,43 +24640,13 @@ async function runGeminiProvider(
   }
 
   child.stdout?.on('data', (data) => {
-    const text = data.toString()
-    appendDurableRunEventForRoute(
-      'gemini',
-      route,
-      'provider_raw',
-      'raw',
-      'Gemini stdout',
-      { data: text },
-      'provider'
-    )
-    publishRunEvent(
-      'gemini-output',
-      'gemini',
-      { provider: 'gemini', data: text, ...route },
-      event.sender
-    )
-    feedOrchestrator?.(text)
-    // Phase I3.x — detect-and-redirect heuristic. If Gemini emits an
-    // invoke_agent tool_call when the user asked for cross-provider
-    // delegation, surface a single non-blocking warning chip so the
-    // user understands the call didn't reach TaskWraith's MCP bridge.
-    maybeEmitGeminiCrossProviderWarning(event.sender, route, payload.prompt, text)
+    emitGeminiStdout(geminiStdoutSanitizer.push(data.toString()))
   })
 
   child.stderr?.on('data', (data) => {
-    const error = data.toString()
-    // 1.0.5-EW13 — Keep a rolling tail of stderr so the timeout
-    // notice can surface what Gemini was actually complaining
-    // about, not just "stuck".
+    // Count raw stderr as liveness immediately, but do not persist or
+    // forward it until the line sanitizer has ruled out canvas_eval data.
     if (payload.ensembleRun) {
-      const trimmed = error.trim()
-      if (trimmed) {
-        ensembleStderrTail.push(trimmed)
-        while (ensembleStderrTail.length > ENSEMBLE_STDERR_TAIL_MAX) {
-          ensembleStderrTail.shift()
-        }
-      }
       // 1.0.5-EW15 — Treat stderr as a "still alive" heartbeat.
       // EW12's idle-time detector only watched stdout JSON events,
       // so a Gemini turn that's slowly emitting progress on stderr
@@ -25508,19 +24657,12 @@ async function runGeminiProvider(
       // stdout AND no stderr for the full window.
       lastOrchestratorEventAt = Date.now()
     }
-    appendDurableRunEventForRoute(
-      'gemini',
-      route,
-      'provider_error',
-      'raw',
-      'Gemini stderr',
-      { error },
-      'provider'
-    )
-    publishRunEvent('gemini-error', 'gemini', { provider: 'gemini', error, ...route }, event.sender)
+    emitGeminiStderr(geminiStderrSanitizer.push(data.toString()))
   })
 
   child.on('close', (code) => {
+    emitGeminiStdout(geminiStdoutSanitizer.flush())
+    emitGeminiStderr(geminiStderrSanitizer.flush())
     // 1.0.5-EW7 / EW12 — Clear the stuck-process safety timer; we
     // no longer need it once the process actually closes. EW12
     // switched setTimeout → setInterval so use clearInterval.
@@ -25577,6 +24719,8 @@ async function runGeminiProvider(
   })
 
   child.on('error', (err) => {
+    emitGeminiStdout(geminiStdoutSanitizer.flush())
+    emitGeminiStderr(geminiStderrSanitizer.flush())
     // 1.0.5-EW7 / EW12 — Clear the stuck-process safety timer;
     // nothing to monitor once the spawn itself failed.
     if (ensembleStuckTimer) {
@@ -25644,8 +24788,8 @@ const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent
   }
 ]
 
-// Cursor is a first-class provider — its adapter is always registered.
-// Write-capable in default mode; read-only only under plan mode (CR6 landed).
+// Cursor remains registered only so historical records and attempted dispatches
+// receive a typed fail-closed result. runCursorProvider starts no process.
 const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('cursor'),
@@ -25724,10 +24868,7 @@ const providerAdapters = createProviderAdapterRegistry<
       }
     },
     getCapabilityContract: (request = {}) =>
-      getOllamaCapabilityContract(
-        { getSettings: () => AppStore.getSettings() },
-        request
-      )
+      getOllamaCapabilityContract({ getSettings: () => AppStore.getSettings() }, request)
   },
   ...grokAdapters,
   ...cursorAdapters
@@ -25754,219 +24895,6 @@ async function readCliVersion(command: string): Promise<string> {
       resolve(code === 0 && stdout.trim() ? stdout.trim() : 'unknown')
     })
     proc.on('error', () => resolve('unknown'))
-  })
-}
-
-
-
-
-
-
-
-function extractCapabilityJsonEntries(
-  value: unknown,
-  kind: GeminiCapabilityKind
-): Array<{ key?: string; value: unknown }> {
-  if (Array.isArray(value)) {
-    return value.map((entry) => ({ value: entry }))
-  }
-
-  const record = asRecord(value)
-  if (!record) {
-    return value === undefined || value === null ? [] : [{ value }]
-  }
-
-  const candidateKeys = [
-    kind,
-    kind === 'mcp' ? 'servers' : kind,
-    kind === 'mcp' ? 'mcpServers' : kind,
-    'items',
-    'data',
-    'results'
-  ]
-
-  for (const key of candidateKeys) {
-    const candidate = record[key]
-    if (Array.isArray(candidate)) {
-      return candidate.map((entry) => ({ value: entry }))
-    }
-
-    const candidateRecord = asRecord(candidate)
-    if (candidateRecord) {
-      return Object.entries(candidateRecord).map(([entryKey, entryValue]) => ({
-        key: entryKey,
-        value: entryValue
-      }))
-    }
-  }
-
-  if (Object.values(record).every((entry) => entry && typeof entry === 'object')) {
-    return Object.entries(record).map(([entryKey, entryValue]) => ({
-      key: entryKey,
-      value: entryValue
-    }))
-  }
-
-  return [{ value }]
-}
-
-function parseCapabilityJsonItems(
-  value: unknown,
-  kind: GeminiCapabilityKind
-): GeminiCapabilityItem[] {
-  return extractCapabilityJsonEntries(value, kind).map((entry, index) => {
-    const record = asRecord(entry.value)
-    const fallbackName = entry.key || `${kind} ${index + 1}`
-
-    if (!record) {
-      const raw = stringifyJsonFragment(entry.value)
-      return {
-        id: fallbackName,
-        name: String(entry.value || fallbackName),
-        raw
-      }
-    }
-
-    const name =
-      readStringField(record, [
-        'name',
-        'displayName',
-        'title',
-        'id',
-        'server',
-        'extension',
-        'skill'
-      ]) || fallbackName
-    const id = readStringField(record, ['id', 'name', 'server', 'extension', 'skill']) || name
-    const status =
-      readStringField(record, ['status', 'state', 'lifecycleState', 'connectionStatus']) ||
-      (typeof record.enabled === 'boolean'
-        ? record.enabled
-          ? 'enabled'
-          : 'disabled'
-        : undefined) ||
-      (typeof record.active === 'boolean' ? (record.active ? 'active' : 'inactive') : undefined) ||
-      (typeof record.installed === 'boolean'
-        ? record.installed
-          ? 'installed'
-          : 'not installed'
-        : undefined)
-    const detail = readStringField(record, ['description', 'summary', 'path', 'command', 'version'])
-
-    return {
-      id,
-      name,
-      status,
-      detail,
-      raw: stringifyJsonFragment(entry.value)
-    }
-  })
-}
-
-function parseCapabilityRawItems(
-  stdout: string,
-  kind: GeminiCapabilityKind
-): GeminiCapabilityItem[] {
-  return stripAnsi(stdout)
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .filter((line) => !/^[-+|=\s]+$/.test(line))
-    .filter((line) => !/^(name|id)\b.*\b(status|state|description|command)\b/i.test(line))
-    .filter((line) => !/^no\s+.+\s+(configured|found|installed|available)\.?$/i.test(line))
-    .filter((line) => !/^.+:\s*$/.test(line))
-    .map((line, index) => {
-      const normalized = line.replace(/^[*•-]\s*/, '')
-      const columns = normalized
-        .split(/\s*\|\s*|\t+|\s{2,}/)
-        .map((part) => part.trim())
-        .filter(Boolean)
-      const statusMatch = normalized.match(
-        /\b(active|enabled|disabled|installed|running|connected|disconnected|ok|error|failed|unavailable|loaded|trusted|untrusted|inactive)\b/i
-      )
-      const name = columns[0] || normalized
-      const detail = columns.length > 1 ? columns.slice(1).join(' · ') : undefined
-
-      return {
-        id: `${kind}-${index + 1}`,
-        name,
-        status: statusMatch?.[1],
-        detail,
-        raw: line
-      }
-    })
-}
-
-async function runGeminiCapabilityCommand(
-  args: string[],
-  cwd?: string
-): Promise<GeminiCapabilityProcessResult> {
-  const resolved = await resolveCliProviderBinary('gemini')
-  if (!resolved.binaryPath) {
-    return {
-      args,
-      stdout: '',
-      stderr: '',
-      exitCode: null,
-      timedOut: false,
-      error: resolved.error || 'Gemini CLI is not configured.'
-    }
-  }
-  const geminiBinaryPath = resolved.binaryPath
-
-  return new Promise((resolve) => {
-    let stdout = ''
-    let stderr = ''
-    let truncated = false
-    let timedOut = false
-    let finished = false
-    const finish = (exitCode: number | null, error?: string): void => {
-      if (finished) return
-      finished = true
-      clearTimeout(timeout)
-      resolve({
-        args,
-        stdout,
-        stderr,
-        exitCode,
-        timedOut,
-        error,
-        truncated
-      })
-    }
-
-    let proc: ChildProcess
-    try {
-      proc = spawn(geminiBinaryPath, args, {
-        cwd,
-        shell: false,
-        env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, geminiBinaryPath)
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      resolve({ args, stdout, stderr, exitCode: null, timedOut: false, error: message })
-      return
-    }
-
-    const timeout = setTimeout(() => {
-      timedOut = true
-      proc.kill()
-    }, GEMINI_CAPABILITY_TIMEOUT_MS)
-
-    proc.stdout?.on('data', (data: Buffer) => {
-      const appended = appendLimitedOutput(stdout, data)
-      stdout = appended.value
-      truncated = truncated || appended.truncated
-    })
-
-    proc.stderr?.on('data', (data: Buffer) => {
-      const appended = appendLimitedOutput(stderr, data)
-      stderr = appended.value
-      truncated = truncated || appended.truncated
-    })
-
-    proc.on('close', (code) => finish(code))
-    proc.on('error', (error) => finish(null, error.message))
   })
 }
 
@@ -26103,8 +25031,7 @@ function rendererResponsivenessMetadata(window: BrowserWindow): Record<string, u
     processMetrics = app
       .getAppMetrics()
       .filter(
-        (metric) =>
-          metric.pid === rendererPid || metric.type === 'GPU' || metric.type === 'Browser'
+        (metric) => metric.pid === rendererPid || metric.type === 'GPU' || metric.type === 'Browser'
       )
       .map((metric) => ({
         pid: metric.pid,
@@ -26310,12 +25237,15 @@ function normalizeProductAuditBundleFilter(
   return normalized
 }
 
-function completeProductAuditBundleFilter(filter: ProductAuditBundleFilter): ProductAuditBundleFilter {
+function completeProductAuditBundleFilter(
+  filter: ProductAuditBundleFilter
+): ProductAuditBundleFilter {
   const completed = { ...filter }
   if (completed.chatId) {
     const chat = AppStore.getChat(completed.chatId)
     if (chat?.workspaceId && !completed.workspaceId) completed.workspaceId = chat.workspaceId
-    if (chat?.workspacePath && !completed.workspacePath) completed.workspacePath = chat.workspacePath
+    if (chat?.workspacePath && !completed.workspacePath)
+      completed.workspacePath = chat.workspacePath
   }
   if (!completed.workspaceId && completed.workspacePath) {
     const workspace = AppStore.getWorkspaces().find(
@@ -26363,7 +25293,9 @@ function purgeProductAuditRetention(request: AuditRetentionPurgeRequest = {}) {
   return AppStore.purgeAuditRetentionEvidence(request, { externalPublish })
 }
 
-function signProductAuditBundleSnapshot(snapshot: ProductAuditBundleSnapshot): ProductAuditBundleSnapshot {
+function signProductAuditBundleSnapshot(
+  snapshot: ProductAuditBundleSnapshot
+): ProductAuditBundleSnapshot {
   const signer = new AuditBundleSigningKeyStore(
     join(app.getPath('userData'), 'audit-bundle-signing-key.json'),
     safeStorage,
@@ -26508,8 +25440,7 @@ async function verifyProductAuditBundle(
       await readBoundedRegularFile(targetPath, {
         maxBytes: PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES,
         regularFileErrorMessage: 'Audit bundle verification requires a regular file.',
-        sizeLimitErrorMessage:
-          `Audit bundle exceeds the ${PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES}-byte verification limit.`
+        sizeLimitErrorMessage: `Audit bundle exceeds the ${PRODUCT_AUDIT_BUNDLE_MAX_VERIFY_BYTES}-byte verification limit.`
       })
     ).toString('utf8')
     const snapshot = JSON.parse(raw) as ProductAuditBundleSnapshot
@@ -26640,8 +25571,6 @@ async function repairKnownStaleGeminiMcpBridgeConfigs(cwd?: string): Promise<voi
   return mcpBridgeRuntime.repairKnownStaleGeminiMcpBridgeConfigs(cwd)
 }
 
-
-
 function formatHostCommandResult(result: HostCommandResult): string {
   const parts = [
     `Exit code: ${result.exitCode ?? (result.timedOut ? 'timeout' : 'unknown')}`,
@@ -26657,8 +25586,6 @@ function formatHostCommandResult(result: HostCommandResult): string {
 // see McpAutoAllowedTools.test.ts. Membership SKIPS the host approval gate, so
 // only non-mutating tools may ever be added there.
 
-
-
 function mcpStructuredJsonResult(
   value: Record<string, unknown>,
   extraContent: McpToolContentBlock[] = []
@@ -26671,7 +25598,9 @@ function mcpStructuredJsonResult(
   }
 }
 
-function unsupportedNativeMcpToolResult(toolName: TaskWraithMcpToolName): McpToolExecutionResult | null {
+function unsupportedNativeMcpToolResult(
+  toolName: TaskWraithMcpToolName
+): McpToolExecutionResult | null {
   const capabilities = getNativeCapabilitySnapshot()
   const feature = toolName.startsWith('attached_window_')
     ? capabilities.screenWatch
@@ -27012,8 +25941,7 @@ async function readAgentRosterPresetImportSource(
   const { buffer } = await readScopedRegularFile(authority, {
     maxBytes: AGENT_ROSTER_IMPORT_MAX_BYTES,
     regularFileErrorMessage: 'Roster preset import path is not a file.',
-    sizeLimitErrorMessage:
-      `Roster preset import is larger than ${AGENT_ROSTER_IMPORT_MAX_BYTES.toLocaleString()} bytes.`
+    sizeLimitErrorMessage: `Roster preset import is larger than ${AGENT_ROSTER_IMPORT_MAX_BYTES.toLocaleString()} bytes.`
   })
   assertTextBuffer(buffer)
   return {
@@ -27036,10 +25964,7 @@ interface PendingRendererRosterPresetImport {
 }
 
 const RENDERER_ROSTER_PRESET_IMPORT_TIMEOUT_MS = 10_000
-const pendingRendererRosterPresetImports = new Map<
-  string,
-  PendingRendererRosterPresetImport
->()
+const pendingRendererRosterPresetImports = new Map<string, PendingRendererRosterPresetImport>()
 
 function acknowledgeRendererRosterPresetImport(
   sender: Electron.WebContents,
@@ -27150,7 +26075,7 @@ async function executeAgentRosterPresetImport(
       message: 'Roster preset import could not resolve the active chat.'
     }
   }
-  const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
+  const configuredProviders = await detectManagedRunConfiguredProviders(AppStore.getSettings())
   configuredProviders.add(parentProvider)
   for (const participant of chat.ensemble?.participants || []) {
     configuredProviders.add(participant.provider)
@@ -27320,9 +26245,7 @@ async function executeAgentRosterPresetImport(
  * generation. Missing profile identity resolves conservatively to v1.
  */
 function gatewayCatalogDefinitions(context: GeminiToolContext) {
-  const hidden = new Set(
-    taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId)
-  )
+  const hidden = new Set(taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId))
   return mcpToolDefinitions().filter((definition) => hidden.has(definition.name))
 }
 
@@ -27333,18 +26256,14 @@ function gatewayCatalogDefinitions(context: GeminiToolContext) {
  */
 function gatewayEligibleHiddenToolNames(context: GeminiToolContext): TaskWraithMcpToolName[] {
   const posture = context.effectivePermissions
-  const hiddenToolNames = taskWraithGatewayHiddenToolNamesForProfile(
-    context.taskWraithMcpProfileId
-  )
+  const hiddenToolNames = taskWraithGatewayHiddenToolNamesForProfile(context.taskWraithMcpProfileId)
   return selectGatewayHiddenToolNames({
     fullToolNames: hiddenToolNames,
     directToolNames: GATEWAY_MCP_DIRECT_TOOLS,
     ...(posture?.readOnly
       ? {
           permissionEligibleToolNames:
-            posture.presetId === 'plan'
-              ? PLAN_MCP_ADVERTISE_TOOLS
-              : READ_ONLY_MCP_ADVERTISE_TOOLS
+            posture.presetId === 'plan' ? PLAN_MCP_ADVERTISE_TOOLS : READ_ONLY_MCP_ADVERTISE_TOOLS
         }
       : {}),
     isBlocked: (name) => Boolean(networkAccessBlockedToolName(name, posture))
@@ -27358,14 +26277,7 @@ function recordCapabilityGatewayEvent(
   payload: Record<string, unknown>
 ): void {
   try {
-    appendDurableRunEventForRoute(
-      parentProvider,
-      route,
-      'tool',
-      'control',
-      summary,
-      payload
-    )
+    appendDurableRunEventForRoute(parentProvider, route, 'tool', 'control', summary, payload)
   } catch (error) {
     console.error('Failed to record capability gateway event', error)
   }
@@ -27404,6 +26316,100 @@ function emitCapabilityGatewayWrapperResult(
   })
 }
 
+interface CanvasMcpExecutionAuthority {
+  provider: ProviderId
+  runId: string
+  chatId: string
+  workspacePath?: string
+}
+
+function captureCanvasMcpExecutionAuthority(
+  context: GeminiToolContext,
+  provider: ProviderId
+): CanvasMcpExecutionAuthority | null {
+  const runId = context.appRunId?.trim()
+  const chatId = context.appChatId?.trim()
+  if (!runId || !chatId) return null
+  const run = runManager.get(runId)
+  const chat = AppStore.getChat(chatId)
+  if (
+    !run ||
+    !chat ||
+    run.appChatId !== chatId ||
+    run.provider !== provider ||
+    isTerminalRunSessionStatus(run.status) ||
+    runManager.getClaimedTerminalStatus(runId) ||
+    !providerRunPersistenceAuthorized(provider, {
+      appRunId: runId,
+      appChatId: chatId
+    }) ||
+    historyClearAdmissionBlocked(runId, context.workspacePath, chatId)
+  ) {
+    return null
+  }
+  return {
+    provider,
+    runId,
+    chatId,
+    workspacePath: chat.workspacePath
+  }
+}
+
+function canvasMcpExecutionAuthorityStillLive(authority: CanvasMcpExecutionAuthority): boolean {
+  const run = runManager.get(authority.runId)
+  const chat = AppStore.getChat(authority.chatId)
+  return Boolean(
+    run &&
+    chat &&
+    run.appChatId === authority.chatId &&
+    !isTerminalRunSessionStatus(run.status) &&
+    !runManager.getClaimedTerminalStatus(authority.runId) &&
+    chat.workspacePath === authority.workspacePath &&
+    providerRunPersistenceAuthorized(authority.provider, {
+      appRunId: authority.runId,
+      appChatId: authority.chatId
+    }) &&
+    !historyClearAdmissionBlocked(authority.runId, authority.workspacePath, authority.chatId)
+  )
+}
+
+function staleCanvasMcpResult(toolName: string): McpToolExecutionResult {
+  return {
+    ...mcpStructuredJsonResult({
+      ok: false,
+      tool: toolName,
+      error: 'Canvas result was discarded because its run or chat authority changed.'
+    }),
+    isError: true
+  }
+}
+
+function staleProviderMcpResult(toolName: string): McpToolExecutionResult {
+  return {
+    ...mcpStructuredJsonResult({
+      ok: false,
+      tool: toolName,
+      error: 'Tool output was discarded because its exact run or chat authority changed.'
+    }),
+    isError: true
+  }
+}
+
+function canvasMcpArgumentsForDurableProjection(
+  args: Record<string, unknown>
+): Record<string, unknown> {
+  let byteLength = 0
+  try {
+    byteLength = Buffer.byteLength(JSON.stringify(args), 'utf8')
+  } catch {
+    // Shape metadata remains useful when an exotic value is not serializable.
+  }
+  return {
+    argumentKeys: Object.keys(args).sort().slice(0, 64),
+    argumentByteLength: byteLength
+  }
+}
+
 async function executeGeminiMcpTool(
   toolName: TaskWraithMcpToolName | CapabilityGatewayToolName,
   rawArgs: unknown,
@@ -27412,11 +26418,33 @@ async function executeGeminiMcpTool(
   callerContext?: McpCallerContext,
   gatewayDispatch?: GatewayTargetDispatchMarker
 ): Promise<McpToolExecutionResult> {
+  if (globalHistoryClearInProgress()) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error: 'TaskWraith is clearing all history; new tool calls are temporarily blocked.'
+      }),
+      isError: true
+    }
+  }
   const args = normalizeMcpToolArguments(rawArgs)
   const effectiveRoute =
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
       : route
+
+  if (historyClearAdmissionBlocked(effectiveRoute?.appRunId)) {
+    return {
+      ...mcpStructuredJsonResult({
+        ok: false,
+        tool: toolName,
+        error:
+          'TaskWraith is clearing history for this workspace; new tool calls are temporarily blocked.'
+      }),
+      isError: true
+    }
+  }
 
   if (isCapabilityGatewayToolName(toolName)) {
     const context = getAgentToolContext(parentProvider, effectiveRoute)
@@ -27691,6 +26719,7 @@ async function executeGeminiMcpTool(
   // workspace_write/full_access), identical to every other provider. The old
   // Ollama-only `ollamaMustPrompt` forcePrompt (tier != provider_parity) is gone;
   // forcePrompt is now only the two universal exceptions below.
+  let canvasEvalApproval: CanvasEvalApprovalReceipt | undefined
   const allowed = skipGenericApproval
     ? true
     : await requestAgenticServiceApproval(
@@ -27708,10 +26737,51 @@ async function executeGeminiMcpTool(
           // full_access / session-YOLO) — it ships agent-chosen text off-box to a
           // 3rd-party API, a prompt-injection exfil channel that must never be
           // auto-allowed silently.
-          forcePrompt: context.scope === 'global' || toolName === 'image_generate',
+          forcePrompt:
+            context.scope === 'global' ||
+            toolName === 'image_generate' ||
+            toolName === 'canvas_eval',
+          ...(toolName === 'canvas_eval'
+            ? {
+                onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) => {
+                  const receipt = createCanvasEvalApprovalReceipt(
+                    String(args.script || ''),
+                    approvalId
+                  )
+                  canvasEvalApproval = receipt
+                  return receipt
+                }
+              }
+            : {}),
           externalPathDetection
         }
       )
+  if (allowed && toolName === 'canvas_eval') {
+    const liveRun = context.appRunId ? runManager.get(context.appRunId) : undefined
+    const liveChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    const authorityStillLive = Boolean(
+      liveRun &&
+      !isTerminalRunSessionStatus(liveRun.status) &&
+      liveChat &&
+      liveRun.appChatId === context.appChatId
+    )
+    if (!authorityStillLive) {
+      return {
+        ...mcpStructuredJsonResult({
+          ok: false,
+          tool: toolName,
+          error:
+            'canvas_eval approval expired because its run or chat is no longer active; execution was blocked.'
+        }),
+        isError: true
+      }
+    }
+  }
+  // Every MCP result is late provider output, not only Canvas. Capture the
+  // promoted run/chat incarnation immediately before dispatch and require it
+  // again before transcript, media, or trusted-ref publication after awaits.
+  const providerMcpExecutionAuthority = captureCanvasMcpExecutionAuthority(context, parentProvider)
+  if (!providerMcpExecutionAuthority) return staleProviderMcpResult(toolName)
   const toolId = `${parentProvider}-mcp-${toolName}-${Date.now()}-${Math.random().toString(36).slice(2)}`
 
   // Phase L2 — duplicate-tool-card fix. For Codex the app-server's own
@@ -27734,7 +26804,8 @@ async function executeGeminiMcpTool(
     parentProvider,
     Boolean(gatewayDispatch)
   )
-    ? (payload: Record<string, unknown>) =>
+    ? (payload: Record<string, unknown>) => {
+        if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) return
         sendAgentCompatLine(
           context.sender,
           parentProvider,
@@ -27744,15 +26815,20 @@ async function executeGeminiMcpTool(
                 via_gateway: true,
                 gateway_tool_name: gatewayDispatch.gatewayToolName
               }
-            : payload
+            : payload,
+          undefined,
+          canvasEvalApproval
         )
+      }
     : (_payload: Record<string, unknown>) => {}
 
   emitMcpToolTranscriptEvent({
     type: 'tool_use',
     tool_id: toolId,
     tool_name: toolName,
-    parameters: { ...args, cwd },
+    parameters: isCanvasMcpToolName(toolName)
+      ? canvasMcpArgumentsForDurableProjection(args)
+      : { ...args, cwd },
     provider: parentProvider,
     server: GEMINI_MCP_SERVER_NAME
   })
@@ -27768,10 +26844,9 @@ async function executeGeminiMcpTool(
       isImageGenMcpToolName(toolName) ||
       isAudioMcpToolName(toolName) ||
       isFfmpegMcpToolName(toolName)
-    const deniedError =
-      networkBlockedTool
-        ? networkAccessBlockedMessage(networkBlockedTool)
-        : mediaToolDenied
+    const deniedError = networkBlockedTool
+      ? networkAccessBlockedMessage(networkBlockedTool)
+      : mediaToolDenied
         ? `Media tool ${toolName} was denied: it is gated as File changes and needs a write-capable permission preset (not read-only/plan)${
             toolName === 'image_generate'
               ? ', and image generation must be enabled with an API key in TaskWraith Settings'
@@ -27796,12 +26871,15 @@ async function executeGeminiMcpTool(
     return { ...deniedResult, isError: true }
   }
 
+  let pendingToolMediaPersistence: PendingToolMediaPersistence | undefined
+  let hostCommandProjection: HostCommandProjectionScope | null = null
   try {
     let text = ''
     let toolIsError = false
     let richResult: McpToolExecutionResult | null = null
     const applyRichResult = (result: McpToolExecutionResult) => {
       richResult = result
+      pendingToolMediaPersistence = result.pendingToolMediaPersistence
       text = result.text
       toolIsError =
         result.isError === true ||
@@ -27824,7 +26902,15 @@ async function executeGeminiMcpTool(
         })
         return { text: lock.text, isError: true }
       }
-      const result = await runHostCommand(command, cwd)
+      hostCommandProjection = createHostCommandProjectionScope({
+        source: 'brokered-mcp',
+        appRunId: context.appRunId,
+        appChatId: context.appChatId,
+        workspacePath: context.workspacePath
+      })
+      const result = await runWithHostCommandProjectionScope(hostCommandProjection, () =>
+        runHostCommand(command, cwd)
+      )
       text = formatHostCommandResult(result)
       const isError = Boolean(
         result.error || result.timedOut || (result.exitCode !== null && result.exitCode !== 0)
@@ -27890,12 +26976,10 @@ async function executeGeminiMcpTool(
       toolIsError = result.isError
       text = mcpJson(result.result)
     } else if (isEvidenceMcpToolName(toolName)) {
-      const result = await evidenceToolExecutors.executeEvidenceMcpTool(
-        toolName,
-        args,
-        context,
-        { provider: parentProvider, runId: context.appRunId }
-      )
+      const result = await evidenceToolExecutors.executeEvidenceMcpTool(toolName, args, context, {
+        provider: parentProvider,
+        runId: context.appRunId
+      })
       toolIsError = result.isError
       text = mcpJson(result.result)
       if (
@@ -27907,17 +26991,21 @@ async function executeGeminiMcpTool(
         emitEvidencePacksChanged()
       }
     } else if (isWorkspaceMcpToolName(toolName)) {
+      hostCommandProjection = createHostCommandProjectionScope({
+        source: 'brokered-mcp',
+        appRunId: context.appRunId,
+        appChatId: context.appChatId,
+        workspacePath: context.workspacePath
+      })
       if (WORKSPACE_WIDE_WRITE_LOCK_TOOLS.has(toolName)) {
         const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd })
         if (!lock.ok) {
           toolIsError = true
           text = lock.text
         } else {
-          const result = await workspaceToolExecutors.executeWorkspaceMcpTool(
-            toolName,
-            args,
-            context,
-            cwd
+          const result = await runWithHostCommandProjectionScope(
+            hostCommandProjection,
+            () => workspaceToolExecutors.executeWorkspaceMcpTool(toolName, args, context, cwd)
           )
           toolIsError = result.isError
           if (result.richResult) {
@@ -27927,11 +27015,9 @@ async function executeGeminiMcpTool(
           }
         }
       } else {
-        const result = await workspaceToolExecutors.executeWorkspaceMcpTool(
-          toolName,
-          args,
-          context,
-          cwd
+        const result = await runWithHostCommandProjectionScope(
+          hostCommandProjection,
+          () => workspaceToolExecutors.executeWorkspaceMcpTool(toolName, args, context, cwd)
         )
         toolIsError = result.isError
         if (result.richResult) {
@@ -27961,9 +27047,16 @@ async function executeGeminiMcpTool(
     ) {
       applyRichResult(await executeBrowserTool(toolName, args, context))
     } else if (isCanvasMcpToolName(toolName)) {
-      applyRichResult(
-        await canvasToolExecutors.executeCanvasTool(toolName, args, context, parentProvider)
+      const canvasResult = await canvasToolExecutors.executeCanvasTool(
+        toolName,
+        args,
+        { ...context, canvasEvalApproval },
+        parentProvider
       )
+      if (!canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)) {
+        return staleCanvasMcpResult(toolName)
+      }
+      applyRichResult(canvasResult)
     } else if (isLaunchMcpToolName(toolName)) {
       if (!launchMcpExecutors) {
         throw new Error('Launch tools are not available yet (app still initializing).')
@@ -28113,16 +27206,22 @@ async function executeGeminiMcpTool(
         targets: args.targets,
         prompt: optionalString(args.prompt),
         reason: optionalString(args.reason),
-        mode: args.mode === 'locked_writers' ? 'locked_writers' : args.mode === 'read_only' ? 'read_only' : undefined,
+        mode:
+          args.mode === 'locked_writers'
+            ? 'locked_writers'
+            : args.mode === 'read_only'
+              ? 'read_only'
+              : undefined,
         targetStage: args.targetStage ?? args.target_stage ?? args.stage,
         writeScopes: args.writeScopes ?? args.write_scopes
-      }) ?? Promise.resolve({
-        ok: false,
-        tool: 'ensemble_fanout' as const,
-        mode: 'read_only' as const,
-        message: 'Ensemble orchestrator is not available.',
-        error: 'no_active_run' as const
-      }))
+      }) ??
+        Promise.resolve({
+          ok: false,
+          tool: 'ensemble_fanout' as const,
+          mode: 'read_only' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_run' as const
+        }))
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_bossman_control') {
@@ -28154,9 +27253,7 @@ async function executeGeminiMcpTool(
             ? args.action
             : undefined,
         roundId: optionalString(args.roundId || args.round_id),
-        targetParticipantId: optionalString(
-          args.targetParticipantId || args.target_participant_id
-        ),
+        targetParticipantId: optionalString(args.targetParticipantId || args.target_participant_id),
         targetRunId: optionalString(args.targetRunId || args.target_run_id),
         participantIds: Array.isArray(args.participantIds)
           ? args.participantIds.filter((id: unknown): id is string => typeof id === 'string')
@@ -28248,15 +27345,18 @@ async function executeGeminiMcpTool(
               : undefined,
         provider: optionalString(args.provider) as any,
         replacement:
-          args.replacement && typeof args.replacement === 'object' && !Array.isArray(args.replacement)
+          args.replacement &&
+          typeof args.replacement === 'object' &&
+          !Array.isArray(args.replacement)
             ? (args.replacement as Record<string, any>)
             : undefined
-      }) ?? Promise.resolve({
-        ok: false,
-        tool: 'ensemble_bossman_control' as const,
-        message: 'Ensemble orchestrator is not available.',
-        error: 'no_active_run' as const
-      }))
+      }) ??
+        Promise.resolve({
+          ok: false,
+          tool: 'ensemble_bossman_control' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_run' as const
+        }))
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_poll_response') {
@@ -28316,9 +27416,7 @@ async function executeGeminiMcpTool(
     } else if (toolName === 'ensemble_brief_update') {
       const result = await (ensembleOrchestratorRef?.briefUpdateForRun(context.appRunId, {
         roundId: optionalString(args.roundId || args.round_id),
-        targetParticipantId: optionalString(
-          args.targetParticipantId || args.target_participant_id
-        ),
+        targetParticipantId: optionalString(args.targetParticipantId || args.target_participant_id),
         brief:
           typeof args.brief === 'string'
             ? args.brief
@@ -28327,17 +27425,18 @@ async function executeGeminiMcpTool(
               : undefined,
         clear: args.clear === true || args.action === 'clear',
         reason: optionalString(args.reason)
-      }) ?? Promise.resolve({
-        ok: false,
-        tool: 'ensemble_brief_update' as const,
-        message: 'Ensemble orchestrator is not available.',
-        error: 'no_active_run' as const
-      }))
+      }) ??
+        Promise.resolve({
+          ok: false,
+          tool: 'ensemble_brief_update' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_run' as const
+        }))
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'list_ensemble_participants') {
       const callingChat = context.appChatId ? AppStore.getChat(context.appChatId) : null
-      const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
+      const configuredProviders = await detectManagedRunConfiguredProviders(AppStore.getSettings())
       configuredProviders.add(parentProvider)
       const result =
         callingChat && callingChat.chatKind !== 'ensemble'
@@ -28657,8 +27756,7 @@ async function executeGeminiMcpTool(
     } else if (toolName === 'blackboard_read') {
       const chatId = context.appChatId || ''
       const chat = chatId ? AppStore.getChat(chatId) : null
-      const participantId =
-        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
+      const participantId = ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
       if (!chat?.ensemble) {
         toolIsError = true
         text = mcpJson({
@@ -28685,11 +27783,7 @@ async function executeGeminiMcpTool(
           participantId
         )
         const selectedIds = result.selected.map((entry) => entry.id)
-        const marked = markBlackboardEntriesSeen(
-          currentBlackboard,
-          selectedIds,
-          participantId
-        )
+        const marked = markBlackboardEntriesSeen(currentBlackboard, selectedIds, participantId)
         if (marked !== currentBlackboard) {
           const updated: ChatRecord = {
             ...chat,
@@ -28734,8 +27828,7 @@ async function executeGeminiMcpTool(
           text = mcpJson({
             ok: false,
             tool: 'blackboard_delete',
-            error:
-              'No blackboard entries matched. Pass ids, keys, category, or all:true to delete.'
+            error: 'No blackboard entries matched. Pass ids, keys, category, or all:true to delete.'
           })
         } else {
           const timestamp = new Date().toISOString()
@@ -28879,7 +27972,9 @@ async function executeGeminiMcpTool(
       } else {
         const todoFollowupHint =
           validated.todos.length > 0 &&
-          validated.todos.every((todo) => todo.status === 'completed' || todo.status === 'cancelled')
+          validated.todos.every(
+            (todo) => todo.status === 'completed' || todo.status === 'cancelled'
+          )
             ? 'Checklist has no active step. If more work remains or new work was discovered, call todo_write again with merge:true and add pending/in_progress items.'
             : undefined
         const chatId = String(context.appChatId || '').trim()
@@ -29042,17 +28137,22 @@ async function executeGeminiMcpTool(
         'write'
       )
       const targetPath = authority.targetPath
-      const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd, resourcePath: targetPath })
+      const lock = acquireMcpWorkspaceWriteLocks({
+        context,
+        toolName,
+        cwd,
+        resourcePath: targetPath
+      })
       if (!lock.ok) {
         toolIsError = true
         text = lock.text
       } else {
-      const content = String(args.content ?? '')
-      await writeScopedUtf8FileWithLegacyCreate(authority, {
-        maxBytes: MAX_EDITOR_FILE_BYTES,
-        content
-      })
-      text = `Wrote ${formatScopedPath(context, targetPath)} (${content.length} chars).`
+        const content = String(args.content ?? '')
+        await writeScopedUtf8FileWithLegacyCreate(authority, {
+          maxBytes: MAX_EDITOR_FILE_BYTES,
+          content
+        })
+        text = `Wrote ${formatScopedPath(context, targetPath)} (${content.length} chars).`
       }
     } else if (toolName === 'replace') {
       const authority = resolveGeminiMcpGrantAwarePathAuthority(
@@ -29062,24 +28162,29 @@ async function executeGeminiMcpTool(
         'write'
       )
       const targetPath = authority.targetPath
-      const lock = acquireMcpWorkspaceWriteLocks({ context, toolName, cwd, resourcePath: targetPath })
+      const lock = acquireMcpWorkspaceWriteLocks({
+        context,
+        toolName,
+        cwd,
+        resourcePath: targetPath
+      })
       if (!lock.ok) {
         toolIsError = true
         text = lock.text
       } else {
-      const oldString = String(args.old_string ?? args.oldString ?? '')
-      const newString = String(args.new_string ?? args.newString ?? '')
-      await updateScopedUtf8File(authority, {
-        maxBytes: MAX_EDITOR_FILE_BYTES,
-        update: (original) =>
-          replaceLiteralText(
-            original,
-            oldString,
-            newString,
-            args.replace_all === true || args.replaceAll === true
-          )
-      })
-      text = `Edited ${formatScopedPath(context, targetPath)}.`
+        const oldString = String(args.old_string ?? args.oldString ?? '')
+        const newString = String(args.new_string ?? args.newString ?? '')
+        await updateScopedUtf8File(authority, {
+          maxBytes: MAX_EDITOR_FILE_BYTES,
+          update: (original) =>
+            replaceLiteralText(
+              original,
+              oldString,
+              newString,
+              args.replace_all === true || args.replaceAll === true
+            )
+        })
+        text = `Edited ${formatScopedPath(context, targetPath)}.`
       }
     } else if (toolName === 'delegate_to_subthread') {
       // Phase F3: agent-driven sub-thread delegation. Spawns a
@@ -29348,6 +28453,22 @@ async function executeGeminiMcpTool(
         })
         return { text: declineText, isError: true }
       }
+      // The approval modal is an arbitrary await. Parent deletion/clear may
+      // have claimed the run while it was visible; re-resolve exact main-owned
+      // authority immediately before child persistence/recall continuation.
+      const parentAfterApproval = AppStore.getChat(parentChatId)
+      const runAfterApproval = context.appRunId ? runManager.get(context.appRunId) : undefined
+      if (
+        !parentAfterApproval ||
+        !runAfterApproval ||
+        runAfterApproval.appChatId !== parentChatId ||
+        runManager.getClaimedTerminalStatus(context.appRunId) ||
+        isTerminalRunSessionStatus(runAfterApproval.status) ||
+        historyClearAdmissionBlocked(context.appRunId, context.workspacePath, parentChatId)
+      ) {
+        throw new Error('Sub-thread delegation was cancelled because the parent chat changed.')
+      }
+      assertParentChatRelationshipCreationAllowed(parentChatId)
       // Phase J2: in recall mode we DON'T create a new chat record —
       // we reuse the resolved existing sub-thread. In spawn mode the
       // existing AppStore.createSubThread path runs as before.
@@ -29676,113 +28797,224 @@ async function executeGeminiMcpTool(
     }
 
     const finalRichResult = richResult as McpToolExecutionResult | null
-    emitMcpToolTranscriptEvent({
-      type: 'tool_result',
-      tool_id: toolId,
-      tool_name: toolName,
-      status: toolIsError ? 'error' : 'success',
-      output: text,
-      ...(finalRichResult?.content ? { content: finalRichResult.content } : {}),
-      ...(finalRichResult?.structuredContent
-        ? { structuredContent: finalRichResult.structuredContent }
-        : {}),
-      provider: parentProvider,
-      server: GEMINI_MCP_SERVER_NAME
-    })
-    // PR1 (keystone): surface any image the tool returned as a VISIBLE
-    // transcript attachment. The `content` image blocks above go to the MODEL
-    // only — without this `media_refs` line even canvas_screenshot is invisible
-    // in the transcript. createToolResultMediaRefs magic-byte-sniffs and rejects
-    // SVG, so the visible lane stays raster-only.
-    //
-    // Emitted for EVERY provider, codex included. A codex MCP-tool image has NO
-    // other path to the transcript: codex's notification-stream emitter
-    // (emitCodexProviderMediaRefs) fires ONLY for `agentMessage` items, whereas
-    // its MCP tool RESULTS arrive as `mcpToolCall` items routed through
-    // codexToolResultFromItem — which never reaches that emitter and never
-    // produces a media_refs line (the image only survives there JSON-stringified
-    // into the tool_result text). So this is the keystone, not a double-emit:
-    // the two lanes are disjoint by codex item type, and even a same-bytes
-    // coincidence collapses on the renderer's sha256 dedup
-    // (mergeTranscriptMediaRefs). This mirrors the CLI notification lane, where
-    // emitCliProviderMediaRefs likewise early-returns on tool-result-like events
-    // and defers tool images to this seam. (Distinct from emitMcpToolTranscriptEvent,
-    // which IS a codex no-op — that is the tool TIMELINE, not the image attachment.)
-    const resultImageBlocks = (finalRichResult?.content ?? []).filter(
-      (block) => block.type === 'image'
+    const trustedMediaRefs = finalRichResult?.trustedMediaRefs ?? []
+    const hasPublishableTrustedMediaRef = trustedMediaRefs.some(
+      (ref) =>
+        (ref.kind === 'audio' || ref.kind === 'video') &&
+        Boolean(ref.sha256?.trim() && ref.mimeType?.trim())
     )
-    if (resultImageBlocks.length > 0 && context.sender) {
-      const mediaRefs = createOwnedToolResultMediaRefs({
-        store: getTranscriptMediaAssetStore(),
-        appChatId: context.appChatId,
-        messageId: context.appRunId || `${parentProvider}-mcp-${toolName}`,
-        runId: context.appRunId || undefined,
-        toolName,
-        source: 'tool_result',
-        blocks: resultImageBlocks,
-        // Per-frame caption + grouping (e.g. inspect_video_frames → a filmstrip). The
-        // hints are aligned to the image blocks above in content order; the host trusts
-        // them because finalRichResult is main-side executor output, not provider stdout.
-        hints: finalRichResult?.mediaRefHints,
-        // Per-call ref cap (e.g. inspect_video_frames's 24-frame filmstrip). A TRUSTED
-        // main-side hint — createToolResultMediaRefs ceiling-clamps it to 32 so even a
-        // forged value can't emit an unbounded number of refs. Absent → the default 8.
-        maxRefs: finalRichResult?.mediaRefHints?.maxRefs
-      })
-      if (mediaRefs.length > 0) {
-        sendAgentCompatLine(context.sender, parentProvider, {
-          type: 'media_refs',
-          mediaRefs,
-          provider: parentProvider
+    const producedMediaAuthorityLive = (): boolean =>
+      canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
+    const deferProducedMediaCommit = Boolean(
+      pendingToolMediaPersistence && !toolIsError && hasPublishableTrustedMediaRef
+    )
+    if (deferProducedMediaCommit) {
+      if (
+        !toolMediaPublicationAuthorized({
+          publish: true,
+          isAuthorized: producedMediaAuthorityLive
         })
+      ) {
+        await rollbackPendingToolMediaPersistence(pendingToolMediaPersistence)
+        pendingToolMediaPersistence = undefined
+        return isCanvasMcpToolName(toolName)
+          ? staleCanvasMcpResult(toolName)
+          : staleProviderMcpResult(toolName)
+      }
+    } else {
+      const settlementCandidate = settleToolMediaPersistence({
+        pending: pendingToolMediaPersistence,
+        publish: false,
+        isAuthorized: producedMediaAuthorityLive
+      })
+      const settlement =
+        settlementCandidate instanceof Promise ? await settlementCandidate : settlementCandidate
+      pendingToolMediaPersistence = undefined
+      if (!settlement.authorityLive || !producedMediaAuthorityLive()) {
+        return isCanvasMcpToolName(toolName)
+          ? staleCanvasMcpResult(toolName)
+          : staleProviderMcpResult(toolName)
       }
     }
-    // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg/VideoToolbox
-    // producer tool are delivered DIRECTLY into the owning run's transcript,
-    // bypassing the image-only provider sanitizer (which would hard-drop AV).
-    // Un-forgeable: a McpToolExecutionResult is only ever constructed by main-side
-    // executor code, never provider stdout.
-    //
-    // injectTrustedMediaRefs fans to the 3 MAIN-SIDE maps (bridge / sub-thread /
-    // ensemble) and RETURNS whether one owned the run — those cover the phone,
-    // background, and ensemble runs (all persist raw to AppStore, no sanitizer).
-    // A FOREGROUND SOLO run — of ANY provider — is owned by the provider's own
-    // run state and is in NONE of the maps (delivered=false): codex by
-    // CodexRunState, the CLI/API providers (claude/gemini/cursor/grok/kimi/ollama)
-    // by their registerRunSession entry. So the fallback fires for EVERY provider
-    // whenever no map owned the run, delivering the trusted refs on a DEDICATED
-    // main-only IPC keyed by appChatId — never the sanitized/forgeable
-    // agent-output media_refs lane (which strips AV AND is provider-reachable).
-    // It is exclusive with the map paths (fires only on !delivered → no
-    // double-emit), and the sender/appRunId/appChatId guards fail it closed for
-    // the headless/windowless dispatch case (sender = null-object headlessRunSender;
-    // that case is map-owned anyway). Renderer-side it applies RAW + persists via
-    // saveChat, so the inline Electron transcript shows it and it syncs to iOS.
-    if (finalRichResult?.trustedMediaRefs && finalRichResult.trustedMediaRefs.length > 0) {
-      const ownedMediaRefs = grantTranscriptMediaRefsToChat(
-        context.appChatId,
-        finalRichResult.trustedMediaRefs
+    if (!producedMediaAuthorityLive()) {
+      await rollbackPendingToolMediaPersistence(pendingToolMediaPersistence)
+      pendingToolMediaPersistence = undefined
+      return isCanvasMcpToolName(toolName)
+        ? staleCanvasMcpResult(toolName)
+        : staleProviderMcpResult(toolName)
+    }
+    const publicFinalRichResult = finalRichResult
+      ? stripPendingToolMediaPersistence(finalRichResult)
+      : null
+    const projectMcpToolResult = (): McpToolExecutionResult => {
+      emitMcpToolTranscriptEvent({
+        type: 'tool_result',
+        tool_id: toolId,
+        tool_name: toolName,
+        status: toolIsError ? 'error' : 'success',
+        output: text,
+        ...(publicFinalRichResult?.content && !isCanvasMcpToolName(toolName)
+          ? { content: publicFinalRichResult.content }
+          : {}),
+        ...(publicFinalRichResult?.structuredContent
+          ? { structuredContent: publicFinalRichResult.structuredContent }
+          : {}),
+        provider: parentProvider,
+        server: GEMINI_MCP_SERVER_NAME
+      })
+      // PR1 (keystone): surface any image the tool returned as a VISIBLE
+      // transcript attachment. The `content` image blocks above go to the MODEL
+      // only — without this `media_refs` line even canvas_screenshot is invisible
+      // in the transcript. createToolResultMediaRefs magic-byte-sniffs and rejects
+      // SVG, so the visible lane stays raster-only.
+      //
+      // Emitted for EVERY provider, codex included. A codex MCP-tool image has NO
+      // other path to the transcript: codex's notification-stream emitter
+      // (emitCodexProviderMediaRefs) fires ONLY for `agentMessage` items, whereas
+      // its MCP tool RESULTS arrive as `mcpToolCall` items routed through
+      // codexToolResultFromItem — which never reaches that emitter and never
+      // produces a media_refs line (the image only survives there JSON-stringified
+      // into the tool_result text). So this is the keystone, not a double-emit:
+      // the two lanes are disjoint by codex item type, and even a same-bytes
+      // coincidence collapses on the renderer's sha256 dedup
+      // (mergeTranscriptMediaRefs). This mirrors the CLI notification lane, where
+      // emitCliProviderMediaRefs likewise early-returns on tool-result-like events
+      // and defers tool images to this seam. (Distinct from emitMcpToolTranscriptEvent,
+      // which IS a codex no-op — that is the tool TIMELINE, not the image attachment.)
+      const resultImageBlocks = (publicFinalRichResult?.content ?? []).filter(
+        (block) => block.type === 'image'
       )
-      if (ownedMediaRefs.length > 0) {
-        const delivered = injectTrustedMediaRefs(context.appRunId, ownedMediaRefs)
-        if (!delivered && context.sender && context.appRunId && context.appChatId) {
-          sendTrustedRunMediaRefs(context.sender, {
-            appChatId: context.appChatId,
-            appRunId: context.appRunId,
-            mediaRefs: ownedMediaRefs
+      if (resultImageBlocks.length > 0 && context.sender) {
+        const mediaStore = getTranscriptMediaAssetStore()
+        const mediaRefs = persistAuthorizedProviderMedia({
+          isAuthorized: () => canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority),
+          persist: () =>
+            createOwnedToolResultMediaRefs({
+              store: mediaStore,
+              appChatId: context.appChatId,
+              messageId: context.appRunId || `${parentProvider}-mcp-${toolName}`,
+              runId: context.appRunId || undefined,
+              toolName,
+              source: 'tool_result',
+              blocks: resultImageBlocks,
+              // Per-frame caption + grouping (e.g. inspect_video_frames → a filmstrip). The
+              // hints are aligned to the image blocks above in content order; the host trusts
+              // them because finalRichResult is main-side executor output, not provider stdout.
+              hints: publicFinalRichResult?.mediaRefHints,
+              // Per-call ref cap (e.g. inspect_video_frames's 24-frame filmstrip). A TRUSTED
+              // main-side hint — createToolResultMediaRefs ceiling-clamps it to 32 so even a
+              // forged value can't emit an unbounded number of refs. Absent → the default 8.
+              maxRefs: publicFinalRichResult?.mediaRefHints?.maxRefs
+            }),
+          revokeOnLostAuthority: async () => {
+            await mediaStore.revokeChatOwnershipStrict(
+              [context.appChatId].filter((chatId): chatId is string => Boolean(chatId))
+            )
+          }
+        })
+        if (mediaRefs.length > 0) {
+          sendAgentCompatLine(context.sender, parentProvider, {
+            type: 'media_refs',
+            mediaRefs,
+            provider: parentProvider
           })
         }
       }
+      // S1b-3: TRUSTED AV media refs produced by a main-side ffmpeg/VideoToolbox
+      // producer tool are delivered DIRECTLY into the owning run's transcript,
+      // bypassing the image-only provider sanitizer (which would hard-drop AV).
+      // Un-forgeable: a McpToolExecutionResult is only ever constructed by main-side
+      // executor code, never provider stdout.
+      //
+      // injectTrustedMediaRefs fans to the 3 MAIN-SIDE maps (bridge / sub-thread /
+      // ensemble) and RETURNS whether one owned the run — those cover the phone,
+      // background, and ensemble runs (all persist raw to AppStore, no sanitizer).
+      // A FOREGROUND SOLO run — of ANY provider — is owned by the provider's own
+      // run state and is in NONE of the maps (delivered=false): codex by
+      // CodexRunState, the CLI/API providers (claude/gemini/cursor/grok/kimi/ollama)
+      // by their registerRunSession entry. So the fallback fires for EVERY provider
+      // whenever no map owned the run, delivering the trusted refs on a DEDICATED
+      // main-only IPC keyed by appChatId — never the sanitized/forgeable
+      // agent-output media_refs lane (which strips AV AND is provider-reachable).
+      // It is exclusive with the map paths (fires only on !delivered → no
+      // double-emit), and the sender/appRunId/appChatId guards fail it closed for
+      // the headless/windowless dispatch case (sender = null-object headlessRunSender;
+      // that case is map-owned anyway). Renderer-side it applies RAW + persists via
+      // saveChat, so the inline Electron transcript shows it and it syncs to iOS.
+      if (
+        publicFinalRichResult?.trustedMediaRefs &&
+        publicFinalRichResult.trustedMediaRefs.length > 0
+      ) {
+        const ownedMediaRefs = canvasMcpExecutionAuthorityStillLive(providerMcpExecutionAuthority)
+          ? grantTranscriptMediaRefsToChat(
+              context.appChatId,
+              publicFinalRichResult.trustedMediaRefs
+            )
+          : []
+        if (ownedMediaRefs.length > 0) {
+          const delivered = injectTrustedMediaRefs(context.appRunId, ownedMediaRefs)
+          if (!delivered && context.sender && context.appRunId && context.appChatId) {
+            sendTrustedRunMediaRefs(context.sender, {
+              appChatId: context.appChatId,
+              appRunId: context.appRunId,
+              mediaRefs: ownedMediaRefs
+            })
+          }
+        }
+      }
+      if (publicFinalRichResult) {
+        return {
+          ...publicFinalRichResult,
+          ...(canvasEvalApproval ? { canvasEvalApproval } : {}),
+          ...(toolIsError ? { isError: true } : {})
+        }
+      }
+      return {
+        text,
+        ...(canvasEvalApproval ? { canvasEvalApproval } : {}),
+        ...(toolIsError ? { isError: true } : {})
+      }
     }
-    if (finalRichResult) {
-      return { ...finalRichResult, ...(toolIsError ? { isError: true } : {}) }
+
+    if (pendingToolMediaPersistence) {
+      const pending = pendingToolMediaPersistence
+      const committedProjection = projectAndCommitToolMediaPersistence({
+        pending,
+        isAuthorized: producedMediaAuthorityLive,
+        project: projectMcpToolResult
+      })
+      if (!committedProjection.authorityLive) {
+        await rollbackPendingToolMediaPersistence(pending)
+        pendingToolMediaPersistence = undefined
+        return isCanvasMcpToolName(toolName)
+          ? staleCanvasMcpResult(toolName)
+          : staleProviderMcpResult(toolName)
+      }
+      pendingToolMediaPersistence = undefined
+      return committedProjection.value
     }
-    return { text, ...(toolIsError ? { isError: true } : {}) }
+    return projectMcpToolResult()
   } catch (error) {
+    let surfacedError = error
+    if (pendingToolMediaPersistence) {
+      const pending = pendingToolMediaPersistence
+      try {
+        await rollbackPendingToolMediaPersistence(pending)
+        pendingToolMediaPersistence = undefined
+      } catch (rollbackError) {
+        surfacedError = new AggregateError(
+          [error, rollbackError],
+          'MCP tool failed and its produced media could not be rolled back.'
+        )
+      }
+    }
+    if (isCanvasMcpToolName(toolName)) {
+      return staleCanvasMcpResult(toolName)
+    }
     const errorResult = mcpStructuredJsonResult({
       ok: false,
       tool: toolName,
-      error: error instanceof Error ? error.message : String(error)
+      error: surfacedError instanceof Error ? surfacedError.message : String(surfacedError)
     })
     emitMcpToolTranscriptEvent({
       type: 'tool_result',
@@ -29793,7 +29025,13 @@ async function executeGeminiMcpTool(
       provider: parentProvider,
       server: GEMINI_MCP_SERVER_NAME
     })
-    return { ...errorResult, isError: true }
+    return {
+      ...errorResult,
+      ...(canvasEvalApproval ? { canvasEvalApproval } : {}),
+      isError: true
+    }
+  } finally {
+    completeHostCommandTerminalProjection(hostCommandProjection)
   }
 }
 
@@ -29885,10 +29123,6 @@ async function prepareGeminiMcpBridgeForRun(
   ) as Promise<AgentRunRoute>
 }
 
-async function prepareKimiMcpBridgeForRun(sender: Electron.WebContents): Promise<boolean> {
-  return mcpBridgeRuntime.prepareKimiMcpBridgeForRun(sender)
-}
-
 function installGeminiToolContextForRun(
   sender: Electron.WebContents,
   cwd: string,
@@ -29918,7 +29152,7 @@ function installGeminiToolContextForRun(
     workflowMode: options.runPayload?.workflowMode,
     ...routed
   }
-  registerRunSession(
+  const registeredSession = registerRunSession(
     'gemini',
     sender,
     routed,
@@ -29926,6 +29160,10 @@ function installGeminiToolContextForRun(
     activeGeminiToolContext,
     activeGeminiToolContext.providerSessionId || null
   )
+  if (!registeredSession) {
+    activeGeminiToolContext = null
+    throw new Error('Gemini run lost its exact chat authority before transport admission.')
+  }
   return routed
 }
 
@@ -30050,8 +29288,7 @@ const applyNativeGlassToWindow = (targetWindow: BrowserWindow, settings: AppSett
     (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
     !settings.reduceTransparency &&
     !forceSolidWorkspaceChrome
-  const useGlassWindow =
-    isMac && useMaterialWindow
+  const useGlassWindow = isMac && useMaterialWindow
   const windowsMaterial: BrowserWindowConstructorOptions['backgroundMaterial'] =
     isWindows && useMaterialWindow ? (targetWindow === mainWindow ? 'mica' : 'tabbed') : undefined
   const solidBackground = forceSolidWorkspaceChrome
@@ -30171,8 +29408,7 @@ function createWindow(): void {
   const useMaterialWindow =
     (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
     !settings.reduceTransparency
-  const useGlassWindow =
-    isMac && useMaterialWindow
+  const useGlassWindow = isMac && useMaterialWindow
   const nativeVibrancy = resolveNativeVibrancy(useGlassWindow)
   const initialPlacement = resolveInitialWindowPlacement(settings)
 
@@ -30304,7 +29540,6 @@ function createWindow(): void {
     mainWindow.loadFile(join(__dirname, '../renderer/index.html'))
   }
 }
-
 
 function parseWorkspacePopoutInput(input: unknown): {
   kind: WorkspacePopoutKind
@@ -30449,9 +29684,7 @@ async function openWorkspacePopout(
     parseWorkspacePopoutInput(input)
   assertRendererCanOpenWorkspacePopout(event, { kind, workspacePath, chatId })
   const key =
-    kind === 'chat'
-      ? `chat:${chatId}`
-      : JSON.stringify([kind, workspacePath || '', chatId || ''])
+    kind === 'chat' ? `chat:${chatId}` : JSON.stringify([kind, workspacePath || '', chatId || ''])
   const existing = workspacePopoutWindows.get(key)
   if (existing && !existing.isDestroyed()) {
     const existingOwner = workspacePopoutOwners.get(key)
@@ -30487,8 +29720,7 @@ async function openWorkspacePopout(
     (settings.appearanceMode === 'native_glass' || settings.appearanceMode === 'soft_glass') &&
     !settings.reduceTransparency &&
     !forceSolidWorkspaceChrome
-  const useGlassWindow =
-    isMac && useMaterialWindow
+  const useGlassWindow = isMac && useMaterialWindow
   const title =
     kind === 'file-editor'
       ? 'TaskWraith File Editor'
@@ -30638,6 +29870,20 @@ if (isGeminiMcpBridgeProcess) {
     // Rebrand continuity: seed the new TaskWraith userData dir from a legacy
     // AGBench install BEFORE the store performs its first lazy read.
     migrateLegacyUserDataSync()
+    try {
+      await regenerableHistoryByteStore.initializeStrict(
+        AppStore.getPendingHistoryDeletion()?.operationId
+      )
+    } catch (error) {
+      // Keep the store's admission fence closed. If an outer deletion is
+      // pending, its normal startup recovery below will also fail closed and
+      // suppress queue/graph/schedule revival; otherwise only these
+      // regenerable PDF/media surfaces remain unavailable until restart.
+      console.error(
+        '[history-deletion] PDF/media staging startup recovery failed; derived-byte admission remains closed:',
+        error
+      )
+    }
     // Transcript metadata is presentation data, not migration provenance. Old
     // unowned assets remain fail-closed; only the durable main-owned ownership
     // ledger can authorize a chat after restart.
@@ -30664,10 +29910,6 @@ if (isGeminiMcpBridgeProcess) {
       })
     )
     registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
-    // Reclaim orphaned media-staging outputs (timed-out daemon encodes / ffmpeg
-    // crash-orphans) at startup + every 30 min.
-    sweepMediaStagingDir()
-    setInterval(sweepMediaStagingDir, 30 * 60 * 1000).unref?.()
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
@@ -30900,24 +30142,18 @@ if (isGeminiMcpBridgeProcess) {
         `[scheduled-occurrence] startup recovery blocked; scheduled dispatch is disabled: ${occurrenceReplay.reason}`
       )
     }
-    // Sweep stale phone-attachment temp files (>24h) — they're only needed
-    // for the duration of their run; without this the tmpdir accretes one
-    // file per attached image forever.
+    // New phone attachments publish atomically into chat-owned
+    // transcript-media. Remove only files matching the retired anonymous temp
+    // format; unknown entries or links fail closed and are never unlinked.
     try {
       const attachmentsDir = join(os.tmpdir(), 'taskwraith-remote-attachments')
-      if (fsSync.existsSync(attachmentsDir)) {
-        const cutoff = Date.now() - 24 * 60 * 60 * 1000
-        for (const entry of fsSync.readdirSync(attachmentsDir)) {
-          const filePath = join(attachmentsDir, entry)
-          try {
-            if (fsSync.statSync(filePath).mtimeMs < cutoff) fsSync.unlinkSync(filePath)
-          } catch {
-            // Best-effort hygiene — never block startup on tmp cleanup.
-          }
-        }
-      }
-    } catch {
-      // Best-effort hygiene.
+      purgeLegacyRemoteAttachmentTempRoot(attachmentsDir)
+    } catch (error) {
+      console.warn(
+        `[remote-attachments] Legacy temp cleanup stopped safely: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
     }
 
     // Repair allowlist entries whose ids were hand-typed before the picker
@@ -30950,8 +30186,8 @@ if (isGeminiMcpBridgeProcess) {
           statuses: ['starting', 'active', 'cancelling']
         }).some((candidate) => candidate.runId !== job.runId)
         if (queueLeaseAlreadyHeld) return false
-        // 1.0.6-CRUX26 — sweep all AVAILABLE providers (incl. gated grok/cursor)
-        // so a grok/cursor session already active on this chat blocks a
+        // Sweep available providers (including Grok and historical Cursor state)
+        // so an already-active legacy/provider session on this chat blocks a
         // concurrent lease, matching the core four.
         return !availableProviderIds().some((provider) =>
           runManager
@@ -30986,8 +30222,7 @@ if (isGeminiMcpBridgeProcess) {
       assertMainRendererSender,
       getSnapshot: () => ({
         schemaVersion: 1,
-        repositoryDiagnostics:
-          executionGraphRepositoryRef?.listRepositoryDiagnostics() ?? [],
+        repositoryDiagnostics: executionGraphRepositoryRef?.listRepositoryDiagnostics() ?? [],
         recoveryDiagnostics: executionGraphRecoveryDiagnostics,
         serviceDiagnostics: executionGraphServiceDiagnostics
       })
@@ -31175,7 +30410,7 @@ if (isGeminiMcpBridgeProcess) {
         if (anchorRunRef) {
           if (
             approvalService?.hasPendingHostCommandForRun(anchorRunRef) ||
-            hostCommandRerunsInFlight.has(anchorRunRef)
+            hostCommandOperations.hasRun(anchorRunRef)
           ) {
             throw new Error(
               'Stack cannot anchor while a host-process command continuation is pending.'
@@ -31189,10 +30424,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           const job = matchingJobs[0]
           const session = runManager.get(anchorRunRef)
-          if (
-            !session ||
-            (session.status !== 'starting' && session.status !== 'running')
-          ) {
+          if (!session || (session.status !== 'starting' && session.status !== 'running')) {
             throw new Error('Stack anchor must be one exact active provider session.')
           }
           if (job) {
@@ -31208,10 +30440,7 @@ if (isGeminiMcpBridgeProcess) {
           if (session.appChatId !== chat.appChatId) {
             throw new Error('Stack anchor session does not belong to the selected chat.')
           }
-          if (
-            !session.workspacePath ||
-            canonicalPath(session.workspacePath) !== workspacePath
-          ) {
+          if (!session.workspacePath || canonicalPath(session.workspacePath) !== workspacePath) {
             throw new Error('Stack anchor session does not belong to the selected workspace.')
           }
           if (job && session.provider !== job.provider) {
@@ -31561,14 +30790,12 @@ if (isGeminiMcpBridgeProcess) {
       workspaceId: string,
       limit = 40,
       beforeRowId?: string
-    ):
-      | {
-          canonical: string
-          generatedAt: string
-          payload: Record<string, unknown>
-          runId?: string
-        }
-      | null => {
+    ): {
+      canonical: string
+      generatedAt: string
+      payload: Record<string, unknown>
+      runId?: string
+    } | null => {
       // Scope-global chats (no workspace) ride the reserved 'global' scope
       // — without this mapping their snapshot pushes silently no-oped and
       // the phone sat on the hydration ticker forever.
@@ -31594,9 +30821,7 @@ if (isGeminiMcpBridgeProcess) {
         pooledAgentIdentity: remotePooledAgentIdentityForChat(chat),
         speakerForMessage: remoteSpeakerForMessage(
           chat,
-          chat.ensemble?.enabled
-            ? ensembleSpeakerForMessage(chat.ensemble.participants)
-            : undefined
+          chat.ensemble?.enabled ? ensembleSpeakerForMessage(chat.ensemble.participants) : undefined
         )
       })
       const payload = fitRemoteThreadSnapshotToByteBudget({
@@ -32145,7 +31370,7 @@ if (isGeminiMcpBridgeProcess) {
             reason: 'Queued image attachments from paired devices are not supported yet'
           }
         }
-        const provider = assertProviderId(action.provider)
+        const provider = assertLiveProviderId(action.provider)
         const scope = chatScope(chat)
         const workspace =
           scope === 'global'
@@ -32179,8 +31404,7 @@ if (isGeminiMcpBridgeProcess) {
           selectedModelType === 'default' || selectedModelType === 'cli-default'
             ? GROK_45_MODEL_ID
             : selectedModelType
-        const queueCodexReasoning =
-          provider === 'codex' ? action.reasoningEffort : undefined
+        const queueCodexReasoning = provider === 'codex' ? action.reasoningEffort : undefined
         const queueGrokReasoning =
           provider === 'grok' && isGrok45ReasoningModelId(grokCapabilityModel)
             ? (action.grokReasoningEffort ?? action.reasoningEffort)
@@ -32244,9 +31468,7 @@ if (isGeminiMcpBridgeProcess) {
               ? { cursorReasoningEffort: queueCursorReasoning }
               : {}),
             ...(queueCursorFastMode !== undefined ? { cursorFastMode: queueCursorFastMode } : {}),
-            ...(queueClaudeFastMode !== undefined
-              ? { claudeFastMode: queueClaudeFastMode }
-              : {}),
+            ...(queueClaudeFastMode !== undefined ? { claudeFastMode: queueClaudeFastMode } : {}),
             ...(queueCodexServiceTier !== undefined
               ? { codexServiceTier: queueCodexServiceTier }
               : {}),
@@ -32286,16 +31508,16 @@ if (isGeminiMcpBridgeProcess) {
               ...(action.cursorReasoningEffort !== undefined
                 ? { cursorReasoningEffort: action.cursorReasoningEffort }
                 : {}),
-              ...(action.cursorFastMode !== undefined ? { cursorFastMode: action.cursorFastMode } : {}),
+              ...(action.cursorFastMode !== undefined
+                ? { cursorFastMode: action.cursorFastMode }
+                : {}),
               ...(action.claudeFastMode !== undefined
                 ? { claudeFastMode: action.claudeFastMode }
                 : {}),
               ...(action.codexServiceTier !== undefined
                 ? { codexServiceTier: action.codexServiceTier }
                 : {}),
-              ...(action.kimiFastMode !== undefined
-                ? { kimiFastMode: action.kimiFastMode }
-                : {}),
+              ...(action.kimiFastMode !== undefined ? { kimiFastMode: action.kimiFastMode } : {}),
               ...(queueKimiReasoningEffort !== undefined
                 ? { kimiReasoningEffort: queueKimiReasoningEffort }
                 : {}),
@@ -32342,10 +31564,7 @@ if (isGeminiMcpBridgeProcess) {
         if (job.status !== 'queued') {
           return { ok: false, reason: 'Queued prompt is no longer pending' }
         }
-        if (
-          action.textPrefix &&
-          !job.request.remoteComposer.text.startsWith(action.textPrefix)
-        ) {
+        if (action.textPrefix && !job.request.remoteComposer.text.startsWith(action.textPrefix)) {
           return { ok: false, reason: 'Queue changed underneath — refresh and retry' }
         }
         if (action.op === 'steerNow') {
@@ -32380,41 +31599,42 @@ if (isGeminiMcpBridgeProcess) {
             if (wasScheduledOccurrenceRunIdObserved(runId)) return false
             cancelPendingAgentQuestionsForRun(runId, 'run-cancelled')
           }
-          // Call cancelProviderRun directly instead of
-          // providerAdapters.require(assertProviderId(provider)) — assertProviderId
-          // THROWS for experimental providers (grok/cursor without the flag),
-          // which would reject a legitimate cancel before it ran. cancelProviderRun
-          // locates the run by runId and only uses the provider string for
-          // gemini/codex-specific cleanup, so a lenient cast is safe here.
+          // Cancellation accepts structural provider ids so historical run
+          // records can still be settled. This does not confer new-run
+          // admission; live dispatch uses the canonical selectable set.
           return cancelProviderRun(provider as ProviderId, runId)
         },
-	        workflowSetEnabledFn: (action, ctx) =>
-	          remoteWorkflowActions.setEnabled(action, ctx),
-	        workflowRunNowFn: (action, ctx) => remoteWorkflowActions.runNow(action, ctx),
-	        respondApprovalFn: async (requestId, action, options) => {
-	          return approvalService?.resolve(requestId, action, options) ?? false
-	        },
-	        respondQuestionFn: async (action, response) => {
-	          const scope: RemoteQuestionResolutionScope = {
-	            workspaceId: action.workspaceId,
-	            threadId: action.threadId,
-	            runId: optionalString(action.runId)
-	          }
-	          if (response.kind === 'answer') {
-	            return remoteQuestionRegistry.answerScoped(
-	              action.promptId,
-	              scope,
-	              response.answer,
-	              true
-	            ).ok
-	          }
-	          return remoteQuestionRegistry.rejectScoped(
-	            action.promptId,
-	            scope,
-	            response.reason || 'user-dismissed'
-	          ).ok
-	        },
-	        registerApnsTokenFn: async (action) => {
+        workflowSetEnabledFn: (action, ctx) => remoteWorkflowActions.setEnabled(action, ctx),
+        workflowRunNowFn: (action, ctx) => remoteWorkflowActions.runNow(action, ctx),
+        respondApprovalFn: async (requestId, action, options) => {
+          return (
+            approvalService?.resolve(requestId, action, {
+              ...options,
+              origin: 'remote'
+            }) ?? false
+          )
+        },
+        respondQuestionFn: async (action, response) => {
+          const scope: RemoteQuestionResolutionScope = {
+            workspaceId: action.workspaceId,
+            threadId: action.threadId,
+            runId: optionalString(action.runId)
+          }
+          if (response.kind === 'answer') {
+            return remoteQuestionRegistry.answerScoped(
+              action.promptId,
+              scope,
+              response.answer,
+              true
+            ).ok
+          }
+          return remoteQuestionRegistry.rejectScoped(
+            action.promptId,
+            scope,
+            response.reason || 'user-dismissed'
+          ).ok
+        },
+        registerApnsTokenFn: async (action) => {
           // Light validation beyond what the decoder did — same shape the
           // store's upsert enforces. Thrown errors become the executor's
           // "registration failed" message.
@@ -32628,16 +31848,10 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: 'Round id is no longer active' }
           }
           const reason = action.message || 'cancelled from iOS'
-          const scheduledOwner = scheduledOccurrenceOwners.lookupByChatId(
-            action.threadId
-          )
+          const scheduledOwner = scheduledOccurrenceOwners.lookupByChatId(action.threadId)
           const ok = scheduledOwner
-            ? Boolean(
-                await cancelScheduledOccurrence(scheduledOwner.taskId, reason)
-              )
-            : Boolean(
-                await ensembleOrchestratorRef?.cancelRound(action.threadId, reason)
-              )
+            ? Boolean(await cancelScheduledOccurrence(scheduledOwner.taskId, reason))
+            : Boolean(await ensembleOrchestratorRef?.cancelRound(action.threadId, reason))
           if (ok) {
             broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })
             // Round status is projected in the task card; avoid a duplicate full rebuild.
@@ -32756,11 +31970,11 @@ if (isGeminiMcpBridgeProcess) {
           const canonicalActionWs =
             action.workspaceId === 'global'
               ? 'global'
-              : canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId
+              : (canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId)
           const chatWs =
             chat.scope === 'global'
               ? 'global'
-              : canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
+              : (canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId)
           if (chat.scope !== 'global' && chatWs && chatWs !== canonicalActionWs) {
             return {
               ok: false,
@@ -32789,18 +32003,21 @@ if (isGeminiMcpBridgeProcess) {
           const canonicalActionWs =
             action.workspaceId === 'global'
               ? 'global'
-              : canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId
+              : (canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId)
           const chatWs =
             chat.scope === 'global'
               ? 'global'
-              : canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
+              : (canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId)
           if (chat.scope !== 'global' && chatWs && chatWs !== canonicalActionWs) {
             return {
               ok: false,
               error: `Thread does not belong to workspace "${action.workspaceId}"`
             }
           }
-          if (action.targetKind === 'ensemble' && AppStore.getSettings().ensembleModeEnabled === false) {
+          if (
+            action.targetKind === 'ensemble' &&
+            AppStore.getSettings().ensembleModeEnabled === false
+          ) {
             return { ok: false, error: 'Ensemble mode is disabled on your Mac.' }
           }
           try {
@@ -32811,7 +32028,7 @@ if (isGeminiMcpBridgeProcess) {
               canonicalProvider:
                 action.canonicalProvider === undefined
                   ? undefined
-                  : assertProviderId(action.canonicalProvider),
+                  : assertLiveProviderId(action.canonicalProvider),
               canonicalProviderMetadata: action.canonicalProviderMetadata
             })
             broadcastChatUpdated(updated)
@@ -32985,7 +32202,7 @@ if (isGeminiMcpBridgeProcess) {
           try {
             const chat = chatService.createSideChat({
               parentChatId: action.threadId,
-              ...(action.provider ? { provider: assertProviderId(action.provider) } : {}),
+              ...(action.provider ? { provider: assertLiveProviderId(action.provider) } : {}),
               ...(action.model ? { selectedModelType: action.model } : {}),
               ...(action.codexReasoningEffort !== undefined
                 ? { codexReasoningEffort: action.codexReasoningEffort }
@@ -33095,7 +32312,7 @@ if (isGeminiMcpBridgeProcess) {
           let next: EnsembleParticipant[]
           try {
             next = action.participants.map((entry, index) => {
-              const provider = assertProviderId(entry.provider)
+              const provider = assertLiveProviderId(entry.provider)
               const existing = entry.id ? existingById.get(entry.id) : undefined
               const seed = existing ?? seedByProvider.get(provider)
               const base: EnsembleParticipant = existing
@@ -33287,37 +32504,42 @@ if (isGeminiMcpBridgeProcess) {
           }> = []
           if (action.imageAttachments?.length) {
             try {
-              const dir = join(os.tmpdir(), 'taskwraith-remote-attachments')
-              fsSync.mkdirSync(dir, { recursive: true })
-              const buffers: Buffer[] = []
-              steerImagePaths = action.imageAttachments.map((attachment, index) => {
-                const ext = attachment.mimeType === 'image/png' ? 'png' : 'jpg'
-                const file = join(
-                  dir,
-                  `${action.threadId.replace(/[^a-zA-Z0-9-]/g, '')}-steer-${Date.now()}-${index}.${ext}`
-                )
-                const buf = Buffer.from(attachment.dataBase64, 'base64')
-                buffers.push(buf)
-                fsSync.writeFileSync(file, buf)
-                return file
+              const persisted = persistRemoteImageAttachments({
+                appChatId: action.threadId,
+                attachments: action.imageAttachments,
+                store: getTranscriptMediaAssetStore()
               })
+              steerImagePaths = persisted.map((attachment) => attachment.path)
               for (const imagePath of steerImagePaths) {
-                authorizeImagePreviewPath(imagePath, { mainAuthority: true })
+                authorizeImagePreviewPath(imagePath, {
+                  mainAuthority: true,
+                  appChatId: action.threadId
+                })
               }
-              steerImageThumbnails = buildBridgeImageThumbnails(buffers)
+              steerImageThumbnails = buildBridgeImageThumbnails(
+                persisted.map((attachment) => attachment.buffer)
+              )
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize steer attachments:', err)
               steerImagePaths = []
               steerImageThumbnails = []
             }
           }
-          // Electron parity (extractFirstEnsembleDmTarget): when the steer
-          // prompt @-tags exactly ONE participant, DM-scope the round to it so
-          // the participants-reachable card narrows to that participant. The
-          // phone sends the raw "@Role …" text; resolve it with the shared
-          // mention matcher. Two+ tagged participants stay a full panel round.
+          // Desktop parity: MAIN resolves phone-supplied text through the same
+          // authoritative matcher used by run-ensemble-round. The remote path
+          // has no renderer advisory id, so only an exact structured link or a
+          // single unambiguous @alias can direct the round.
+          const dmTargetResolution = resolveEnsembleDmTargetForDispatch({
+            text,
+            participants: chat.ensemble.participants
+          })
+          const dmTargetError = ensembleDmTargetResolutionError(
+            dmTargetResolution,
+            chat.ensemble.participants
+          )
+          if (dmTargetError) return { ok: false, error: dmTargetError }
           const dmTargetParticipantId =
-            resolveSingleEnsembleDmTarget(text, chat.ensemble.participants) ?? undefined
+            dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
           const lateScheduledBlock = scheduledEnsembleInteractiveBlock(action.threadId)
           if (lateScheduledBlock) return { ok: false, error: lateScheduledBlock }
           const result = ensembleOrchestratorRef?.startRound({
@@ -33338,9 +32560,7 @@ if (isGeminiMcpBridgeProcess) {
                   }))
                 }
               : {}),
-            ...(steerImageThumbnails.length
-              ? { imageThumbnails: steerImageThumbnails }
-              : {})
+            ...(steerImageThumbnails.length ? { imageThumbnails: steerImageThumbnails } : {})
           })
           const ok = result?.status === 'started' || result?.status === 'steered'
           if (ok) {
@@ -33358,17 +32578,20 @@ if (isGeminiMcpBridgeProcess) {
             // Thread creation changes feed membership; keep the helper's one full snapshot only.
           }
           const now = Date.now()
-          const cleanupRemoteDrafts = (keepId: string) => {
+          const cleanupRemoteDrafts = async (keepId: string) => {
             const staleIds = remoteDraftIdsToDelete(AppStore.getChats(), keepId)
+            if (staleIds.length > 0 && !deleteChatWithLifecycleRef) {
+              throw new Error('Chat deletion lifecycle authority is unavailable.')
+            }
             for (const staleId of staleIds) {
-              AppStore.deleteChat(staleId)
+              await deleteChatWithLifecycleRef!(staleId)
             }
             if (staleIds.length > 0) {
               broadcastThreadList()
             }
           }
-          const finishRemoteDraft = (chat: ChatRecord, workspaceId: string) => {
-            cleanupRemoteDrafts(chat.appChatId)
+          const finishRemoteDraft = async (chat: ChatRecord, workspaceId: string) => {
+            await cleanupRemoteDrafts(chat.appChatId)
             finish(chat, workspaceId)
           }
           let requestedThreadId: string | undefined
@@ -33406,7 +32629,7 @@ if (isGeminiMcpBridgeProcess) {
             return AppStore.getChat(chat.appChatId) ?? chat
           }
           if (action.variant === 'global') {
-            const provider = assertProviderId(
+            const provider = assertLiveProviderId(
               action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
             )
             const chat = createOrReuseRemoteDraft({
@@ -33414,7 +32637,7 @@ if (isGeminiMcpBridgeProcess) {
               provider,
               title: requestedTitle
             })
-            finishRemoteDraft(chat, action.workspaceId)
+            await finishRemoteDraft(chat, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
           const workspaceRecord = AppStore.getWorkspaces().find((w) => w.id === action.workspaceId)
@@ -33425,11 +32648,11 @@ if (isGeminiMcpBridgeProcess) {
             if (AppStore.getSettings().ensembleModeEnabled === false) {
               return { ok: false, reason: 'Ensemble mode is disabled on your Mac.' }
             }
-            const configuredProviders = await detectConfiguredProviders(AppStore.getSettings())
-            const provider = coerceLiveProvider(
-              assertProviderId(
-                action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER
-              )
+            const configuredProviders = await detectManagedRunConfiguredProviders(
+              AppStore.getSettings()
+            )
+            const provider = assertLiveProviderId(
+              action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER
             )
             const reusableEnsemble =
               requestedChat ||
@@ -33472,7 +32695,7 @@ if (isGeminiMcpBridgeProcess) {
                   ])
                 )
                 const custom = action.participants.map((entry, index) => {
-                  const provider = assertProviderId(entry.provider)
+                  const provider = assertLiveProviderId(entry.provider)
                   const seed = seedByProvider.get(provider)
                   return {
                     id: `ios-p${index + 1}-${provider}`,
@@ -33501,10 +32724,10 @@ if (isGeminiMcpBridgeProcess) {
             }
             AppStore.saveChat(chat)
             const saved = AppStore.getChat(chat.appChatId) ?? chat
-            finishRemoteDraft(saved, action.workspaceId)
+            await finishRemoteDraft(saved, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
-          const provider = assertProviderId(
+          const provider = assertLiveProviderId(
             action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
           )
           const chat = createOrReuseRemoteDraft({
@@ -33514,7 +32737,7 @@ if (isGeminiMcpBridgeProcess) {
             workspaceId: workspaceRecord.id,
             workspacePath: workspaceRecord.path
           })
-          finishRemoteDraft(chat, action.workspaceId)
+          await finishRemoteDraft(chat, action.workspaceId)
           return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
         },
         threadRowExpandFn: async (action) => {
@@ -33600,7 +32823,10 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, reason: 'Transcript media item not found' }
           }
           const sourceRef = findTranscriptMediaRef(chat, action.rowId, action.mediaId)
-          if (media.source === 'workspace_path' || sourceRef?.mediaRef.source === 'workspace_path') {
+          if (
+            media.source === 'workspace_path' ||
+            sourceRef?.mediaRef.source === 'workspace_path'
+          ) {
             const decision = bridgeAllowlist.evaluate({
               workspaceId: action.workspaceId,
               capability: 'fileRead'
@@ -33672,7 +32898,10 @@ if (isGeminiMcpBridgeProcess) {
                 ? fullTranscriptMediaFromAsset(chat.appChatId, mediaRef, maxBytes)
                 : mediaRef.source === 'workspace_path'
                   ? fullWorkspaceTranscriptMedia(chat, mediaRef, maxBytes)
-                  : { ok: false as const, reason: 'Full fetch is not supported for this media source' }
+                  : {
+                      ok: false as const,
+                      reason: 'Full fetch is not supported for this media source'
+                    }
             if (!full.ok) return { ok: false, reason: full.reason }
             return {
               ok: true,
@@ -33691,7 +32920,10 @@ if (isGeminiMcpBridgeProcess) {
           }
           const thumbnail = media.thumbnail
           if (!thumbnail?.dataBase64) {
-            return { ok: false, reason: 'No bounded preview bytes are available for this media item' }
+            return {
+              ok: false,
+              reason: 'No bounded preview bytes are available for this media item'
+            }
           }
           const byteLength = Buffer.byteLength(thumbnail.dataBase64, 'base64')
           if (byteLength > maxBytes) {
@@ -33754,7 +32986,9 @@ if (isGeminiMcpBridgeProcess) {
           return { ok: true, watchedAppChatId: action.appChatId }
         },
         workspaceFileListFn: async (action) => {
-          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
           if (!workspace) {
             return {
               ok: false,
@@ -33773,7 +33007,9 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         workspaceFileReadFn: async (action) => {
-          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
           if (!workspace) {
             return {
               ok: false,
@@ -33787,7 +33023,9 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         workspaceFileWriteFn: async (action) => {
-          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
           if (!workspace) {
             return {
               ok: false,
@@ -33813,7 +33051,9 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         workspaceFileDeleteFn: async (action) => {
-          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
           if (!workspace) {
             return {
               ok: false,
@@ -33838,7 +33078,9 @@ if (isGeminiMcpBridgeProcess) {
           }
         },
         workspaceDiffFn: async (action) => {
-          const workspace = AppStore.getWorkspaces().find((entry) => entry.id === action.workspaceId)
+          const workspace = AppStore.getWorkspaces().find(
+            (entry) => entry.id === action.workspaceId
+          )
           if (!workspace) {
             return {
               ok: false,
@@ -34045,7 +33287,7 @@ if (isGeminiMcpBridgeProcess) {
           // `event.sender` for streaming; other fields are unused in the
           // run path, so a duck-typed shim is sufficient.
           const fakeEvent = { sender } as unknown as Electron.IpcMainInvokeEvent
-          const provider = assertProviderId(action.provider)
+          const provider = assertLiveProviderId(action.provider)
           // Secondary-workspace grants become write-capable external path
           // grants, so each extra id must pass the same fine-grained write
           // policy the router applies to primary workspace mutations.
@@ -34125,8 +33367,7 @@ if (isGeminiMcpBridgeProcess) {
               workflowSelectedModel === 'default' || workflowSelectedModel === 'cli-default'
                 ? GROK_45_MODEL_ID
                 : workflowSelectedModel
-            const workflowCodexReasoning =
-              provider === 'codex' ? action.reasoningEffort : undefined
+            const workflowCodexReasoning = provider === 'codex' ? action.reasoningEffort : undefined
             const workflowGrokReasoning =
               provider === 'grok' && isGrok45ReasoningModelId(workflowGrokCapabilityModel)
                 ? (action.grokReasoningEffort ?? action.reasoningEffort)
@@ -34188,9 +33429,9 @@ if (isGeminiMcpBridgeProcess) {
             // Workflow creation keeps the helper's full snapshot; a second rebuild is redundant.
             return { dispatched: true, appRunId: null }
           }
-          // Phone-attached images → temp files → the SAME imagePaths lane the
-          // desktop composer uses (adapters forward per provider). Temp dir
-          // is per-run; files are small (phone downscales before sending).
+          // Phone-attached images use the SAME imagePaths lane the desktop
+          // composer uses, but live in the chat-owned transcript-media store
+          // rather than anonymous OS temp files.
           let iosImagePaths: string[] = []
           let iosImageThumbnails: Array<{
             dataBase64: string
@@ -34200,27 +33441,24 @@ if (isGeminiMcpBridgeProcess) {
           }> = []
           if (action.imageAttachments?.length) {
             try {
-              const dir = join(os.tmpdir(), 'taskwraith-remote-attachments')
-              fsSync.mkdirSync(dir, { recursive: true })
-              const buffers: Buffer[] = []
-              iosImagePaths = action.imageAttachments.map((attachment, index) => {
-                const ext = attachment.mimeType === 'image/png' ? 'png' : 'jpg'
-                const file = join(
-                  dir,
-                  `${action.threadId.replace(/[^a-zA-Z0-9-]/g, '')}-${Date.now()}-${index}.${ext}`
-                )
-                const buf = Buffer.from(attachment.dataBase64, 'base64')
-                buffers.push(buf)
-                fsSync.writeFileSync(file, buf)
-                return file
+              const persisted = persistRemoteImageAttachments({
+                appChatId: action.threadId,
+                attachments: action.imageAttachments,
+                store: getTranscriptMediaAssetStore()
               })
+              iosImagePaths = persisted.map((attachment) => attachment.path)
               for (const imagePath of iosImagePaths) {
-                authorizeImagePreviewPath(imagePath, { mainAuthority: true })
+                authorizeImagePreviewPath(imagePath, {
+                  mainAuthority: true,
+                  appChatId: action.threadId
+                })
               }
               // Transcript previews the phone can actually render (it can't
               // read these Mac-local paths). Failure here is non-fatal — the
               // run still dispatches with the attachment, just no thumbnail.
-              iosImageThumbnails = buildBridgeImageThumbnails(buffers)
+              iosImageThumbnails = buildBridgeImageThumbnails(
+                persisted.map((attachment) => attachment.buffer)
+              )
             } catch (err) {
               console.warn('[remote-bridge] failed to materialize image attachments:', err)
               iosImagePaths = []
@@ -34263,8 +33501,9 @@ if (isGeminiMcpBridgeProcess) {
             if (!planChat) {
               return { dispatched: false, appRunId: null, reason: 'Plan chat not found' }
             }
-            const planIdx =
-              planChat.messages.findIndex((m) => m.id === action.proposedPlanImplementOf)
+            const planIdx = planChat.messages.findIndex(
+              (m) => m.id === action.proposedPlanImplementOf
+            )
             const planMsg = planIdx >= 0 ? planChat.messages[planIdx] : undefined
             const planMeta = planMsg?.metadata as Record<string, unknown> | undefined
             const plan = planMeta?.proposedPlan as Record<string, unknown> | undefined
@@ -34307,8 +33546,8 @@ if (isGeminiMcpBridgeProcess) {
           // Desktop runs carry the composer's runtime-profile choice; with no
           // profile at all, providers fall back to raw adapter defaults that
           // can diverge hard from how this chat ran on the desktop (observed:
-          // Grok hitting an ACP path its CLI rejects with 'Method not found',
-          // Cursor dispatching without the TaskWraith MCP tool bridge).
+          // Grok hitting an ACP path its CLI rejects with 'Method not found').
+          // Cursor is separately rejected by the unconditional no-spawn gate.
           // Inherit the most recent run's profile; for fresh iOS chats use
           // the first builtin workspace-scoped profile for the provider —
           // the same one the desktop picker shows by default.
@@ -34404,19 +33643,18 @@ if (isGeminiMcpBridgeProcess) {
               ? action.reasoningEffort || metadataReasoningEffort || undefined
               : provider === 'kimi'
                 ? action.reasoningEffort || metadataKimiReasoningEffort || undefined
-              : provider === 'grok' &&
-                  isGrok45ReasoningModelId(inheritedReasoningCapabilityModel)
-                ? action.grokReasoningEffort ||
-                  action.reasoningEffort ||
-                  metadataGrokReasoningEffort ||
-                  undefined
-                : provider === 'cursor' &&
-                    isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
-                  ? action.cursorReasoningEffort ||
+                : provider === 'grok' && isGrok45ReasoningModelId(inheritedReasoningCapabilityModel)
+                  ? action.grokReasoningEffort ||
                     action.reasoningEffort ||
-                    metadataCursorReasoningEffort ||
+                    metadataGrokReasoningEffort ||
                     undefined
-                  : undefined
+                  : provider === 'cursor' &&
+                      isCursorGrok45ModelId(inheritedReasoningCapabilityModel)
+                    ? action.cursorReasoningEffort ||
+                      action.reasoningEffort ||
+                      metadataCursorReasoningEffort ||
+                      undefined
+                    : undefined
           const inheritedClaudeReasoningEffort =
             action.claudeReasoningEffort || metadataClaudeReasoningEffort || undefined
           const inheritedCursorFastMode =
@@ -34437,8 +33675,7 @@ if (isGeminiMcpBridgeProcess) {
               : undefined
           const inheritedKimiFastMode =
             provider === 'kimi' ? (action.kimiFastMode ?? metadataKimiFastMode ?? false) : undefined
-          const inheritedKimiThinkingEnabled =
-            provider === 'kimi' ? true : undefined
+          const inheritedKimiThinkingEnabled = provider === 'kimi' ? true : undefined
           // Persist the resolved Fast/thinking selection into providerMetadata
           // (the same keys the desktop's rememberChatComposerSelection writes and
           // RemoteTaskProjection reads) so a phone-originated toggle survives to
@@ -34453,9 +33690,7 @@ if (isGeminiMcpBridgeProcess) {
             ...(typeof inheritedCodexServiceTier === 'string'
               ? { codexServiceTier: inheritedCodexServiceTier }
               : {}),
-            ...(inheritedKimiFastMode !== undefined
-              ? { kimiFastMode: inheritedKimiFastMode }
-              : {}),
+            ...(inheritedKimiFastMode !== undefined ? { kimiFastMode: inheritedKimiFastMode } : {}),
             ...(provider === 'kimi' && inheritedReasoningEffort
               ? { kimiReasoningEffort: inheritedReasoningEffort }
               : {}),
@@ -34548,9 +33783,7 @@ if (isGeminiMcpBridgeProcess) {
             (lastProviderRun
               ? linkedSessionForProvider || lastProviderRun.providerThreadId
               : undefined) || undefined
-          const priorMessages = chat.messages.filter(
-            (message) => message.id !== promptMessageId
-          )
+          const priorMessages = chat.messages.filter((message) => message.id !== promptMessageId)
           const bridgeSettings = AppStore.getSettings()
           const bridgeClaudePinnedMcpReceipt =
             provider === 'claude' &&
@@ -34569,8 +33802,8 @@ if (isGeminiMcpBridgeProcess) {
               : provider === 'claude'
                 ? Boolean(
                     bridgeClaudePinnedMcpReceipt ||
-                      (bridgeSettings.geminiMcpBridgeEnabled &&
-                        taskwraithMcpBridgeCommandStatus().available)
+                    (bridgeSettings.geminiMcpBridgeEnabled &&
+                      taskwraithMcpBridgeCommandStatus().available)
                   )
                 : true
           const bridgeTaskWraithMcpProfile = resolveTaskWraithMcpProfile({
@@ -34580,8 +33813,7 @@ if (isGeminiMcpBridgeProcess) {
             storeProviderSessionId: linkedSessionForProvider,
             receipt: chat.taskWraithMcpProfileReceipt,
             coreProfileOptIn: taskWraithCoreMcpProfileOptInEnabled(),
-            grokMcpAdvertised:
-              provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
+            grokMcpAdvertised: provider === 'grok' ? bridgeTaskWraithMcpAdvertised : undefined
           })
           const composed = composeRunPrompt({
             provider,
@@ -34631,15 +33863,14 @@ if (isGeminiMcpBridgeProcess) {
                   : action.permissionPresetId === 'workspace_write'
                     ? 'workspace_write'
                     : undefined
-          const bridgeEffectivePermissions =
-            bridgePermissionPresetId
-              ? resolveEffectiveRunPermissions({
-                  provider,
-                  workspacePath: isGlobalScope ? undefined : workspaceRecord?.path,
-                  settings: AppStore.getSettings(),
-                  presetId: bridgePermissionPresetId
-                })
-              : undefined
+          const bridgeEffectivePermissions = bridgePermissionPresetId
+            ? resolveEffectiveRunPermissions({
+                provider,
+                workspacePath: isGlobalScope ? undefined : workspaceRecord?.path,
+                settings: AppStore.getSettings(),
+                presetId: bridgePermissionPresetId
+              })
+            : undefined
           const payload: AgentRunPayload = {
             // T72 — workspace runs carry their allowlisted workspace; a
             // global run rides the desktop's own global lane (scope
@@ -34729,11 +33960,7 @@ if (isGeminiMcpBridgeProcess) {
             .then((result) => {
               if (!result.dispatched) {
                 const reason = 'Run did not dispatch — check provider profile on your Mac.'
-                finalizeBridgeRunTranscript(
-                  runId,
-                  'failed',
-                  reason
-                )
+                finalizeBridgeRunTranscript(runId, 'failed', reason)
                 if (internalQueueDispatch) {
                   const classification = classifyRemoteComposerQueueDispatchResult({
                     queueRunId: internalQueueDispatch.queueRunId,
@@ -34805,8 +34032,7 @@ if (isGeminiMcpBridgeProcess) {
       return true
     }
     const remoteLiveSnapshotScheduler = createRemoteLiveSnapshotScheduler({
-      shouldPush: (threadId) =>
-        remoteBridgeRunEventFilter.shouldForwardLiveSnapshot(threadId),
+      shouldPush: (threadId) => remoteBridgeRunEventFilter.shouldForwardLiveSnapshot(threadId),
       push: pushRemoteLiveSnapshotDeltas
     })
     runEventBus.subscribe({
@@ -35293,7 +34519,8 @@ if (isGeminiMcpBridgeProcess) {
       }
       for (const [chatIndex, chat] of sortedChats.entries()) {
         const { taskCard } = buildRemoteTaskCardForChat(chat, generatedAt, attentionCounts)
-        const capabilities = taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
+        const capabilities =
+          taskCard.capabilities ?? remoteTaskCapabilitiesForWorkspace(chat.workspaceId)
         maybeNotifyRemoteTaskNeedsAttention(taskCard)
         envelopes.push(
           buildRemoteProjectionEnvelope({
@@ -35324,7 +34551,7 @@ if (isGeminiMcpBridgeProcess) {
               chat.ensemble?.enabled
                 ? ensembleSpeakerForMessage(chat.ensemble.participants)
                 : undefined
-              )
+            )
           })
           const threadPayload = fitRemoteThreadSnapshotToByteBudget({
             ...threadSnapshot,
@@ -35582,8 +34809,7 @@ if (isGeminiMcpBridgeProcess) {
       // ownership is still intact. Enabling or running must target a live chat
       // in that same workspace before provider/posture can be authorized.
       const requiresRunnableTarget =
-        action.kind === 'workflowRunNow' ||
-        (action.kind === 'workflowSetEnabled' && action.enabled)
+        action.kind === 'workflowRunNow' || (action.kind === 'workflowSetEnabled' && action.enabled)
       if (requiresRunnableTarget) {
         const chat = AppStore.getChat(wf.template.chatId)
         if (
@@ -35602,9 +34828,7 @@ if (isGeminiMcpBridgeProcess) {
         }
       }
 
-      const elevation = requiresRunnableTarget
-        ? resolveWorkflowUnattendedElevation(wf)
-        : null
+      const elevation = requiresRunnableTarget ? resolveWorkflowUnattendedElevation(wf) : null
       const approvalMode = remoteWorkflowApprovalMode(
         action,
         wf.template.approvalMode,
@@ -35638,7 +34862,10 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.materializeWorkflowNow(id, nowMs, scheduledAttachmentPersistence.resolve),
       ensureScheduledTaskSignedPosture,
       broadcastWorkflowDefinitionsChanged: () => {
-        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+        mainWindow?.webContents.send(
+          'workflow-definitions-changed',
+          AppStore.getWorkflowDefinitions()
+        )
       },
       broadcastScheduledTasksChanged: () => {
         mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
@@ -35670,8 +34897,7 @@ if (isGeminiMcpBridgeProcess) {
             return { allowed: false, reason: 'Unknown or already-resolved approval' }
           }
           if (scope.workspaceId) {
-            const approvalWs =
-              canonicalRemoteWorkspaceId(scope.workspaceId) ?? scope.workspaceId
+            const approvalWs = canonicalRemoteWorkspaceId(scope.workspaceId) ?? scope.workspaceId
             if (approvalWs !== canonicalWs) {
               return {
                 allowed: false,
@@ -35793,166 +35019,175 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     const startRuntime = (
-        relayUrl: string,
-        advertiseRelayUrl?: string,
-        advertiseRelayUrls?: string[]
-      ): void => {
-        let identity: ReturnType<RemoteIdentityStore['load']>
+      relayUrl: string,
+      advertiseRelayUrl?: string,
+      advertiseRelayUrls?: string[]
+    ): void => {
+      let identity: ReturnType<RemoteIdentityStore['load']>
+      try {
+        identity = new RemoteIdentityStore(
+          join(app.getPath('userData'), 'bridge', 'remote-mac-identity.json'),
+          safeStorage,
+          (line) => console.log(line)
+        ).load()
         try {
-          identity = new RemoteIdentityStore(
-            join(app.getPath('userData'), 'bridge', 'remote-mac-identity.json'),
-            safeStorage,
-            (line) => console.log(line)
-          ).load()
-          try {
-            macIdentitySeedRef = exportRawEd25519Seed(identity.privateKey)
-          } catch (seedErr) {
-            // Fail closed: no seed ⇒ registerApnsToken returns no macAgreePub ⇒
-            // paired phones silently fall back to GENERIC pushes. Log it so that
-            // "rich pushes never arrive" is diagnosable rather than mysterious.
-            macIdentitySeedRef = null
-            console.log(
-              `[ios-remote] push-agreement seed export failed — rich pushes disabled: ${
-                seedErr instanceof Error ? seedErr.message : String(seedErr)
-              }`
-            )
-          }
-          iosRemoteRuntimeError = null
-        } catch (err) {
-          // Security review residual (fixed): the store now REFUSES to
-          // silently mint a replacement identity — every paired phone pins
-          // this key. Hold the bridge down and surface why.
-          iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
-          console.error(`[remote-bridge] NOT starting — ${iosRemoteRuntimeError}`)
-          return
-        }
-        const bridgeActionExecutor = createBridgeActionExecutor()
-        scheduleRemoteComposerQueuePumpRef?.()
-        const transportActionRouter = BridgeActionRouter.fromEnvironment(
-          (line) => console.log(line),
-          bridgeAllowlist,
-          bridgeActionExecutor,
-          bridgeOwnershipValidator,
-          bridgeActionAuthorizationResolver
-        )
-        const runtime = new RemoteBridgeRuntime({
-          relayUrl,
-          advertiseRelayUrl,
-          advertiseRelayUrls,
-          macDisplayName: `${app.getName() || 'TaskWraith'} on ${os.hostname()}`,
-          // Host OS for the phone's per-OS glyph + host-generic copy ("your Mac"
-          // is wrong on a Windows/Linux host). darwin/win32/linux → mac/windows/
-          // linux; anything else is left undefined (phone falls back neutral).
-          hostPlatform:
-            process.platform === 'darwin'
-              ? 'mac'
-              : process.platform === 'win32'
-                ? 'windows'
-                : process.platform === 'linux'
-                  ? 'linux'
-                  : undefined,
-          identity,
-          socketFactory: wsTransportSocketFactory,
-          appStore: AppStore,
-          allowlist: bridgeAllowlist,
-          projectionSource: { listRemoteProjectionEnvelopes },
-          canonicalChatWorkspaceId: canonicalRemoteWorkspaceId,
-          remoteProjectionSnapshotThrottleMs: () =>
-            remoteProjectionSnapshotThrottleMsForStreaming(hasActiveStreamingTaskWraithRun()),
-          routeAction: (method, params) => transportActionRouter.route(method, params),
-          runEventFilter: (event) => remoteBridgeRunEventFilter.shouldForward(event),
-          subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
-          onPairingPrompt: (prompt) => {
-            // Field-debugging breadcrumb: proves the phone's clientAuth
-            // REACHED the Mac (the prompt fired), separating "handshake
-            // never arrived" from "renderer didn't show the sheet".
-            console.log(
-              `[remote-bridge] pairing confirm prompt for "${prompt.controllerDisplayName}" (session ${prompt.sessionID.slice(0, 8)}…) — code ${prompt.code}`
-            )
-            if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
-              mainWindow.webContents.send('bridge-pairing-response-received', prompt)
-            } else {
-              console.error(
-                '[remote-bridge] pairing confirm prompt had NO live window to land in — open the main window and retry'
-              )
-            }
-          },
-          onBroadcasterChange: (broadcaster) => {
-            bridgeBroadcaster = broadcaster
-            bridgeBroadcasterRef = broadcaster
-          },
-          // LIVE connected count drives the run-event filter + git feed: a
-          // silently-dropped or suspended phone (RC6) flips this to a true count
-          // so we stop encoding run events / watching git for a gone viewer.
-          onConnectedDeviceCountChange: (connectedCount) => {
-            remoteBridgeRunEventFilter.setConnectedDeviceCount(connectedCount)
-            // The watcher-lane git feed subscribes only while a phone is
-            // connected — zero phones, zero watchers, zero git churn.
-            remoteGitSnapshotFeedRef?.setConnectedDeviceCount(connectedCount)
-          },
-          // PAIRED presence drives the Mac-awake power assertion (see
-          // updateRemotePowerAssertion). Kept on paired (not live) count so a
-          // phone that merely SUSPENDED — still paired, about to return — keeps
-          // the Mac awake to serve its push-to-wake / backgrounded-run reconcile;
-          // released only on genuine unpair.
-          onPairedDeviceCountChange: (pairedCount) => {
-            updateRemotePowerAssertion(pairedCount)
-          },
-          // EVERY establish (incl. phone relaunches) re-ships the async
-          // provider-model catalogs — a freshly-launched phone starts with
-          // empty pickers otherwise.
-          onDeviceEstablished: () => {
-            remoteBridgeRunEventFilter.resetOnDeviceEstablished()
-            remoteProviderModelsTrigger?.()
-            remoteUsageRollupTrigger?.()
-            remoteModelUsageTrigger?.()
-            remoteFirstLaunchStateTrigger?.()
-            // Rehydrate guard (Codex-diagnosed): the establish-time
-            // broadcastSnapshot can fire while the store/allowlist state is
-            // still settling after a Mac restart — the phone then accepts an
-            // EMPTY snapshot as authoritative and shows "connected, no
-            // chats". A delayed, throttle-cleared second snapshot re-seeds
-            // it (projections are idempotent by envelopeId).
-            setTimeout(() => {
-              const broadcaster = bridgeBroadcasterRef
-              if (!broadcaster) return
-              // Reap abandoned remote drafts (welcome-card drafts the user
-              // opened then backed out of — INCLUDING goal/pin/note-dirtied ones
-              // that the create-time reap's strict predicate skips) before we
-              // re-seed, so the rehydrate snapshot ships a clean list. Age-gated,
-              // so it can never touch a draft being composed right now.
-              const ABANDONED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
-              const reaped = abandonedRemoteDraftIdsToDelete(
-                AppStore.getChats(),
-                Date.now(),
-                ABANDONED_DRAFT_TTL_MS
-              )
-              for (const staleId of reaped) AppStore.deleteChat(staleId)
-              if (reaped.length > 0) {
-                console.log(`[remote-bridge] reaped ${reaped.length} abandoned remote draft(s)`)
-                broadcastThreadList()
-              }
-              broadcaster.resetThrottle()
-              broadcaster.broadcastSnapshot()
-              remoteFirstLaunchStateTrigger?.()
-              console.log('[remote-bridge] post-establish rehydrate snapshot sent')
-            }, 1500).unref?.()
-          },
-          pairingStore: new RemotePairingStore(
-            join(app.getPath('userData'), 'bridge', 'remote-pairing.json'),
-            (line) => console.log(line)
-          ),
-          log: (line) => console.log(line)
-        })
-        iosRemoteRuntime = runtime
-        // Trusted reconnect (T5): resume the persisted pairing at startup —
-        // the phone finds this session via the resolve directory, no QR.
-        if (runtime.startListening()) {
+          macIdentitySeedRef = exportRawEd25519Seed(identity.privateKey)
+        } catch (seedErr) {
+          // Fail closed: no seed ⇒ registerApnsToken returns no macAgreePub ⇒
+          // paired phones silently fall back to GENERIC pushes. Log it so that
+          // "rich pushes never arrive" is diagnosable rather than mysterious.
+          macIdentitySeedRef = null
           console.log(
-            '[remote-bridge] resumed persisted pairing — listening for trusted reconnect'
+            `[ios-remote] push-agreement seed export failed — rich pushes disabled: ${
+              seedErr instanceof Error ? seedErr.message : String(seedErr)
+            }`
           )
         }
+        iosRemoteRuntimeError = null
+      } catch (err) {
+        // Security review residual (fixed): the store now REFUSES to
+        // silently mint a replacement identity — every paired phone pins
+        // this key. Hold the bridge down and surface why.
+        iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
+        console.error(`[remote-bridge] NOT starting — ${iosRemoteRuntimeError}`)
+        return
       }
+      const bridgeActionExecutor = createBridgeActionExecutor()
+      scheduleRemoteComposerQueuePumpRef?.()
+      const transportActionRouter = BridgeActionRouter.fromEnvironment(
+        (line) => console.log(line),
+        bridgeAllowlist,
+        bridgeActionExecutor,
+        bridgeOwnershipValidator,
+        bridgeActionAuthorizationResolver
+      )
+      const runtime = new RemoteBridgeRuntime({
+        relayUrl,
+        advertiseRelayUrl,
+        advertiseRelayUrls,
+        macDisplayName: `${app.getName() || 'TaskWraith'} on ${os.hostname()}`,
+        // Host OS for the phone's per-OS glyph + host-generic copy ("your Mac"
+        // is wrong on a Windows/Linux host). darwin/win32/linux → mac/windows/
+        // linux; anything else is left undefined (phone falls back neutral).
+        hostPlatform:
+          process.platform === 'darwin'
+            ? 'mac'
+            : process.platform === 'win32'
+              ? 'windows'
+              : process.platform === 'linux'
+                ? 'linux'
+                : undefined,
+        identity,
+        socketFactory: wsTransportSocketFactory,
+        appStore: AppStore,
+        allowlist: bridgeAllowlist,
+        projectionSource: { listRemoteProjectionEnvelopes },
+        canonicalChatWorkspaceId: canonicalRemoteWorkspaceId,
+        remoteProjectionSnapshotThrottleMs: () =>
+          remoteProjectionSnapshotThrottleMsForStreaming(hasActiveStreamingTaskWraithRun()),
+        routeAction: (method, params) => transportActionRouter.route(method, params),
+        runEventFilter: (event) => remoteBridgeRunEventFilter.shouldForward(event),
+        subscribeRunEvents: (sink) => runEventBus.subscribe(sink),
+        onPairingPrompt: (prompt) => {
+          // Field-debugging breadcrumb: proves the phone's clientAuth
+          // REACHED the Mac (the prompt fired), separating "handshake
+          // never arrived" from "renderer didn't show the sheet".
+          console.log(
+            `[remote-bridge] pairing confirm prompt for "${prompt.controllerDisplayName}" (session ${prompt.sessionID.slice(0, 8)}…) — code ${prompt.code}`
+          )
+          if (mainWindow && !mainWindow.isDestroyed() && !mainWindow.webContents.isDestroyed()) {
+            mainWindow.webContents.send('bridge-pairing-response-received', prompt)
+          } else {
+            console.error(
+              '[remote-bridge] pairing confirm prompt had NO live window to land in — open the main window and retry'
+            )
+          }
+        },
+        onBroadcasterChange: (broadcaster) => {
+          bridgeBroadcaster = broadcaster
+          bridgeBroadcasterRef = broadcaster
+        },
+        // LIVE connected count drives the run-event filter + git feed: a
+        // silently-dropped or suspended phone (RC6) flips this to a true count
+        // so we stop encoding run events / watching git for a gone viewer.
+        onConnectedDeviceCountChange: (connectedCount) => {
+          remoteBridgeRunEventFilter.setConnectedDeviceCount(connectedCount)
+          // The watcher-lane git feed subscribes only while a phone is
+          // connected — zero phones, zero watchers, zero git churn.
+          remoteGitSnapshotFeedRef?.setConnectedDeviceCount(connectedCount)
+        },
+        // PAIRED presence drives the Mac-awake power assertion (see
+        // updateRemotePowerAssertion). Kept on paired (not live) count so a
+        // phone that merely SUSPENDED — still paired, about to return — keeps
+        // the Mac awake to serve its push-to-wake / backgrounded-run reconcile;
+        // released only on genuine unpair.
+        onPairedDeviceCountChange: (pairedCount) => {
+          updateRemotePowerAssertion(pairedCount)
+        },
+        // EVERY establish (incl. phone relaunches) re-ships the async
+        // provider-model catalogs — a freshly-launched phone starts with
+        // empty pickers otherwise.
+        onDeviceEstablished: () => {
+          remoteBridgeRunEventFilter.resetOnDeviceEstablished()
+          remoteProviderModelsTrigger?.()
+          remoteUsageRollupTrigger?.()
+          remoteModelUsageTrigger?.()
+          remoteFirstLaunchStateTrigger?.()
+          // Rehydrate guard (Codex-diagnosed): the establish-time
+          // broadcastSnapshot can fire while the store/allowlist state is
+          // still settling after a Mac restart — the phone then accepts an
+          // EMPTY snapshot as authoritative and shows "connected, no
+          // chats". A delayed, throttle-cleared second snapshot re-seeds
+          // it (projections are idempotent by envelopeId).
+          setTimeout(async () => {
+            const broadcaster = bridgeBroadcasterRef
+            if (!broadcaster) return
+            // Reap abandoned remote drafts (welcome-card drafts the user
+            // opened then backed out of — INCLUDING goal/pin/note-dirtied ones
+            // that the create-time reap's strict predicate skips) before we
+            // re-seed, so the rehydrate snapshot ships a clean list. Age-gated,
+            // so it can never touch a draft being composed right now.
+            const ABANDONED_DRAFT_TTL_MS = 24 * 60 * 60 * 1000
+            const reaped = abandonedRemoteDraftIdsToDelete(
+              AppStore.getChats(),
+              Date.now(),
+              ABANDONED_DRAFT_TTL_MS
+            )
+            const deleted: string[] = []
+            for (const staleId of reaped) {
+              try {
+                if (!deleteChatWithLifecycleRef) {
+                  throw new Error('Chat deletion lifecycle authority is unavailable.')
+                }
+                await deleteChatWithLifecycleRef(staleId)
+                deleted.push(staleId)
+              } catch (error) {
+                console.warn(`[remote-bridge] abandoned draft ${staleId} was retained:`, error)
+              }
+            }
+            if (deleted.length > 0) {
+              console.log(`[remote-bridge] reaped ${deleted.length} abandoned remote draft(s)`)
+              broadcastThreadList()
+            }
+            broadcaster.resetThrottle()
+            broadcaster.broadcastSnapshot()
+            remoteFirstLaunchStateTrigger?.()
+            console.log('[remote-bridge] post-establish rehydrate snapshot sent')
+          }, 1500).unref?.()
+        },
+        pairingStore: new RemotePairingStore(
+          join(app.getPath('userData'), 'bridge', 'remote-pairing.json'),
+          (line) => console.log(line)
+        ),
+        log: (line) => console.log(line)
+      })
+      iosRemoteRuntime = runtime
+      // Trusted reconnect (T5): resume the persisted pairing at startup —
+      // the phone finds this session via the resolve directory, no QR.
+      if (runtime.startListening()) {
+        console.log('[remote-bridge] resumed persisted pairing — listening for trusted reconnect')
+      }
+    }
 
     const envRelayUrl = (process.env.TASKWRAITH_RELAY_URL || '').trim()
     const configuredSettingsRelayUrl = (): string =>
@@ -36003,229 +35238,227 @@ if (isGeminiMcpBridgeProcess) {
         return fallbackPort
       }
     }
-      const advertisableManualRelayUrl = (relayPort: number): string | null => {
-        const manualRelayUrl = configuredManualRelayUrl(relayPort)
-        return manualRelayUrl || null
+    const advertisableManualRelayUrl = (relayPort: number): string | null => {
+      const manualRelayUrl = configuredManualRelayUrl(relayPort)
+      return manualRelayUrl || null
+    }
+    const resolveTailscaleWssLane = async (
+      preferredUrl: string | null
+    ): Promise<{ wssUrl: string; dnsName: string; cliPath: string | null } | null> => {
+      const tailscale = await detectTailscale()
+      const relayPort = iosRemoteRelayPort()
+      const httpsPort = iosRemoteServeHttpsPort()
+      const preferred = tailscaleWssCandidateFromUrl(preferredUrl, httpsPort)
+      const configured = configuredTailscaleWssCandidate(relayPort, httpsPort)
+      let dnsName = tailscale.dnsName?.toLowerCase()
+      if (!dnsName && tailscale.cliPath) {
+        const serve = await getTailscaleServeStatus({
+          cliPath: tailscale.cliPath,
+          relayPort,
+          httpsPort
+        })
+        dnsName = serve.dnsName?.toLowerCase()
       }
-      const resolveTailscaleWssLane = async (
-        preferredUrl: string | null
-      ): Promise<{ wssUrl: string; dnsName: string; cliPath: string | null } | null> => {
-        const tailscale = await detectTailscale()
-        const relayPort = iosRemoteRelayPort()
-        const httpsPort = iosRemoteServeHttpsPort()
-        const preferred = tailscaleWssCandidateFromUrl(preferredUrl, httpsPort)
-        const configured = configuredTailscaleWssCandidate(relayPort, httpsPort)
-        let dnsName = tailscale.dnsName?.toLowerCase()
-        if (!dnsName && tailscale.cliPath) {
-          const serve = await getTailscaleServeStatus({
-            cliPath: tailscale.cliPath,
-            relayPort,
-            httpsPort
-          })
-          dnsName = serve.dnsName?.toLowerCase()
-        }
-        dnsName ??= preferred?.dnsName ?? configured?.dnsName
-        if (!dnsName) return null
-        let wssUrl = serveWssUrl(dnsName, httpsPort)
-        if (preferredUrl) {
-          try {
-            const parsed = new URL(preferredUrl)
-            if (parsed.protocol === 'wss:' && parsed.hostname.toLowerCase() === dnsName) {
-              wssUrl = serveWssUrl(dnsName, httpsPort)
-            }
-          } catch {
-            // Ignore malformed preferred URLs and use the discovered lane.
-          }
-        }
-        return { wssUrl, dnsName, cliPath: tailscale.cliPath ?? null }
-      }
-      const relayOriginWithPort = (relayUrl: string, port: number): string => {
+      dnsName ??= preferred?.dnsName ?? configured?.dnsName
+      if (!dnsName) return null
+      let wssUrl = serveWssUrl(dnsName, httpsPort)
+      if (preferredUrl) {
         try {
-          const parsed = new URL(relayUrl)
-          parsed.port = String(port)
-          parsed.pathname = ''
-          parsed.search = ''
-          parsed.hash = ''
-          return `${parsed.protocol}//${parsed.host}`
+          const parsed = new URL(preferredUrl)
+          if (parsed.protocol === 'wss:' && parsed.hostname.toLowerCase() === dnsName) {
+            wssUrl = serveWssUrl(dnsName, httpsPort)
+          }
         } catch {
-          return relayUrl.replace(/\/$/, '')
+          // Ignore malformed preferred URLs and use the discovered lane.
         }
       }
-      const automaticEmbeddedRelayUrls = (port: number): string[] =>
-        listRelayAdvertiseHosts().map(({ host }) => `ws://${host}:${port}`)
-      // QR-optional discovery (multi-host): the embedded relay advertises this
-      // host on the tailnet. `hostInfo` is a read-only self-description an
-      // oracle peer probes (GET /v1/hostinfo) to learn the machine runs
-      // TaskWraith; `beginPair` lets a discovered (never-paired) phone ask THIS
-      // host to open a pairing window on demand (POST /v1/beginpair) — the user
-      // still confirms the 6-digit SAS here, so an unauthenticated tailnet POST
-      // can only open a window, never pair on its own. Both read `iosRemoteRuntime`
-      // at request time (it's assigned later, inside startRuntime), so they return
-      // null until the runtime is up; nothing here exposes a secret.
-      // S1-4: discovery (/v1/hostinfo) is POLLED, and the relay's hostInfo
-      // provider is sync, so drop doors the Mac can't reach itself via a
-      // stale-while-revalidate cache — never re-probes per poll, never hides the
-      // host (raw fallback on a cold/all-dead probe). The pairing path keeps its
-      // own fresh, uncached probe (it needs an authoritative answer to self-heal).
-      const advertisableRelayCache = createAdvertisableRelayCache()
-      const relayHostInfoProvider = (): Record<string, unknown> | null => {
-        if (!iosRemoteRuntime) return null
-        const info = iosRemoteRuntime.describeHost()
-        const liveRelayUrls = embeddedRelayHandle
-          ? mergeRelayUrls(info.relayUrls, automaticEmbeddedRelayUrls(embeddedRelayHandle.port))
-          : info.relayUrls
-        return {
-          ...info,
-          relayUrls: advertisableRelayCache.readSync(liveRelayUrls)
-        } as unknown as Record<string, unknown>
+      return { wssUrl, dnsName, cliPath: tailscale.cliPath ?? null }
+    }
+    const relayOriginWithPort = (relayUrl: string, port: number): string => {
+      try {
+        const parsed = new URL(relayUrl)
+        parsed.port = String(port)
+        parsed.pathname = ''
+        parsed.search = ''
+        parsed.hash = ''
+        return `${parsed.protocol}//${parsed.host}`
+      } catch {
+        return relayUrl.replace(/\/$/, '')
       }
-      const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
-        if (!iosRemoteRuntime) return null
-        // beginPairingOnDemand (not beginPairing): an anonymous tailnet POST may
-        // only open a window in a FREE slot — it must not evict a console QR
-        // pairing or churn sockets. null → relay 503 (busy, retry). The phone
-        // walks the returned candidates LAN-first on connect.
-        const result = iosRemoteRuntime.beginPairingOnDemand()
-        return result
-          ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
+    }
+    const automaticEmbeddedRelayUrls = (port: number): string[] =>
+      listRelayAdvertiseHosts().map(({ host }) => `ws://${host}:${port}`)
+    // QR-optional discovery (multi-host): the embedded relay advertises this
+    // host on the tailnet. `hostInfo` is a read-only self-description an
+    // oracle peer probes (GET /v1/hostinfo) to learn the machine runs
+    // TaskWraith; `beginPair` lets a discovered (never-paired) phone ask THIS
+    // host to open a pairing window on demand (POST /v1/beginpair) — the user
+    // still confirms the 6-digit SAS here, so an unauthenticated tailnet POST
+    // can only open a window, never pair on its own. Both read `iosRemoteRuntime`
+    // at request time (it's assigned later, inside startRuntime), so they return
+    // null until the runtime is up; nothing here exposes a secret.
+    // S1-4: discovery (/v1/hostinfo) is POLLED, and the relay's hostInfo
+    // provider is sync, so drop doors the Mac can't reach itself via a
+    // stale-while-revalidate cache — never re-probes per poll, never hides the
+    // host (raw fallback on a cold/all-dead probe). The pairing path keeps its
+    // own fresh, uncached probe (it needs an authoritative answer to self-heal).
+    const advertisableRelayCache = createAdvertisableRelayCache()
+    const relayHostInfoProvider = (): Record<string, unknown> | null => {
+      if (!iosRemoteRuntime) return null
+      const info = iosRemoteRuntime.describeHost()
+      const liveRelayUrls = embeddedRelayHandle
+        ? mergeRelayUrls(info.relayUrls, automaticEmbeddedRelayUrls(embeddedRelayHandle.port))
+        : info.relayUrls
+      return {
+        ...info,
+        relayUrls: advertisableRelayCache.readSync(liveRelayUrls)
+      } as unknown as Record<string, unknown>
+    }
+    const relayBeginPairProvider = async (): Promise<Record<string, unknown> | null> => {
+      if (!iosRemoteRuntime) return null
+      // beginPairingOnDemand (not beginPairing): an anonymous tailnet POST may
+      // only open a window in a FREE slot — it must not evict a console QR
+      // pairing or churn sockets. null → relay 503 (busy, retry). The phone
+      // walks the returned candidates LAN-first on connect.
+      const result = iosRemoteRuntime.beginPairingOnDemand()
+      return result
+        ? (result.bootstrap.bootstrapPayload as unknown as Record<string, unknown>)
+        : null
+    }
+    const startEmbeddedRelay = async (advertiseRelayUrl: string | null): Promise<void> => {
+      // No external relay configured → run the relay IN-PROCESS. The relay
+      // is a plain Node http+ws server and Electron main is Node, so users
+      // never have to run a terminal command for the built-in case. The QR
+      // advertises the Mac's Tailscale IP when present (reachable across
+      // networks), else the LAN IP (same-Wi-Fi pairing).
+      const port = embeddedPort(advertiseRelayUrl)
+      try {
+        const handle = await createRelayServer({
+          port,
+          hostInfo: relayHostInfoProvider,
+          beginPair: relayBeginPairProvider
+        })
+        embeddedRelayHandle = handle
+        const advertisedHosts = listRelayAdvertiseHosts()
+        const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
+        const configuredRelayUrl = advertiseRelayUrl
+          ? relayOriginWithPort(advertiseRelayUrl, handle.port)
           : null
-      }
-      const startEmbeddedRelay = async (advertiseRelayUrl: string | null): Promise<void> => {
-        // No external relay configured → run the relay IN-PROCESS. The relay
-        // is a plain Node http+ws server and Electron main is Node, so users
-        // never have to run a terminal command for the built-in case. The QR
-        // advertises the Mac's Tailscale IP when present (reachable across
-        // networks), else the LAN IP (same-Wi-Fi pairing).
-        const port = embeddedPort(advertiseRelayUrl)
-        try {
-          const handle = await createRelayServer({
-            port,
-            hostInfo: relayHostInfoProvider,
-            beginPair: relayBeginPairProvider
-          })
-          embeddedRelayHandle = handle
-          const advertisedHosts = listRelayAdvertiseHosts()
-          const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
-          const configuredRelayUrl = advertiseRelayUrl
-            ? relayOriginWithPort(advertiseRelayUrl, handle.port)
-            : null
-          const manualRelayUrl = advertisableManualRelayUrl(handle.port)
-          const relayCandidates = mergeRelayUrls(
-            [configuredRelayUrl],
-            automaticRelayUrls,
-            [manualRelayUrl]
-          )
-          if (advertisedHosts[0]?.kind === 'loopback') {
-            console.warn(
-              '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
-            )
-          }
-          console.log(
-            `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayCandidates.join(' → ')} (${advertisedHosts.map(({ kind }) => kind).join('+')})`
-          )
-          startRuntime(`ws://127.0.0.1:${handle.port}`, undefined, relayCandidates)
-          reopenCollaborationRooms()
-        } catch (err: unknown) {
-          iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
-          console.error(
-            `[remote-bridge] embedded relay failed to start on :${port} (${
-              err instanceof Error ? err.message : String(err)
-            }) — remote iOS pairing disabled. Free the port, set TASKWRAITH_RELAY_PORT, or point TASKWRAITH_RELAY_URL at an external relay.`
+        const manualRelayUrl = advertisableManualRelayUrl(handle.port)
+        const relayCandidates = mergeRelayUrls([configuredRelayUrl], automaticRelayUrls, [
+          manualRelayUrl
+        ])
+        if (advertisedHosts[0]?.kind === 'loopback') {
+          console.warn(
+            '[remote-bridge] no Tailscale/LAN address found — the pairing QR will only be reachable from this machine'
           )
         }
+        console.log(
+          `[remote-bridge] embedded relay listening on :${handle.port} — advertising ${relayCandidates.join(' → ')} (${advertisedHosts.map(({ kind }) => kind).join('+')})`
+        )
+        startRuntime(`ws://127.0.0.1:${handle.port}`, undefined, relayCandidates)
+        reopenCollaborationRooms()
+      } catch (err: unknown) {
+        iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
+        console.error(
+          `[remote-bridge] embedded relay failed to start on :${port} (${
+            err instanceof Error ? err.message : String(err)
+          }) — remote iOS pairing disabled. Free the port, set TASKWRAITH_RELAY_PORT, or point TASKWRAITH_RELAY_URL at an external relay.`
+        )
       }
-      // Self-hosted Tailscale TLS lane: a wss:// settings URL whose host is
-      // THIS Mac's MagicDNS name means "embedded relay behind tailscale
-      // serve". The relay still runs in-process and answers on loopback for
-      // Tailscale Serve's proxy target, while also answering on LAN for the
-      // same-Wi-Fi fast path. The QR advertises the wss:// front door for
-      // an optional TLS/hostname front door. Direct ws://100.64/10 remains the
-      // zero-configuration off-LAN path; Serve is defense-in-depth and is
-      // enabled explicitly from Settings → Devices → Remote access.
-      //
-      // The WSS door is verified before it enters a QR. Missing/dead Serve is
-      // simply omitted; users can explicitly add or repair this optional door
-      // in Settings without affecting the direct tailnet route.
-      const startSelfHostedWssRelay = async (
-        wssUrl: string,
-        dnsName: string,
-        cliPath: string | null
-      ): Promise<void> => {
-        const port = embeddedPort(null)
-        // Release fronts :443, a dev build :8443 — distinct serve handlers so the
-        // two coexist on one Mac instead of fighting over one :443 mapping.
-        const httpsPort = iosRemoteServeHttpsPort()
-        try {
-          const handle = await createRelayServer({
-            port,
-            hostInfo: relayHostInfoProvider,
-            beginPair: relayBeginPairProvider
-          })
-          embeddedRelayHandle = handle
-          // Advertise LAN + direct Tailscale IP even when the optional WSS
-          // door is configured. If Serve is unavailable, pairing still has
-          // a zero-configuration cellular route through WireGuard.
-          const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
-          const manualRelayUrl = advertisableManualRelayUrl(handle.port)
-          const candidates = mergeRelayUrls(automaticRelayUrls, [wssUrl], [manualRelayUrl])
-          selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
-          console.log(
-            `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
-          )
-          if (cliPath) {
-              // Confirm the relay actually answers on its loopback port BEFORE we
-              // (re)assert a serve door over it. `tailscale serve --bg` PERSISTS
-              // across app restarts, so if a prior run left a door up and this
-              // run's relay isn't really answering, fronting it would hand phones
-              // a 502 ("bad response from server"). Bind → verify → serve.
-            const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${handle.port}`)
-            if (!loopback.reachable) {
-              console.error(
-                `[remote-bridge] embedded relay on :${handle.port} is not answering loopback (${loopback.detail}) — tearing down any stale serve front door on :${httpsPort} rather than advertising a dead relay`
-              )
-              await disableTailscaleServe({ cliPath, httpsPort })
-            } else {
-              const serve = await getTailscaleServeStatus({
-                cliPath,
-                relayPort: handle.port,
-                httpsPort
-              })
-              if (!serve.configured) {
-                console.warn(
-                  `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
-                    serve.error ? ` (status error: ${serve.error})` : ''
-                  } — leaving optional WSS off; direct Tailscale IP remains available`
-                )
-              }
-            }
+    }
+    // Self-hosted Tailscale TLS lane: a wss:// settings URL whose host is
+    // THIS Mac's MagicDNS name means "embedded relay behind tailscale
+    // serve". The relay still runs in-process and answers on loopback for
+    // Tailscale Serve's proxy target, while also answering on LAN for the
+    // same-Wi-Fi fast path. The QR advertises the wss:// front door for
+    // an optional TLS/hostname front door. Direct ws://100.64/10 remains the
+    // zero-configuration off-LAN path; Serve is defense-in-depth and is
+    // enabled explicitly from Settings → Devices → Remote access.
+    //
+    // The WSS door is verified before it enters a QR. Missing/dead Serve is
+    // simply omitted; users can explicitly add or repair this optional door
+    // in Settings without affecting the direct tailnet route.
+    const startSelfHostedWssRelay = async (
+      wssUrl: string,
+      dnsName: string,
+      cliPath: string | null
+    ): Promise<void> => {
+      const port = embeddedPort(null)
+      // Release fronts :443, a dev build :8443 — distinct serve handlers so the
+      // two coexist on one Mac instead of fighting over one :443 mapping.
+      const httpsPort = iosRemoteServeHttpsPort()
+      try {
+        const handle = await createRelayServer({
+          port,
+          hostInfo: relayHostInfoProvider,
+          beginPair: relayBeginPairProvider
+        })
+        embeddedRelayHandle = handle
+        // Advertise LAN + direct Tailscale IP even when the optional WSS
+        // door is configured. If Serve is unavailable, pairing still has
+        // a zero-configuration cellular route through WireGuard.
+        const automaticRelayUrls = automaticEmbeddedRelayUrls(handle.port)
+        const manualRelayUrl = advertisableManualRelayUrl(handle.port)
+        const candidates = mergeRelayUrls(automaticRelayUrls, [wssUrl], [manualRelayUrl])
+        selfHostedWssLane = { wssUrl, cliPath, relayPort: handle.port, candidates }
+        console.log(
+          `[remote-bridge] embedded relay on :${handle.port} behind tailscale serve — Mac via loopback, phones via ${candidates.join(' → ')} (${dnsName})`
+        )
+        if (cliPath) {
+          // Confirm the relay actually answers on its loopback port BEFORE we
+          // (re)assert a serve door over it. `tailscale serve --bg` PERSISTS
+          // across app restarts, so if a prior run left a door up and this
+          // run's relay isn't really answering, fronting it would hand phones
+          // a 502 ("bad response from server"). Bind → verify → serve.
+          const loopback = await probeRelayFrontDoor(`ws://127.0.0.1:${handle.port}`)
+          if (!loopback.reachable) {
+            console.error(
+              `[remote-bridge] embedded relay on :${handle.port} is not answering loopback (${loopback.detail}) — tearing down any stale serve front door on :${httpsPort} rather than advertising a dead relay`
+            )
+            await disableTailscaleServe({ cliPath, httpsPort })
           } else {
-            console.warn(
-              '[remote-bridge] tailscale CLI path unknown — cannot verify/repair the serve front door; pairing will probe reachability before advertising'
-            )
-          }
-          startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
-          reopenCollaborationRooms()
-        } catch (err: unknown) {
-          iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
-          console.error(
-            `[remote-bridge] embedded relay failed to start on :${port} (${
-              err instanceof Error ? err.message : String(err)
-            }) — remote iOS pairing disabled. Free the port or set TASKWRAITH_RELAY_PORT.`
-          )
-          // The relay never bound, but a `serve --bg` door from a previous run
-          // persists in tailscaled and would now proxy to a dead port — a 502
-          // trap for any phone that dials it. Take OUR OWN front door down
-          // (httpsPort-scoped, so this never touches the other build's door).
-          if (cliPath) {
-            const torn = await disableTailscaleServe({ cliPath, httpsPort })
-            if (!torn.ok) {
+            const serve = await getTailscaleServeStatus({
+              cliPath,
+              relayPort: handle.port,
+              httpsPort
+            })
+            if (!serve.configured) {
               console.warn(
-                `[remote-bridge] could not tear down the stale serve door on :${httpsPort}: ${torn.message ?? 'unknown'}`
+                `[remote-bridge] tailscale serve is NOT fronting :${handle.port} on :${httpsPort}${
+                  serve.error ? ` (status error: ${serve.error})` : ''
+                } — leaving optional WSS off; direct Tailscale IP remains available`
               )
             }
           }
+        } else {
+          console.warn(
+            '[remote-bridge] tailscale CLI path unknown — cannot verify/repair the serve front door; pairing will probe reachability before advertising'
+          )
+        }
+        startRuntime(`ws://127.0.0.1:${handle.port}`, wssUrl, candidates)
+        reopenCollaborationRooms()
+      } catch (err: unknown) {
+        iosRemoteRuntimeError = err instanceof Error ? err.message : String(err)
+        console.error(
+          `[remote-bridge] embedded relay failed to start on :${port} (${
+            err instanceof Error ? err.message : String(err)
+          }) — remote iOS pairing disabled. Free the port or set TASKWRAITH_RELAY_PORT.`
+        )
+        // The relay never bound, but a `serve --bg` door from a previous run
+        // persists in tailscaled and would now proxy to a dead port — a 502
+        // trap for any phone that dials it. Take OUR OWN front door down
+        // (httpsPort-scoped, so this never touches the other build's door).
+        if (cliPath) {
+          const torn = await disableTailscaleServe({ cliPath, httpsPort })
+          if (!torn.ok) {
+            console.warn(
+              `[remote-bridge] could not tear down the stale serve door on :${httpsPort}: ${torn.message ?? 'unknown'}`
+            )
+          }
         }
       }
+    }
     const startIosRemoteBridge = async (reason: string): Promise<void> => {
       if (iosRemoteRuntime) return
       if (iosRemoteStartPromise) return iosRemoteStartPromise
@@ -36485,6 +35718,853 @@ if (isGeminiMcpBridgeProcess) {
       }
     }
 
+    type BroadHistoryStrictAttempt = {
+      promise: Promise<unknown>
+      status: 'pending' | 'fulfilled' | 'rejected'
+    }
+    const usageHistoryDeletionTarget = new UsageHistoryDeletionTarget<UsageHistoryMutationHold>({
+      beginHistoryMutation: (input) => AppStore.beginUsageHistoryMutation(input),
+      purgeHistoryStrict: (hold) => {
+        AppStore.purgeUsageHistoryStrict(hold)
+      },
+      endHistoryMutation: (hold) => AppStore.endUsageHistoryMutation(hold)
+    })
+    // One process-lifetime byte-store authority is shared by startup
+    // reconciliation, destructive history transactions, and run capture.
+    const projectReferenceArtifactStore = new ProjectReferenceArtifactStore(
+      join(app.getPath('userData'), 'project-reference-context-artifacts')
+    )
+    type BroadHistoryDeletionHolds = {
+      codexAdmissionHold: CodexThreadAdmissionHistoryHold
+      maintenanceCompactionHold: MaintenanceCompactionHistoryHold
+      usageHistoryHold: UsageHistoryDeletionHold<UsageHistoryMutationHold>
+      projectReferenceHold: ProjectReferenceHistoryMutationHold
+      canvasAuthority: CanvasHistoryAuthority | null
+      canvasPurge: BroadHistoryStrictAttempt
+      canvasHoldCount: number
+      bridgePurge: BroadHistoryStrictAttempt | null
+      bridgeHoldCount: number
+      transcriptMediaHold: TranscriptMediaHistoryMutationHold
+      derivedByteHold: RegenerableHistoryByteHistoryHold
+      ensemblePurges: Map<string, BroadHistoryStrictAttempt>
+      soloWakeupHolds: SoloWakeupHistoryHold[]
+      soloWakeupPurge: BroadHistoryStrictAttempt | null
+      hostCommandPurge: BroadHistoryStrictAttempt
+      backgroundProcessHold: BackgroundProcessHistoryHold
+    }
+
+    const trackBroadHistoryStrictAttempt = (
+      promise: Promise<unknown>
+    ): BroadHistoryStrictAttempt => {
+      const attempt: BroadHistoryStrictAttempt = { promise, status: 'pending' }
+      void promise.then(
+        () => {
+          attempt.status = 'fulfilled'
+        },
+        () => {
+          attempt.status = 'rejected'
+        }
+      )
+      return attempt
+    }
+
+    const ensembleHistoryRuntimeCouldExist = (chatId: string): boolean =>
+      Boolean(wakeupTimerServiceRef) ||
+      RUN_MANAGER_PROVIDERS.some((provider) =>
+        runManager
+          .getActiveByProvider(provider)
+          .some((session) => session.appChatId === chatId)
+      )
+
+    const beginBroadEnsembleHistoryClear = (chatId: string): Promise<void> => {
+      const chat = AppStore.getChat(chatId)
+      if (!chat?.ensemble) return Promise.resolve()
+      const round = chat.ensemble.activeRound
+      const expectedRoundId = round?.status === 'running' ? round.roundId : undefined
+      const orchestrator = ensembleOrchestratorRef
+      if (!orchestrator) {
+        // Startup replays the durable deletion before the orchestrator/timer
+        // service or run queue exists. There is no process-local Ensemble
+        // activity to join in that phase; the outer commit removes persistence.
+        if (!ensembleHistoryRuntimeCouldExist(chatId)) return Promise.resolve()
+        return Promise.reject(
+          new Error(`Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`)
+        )
+      }
+      return orchestrator
+        .cancelRoundForHistory(chatId, 'chat history cleared', expectedRoundId)
+        .then((cancelled) => {
+          if (!cancelled) {
+            throw new Error(
+              `Ensemble history authority for chat ${chatId} changed before history clear.`
+            )
+          }
+        })
+    }
+
+    const broadSoloWakeupHistoryScope = (
+      preparation: HistoryDeletionPreparation
+    ): SoloWakeupHistoryClearScope => {
+      if (preparation.kind === 'global') return { kind: 'global' }
+      if (preparation.kind === 'workspace') {
+        return {
+          kind: 'workspace',
+          workspaceId: requireNonEmptyString(
+            preparation.workspaceId,
+            'Solo wakeup history workspace id'
+          ),
+          chatIds: preparation.chatIds
+        }
+      }
+      return { kind: 'chat', chatIds: preparation.chatIds }
+    }
+
+    const historyDeletionTargetId = (prefix: string, identity: string): string => {
+      const candidate = `${prefix}:${identity}`
+      if (candidate.length <= 500) return candidate
+      return `${prefix}:sha256:${createHash('sha256').update(identity).digest('hex')}`
+    }
+
+    const broadHistoryDeletionTargets = (
+      workspaceId?: string
+    ): HistoryDeletionQuiescenceTarget[] => {
+      const chats = AppStore.getChats(workspaceId)
+      const chatIds = new Set(chats.map((chat) => chat.appChatId))
+      const scopeIdentity = workspaceId ? `workspace:${workspaceId}` : 'global'
+      const targets: HistoryDeletionQuiescenceTarget[] = []
+      const maintenanceScope: MaintenanceCompactionDeletionScope = workspaceId
+        ? { kind: 'workspace', workspaceId, chatIds: [...chatIds] }
+        : { kind: 'global' }
+      targets.push({
+        id: historyDeletionTargetId('maintenance-compaction', scopeIdentity),
+        kind: 'maintenance-compaction',
+        ...(workspaceId ? { workspaceId } : {})
+      })
+      for (const compaction of maintenanceCompactionRegistry.list(maintenanceScope)) {
+        targets.push({
+          id: historyDeletionTargetId('maintenance-compaction', compaction.id),
+          kind: 'maintenance-compaction',
+          maintenanceCompactionId: compaction.id,
+          provider: compaction.provider,
+          chatId: compaction.chatId,
+          ...(workspaceId ? { workspaceId } : {})
+        })
+      }
+      for (const provider of RUN_MANAGER_PROVIDERS) {
+        for (const session of runManager.getActiveByProvider(provider)) {
+          const belongs = workspaceId
+            ? Boolean(
+                (session.appChatId && chatIds.has(session.appChatId)) ||
+                workspaceIdForHistoryClearAuthority(session.runId, session.workspacePath) ===
+                  workspaceId
+              )
+            : true
+          if (!belongs) continue
+          targets.push({
+            id: historyDeletionTargetId('provider-run', session.runId),
+            kind: 'provider-run',
+            runId: session.runId,
+            provider,
+            ...(session.appChatId && (!workspaceId || chatIds.has(session.appChatId))
+              ? { chatId: session.appChatId }
+              : {}),
+            ...(workspaceId ? { workspaceId } : {})
+          })
+        }
+      }
+      targets.push(
+        {
+          id: historyDeletionTargetId('canvas', scopeIdentity),
+          kind: 'canvas',
+          ...(workspaceId ? { workspaceId } : {})
+        },
+        {
+          id: historyDeletionTargetId('execution-graph', scopeIdentity),
+          kind: 'execution-graph',
+          ...(workspaceId ? { workspaceId } : {})
+        },
+        {
+          id: historyDeletionTargetId('usage', scopeIdentity),
+          kind: 'usage',
+          ...(workspaceId ? { workspaceId } : {})
+        },
+        {
+          id: historyDeletionTargetId('project-reference', scopeIdentity),
+          kind: 'project-reference',
+          ...(workspaceId ? { workspaceId } : {})
+        },
+        {
+          id: historyDeletionTargetId('media', scopeIdentity),
+          kind: 'media',
+          ...(workspaceId ? { workspaceId } : {})
+        }
+      )
+      if (!workspaceId) targets.push({ id: 'bridge:global', kind: 'bridge' })
+      return targets
+    }
+
+    const scopedHistoryDeletionTargets = (
+      chatIds: readonly string[]
+    ): HistoryDeletionQuiescenceTarget[] => {
+      const targetChats = new Set(chatIds)
+      const targets: HistoryDeletionQuiescenceTarget[] = []
+      targets.push({
+        id: 'maintenance-compaction:chat-batch',
+        kind: 'maintenance-compaction'
+      })
+      for (const compaction of maintenanceCompactionRegistry.list({ kind: 'chat', chatIds })) {
+        targets.push({
+          id: historyDeletionTargetId('maintenance-compaction', compaction.id),
+          kind: 'maintenance-compaction',
+          maintenanceCompactionId: compaction.id,
+          provider: compaction.provider,
+          chatId: compaction.chatId
+        })
+      }
+      for (const provider of RUN_MANAGER_PROVIDERS) {
+        for (const session of runManager.getActiveByProvider(provider)) {
+          if (!session.appChatId || !targetChats.has(session.appChatId)) continue
+          targets.push({
+            id: historyDeletionTargetId('provider-run', session.runId),
+            kind: 'provider-run',
+            runId: session.runId,
+            provider,
+            chatId: session.appChatId
+          })
+        }
+      }
+      for (const chatId of chatIds) {
+        targets.push(
+          { id: historyDeletionTargetId('canvas:chat', chatId), kind: 'canvas', chatId },
+          {
+            id: historyDeletionTargetId('execution-graph:chat', chatId),
+            kind: 'execution-graph',
+            chatId
+          }
+        )
+      }
+      targets.push(
+        { id: 'usage:chat-batch', kind: 'usage' },
+        { id: 'project-reference:chat-run-batch', kind: 'project-reference' },
+        { id: 'media:chat-batch', kind: 'media' }
+      )
+      return targets
+    }
+
+    const canvasAuthorityForHistoryPreparation = (
+      preparation: HistoryDeletionPreparation
+    ): CanvasHistoryAuthority => {
+      const chats = preparation.chatIds
+        .map((chatId) => AppStore.getChat(chatId))
+        .filter((chat): chat is ChatRecord => Boolean(chat))
+      const workspace = preparation.workspaceId
+        ? AppStore.getWorkspaces().find((item) => item.id === preparation.workspaceId)
+        : undefined
+      return {
+        chatIds: [...preparation.chatIds],
+        workspacePaths: [workspace?.path, ...chats.map((chat) => chat.workspacePath)].filter(
+          (path): path is string => Boolean(path)
+        )
+      }
+    }
+
+    const clearExecutionGraphForHistoryPreparation = async (
+      preparation: HistoryDeletionPreparation,
+      target: HistoryDeletionQuiescenceTarget
+    ): Promise<void> => {
+      const repository = executionGraphRepositoryRef
+      const coordinator = executionGraphCoordinatorRef
+      if (target.chatId) {
+        if (repository && coordinator) {
+          await deleteExecutionGraphHistoryForChat({ repository, coordinator }, target.chatId)
+          return
+        }
+        const storageRoot = join(app.getPath('userData'), 'execution-graph')
+        if (!ExecutionGraphRepository.storageRootMentionsRootChat(storageRoot, target.chatId)) {
+          return
+        }
+        throw new Error('Execution-graph chat history could not be quiesced during recovery.')
+      }
+      if (repository && coordinator) {
+        await clearExecutionGraphHistory(
+          { repository, coordinator },
+          preparation.kind === 'workspace' ? preparation.workspaceId : undefined
+        )
+        return
+      }
+      const storageRoot = join(app.getPath('userData'), 'execution-graph')
+      if (
+        preparation.kind === 'workspace' &&
+        preparation.workspaceId &&
+        !ExecutionGraphRepository.storageRootMentionsWorkspace(storageRoot, preparation.workspaceId)
+      ) {
+        return
+      }
+      if (preparation.kind === 'global') {
+        ExecutionGraphRepository.clearStorageRootHistory(storageRoot)
+        return
+      }
+      throw new Error('Execution-graph scoped history could not be quiesced during recovery.')
+    }
+
+    const broadHistoryDeletionCoordinator =
+      new HistoryDeletionTransactionCoordinator<BroadHistoryDeletionHolds>({
+        prepare: (input) => AppStore.prepareHistoryDeletion(input),
+        acquireHolds: (preparation) => {
+          // Transcript media is the only synchronous acquisition that can reject
+          // under ordinary contention (`purgeInProgress`), so acquire it before
+          // mutating any other in-memory gate. Every later synchronous failure is
+          // rolled back in reverse order below; async strict failures remain
+          // represented by their tracked promises and retain all holds.
+          const mediaStore = getTranscriptMediaAssetStore()
+          const transcriptMediaHold =
+            preparation.kind === 'global'
+              ? mediaStore.beginHistoryMutation({ kind: 'global' })
+              : preparation.kind === 'workspace'
+                ? mediaStore.beginHistoryMutation({
+                    kind: 'workspace',
+                    workspaceId: preparation.workspaceId!,
+                    appChatIds: preparation.chatIds
+                  })
+                : mediaStore.beginHistoryMutation({
+                    kind: preparation.kind,
+                    appChatIds: preparation.chatIds
+                  })
+          const canvasAuthority =
+            preparation.kind === 'global' ? null : canvasAuthorityForHistoryPreparation(preparation)
+          let maintenanceCompactionHold: MaintenanceCompactionHistoryHold | null = null
+          let usageHistoryHold: UsageHistoryDeletionHold<UsageHistoryMutationHold> | null = null
+          let projectReferenceHold: ProjectReferenceHistoryMutationHold | null = null
+          let derivedByteHold: RegenerableHistoryByteHistoryHold | null = null
+          let backgroundProcessHold: BackgroundProcessHistoryHold | null = null
+          let codexAdmissionHold: CodexThreadAdmissionHistoryHold | null = null
+          const ensemblePurges = new Map<string, BroadHistoryStrictAttempt>()
+          const soloWakeupHolds: SoloWakeupHistoryHold[] = []
+          let soloWakeupPurge: BroadHistoryStrictAttempt | null = null
+          let historyGateHeld = false
+          let canvasHoldCount = 0
+          let bridgeHoldCount = 0
+          try {
+            derivedByteHold = regenerableHistoryByteStore.beginHistoryMutation(
+              preparation.operationId
+            )
+            maintenanceCompactionHold = maintenanceCompactionRegistry.beginHistoryDeletion(
+              preparation.kind === 'global'
+                ? { kind: 'global' }
+                : preparation.kind === 'workspace'
+                  ? {
+                      kind: 'workspace',
+                      workspaceId: preparation.workspaceId!,
+                      chatIds: preparation.chatIds
+                    }
+                  : { kind: preparation.kind, chatIds: preparation.chatIds }
+            )
+            usageHistoryHold = usageHistoryDeletionTarget.acquire(preparation)
+            projectReferenceHold = projectReferenceArtifactStore.beginHistoryMutation(
+              preparation.kind === 'global'
+                ? { kind: 'global' }
+                : preparation.kind === 'workspace'
+                  ? {
+                      kind: 'workspace',
+                      workspaceId: preparation.workspaceId!,
+                      appChatIds: preparation.chatIds
+                    }
+                  : { kind: preparation.kind, appChatIds: preparation.chatIds }
+            )
+            if (preparation.kind === 'global') {
+              historyClearAdmissionGate.begin()
+            } else if (preparation.kind === 'workspace') {
+              historyClearAdmissionGate.begin(preparation.workspaceId)
+            } else {
+              for (const chatId of preparation.chatIds) historyClearAdmissionGate.beginChat(chatId)
+            }
+            historyGateHeld = true
+            codexAdmissionHold = codexThreadAdmissionRegistry.beginHistoryClear(
+              preparation.kind === 'global'
+                ? { kind: 'global' }
+                : preparation.kind === 'workspace'
+                  ? {
+                      kind: 'workspace',
+                      workspaceId: preparation.workspaceId!,
+                      chatIds: preparation.chatIds
+                    }
+                  : { kind: preparation.kind, chatIds: preparation.chatIds }
+            )
+            backgroundProcessHold = backgroundProcessRegistry.beginHistoryDeletion(
+              preparation.kind === 'global'
+                ? { kind: 'global' }
+                : preparation.kind === 'workspace'
+                  ? {
+                      kind: 'workspace',
+                      workspaceId: preparation.workspaceId!,
+                      chatIds: preparation.chatIds
+                    }
+                  : { kind: preparation.kind, chatIds: preparation.chatIds }
+            )
+            const hostCommandPurge = trackBroadHistoryStrictAttempt(
+              hostCommandOperations.beginCancellation(
+                hostCommandHistoryCancellationScope(preparation),
+                'history-deletion'
+              ).completion
+            )
+
+            // The solo service owns wall-clock timer callbacks that can be in
+            // pre-dispatch awaits without a RunManager session. Raise its
+            // history generation synchronously and retain the exact callback
+            // join through the outer commit.
+            if (soloChatWakeupServiceRef) {
+              const soloWakeupHold = soloChatWakeupServiceRef.beginHistoryClear(
+                broadSoloWakeupHistoryScope(preparation)
+              )
+              soloWakeupHolds.push(soloWakeupHold)
+              soloWakeupPurge = trackBroadHistoryStrictAttempt(soloWakeupHold.completion)
+            }
+
+            for (const chatId of preparation.chatIds) {
+              ensemblePurges.set(
+                chatId,
+                trackBroadHistoryStrictAttempt(beginBroadEnsembleHistoryClear(chatId))
+              )
+            }
+
+            if (canvasAuthority) {
+              canvasEmbedIpcAuthority.invalidateAuthorities(canvasAuthority)
+            } else {
+              canvasEmbedIpcAuthority.clear()
+              canvasEmbedController.detachAll()
+            }
+            // Both begin methods synchronously raise their admission generations
+            // before their first internal await.
+            const canvasPurge = trackBroadHistoryStrictAttempt(
+              canvasAuthority
+                ? canvasService.beginAuthorityHistoryClear(canvasAuthority)
+                : canvasService.beginHistoryClear()
+            )
+            canvasHoldCount = 1
+            const bridgePurge =
+              preparation.kind === 'global'
+                ? trackBroadHistoryStrictAttempt(beginBridgeSubprocessLogHistoryClear())
+                : null
+            bridgeHoldCount = bridgePurge ? 1 : 0
+
+            for (const target of preparation.quiescenceTargets) {
+              if (target.kind !== 'provider-run' || !target.runId) continue
+              runManager.claimTerminalStatus(target.runId, 'cancelled')
+              approvalService?.cancelForRun(target.runId, 'history-cleared')
+              cancelPendingAgentQuestionsForRun(target.runId, 'history-cleared')
+            }
+            for (const chatId of preparation.chatIds) {
+              approvalService?.cancelForChat(chatId, 'history-cleared')
+              attachmentCapabilityRegistry.revokeMainChat(chatId)
+            }
+            if (preparation.kind === 'global') {
+              approvalService?.cancelAll('history-cleared')
+              attachmentCapabilityRegistry.clearMainAuthority()
+            } else if (preparation.workspaceId) {
+              approvalService?.cancelForWorkspace(
+                preparation.workspaceId,
+                'workspace-history-cleared'
+              )
+            }
+            return {
+              codexAdmissionHold,
+              maintenanceCompactionHold,
+              usageHistoryHold,
+              projectReferenceHold,
+              canvasAuthority,
+              canvasPurge,
+              canvasHoldCount,
+              bridgePurge,
+              bridgeHoldCount,
+              transcriptMediaHold,
+              derivedByteHold,
+              ensemblePurges,
+              soloWakeupHolds,
+              soloWakeupPurge,
+              hostCommandPurge,
+              backgroundProcessHold
+            }
+          } catch (error) {
+            const rollbackErrors: unknown[] = []
+            const rollback = (release: () => void): void => {
+              try {
+                release()
+              } catch (releaseError) {
+                rollbackErrors.push(releaseError)
+              }
+            }
+            for (let index = 0; index < bridgeHoldCount; index += 1) {
+              rollback(() => endBridgeSubprocessLogHistoryClear())
+            }
+            for (let index = 0; index < canvasHoldCount; index += 1) {
+              rollback(() => {
+                if (canvasAuthority) canvasService.endAuthorityHistoryClear(canvasAuthority)
+                else canvasService.endHistoryClear()
+              })
+            }
+            for (const hold of [...soloWakeupHolds].reverse()) {
+              rollback(() => {
+                if (!soloChatWakeupServiceRef?.endHistoryClear(hold)) {
+                  throw new Error('Solo wakeup acquisition rollback hold was not active.')
+                }
+              })
+            }
+            if (backgroundProcessHold) {
+              rollback(() => {
+                if (!backgroundProcessRegistry.endHistoryDeletion(backgroundProcessHold!)) {
+                  throw new Error('Background-process acquisition rollback hold was not active.')
+                }
+              })
+            }
+            if (codexAdmissionHold) {
+              rollback(() => {
+                if (!codexThreadAdmissionRegistry.endHistoryClear(codexAdmissionHold!)) {
+                  throw new Error('Codex admission history deletion hold was not active.')
+                }
+              })
+            }
+            if (historyGateHeld) {
+              rollback(() => {
+                if (preparation.kind === 'global') historyClearAdmissionGate.end()
+                else if (preparation.kind === 'workspace') {
+                  historyClearAdmissionGate.end(preparation.workspaceId)
+                } else {
+                  for (const chatId of preparation.chatIds) {
+                    historyClearAdmissionGate.endChat(chatId)
+                  }
+                }
+              })
+            }
+            if (projectReferenceHold) {
+              rollback(() => {
+                if (!projectReferenceArtifactStore.endHistoryMutation(projectReferenceHold!)) {
+                  throw new Error('Project-reference acquisition rollback hold was not active.')
+                }
+              })
+            }
+            if (usageHistoryHold) {
+              rollback(() => {
+                if (!AppStore.endUsageHistoryMutation(usageHistoryHold!.storeHold)) {
+                  throw new Error('Usage history mutation acquisition rollback was not active.')
+                }
+              })
+            }
+            if (maintenanceCompactionHold) {
+              rollback(() => {
+                if (!maintenanceCompactionRegistry.endHistoryDeletion(maintenanceCompactionHold!)) {
+                  throw new Error(
+                    'Maintenance compaction acquisition rollback hold was not active.'
+                  )
+                }
+              })
+            }
+            if (derivedByteHold) {
+              rollback(() => {
+                if (!regenerableHistoryByteStore.cancelHistoryMutation(derivedByteHold!)) {
+                  throw new Error(
+                    'Regenerable history-byte acquisition rollback hold was not active.'
+                  )
+                }
+              })
+            }
+            rollback(() => {
+              if (!mediaStore.endHistoryMutation(transcriptMediaHold)) {
+                throw new Error('Transcript media acquisition rollback hold was not active.')
+              }
+            })
+            if (rollbackErrors.length > 0) {
+              console.error(
+                '[history-deletion] acquisition rollback left one or more process-local holds unreleased:',
+                new AggregateError(rollbackErrors, 'History deletion acquisition rollback failed.')
+              )
+            }
+            throw error
+          }
+        },
+        refreshHolds: (_preparation, holds) => {
+          if (holds.hostCommandPurge.status === 'rejected') {
+            holds.hostCommandPurge = trackBroadHistoryStrictAttempt(
+              hostCommandOperations.beginCancellation(
+                hostCommandHistoryCancellationScope(_preparation),
+                'history-deletion-retry'
+              ).completion
+            )
+          }
+          if (holds.soloWakeupPurge?.status === 'rejected') {
+            const service = soloChatWakeupServiceRef
+            if (!service) {
+              throw new Error('Solo wakeup history service disappeared during deletion retry.')
+            }
+            const hold = service.beginHistoryClear(broadSoloWakeupHistoryScope(_preparation))
+            holds.soloWakeupHolds.push(hold)
+            holds.soloWakeupPurge = trackBroadHistoryStrictAttempt(hold.completion)
+          }
+          if (holds.canvasPurge.status === 'rejected') {
+            holds.canvasPurge = trackBroadHistoryStrictAttempt(
+              holds.canvasAuthority
+                ? canvasService.beginAuthorityHistoryClear(holds.canvasAuthority)
+                : canvasService.beginHistoryClear()
+            )
+            holds.canvasHoldCount += 1
+          }
+          if (holds.bridgePurge?.status === 'rejected') {
+            holds.bridgePurge = trackBroadHistoryStrictAttempt(
+              beginBridgeSubprocessLogHistoryClear()
+            )
+            holds.bridgeHoldCount += 1
+          }
+          for (const [chatId, attempt] of holds.ensemblePurges) {
+            if (attempt.status !== 'rejected') continue
+            holds.ensemblePurges.set(
+              chatId,
+              trackBroadHistoryStrictAttempt(beginBroadEnsembleHistoryClear(chatId))
+            )
+          }
+          return holds
+        },
+        quiesce: async (preparation, holds) => {
+          // Canvas/usage/bridge receipts prove a prior process completed a purge,
+          // but their process-local holds do not survive restart. `acquireHolds`
+          // recreates those fences, so always await (and idempotently re-receipt)
+          // the corresponding targets before commit.
+          const usageTargets = preparation.quiescenceTargets.filter(
+            (target) => target.kind === 'usage'
+          )
+          if (usageTargets.length !== 1) {
+            throw new Error('Broad usage history deletion target was not frozen exactly once.')
+          }
+          const projectReferenceTargets = preparation.quiescenceTargets.filter(
+            (target) => target.kind === 'project-reference'
+          )
+          if (projectReferenceTargets.length !== 1) {
+            throw new Error(
+              'Broad Project-reference history deletion target was not frozen exactly once.'
+            )
+          }
+          const mediaTargets = preparation.quiescenceTargets.filter(
+            (target) => target.kind === 'media'
+          )
+          if (mediaTargets.length !== 1) {
+            throw new Error('Broad media history deletion target was not frozen exactly once.')
+          }
+          const attemptPreparation = requireReacquiredHistoryDeletionHolds(preparation)
+          await holds.backgroundProcessHold.completion
+          await holds.hostCommandPurge.promise
+          if (holds.soloWakeupPurge) await holds.soloWakeupPurge.promise
+          await Promise.all([...holds.ensemblePurges.values()].map((attempt) => attempt.promise))
+          await quiescePreparedHistoryDeletion(attemptPreparation, {
+            providerRun: async (target) =>
+              Boolean(
+                target.runId &&
+                target.provider &&
+                (await terminateProviderRunForHistory(target.provider, target.runId))
+              ),
+            maintenanceCompaction: async (target) =>
+              target.maintenanceCompactionId
+                ? maintenanceCompactionRegistry.cancelAndJoin(target.maintenanceCompactionId)
+                : maintenanceCompactionRegistry.cancelAndJoinHold(holds.maintenanceCompactionHold),
+            canvas: async () => {
+              await holds.canvasPurge.promise
+            },
+            executionGraph: async (target) => {
+              await clearExecutionGraphForHistoryPreparation(preparation, target)
+            },
+            usage: async () => {
+              await usageHistoryDeletionTarget.purgeStrict(preparation, holds.usageHistoryHold)
+            },
+            projectReference: async () => {
+              if (preparation.kind === 'global') {
+                await projectReferenceArtifactStore.clearAllStrict()
+              } else {
+                await projectReferenceArtifactStore.revokeOwnershipStrict({
+                  appChatIds: preparation.chatIds,
+                  runIds: preparation.runIds
+                })
+              }
+            },
+            media: async () => {
+              const mediaStore = getTranscriptMediaAssetStore()
+              if (preparation.kind === 'global') {
+                await mediaStore.clearAllStrict()
+              } else {
+                await mediaStore.revokeChatOwnershipStrict(preparation.chatIds)
+              }
+              await regenerableHistoryByteStore.purgeStrict(holds.derivedByteHold)
+            },
+            bridge: async () => {
+              if (!holds.bridgePurge) {
+                throw new Error('Global bridge history clear was not fenced.')
+              }
+              await holds.bridgePurge.promise
+            },
+            record: (operationId, targetIds) =>
+              AppStore.recordHistoryDeletionQuiesced(operationId, targetIds)
+          })
+          await holds.codexAdmissionHold.completion
+        },
+        commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId),
+        releaseHolds: (preparation, holds) => {
+          const releaseErrors: unknown[] = []
+          try {
+            usageHistoryDeletionTarget.releaseAfterCommit(preparation, holds.usageHistoryHold)
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          try {
+            if (
+              !maintenanceCompactionRegistry.endHistoryDeletion(holds.maintenanceCompactionHold)
+            ) {
+              throw new Error('Maintenance compaction history deletion hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          try {
+            if (!projectReferenceArtifactStore.endHistoryMutation(holds.projectReferenceHold)) {
+              throw new Error('Project-reference history mutation hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          try {
+            if (!getTranscriptMediaAssetStore().endHistoryMutation(holds.transcriptMediaHold)) {
+              throw new Error('Transcript media history mutation hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          try {
+            if (!regenerableHistoryByteStore.endHistoryMutation(holds.derivedByteHold)) {
+              throw new Error('Regenerable history-byte mutation hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          for (let index = 0; index < holds.canvasHoldCount; index += 1) {
+            try {
+              if (holds.canvasAuthority) {
+                canvasService.endAuthorityHistoryClear(holds.canvasAuthority)
+              } else {
+                canvasService.endHistoryClear()
+              }
+            } catch (error) {
+              releaseErrors.push(error)
+            }
+          }
+          for (const hold of [...holds.soloWakeupHolds].reverse()) {
+            try {
+              if (!soloChatWakeupServiceRef?.endHistoryClear(hold)) {
+                throw new Error('Solo wakeup history deletion hold was not active.')
+              }
+            } catch (error) {
+              releaseErrors.push(error)
+            }
+          }
+          try {
+            if (!backgroundProcessRegistry.endHistoryDeletion(holds.backgroundProcessHold)) {
+              throw new Error('Background-process history deletion hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          try {
+            if (!codexThreadAdmissionRegistry.endHistoryClear(holds.codexAdmissionHold)) {
+              throw new Error('Codex admission history deletion hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
+          }
+          if (preparation.kind === 'global') {
+            for (let index = 0; index < holds.bridgeHoldCount; index += 1) {
+              try {
+                endBridgeSubprocessLogHistoryClear()
+              } catch (error) {
+                releaseErrors.push(error)
+              }
+            }
+            try {
+              historyClearAdmissionGate.end()
+            } catch (error) {
+              releaseErrors.push(error)
+            }
+          } else if (preparation.kind === 'workspace') {
+            try {
+              historyClearAdmissionGate.end(preparation.workspaceId)
+            } catch (error) {
+              releaseErrors.push(error)
+            }
+          } else {
+            for (const chatId of preparation.chatIds) {
+              try {
+                historyClearAdmissionGate.endChat(chatId)
+              } catch (error) {
+                releaseErrors.push(error)
+              }
+            }
+          }
+          if (releaseErrors.length > 0) {
+            // The durable commit has already removed the intent and its payload.
+            // A process-local release defect must be loud, but must not make the
+            // caller retry a deletion that has already committed successfully.
+            console.error(
+              '[history-deletion] committed deletion left one or more process-local holds unreleased:',
+              new AggregateError(
+                releaseErrors,
+                'History deletion committed but one or more process-local holds failed to release.'
+              )
+            )
+          }
+        }
+      })
+
+    const clearBroadChatHistory = (workspaceId?: string): Promise<void> =>
+      broadHistoryDeletionCoordinator.run(
+        workspaceId
+          ? {
+              kind: 'workspace',
+              workspaceId,
+              quiescenceTargets: broadHistoryDeletionTargets(workspaceId)
+            }
+          : { kind: 'global', quiescenceTargets: broadHistoryDeletionTargets() }
+      )
+
+    const recoverPendingHistoryDeletionBeforeRunQueue = async (): Promise<void> => {
+      const pending = AppStore.getPendingHistoryDeletion()
+      if (!pending) return
+      await broadHistoryDeletionCoordinator.resume(pending)
+    }
+
+    const recoverPendingUsageHistoryMutationBeforeOuterDeletion = (): void => {
+      // Covers a crash after the outer commit removed its journal but before
+      // releaseHolds retired UsageJournalStore's correlated inner intent.
+      // Run this synchronously before outer recovery so no append/queue turn
+      // can enter the gap between retiring the old intent and reacquiring the
+      // outer operation's fresh process-local usage hold.
+      AppStore.recoverPendingUsageHistoryMutationStrict()
+    }
+
+    const drainOrphanSubThreadsBeforeRunQueue = async (): Promise<void> => {
+      const candidates = AppStore.listOrphanSubThreadReapCandidates()
+      let changed = false
+      // Sequential deletion is deliberate: AppStore admits one durable intent
+      // at a time, and a failed candidate must remain fenced/retryable rather
+      // than allowing a later orphan's queued run to recover.
+      for (const rootChatId of candidates) {
+        const preview = AppStore.previewHistoryDeletionScope({
+          kind: 'chat',
+          rootChatId
+        })
+        await broadHistoryDeletionCoordinator.run({
+          kind: 'chat',
+          rootChatId,
+          quiescenceTargets: scopedHistoryDeletionTargets(preview.chatIds)
+        })
+        AppStore.acknowledgeOrphanSubThreadReapCandidate(rootChatId)
+        changed = true
+      }
+      if (changed) broadcastThreadList()
+    }
+
     reconcileBridgeDaemonFromSettings()
     app.on('will-quit', () => {
       teardownCanvasSurfacesForWindowClose()
@@ -36521,30 +36601,80 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
-    const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
-    recordStartupRecoveryEvents(startupRecoveryRecords)
+    // A crash after durable history prepare must replay every unreceipted
+    // external sink and commit before queue/graph/schedule recovery can revive
+    // any prompt or provider transport from the deleted scope.
+    let projectReferenceOwnershipReconciled = false
     try {
-      // Queue recovery owns process/transport reconciliation. Only after it has
-      // settled those rows may the graph ledger decide whether a claimed
-      // attempt is safe to requeue or must stop at requires_action.
-      executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
-      for (const diagnostic of executionGraphRecoveryDiagnostics) {
-        console.error(
-          `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
+      // Durable run events are the reachability authority. Rebuild the
+      // Project-reference owner ledger and remove zero-reference snapshots on
+      // every startup before replaying an outer history-deletion transaction.
+      const pendingDeletionForProjectReferenceReachability = AppStore.getPendingHistoryDeletion()
+      projectReferenceArtifactStore.reconcileLegacyOwnership(
+        projectReferenceOwnedArtifactRefsFromRunEvents(
+          await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] }),
+          pendingDeletionForProjectReferenceReachability
         )
-      }
+      )
+      projectReferenceOwnershipReconciled = true
+      recoverPendingUsageHistoryMutationBeforeOuterDeletion()
+      await recoverPendingHistoryDeletionBeforeRunQueue()
+      await drainOrphanSubThreadsBeforeRunQueue()
     } catch (error) {
-      executionGraphRecoveryDiagnostics = []
+      if (!projectReferenceOwnershipReconciled) {
+        try {
+          // Keep new captures fail-closed for this process. A clean restart
+          // retries authoritative reconciliation before dispatch recovery.
+          projectReferenceArtifactStore.beginHistoryMutation({ kind: 'global' })
+        } catch (holdError) {
+          console.error(
+            '[project-reference] failed to retain the startup recovery admission hold:',
+            holdError
+          )
+        }
+      }
+      historyDeletionStartupRecoveryBlockedReason = executionGraphDiagnosticMessage(error)
+      scheduledOccurrenceRecoveryBlockedReason ||= `History deletion recovery is required: ${historyDeletionStartupRecoveryBlockedReason}`
       executionGraphServiceDiagnostics = [
         ...executionGraphServiceDiagnostics,
         {
-          code: 'startup_recovery_failed',
-          message: executionGraphDiagnosticMessage(error)
+          code: 'history_deletion_recovery_required',
+          message:
+            'Startup left the durable history-deletion fence in place and skipped queue, graph, and schedule recovery: ' +
+            historyDeletionStartupRecoveryBlockedReason
         }
       ]
-      console.error('[ExecutionGraph] startup recovery failed:', error)
+      console.error(
+        '[history-deletion] startup recovery is required; run and schedule recovery remain disabled:',
+        error
+      )
     }
-    if (!scheduledOccurrenceRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason) {
+      const startupRecoveryRecords = AppStore.recoverRunQueueAfterStartup()
+      recordStartupRecoveryEvents(startupRecoveryRecords)
+      try {
+        // Queue recovery owns process/transport reconciliation. Only after it has
+        // settled those rows may the graph ledger decide whether a claimed
+        // attempt is safe to requeue or must stop at requires_action.
+        executionGraphRecoveryDiagnostics = executionGraphCoordinatorRef?.recover() ?? []
+        for (const diagnostic of executionGraphRecoveryDiagnostics) {
+          console.error(
+            `[ExecutionGraph] startup recovery failed for executionId=${diagnostic.executionId}: ${diagnostic.message}`
+          )
+        }
+      } catch (error) {
+        executionGraphRecoveryDiagnostics = []
+        executionGraphServiceDiagnostics = [
+          ...executionGraphServiceDiagnostics,
+          {
+            code: 'startup_recovery_failed',
+            message: executionGraphDiagnosticMessage(error)
+          }
+        ]
+        console.error('[ExecutionGraph] startup recovery failed:', error)
+      }
+    }
+    if (!historyDeletionStartupRecoveryBlockedReason && !scheduledOccurrenceRecoveryBlockedReason) {
       AppStore.recoverInterruptedScheduledTasksAfterStartup()
       // Widened backstop at boot: the 'running'-only startup recovery above misses a
       // 'due'/'pending' wedge held across a restart (e.g. renderer closed mid-dispatch).
@@ -36560,9 +36690,11 @@ if (isGeminiMcpBridgeProcess) {
     // hard singleton with no resume, so any record left 'planning'/'awaitingConfirm'/
     // 'running' at launch was orphaned by a crash and would otherwise sit non-terminal
     // forever. Settles each to 'failed' with a restart-interruption note.
-    AppStore.reconcileStaleAuditRuns()
+    if (!historyDeletionStartupRecoveryBlockedReason) {
+      AppStore.reconcileStaleAuditRuns()
+    }
     // ~10-min floor sweep so a wedge self-heals even with no materialize traffic.
-    if (!scheduledOccurrenceRecoveryBlockedReason) {
+    if (!historyDeletionStartupRecoveryBlockedReason && !scheduledOccurrenceRecoveryBlockedReason) {
       stallReconcilerInterval = setInterval(
         reconcileStalledScheduledTasks,
         Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
@@ -36809,8 +36941,7 @@ if (isGeminiMcpBridgeProcess) {
     })
     managedPolicySnapshotForDiagnostics = () =>
       managedPolicyService.snapshot() as unknown as Record<string, unknown>
-    managedUserMcpLaunchAllowlistPolicy = () =>
-      managedPolicyService.userMcpLaunchAllowlistPolicy()
+    managedUserMcpLaunchAllowlistPolicy = () => managedPolicyService.userMcpLaunchAllowlistPolicy()
     const startupManagedPatch = managedPolicyService.enforcedSettingsPatch(AppStore.getSettings())
     if (Object.keys(startupManagedPatch).length > 0) {
       AppStore.updateSettings(startupManagedPatch)
@@ -37071,13 +37202,11 @@ if (isGeminiMcpBridgeProcess) {
     const executionGraphDurableClaimForRun = (appRunId: string) => {
       const coordinator = executionGraphCoordinatorRef
       if (!coordinator) return null
-      const claims = coordinator
-        .listExecutions({ includeTerminal: true })
-        .flatMap((projection) =>
-          Object.values(projection.attempts)
-            .filter((attempt) => attempt.providerRunRef === appRunId)
-            .map((attempt) => ({ projection, attempt }))
-        )
+      const claims = coordinator.listExecutions({ includeTerminal: true }).flatMap((projection) =>
+        Object.values(projection.attempts)
+          .filter((attempt) => attempt.providerRunRef === appRunId)
+          .map((attempt) => ({ projection, attempt }))
+      )
       if (claims.length > 1) {
         throw new Error('Execution graph run identity is claimed by multiple attempts.')
       }
@@ -37085,9 +37214,8 @@ if (isGeminiMcpBridgeProcess) {
     }
 
     const executionGraphAnchorClaimsForRun = (appRunId: string) => {
-      const canonicalRunId = canonicalExecutionGraphRunId(
-        appRunId,
-        (runIdOrId) => AppStore.getRunQueueJob(runIdOrId)
+      const canonicalRunId = canonicalExecutionGraphRunId(appRunId, (runIdOrId) =>
+        AppStore.getRunQueueJob(runIdOrId)
       )
       return (
         executionGraphCoordinatorRef
@@ -37202,15 +37330,12 @@ if (isGeminiMcpBridgeProcess) {
       if (!chat || chat.archived || chat.parentChatId || chat.chatKind === 'ensemble') {
         throw new Error('Execution graph composer chat is unavailable.')
       }
-      const projection = executionGraphCoordinatorRef?.getExecution(
-        graphBinding.executionId
-      )
+      const projection = executionGraphCoordinatorRef?.getExecution(graphBinding.executionId)
       const activation = projection?.activations[graphBinding.activationId]
       if (
         !projection ||
         !activation ||
-        activation.stepId !==
-          projection.attempts[graphBinding.attemptId]?.stepId
+        activation.stepId !== projection.attempts[graphBinding.attemptId]?.stepId
       ) {
         throw new Error('Execution graph composer lost its exact activation identity.')
       }
@@ -37244,8 +37369,9 @@ if (isGeminiMcpBridgeProcess) {
         const predecessorRun = chat.runs?.find(
           (run) => run.runId === predecessorAttempt.providerRunRef
         )
-        const predecessorReceipt = predecessorRun?.providerMetadata
-          ?.executionGraphResultReceipt as ExecutionGraphAttemptTerminalReceipt | undefined
+        const predecessorReceipt = predecessorRun?.providerMetadata?.executionGraphResultReceipt as
+          | ExecutionGraphAttemptTerminalReceipt
+          | undefined
         if (
           !predecessorReceipt ||
           !verifyExecutionGraphAttemptReceiptOnChat(chat, predecessorReceipt) ||
@@ -37273,10 +37399,7 @@ if (isGeminiMcpBridgeProcess) {
         provider: job.provider,
         scope: 'workspace',
         workspace: job.workspacePath,
-        userInput: formatExecutionGraphPredecessorResults(
-          request.prompt,
-          predecessorResults
-        ),
+        userInput: formatExecutionGraphPredecessorResults(request.prompt, predecessorResults),
         selectedModelType: request.selectedModelType,
         customModel: request.customModel,
         approvalMode: request.approvalMode,
@@ -37358,14 +37481,14 @@ if (isGeminiMcpBridgeProcess) {
       canonicalPath,
       prepareForkMessages: prepareForkMessagesWithMediaOwnership,
       sanitizeChatForSave,
+      assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
+      clearHistoryTransaction: clearBroadChatHistory,
       appendDurableRunEventForRoute
     })
-    let humanCollaborationRuntime:
-      | HumanCollaborationRuntime<
-          HumanShareProjection,
-          ReturnType<typeof chatService.appendCollaboratorComment>
-        >
-      | null = null
+    let humanCollaborationRuntime: HumanCollaborationRuntime<
+      HumanShareProjection,
+      ReturnType<typeof chatService.appendCollaboratorComment>
+    > | null = null
     let humanCollaborationHostTransport: HumanCollaborationHostTransport | null = null
     // The host dials its OWN relay (loopback embedded relay) to take the `mac`
     // seat of each collaborator room; the collaborator dials the advertised
@@ -37504,7 +37627,8 @@ if (isGeminiMcpBridgeProcess) {
       }, 3000)
     }
 
-    const liveIosRemoteRelayPort = (): number => selfHostedWssLane?.relayPort ?? iosRemoteRelayPort()
+    const liveIosRemoteRelayPort = (): number =>
+      selfHostedWssLane?.relayPort ?? iosRemoteRelayPort()
     const iosRemoteTailscaleStatus = createIosRemoteTailscaleStatusGetter({
       getSettings: () => AppStore.getSettings(),
       getLiveIosRemoteRelayPort: liveIosRemoteRelayPort,
@@ -37671,8 +37795,7 @@ if (isGeminiMcpBridgeProcess) {
           ok: false,
           unsupported: true,
           error:
-            nativeCapabilities.screenWatch.reason ||
-            'Screen Watch is unavailable on this host.',
+            nativeCapabilities.screenWatch.reason || 'Screen Watch is unavailable on this host.',
           nativeCapabilities
         }
       }
@@ -37794,13 +37917,10 @@ if (isGeminiMcpBridgeProcess) {
         } else if (!isMainRendererSender(event)) {
           throw new Error('Renderer cannot resolve Ensemble poll chat authority.')
         }
-        const result = ensembleOrchestratorRef?.userPollResponseForChat(
-          appChatId,
-          {
-            pollId: optionalString(payload.pollId),
-            choice: optionalString(payload.choice)
-          }
-        ) || {
+        const result = ensembleOrchestratorRef?.userPollResponseForChat(appChatId, {
+          pollId: optionalString(payload.pollId),
+          choice: optionalString(payload.choice)
+        }) || {
           ok: false,
           tool: 'ensemble_poll_response' as const,
           message: 'Ensemble orchestrator is not available.',
@@ -37881,6 +38001,7 @@ if (isGeminiMcpBridgeProcess) {
       },
       getSettings: () => settingsService.getSettings(),
       assertProviderId,
+      assertLiveProviderId,
       requireNonEmptyString,
       assertAgenticServiceId,
       assertSenderCanManageAgenticWorkspaceGrants: (event, workspacePath) => {
@@ -37916,8 +38037,7 @@ if (isGeminiMcpBridgeProcess) {
           canonicalizePath: canonicalPath
         })
       },
-      resolveSenderAttachmentPaths: (event, paths) =>
-        resolveRendererAttachmentPaths(event, paths),
+      resolveSenderAttachmentPaths: (event, paths) => resolveRendererAttachmentPaths(event, paths),
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
     registerDiscordContextHandlers({
@@ -38019,10 +38139,14 @@ if (isGeminiMcpBridgeProcess) {
     })
 
     const getChatWorkspaceRebindBlocker = (chatId: string): 'active' | 'queued' | null => {
+      if (
+        canvasService.openChatIds().has(chatId) ||
+        canvasEmbedIpcAuthority.openChatIds().has(chatId)
+      ) {
+        return 'active'
+      }
       const hasActiveProviderSession = RUN_MANAGER_PROVIDERS.some((provider) =>
-        runManager
-          .getActiveByProvider(provider)
-          .some((session) => session.appChatId === chatId)
+        runManager.getActiveByProvider(provider).some((session) => session.appChatId === chatId)
       )
       if (hasActiveProviderSession) return 'active'
 
@@ -38039,7 +38163,9 @@ if (isGeminiMcpBridgeProcess) {
       if ((round?.queuedPrompts?.length || 0) > 0 || Boolean(round?.queuedPrompt?.trim())) {
         return 'queued'
       }
-      if (Object.values(chat?.ensemble?.wakeups || {}).some((wakeup) => wakeup.status === 'pending')) {
+      if (
+        Object.values(chat?.ensemble?.wakeups || {}).some((wakeup) => wakeup.status === 'pending')
+      ) {
         return 'queued'
       }
       if (Object.values(chat?.soloWakeups || {}).some((wakeup) => wakeup.status === 'pending')) {
@@ -38054,22 +38180,315 @@ if (isGeminiMcpBridgeProcess) {
       return null
     }
 
-    registerChatHandlers({
-      chatService,
-      deleteExecutionGraphHistoryForChat: async (chatId) => {
-        const repository = executionGraphRepositoryRef
-        const coordinator = executionGraphCoordinatorRef
-        if (!repository || !coordinator) {
-          const storageRoot = join(app.getPath('userData'), 'execution-graph')
-          if (!ExecutionGraphRepository.storageRootMentionsRootChat(storageRoot, chatId)) {
-            return
+    type ChatHistoryMutationAuthority = {
+      canvas: CanvasHistoryAuthority
+      codexAdmission: CodexThreadAdmissionHistoryHold
+      soloWakeup: SoloWakeupHistoryHold | null
+      hostCommandCompletion: Promise<void>
+    }
+    const chatCanvasHistoryAuthorities = new Map<string, ChatHistoryMutationAuthority[]>()
+    const beginChatHistoryMutation = (chatId: string): Promise<void> => {
+      historyClearAdmissionGate.beginChat(chatId)
+      const authority: CanvasHistoryAuthority = {
+        // Per-chat mutation must never widen to the whole workspace: Canvas
+        // authority matching is intentionally OR-based, so adding the shared
+        // workspace path here would close/purge sibling chats A and B together.
+        chatIds: [chatId]
+      }
+      const stack = chatCanvasHistoryAuthorities.get(chatId) ?? []
+      const retained: ChatHistoryMutationAuthority = {
+        canvas: authority,
+        codexAdmission: codexThreadAdmissionRegistry.beginHistoryClear({
+          kind: 'chat',
+          chatIds: [chatId]
+        }),
+        soloWakeup: null,
+        hostCommandCompletion: hostCommandOperations.beginCancellation(
+          { kind: 'chat', chatIds: [chatId] },
+          'chat-history-deletion'
+        ).completion
+      }
+      stack.push(retained)
+      chatCanvasHistoryAuthorities.set(chatId, stack)
+      canvasEmbedIpcAuthority.invalidateAuthorities(authority)
+      // beginAuthorityHistoryClear raises its Canvas hold synchronously before
+      // returning this promise; callers synchronously revoke approvals before
+      // awaiting it.
+      const canvas = canvasService.beginAuthorityHistoryClear(authority)
+      retained.soloWakeup =
+        soloChatWakeupServiceRef?.beginHistoryClear({ kind: 'chat', chatIds: [chatId] }) ?? null
+      return Promise.all([
+        canvas,
+        retained.codexAdmission.completion,
+        retained.soloWakeup?.completion,
+        retained.hostCommandCompletion
+      ]).then(() => undefined)
+    }
+    const finishChatHistoryMutation = (chatId: string): void => {
+      const stack = chatCanvasHistoryAuthorities.get(chatId)
+      const retained = stack?.pop()
+      const releaseErrors: unknown[] = []
+      if (retained) {
+        try {
+          canvasService.endAuthorityHistoryClear(retained.canvas)
+        } catch (error) {
+          releaseErrors.push(error)
+        }
+        if (retained.soloWakeup) {
+          try {
+            if (!soloChatWakeupServiceRef?.endHistoryClear(retained.soloWakeup)) {
+              throw new Error('Solo wakeup chat history hold was not active.')
+            }
+          } catch (error) {
+            releaseErrors.push(error)
           }
-          throw new Error(
-            'Execution-graph history authority is unavailable; chat deletion was stopped.'
+        }
+        try {
+          if (!codexThreadAdmissionRegistry.endHistoryClear(retained.codexAdmission)) {
+            throw new Error('Codex admission chat history hold was not active.')
+          }
+        } catch (error) {
+          releaseErrors.push(error)
+        }
+      }
+      if (!stack?.length) chatCanvasHistoryAuthorities.delete(chatId)
+      try {
+        historyClearAdmissionGate.endChat(chatId)
+      } catch (error) {
+        releaseErrors.push(error)
+      }
+      if (releaseErrors.length > 0) {
+        throw new AggregateError(releaseErrors, 'Chat history mutation holds could not be released.')
+      }
+    }
+    const beginEnsembleHistoryClear = (chatId: string): Promise<void> => {
+      const chat = AppStore.getChat(chatId)
+      if (!chat?.ensemble) return Promise.resolve()
+      const round = chat.ensemble.activeRound
+      const expectedRoundId = round?.status === 'running' ? round.roundId : undefined
+      const orchestrator = ensembleOrchestratorRef
+      if (!orchestrator) {
+        if (!ensembleHistoryRuntimeCouldExist(chatId)) return Promise.resolve()
+        return Promise.reject(
+          new Error(`Ensemble history for chat ${chatId} cannot be quiesced without its orchestrator.`)
+        )
+      }
+      // The history-only path fences its exact runtime and cancels every
+      // target-chat Ensemble timer synchronously without writing AppStore. The
+      // caller retains its dispatch/activity/transport join through commit.
+      return orchestrator
+        .cancelRoundForHistory(chatId, 'chat history cleared', expectedRoundId)
+        .then((cancelled) => {
+          if (!cancelled) {
+            throw new Error(
+              `Ensemble history authority for chat ${chatId} changed before history clear.`
+            )
+          }
+        })
+    }
+    const revokeApprovalsForChat = (chatId: string): void => {
+      for (const provider of RUN_MANAGER_PROVIDERS) {
+        for (const session of runManager.getActiveByProvider(provider)) {
+          if (session.appChatId !== chatId) continue
+          runManager.claimTerminalStatus(session.runId, 'cancelled')
+          approvalService?.cancelForRun(session.runId, 'chat-history-cleared')
+          cancelPendingAgentQuestionsForRun(session.runId, 'chat-history-cleared')
+        }
+      }
+      approvalService?.cancelForChat(chatId, 'chat-history-cleared')
+      attachmentCapabilityRegistry.revokeMainChat(chatId)
+    }
+    const deleteExecutionGraphForChat = async (chatId: string): Promise<void> => {
+      const repository = executionGraphRepositoryRef
+      const coordinator = executionGraphCoordinatorRef
+      if (!repository || !coordinator) {
+        const storageRoot = join(app.getPath('userData'), 'execution-graph')
+        if (!ExecutionGraphRepository.storageRootMentionsRootChat(storageRoot, chatId)) return
+        throw new Error(
+          'Execution-graph history authority is unavailable; chat deletion was stopped.'
+        )
+      }
+      await deleteExecutionGraphHistoryForChat({ repository, coordinator }, chatId)
+    }
+    type ScopedMediaHistoryHold = {
+      transcript: TranscriptMediaHistoryMutationHold
+      derived: RegenerableHistoryByteHistoryHold
+    }
+    const scopedHistoryDeletionCoordinator = new ScopedHistoryDeletionCoordinator({
+      resolveChatIds: (kind, rootChatId) =>
+        AppStore.previewHistoryDeletionScope({ kind, rootChatId }).chatIds,
+      listProviderRuns: (chatIds) => {
+        const targetChats = new Set(chatIds)
+        return RUN_MANAGER_PROVIDERS.flatMap((provider) =>
+          runManager
+            .getActiveByProvider(provider)
+            .filter((session) => Boolean(session.appChatId && targetChats.has(session.appChatId)))
+            .map((session) => ({ provider, runId: session.runId }))
+        )
+      },
+      listMaintenanceCompactions: (chatIds) =>
+        maintenanceCompactionRegistry.list({ kind: 'chat', chatIds }),
+      getPending: () => AppStore.getPendingHistoryDeletion(),
+      prepare: (input) => AppStore.prepareHistoryDeletion(input),
+      recordQuiesced: (operationId, targetIds) =>
+        AppStore.recordHistoryDeletionQuiesced(operationId, targetIds),
+      commitDelete: (chatId) => chatService.deleteChat(chatId),
+      commitTruncate: (chatId) => chatService.truncateChatHistory(chatId),
+      beginUsageHistoryMutation: (preparation) => usageHistoryDeletionTarget.acquire(preparation),
+      purgeUsageHistoryStrict: async (preparation, hold) => {
+        await usageHistoryDeletionTarget.purgeStrict(
+          preparation,
+          hold as UsageHistoryDeletionHold<UsageHistoryMutationHold>
+        )
+      },
+      endUsageHistoryMutation: (preparation, hold) => {
+        usageHistoryDeletionTarget.releaseAfterCommit(
+          preparation,
+          hold as UsageHistoryDeletionHold<UsageHistoryMutationHold>
+        )
+      },
+      beginProjectReferenceMutation: (kind, chatIds) =>
+        projectReferenceArtifactStore.beginHistoryMutation({
+          kind,
+          appChatIds: chatIds
+        }),
+      clearProjectReferenceArtifacts: async ({ appChatIds, runIds }) => {
+        await projectReferenceArtifactStore.revokeOwnershipStrict({
+          appChatIds,
+          runIds
+        })
+      },
+      endProjectReferenceMutation: (hold) => {
+        if (
+          !projectReferenceArtifactStore.endHistoryMutation(
+            hold as ProjectReferenceHistoryMutationHold
+          )
+        ) {
+          throw new Error('Project-reference history mutation hold was not active.')
+        }
+      },
+      beginTranscriptMediaMutation: (kind, chatIds) => {
+        const transcript = getTranscriptMediaAssetStore().beginHistoryMutation({
+          kind,
+          appChatIds: chatIds
+        })
+        try {
+          const pending = AppStore.getPendingHistoryDeletion()
+          if (!pending || pending.kind !== kind) {
+            throw new Error('Scoped derived-byte deletion has no matching durable intent.')
+          }
+          return {
+            transcript,
+            derived: regenerableHistoryByteStore.beginHistoryMutation(pending.operationId)
+          } satisfies ScopedMediaHistoryHold
+        } catch (error) {
+          if (!getTranscriptMediaAssetStore().endHistoryMutation(transcript)) {
+            throw new AggregateError(
+              [error],
+              'Scoped derived-byte hold failed and transcript-media rollback was not active.'
+            )
+          }
+          throw error
+        }
+      },
+      endTranscriptMediaMutation: (hold) => {
+        const scopedHold = hold as ScopedMediaHistoryHold
+        const releaseErrors: unknown[] = []
+        try {
+          if (!getTranscriptMediaAssetStore().endHistoryMutation(scopedHold.transcript)) {
+            throw new Error('Transcript media history mutation hold was not active.')
+          }
+        } catch (error) {
+          releaseErrors.push(error)
+        }
+        try {
+          if (!regenerableHistoryByteStore.endHistoryMutation(scopedHold.derived)) {
+            throw new Error('Regenerable history-byte mutation hold was not active.')
+          }
+        } catch (error) {
+          releaseErrors.push(error)
+        }
+        if (releaseErrors.length > 0) {
+          throw new AggregateError(
+            releaseErrors,
+            'Scoped media history holds could not be released after commit.'
           )
         }
-        await deleteExecutionGraphHistoryForChat({ repository, coordinator }, chatId)
       },
+      beginMaintenanceCompactionDeletion: (kind, chatIds) =>
+        maintenanceCompactionRegistry.beginHistoryDeletion({ kind, chatIds }),
+      cancelAndJoinMaintenanceCompaction: async (maintenanceCompactionId, hold) => {
+        const confirmed = maintenanceCompactionId
+          ? await maintenanceCompactionRegistry.cancelAndJoin(maintenanceCompactionId)
+          : await maintenanceCompactionRegistry.cancelAndJoinHold(
+              hold as MaintenanceCompactionHistoryHold
+            )
+        if (!confirmed) {
+          throw new Error(
+            maintenanceCompactionId
+              ? `Maintenance compaction ${maintenanceCompactionId} has no exact termination proof.`
+              : 'Maintenance compaction scope could not be quiesced.'
+          )
+        }
+      },
+      endMaintenanceCompactionDeletion: (hold) => {
+        if (
+          !maintenanceCompactionRegistry.endHistoryDeletion(
+            hold as MaintenanceCompactionHistoryHold
+          )
+        ) {
+          throw new Error('Maintenance compaction history deletion hold was not active.')
+        }
+      },
+      beginBackgroundProcessDeletion: (kind, chatIds) =>
+        backgroundProcessRegistry.beginHistoryDeletion({ kind, chatIds }),
+      endBackgroundProcessDeletion: (hold) => {
+        if (!backgroundProcessRegistry.endHistoryDeletion(hold as BackgroundProcessHistoryHold)) {
+          throw new Error('Background-process history deletion hold was not active.')
+        }
+      },
+      beginCanvasClear: beginChatHistoryMutation,
+      endCanvasClear: finishChatHistoryMutation,
+      beginEnsembleClear: beginEnsembleHistoryClear,
+      revokeChatAuthority: revokeApprovalsForChat,
+      terminateProviderRun: async ({ provider, runId }) => {
+        const stopped = await terminateProviderRunForHistory(provider, runId)
+        if (!stopped) {
+          throw new Error(`Provider run ${runId} could not be quiesced for history deletion.`)
+        }
+      },
+      clearExecutionGraph: deleteExecutionGraphForChat,
+      clearTranscriptMedia: async (chatIds, hold) => {
+        const scopedHold = hold as ScopedMediaHistoryHold
+        await getTranscriptMediaAssetStore().revokeChatOwnershipStrict(chatIds)
+        await regenerableHistoryByteStore.purgeStrict(scopedHold.derived)
+      },
+      reportPostCommitReleaseError: (error) => {
+        console.error(
+          '[scoped-history-deletion] committed deletion left one or more process-local holds unreleased:',
+          error
+        )
+      }
+    })
+    const deleteChatWithLifecycle = async (chatId: string): Promise<string[]> => {
+      const result = await scopedHistoryDeletionCoordinator.run('chat', chatId)
+      return result.chatIds
+    }
+    const truncateChatWithLifecycle = async (chatId: string): Promise<ChatRecord | null> => {
+      const result = await scopedHistoryDeletionCoordinator.run('truncate', chatId)
+      return result.truncated
+    }
+    deleteChatWithLifecycleRef = deleteChatWithLifecycle
+
+    registerChatHandlers({
+      chatService,
+      beginChatHistoryMutation,
+      finishChatHistoryMutation,
+      revokeApprovalsForChat,
+      deleteChatWithLifecycle,
+      truncateChatWithLifecycle,
+      assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
+      deleteExecutionGraphHistoryForChat: deleteExecutionGraphForChat,
       clearExecutionGraphHistory: async (workspaceId) => {
         const repository = executionGraphRepositoryRef
         const coordinator = executionGraphCoordinatorRef
@@ -38093,7 +38512,7 @@ if (isGeminiMcpBridgeProcess) {
         )
       },
       getSettings: () => AppStore.getSettings(),
-      detectConfiguredProviders,
+      detectConfiguredProviders: detectManagedRunConfiguredProviders,
       normalizeTranscriptMarkdownMediaForChat,
       maybeScheduleCodexNativeGoalSync,
       broadcastThreadUpdate,
@@ -38127,6 +38546,8 @@ if (isGeminiMcpBridgeProcess) {
         }
         return chatIds
       },
+      getOpenCanvasChatIds: () =>
+        new Set([...canvasService.openChatIds(), ...canvasEmbedIpcAuthority.openChatIds()]),
       getChatWorkspaceRebindBlocker,
       resolveSenderChatReadScope: (event) => {
         if (isMainRendererSender(event)) return { kind: 'all' }
@@ -38180,8 +38601,7 @@ if (isGeminiMcpBridgeProcess) {
       getCurrentHumanCollaborationRuntime: () => humanCollaborationRuntime,
       openCollaborationHostRoom: (relayUrl, roomId) =>
         humanCollaborationHostTransport?.openRoom(relayUrl, roomId),
-      closeCollaborationHostRoom: (roomId) =>
-        humanCollaborationHostTransport?.closeRoom(roomId),
+      closeCollaborationHostRoom: (roomId) => humanCollaborationHostTransport?.closeRoom(roomId),
       socketFactory: wsTransportSocketFactory,
       sendToMainWindow: (channel, payload) => {
         mainWindow?.webContents.send(channel, payload)
@@ -38254,32 +38674,32 @@ if (isGeminiMcpBridgeProcess) {
       fetchCodexUsageSnapshot,
       fetchClaudeUsageSnapshot,
       fetchKimiUsageSnapshot,
-      fetchCursorUsageSnapshot,
       getProviderCapabilityContract,
-      getPluginActivationSnapshot: () => pluginContributionManagerRef?.getActivationSnapshot() || {
-        schemaVersion: 1,
-        generatedAt: new Date(0).toISOString(),
-        mcpServers: [],
-        runtimeProfileIds: [],
-        taskwraithToolBundles: [],
-        workflowTemplates: [],
-        connectors: [],
-        localServices: [],
-        providerSetup: [],
-        mobileRemoteProjection: [],
-        materializedResources: [],
-        counts: {
-          enabledPlugins: 0,
-          mcpServers: 0,
-          runtimeProfiles: 0,
-          taskwraithToolBundles: 0,
-          workflowTemplates: 0,
-          connectors: 0,
-          localServices: 0,
-          providerSetup: 0,
-          mobileRemoteProjection: 0
-        }
-      },
+      getPluginActivationSnapshot: () =>
+        pluginContributionManagerRef?.getActivationSnapshot() || {
+          schemaVersion: 1,
+          generatedAt: new Date(0).toISOString(),
+          mcpServers: [],
+          runtimeProfileIds: [],
+          taskwraithToolBundles: [],
+          workflowTemplates: [],
+          connectors: [],
+          localServices: [],
+          providerSetup: [],
+          mobileRemoteProjection: [],
+          materializedResources: [],
+          counts: {
+            enabledPlugins: 0,
+            mcpServers: 0,
+            runtimeProfiles: 0,
+            taskwraithToolBundles: 0,
+            workflowTemplates: 0,
+            connectors: 0,
+            localServices: 0,
+            providerSetup: 0,
+            mobileRemoteProjection: 0
+          }
+        },
       getCurrentFxRates: () => getCurrentFxRates(),
       refreshFxRates: (force) => refreshFxRates(force),
       getCurrentProviderRates: () => getCurrentProviderRates(),
@@ -38320,7 +38740,8 @@ if (isGeminiMcpBridgeProcess) {
       getEvidencePacks: (workspaceId) => AppStore.getEvidencePacks(workspaceId),
       saveEvidencePack: (pack) => AppStore.saveEvidencePack(pack),
       deleteEvidencePack: (id) => AppStore.deleteEvidencePack(id),
-      getCapabilityLedgerSnapshot: (workspaceId) => AppStore.getCapabilityLedgerSnapshot(workspaceId),
+      getCapabilityLedgerSnapshot: (workspaceId) =>
+        AppStore.getCapabilityLedgerSnapshot(workspaceId),
       getRepoConventionIndexes: (workspaceId) => AppStore.getRepoConventionIndexes(workspaceId),
       saveRepoConventionIndex: (snapshot) => AppStore.saveRepoConventionIndex(snapshot),
       materializeWorkflowNow: (id) => {
@@ -38331,8 +38752,7 @@ if (isGeminiMcpBridgeProcess) {
         )
         return task ? ensureScheduledTaskSignedPosture(task) : null
       },
-      workflowAuthorityDigest: (workflow) =>
-        workflowAuthorityDigest(workflow, canonicalPath),
+      workflowAuthorityDigest: (workflow) => workflowAuthorityDigest(workflow, canonicalPath),
       currentWorkflowUnattendedElevationCapability: (workflow) => {
         const elevation = resolveWorkflowUnattendedElevation(workflow)
         const signature = elevation?.ack.signature
@@ -38349,15 +38769,15 @@ if (isGeminiMcpBridgeProcess) {
           const chat = AppStore.getChat(workflow.template.chatId)
           return Boolean(
             workspace &&
-              chat &&
-              !chat.archived &&
-              chat.scope === 'workspace' &&
-              chat.workspaceId === workspace.id &&
-              chat.workspaceId === workflow.workspaceId &&
-              chat.workspaceId === workflow.template.workspaceId &&
-              chat.workspacePath &&
-              canonicalPath(chat.workspacePath) === canonicalPath(workflow.workspacePath) &&
-              canonicalPath(chat.workspacePath) === canonicalPath(workflow.template.workspacePath)
+            chat &&
+            !chat.archived &&
+            chat.scope === 'workspace' &&
+            chat.workspaceId === workspace.id &&
+            chat.workspaceId === workflow.workspaceId &&
+            chat.workspaceId === workflow.template.workspaceId &&
+            chat.workspacePath &&
+            canonicalPath(chat.workspacePath) === canonicalPath(workflow.workspacePath) &&
+            canonicalPath(chat.workspacePath) === canonicalPath(workflow.template.workspacePath)
           )
         } catch {
           return false
@@ -38397,7 +38817,10 @@ if (isGeminiMcpBridgeProcess) {
         mainWindow?.webContents.send('scheduled-tasks-changed', AppStore.getScheduledTasks())
       },
       broadcastWorkflowDefinitionsChanged: () => {
-        mainWindow?.webContents.send('workflow-definitions-changed', AppStore.getWorkflowDefinitions())
+        mainWindow?.webContents.send(
+          'workflow-definitions-changed',
+          AppStore.getWorkflowDefinitions()
+        )
       },
       broadcastWorkspaceBoardsChanged: () => {
         mainWindow?.webContents.send('workspace-boards-changed', {
@@ -38475,7 +38898,10 @@ if (isGeminiMcpBridgeProcess) {
           : mutation.operation === 'promote-steer'
             ? [mutation.input.runId, mutation.input.cancelRunId]
             : [mutation.input.runId]
-      if (graphTargets.some(Boolean) || graphIdentityTargets.some(graphIdentityForRendererMutation)) {
+      if (
+        graphTargets.some(Boolean) ||
+        graphIdentityTargets.some(graphIdentityForRendererMutation)
+      ) {
         throw new Error(
           'Graph-owned attempts and Stack anchors can only be changed through graph-aware controls.'
         )
@@ -38511,8 +38937,7 @@ if (isGeminiMcpBridgeProcess) {
             chat.runs?.some((run) => run.ensembleRoundId === targetId)
         )?.appChatId
       },
-      authorizeRendererRunQueueMutation: (mutation) =>
-        authorizeRendererRunQueueMutation(mutation),
+      authorizeRendererRunQueueMutation: (mutation) => authorizeRendererRunQueueMutation(mutation),
       getRunQueueJobs: (filter) => runQueueService.getJobs(filter),
       getRunRecoveryRecords: (filter) => getRunRepository().getRunRecoveryRecords(filter || {}),
       requestRunQueueJob: (job, options) => runQueueService.requestJob(job, options),
@@ -38581,7 +39006,7 @@ if (isGeminiMcpBridgeProcess) {
         AppStore.recordProductCrash({
           ...input,
           source: input?.source || 'renderer'
-      }),
+        }),
       exportProductDiagnostics: (requestedPath) => exportProductDiagnostics(requestedPath),
       exportProductAuditBundle: (request) => exportProductAuditBundle(request),
       verifyProductAuditBundle: (request) => verifyProductAuditBundle(request),
@@ -38740,32 +39165,43 @@ if (isGeminiMcpBridgeProcess) {
       return filePaths
     })
 
-    ipcMain.handle('save-clipboard-image-attachment', async (event, token: unknown) =>
-      saveClipboardImageFromTrustedPaste({
-        senderId: event.sender.id,
-        token,
-        consumeIntent: (senderId, candidate) =>
-          clipboardPasteIntentRegistry.consume(senderId, candidate),
-        readImage: () => clipboard.readImage(),
-        createFilePath: () =>
-          join(
-            os.tmpdir(),
-            `taskwraith-paste-${Date.now()}-${randomUUID().slice(0, 8)}.png`
-          ),
-        writeFile: (filePath, data) => fs.writeFile(filePath, data),
-        authorizePath: (filePath) =>
-          authorizeImagePreviewPath(filePath, {
-            sender: event.sender,
-            mainAuthority: isMainRendererSender(event)
-          })
-      })
+    ipcMain.handle(
+      'save-clipboard-image-attachment',
+      async (event, rawAppChatId: unknown, token: unknown) => {
+        const appChatId = requireNonEmptyString(rawAppChatId, 'Clipboard attachment chat id')
+        assertRendererChatScope(event, appChatId)
+        const chat = AppStore.getChat(appChatId)
+        if (
+          !chat ||
+          historyClearAdmissionBlocked(undefined, chat.workspacePath, chat.appChatId)
+        ) {
+          return []
+        }
+        return saveClipboardImageFromTrustedPaste({
+          appChatId,
+          senderId: event.sender.id,
+          token,
+          consumeIntent: (senderId, candidate) =>
+            clipboardPasteIntentRegistry.consume(senderId, candidate),
+          readImage: () => clipboard.readImage(),
+          assetStore: getTranscriptMediaAssetStore(),
+          authorizePath: (filePath) =>
+            authorizeImagePreviewPath(filePath, {
+              sender: event.sender,
+              mainAuthority: isMainRendererSender(event),
+              appChatId
+            })
+        })
+      }
     )
 
     const readImageViaMacImageServices = async (
-      real: string
+      real: string,
+      reservation: RegenerableHistoryByteReservation
     ): Promise<ReturnType<typeof nativeImage.createEmpty> | null> => {
       if (process.platform !== 'darwin') return null
-      const tempDir = await fs.mkdtemp(join(os.tmpdir(), 'taskwraith-image-preview-'))
+      if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
+      const tempDir = await fs.mkdtemp(join(reservation.root, '.image-preview-'))
       const outPath = join(tempDir, 'preview.png')
       try {
         await new Promise<void>((resolvePromise, rejectPromise) => {
@@ -38782,12 +39218,13 @@ if (isGeminiMcpBridgeProcess) {
             }
           )
         })
+        if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
         const img = nativeImage.createFromPath(outPath)
         return img.isEmpty() ? null : img
       } catch {
         return null
       } finally {
-        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+        await fs.rm(tempDir, { recursive: true, force: true })
       }
     }
 
@@ -38816,24 +39253,56 @@ if (isGeminiMcpBridgeProcess) {
         }
         const stat = await fs.lstat(real)
         if (!stat.isFile()) return null
+        let img = nativeImage.createEmpty()
         if (isPdfAttachmentPath(real)) {
-          const rendered = await renderPdfPagesForAttachments([{ path: real, name: basename(real) }])
-          const firstPage = rendered[0]?.path
-          if (!firstPage) return null
-          real = firstPage
-        } else if (stat.size > IMAGE_PREVIEW_MAX_BYTES) {
-          return null
-        }
-        let img = nativeImage.createFromPath(real)
-        if (img.isEmpty()) {
+          const reservation = regenerableHistoryByteStore.begin('pdf')
           try {
-            img = nativeImage.createFromBuffer(await fs.readFile(real))
-          } catch {
-            img = nativeImage.createEmpty()
+            await prunePdfAttachmentRenderCacheOnce(reservation.root)
+            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
+            const rendered = await renderPdfAttachmentPages(
+              [{ path: real, name: basename(real) }],
+              { cacheDir: reservation.root }
+            )
+            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
+            const firstPage = rendered.rendered[0]?.path
+            if (!firstPage) return null
+            img = nativeImage.createFromPath(firstPage)
+            if (img.isEmpty()) {
+              try {
+                img = nativeImage.createFromBuffer(await fs.readFile(firstPage))
+              } catch {
+                img = nativeImage.createEmpty()
+              }
+            }
+            if (img.isEmpty()) {
+              img =
+                (await readImageViaMacImageServices(firstPage, reservation)) ??
+                nativeImage.createEmpty()
+            }
+            if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
+          } finally {
+            endRegenerableHistoryByteReservation(reservation)
           }
-        }
-        if (img.isEmpty()) {
-          img = (await readImageViaMacImageServices(real)) ?? nativeImage.createEmpty()
+        } else {
+          if (stat.size > IMAGE_PREVIEW_MAX_BYTES) return null
+          img = nativeImage.createFromPath(real)
+          if (img.isEmpty()) {
+            try {
+              img = nativeImage.createFromBuffer(await fs.readFile(real))
+            } catch {
+              img = nativeImage.createEmpty()
+            }
+          }
+          if (img.isEmpty()) {
+            const reservation = regenerableHistoryByteStore.begin('media')
+            try {
+              img =
+                (await readImageViaMacImageServices(real, reservation)) ?? nativeImage.createEmpty()
+              if (!regenerableHistoryByteStore.isCurrent(reservation)) return null
+            } finally {
+              endRegenerableHistoryByteReservation(reservation)
+            }
+          }
         }
         if (img.isEmpty()) return null
         // Downscale large images so a screenshot isn't a multi-MB base64.
@@ -38867,11 +39336,11 @@ if (isGeminiMcpBridgeProcess) {
         const owner = workspacePopoutOwnerForSender(event.sender.id)
         return Boolean(
           owner?.kind === 'chat' &&
-            owner.chatId &&
-            getTranscriptMediaAssetStore().owns({
-              ...asset,
-              appChatId: owner.chatId
-            })
+          owner.chatId &&
+          getTranscriptMediaAssetStore().owns({
+            ...asset,
+            appChatId: owner.chatId
+          })
         )
       },
       getRequestingWindow: (event) => {
@@ -38978,9 +39447,9 @@ if (isGeminiMcpBridgeProcess) {
         if (provider === 'claude') {
           return fetchClaudeUsageSnapshot({ force })
         }
-        if (provider === 'cursor') {
-          return fetchCursorUsageSnapshot({ force })
-        }
+        // Cursor managed runs are disabled. Do not inspect the editor's local
+        // auth state or access token merely to populate an unavailable card.
+        if (provider === 'cursor') return null
         if (provider !== 'codex') {
           return null
         }
@@ -39147,19 +39616,25 @@ if (isGeminiMcpBridgeProcess) {
       isEncryptionAvailable: () => safeStorage.isEncryptionAvailable(),
       encryptApiKey,
       resolveCliProviderBinary,
-      readResolvedCliVersion,
-      probeKimiFlavour: probeKimiFlavourForBinary,
-      hasOAuthCredential: async () => {
-        for (const path of kimiCredentialCandidatePaths()) {
-          try {
-            await fs.access(path)
-            return true
-          } catch {
-            // Try the next candidate.
-          }
+      inspectRuntime: async (resolved) => {
+        if (!resolved.binaryPath) {
+          return { admitted: false as const, message: resolved.error || 'Kimi CLI was not found.' }
         }
-        return false
+        const admission = await admitKimiRuntime({
+          binaryPath: resolved.binaryPath,
+          isPackaged: app.isPackaged,
+          environment: process.env
+        })
+        return admission.admitted
+          ? {
+              admitted: true as const,
+              version: admission.capability.version,
+              mode: admission.mode
+            }
+          : { admitted: false as const, message: admission.message }
       },
+      getManagedAuthState: () =>
+        detectKimiManagedAuthState(join(os.homedir(), '.kimi-code'), kimiHomeFsAdapter),
       isMainRendererSender
     })
 
@@ -39206,9 +39681,7 @@ if (isGeminiMcpBridgeProcess) {
       getPlatform: () => process.platform
     })
 
-    const resolveSenderAgentThreadScope = (
-      event: IpcMainInvokeEvent
-    ): AgentThreadSenderScope => {
+    const resolveSenderAgentThreadScope = (event: IpcMainInvokeEvent): AgentThreadSenderScope => {
       if (isMainRendererSender(event)) return { kind: 'main' }
       const owner = workspacePopoutOwnerForSender(event.sender.id)
       if (owner?.kind !== 'chat' || !owner.chatId) {
@@ -39291,136 +39764,253 @@ if (isGeminiMcpBridgeProcess) {
         )
         const route = routeWithRunId('codex', params)
         const reviewRunId = route.appRunId
-        if (
-          reviewRunId &&
-          executionGraphOwnsOrAnchorsRunId(reviewRunId)
-        ) {
+        if (reviewRunId && executionGraphOwnsOrAnchorsRunId(reviewRunId)) {
           throw new Error('Native review cannot reuse a graph-owned run identity.')
         }
-        const client = getCodexClient()
-        await client.ensureStarted(app.getVersion())
-        const model = normalizeCodexModel(params?.model)
-        const reviewState = createCodexRunState(
-          event.sender,
+        const reviewDispatchPayload = {
+          provider: 'codex',
+          scope: 'workspace',
+          workspace: reviewWorkspacePath,
+          prompt: 'TaskWraith native review',
+          ...route
+        } as AgentRunPayload
+        const reviewDispatchReservation = reserveProviderDispatchForPayload(reviewDispatchPayload)
+        let resolveReviewInvocation!: () => void
+        const reviewInvocationCompletion = new Promise<void>((resolve) => {
+          resolveReviewInvocation = resolve
+        })
+        const reviewAdmissionReservation = codexThreadAdmissionRegistry.reserve({
           threadId,
-          model,
-          reviewWorkspacePath,
-          reviewWorkspacePath,
-          'workspace',
-          route
-        )
-        const registeredReviewSession = registerRunSession(
-          'codex',
-          event.sender,
-          reviewState,
-          reviewWorkspacePath,
-          reviewState,
-          threadId
-        )
-        if (!registeredReviewSession) {
-          throw new Error('Native review could not reserve its exact run identity.')
-        }
-        setActiveCodexRunState(reviewState)
-        sendAgentCompatLine(
-          event.sender,
-          'codex',
-          {
-            type: 'init',
-            provider: 'codex',
-            model,
-            providerThreadId: threadId,
-            message: 'Starting native Codex review.'
-          },
-          reviewState
-        )
-        // Codex emits no natural anchor tool-call for a review, so synthesize a
-        // `codex_review` tool activity the review card hangs its status on. Its
-        // terminal status is emitted from the shared `review/completed` handler
-        // (gated on `reviewState.reviewActivityId`).
-        const reviewActivityId = `codex-review-${randomUUID()}`
-        const reviewStartTelemetry = codexReviewStartTelemetry({ target: params.target, model })
-        reviewState.reviewActivityId = reviewActivityId
-        reviewState.reviewTarget = reviewStartTelemetry.target
-        reviewState.reviewModel = reviewStartTelemetry.model
-        sendAgentCompatLine(
-          event.sender,
-          'codex',
-          {
-            type: 'tool_use',
-            tool_id: reviewActivityId,
-            tool_name: CODEX_REVIEW_TOOL_NAME,
-            parameters: {
-              ...(reviewStartTelemetry.target ? { target: reviewStartTelemetry.target } : {}),
-              ...(reviewStartTelemetry.model ? { model: reviewStartTelemetry.model } : {})
-            },
-            provider: 'codex'
-          },
-          reviewState
-        )
-        sendAgentCompatLine(
-          event.sender,
-          'codex',
-          {
-            type: 'review_event',
-            tool_id: reviewActivityId,
-            review: reviewStartTelemetry,
-            provider: 'codex'
-          },
-          reviewState
-        )
+          kind: 'review',
+          scope: {
+            appChatId: route.appChatId || '',
+            workspaceId: AppStore.getChat(route.appChatId || '')?.workspaceId,
+            joinAfterRelease: () => reviewInvocationCompletion
+          }
+        })
+        let reviewAdmissionMayBeLive = false
         try {
-          const result = await client.request(
-            'review/start',
-            {
-              threadId,
-              target: params.target || { type: 'uncommittedChanges' },
-              delivery: params.delivery || 'inline',
-              model
-            },
-            30_000
+          if (!(await reviewAdmissionReservation.waitUntilAcquired())) {
+            throw new Error('Native review admission was cancelled before setup.')
+          }
+          if (
+            historyClearAdmissionBlocked(
+              route.appRunId,
+              reviewWorkspacePath,
+              route.appChatId
+            )
+          ) {
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            throw new Error('Native review authority was revoked while awaiting admission.')
+          }
+          const client = getCodexClient()
+          try {
+            await client.ensureStarted(app.getVersion())
+          } catch (error) {
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            throw error
+          }
+          promoteProviderRunPersistenceAuthority(reviewDispatchPayload, reviewDispatchReservation)
+          const model = normalizeCodexModel(params?.model)
+          const reviewState = createCodexRunState(
+            event.sender,
+            threadId,
+            model,
+            reviewWorkspacePath,
+            reviewWorkspacePath,
+            'workspace',
+            route
           )
-          const turnId = result?.turn?.id || result?.turnId || result?.review?.id
-          if (turnId) {
-            reviewState.turnId = turnId
+          reviewState.admissionKind = 'review'
+          reviewState.admissionReservation = reviewAdmissionReservation
+          const sessionBeforeReviewRegistration = runManager.get(route.appRunId)
+          if (
+            !providerTransportAdmissionStillAuthorized({
+              historyBlocked: historyClearAdmissionBlocked(
+                route.appRunId,
+                reviewWorkspacePath,
+                route.appChatId
+              ),
+              sessionExists: Boolean(sessionBeforeReviewRegistration),
+              persistenceAuthorized: sessionBeforeReviewRegistration
+                ? providerRunPersistenceAuthorized('codex', route)
+                : false
+            })
+          ) {
+            runManager.finish(route.appRunId, 'cancelled')
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            throw new Error('Native review authority was revoked before admission.')
           }
-          return result
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error)
-          // Settle the synthesized review anchor as failed so its card doesn't
-          // hang on "Reviewing" after the review/start RPC errors (e.g. timeout).
-          if (reviewState.reviewActivityId) {
-            sendAgentCompatLine(
-              reviewState.sender,
+          const reviewTurnOperation = trackCodexAppServerTurnOperation(reviewState)
+          let registeredReviewSession: ReturnType<typeof registerRunSession>
+          try {
+            registeredReviewSession = registerRunSession(
               'codex',
-              {
-                type: 'review_event',
-                tool_id: reviewState.reviewActivityId,
-                review: codexReviewCompletionTelemetry({ status: 'failed', error: message }),
-                provider: 'codex'
-              },
-              reviewState
+              event.sender,
+              reviewState,
+              reviewWorkspacePath,
+              reviewState,
+              threadId
             )
-            sendAgentCompatLine(
-              reviewState.sender,
-              'codex',
-              {
-                type: 'tool_result',
-                tool_id: reviewState.reviewActivityId,
-                status: 'error',
-                output: '',
-                provider: 'codex'
-              },
-              reviewState
-            )
+          } catch (error) {
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            completeCodexAppServerTurnProjection(reviewState)
+            await reviewTurnOperation
+            throw error
           }
-          sendAgentCompatError(reviewState.sender, 'codex', message, reviewState)
-          sendAgentCompatExit(reviewState.sender, 'codex', 1, reviewState)
-          runManager.finish(reviewState.appRunId, 'failed')
-          if (activeCodexRunState === reviewState)
-            setActiveCodexRunState(
-              getCodexStateFromSession(getSingleActiveProviderSession('codex'))
+          if (!registeredReviewSession) {
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            completeCodexAppServerTurnProjection(reviewState)
+            await reviewTurnOperation
+            releaseProviderRunPersistenceAuthority(reviewRunId)
+            throw new Error('Native review could not reserve its exact run identity.')
+          }
+          if (
+            !providerTransportAdmissionStillAuthorized({
+              historyBlocked: historyClearAdmissionBlocked(
+                route.appRunId,
+                reviewWorkspacePath,
+                route.appChatId
+              ),
+              sessionExists: true,
+              persistenceAuthorized: providerRunPersistenceAuthorized('codex', route)
+            })
+          ) {
+            runManager.finish(route.appRunId, 'cancelled')
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            completeCodexAppServerTurnProjection(reviewState)
+            await reviewTurnOperation
+            throw new Error('Native review authority was revoked before admission.')
+          }
+          setActiveCodexRunState(reviewState)
+          sendAgentCompatLine(
+            event.sender,
+            'codex',
+            {
+              type: 'init',
+              provider: 'codex',
+              model,
+              providerThreadId: threadId,
+              message: 'Starting native Codex review.'
+            },
+            reviewState
+          )
+          // Codex emits no natural anchor tool-call for a review, so synthesize a
+          // `codex_review` tool activity the review card hangs its status on. Its
+          // terminal status is emitted from the shared `review/completed` handler
+          // (gated on `reviewState.reviewActivityId`).
+          const reviewActivityId = `codex-review-${randomUUID()}`
+          const reviewStartTelemetry = codexReviewStartTelemetry({ target: params.target, model })
+          reviewState.reviewActivityId = reviewActivityId
+          reviewState.reviewTarget = reviewStartTelemetry.target
+          reviewState.reviewModel = reviewStartTelemetry.model
+          sendAgentCompatLine(
+            event.sender,
+            'codex',
+            {
+              type: 'tool_use',
+              tool_id: reviewActivityId,
+              tool_name: CODEX_REVIEW_TOOL_NAME,
+              parameters: {
+                ...(reviewStartTelemetry.target ? { target: reviewStartTelemetry.target } : {}),
+                ...(reviewStartTelemetry.model ? { model: reviewStartTelemetry.model } : {})
+              },
+              provider: 'codex'
+            },
+            reviewState
+          )
+          sendAgentCompatLine(
+            event.sender,
+            'codex',
+            {
+              type: 'review_event',
+              tool_id: reviewActivityId,
+              review: reviewStartTelemetry,
+              provider: 'codex'
+            },
+            reviewState
+          )
+          try {
+            const result = await client.request(
+              'review/start',
+              {
+                threadId,
+                target: params.target || { type: 'uncommittedChanges' },
+                delivery: 'inline',
+                model
+              },
+              30_000
             )
-          throw error
+            reviewAdmissionMayBeLive = true
+            const turnId = codexString(result?.turn?.id || result?.turnId || result?.review?.id)
+            if (turnId && !bindCodexRunExactOperationId(reviewState, turnId)) {
+              throw new Error('Codex review admission returned a conflicting exact turn id.')
+            }
+            if (result?.reviewThreadId && result.reviewThreadId !== threadId) {
+              throw new Error('Codex review detached onto an unexpected thread; refusing it.')
+            }
+            return result
+          } catch (error) {
+            if (isCodexAppServerRequestTimeout(error, 'review/start')) {
+              // review/start timeouts are admission-ambiguous just like
+              // turn/start. Keep the exact operation live, interrupt the
+              // delayed turn as soon as its id arrives, and do not project a
+              // false failure or release history deletion early.
+              reviewAdmissionMayBeLive = true
+              pendingCodexInterrupts.add(reviewState.threadId)
+              await reviewTurnOperation
+              return { status: 'start-timeout-contained' }
+            }
+            if (reviewState.turnId) {
+              reviewAdmissionMayBeLive = true
+              await issueCodexTurnInterrupt(reviewState.threadId, reviewState.turnId)
+              await reviewTurnOperation
+              throw error
+            }
+            const message = error instanceof Error ? error.message : String(error)
+            // Settle the synthesized review anchor as failed so its card doesn't
+            // hang on "Reviewing" after the review/start RPC errors (e.g. timeout).
+            if (reviewState.reviewActivityId) {
+              sendAgentCompatLine(
+                reviewState.sender,
+                'codex',
+                {
+                  type: 'review_event',
+                  tool_id: reviewState.reviewActivityId,
+                  review: codexReviewCompletionTelemetry({ status: 'failed', error: message }),
+                  provider: 'codex'
+                },
+                reviewState
+              )
+              sendAgentCompatLine(
+                reviewState.sender,
+                'codex',
+                {
+                  type: 'tool_result',
+                  tool_id: reviewState.reviewActivityId,
+                  status: 'error',
+                  output: '',
+                  provider: 'codex'
+                },
+                reviewState
+              )
+            }
+            sendAgentCompatError(reviewState.sender, 'codex', message, reviewState)
+            sendAgentCompatExit(reviewState.sender, 'codex', 1, reviewState)
+            runManager.finish(reviewState.appRunId, 'failed')
+            if (activeCodexRunState === reviewState)
+              setActiveCodexRunState(
+                getCodexStateFromSession(getSingleActiveProviderSession('codex'))
+              )
+            reviewAdmissionReservation.releaseBeforeAdmission()
+            completeCodexAppServerTurnProjection(reviewState)
+            await reviewTurnOperation
+            throw error
+          }
+        } finally {
+          if (!reviewAdmissionMayBeLive) reviewAdmissionReservation.releaseBeforeAdmission()
+          releaseProviderDispatchReservation(reviewDispatchReservation)
+          resolveReviewInvocation()
         }
       }
     )
@@ -39429,6 +40019,12 @@ if (isGeminiMcpBridgeProcess) {
     // (get-agent-models IPC) and the paired-device broadcast both call this,
     // so the phone's hierarchical picker can never drift from the desktop's.
     const listAgentModelsForProvider = async (provider: ProviderId): Promise<unknown[]> => {
+      if (provider === 'cursor') {
+        const reason = cursorManagedRunAdmission().message
+        return getStaticProviderModels('cursor', {
+          includePreviewModels: previewModelCatalogEnabledForProvider('cursor', process.env)
+        }).map((model) => ({ ...model, disabled: true, disabledReason: reason }))
+      }
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()
@@ -39457,9 +40053,7 @@ if (isGeminiMcpBridgeProcess) {
         const models = Array.isArray(response?.data) ? response.data : []
         const normalized = activeCodexModelRows(
           models
-            .filter(
-              (model: any) => model && typeof model.id === 'string' && !model.hidden
-            )
+            .filter((model: any) => model && typeof model.id === 'string' && !model.hidden)
             .map((model: any) => ({
               id: model.id,
               label: model.displayName || model.model || model.id,
@@ -39501,14 +40095,7 @@ if (isGeminiMcpBridgeProcess) {
     // gemini retired — excluded so it never appears in any iOS picker. Historical
     // iOS cards still render via RemoteThreadProjection PROVIDER_LABELS + the
     // Swift Theme gemini accent/label fallback.
-    const REMOTE_MODEL_PROVIDERS: ProviderId[] = [
-      'claude',
-      'codex',
-      'kimi',
-      'grok',
-      'cursor',
-      'ollama'
-    ]
+    const REMOTE_MODEL_PROVIDERS: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
     const broadcastProviderModelsToRemote = (): void => {
       void (async () => {
         const broadcaster = bridgeBroadcasterRef
@@ -39614,10 +40201,9 @@ if (isGeminiMcpBridgeProcess) {
       getChat: (chatId) => AppStore.getChat(chatId),
       getProjects: () => AppStore.getProjects(),
       getReferences: () => AppStore.getProjectReferences(),
-      appendRunEvent: (input) => getRunRepository().appendRunEvent(input),
-      artifactStore: new ProjectReferenceArtifactStore(
-        join(app.getPath('userData'), 'project-reference-context-artifacts')
-      )
+      appendDurableRunEvent: (input) =>
+        getRunRepository().appendRunEvent(input, { durability: 'strict' }),
+      artifactStore: projectReferenceArtifactStore
     })
     projectReferenceContextAuditServiceRef = projectReferenceContextAuditService
     const runCoordinator = new RunCoordinator({
@@ -39625,19 +40211,29 @@ if (isGeminiMcpBridgeProcess) {
       routeWithRunId,
       applyRuntimeProfileToPayload,
       ensureProviderRunPreflight,
-      prepareReferenceContext: (payload) =>
-        projectReferenceContextAuditService.prepare(payload),
-      captureReferenceContext: (payload) =>
-        projectReferenceContextAuditService.capture(payload),
-      authorizeBeforeAdapterRun: (payload) => {
+      prepareReferenceContext: (payload) => projectReferenceContextAuditService.prepare(payload),
+      reserveDispatch: reserveProviderDispatchForPayload,
+      captureReferenceContext: (payload) => projectReferenceContextAuditService.capture(payload),
+      authorizeBeforeReferenceCapture: (payload, reservation) => {
+        validateProviderDispatchReservation(
+          payload,
+          reservation as ProviderDispatchReservation | undefined
+        )
+      },
+      authorizeBeforeAdapterRun: (payload, reservation) => {
+        const providerReservation = reservation as ProviderDispatchReservation | undefined
+        validateProviderDispatchReservation(payload, providerReservation)
         const appRunId = payload.appRunId?.trim()
-        if (!appRunId) return
+        if (!appRunId) throw new Error('Provider dispatch requires an exact app run id.')
         const candidate = AppStore.getRunQueueJob(appRunId)
         const durableClaim = executionGraphDurableClaimForRun(appRunId)
         if (executionGraphAnchorClaimsForRun(appRunId).length > 0) {
           throw new Error('A live Stack anchor run identity cannot start another transport.')
         }
-        if (!candidate?.executionGraph && !durableClaim) return
+        if (!candidate?.executionGraph && !durableClaim) {
+          promoteProviderRunPersistenceAuthority(payload, providerReservation!)
+          return
+        }
         if (!candidate?.executionGraph || !durableClaim) {
           throw new Error('Execution graph adapter authority is missing its exact durable twin.')
         }
@@ -39682,12 +40278,12 @@ if (isGeminiMcpBridgeProcess) {
         ) {
           throw new Error('Execution graph attempts cannot be rerouted after composition.')
         }
+        promoteProviderRunPersistenceAuthority(payload, providerReservation!)
       },
+      releaseDispatchReservation: releaseProviderDispatchReservation,
       runAdapter: async (adapter, event, payload) => {
         const appRunId = payload.appRunId?.trim()
-        const admission = appRunId
-          ? executionGraphAdapterAdmissions.get(appRunId)
-          : undefined
+        const admission = appRunId ? executionGraphAdapterAdmissions.get(appRunId) : undefined
         if (!appRunId) {
           await adapter.run({ event, payload })
           return
@@ -39697,20 +40293,31 @@ if (isGeminiMcpBridgeProcess) {
         }
         const token = Object.freeze({})
         providerAdapterInvocationTokens.set(appRunId, token)
+        let adapterOperation: Promise<void> | null = null
         try {
-          await executionGraphAdapterContext.run(
-            { appRunId, token, ...(admission ? { admission } : {}) },
-            () => adapter.run({ event, payload })
+          adapterOperation = Promise.resolve(
+            executionGraphAdapterContext.run(
+              { appRunId, token, ...(admission ? { admission } : {}) },
+              () => adapter.run({ event, payload })
+            )
           )
+          providerAdapterRunsInFlight.set(appRunId, adapterOperation)
+          await adapterOperation
         } finally {
+          if (adapterOperation && providerAdapterRunsInFlight.get(appRunId) === adapterOperation) {
+            providerAdapterRunsInFlight.delete(appRunId)
+          }
           if (providerAdapterInvocationTokens.get(appRunId) === token) {
             providerAdapterInvocationTokens.delete(appRunId)
+          }
+          if (!runManager.get(appRunId)) {
+            releaseProviderRunPersistenceAuthority(appRunId)
           }
         }
       },
       getAdapter: (provider) => providerAdapters.require(provider),
-      sendError: sendAgentCompatError,
-      sendExit: sendAgentCompatExit
+      sendError: sendProviderPreflightError,
+      sendExit: sendProviderPreflightExit
     })
     // Publish to module-scope so the MCP `delegate_to_subthread` tool
     // (Phase F3) can dispatch agent-driven sub-thread runs without
@@ -39780,6 +40387,7 @@ if (isGeminiMcpBridgeProcess) {
         executionGraphCoordinatorRef?.recordPreSessionDispatchFailure(appRunId, reason)
       }
       let exclusiveReservation: ExclusiveChatDispatchReservation | undefined
+      let providerDispatchReservation: ProviderDispatchReservation | undefined
       try {
         try {
           exclusiveReservation = scheduledOccurrenceOwners.reserveExclusiveChatDispatch(
@@ -39821,11 +40429,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           throw new Error('Execution graph scheduler lost its queued attempt before lease.')
         }
-        if (
-          leased.runId !== appRunId ||
-          leased.status !== 'starting' ||
-          !leased.executionGraph
-        ) {
+        if (leased.runId !== appRunId || leased.status !== 'starting' || !leased.executionGraph) {
           throw new Error('Execution graph scheduler could not acquire its exact queue lease.')
         }
         const entry = composeMainOwnedExecutionGraphAttempt(appRunId)
@@ -39840,6 +40444,7 @@ if (isGeminiMcpBridgeProcess) {
           throw new Error('Main-owned execution graph payload belongs to a stale attempt.')
         }
         registerExecutionGraphRunTranscript({ job, entry })
+        providerDispatchReservation = reserveProviderDispatchForPayload(entry.payload)
 
         // Consume composition authority before provider launch. No renderer or
         // second main pump can replay this attempt while the adapter starts.
@@ -39847,18 +40452,18 @@ if (isGeminiMcpBridgeProcess) {
         executionGraphAdapterAdmissions.set(appRunId, entry)
         executionGraphComposedPayloads.delete(appRunId)
         await repairKnownStaleGeminiMcpBridgeConfigs(entry.payload.workspace).catch(() => {})
-        await expandPdfImagePathsForPayload(entry.payload).catch((error) => {
-          console.warn(
-            `[pdf-attachments] graph expansion failed for runId=${appRunId}: ${error instanceof Error ? error.message : String(error)}`
-          )
-        })
+        await expandPdfImagePathsForPayload(entry.payload)
         // Re-read the predecessor receipt at the last main-owned boundary. A
         // concurrent transcript clear or stale renderer save cannot turn the
         // graph ledger alone into dispatch authority.
         graphOwnedComposerInput(appRunId)
-        const result = await runCoordinator.dispatch(entry.payload, {
-          sender: mainWindow.webContents
-        } as Electron.IpcMainInvokeEvent)
+        const result = await runCoordinator.dispatch(
+          entry.payload,
+          {
+            sender: mainWindow.webContents
+          } as Electron.IpcMainInvokeEvent,
+          providerDispatchReservation
+        )
         const session = runManager.get(appRunId)
         if (
           !result.dispatched ||
@@ -39915,6 +40520,9 @@ if (isGeminiMcpBridgeProcess) {
         executionGraphComposedPayloads.delete(appRunId)
         executionGraphAdapterAdmissions.delete(appRunId)
         executionGraphDispatchesInFlight.delete(appRunId)
+        if (providerDispatchReservation) {
+          releaseProviderDispatchReservation(providerDispatchReservation)
+        }
         if (exclusiveReservation) {
           scheduledOccurrenceOwners.releaseExclusiveChatDispatch(exclusiveReservation)
         }
@@ -39944,20 +40552,33 @@ if (isGeminiMcpBridgeProcess) {
       workflowBudgetRegistry,
       failoverSnapshotByRun,
       runCoordinator,
+      reserveDispatch: reserveProviderDispatchForPayload,
+      releaseDispatchReservation: releaseProviderDispatchReservation,
       getSettings: () => AppStore.getSettings(),
       getScheduledTasks: () => AppStore.getScheduledTasks(),
       getWorkflowDefinitions: () => AppStore.getWorkflowDefinitions(),
       wasDurableScheduledRunIdObserved
     }
     const baseDispatchRunWithProviderPause = createRunDispatchFacade(runDispatchFacadeDeps)
-    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event) =>
-      dispatchParentRunWithPendingSubThreadMailbox(
+    const dispatchRunWithProviderPause: ParentRunDispatch = (payload, event) => {
+      if (historyClearBlocksRunPayload(payload)) {
+        return Promise.reject(
+          new Error('TaskWraith is clearing all history; new runs are temporarily blocked.')
+        )
+      }
+      return dispatchParentRunWithPendingSubThreadMailbox(
         payload,
         event,
         baseDispatchRunWithProviderPause
       )
+    }
     dispatchRunWithProviderPauseRef = dispatchRunWithProviderPause
     const dispatchMainOwnedScheduledOccurrence: ParentRunDispatch = (payload, event) => {
+      if (historyClearBlocksRunPayload(payload)) {
+        return Promise.reject(
+          new Error('TaskWraith is clearing all history; scheduled runs are temporarily blocked.')
+        )
+      }
       return baseDispatchRunWithProviderPause(
         authorizeMainOwnedScheduledOccurrenceDispatch(payload),
         event
@@ -39999,9 +40620,7 @@ if (isGeminiMcpBridgeProcess) {
             scheduledRoundId &&
             scheduledOccurrenceOwners.wasEnsembleRoundIdObserved(scheduledRoundId)
           ) {
-            throw new Error(
-              'Scheduled ensemble ownership ended before participant dispatch.'
-            )
+            throw new Error('Scheduled ensemble ownership ended before participant dispatch.')
           }
           return dispatchRunWithProviderPause(payload, event)
         }
@@ -40025,6 +40644,8 @@ if (isGeminiMcpBridgeProcess) {
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
+      terminateRunForHistory: (provider, runId) =>
+        terminateProviderRunForHistory(provider, runId),
       createRunId: createFallbackRunId,
       now: () => Date.now(),
       nowIso: () => new Date().toISOString(),
@@ -40063,11 +40684,7 @@ if (isGeminiMcpBridgeProcess) {
           const owner = scheduledOccurrenceOwners.lookupEnsembleRound(roundId)
           if (owner) {
             const terminalStatus =
-              status === 'completed'
-                ? 'completed'
-                : status === 'cancelled'
-                  ? 'cancelled'
-                  : 'failed'
+              status === 'completed' ? 'completed' : status === 'cancelled' ? 'cancelled' : 'failed'
             const settled = settleScheduledOccurrence(owner, terminalStatus, {
               completedAt: new Date().toISOString(),
               ...(terminalStatus === 'failed'
@@ -40086,7 +40703,8 @@ if (isGeminiMcpBridgeProcess) {
         runQueueServiceRef
           ? runQueueServiceRef.transitionJob(runIdOrId, status, partial)
           : getRunRepository().transitionRunQueueJob(runIdOrId, status, partial),
-      releaseWriteIntentsForLane: (laneId) => workspaceWriteIntentRegistry.releaseAllForLane(laneId),
+      releaseWriteIntentsForLane: (laneId) =>
+        workspaceWriteIntentRegistry.releaseAllForLane(laneId),
       // A non-Boss participant that tries to drive a Boss-only Ensemble MCP
       // control is an attempted control escalation — record it to the durable
       // approval ledger (as a policy auto-deny), not just the transcript.
@@ -40107,16 +40725,16 @@ if (isGeminiMcpBridgeProcess) {
           ? 'Ensemble brief update rejected'
           : rejectedKind === 'roster_preset_import_rejected'
             ? 'Ensemble roster preset import rejected'
-          : rosterEditRejected
-            ? 'Ensemble roster edit rejected'
-            : 'Ensemble Boss control rejected'
+            : rosterEditRejected
+              ? 'Ensemble roster edit rejected'
+              : 'Ensemble Boss control rejected'
         const body = briefUpdateRejected
           ? 'A non-Boss participant attempted to use ensemble_brief_update.'
           : rejectedKind === 'roster_preset_import_rejected'
             ? 'A non-authority participant attempted to import and activate an Ensemble roster preset.'
-          : rosterEditRejected
-            ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
-            : 'A non-Boss participant attempted to use ensemble_bossman_control.'
+            : rosterEditRejected
+              ? 'A non-Boss participant attempted to use ensemble_roster_edit.'
+              : 'A non-Boss participant attempted to use ensemble_bossman_control.'
         return auditService.recordAutomaticApprovalDecision(
           rejection.provider,
           { appRunId: rejection.runId, appChatId: rejection.chatId },
@@ -40210,9 +40828,10 @@ if (isGeminiMcpBridgeProcess) {
 
     // resolveSignals: live provider auth/health/usage → resolver ProviderSignals.
     // Reuses the app's existing per-provider auth determination (the same cheap
-    // signals the get-*-auth-status handlers use): binary resolution for
-    // `configured`, and per-provider credential/auth-state for `authenticated`
-    // (a provider with no auth comes back authenticated:false). v1 cuts:
+    // signals the get-*-auth-status handlers use): binary resolution for most
+    // providers, exact managed-runtime admission for Kimi, and per-provider
+    // credential/auth-state for `authenticated` (a provider with no auth comes
+    // back authenticated:false). v1 cuts:
     //   - healthy:true for every provider (no live reachability probe yet — a
     //     later enhancement; the resolver only excludes on configured/auth/usage).
     //   - usageBand omitted (cheap path only) — the resolver treats a missing
@@ -40256,14 +40875,25 @@ if (isGeminiMcpBridgeProcess) {
         let configured = false
         let authenticated = false
         try {
+          if (provider === 'kimi') {
+            // Audit selection must use the same managed-run truth as status and
+            // dispatch. A PATH hit is not configuration when the exact runtime
+            // is unadmitted, while an admitted OAuth-only seat is authenticated
+            // even without a stored provider key.
+            const status = await getKimiAdmittedStatusSnapshot()
+            configured = status.available === true
+            const kimiAuthState = String(status.authState || '').toLowerCase()
+            authenticated =
+              configured && ['api-key', 'oauth', 'authenticated'].includes(kimiAuthState)
+            inputs.push({ provider, configured, authenticated, healthy: true })
+            continue
+          }
           const resolved = await resolveCliProviderBinary(provider)
           configured = Boolean(resolved.binaryPath)
           if (provider === 'claude') {
             authenticated =
               Boolean(settings.claudeApiKey) ||
               (configured && (await readClaudeAuthState(resolved)) === 'authenticated')
-          } else if (provider === 'kimi') {
-            authenticated = Boolean(settings.kimiApiKey)
           } else if (provider === 'gemini') {
             const geminiAuth = await getGeminiAuthStatusSnapshot()
             authenticated = geminiAuth.authState === 'authenticated'
@@ -40293,6 +40923,16 @@ if (isGeminiMcpBridgeProcess) {
       }),
       runGates: createAuditGatesRunner({
         runCommand: (command, cwd) => runHostCommand(command, cwd),
+        createHostCommandProjection: (authority) =>
+          hostCommandProjectionHandle(
+            createHostCommandProjectionScope({
+              source: 'audit-gate',
+              appRunId: authority.auditRunId,
+              appChatId: authority.appChatId,
+              workspaceId: authority.workspaceId,
+              workspacePath: authority.workspacePath
+            })
+          ),
         uuid: () => randomUUID()
       }).runGates,
       getPolicy: () => AppStore.getSettings().auditOrchestration,
@@ -40338,7 +40978,7 @@ if (isGeminiMcpBridgeProcess) {
       now: () => Date.now(),
       nowIso: () => new Date().toISOString()
     })
-    if (ensembleWakeupsEnabled()) {
+    if (!historyDeletionStartupRecoveryBlockedReason && ensembleWakeupsEnabled()) {
       recoverPersistedEnsembleWakeups()
       // 1.0.5-EW37 — Solo wakeups gated behind the same flag as
       // ensemble for now. Once the feature is considered stable
@@ -40346,7 +40986,9 @@ if (isGeminiMcpBridgeProcess) {
       // together.
       recoverPersistedSoloChatWakeups()
     }
-    recoverPendingSubThreadMailboxes()
+    if (!historyDeletionStartupRecoveryBlockedReason) {
+      recoverPendingSubThreadMailboxes()
+    }
     const dispatchAgentRun = async (
       payload: AgentRunPayload,
       event: Electron.IpcMainInvokeEvent
@@ -40400,11 +41042,11 @@ if (isGeminiMcpBridgeProcess) {
         const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
         assertRendererChatScope(event, chatId)
         if (Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId')) {
-          throw new Error('Renderer scheduled-round dispatch is retired; MAIN owns every occurrence.')
+          throw new Error(
+            'Renderer scheduled-round dispatch is retired; MAIN owns every occurrence.'
+          )
         }
-        const imageAttachments = imageAttachmentSnapshots(
-          payload?.imageAttachments
-        )
+        const imageAttachments = imageAttachmentSnapshots(payload?.imageAttachments)
         const prompt = typeof payload?.prompt === 'string' ? payload.prompt : ''
         if (!prompt.trim() && imageAttachments.length === 0) {
           throw new Error('Ensemble prompt or attachment is required.')
@@ -40412,7 +41054,8 @@ if (isGeminiMcpBridgeProcess) {
         const dispatchImageAttachments = await authorizeThenExpandAttachmentRecords(
           imageAttachments,
           (paths) => resolveRendererAttachmentPaths(event, paths),
-          expandPdfAttachmentsForDispatch
+          (authorizedAttachments) =>
+            expandPdfAttachmentsForDispatch(authorizedAttachments, chatId)
         )
         // 1.0.4-AT4 — normalize the renderer-supplied grants the
         // same way solo-run dispatch does. Drops malformed entries
@@ -40425,6 +41068,27 @@ if (isGeminiMcpBridgeProcess) {
           ? payload.discordContextSnapshots
           : []
         assertScheduledEnsembleInteractiveAvailable(chatId)
+        const ensembleChat = AppStore.getChat(chatId)
+        if (!ensembleChat?.ensemble) {
+          throw new Error('Ensemble chat not found.')
+        }
+        // MAIN owns participant routing. The renderer's id is advisory because
+        // its roster snapshot can be stale and its historical plain-mention
+        // resolver selected the first seat for duplicate aliases. Re-resolve
+        // the prompt against the current roster; structured picker links retain
+        // exact identity, while ambiguous or stale targets fail before launch.
+        const dmTargetResolution = resolveEnsembleDmTargetForDispatch({
+          text: prompt,
+          participants: ensembleChat.ensemble.participants,
+          advisoryParticipantId: payload?.dmTargetParticipantId
+        })
+        const dmTargetError = ensembleDmTargetResolutionError(
+          dmTargetResolution,
+          ensembleChat.ensemble.participants
+        )
+        if (dmTargetError) throw new Error(dmTargetError)
+        const dmTargetParticipantId =
+          dmTargetResolution.kind === 'target' ? dmTargetResolution.participantId : undefined
         const ensembleStartResult = ensembleOrchestratorRef?.startRound({
           chatId,
           prompt,
@@ -40435,19 +41099,11 @@ if (isGeminiMcpBridgeProcess) {
                 concurrentMode: Boolean(payload.concurrentMode)
               }
             : {}),
-          ...(payload?.fanoutPolicy !== undefined
-            ? { fanoutPolicy: payload.fanoutPolicy }
-            : {}),
+          ...(payload?.fanoutPolicy !== undefined ? { fanoutPolicy: payload.fanoutPolicy } : {}),
           imageAttachments: dispatchImageAttachments,
           ...(discordContextSnapshots.length > 0 ? { discordContextSnapshots } : {}),
-          ...(payload?.dmTargetParticipantId
-            ? {
-                dmTargetParticipantId: payload.dmTargetParticipantId
-              }
-            : {}),
-          ...(externalPathGrants.length > 0
-            ? { externalPathGrants }
-            : {})
+          ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+          ...(externalPathGrants.length > 0 ? { externalPathGrants } : {})
         })
         return ensembleStartResult
       }
@@ -40472,18 +41128,18 @@ if (isGeminiMcpBridgeProcess) {
         assertRendererChatScope(event, chatId)
         const index = Number.isFinite(payload?.index) ? Math.floor(Number(payload.index)) : -1
         assertScheduledEnsembleInteractiveAvailable(chatId)
-        return ensembleOrchestratorRef?.steerQueuedPrompt({
-          chatId,
-          index,
-          event,
-          ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {}),
-          ...(payload?.concurrentMode !== undefined
-            ? { concurrentMode: Boolean(payload.concurrentMode) }
-            : {}),
-          ...(payload?.fanoutPolicy !== undefined
-            ? { fanoutPolicy: payload.fanoutPolicy }
-            : {})
-        }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
+        return (
+          ensembleOrchestratorRef?.steerQueuedPrompt({
+            chatId,
+            index,
+            event,
+            ...(typeof payload?.textPrefix === 'string' ? { textPrefix: payload.textPrefix } : {}),
+            ...(payload?.concurrentMode !== undefined
+              ? { concurrentMode: Boolean(payload.concurrentMode) }
+              : {}),
+            ...(payload?.fanoutPolicy !== undefined ? { fanoutPolicy: payload.fanoutPolicy } : {})
+          }) ?? { status: 'ignored', error: 'Ensemble orchestrator is not initialized.' }
+        )
       }
     )
 
@@ -40637,7 +41293,11 @@ if (isGeminiMcpBridgeProcess) {
       chatId: string
       index: number
       textPrefix?: string
-    }): { ok: boolean; entry?: NonNullable<ReturnType<typeof makeBlackboardEntry>>; error?: string } {
+    }): {
+      ok: boolean
+      entry?: NonNullable<ReturnType<typeof makeBlackboardEntry>>
+      error?: string
+    } {
       const removal = ensembleOrchestratorRef?.removeQueuedPrompt({
         chatId: input.chatId,
         index: input.index,
@@ -40733,11 +41393,14 @@ if (isGeminiMcpBridgeProcess) {
         assertRendererChatScope(event, chatId)
         const participantId = requireNonEmptyString(payload?.participantId, 'Participant id')
         const rawParticipant =
-          payload?.participant && typeof payload.participant === 'object' && !Array.isArray(payload.participant)
+          payload?.participant &&
+          typeof payload.participant === 'object' &&
+          !Array.isArray(payload.participant)
             ? payload.participant
             : {}
         const participant: RosterEditParticipantInput = {}
-        if (typeof rawParticipant.provider === 'string') participant.provider = rawParticipant.provider
+        if (typeof rawParticipant.provider === 'string')
+          participant.provider = rawParticipant.provider
         if (typeof rawParticipant.model === 'string' || rawParticipant.model === null) {
           participant.model = rawParticipant.model
         }
@@ -40832,18 +41495,17 @@ if (isGeminiMcpBridgeProcess) {
               ? rawParticipant.linkedProviderSessionId
               : undefined
         }
-        const result =
-          (await ensembleOrchestratorRef?.requestParticipantSeatChange({
-            chatId,
-            participantId,
-            participant,
-            changedBy: 'user',
-            reason: optionalString(payload?.reason) || 'Participant seat changed by user.'
-          })) ?? {
-            ok: false,
-            message: 'Participant seat change rejected: Ensemble orchestrator is not initialized.',
-            error: 'not_ensemble'
-          }
+        const result = (await ensembleOrchestratorRef?.requestParticipantSeatChange({
+          chatId,
+          participantId,
+          participant,
+          changedBy: 'user',
+          reason: optionalString(payload?.reason) || 'Participant seat changed by user.'
+        })) ?? {
+          ok: false,
+          message: 'Participant seat change rejected: Ensemble orchestrator is not initialized.',
+          error: 'not_ensemble'
+        }
         const updated = AppStore.getChat(chatId)
         if (updated) broadcastChatUpdated(updated)
         broadcastThreadUpdate(chatId, { remoteProjectionSnapshot: false })
@@ -40949,10 +41611,7 @@ if (isGeminiMcpBridgeProcess) {
           )
           if (scheduledOwner) {
             return Boolean(
-              await cancelScheduledOccurrence(
-                scheduledOwner.taskId,
-                'Cancelled from run controls.'
-              )
+              await cancelScheduledOccurrence(scheduledOwner.taskId, 'Cancelled from run controls.')
             )
           }
           if (wasScheduledOccurrenceRunIdObserved(runIdString)) return false
@@ -40967,10 +41626,13 @@ if (isGeminiMcpBridgeProcess) {
     // wake-push fan-out + the scheduled-timeout integration. See
     // src/main/services/ApprovalService.ts for the full surface.
     const approvalServiceInstance = new ApprovalService({
+      isApprovalAdmissionBlocked: historyClearAdmissionBlocked,
       runManager,
       permissionService,
       appendDurableRunEventForRoute,
       resolveApprovalLedger: auditService.resolveApprovalLedgerResponse.bind(auditService),
+      resolveApprovalLedgerStrict:
+        auditService.resolveApprovalLedgerResponseStrict.bind(auditService),
       getCodexClient: () => codexClient,
       sendAgentCompatLine,
       respondToKimiWireRequest,
@@ -41069,8 +41731,7 @@ if (isGeminiMcpBridgeProcess) {
         if (isMainRendererSender(event)) return
         const route = approvalServiceInstance.lookupRoute(requestId)
         const external = approvalServiceInstance.getPendingExternalPathDetection(requestId)
-        const chatId =
-          route?.appChatId || external?.appChatId
+        const chatId = route?.appChatId || external?.appChatId
         if (!chatId) {
           throw new Error('Renderer does not own this approval request.')
         }

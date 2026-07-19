@@ -3,6 +3,7 @@ import {
   type McpBridgeAgentRunRoute,
   type McpToolDefinition
 } from '../mcp/McpBridgeRuntime'
+import { mcpUnexpectedInternalError } from '../mcp/McpInternalError'
 
 export interface KimiMcpDispatchOptions {
   route: McpBridgeAgentRunRoute
@@ -73,12 +74,8 @@ export function createKimiMcpDispatch(
           message,
           'line'
         )
-      } catch (error) {
-        finish({
-          jsonrpc: '2.0',
-          id: message.id ?? null,
-          error: { code: -32000, message: error instanceof Error ? error.message : String(error) }
-        })
+      } catch {
+        finish(mcpUnexpectedInternalError(message.id))
       }
 
       if (!settled) {

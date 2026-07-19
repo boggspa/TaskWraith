@@ -1,8 +1,13 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
-import { grokAcpEnabled, grokSeatSessionsEnabled } from './grokGate'
+import {
+  GROK_ACP_REQUIRED_MESSAGE,
+  grokAcpEnabled,
+  grokSeatSessionsEnabled
+} from './grokGate'
 
 // Provider eligibility is no longer gated (Grok is permanently first-class —
-// see ProviderId). Only the ACP transport sub-gate remains configurable.
+// see ProviderId). ACP is also mandatory for managed one-shot runs; the legacy
+// environment key remains here only to prove it cannot reopen headless mode.
 const GROK_ENV_KEYS = ['TASKWRAITH_GROK_ACP', 'TASKWRAITH_GROK_SEAT_SESSIONS'] as const
 
 type GrokEnvKey = (typeof GROK_ENV_KEYS)[number]
@@ -42,18 +47,20 @@ describe('grokAcpEnabled', () => {
     expect(grokAcpEnabled()).toBe(true)
   })
 
-  it('stays on for documented enabled or malformed values', () => {
+  it('stays on for enabled or malformed values', () => {
     for (const value of ['', '1', 'true', 'yes', 'TRUE', 'YES', ' yes ', 'random']) {
       resetGrokEnv({ TASKWRAITH_GROK_ACP: value })
       expect(grokAcpEnabled()).toBe(true)
     }
   })
 
-  it('turns off for exact documented opt-out values', () => {
-    for (const value of ['0', 'false', 'no']) {
+  it('fails closed for former headless opt-outs without reopening that transport', () => {
+    for (const value of ['0', 'false', 'no', 'off', 'FALSE', ' No ', ' OFF ']) {
       resetGrokEnv({ TASKWRAITH_GROK_ACP: value })
       expect(grokAcpEnabled()).toBe(false)
     }
+    expect(GROK_ACP_REQUIRED_MESSAGE).toContain('legacy headless fallback is retired')
+    expect(GROK_ACP_REQUIRED_MESSAGE).toContain('exact process-close evidence')
   })
 })
 
@@ -72,12 +79,12 @@ describe('grokSeatSessionsEnabled', () => {
     }
   })
 
-  it('defaults the production ensemble seat-session path on', () => {
-    expect(grokSeatSessionsEnabled()).toBe(true)
+  it('keeps persistent ensemble seat processes disabled by default', () => {
+    expect(grokSeatSessionsEnabled()).toBe(false)
   })
 
-  it('honors the documented emergency opt-out', () => {
-    for (const value of ['0', 'false', 'no']) {
+  it('does not let environment flags reopen the unjoined persistent process lane', () => {
+    for (const value of ['0', 'false', 'no', '1', 'true', 'yes']) {
       resetGrokEnv({ TASKWRAITH_GROK_SEAT_SESSIONS: value })
       expect(grokSeatSessionsEnabled()).toBe(false)
     }

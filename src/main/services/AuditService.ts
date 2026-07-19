@@ -7,6 +7,10 @@ import type {
   ProviderId,
   RunPermissionPostureSnapshot
 } from '../store/types'
+import {
+  canvasEvalApprovalPayloadForDurableStorage,
+  createCanvasEvalApprovalReceipt
+} from '../canvas/CanvasEvalAudit'
 
 export interface ApprovalRouteContext {
   session?: {
@@ -46,7 +50,7 @@ export interface AuditServiceDeps {
     action: AgentApprovalAction,
     decisionSource: 'user' | 'system',
     extraMetadata: Record<string, unknown>
-  ) => void
+  ) => unknown
   recordApprovalLedgerDecision: (input: ApprovalLedgerRequestInput) => void
   approvalRouteContext: (provider: ProviderId, route?: AgentRunRoute | null) => ApprovalRouteContext
   now?: () => Date
@@ -57,9 +61,11 @@ export interface AuditServiceDeps {
 /**
  * AuditService — Phase B follow-up extraction.
  *
- * Owns approval-ledger response and automatic-decision writes. The
- * service intentionally never throws: ledger/audit failures should not
- * break provider protocol flow or permission dispatch.
+ * Owns approval-ledger response and automatic-decision writes. Ordinary
+ * best-effort methods absorb ledger failures so telemetry does not break
+ * provider protocol flow. The signed-elevated strict resolver is the deliberate
+ * exception: it throws unless the pending durable row was resolved, preventing
+ * privileged execution from resuming without its forensic record.
  */
 export class AuditService {
   constructor(private deps: AuditServiceDeps) {}
@@ -77,6 +83,24 @@ export class AuditService {
     }
   }
 
+  /** Signed-elevated decisions must exist durably before execution resumes. */
+  resolveApprovalLedgerResponseStrict(
+    approvalId: string,
+    action: AgentApprovalAction,
+    decisionSource: 'user' | 'system' = 'user',
+    extraMetadata: Record<string, unknown> = {}
+  ): void {
+    const resolved = this.deps.resolveApprovalResponse(
+      approvalId,
+      action,
+      decisionSource,
+      extraMetadata
+    )
+    if (!resolved) {
+      throw new Error(`Approval ledger record ${approvalId} was not durably resolved.`)
+    }
+  }
+
   recordAutomaticApprovalDecision(
     provider: ProviderId,
     route: AgentRunRoute | null | undefined,
@@ -91,18 +115,41 @@ export class AuditService {
     try {
       const now = this.nowIso()
       const context = this.deps.approvalRouteContext(provider, route)
+      const approvalId = `${decision}-${service}-${this.nowMs()}-${this.idSuffix()}`
+      // This is a host-owned canonical request boundary, not a generic log
+      // sanitizer. Bind only the exact, documented preview.params.script field;
+      // never walk arbitrary nested provider data looking for something that
+      // resembles JavaScript.
+      const preview =
+        request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
+          ? (request.preview as Record<string, unknown>)
+          : null
+      const params =
+        preview?.params && typeof preview.params === 'object' && !Array.isArray(preview.params)
+          ? (preview.params as Record<string, unknown>)
+          : null
+      const canvasEvalApproval =
+        service === 'canvasEval' && typeof params?.script === 'string'
+          ? createCanvasEvalApprovalReceipt(params.script, approvalId)
+          : undefined
+      const durableRequest = canvasEvalApprovalPayloadForDurableStorage(
+        service,
+        request,
+        approvalId,
+        canvasEvalApproval
+      )
       const metadataWithPosture = mergePermissionPostureMetadata(
         metadata,
         context.permissionPosture
       )
       this.deps.recordApprovalLedgerDecision({
-        approvalId: `${decision}-${service}-${this.nowMs()}-${this.idSuffix()}`,
+        approvalId,
         provider,
         service,
-        method: request.method,
-        title: request.title,
-        body: request.body,
-        preview: request.preview,
+        method: durableRequest.method,
+        title: durableRequest.title,
+        body: durableRequest.body,
+        preview: durableRequest.preview,
         actions: [],
         status: decision === 'autoAllow' ? 'approved' : 'denied',
         requestedAt: now,

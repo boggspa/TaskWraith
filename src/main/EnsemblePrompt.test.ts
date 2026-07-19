@@ -806,7 +806,10 @@ describe('Ensemble prompt composition', () => {
     })
     expect(prompt).toMatch(/address participants by their.*\(role\) name.*model name/i)
     expect(prompt).toMatch(/do not address peers by bare provider name/i)
-    expect(prompt).toMatch(/bare provider name.*non-deterministic/i)
+    expect(prompt).toMatch(/same-provider peers.*ambiguous.*fails it closed/i)
+    expect(prompt).toMatch(/in-round mention.*changes no routing/i)
+    expect(prompt).toMatch(/new-round directed send is rejected/i)
+    expect(prompt).toMatch(/participant picker.*unique role\/model alias/i)
   })
 
   it('includes orchestrator-written session activity events in the round header', () => {
@@ -1578,7 +1581,10 @@ describe('formatSameProviderDisambiguationNote', () => {
     expect(note).toContain('`@Brodex`')
     expect(note).toContain('`@5.5`')
     expect(note).toContain('Plain `@codex`')
-    expect(note).toContain('non-deterministic')
+    expect(note).toContain('participant picker')
+    expect(note).toContain('fails it closed')
+    expect(note).toContain('no in-round promotion occurs')
+    expect(note).toContain('new-round directed send is rejected')
   })
 
   it('handles multiple duplicate-provider groups in one note', () => {
@@ -2140,10 +2146,12 @@ describe('Ollama ensemble prompt budgeting', () => {
       chatContextTurns: 10
     })
     expect(prompt).toContain('Local Ollama participant notes:')
-    // Identity anchor: the Ollama seat is told it is a local model and is NOT a
-    // cloud provider, so it doesn't mirror a peer's stronger-sounding label.
+    // Identity anchor: the Ollama seat is told it is a local model and that
+    // roster names identify peers, so it doesn't mirror a stronger label or
+    // imply that unavailable canonical providers are live participants.
     expect(prompt).toContain('You are a LOCAL model running through Ollama')
-    expect(prompt).toContain('You are NOT Claude, Codex, Gemini, Kimi, Grok, or Cursor')
+    expect(prompt).toContain('Other names in the participant roster identify peer seats, not you')
+    expect(prompt).not.toContain('Cursor — those are OTHER participants')
     // Tier retirement (2026-07): the ensemble note no longer hard-codes the old
     // "write with approval, shell with approval" tier semantics — approval is set
     // by the run's permission role, same tools as every participant.

@@ -177,14 +177,15 @@ describe('probeKimiFlavour', () => {
 })
 
 describe('buildKimiFlavourGateMessage', () => {
-  it('explains the temporary Kimi Code gate with the resolved path and a legacy escape hatch', () => {
+  it('explains that generation detection is not ACP runtime admission', () => {
     const message = buildKimiFlavourGateMessage(
       { flavour: 'kimi-code', evidence: "no --wire option; 'acp' subcommand advertised in --help" },
       '/Users/x/.kimi-code/bin/kimi'
     )
     expect(message).toContain('Kimi Code was detected at /Users/x/.kimi-code/bin/kimi')
-    expect(message).toContain('temporarily unavailable')
-    expect(message).toContain('legacy Kimi CLI binary that supports --wire')
+    expect(message).toContain('generation detection is not runtime admission')
+    expect(message).toContain('embedded reviewed roster')
+    expect(message).toContain('No legacy Wire or print-mode fallback')
   })
 
   it('surfaces the probe evidence for unsupported binaries', () => {

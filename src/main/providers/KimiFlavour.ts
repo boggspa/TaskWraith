@@ -1,4 +1,7 @@
-// Pure, dependency-injected generation probe for the Kimi CLI.
+// Historical, dependency-injected generation classifier for old Kimi records
+// and regression fixtures. Production managed runs do not call this module:
+// descriptor-bound KimiRuntimeAdmission is authoritative and admits only the
+// exact ACP runtime tuples embedded in the build.
 //
 // The kimi-cli → Kimi Code migration (2026-07) replaced the legacy Python CLI
 // (Wire transport, `--wire`) with a TypeScript rewrite whose stdio server is
@@ -148,8 +151,8 @@ export async function probeKimiFlavour(
 }
 
 /**
- * User-facing failure copy for a generation the runtime refuses to spawn.
- * Only meaningful when `findings.flavour !== 'legacy-wire'`.
+ * Compatibility copy for historical callers. No result from this classifier
+ * authorises a managed spawn.
  */
 export function buildKimiFlavourGateMessage(
   findings: KimiFlavourFindings,
@@ -157,9 +160,9 @@ export function buildKimiFlavourGateMessage(
 ): string {
   if (findings.flavour === 'kimi-code') {
     return (
-      `Kimi Code was detected at ${binaryPath}. TaskWraith still drives Kimi over the legacy Wire transport, ` +
-      `which Kimi Code removed, so Kimi runs are temporarily unavailable while the ACP transport migration lands. ` +
-      `To keep using Kimi in the meantime, point Settings → Providers → Kimi at a legacy Kimi CLI binary that supports --wire.`
+      `Kimi Code was detected at ${binaryPath}, but generation detection is not runtime admission. ` +
+      `TaskWraith starts Kimi only through its contained ACP transport when the exact binary tuple is present in the embedded reviewed roster. ` +
+      `No legacy Wire or print-mode fallback is available.`
     )
   }
   return `The Kimi CLI at ${binaryPath} could not be identified as a supported generation (${findings.evidence}), so the run was not started.`

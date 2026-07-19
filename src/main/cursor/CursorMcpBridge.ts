@@ -1,18 +1,20 @@
+// HISTORICAL/QUALIFICATION-ONLY: production Cursor admission is disabled before
+// process launch. These pure bridge builders remain for regression evidence and
+// possible future exact-build qualification; they are not a current runtime
+// surface or containment boundary.
+//
 // 1.0.6-CRUX34 — TaskWraith Cursor MCP bridge (OQ#2).
 //
 // The CR-net probes proved native Cursor web tools (webSearch/webFetch) are
 // hard-rejected ("User Rejected") in headless `-p`, and that the
 // `permissions.allow` token matcher does NOT govern them. The OQ#2 spike first
-// proved the web-only path, and the full provider path now uses a workspace-local
-// `.cursor/mcp.json` registering a brokered TaskWraith MCP server. Plan mode
-// executes no tools, so this bridge is write/default-mode only.
+// proved the web-only path. The historical qualification design used a
+// workspace-local `.cursor/mcp.json`; production no longer writes or attaches
+// it because neither Plan nor tool transport is qualified.
 //
 // This module is PURE (no Electron / no fs) so it's unit-testable: it owns the
-// MCP server SOURCE (written to a temp file per-run by the caller, so there's no
-// packaging/path wiring — the source ships inside the bundled main process) plus
-// the pure helpers that build/merge the `.cursor/mcp.json` + the cli.json allow
-// rule. The Electron-side lifecycle (write temp server, write mcp.json, merge
-// allow, pass --approve-mcps, restore) lives in index.ts / CursorWorkspaceConfig.
+// qualification MCP server source plus pure config/allow-rule builders. No
+// production Electron lifecycle calls them.
 
 import {
   isPlanAdvertisedTool,
@@ -279,7 +281,8 @@ export interface CursorMcpServerInvocation {
 
 /**
  * Build the `mcpServers` entry for the TaskWraith gateway broker server. Pure — the caller
- * merges it into the workspace `.cursor/mcp.json` via {@link mergeCursorMcpConfig}.
+ * installs it into the isolated workspace `.cursor/mcp.json` via
+ * {@link mergeCursorMcpConfig}.
  */
 export function buildCursorMcpServerEntry(
   invocation: CursorMcpServerInvocation
@@ -319,7 +322,7 @@ export function buildCursorReadOnlyMcpServerEntry(
 }
 
 // ── "B" mode: durable GLOBAL registration (~/.cursor/mcp.json) ───────────────
-// The live cursor-agent CLI (2026.06) proved the root cause: `--approve-mcps`
+// Qualification against cursor-agent (2026.06) proved the root cause: `--approve-mcps`
 // approves the SERVER only, and a per-run WORKSPACE `.cursor/mcp.json` server
 // never reaches the durable "approved" state (`cursor-agent mcp list` → "ready"),
 // so headless `-p` rejects its every tool call ("User rejected MCP"). GLOBALLY
@@ -393,19 +396,35 @@ export function globalCursorMcpNeedsUpdate(
 }
 
 /**
- * Merge the TaskWraith server entry into an existing `.cursor/mcp.json` shape (or
- * {}), preserving any other registered MCP servers + unknown top-level keys.
- * Pure.
+ * Build the transient workspace `.cursor/mcp.json` shape used for a managed
+ * Cursor run. Existing server definitions are intentionally excluded: carrying
+ * a project server through while Cursor runs with `--approve-mcps` / `--force`
+ * would let an ungoverned process ride TaskWraith's provider launch.
+ *
+ * `serverEntry` is the complete allowlisted set for this run: TaskWraith's
+ * broker aliases plus any servers explicitly resolved from TaskWraith settings.
+ * For the special Home/global alias case, callers may retain the exact canonical
+ * TaskWraith broker registrations already written to the same global file. The
+ * ambiguous legacy `taskwraith` name is never retained from disk because it can
+ * be user-owned; it is present only when supplied explicitly in `serverEntry`.
+ * Unknown top-level keys are preserved because they cannot register a server,
+ * and the caller restores the original bytes after the run. Pure.
  */
 export function mergeCursorMcpConfig(
   existing: unknown,
-  serverEntry: Record<string, unknown>
+  serverEntry: Record<string, unknown>,
+  options?: { preserveExistingTaskWraithBrokers?: boolean }
 ): Record<string, unknown> {
   const base = asRecord(existing)
   const existingServers = asRecord(base.mcpServers)
   const servers: Record<string, unknown> = {}
-  for (const [name, value] of Object.entries(existingServers)) {
-    if (!isReservedCursorMcpServerName(name)) servers[name] = value
+  if (options?.preserveExistingTaskWraithBrokers) {
+    // Global mode currently registers and enables only this canonical broker.
+    // The scoped name is an obsolete global registration and must not silently
+    // rejoin Cursor's aggregate tool catalogue.
+    if (CURSOR_MCP_SERVER_NAME in existingServers) {
+      servers[CURSOR_MCP_SERVER_NAME] = existingServers[CURSOR_MCP_SERVER_NAME]
+    }
   }
   Object.assign(servers, serverEntry)
   return { ...base, mcpServers: servers }

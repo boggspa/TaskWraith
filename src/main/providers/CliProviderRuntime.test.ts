@@ -2,7 +2,11 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
   createCliEnv,
+  getCliProviderStatus,
   getCliProviderMcpStatus,
+  getAgentMcpStatusSnapshotDirect,
+  getAgentStatusSnapshotDirect,
+  readResolvedCliVersion,
   runtimeSettings,
   type CliProviderRuntimeDependencies,
   type RuntimeProfilePayload
@@ -285,6 +289,41 @@ describe('createCliEnv', () => {
 })
 
 describe('getCliProviderMcpStatus', () => {
+  it('returns static Cursor unavailability without consulting settings', () => {
+    const getSettings = vi.fn(() => {
+      throw new Error('must not read settings')
+    })
+    const status = getCliProviderMcpStatus('cursor', { getSettings })
+
+    expect(status).toMatchObject({
+      provider: 'cursor',
+      available: false,
+      enabled: false,
+      source: 'unsupported',
+      serverName: null,
+      tools: [],
+      sections: []
+    })
+    expect(status.message).toContain('No Cursor process was started')
+    expect(getSettings).not.toHaveBeenCalled()
+  })
+
+  it('keeps the direct MCP wrapper explicit for Cursor adapters', async () => {
+    const getSettings = vi.fn(() => {
+      throw new Error('must not read settings')
+    })
+
+    await expect(getAgentMcpStatusSnapshotDirect('cursor', { getSettings })).resolves.toMatchObject({
+      provider: 'cursor',
+      available: false,
+      enabled: false,
+      source: 'unsupported',
+      serverName: null,
+      tools: []
+    })
+    expect(getSettings).not.toHaveBeenCalled()
+  })
+
   it('keeps Claude MCP available for user-managed servers when the TaskWraith bridge is off', () => {
     const status = getCliProviderMcpStatus('claude', {
       getSettings: () =>
@@ -309,5 +348,83 @@ describe('getCliProviderMcpStatus', () => {
     expect(status.tools).toEqual([])
     expect(status.message).toContain('1 user-managed MCP server')
     expect(status.message).toContain('TaskWraith MCP bridge is disabled')
+  })
+})
+
+describe('Cursor no-process status/version admission', () => {
+  it('keeps the direct status wrapper on the static no-process path', async () => {
+    const getSettings = vi.fn(() => {
+      throw new Error('must not read settings')
+    })
+    const getRuntimeProfiles = vi.fn(() => {
+      throw new Error('must not read runtime profiles')
+    })
+
+    await expect(
+      getAgentStatusSnapshotDirect('cursor', { getSettings, getRuntimeProfiles })
+    ).resolves.toMatchObject({
+      provider: 'cursor',
+      available: false,
+      securityUnavailable: true,
+      version: 'security-unavailable'
+    })
+    expect(getSettings).not.toHaveBeenCalled()
+    expect(getRuntimeProfiles).not.toHaveBeenCalled()
+  })
+
+  it('returns status before reading runtime profiles or settings', async () => {
+    const getSettings = vi.fn(() => {
+      throw new Error('must not read settings')
+    })
+    const getRuntimeProfiles = vi.fn(() => {
+      throw new Error('must not resolve profiles')
+    })
+
+    await expect(
+      getCliProviderStatus('cursor', { getSettings, getRuntimeProfiles })
+    ).resolves.toMatchObject({
+      provider: 'cursor',
+      available: false,
+      setupRequired: true,
+      securityUnavailable: true,
+      binaryPath: null,
+      version: 'security-unavailable'
+    })
+    expect(getSettings).not.toHaveBeenCalled()
+    expect(getRuntimeProfiles).not.toHaveBeenCalled()
+  })
+
+  it('never executes a resolved Cursor binary for version discovery', async () => {
+    await expect(
+      readResolvedCliVersion({
+        provider: 'cursor',
+        binaryPath: '/definitely/not/a/real/cursor-agent-sentinel',
+        source: 'settings'
+      })
+    ).resolves.toBe('security-unavailable')
+  })
+})
+
+describe('Kimi status admission', () => {
+  it('fails closed without the reviewed status seam and starts no generic discovery path', async () => {
+    const getSettings = vi.fn(() => {
+      throw new Error('must not read settings')
+    })
+    const getRuntimeProfiles = vi.fn(() => {
+      throw new Error('must not resolve profiles')
+    })
+
+    await expect(
+      getCliProviderStatus('kimi', { getSettings, getRuntimeProfiles })
+    ).resolves.toMatchObject({
+      provider: 'kimi',
+      available: false,
+      setupRequired: true,
+      binaryPath: null,
+      version: 'admission-required',
+      appServer: 'acp-admission-required'
+    })
+    expect(getSettings).not.toHaveBeenCalled()
+    expect(getRuntimeProfiles).not.toHaveBeenCalled()
   })
 })

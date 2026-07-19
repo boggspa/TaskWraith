@@ -18,6 +18,7 @@ const artifactDir = (runId: string): string => join(userDataPath, 'run-artifacts
 const chatListIndexPath = (): string => join(userDataPath, 'chat-list-index.json')
 const runQueuePath = (): string => join(userDataPath, 'run-queue.json')
 const runRecoveryPath = (): string => join(userDataPath, 'run-recovery.json')
+const approvalLedgerPath = (): string => join(userDataPath, 'approval-ledger.json')
 
 function makeRun(runId: string): ChatRun {
   return { runId, startedAt: '2026-05-08T00:00:00.000Z' }
@@ -213,15 +214,23 @@ describe('AppStore.deleteChat cascade + orphan reap', () => {
     expect(fs.existsSync(chatFile('bystander'))).toBe(true)
   })
 
-  it('reaps an orphaned child whose parent file is gone on first getChats', () => {
+  it('discovers an orphan without deleting from the getChats read path', () => {
     // Legacy orphan: child persisted, parent never existed on disk.
     saveChild('orphan', 'missing-parent', 'subThread')
     expect(fs.existsSync(chatFile('orphan'))).toBe(true)
 
     const chats = AppStore.getChats()
 
-    expect(fs.existsSync(chatFile('orphan'))).toBe(false)
+    expect(fs.existsSync(chatFile('orphan'))).toBe(true)
     expect(chats.some((c) => c.appChatId === 'orphan')).toBe(false)
+    expect(AppStore.listOrphanSubThreadReapCandidates()).toEqual(['orphan'])
+
+    // Main owns the lifecycle-fenced deletion, then acknowledges only after it
+    // succeeds. A failed main deletion leaves the candidate retryable.
+    AppStore.deleteChat('orphan')
+    AppStore.acknowledgeOrphanSubThreadReapCandidate('orphan')
+    expect(fs.existsSync(chatFile('orphan'))).toBe(false)
+    expect(AppStore.listOrphanSubThreadReapCandidates()).toEqual([])
   })
 
   it('keeps a child whose parent still exists', () => {
@@ -260,6 +269,11 @@ describe('AppStore.clearChats all-history cleanup', () => {
       JSON.stringify([{ runId: 'recovered-run', promptPreview: 'private recovered prompt' }]),
       'utf8'
     )
+    fs.writeFileSync(
+      approvalLedgerPath(),
+      JSON.stringify([{ approvalId: 'legacy-eval', preview: { script: 'private script' } }]),
+      'utf8'
+    )
     seedRunFiles('run-parent')
     seedRunFiles('run-ensemble')
     seedRunFiles('orphan-run')
@@ -270,6 +284,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(runEventPath('orphan-run'))).toBe(true)
     expect(fs.existsSync(runQueuePath())).toBe(true)
     expect(fs.existsSync(runRecoveryPath())).toBe(true)
+    expect(fs.existsSync(approvalLedgerPath())).toBe(true)
 
     AppStore.clearChats()
 
@@ -294,6 +309,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(artifactDir('orphan-run'))).toBe(false)
     expect(fs.existsSync(runQueuePath())).toBe(false)
     expect(fs.existsSync(runRecoveryPath())).toBe(false)
+    expect(fs.existsSync(approvalLedgerPath())).toBe(false)
     expect(fs.existsSync(kimiAcpSeatStateRoot(userDataPath))).toBe(false)
     expect(AppStore.getChats()).toEqual([])
   })
@@ -304,6 +320,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     AppStore.saveChat({ ...workspaceB, workspaceId: 'workspace-2', workspacePath: '/repo-2' })
     seedRunFiles('run-a')
     seedRunFiles('run-b')
+    fs.writeFileSync(approvalLedgerPath(), '[{"approvalId":"global-ledger"}]', 'utf8')
 
     AppStore.clearChats(workspaceA.workspaceId)
 
@@ -311,6 +328,7 @@ describe('AppStore.clearChats all-history cleanup', () => {
     expect(fs.existsSync(runEventPath('run-a'))).toBe(false)
     expect(fs.existsSync(chatFile('workspace-b-chat'))).toBe(true)
     expect(fs.existsSync(runEventPath('run-b'))).toBe(true)
+    expect(fs.existsSync(approvalLedgerPath())).toBe(true)
     expect(AppStore.getChats().map((chat) => chat.appChatId)).toEqual(['workspace-b-chat'])
   })
 

@@ -1,6 +1,13 @@
 import { summarizeOllamaToolArgs } from './OllamaToolResultSummary'
 import { resolveContextWindow } from '../../shared/contextWindows'
 import { resolveOllamaModelFamily } from './OllamaModelPreflight'
+import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
+import {
+  CANVAS_EVAL_RESULT_REDACTED,
+  assertCanvasEvalApprovalReceipt,
+  isCanvasEvalToolName
+} from '../canvas/CanvasEvalAudit'
+import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
 
 export interface OllamaLoopMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
@@ -20,9 +27,13 @@ export interface OllamaWorkingMemoryLimits {
 
 export interface OllamaToolTrajectoryEntry {
   toolName: string
+  /** The gateway target when it differs from the outer callable name. */
+  effectiveToolName?: string
   argsSummary: string
   ok: boolean
   resultSummary: string
+  /** Content-minimised proof only; the approved script is never retained here. */
+  canvasEvalReceipt?: CanvasEvalApprovalReceipt
 }
 
 export interface OllamaSessionMemory {
@@ -39,9 +50,22 @@ export function normalizeOllamaSessionMemory(
   memory: OllamaSessionMemory | null | undefined
 ): OllamaSessionMemory | null {
   if (!memory) return null
+  const trajectory = memory.trajectory ?? []
+  const containsCanvasEval = trajectory.some(isCanvasEvalTrajectoryEntry)
+  const sanitizedTrajectory = containsCanvasEval
+    ? trajectory.map(sanitizeOllamaTrajectoryEntryForPersist)
+    : trajectory
   return {
     ...memory,
-    trajectory: memory.trajectory ?? []
+    trajectory: sanitizedTrajectory,
+    ...(containsCanvasEval
+      ? {
+          workingMemory: buildOllamaWorkingMemoryBlock(
+            sanitizedTrajectory,
+            resolveOllamaWorkingMemoryLimits(memory.modelId).workingMemoryMaxChars
+          )
+        }
+      : {})
   }
 }
 
@@ -164,21 +188,143 @@ function summarizeToolResultForMemory(
     : `${normalized.slice(0, maxChars)}...`
 }
 
+interface CanvasEvalMemoryInvocation {
+  effectiveToolName: 'canvas_eval'
+  targetArgs: Record<string, unknown>
+  viaGateway: boolean
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value)
+}
+
+function resolveCanvasEvalMemoryInvocation(
+  toolName: string,
+  args: Record<string, unknown>
+): CanvasEvalMemoryInvocation | null {
+  if (isCanvasEvalToolName(toolName)) {
+    return { effectiveToolName: 'canvas_eval', targetArgs: args, viaGateway: false }
+  }
+  if (
+    canonicalTaskWraithToolName(toolName) !== 'capability_invoke' ||
+    !isCanvasEvalToolName(args.name)
+  ) {
+    return null
+  }
+  return {
+    effectiveToolName: 'canvas_eval',
+    targetArgs: isRecord(args.arguments) ? args.arguments : {},
+    viaGateway: true
+  }
+}
+
+function normalizeCanvasEvalReceipt(value: unknown): CanvasEvalApprovalReceipt | undefined {
+  if (!isRecord(value)) return undefined
+  const approvalId = typeof value.approvalId === 'string' ? value.approvalId.trim() : ''
+  const scriptHash = typeof value.scriptHash === 'string' ? value.scriptHash : ''
+  if (
+    value.schemaVersion !== 2 ||
+    !approvalId ||
+    approvalId.length > 200 ||
+    value.scriptHashAlgorithm !== 'sha256-utf16le' ||
+    !/^[a-f0-9]{64}$/.test(scriptHash) ||
+    !Number.isSafeInteger(value.scriptLength) ||
+    Number(value.scriptLength) < 0 ||
+    !Number.isSafeInteger(value.scriptByteLength) ||
+    Number(value.scriptByteLength) < 0
+  ) {
+    return undefined
+  }
+  return {
+    schemaVersion: 2,
+    approvalId,
+    scriptHashAlgorithm: 'sha256-utf16le',
+    scriptHash,
+    scriptLength: Number(value.scriptLength),
+    scriptByteLength: Number(value.scriptByteLength)
+  }
+}
+
+function canvasEvalReceiptForMemory(
+  invocation: CanvasEvalMemoryInvocation,
+  receipt: CanvasEvalApprovalReceipt | undefined
+): CanvasEvalApprovalReceipt | undefined {
+  const script = invocation.targetArgs.script
+  if (typeof script !== 'string' || !receipt) return undefined
+  try {
+    return normalizeCanvasEvalReceipt(assertCanvasEvalApprovalReceipt(script, receipt))
+  } catch {
+    // A missing or mismatched receipt must never weaken redaction. The
+    // execution lane owns fail-closed receipt validation; memory simply omits
+    // unverifiable metadata while retaining no sensitive text.
+    return undefined
+  }
+}
+
+function canvasEvalArgsSummary(toolName: string, viaGateway: boolean): string {
+  return viaGateway
+    ? `${toolName} name=canvas_eval script=[redacted]`
+    : `${toolName} script=[redacted]`
+}
+
+function isCanvasEvalTrajectoryEntry(entry: OllamaToolTrajectoryEntry): boolean {
+  return (
+    isCanvasEvalToolName(entry.toolName) ||
+    isCanvasEvalToolName(entry.effectiveToolName) ||
+    (canonicalTaskWraithToolName(entry.toolName) === 'capability_invoke' &&
+      /\bname=canvas_eval\b/.test(entry.argsSummary))
+  )
+}
+
+/** Defense-in-depth projection used again at the final persistence boundary. */
+export function sanitizeOllamaTrajectoryEntryForPersist(
+  entry: OllamaToolTrajectoryEntry
+): OllamaToolTrajectoryEntry {
+  if (!isCanvasEvalTrajectoryEntry(entry)) return entry
+  const viaGateway = canonicalTaskWraithToolName(entry.toolName) === 'capability_invoke'
+  const canvasEvalReceipt = normalizeCanvasEvalReceipt(entry.canvasEvalReceipt)
+  return {
+    toolName: entry.toolName,
+    effectiveToolName: 'canvas_eval',
+    argsSummary: canvasEvalArgsSummary(entry.toolName, viaGateway),
+    ok: entry.ok,
+    resultSummary: CANVAS_EVAL_RESULT_REDACTED,
+    ...(canvasEvalReceipt ? { canvasEvalReceipt } : {})
+  }
+}
+
 export function appendOllamaTrajectoryEntry(
   memory: OllamaSessionMemory,
-  entry: Omit<OllamaToolTrajectoryEntry, 'argsSummary'> & {
+  entry: Omit<
+    OllamaToolTrajectoryEntry,
+    'argsSummary' | 'effectiveToolName' | 'canvasEvalReceipt'
+  > & {
     args: Record<string, unknown>
+    canvasEvalApproval?: CanvasEvalApprovalReceipt
   }
 ): OllamaSessionMemory {
   const limits = resolveOllamaWorkingMemoryLimits(memory.modelId)
+  const canvasEvalInvocation = resolveCanvasEvalMemoryInvocation(entry.toolName, entry.args)
+  const canvasEvalReceipt = canvasEvalInvocation
+    ? canvasEvalReceiptForMemory(canvasEvalInvocation, entry.canvasEvalApproval)
+    : undefined
   const trajectory = [
     ...(memory.trajectory ?? []),
-    {
-      toolName: entry.toolName,
-      argsSummary: summarizeOllamaToolArgs(entry.toolName, entry.args),
-      ok: entry.ok,
-      resultSummary: summarizeToolResultForMemory(entry.resultSummary, limits.toolResultMaxChars)
-    }
+    canvasEvalInvocation
+      ? {
+          toolName: entry.toolName,
+          effectiveToolName: canvasEvalInvocation.effectiveToolName,
+          argsSummary: canvasEvalArgsSummary(entry.toolName, canvasEvalInvocation.viaGateway),
+          ok: entry.ok,
+          resultSummary: CANVAS_EVAL_RESULT_REDACTED,
+          ...(canvasEvalReceipt ? { canvasEvalReceipt } : {})
+        }
+      : {
+          toolName: entry.toolName,
+          argsSummary: summarizeOllamaToolArgs(entry.toolName, entry.args),
+          ok: entry.ok,
+          resultSummary: summarizeToolResultForMemory(entry.resultSummary, limits.toolResultMaxChars)
+        }
   ].slice(-12)
   return {
     ...memory,
@@ -235,11 +381,18 @@ export function compressOllamaMessagesWithWorkingMemory(
 
 export function pruneOllamaSessionMemoryForPersist(memory: OllamaSessionMemory): OllamaSessionMemory {
   const limits = resolveOllamaWorkingMemoryLimits(memory.modelId)
+  const trajectory = (memory.trajectory ?? [])
+    .slice(-8)
+    .map(sanitizeOllamaTrajectoryEntryForPersist)
+  const containsCanvasEval = trajectory.some(isCanvasEvalTrajectoryEntry)
   return {
     modelId: memory.modelId,
     updatedAt: memory.updatedAt,
-    workingMemory: memory.workingMemory.slice(0, limits.workingMemoryMaxChars),
+    workingMemory: (containsCanvasEval
+      ? buildOllamaWorkingMemoryBlock(trajectory, limits.workingMemoryMaxChars)
+      : memory.workingMemory
+    ).slice(0, limits.workingMemoryMaxChars),
     toolTurnCount: memory.toolTurnCount,
-    trajectory: (memory.trajectory ?? []).slice(-8)
+    trajectory
   }
 }

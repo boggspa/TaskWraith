@@ -8,7 +8,12 @@ import {
 import { withCodexCodeModeHostEnv } from './CodexCodeModeHost'
 import type { RuntimeProfile } from './store/types'
 import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
+import { CodexAppServerRequestTimeoutError } from './codex/CodexAppServerRequestError'
 export { isCodexAppServerThreadId } from './CodexSessionIdentity'
+export {
+  CodexAppServerRequestTimeoutError,
+  isCodexAppServerRequestTimeout
+} from './codex/CodexAppServerRequestError'
 
 /**
  * Detect the specific failure where the codex CLI refuses to start because
@@ -463,7 +468,7 @@ export class CodexAppServerClient {
     const result = new Promise<T>((resolve, reject) => {
       const timeout = setTimeout(() => {
         this.pending.delete(id)
-        reject(new Error(`Codex app-server request timed out: ${method}`))
+        reject(new CodexAppServerRequestTimeoutError(method))
       }, timeoutMs)
       this.pending.set(id, { resolve, reject, timeout })
     })

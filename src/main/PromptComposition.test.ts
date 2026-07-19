@@ -75,19 +75,20 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
   it('removes a source core claim when the target resolves full', () => {
     expect(
-      sanitizeTaskWraithMcpPromptClaims(
-        `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`,
-        { advertised: true, coreProfile: false }
-      )
+      sanitizeTaskWraithMcpPromptClaims(`${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`, {
+        advertised: true,
+        coreProfile: false
+      })
     ).toBe('User work.')
   })
 
   it('strips but does not re-inject the core note for a resumed pinned Claude session', () => {
     expect(
-      sanitizeTaskWraithMcpPromptClaims(
-        `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`,
-        { advertised: true, coreProfile: true, injectCoreNote: false }
-      )
+      sanitizeTaskWraithMcpPromptClaims(`${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nUser work.`, {
+        advertised: true,
+        coreProfile: true,
+        injectCoreNote: false
+      })
     ).toBe('User work.')
   })
 
@@ -104,15 +105,12 @@ describe('sanitizeTaskWraithMcpPromptClaims', () => {
 
   it('does not re-inject the gateway note on a resumed pinned Claude session', () => {
     expect(
-      sanitizeTaskWraithMcpPromptClaims(
-        `${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\nUser work.`,
-        {
-          advertised: true,
-          coreProfile: false,
-          gatewayProfile: true,
-          injectGatewayNote: false
-        }
-      )
+      sanitizeTaskWraithMcpPromptClaims(`${TASKWRAITH_GATEWAY_MCP_PROFILE_NOTE}\n\nUser work.`, {
+        advertised: true,
+        coreProfile: false,
+        gatewayProfile: true,
+        injectGatewayNote: false
+      })
     ).toBe('User work.')
   })
 
@@ -596,7 +594,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
   })
 
-  it('steers Cursor write-mode runs to TaskWraith MCP tools', () => {
+  it('never advertises TaskWraith MCP tools to the unqualified Cursor transport', () => {
     const result = composeRunPrompt({
       provider: 'cursor',
       finalPrompt: 'Create a test file.',
@@ -608,15 +606,10 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Cursor'
     })
 
-    expect(result.contextualPrompt).toContain(
-      'this Cursor workspace run has access to the TaskWraith MCP server'
-    )
-    expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
-    expect(result.contextualPrompt).toContain('Do not call native Cursor Write or Shell tools')
-    expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-write_file')
-    expect(result.contextualPrompt).toContain('mcp_taskwraith-broker-run_shell_command')
-    expect(result.contextualPrompt).toContain('mcp_taskwraith-<tool>')
-    expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
+    expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
+    expect(result.contextualPrompt).not.toContain('taskwraith__apply_patch')
+    expect(result.contextualPrompt).not.toContain('mcp_taskwraith-broker')
+    expect(result.contextualPrompt).toContain('Create a test file.')
   })
 
   it('steers Grok write-mode runs to TaskWraith MCP tools', () => {
@@ -646,7 +639,6 @@ describe('composeRunPrompt sub-thread returns', () => {
       ['claude', 'mcp__TaskWraith__delegate_to_subthread'],
       ['kimi', 'TaskWraith__delegate_to_subthread'],
       ['codex', 'TaskWraith__delegate_to_subthread'],
-      ['cursor', 'taskwraith__delegate_to_subthread'],
       ['grok', 'taskwraith-broker__delegate_to_subthread']
     ] as const
 
@@ -685,7 +677,7 @@ describe('composeRunPrompt sub-thread returns', () => {
   it('adds sub-thread recall examples only for operational delegation prompts', () => {
     const requested = composeRunPrompt({
       provider: 'codex',
-      finalPrompt: 'Use two review agents and delegate one to Gemini.',
+      finalPrompt: 'Use two review agents and delegate one to Claude.',
       messages: [],
       chatContextTurns: 6,
       codexHandoffsApplied: [],
@@ -810,7 +802,7 @@ describe('composeRunPrompt sub-thread returns', () => {
   })
 
   it('preserves the read → edit → verify contract in compact cloud preambles', () => {
-    for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'cursor', 'grok'] as const) {
+    for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'grok'] as const) {
       const result = composeRunPrompt({
         provider,
         finalPrompt: 'Make the change.',
@@ -1028,7 +1020,7 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
     expect(result.contextTurnsApplied).toBeGreaterThan(0)
   })
 
-  it('does NOT inject when the ACP transport is disabled (headless --resume is authoritative)', () => {
+  it('does not compose ACP context for a fail-closed disabled Grok run', () => {
     const prev = process.env.TASKWRAITH_GROK_ACP
     process.env.TASKWRAITH_GROK_ACP = '0'
     try {
@@ -1045,7 +1037,6 @@ describe('composeRunPrompt Grok ACP cross-turn context', () => {
 
       expect(result.contextualPrompt).not.toContain('Conversation context')
       expect(result.contextualPrompt).not.toContain('official AI credentials')
-      expect(result.applicationLog).toContain('provider/session history is authoritative')
       expect(result.contextTurnsApplied).toBe(0)
     } finally {
       if (prev === undefined) delete process.env.TASKWRAITH_GROK_ACP
@@ -1115,7 +1106,7 @@ describe('image-tool discoverability (PR5)', () => {
     })
     expect(coldCursor.contextualPrompt).not.toContain('Image tools are also available over MCP')
     expect(coldCursor.contextualPrompt).not.toContain('open_workspace_file')
-    expect(coldCursor.contextualPrompt).toContain('read_file')
+    expect(coldCursor.contextualPrompt).not.toContain('read_file')
 
     const resumedGrok = composeRunPrompt({
       provider: 'grok',
@@ -1447,7 +1438,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
     }
   })
 
-  it('injects for Cursor only on a fresh session (post-reset), never on resume', () => {
+  it('does not manufacture a Cursor runtime prompt for the unavailable provider', () => {
     const base = {
       provider: 'cursor' as const,
       finalPrompt: 'Continue the work.',
@@ -1460,12 +1451,9 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     }
     const fresh = composeRunPrompt(base)
-    expect(fresh.contextualPrompt).toContain('Prior session summary')
-    expect(fresh.contextualPrompt).toContain('Current user request:\nContinue the work.')
-    // Once the new session resumes natively, its own history carries the
-    // summary — no re-injection.
+    expect(fresh.contextualPrompt).toBe('Continue the work.')
     const resumed = composeRunPrompt({ ...base, resumeSessionId: 'cursor-session-2' })
-    expect(resumed.contextualPrompt).not.toContain('Prior session summary')
+    expect(resumed.contextualPrompt).toBe('Continue the work.')
   })
 
   it('never injects into a verbatim slash dispatch', () => {

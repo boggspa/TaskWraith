@@ -47,7 +47,7 @@ import { redactGeminiProfileForMcp } from '../GeminiAuthRedaction'
 import { buildProviderAuthStatusV2 } from '../ProviderAuthStatus'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
-import { isRetiredProvider } from '../../shared/retiredProviders'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../shared/retiredProviders'
 import type { NativeCapabilitySnapshot } from '../NativeCapabilities'
 import type {
   AppSettings,
@@ -69,7 +69,8 @@ const MAX_CREATIVE_PROJECT_SNAPSHOT_BYTES = 2_000_000
 const CREATIVE_RUNNING_PROBE_TTL_MS = 3_000
 const FCPXML_DTD_CACHE_DIR = `${os.tmpdir()}/taskwraith-fcpxml-dtds`
 
-// Grok + Cursor are first-class providers; no eligibility gate (see ProviderId).
+// Structural status/decode allowlist only. Live authority is enforced by each
+// operation's canonical provider admission gate.
 const PROVIDER_IDS = new Set<ProviderId>([
   'gemini',
   'codex',
@@ -372,12 +373,10 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 function availableProviderIds(): ProviderId[] {
-  // Offer/sweep list for MCP desktop tools — excludes retired providers (gemini)
-  // so an agent can neither target nor sweep one. `assertProviderId` above still
-  // accepts retired ids for decode of historical args.
-  return (['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as ProviderId[]).filter(
-    (provider) => !isRetiredProvider(provider)
-  )
+  // Offer/sweep list for MCP desktop tools — excludes retired Gemini and
+  // security-unavailable Cursor so an agent can neither target nor sweep them.
+  // `assertProviderId` above still accepts canonical ids for compatibility decode.
+  return [...LIVE_SELECTABLE_PROVIDER_IDS]
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {
@@ -2035,6 +2034,20 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       return {
         ...status,
         apiKeyConfigured,
+        encryptionAvailable: auth.encryptionAvailable(),
+        ...v2
+      }
+    }
+    if (provider !== 'codex') {
+      const v2 = buildProviderAuthStatusV2({
+        provider,
+        available: status.available,
+        rawAuthState,
+        errorReason
+      })
+      return {
+        ...status,
+        apiKeyConfigured: false,
         encryptionAvailable: auth.encryptionAvailable(),
         ...v2
       }

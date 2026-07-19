@@ -1,12 +1,7 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ProviderApiKeyStatus } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
-import type { KimiFlavourFindings } from '../providers/KimiFlavour'
 import { rendererSafeProviderApiKeyStatus } from '../RendererProviderProjection'
-
-interface KimiVersionReader {
-  (resolved: ResolvedProviderBinary): Promise<string>
-}
 
 export interface KimiAuthHandlersDeps {
   getSettings: () => { kimiApiKey?: string }
@@ -14,10 +9,12 @@ export interface KimiAuthHandlersDeps {
   isEncryptionAvailable: () => boolean
   encryptApiKey: (value: string) => string | null
   resolveCliProviderBinary: (provider: 'kimi') => Promise<ResolvedProviderBinary>
-  readResolvedCliVersion: KimiVersionReader
-  probeKimiFlavour: (binaryPath: string) => Promise<KimiFlavourFindings>
-  /** True when a Kimi OAuth credential file is present (signed in via `kimi login`). */
-  hasOAuthCredential: () => Promise<boolean>
+  inspectRuntime: (resolved: ResolvedProviderBinary) => Promise<
+    | { admitted: true; version: string; mode: 'reviewed' | 'unattested-development' }
+    | { admitted: false; message: string }
+  >
+  /** Managed ACP credential state from the current ~/.kimi-code home only. */
+  getManagedAuthState: () => Promise<'oauth' | 'api-key' | 'unknown'>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
@@ -36,24 +33,22 @@ export function registerKimiAuthHandlers(deps: KimiAuthHandlersDeps): void {
       }
       return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
     }
-    const version = await deps.readResolvedCliVersion(resolved)
-    // Kimi Code (the kimi-cli successor) resolves like a legacy binary but
-    // cannot be driven by the Wire transport, so the status carries the
-    // positively-identified generation for the Settings UI to explain why
-    // runs are gated (migration dossier §4).
-    const flavour = await deps.probeKimiFlavour(resolved.binaryPath)
-    // Kimi Code signs in via `kimi login` (OAuth), so a user with no API key can
-    // still be authenticated — surface 'oauth' rather than 'unknown'.
-    const oauthSignedIn = apiKeyConfigured ? false : await deps.hasOAuthCredential()
+    // Runtime admission owns the only executable inventory probes. Status must
+    // not run an independent --version/--help process around that gate.
+    const runtime = await deps.inspectRuntime(resolved)
+    // The encrypted Settings key is used by the usage endpoint and is not
+    // projected into ACP. Only inspect current-home credentials after runtime
+    // admission succeeds; an unqualified binary is never reported ready.
+    const managedAuthState = runtime.admitted ? await deps.getManagedAuthState() : 'unknown'
     const status: ProviderApiKeyStatus = {
-      available: true,
-      authState: apiKeyConfigured ? 'api-key' : oauthSignedIn ? 'oauth' : 'unknown',
+      available: runtime.admitted,
+      authState: managedAuthState,
       apiKeyConfigured,
       encryptionAvailable,
-      version,
+      version: runtime.admitted ? runtime.version : runtime.message,
       binaryPath: resolved.binaryPath,
-      cliFlavour: flavour.flavour,
-      transportSupported: flavour.flavour === 'legacy-wire'
+      cliFlavour: runtime.admitted ? 'kimi-code' : 'unsupported',
+      transportSupported: runtime.admitted
     }
     return deps.isMainRendererSender(event) ? status : rendererSafeProviderApiKeyStatus(status)
   })

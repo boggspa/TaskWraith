@@ -277,4 +277,75 @@ describe('AppStore audit retention purge', () => {
       'old-approval'
     ])
   })
+
+  it('resolves a pending durable approval exactly once', () => {
+    AppStore.recordApprovalRequest({
+      approvalId: 'pending-cas',
+      provider: 'claude',
+      service: 'canvasEval',
+      method: 'claude-mcp/canvas_eval',
+      title: 'Approve Canvas eval',
+      actions: ['accept', 'decline', 'cancel']
+    })
+
+    expect(AppStore.resolveApprovalRequest('pending-cas', 'accept')).toMatchObject({
+      approvalId: 'pending-cas',
+      status: 'approved',
+      decision: 'accept'
+    })
+    expect(AppStore.resolveApprovalRequest('pending-cas', 'decline')).toBeNull()
+    expect(AppStore.getApprovalLedger({ approvalId: 'pending-cas' })[0]).toMatchObject({
+      status: 'approved',
+      decision: 'accept'
+    })
+  })
+
+  it.each([
+    ['denied', 'decline'],
+    ['cancelled', 'cancel']
+  ] as const)('never rewrites an already-%s durable approval into an acceptance', (_status, action) => {
+    const approvalId = `terminal-cas-${action}`
+    AppStore.recordApprovalRequest({
+      approvalId,
+      provider: 'claude',
+      service: 'canvasEval',
+      method: 'claude-mcp/canvas_eval',
+      title: 'Approve Canvas eval',
+      actions: ['accept', 'decline', 'cancel']
+    })
+    expect(AppStore.resolveApprovalRequest(approvalId, action)).not.toBeNull()
+
+    expect(AppStore.resolveApprovalRequest(approvalId, 'accept')).toBeNull()
+    expect(AppStore.getApprovalLedger({ approvalId })[0]).toMatchObject({
+      status: _status,
+      decision: action
+    })
+  })
+
+  it('recovers an expired pending row before compare-and-set and rejects late acceptance', () => {
+    AppStore.recordApprovalRequest({
+      approvalId: 'expired-cas',
+      provider: 'claude',
+      service: 'canvasEval',
+      method: 'claude-mcp/canvas_eval',
+      title: 'Approve Canvas eval',
+      actions: ['accept', 'decline', 'cancel'],
+      expiration: {
+        mode: 'pending_timeout',
+        description: 'Expired test approval.',
+        expiresAt: '2000-01-01T00:00:00.000Z'
+      }
+    })
+
+    expect(AppStore.resolveApprovalRequest('expired-cas', 'accept')).toBeNull()
+    expect(
+      AppStore.getApprovalLedger({ approvalId: 'expired-cas', includeExpired: true })[0]
+    ).toMatchObject({
+      status: 'expired',
+      decision: 'expired',
+      expiration: {
+        expiredReason: 'pending_timeout'
+      }
+    })
+  })
 })

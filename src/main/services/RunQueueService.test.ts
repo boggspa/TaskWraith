@@ -745,7 +745,7 @@ describe('RunQueueService', () => {
     const service = new RunQueueService(deps)
     service.requestJob({
       runId: 'global-run',
-      provider: 'gemini',
+      provider: 'codex',
       scope: 'global',
       chatId: 'global-chat'
     })
@@ -904,12 +904,13 @@ describe('RunQueueService', () => {
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
-  it('admits cursor as a provider (gate on by default) so queued/scheduled runs work', () => {
-    const { deps } = makeDeps()
+  it('rejects Cursor before a new queue job is persisted', () => {
+    const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
-    // Cursor passes provider validation (it may still fail later validation for
-    // other missing fields, but never with the provider error). Mirrors grok.
-    expect(() => service.requestJob({ provider: 'cursor' })).not.toThrow('Provider is invalid.')
+    expect(() => service.requestJob({ provider: 'cursor' })).toThrow(
+      'Provider is unavailable for new runs.'
+    )
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
   it('preserves external grant validation failures', () => {

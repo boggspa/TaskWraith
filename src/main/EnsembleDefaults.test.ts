@@ -4,18 +4,18 @@ import { MAX_ENSEMBLE_PARTICIPANTS } from './EnsemblePrompt'
 import type { ProviderId } from './store/types'
 import { getDefaultEnsembleParticipantConfig } from '../renderer/src/lib/ensembleProviderDefaults'
 
-// gemini is RETIRED — it is no longer seeded into the default ensemble.
-const EXPECTED_PROVIDERS = ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
-const DEFAULT_ORDER = ['claude', 'codex', 'kimi', 'grok', 'cursor', 'ollama'] as const
+// Gemini is retired. Fresh panels choose a small role-shaped subset of these
+// live providers; users can still add any configured provider afterwards.
+const LIVE_PROVIDERS = ['codex', 'claude', 'kimi', 'grok', 'ollama'] as const
+const DEFAULT_PANEL = ['claude', 'codex', 'kimi', 'ollama'] as const
 
 describe('createDefaultEnsembleConfig parity guard', () => {
-  it('seeds exactly the six live providers (gemini retired)', () => {
+  it('seeds a four-seat panel with a local outsider by default', () => {
     const config = createDefaultEnsembleConfig()
     const providers = config.participants.map((participant) => participant.provider)
 
-    expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
-    expect(providers).toEqual(DEFAULT_ORDER)
-    expect(config.participants).toHaveLength(EXPECTED_PROVIDERS.length)
+    expect(providers).toEqual(DEFAULT_PANEL)
+    expect(config.participants).toHaveLength(4)
   })
 
   it('keeps main participant MODEL seeds in sync with renderer provider defaults', () => {
@@ -29,13 +29,14 @@ describe('createDefaultEnsembleConfig parity guard', () => {
     }
   })
 
-  it('pins provider roles, instructions and curated presets exposed by the default config', () => {
+  it('pins small-panel roles, authority and curated permission presets', () => {
     // permissionPresetId is pinned EXPLICITLY here, not against
     // getDefaultEnsembleParticipantConfig: the seeded panel keeps a curated
     // writer/reader split (codex lone writer, read-only recon seats) while
     // chip-strip adds seed uniformly with 'default' (Default Approval).
+    const config = createDefaultEnsembleConfig()
     const rolesByProvider = Object.fromEntries(
-      createDefaultEnsembleConfig().participants.map((participant) => [
+      config.participants.map((participant) => [
         participant.provider,
         {
           role: participant.role,
@@ -47,50 +48,47 @@ describe('createDefaultEnsembleConfig parity guard', () => {
 
     expect(rolesByProvider).toEqual({
       claude: {
-        role: 'Claude',
+        role: 'Boss',
         instructions:
-          'Explore the request, identify constraints, and propose the safest path forward.',
+          'Own the outcome, keep the panel scoped, and synthesize a clear decision from the other seats. Explore the request, identify constraints, and propose the safest path forward.',
         permissionPresetId: 'read_only'
       },
       codex: {
-        role: 'Codex',
+        role: 'Captain',
         instructions:
-          'Implement concrete code or workflow changes when the round calls for action.',
+          'Act as second-in-command: challenge the plan, track unresolved risks, and keep the work moving. Implement concrete code or workflow changes when the round calls for action.',
         permissionPresetId: 'workspace_write'
       },
       kimi: {
-        role: 'Kimi',
-        instructions: 'Review prior responses for gaps, edge cases, and test coverage.',
-        permissionPresetId: 'read_only'
-      },
-      grok: {
-        role: 'Grok',
+        role: 'Specialist',
         instructions:
-          'Stress-test the proposed approach: surface risky assumptions, failure modes, and simpler alternatives.',
-        permissionPresetId: 'read_only'
-      },
-      cursor: {
-        role: 'Cursor',
-        instructions:
-          'Draft the concrete implementation: propose specific edits, file touches, and integration steps.',
+          'Contribute concrete domain work and evidence for the task in front of the panel. Review prior responses for gaps, edge cases, and test coverage.',
         permissionPresetId: 'read_only'
       },
       ollama: {
-        role: 'Local',
+        role: 'Outsider',
         instructions:
-          'Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
+          'Take an independent view, stress-test the emerging consensus, and surface missed alternatives. Provide a local, privacy-preserving second opinion for summaries, triage, and small read-only reasoning tasks.',
         permissionPresetId: 'read_only'
       }
     })
+    expect(config.bossmanParticipantId).toBe('ensemble-claude')
+    expect(config.secondInCommandParticipantId).toBe('ensemble-codex')
   })
 
-  it('rotates each active provider first without changing the seeded set or renderer parity', () => {
-    for (const provider of EXPECTED_PROVIDERS) {
+  it('rotates each active provider into the Boss seat while keeping the panel small', () => {
+    for (const provider of LIVE_PROVIDERS) {
       const config = createDefaultEnsembleConfig(provider)
       expect(config.participants[0]?.provider).toBe(provider)
-      expect(new Set(config.participants.map((participant) => participant.provider))).toEqual(
-        new Set(EXPECTED_PROVIDERS)
-      )
+      expect(config.participants).toHaveLength(4)
+      expect(config.participants.map((participant) => participant.role)).toEqual([
+        'Boss',
+        'Captain',
+        'Specialist',
+        'Outsider'
+      ])
+      expect(config.bossmanParticipantId).toBe(config.participants[0]?.id)
+      expect(config.secondInCommandParticipantId).toBe(config.participants[1]?.id)
 
       for (const participant of config.participants) {
         const rendererDefaults = getDefaultEnsembleParticipantConfig(participant.provider)
@@ -118,9 +116,9 @@ describe('createDefaultEnsembleConfig parity guard', () => {
 })
 
 describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () => {
-  it('seeds all six live providers when no configured set is supplied (back-compat)', () => {
+  it('seeds the recommended small panel when no configured set is supplied', () => {
     const providers = createDefaultEnsembleConfig('claude').participants.map((p) => p.provider)
-    expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
+    expect(providers).toEqual(DEFAULT_PANEL)
   })
 
   it('seeds only the configured providers when a set is supplied', () => {
@@ -130,6 +128,9 @@ describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () =
     )
     expect(new Set(providers)).toEqual(new Set(['claude', 'codex']))
     expect(providers).toHaveLength(2)
+    expect(
+      createDefaultEnsembleConfig('claude', configured).participants.map((p) => p.role)
+    ).toEqual(['Boss', 'Captain'])
   })
 
   it('always includes the active provider even if absent from the configured set', () => {
@@ -140,18 +141,26 @@ describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () =
     expect(new Set(providers)).toEqual(new Set(['claude', 'codex', 'grok']))
   })
 
-  it('falls back to the full roster when fewer than two would remain', () => {
+  it('caps a larger configured-provider set at four seats', () => {
+    const configured = new Set<ProviderId>(LIVE_PROVIDERS)
+    const providers = createDefaultEnsembleConfig('claude', configured).participants.map(
+      (p) => p.provider
+    )
+    expect(providers).toEqual(DEFAULT_PANEL)
+  })
+
+  it('falls back to the recommended panel when fewer than two would remain', () => {
     const configured = new Set<ProviderId>(['claude'])
     const providers = createDefaultEnsembleConfig('claude', configured).participants.map(
       (p) => p.provider
     )
-    expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
+    expect(providers).toEqual(DEFAULT_PANEL)
   })
 
-  it('treats an empty configured set as a fallback to the full roster', () => {
+  it('treats an empty configured set as a fallback to the recommended panel', () => {
     const providers = createDefaultEnsembleConfig('claude', new Set<ProviderId>()).participants.map(
       (p) => p.provider
     )
-    expect(new Set(providers)).toEqual(new Set(EXPECTED_PROVIDERS))
+    expect(providers).toEqual(DEFAULT_PANEL)
   })
 })

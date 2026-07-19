@@ -124,6 +124,40 @@ describe('planning helpers', () => {
 })
 
 describe('AuditOrchestrator — full DAG', () => {
+  it('projects each gate under the exact audit identity before releasing the runner', async () => {
+    const state = makeStore()
+    const observed: string[] = []
+    const gate: AuditGateResult = {
+      id: 'g-exact',
+      check: 'typecheck',
+      command: 'npm run typecheck',
+      status: 'pass'
+    }
+    const deps = baseDeps({
+      store: state.store,
+      runGates: async (_checks, _workspacePath, authority, projectGate) => {
+        expect(authority).toEqual({
+          auditRunId: 'audit-1',
+          appChatId: 'c1',
+          workspaceId: 'workspace-1',
+          workspacePath: '/repo'
+        })
+        projectGate?.(gate)
+        expect(state.get().gates).toEqual([gate])
+        observed.push('persisted-before-runner-return')
+        return [gate]
+      }
+    })
+
+    const result = await new AuditOrchestrator(deps).run({
+      ...input,
+      workspaceId: 'workspace-1'
+    })
+
+    expect(observed).toEqual(['persisted-before-runner-return'])
+    expect(result.gates).toEqual([gate])
+  })
+
   it('runs recon→gates‖reviewers→dedup→verify→synthesis to completion', async () => {
     const store = makeStore()
     const deps = baseDeps({ store: store.store })

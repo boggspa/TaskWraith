@@ -1,4 +1,7 @@
 // @vitest-environment node
+import { mkdtempSync, mkdirSync, rmSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import {
   authorizeMainOwnedScheduledOccurrenceDispatch,
@@ -10,6 +13,8 @@ import {
   ScheduledOccurrenceOwnerRegistry,
   type ScheduledOccurrenceOwner
 } from '../ScheduledOccurrenceOwnerRegistry'
+import { HistoryClearAdmissionGate } from '../HistoryClearAdmissionGate'
+import { RegenerableHistoryByteStore } from '../services/RegenerableHistoryByteStore'
 
 // The 3 pure helpers direct-import in the facade → vi.mock them (M3-1b precedent).
 vi.mock('../ProviderRunPause', () => ({
@@ -64,6 +69,8 @@ function makeDeps(order: string[]): RunDispatchFacadeDeps {
         return { dispatched: true, appRunId: 'run-1' }
       })
     } as never,
+    reserveDispatch: vi.fn(() => Object.freeze({ id: 'dispatch-reservation' })),
+    releaseDispatchReservation: vi.fn(),
     getSettings: vi.fn(() => {
       order.push('getSettings')
       return { workflowBudgetKillEnabled: true, autoFailoverEnabled: true } as never
@@ -186,6 +193,65 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
       false
     )
   })
+
+  it.each(['config repair', 'PDF expansion'] as const)(
+    'rejects a pre-clear payload when chat truncation completes during paused %s',
+    async (pausedStage) => {
+      const deps = makeDeps([])
+      const gate = new HistoryClearAdmissionGate()
+      const authority = {
+        appChatId: 'chat-1',
+        workspaceId: 'workspace-1',
+        persistenceRevision: 7
+      }
+      let resume!: () => void
+      const paused = new Promise<void>((resolve) => {
+        resume = resolve
+      })
+      const reservation = gate.reserveDispatch(authority)
+      vi.mocked(deps.reserveDispatch).mockReturnValue(reservation)
+      vi.mocked(deps.releaseDispatchReservation).mockImplementation((received) => {
+        gate.releaseDispatch(received as typeof reservation)
+      })
+      if (pausedStage === 'config repair') {
+        vi.mocked(deps.repairKnownStaleGeminiMcpBridgeConfigs).mockReturnValue(paused)
+      } else {
+        vi.mocked(deps.expandPdfImagePathsForPayload).mockReturnValue(paused)
+      }
+      vi.mocked(deps.runCoordinator.dispatch).mockImplementation(
+        async (_payload, _event, received) => {
+          if (!gate.authorizeDispatch(received as typeof reservation, authority)) {
+            throw new Error('Dispatch chat authority changed before adapter launch.')
+          }
+          return { dispatched: true, appRunId: 'run-1' }
+        }
+      )
+
+      const dispatch = createRunDispatchFacade(deps)(payload(), senderEvent)
+      const pausedMock =
+        pausedStage === 'config repair'
+          ? vi.mocked(deps.repairKnownStaleGeminiMcpBridgeConfigs)
+          : vi.mocked(deps.expandPdfImagePathsForPayload)
+      for (let flush = 0; flush < 5 && pausedMock.mock.calls.length === 0; flush++) {
+        await Promise.resolve()
+      }
+      expect(pausedMock).toHaveBeenCalledOnce()
+      expect(vi.mocked(deps.reserveDispatch).mock.invocationCallOrder[0]).toBeLessThan(
+        pausedMock.mock.invocationCallOrder[0]
+      )
+      gate.beginChat('chat-1')
+      gate.endChat('chat-1')
+      resume()
+
+      await expect(dispatch).rejects.toThrow('authority changed before adapter launch')
+      expect(deps.runCoordinator.dispatch).toHaveBeenCalledWith(
+        expect.objectContaining({ appChatId: 'chat-1' }),
+        senderEvent,
+        reservation
+      )
+      expect(deps.releaseDispatchReservation).toHaveBeenCalledWith(reservation)
+    }
+  )
 
   it('rejects an ordinary run while the chat has a scheduled owner', async () => {
     const deps = makeDeps([])
@@ -375,20 +441,123 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenCalledOnce()
   })
 
-  it('does not abort dispatch when the graceful-fail steps reject', async () => {
+  it('does not abort dispatch when best-effort config repair rejects', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     deps.repairKnownStaleGeminiMcpBridgeConfigs = vi.fn(async () => {
       throw new Error('repair boom')
-    })
-    deps.expandPdfImagePathsForPayload = vi.fn(async () => {
-      throw new Error('pdf boom')
     })
 
     const result = await createRunDispatchFacade(deps)(payload(), senderEvent)
 
     expect(result).toEqual({ dispatched: true, appRunId: 'run-1' })
     expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenCalledOnce()
+  })
+
+  it('fails closed before provider launch when PDF preparation is revoked', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    deps.expandPdfImagePathsForPayload = vi.fn(async () => {
+      throw new Error(
+        'PDF attachment preparation was interrupted by history deletion; retry the dispatch.'
+      )
+    })
+
+    await expect(createRunDispatchFacade(deps)(payload(), senderEvent)).rejects.toThrow(
+      'interrupted by history deletion'
+    )
+
+    expect(deps.runCoordinator.dispatch).not.toHaveBeenCalled()
+    expect(deps.captureFailoverSnapshot).not.toHaveBeenCalled()
+    expect(deps.releaseDispatchReservation).toHaveBeenCalledOnce()
+    expect(deps.scheduledOccurrenceOwners.hasOrdinaryChatDispatchReservation('chat-1')).toBe(
+      false
+    )
+  })
+
+  it('rejects rather than stripping a PDF when an unrelated clear revokes its derived generation', async () => {
+    const storeRoot = mkdtempSync(join(tmpdir(), 'taskwraith-pdf-revocation-'))
+    const mediaRoot = join(storeRoot, 'media')
+    const pdfRoot = join(storeRoot, 'pdf')
+    mkdirSync(mediaRoot)
+    mkdirSync(pdfRoot)
+    const store = new RegenerableHistoryByteStore({
+      roots: { media: mediaRoot, pdf: pdfRoot },
+      journalPath: join(storeRoot, 'derived-purge.json')
+    })
+
+    try {
+      await store.initializeStrict()
+      const deps = makeDeps([])
+      let expansionStarted!: () => void
+      let resumeExpansion!: () => void
+      const started = new Promise<void>((resolve) => {
+        expansionStarted = resolve
+      })
+      const resume = new Promise<void>((resolve) => {
+        resumeExpansion = resolve
+      })
+      let expansionPayload: AgentRunPayload | undefined
+      deps.expandPdfImagePathsForPayload = vi.fn(async (candidate) => {
+        expansionPayload = candidate
+        const reservation = store.begin('pdf')
+        expansionStarted()
+        try {
+          await resume
+          if (!store.isCurrent(reservation)) {
+            throw new Error(
+              'PDF attachment preparation was interrupted by history deletion; retry the dispatch.'
+            )
+          }
+          candidate.imagePaths = []
+        } finally {
+          expect(store.end(reservation)).toBe(true)
+        }
+      })
+
+      const dispatch = createRunDispatchFacade(deps)(
+        payload({ imagePaths: ['/repo/report.pdf'] }),
+        senderEvent
+      )
+      const rejected = expect(dispatch).rejects.toThrow('interrupted by history deletion')
+      await started
+
+      // This operation represents a scoped clear for a different chat. The
+      // regenerable byte store is intentionally global, so it revokes the PDF
+      // generation synchronously before its strict purge joins the render.
+      const hold = store.beginHistoryMutation('unrelated-chat-history-clear')
+      const purge = store.purgeStrict(hold)
+      resumeExpansion()
+
+      await rejected
+      await purge
+      expect(store.endHistoryMutation(hold)).toBe(true)
+      expect(expansionPayload?.imagePaths).toEqual(['/repo/report.pdf'])
+      expect(deps.runCoordinator.dispatch).not.toHaveBeenCalled()
+      expect(deps.releaseDispatchReservation).toHaveBeenCalledOnce()
+    } finally {
+      rmSync(storeRoot, { recursive: true, force: true })
+    }
+  })
+
+  it('does not dispatch a partial multi-PDF expansion', async () => {
+    const deps = makeDeps([])
+    deps.expandPdfImagePathsForPayload = vi.fn(async (candidate) => {
+      expect(candidate.imagePaths).toEqual(['/repo/first.pdf', '/repo/second.pdf'])
+      throw new Error(
+        'One or more PDF attachments could not be rendered into verified page images; the run was not dispatched with any PDF silently omitted.'
+      )
+    })
+
+    await expect(
+      createRunDispatchFacade(deps)(
+        payload({ imagePaths: ['/repo/first.pdf', '/repo/second.pdf'] }),
+        senderEvent
+      )
+    ).rejects.toThrow('One or more PDF attachments could not be rendered')
+
+    expect(deps.runCoordinator.dispatch).not.toHaveBeenCalled()
+    expect(deps.releaseDispatchReservation).toHaveBeenCalledOnce()
   })
 
   it('reconstructs a current main-owned pause reroute and strips an unproven claim', async () => {
@@ -431,7 +600,8 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
         provider: 'claude',
         providerReroute: expect.objectContaining({ from: 'codex', to: 'claude' })
       }),
-      senderEvent
+      senderEvent,
+      expect.any(Object)
     )
 
     await createRunDispatchFacade(deps)(
@@ -447,7 +617,8 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
     )
     expect(vi.mocked(deps.runCoordinator.dispatch)).toHaveBeenLastCalledWith(
       expect.not.objectContaining({ providerReroute: expect.anything() }),
-      senderEvent
+      senderEvent,
+      expect.any(Object)
     )
   })
 
@@ -479,7 +650,8 @@ describe('createRunDispatchFacade — ordered side-effect sequence (faked deps)'
         provider: 'claude',
         providerReroute: { from: 'codex', to: 'claude', reason: 'user-failover' }
       }),
-      senderEvent
+      senderEvent,
+      expect.any(Object)
     )
   })
 

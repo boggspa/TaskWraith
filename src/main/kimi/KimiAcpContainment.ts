@@ -1,13 +1,13 @@
 // Kimi Code ACP containment: the isolated KIMI_CODE_HOME + curated config that
-// makes a full-tool `kimi acp` seat safe to run. Every element here was live-
-// verified against kimi-code 0.24.1 before it was written (traces in the
-// migration dossier follow-up); see the block comments for what each closes.
+// makes a full-tool `kimi acp` seat safe to run. Historical kimi-code 0.24.1
+// traces motivated these controls; they do not qualify any current binary.
+// Source-ahead production admission comes only from the embedded exact-build
+// roster populated by the credentialed containment canary.
 //
 // Live findings that shape this module:
-//   - File tools (Read/Grep/Glob/Write/Edit) route through the ACP CLIENT fs
-//     capabilities, so TaskWraith regains per-path authority by implementing
-//     the fs handlers (KimiAcpClient) — the `--agent-file allowed_tools:[]`
-//     successor. That is the client's job, not this module's.
+//   - Production seats advertise NO ACP client fs capability. Read/Write/Edit
+//     are denied statically alongside the server-side Bash/Glob/Grep tools, so
+//     every workspace byte flows through the governed TaskWraith HTTP gateway.
 //   - WebSearch + FetchURL AUTO-RUN server-side (no permission ask) and reach
 //     api.kimi.com/coding/v1/{search,fetch}. They are the egress vector.
 //     Removing [services.moonshot_search] kills WebSearch but FetchURL SURVIVES
@@ -26,30 +26,24 @@
 // no standing always-allow reaches the ACP session.
 
 /**
- * Workspace-relative Kimi project-config entries that auto-execute or auto-load
- * at session start. Kimi Code discovers project config from the ACP `session/new`
- * cwd (verified: a project `.kimi-code/mcp.json` ran `/usr/bin/touch` at
- * session/new despite the isolated KIMI_CODE_HOME, `mcpServers:[]`, and the deny
- * wall) — that discovery is driven by the session cwd, which MUST be the real
- * workspace for the seat to be usable, so it cannot be relocated like the data
- * root. `.kimi-code/mcp.json` executes arbitrary stdio servers pre-prompt (RCE +
- * egress that bypasses the by-name deny wall); `.kimi-code/plugins` auto-loads
- * MCP servers / hooks. A workspace carrying either cannot be sandboxed, so a
- * contained Kimi ACP run must REFUSE rather than execute it. (dossier B3/B4.)
+ * Historical workspace-relative Kimi project-config entries that auto-execute
+ * or auto-load when the real workspace is used as `session/new` cwd. Production
+ * TaskWraith seats no longer use the workspace as process or session cwd; these
+ * names remain for compatibility probes and migration diagnostics only.
  */
 export const UNSAFE_WORKSPACE_KIMI_CONFIG_RELPATHS = [
   '.kimi-code/mcp.json',
   '.kimi-code/plugins'
 ] as const
 
-/** User-facing copy for the refuse-to-run when a workspace carries an
- *  un-sandboxable project Kimi config. */
+/** Historical diagnostic retained for compatibility probes. Production seats
+ * use a private empty cwd, so project Kimi config in the real workspace is not
+ * discovered and does not require a check-before-use refusal. */
 export function buildKimiWorkspaceConfigRefusalMessage(offendingPath: string): string {
   return (
-    `This workspace contains a project-level Kimi config (${offendingPath}) that TaskWraith cannot sandbox: ` +
-    `Kimi Code loads it from the session working directory before any prompt or permission check, outside the ` +
-    `isolated profile and the tool deny wall, so it could run arbitrary commands. Kimi runs are blocked in this ` +
-    `workspace for safety. Remove or relocate the .kimi-code project config to run Kimi here.`
+    `This workspace contains a project-level Kimi config (${offendingPath}). Legacy TaskWraith Kimi seats ` +
+    `could load it from the real session working directory before any prompt or permission check. Current ` +
+    `production seats use a private synthetic cwd and do not load this workspace config.`
   )
 }
 
@@ -57,17 +51,15 @@ export function buildKimiWorkspaceConfigRefusalMessage(offendingPath: string): s
  *  Two classes:
  *   - EGRESS / fan-out: FetchURL/WebSearch auto-run the server-side network
  *     egress vector; AgentSwarm fans out unbrokered sub-agents.
- *   - SERVER-SIDE FS / EXEC: Bash/Glob/Grep execute INSIDE the kimi acp process
+ *   - NATIVE FS / EXEC: Bash/Glob/Grep execute INSIDE the kimi acp process
  *     and do NOT route through the client fs authority, so they can read AND
  *     write ANY absolute path outside the workspace roots. Verified live: Bash
  *     `cat` leaked an out-of-workspace file and Bash `echo >` WROTE one; Glob
- *     enumerated an out-of-workspace directory. (Read/Write/Edit route through
- *     the client fs handler — `fs/read_text_file`/`fs/write_text_file` — and are
- *     already boundary-enforced: they returned `failed` for the same paths.)
- *     Denying the escapers forces all filesystem/exec access onto the two
- *     ENFORCED doors — the client fs handler (Read/Write/Edit) and the
- *     workspace-confined TaskWraith gateway MCP (run_shell_command /
- *     list_directory / find_files / workspace_search).
+ *     enumerated an out-of-workspace directory. Read/Write/Edit are also denied
+ *     because omitting client fs capability must not be allowed to shift them
+ *     to provider-side execution. Denying every native filesystem door forces
+ *     all workspace access onto the workspace-confined TaskWraith gateway MCP
+ *     (run_shell_command / list_directory / find_files / workspace_search).
  *  Deny rules are static and inherit into any sub-agent that is spawned. */
 export const KIMI_ACP_DENY_TOOLS = [
   'FetchURL',
@@ -75,7 +67,10 @@ export const KIMI_ACP_DENY_TOOLS = [
   'AgentSwarm',
   'Bash',
   'Glob',
-  'Grep'
+  'Grep',
+  'Read',
+  'Write',
+  'Edit'
 ] as const
 
 /**
@@ -87,35 +82,89 @@ export const KIMI_ACP_DENY_TOOLS = [
  * header or EOF.
  */
 export function stripAllowPermissionRules(configBody: string): string {
+  if (configBody.includes('"""') || configBody.includes("'''")) {
+    throw new Error('Multiline TOML strings are unsupported in a contained Kimi profile.')
+  }
   const lines = configBody.split(/\r?\n/)
   const out: string[] = []
   let block: string[] | null = null
-  let blockIsAllow = false
+  let blockDecision: 'allow' | 'deny' | 'ask' | null = null
+  const permissionRuleHeader =
+    /^\s*\[\[\s*(?:permission|"permission"|'permission')\s*\.\s*(?:rules|"rules"|'rules')\s*\]\]\s*(?:#.*)?$/
+  const codeBeforeComment = (line: string): string => {
+    let quote: 'single' | 'double' | null = null
+    for (let index = 0; index < line.length; index += 1) {
+      const char = line[index]
+      if (quote === 'double' && char === '\\') {
+        index += 1
+        continue
+      }
+      if (char === '"' && quote !== 'single') quote = quote === 'double' ? null : 'double'
+      else if (char === "'" && quote !== 'double') quote = quote === 'single' ? null : 'single'
+      else if (char === '#' && quote === null) return line.slice(0, index)
+    }
+    return line
+  }
 
   const flush = (): void => {
     if (!block) return
-    if (!blockIsAllow) out.push(...block)
+    if (!blockDecision) {
+      throw new Error('Kimi permission.rules block has no supported decision.')
+    }
+    if (blockDecision !== 'allow') out.push(...block)
     block = null
-    blockIsAllow = false
+    blockDecision = null
   }
-  const isTableHeader = (line: string): boolean => /^\s*\[\[?[^\]]+\]\]?\s*$/.test(line.trim())
+  const isTableHeader = (line: string): boolean =>
+    /^\s*\[\[?.+?\]\]?\s*(?:#.*)?$/.test(line)
 
   for (const line of lines) {
-    const trimmed = line.trim()
-    if (trimmed === '[[permission.rules]]') {
+    const code = codeBeforeComment(line).trim()
+    const keyOrHeader = code.includes('=') ? code.slice(0, code.indexOf('=')) : code
+    if (keyOrHeader.includes('\\')) {
+      throw new Error('Escaped TOML keys are unsupported in a contained Kimi profile.')
+    }
+    if (permissionRuleHeader.test(line)) {
       flush()
       block = [line]
-      blockIsAllow = false
+      blockDecision = null
       continue
+    }
+    // A permission-rule-looking array header that this bounded parser cannot
+    // understand is a containment error, not something to preserve and hope
+    // deny precedence handles.
+    if (/^\[/.test(code) && /permission/i.test(code)) {
+      throw new Error('Unsupported Kimi permission.rules table syntax.')
+    }
+    // TOML object equivalence permits standing rules without an array-table,
+    // e.g. `permission.rules = [...]` or `permission = { rules = [...] }`.
+    // This bounded transform supports only the canonical array-table form and
+    // rejects every other permission assignment instead of relying on rule
+    // precedence that the host cannot prove.
+    if (
+      /^(?:permission|"permission"|'permission')\s*(?:\.|=)/i.test(code) ||
+      /^(?:"permission\.rules"|'permission\.rules')\s*=/i.test(code)
+    ) {
+      throw new Error('Unsupported inline or dotted Kimi permission syntax.')
     }
     if (block) {
       // A new table header ends the current permission-rule block.
-      if (isTableHeader(line) && trimmed !== '[[permission.rules]]') {
+      if (isTableHeader(line) && !permissionRuleHeader.test(line)) {
         flush()
         out.push(line)
         continue
       }
-      if (/^\s*decision\s*=\s*["']allow["']/.test(line)) blockIsAllow = true
+      const decision = line.match(
+        /^\s*decision\s*=\s*(["'])(allow|deny|ask)\1\s*(?:#.*)?$/
+      )
+      if (decision) {
+        if (blockDecision) {
+          throw new Error('Kimi permission.rules block has duplicate decisions.')
+        }
+        blockDecision = decision[2] as 'allow' | 'deny' | 'ask'
+      } else if (/^\s*(?:decision|"decision"|'decision')\s*=/.test(line)) {
+        throw new Error('Kimi permission.rules block uses unsupported decision syntax.')
+      }
       block.push(line)
       continue
     }
@@ -128,11 +177,28 @@ export function stripAllowPermissionRules(configBody: string): string {
 /** Force `telemetry = false`: replace an existing top-level assignment, or add
  *  one if absent (before the first table header so it stays top-level). */
 export function forceTelemetryOff(configBody: string): string {
-  if (/^\s*telemetry\s*=/m.test(configBody)) {
-    return configBody.replace(/^\s*telemetry\s*=.*$/m, 'telemetry = false')
+  if (configBody.includes('"""') || configBody.includes("'''")) {
+    throw new Error('Multiline TOML strings are unsupported in a contained Kimi profile.')
+  }
+  if (/^\s*(?:"telemetry"|'telemetry')\s*=/m.test(configBody)) {
+    throw new Error('Quoted telemetry keys are unsupported in a contained Kimi profile.')
   }
   const lines = configBody.split(/\r?\n/)
   const firstTable = lines.findIndex((l) => /^\s*\[/.test(l.trim()))
+  const topLevelEnd = firstTable === -1 ? lines.length : firstTable
+  const telemetryIndex = lines
+    .slice(0, topLevelEnd)
+    .findIndex((line) => /^\s*telemetry\s*=/.test(line))
+  const topLevelTelemetryCount = lines
+    .slice(0, topLevelEnd)
+    .filter((line) => /^\s*telemetry\s*=/.test(line)).length
+  if (topLevelTelemetryCount > 1) {
+    throw new Error('Duplicate top-level telemetry keys are unsupported in a contained Kimi profile.')
+  }
+  if (telemetryIndex >= 0) {
+    lines[telemetryIndex] = 'telemetry = false'
+    return lines.join('\n')
+  }
   if (firstTable === -1) return `${configBody.replace(/\s*$/, '')}\ntelemetry = false\n`
   lines.splice(firstTable, 0, 'telemetry = false', '')
   return lines.join('\n')

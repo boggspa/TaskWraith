@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { cursorDebugEnabled, cursorWebBridgeEnabled } from './cursorGate'
 
-// Provider eligibility is no longer gated (Cursor is permanently first-class —
-// see ProviderId). Only the debug + web-bridge sub-gates remain configurable.
+// These flags are legacy diagnostics only; neither can enable a production
+// Cursor run or bridge under the unconditional managed-run gate.
 const CURSOR_ENV_KEYS = ['TASKWRAITH_CURSOR_DEBUG', 'TASKWRAITH_CURSOR_WEB'] as const
 
 type CursorEnvKey = (typeof CURSOR_ENV_KEYS)[number]
@@ -74,8 +74,8 @@ describe('cursorWebBridgeEnabled', () => {
     }
   })
 
-  it('defaults on', () => {
-    expect(cursorWebBridgeEnabled()).toBe(true)
+  it('defaults off', () => {
+    expect(cursorWebBridgeEnabled()).toBe(false)
   })
 
   it('turns off for documented opt-out values', () => {
@@ -85,10 +85,10 @@ describe('cursorWebBridgeEnabled', () => {
     }
   })
 
-  it('stays on for opt-in-looking, malformed, uppercase, or padded values', () => {
+  it('cannot be enabled by legacy opt-in-looking or malformed values', () => {
     for (const value of ['', '1', 'true', 'yes', 'FALSE', 'NO', ' no ', 'random']) {
       resetCursorEnv({ TASKWRAITH_CURSOR_WEB: value })
-      expect(cursorWebBridgeEnabled()).toBe(true)
+      expect(cursorWebBridgeEnabled()).toBe(false)
     }
   })
 })

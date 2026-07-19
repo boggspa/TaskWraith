@@ -90,6 +90,23 @@ describe('registerProviderTerminalHandlers', () => {
     })
   })
 
+  it.each(['login', 'logout', 'upgrade'] as const)(
+    'blocks Cursor %s before binary resolution or terminal creation',
+    async (action) => {
+      const { deps } = createDeps()
+      registerProviderTerminalHandlers(deps)
+
+      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'cursor')).resolves.toEqual({
+        ok: false,
+        error: expect.stringMatching(/Cursor managed runs are temporarily disabled.*No Cursor process was started/i)
+      })
+      expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+      expect(deps.mkdirSync).not.toHaveBeenCalled()
+      expect(deps.writeFileSync).not.toHaveBeenCalled()
+      expect(deps.openPath).not.toHaveBeenCalled()
+    }
+  )
+
   it('preserves raw-command fallback branches', async () => {
     const { deps } = createDeps()
     deps.resolveCliProviderBinary.mockResolvedValueOnce(createResolved(null))
@@ -174,8 +191,31 @@ describe('registerProviderTerminalHandlers', () => {
     registerProviderTerminalHandlers(deps)
 
     await expect(handlerFor('provider:open-kimi-upgrade-terminal')({})).resolves.toEqual({
-      ok: true
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/outside TaskWraith managed-run containment/i)
     })
     expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('kimi')
+    expect(deps.writeFileSync.mock.calls[0]?.[1]).toContain(
+      'Success does not qualify this runtime for managed Kimi turns or compaction.'
+    )
+  })
+
+  it('rejects Kimi logout without resolving or launching a bare Kimi session', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-logout-terminal')({}, 'kimi')).resolves.toEqual({
+      ok: false,
+      error: expect.stringMatching(/bounded logout command.*No Kimi process was started/i),
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/outside TaskWraith managed-run containment/i)
+    })
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+    expect(deps.mkdirSync).not.toHaveBeenCalled()
+    expect(deps.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.openPath).not.toHaveBeenCalled()
   })
 })

@@ -36,6 +36,24 @@ describe('AppStore run events', () => {
     )
   })
 
+  it('persists a strict reference-context append before returning its record', () => {
+    const runEventsDir = join(userDataPath, 'run-events')
+    fs.mkdirSync(runEventsDir, { recursive: true })
+
+    const record = AppStore.appendRunEvent(
+      {
+        runId: 'run-reference',
+        chatId: 'chat-reference',
+        kind: 'reference_context',
+        phase: 'artifact',
+        source: 'main'
+      },
+      { durability: 'strict' }
+    )
+
+    expect(AppStore.getRunEvents({ runId: 'run-reference' })).toContainEqual(record)
+  })
+
   it('persists redacted provider stream artifacts when raw events are enabled', () => {
     AppStore.updateSettings({ storeRawEvents: true })
 

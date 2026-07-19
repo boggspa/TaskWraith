@@ -1,12 +1,17 @@
 // Pure builder for the Cursor Agent CLI argv (`cursor-agent -p …`). No Electron
 // imports — unit-testable. Mirrors GrokCliArgs.
 //
-// LOAD-BEARING SAFETY (proven by the CR3 live spike — see the blueprint):
+// LOAD-BEARING SAFETY:
 //   * A bare `cursor-agent -p` has write+shell and uses them UNMEDIATED. So we
-//     NEVER spawn bare `-p`: read-only runs always pass `--mode plan` (proven
-//     to refuse edits), and write runs are contained by a workspace-local
-//     `.cursor/cli.json` deny-list (written by CursorWorkspaceConfig, NOT here).
-//   * We NEVER pass `--force` / `--yolo` (they auto-allow everything).
+//     NEVER spawn a production Cursor run. Authenticated startup can preload
+//     account/team hooks, managed skills/plugins, and MCP before a turn, even
+//     with private roots, excluded workspace context, and plan mode.
+//   * This builder is retained for hermetic argv tests and non-production
+//     qualification work only; it is not a production admission boundary.
+//   * `--force` remains behind an explicit containment-attestation input. No
+//     production caller currently supplies that attestation. `--yolo` is never
+//     emitted. `--approve-mcps` is never emitted because it approves Cursor's
+//     aggregate MCP catalogue rather than one TaskWraith-owned server.
 //   * Only TaskWraith-exposed Cursor model ids are forwarded. Cursor-proxied
 //     native-provider models are still dropped unless explicitly listed here.
 
@@ -16,9 +21,8 @@ import type { EffectiveRunPermissions } from '../store/types'
 import { cursorMcpToolsDenied } from './CursorMcpPolicy'
 
 /**
- * `'plan'` / unset = read-only (`--mode plan`, no edits). Anything else =
- * write-capable (default mode + the deny-list config contains native side
- * effects). Mirrors grokWriteCapable / claudePermissionModeForApproval.
+ * Classify a requested legacy/qualification argv posture. This does not make
+ * either posture admissible for a production Cursor process.
  */
 export function cursorWriteCapable(approvalMode: string | null | undefined): boolean {
   return typeof approvalMode === 'string' && approvalMode.trim() !== '' && approvalMode !== 'plan'
@@ -38,18 +42,24 @@ export interface BuildCursorCliArgsInput {
    * bridge approval/force flag even if a stale caller claims a bridge is live. */
   effectivePermissions?: Pick<EffectiveRunPermissions, 'agenticServices'> | null
   /**
-   * True when the TaskWraith MCP bridge is active for this run (a per-run
+   * Qualification-only exact-version containment input. Production admission
+   * is disabled before this builder is reached.
+   */
+  containmentAttested?: boolean
+  /** Add exact-build flags that suppress provider project config/context. */
+  isolateProjectConfigs?: boolean
+  /**
+   * Legacy/qualification-only bridge input (a per-run
    * `.cursor/mcp.json` registering the full brokered TaskWraith MCP server was
    * written, with matching `Mcp(<server>:<tool>)` allow rules). Adds
    * `--approve-mcps` so the bridge's tools don't block on the interactive
    * MCP-approval prompt. Only ever set for write-capable runs (default mode);
-   * plan mode executes no MCP tools. `--approve-mcps` auto-approves MCP servers
-   * ONLY — never shell/write — so it stays within the never-`--force`/`--yolo`
-   * rule.
+   * plan mode executes no MCP tools. Ignored without `containmentAttested`.
+   * No production caller may set this.
    */
   webBridgeActive?: boolean
   /**
-   * True when a READ-ONLY safe-subset TaskWraith MCP bridge is active for this
+   * Legacy/qualification-only READ-ONLY safe-subset bridge input for this
    * run (Grok-parity: a scoped `--safe-subset` broker advertising ONLY the
    * non-mutating read tools was registered, with native `Shell(**)`/`Write(**)`
    * denied in `.cursor/cli.json`). Because Cursor `--mode plan` executes NO
@@ -58,15 +68,17 @@ export interface BuildCursorCliArgsInput {
    * offers no write/shell tool at all), which is strictly more restrictive than
    * a write seat. Set only by the caller after it wrote the containment config.
    * Ignored for write-capable runs (which use the full bridge via
-   * `webBridgeActive`). Adds `--approve-mcps` and SUPPRESSES `--mode plan`.
+   * `webBridgeActive`). Suppresses `--mode plan` only when attested. No
+   * production caller may set this.
    */
   readOnlyBridgeActive?: boolean
   /**
-   * Emit `--force` alongside the active bridge so the MCP tool CALLS execute
+   * Qualification-only request to emit `--force` alongside the active bridge
    * headlessly (see the `--force` note in buildCursorCliArgs). Default (undefined)
    * = ON whenever the bridge is active. Set to `false` to withhold it (the MCP
    * tools then get rejected, the pre-fix behavior). Only ever has effect when the
-   * bridge is active — never adds `--force` to a bare/plan run.
+   * bridge is active — never adds `--force` to a bare/plan run. Production
+   * Cursor admission is disabled and must never reach this branch.
    */
   forceAllowTools?: boolean
 }
@@ -98,11 +110,12 @@ function resolveCursorModelArg(input: {
 
 export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   const mcpToolsDenied = cursorMcpToolsDenied(input.effectivePermissions)
-  // Cursor write mode is implemented exclusively through the governed
-  // TaskWraith MCP bridge. The production caller rejects this combination; the
-  // pure argv builder independently clamps it to plan mode so stale bridge
-  // booleans can never produce an uncontained default-mode process.
-  const writeCapable = cursorWriteCapable(input.approvalMode) && !mcpToolsDenied
+  // Production admission rejects Cursor before this qualification-only builder.
+  // Independently clamp absent attestation so stale bridge booleans cannot
+  // produce an uncontained default-mode argv in tests or future probes.
+  const containmentAttested = input.containmentAttested === true
+  const writeCapable =
+    containmentAttested && cursorWriteCapable(input.approvalMode) && !mcpToolsDenied
   const args: string[] = [
     '-p',
     '--output-format',
@@ -113,11 +126,17 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
     '--workspace',
     input.workspace
   ]
+  if (input.isolateProjectConfigs) {
+    args.push('--disable-project-configs', '--exclude-workspace-context')
+  }
   // A read-only seat with an active safe-subset bridge is CONTAINED (deny-list +
   // read-only-only broker) and must run in DEFAULT mode, because `--mode plan`
   // executes no tools — including the read tools the seat was just given.
   const readOnlyContained =
-    !mcpToolsDenied && !writeCapable && Boolean(input.readOnlyBridgeActive)
+    containmentAttested &&
+    !mcpToolsDenied &&
+    !writeCapable &&
+    Boolean(input.readOnlyBridgeActive)
   const bridgeActive =
     !mcpToolsDenied &&
     ((writeCapable && Boolean(input.webBridgeActive)) || readOnlyContained)
@@ -128,20 +147,9 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
     args.push('--mode', 'plan')
   }
   if (bridgeActive) {
-    // --approve-mcps loads/approves the MCP SERVER so its tools are advertised.
-    args.push('--approve-mcps')
-    // --force is REQUIRED for the MCP tool CALLS to execute headlessly: proven
-    // live, `-p` mode rejects every un-interactively-approved MCP tool call
-    // ("User rejected MCP", isReadonly:false) even when the server is enabled
-    // (the full broker catalog) and `--approve-mcps` is set. `--force` = "allow commands
-    // UNLESS EXPLICITLY DENIED"; the caller has written a `.cursor/cli.json`
-    // that explicitly denies `Shell(**)`/`Write(**)` (proven to block native
-    // writes/edits/shell), so --force allows ONLY the TaskWraith broker's MCP
-    // tools — which STILL pass through TaskWraith's approval ledger + workspace/
-    // path checks — and NEVER native side effects. It is therefore emitted ONLY
-    // here, coupled to the bridge + deny-list containment, and NEVER for a bare/
-    // plan/uncontained run (which never sets webBridgeActive/readOnlyBridgeActive).
-    // Opt-out via forceAllowTools:false (falls back to the tools being rejected).
+    // Cursor has no single-server approve flag. Never use `--approve-mcps`,
+    // which approves the aggregate catalogue. This qualification-only branch
+    // is unreachable from production while Cursor admission is disabled.
     if (input.forceAllowTools !== false) {
       args.push('--force')
     }
@@ -166,9 +174,14 @@ export function buildCursorProviderCliArgs(input: BuildCursorProviderCliArgsInpu
     // Honor the chat's approval mode only when the WRITE containment config is
     // in place; otherwise force read-only. A read-only seat with the safe-subset
     // broker still runs (contained) in default mode via readOnlyBridgeActive.
-    approvalMode: input.taskWraithMcpActive && !mcpToolsDenied ? input.approvalMode : 'plan',
-    webBridgeActive: !mcpToolsDenied && Boolean(input.taskWraithMcpActive),
+    approvalMode:
+      input.containmentAttested && input.taskWraithMcpActive && !mcpToolsDenied
+        ? input.approvalMode
+        : 'plan',
+    webBridgeActive:
+      input.containmentAttested && !mcpToolsDenied && Boolean(input.taskWraithMcpActive),
     readOnlyBridgeActive:
+      input.containmentAttested &&
       !mcpToolsDenied &&
       !input.taskWraithMcpActive &&
       Boolean(input.taskWraithReadOnlyMcpActive),

@@ -9,6 +9,10 @@ import {
   shouldRollOllamaRunSummary,
   upsertOllamaSessionMemory
 } from './OllamaRunMemory'
+import {
+  CANVAS_EVAL_RESULT_REDACTED,
+  createCanvasEvalApprovalReceipt
+} from '../canvas/CanvasEvalAudit'
 
 describe('OllamaRunMemory', () => {
   it('rolls working memory after every third tool turn', () => {
@@ -75,6 +79,80 @@ describe('OllamaRunMemory', () => {
     const pruned = pruneOllamaSessionMemoryForPersist(memory)
 
     expect(pruned.workingMemory).toHaveLength(6000)
+  })
+
+  it('retains only an approval-bound receipt for direct canvas_eval trajectory', () => {
+    const script = 'globalThis.__OLLAMA_CANVAS_SCRIPT_SECRET__ = "swordfish"'
+    const result = 'OLLAMA_CANVAS_RESULT_SECRET: swordfish'
+    const receipt = createCanvasEvalApprovalReceipt(script, 'approval-ollama-direct')
+
+    const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('gpt-oss:20b'), {
+      toolName: 'canvas_eval',
+      args: { canvasId: 'canvas-1', script },
+      ok: true,
+      resultSummary: result,
+      canvasEvalApproval: receipt
+    })
+    const persisted = pruneOllamaSessionMemoryForPersist(memory)
+    const serialized = JSON.stringify(persisted)
+
+    expect(serialized).not.toContain('__OLLAMA_CANVAS_SCRIPT_SECRET__')
+    expect(serialized).not.toContain('OLLAMA_CANVAS_RESULT_SECRET')
+    expect(persisted.trajectory?.[0]).toMatchObject({
+      toolName: 'canvas_eval',
+      effectiveToolName: 'canvas_eval',
+      argsSummary: 'canvas_eval script=[redacted]',
+      resultSummary: CANVAS_EVAL_RESULT_REDACTED,
+      canvasEvalReceipt: receipt
+    })
+    expect(persisted.workingMemory).toContain(CANVAS_EVAL_RESULT_REDACTED)
+  })
+
+  it('redacts nested capability_invoke canvas_eval errors even without a receipt', () => {
+    const script = 'throw new Error("OLLAMA_NESTED_SCRIPT_SECRET")'
+    const error = 'OLLAMA_NESTED_ERROR_SECRET: stack included script text'
+
+    const memory = appendOllamaTrajectoryEntry(createEmptyOllamaSessionMemory('gpt-oss:20b'), {
+      toolName: 'capability_invoke',
+      args: {
+        name: 'canvas_eval',
+        arguments: { canvasId: 'canvas-2', script }
+      },
+      ok: false,
+      resultSummary: error
+    })
+    const persisted = pruneOllamaSessionMemoryForPersist(memory)
+    const serialized = JSON.stringify(persisted)
+
+    expect(serialized).not.toContain('OLLAMA_NESTED_SCRIPT_SECRET')
+    expect(serialized).not.toContain('OLLAMA_NESTED_ERROR_SECRET')
+    expect(persisted.trajectory?.[0]).toEqual({
+      toolName: 'capability_invoke',
+      effectiveToolName: 'canvas_eval',
+      argsSummary: 'capability_invoke name=canvas_eval script=[redacted]',
+      ok: false,
+      resultSummary: CANVAS_EVAL_RESULT_REDACTED
+    })
+  })
+
+  it('re-sanitizes canvas_eval entries at the final persistence boundary', () => {
+    const persisted = pruneOllamaSessionMemoryForPersist({
+      ...createEmptyOllamaSessionMemory('gpt-oss:20b'),
+      workingMemory: 'LEGACY_CANVAS_RESULT_SECRET',
+      toolTurnCount: 1,
+      trajectory: [
+        {
+          toolName: 'canvas_eval',
+          argsSummary: 'canvas_eval LEGACY_CANVAS_SCRIPT_SECRET',
+          ok: false,
+          resultSummary: 'LEGACY_CANVAS_RESULT_SECRET'
+        }
+      ]
+    })
+
+    expect(JSON.stringify(persisted)).not.toContain('LEGACY_CANVAS_SCRIPT_SECRET')
+    expect(JSON.stringify(persisted)).not.toContain('LEGACY_CANVAS_RESULT_SECRET')
+    expect(persisted.trajectory?.[0]?.resultSummary).toBe(CANVAS_EVAL_RESULT_REDACTED)
   })
 
   it('keeps ensemble Ollama memory buckets isolated by safe seat key', () => {

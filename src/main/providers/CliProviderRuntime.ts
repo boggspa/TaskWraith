@@ -9,6 +9,7 @@ import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
+import { cursorManagedRunAdmission } from '../cursor/CursorManagedRunGate'
 import type { ExtensionSecretRef, ExtensionSecretResolution } from '../ExtensionSecretStore'
 import type {
   AppSettings,
@@ -55,6 +56,7 @@ export interface CliProviderRuntimeDependencies {
   }) => Promise<GeminiMcpBridgeStatus>
   getCodexStatusSnapshot?: () => Promise<unknown>
   getCodexMcpStatusSnapshot?: () => Promise<unknown>
+  getKimiStatusSnapshot?: () => Promise<Record<string, unknown>>
   resolveExtensionSecretValues?: (refs: ExtensionSecretRef[]) => ExtensionSecretResolution[]
 }
 
@@ -95,8 +97,8 @@ export function providerDisplayName(provider: ProviderId): string {
 export function providerBinaryName(provider: ProviderId): string {
   if (provider === 'kimi') return 'kimi'
   if (provider === 'claude') return 'claude'
-  // Cursor's CLI binary is `cursor-agent` (installed to ~/.local/bin); the
-  // unconditional ~/.local/bin candidate below resolves it.
+  // Historical/qualification identity only. Production Cursor status and run
+  // paths return before binary resolution or process launch.
   if (provider === 'cursor') return 'cursor-agent'
   return provider
 }
@@ -487,10 +489,10 @@ export async function resolveCliProviderBinary(
     // Kimi Code (the kimi-cli successor) installs its binary at
     // ~/.kimi-code/bin/kimi and only exposes that dir via a ~/.zshrc PATH
     // export, so a packaged (launchd-PATH) launch never sees it. Mirror the
-    // Grok case so Kimi resolves in a limited-PATH context. NOTE: resolving
-    // the binary is necessary but NOT sufficient — the Kimi Code binary
-    // dropped Wire mode, so runs still require the ACP transport migration
-    // before Kimi can actually execute.
+    // Grok case so Kimi resolves in a limited-PATH context. Resolving the
+    // binary is necessary but NOT sufficient: managed execution is ACP-only
+    // and still requires exact descriptor-bound runtime admission plus the
+    // contained synthetic-cwd/authenticated-gateway launch composition.
     ...(provider === 'kimi'
       ? binaryCandidates.map((name) => join(os.homedir(), '.kimi-code', 'bin', name))
       : []),
@@ -574,6 +576,7 @@ export async function readResolvedCliVersion(
   resolved: ResolvedProviderBinary,
   deps?: CliProviderRuntimeDependencies
 ): Promise<string> {
+  if (resolved.provider === 'cursor') return 'security-unavailable'
   if (!resolved.binaryPath) return 'missing'
   const output = await captureProcessOutput(
     resolved.binaryPath,
@@ -619,6 +622,51 @@ export async function getCliProviderStatus(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ) {
+  if (provider === 'cursor') {
+    const admission = cursorManagedRunAdmission()
+    return {
+      provider,
+      label: providerDisplayName(provider),
+      available: false,
+      version: 'security-unavailable',
+      appServer: 'unsupported',
+      authState: 'unavailable',
+      setupRequired: true,
+      securityUnavailable: admission.securityUnavailable,
+      binaryPath: null,
+      binarySource: 'disabled',
+      error: admission.message,
+      supportsSessions: false,
+      supportsApprovals: false,
+      supportsQuota: false,
+      supportsMcpStatus: false
+    }
+  }
+  if (provider === 'kimi' && deps?.getKimiStatusSnapshot) {
+    return deps.getKimiStatusSnapshot()
+  }
+  if (provider === 'kimi') {
+    // A PATH hit or an independently executed `--version` is not Kimi runtime
+    // admission. Production injects getKimiStatusSnapshot from the reviewed
+    // descriptor-bound admission seam; generic callers fail closed and start
+    // no provider process.
+    return {
+      provider,
+      label: providerDisplayName(provider),
+      available: false,
+      version: 'admission-required',
+      appServer: 'acp-admission-required',
+      authState: 'unknown',
+      setupRequired: true,
+      binaryPath: null,
+      binarySource: 'unqualified',
+      error: 'Kimi status requires reviewed ACP runtime admission; no Kimi process was started.',
+      supportsSessions: false,
+      supportsApprovals: false,
+      supportsQuota: false,
+      supportsMcpStatus: false
+    }
+  }
   const resolved = await resolveCliProviderBinary(provider, undefined, deps)
   if (!resolved.binaryPath) {
     return {
@@ -644,7 +692,7 @@ export async function getCliProviderStatus(
     label: providerDisplayName(provider),
     available: true,
     version: await readResolvedCliVersion(resolved, deps),
-    appServer: provider === 'kimi' ? 'wire-supported' : 'sdk-or-cli',
+    appServer: 'sdk-or-cli',
     authState:
       provider === 'claude'
         ? await readClaudeAuthState(resolved, deps)
@@ -653,7 +701,7 @@ export async function getCliProviderStatus(
     binaryPath: resolved.binaryPath,
     binarySource: resolved.source,
     supportsSessions: true,
-    supportsApprovals: provider === 'kimi',
+    supportsApprovals: false,
     supportsQuota: false,
     supportsMcpStatus: false
   }
@@ -663,6 +711,18 @@ export function getCliProviderMcpStatus(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ) {
+  if (provider === 'cursor') {
+    return {
+      provider,
+      available: false,
+      enabled: false,
+      source: 'unsupported',
+      serverName: null,
+      tools: [],
+      sections: [],
+      message: cursorManagedRunAdmission().message
+    }
+  }
   const settings = runtimeSettingsFromDeps(deps)
   const bridgeEnabled = Boolean(settings.geminiMcpBridgeEnabled)
   const userMcpServers =
@@ -692,6 +752,11 @@ export async function getAgentStatusSnapshotDirect(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ): Promise<unknown> {
+  if (provider === 'cursor') {
+    // getCliProviderStatus returns the static no-process security posture before
+    // settings, profile, binary, version, or auth discovery.
+    return getCliProviderStatus(provider, deps)
+  }
   if (provider === 'codex') {
     if (!deps?.getCodexStatusSnapshot) {
       throw new Error('Codex status snapshot requires app-server runtime dependencies.')
@@ -701,11 +766,10 @@ export async function getAgentStatusSnapshotDirect(
   if (
     provider === 'claude' ||
     provider === 'kimi' ||
-    provider === 'grok' ||
-    provider === 'cursor'
+    provider === 'grok'
   ) {
-    // Grok and Cursor are local CLI providers; route to the generic CLI
-    // status instead of falling through to the Gemini-shaped snapshot below.
+    // Route live local CLIs to generic status instead of the Gemini-shaped
+    // snapshot below.
     return getCliProviderStatus(provider, deps)
   }
   const geminiStatus = await getCliProviderStatus('gemini', deps)
@@ -720,7 +784,7 @@ export async function getAgentMcpStatusSnapshotDirect(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ): Promise<unknown> {
-  if (provider === 'claude' || provider === 'kimi') {
+  if (provider === 'claude' || provider === 'kimi' || provider === 'cursor') {
     return getCliProviderMcpStatus(provider, deps)
   }
   if (provider !== 'codex') {

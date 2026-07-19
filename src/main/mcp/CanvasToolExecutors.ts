@@ -15,11 +15,14 @@ import type { McpToolContentBlock, McpToolExecutionResult } from './McpBridgeRun
 import type {
   CanvasCallContext,
   CanvasController,
+  CanvasEvalApprovalReceipt,
   CanvasMark,
   CanvasSketchElement,
   CanvasSketchUpdateInput
 } from '../canvas/canvasTypes'
+import { CANVAS_EVAL_SCRIPT_CAP, CANVAS_EVAL_VALUE_CAP } from '../canvas/canvasTypes'
 import {
+  redactUrlQuery,
   resolveViewport,
   validateCanvasHtml,
   validateCanvasImageRef,
@@ -63,6 +66,7 @@ export interface CanvasToolContext {
   appChatId?: string
   appRunId?: string
   workspacePath?: string
+  canvasEvalApproval?: CanvasEvalApprovalReceipt
 }
 
 export interface CanvasToolExecutorDeps {
@@ -173,6 +177,21 @@ function fail(toolName: CanvasMcpToolName, message: string): McpToolExecutionRes
   return { text, isError: true, structuredContent: value, content: [{ type: 'text', text }] }
 }
 
+function canvasToolErrorForProvider(error: unknown): string {
+  const raw = error instanceof Error ? error.message : String(error)
+  const lower = raw.toLowerCase()
+  const code = lower.includes('timed out')
+    ? 'timeout'
+    : lower.includes('cancel') || lower.includes('history')
+      ? 'authority_changed'
+      : lower.includes('navigation') || lower.includes('load')
+        ? 'navigation_failed'
+        : lower.includes('not found') || lower.includes('no open canvas')
+          ? 'not_found'
+          : 'operation_failed'
+  return `Canvas operation failed (${code}).`
+}
+
 function escapeHtml(value: string): string {
   return value
     .replace(/&/g, '&amp;')
@@ -263,7 +282,8 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
       provider: parentProvider,
       chatId: context.appChatId,
       runId: context.appRunId,
-      workspacePath: context.workspacePath
+      workspacePath: context.workspacePath,
+      canvasEvalApproval: context.canvasEvalApproval
     }
     const canvasId = asOptString(args.canvasId)
     const needsId = (): string => {
@@ -297,7 +317,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ok: true,
               tool: toolName,
               canvasId: opened.canvasId,
-              url: opened.url,
+              url: redactUrlQuery(opened.url),
               title: opened.title,
               viewport: opened.viewport
             })
@@ -317,7 +337,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             ok: true,
             tool: toolName,
             canvasId: opened.canvasId,
-            url: opened.url,
+            url: redactUrlQuery(opened.url),
             title: opened.title,
             viewport: opened.viewport
           })
@@ -335,7 +355,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ok: true,
               tool: toolName,
               canvasId: opened.canvasId,
-              url: opened.url,
+              url: redactUrlQuery(opened.url),
               title: opened.title,
               mimeType: frame.mimeType,
               width: frame.width,
@@ -364,7 +384,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               ok: true,
               tool: toolName,
               canvasId: opened.canvasId,
-              url: opened.url,
+              url: redactUrlQuery(opened.url),
               mimeType: frame.mimeType,
               width: frame.width,
               height: frame.height,
@@ -394,7 +414,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               attemptId,
               source: 'detectedUrl',
               canvasId: opened.canvasId,
-              url: opened.url,
+              url: redactUrlQuery(opened.url),
               title: opened.title,
               viewport: opened.viewport
             })
@@ -418,7 +438,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
               attemptId,
               source: 'outputTail',
               canvasId: opened.canvasId,
-              url: opened.url,
+              url: redactUrlQuery(opened.url),
               title: opened.title,
               status: attempt.status,
               mimeType: frame.mimeType,
@@ -439,7 +459,7 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             ok: true,
             tool: toolName,
             canvasId: opened.canvasId,
-            url: opened.url,
+            url: redactUrlQuery(opened.url),
             title: opened.title,
             viewport: opened.viewport,
             document
@@ -479,7 +499,12 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         }
         case 'canvas_snapshot': {
           const tree = await controller.snapshot(needsId(), ctx)
-          return jsonResult({ ok: true, tool: toolName, ...tree })
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            ...tree,
+            url: redactUrlQuery(tree.url)
+          })
         }
         case 'canvas_screenshot': {
           const frame = await controller.screenshot(needsId(), ctx)
@@ -513,7 +538,15 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           const filter = filterRaw === 'failed' ? 'failed' : 'all'
           const requestId = asOptNumber(args.requestId)
           const requests = await controller.network(needsId(), { filter, requestId }, ctx)
-          return jsonResult({ ok: true, tool: toolName, count: requests.length, requests })
+          return jsonResult({
+            ok: true,
+            tool: toolName,
+            count: requests.length,
+            requests: requests.map((request) => ({
+              ...request,
+              url: redactUrlQuery(request.url)
+            }))
+          })
         }
         case 'canvas_console': {
           const levelRaw = asOptString(args.level)
@@ -543,7 +576,11 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             return fail(toolName, 'Provide a `ref`, a `selector`, or both `x` and `y`.')
           }
           const result = await controller.click(needsId(), { kind: 'click', ref, selector, x, y }, ctx)
-          return jsonResult({ ...result, tool: toolName })
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
         }
         case 'canvas_fill': {
           const ref = asOptString(args.ref)
@@ -555,7 +592,11 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
             { kind: 'fill', ref, selector, value: args.value },
             ctx
           )
-          return jsonResult({ ...result, tool: toolName })
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
         }
         case 'canvas_annotate': {
           const marks = parseMarks(args.marks)
@@ -575,12 +616,21 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           if (!script.trim()) return fail(toolName, '`script` (JavaScript string) is required.')
           // Bound the script size before it ever reaches the page (defence-in-depth
           // alongside the per-session eval budget and the signed-elevated approval).
-          const MAX_SCRIPT = 100000
-          if (script.length > MAX_SCRIPT) {
-            return fail(toolName, `\`script\` too large (max ${MAX_SCRIPT} chars).`)
+          if (script.length > CANVAS_EVAL_SCRIPT_CAP) {
+            return fail(
+              toolName,
+              `\`script\` too large (max ${CANVAS_EVAL_SCRIPT_CAP} chars).`
+            )
+          }
+          if (!ctx.canvasEvalApproval) {
+            return fail(toolName, 'canvas_eval requires a bound per-call approval receipt.')
           }
           const result = await controller.evaluate(needsId(), { script }, ctx)
-          return jsonResult({ ...result, tool: toolName })
+          return jsonResult({
+            ...result,
+            ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
+            tool: toolName
+          })
         }
         case 'canvas_close': {
           await controller.close(needsId(), ctx)
@@ -591,7 +641,12 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
         }
       }
     } catch (err) {
-      return fail(toolName, err instanceof Error ? err.message : String(err))
+      return fail(
+        toolName,
+        toolName === 'canvas_eval'
+          ? canvasToolErrorForProvider(err).slice(0, CANVAS_EVAL_VALUE_CAP)
+          : canvasToolErrorForProvider(err)
+      )
     }
   }
 

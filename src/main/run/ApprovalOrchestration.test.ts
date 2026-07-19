@@ -5,6 +5,7 @@ import {
   createMainApprovalOrchestration,
   type RequestAgenticServiceApprovalDeps
 } from './ApprovalOrchestration'
+import { createCanvasEvalApprovalReceipt } from '../canvas/CanvasEvalAudit'
 
 /**
  * M3-3b SECURITY wrapper net for the relocated approval orchestrator (the trust
@@ -54,7 +55,10 @@ type Resolution = {
 function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
   return {
     runManager: {
-      get: vi.fn(() => undefined),
+      get: vi.fn((runId?: string) =>
+        runId ? { runId, appChatId: 'chat-1', status: 'running', state: {} } : undefined
+      ),
+      getClaimedTerminalStatus: vi.fn(() => undefined),
       registerApproval: vi.fn(() => {
         order.push('runManager.registerApproval')
       })
@@ -314,20 +318,21 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void promise
   })
 
-  // (g2) REGISTER null-service — a null approval service (pre-init) must not throw;
-  // the optional-chain skips registerGeminiTool but the rest of the sequence runs.
-  it('(g2) a null approval service skips registerGeminiTool without throwing', async () => {
+  // (g2) REGISTER null-service — no registry means there is nowhere to receive
+  // the renderer decision. Fail closed before emitting an orphan card/ledger row.
+  it('(g2) a null approval service fails closed before emitting an orphan prompt', async () => {
     const order: string[] = []
     const deps = makeDeps(order)
     vi.mocked(deps.getApprovalService).mockReturnValue(null as never)
 
-    createApprovalOrchestration(deps)(sender, 'gemini', 'mcpTools', '/repo', request())
-    await Promise.resolve()
+    await expect(
+      createApprovalOrchestration(deps)(sender, 'gemini', 'mcpTools', '/repo', request())
+    ).resolves.toBe(false)
 
     expect(vi.mocked(deps.getApprovalService)).toHaveBeenCalled() // live read still happens
-    expect(order).not.toContain('registerGeminiTool') // null → optional-chain no-op
-    expect(order).toContain('runManager.registerApproval') // sequence continues
-    expect(order).toContain('safeSendToSender:agent-approval-request')
+    expect(order).not.toContain('registerGeminiTool')
+    expect(order).not.toContain('runManager.registerApproval')
+    expect(order).not.toContain('safeSendToSender:agent-approval-request')
   })
 
   // (h) NEVER-AUTO-ALLOW — invariant #5: canvasEval (RCE) is non-grantable. Even
@@ -344,7 +349,18 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
       decision: 'allow'
     })
 
-    createApprovalOrchestration(deps)(sender, 'claude', 'canvasEval', '/repo', request())
+    const script = 'return 1'
+    createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'canvasEval',
+      '/repo',
+      request({
+        preview: { toolName: 'canvas_eval', params: { script } },
+        onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) =>
+          createCanvasEvalApprovalReceipt(script, approvalId)
+      })
+    )
     await Promise.resolve()
 
     // no auto-allow of any flavour…
@@ -353,6 +369,91 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('audit:autoAllow:bossman_auto')
     // …it reaches the human prompt instead.
     expect(order).toContain('registerGeminiTool')
+  })
+
+  it('(i) keeps the exact canvas_eval script transient while durable sinks receive an approval-bound receipt', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const script = 'document.cookie + "APPROVAL-SECRET"'
+    const onApprovalPromptCreated = vi.fn(({ approvalId }: { approvalId: string }) =>
+      createCanvasEvalApprovalReceipt(script, approvalId)
+    )
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'canvasEval',
+      '/repo',
+      request({
+        preview: {
+          kind: 'tool',
+          toolName: 'canvas_eval',
+          params: { canvasId: 'canvas-1', script }
+        },
+        onApprovalPromptCreated
+      })
+    )
+    await Promise.resolve()
+
+    const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
+    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls[0]?.[5] as any
+    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls[0]?.[2] as any
+
+    expect(livePayload.preview.params.script).toBe(script)
+    expect(JSON.stringify(durableRunPayload)).not.toContain('APPROVAL-SECRET')
+    expect(JSON.stringify(durableLedgerPayload)).not.toContain('APPROVAL-SECRET')
+    expect(durableRunPayload.preview.canvasEvalReceipt).toEqual(
+      durableLedgerPayload.preview.canvasEvalReceipt
+    )
+    expect(durableRunPayload.preview.canvasEvalReceipt).toMatchObject({
+      approvalId: livePayload.approvalId,
+      schemaVersion: 2,
+      scriptHashAlgorithm: 'sha256-utf16le',
+      scriptLength: script.length,
+      scriptByteLength: Buffer.byteLength(script, 'utf8')
+    })
+    expect(onApprovalPromptCreated).toHaveBeenCalledWith({
+      approvalId: livePayload.approvalId
+    })
+    void pending
+  })
+
+  it('(j) blocks canvas_eval before registration when the host receipt is missing or mismatched', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const script = 'return "reviewed"'
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        'canvasEval',
+        '/repo',
+        request({
+          preview: { toolName: 'canvas_eval', params: { script } },
+          onApprovalPromptCreated: vi.fn(() => undefined)
+        })
+      )
+    ).resolves.toBe(false)
+
+    await expect(
+      createApprovalOrchestration(deps)(
+        sender,
+        'claude',
+        'canvasEval',
+        '/repo',
+        request({
+          preview: { toolName: 'canvas_eval', params: { script } },
+          onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) =>
+            createCanvasEvalApprovalReceipt('return "different"', approvalId)
+        })
+      )
+    ).resolves.toBe(false)
+
+    expect(order).not.toContain('registerGeminiTool')
+    expect(order).not.toContain('runManager.registerApproval')
+    expect(order).not.toContain('appendDurableRunEventForRoute')
+    expect(order.filter((entry) => entry === 'safeSendToSender:agent-error')).toHaveLength(2)
   })
 })
 
@@ -423,19 +524,21 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     expect(deps.getApprovalService).toHaveBeenCalled()
   })
 
-  // (m3) Null approval service still logs and fans out but skips registerMain.
-  it('(m3) a null approval service skips registerMain but still completes the main-authority sequence', async () => {
+  // (m3) Null approval service cannot own the pending resolver, so fail closed
+  // before creating a durable or visible approval that can never settle.
+  it('(m3) a null approval service fails closed before emitting a main-authority prompt', async () => {
     const order: string[] = []
     const deps = makeMainDeps(order)
     vi.mocked(deps.getApprovalService).mockReturnValue(null as never)
 
-    createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
-    await Promise.resolve()
+    await expect(
+      createMainApprovalOrchestration(deps)(mainSender, 'gemini', null, mainRequest())
+    ).resolves.toBe(false)
 
-    expect(order).toContain('runManager.registerApproval')
+    expect(order).not.toContain('runManager.registerApproval')
     expect(order).not.toContain('registerMain')
-    expect(order).toContain('safeSendToSender:agent-approval-request')
-    expect(order).toContain('notifyPairedDevicesOfApproval')
+    expect(order).not.toContain('safeSendToSender:agent-approval-request')
+    expect(order).not.toContain('notifyPairedDevicesOfApproval')
   })
 
   // (m4) The main-authority timeout and ledger metadata flags must be injected.
