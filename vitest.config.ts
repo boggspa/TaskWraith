@@ -19,6 +19,11 @@ export default defineConfig({
     exclude: [
       ...configDefaults.exclude,
       '.local-only/**',
+      // Never discover test copies inside agent worktrees: they are redundant
+      // with the main tree, and double-discovery breaks strict per-file
+      // assertion validation (e.g. the provider-containment canary rejects
+      // "live assertion titles were duplicated"). Implements the file header.
+      '**/.claude/worktrees/**',
       ...(includeSwiftInterop ? [] : ['ios/**'])
     ]
   }
