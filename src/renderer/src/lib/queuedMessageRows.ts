@@ -166,14 +166,14 @@ export const alignEnsembleQueuedPromptEntries = (
 }
 
 export const ensembleRoundQueuePatch = (
-  round: NonNullable<ChatRecord['ensemble']>['activeRound'],
+  round: NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>,
   nextPrompts: string[],
   options?: {
     removedIndex?: number
     appendedPrompt?: string
   }
 ): Pick<
-  NonNullable<ChatRecord['ensemble']>['activeRound'],
+  NonNullable<NonNullable<ChatRecord['ensemble']>['activeRound']>,
   'queuedPrompt' | 'queuedPrompts' | 'queuedPromptEntries'
 > => {
   const previousPrompts = ensembleQueuedPromptsFromRound(round)

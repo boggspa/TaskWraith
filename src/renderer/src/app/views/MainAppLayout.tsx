@@ -2378,7 +2378,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               isThinking={isSideChatRunning}
               pendingPlanChoice={null}
               pendingAgentQuestions={
-                pendingAgentQuestionsByChatId[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
+                pendingAgentQuestionsByChatId?.[sideChat.appChatId] || EMPTY_AGENT_QUESTION_QUEUE
               }
               onAgentQuestionSubmit={NOOP_AGENT_QUESTION_SUBMIT}
               onAgentQuestionDismiss={NOOP_MESSAGE_ACTION}
