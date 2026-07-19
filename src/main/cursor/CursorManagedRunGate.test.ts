@@ -1,21 +1,36 @@
 import { readFileSync } from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import { describe, expect, it } from 'vitest'
-import { cursorManagedRunAdmission } from './CursorManagedRunGate'
+import { cursorManagedRunAdmission, resolveCursorManagedRunAdmission } from './CursorManagedRunGate'
 
 describe('Cursor managed-run release gate', () => {
-  it('blocks unconditionally, including when explicit auth exists', () => {
+  it('blocks with the empty embedded roster regardless of explicit auth (fail-closed)', () => {
     for (const _env of [
       {},
       { CURSOR_AUTH_TOKEN: 'secret-token' },
       { CURSOR_API_KEY: 'secret-api-key' }
     ]) {
+      // The shipped runtime roster is empty, so admission is fail-closed and is
+      // never a function of credentials.
       const admission = cursorManagedRunAdmission()
       expect(admission).toMatchObject({ allowed: false, securityUnavailable: true })
       expect(admission.message).toContain('No Cursor process was started')
       expect(admission.message).not.toContain('secret-token')
       expect(admission.message).not.toContain('secret-api-key')
     }
+  })
+
+  it('derives the gate from the qualified roster and never authorizes a spawn at this coarse layer', () => {
+    // No qualified build -> security-unavailable (the shipped fail-closed state).
+    const empty = resolveCursorManagedRunAdmission(false)
+    expect(empty).toMatchObject({ allowed: false, securityUnavailable: true })
+    expect(empty.message).toContain('No Cursor process was started')
+    // A qualified build present -> no longer "security unavailable", but this
+    // coarse synchronous gate STILL does not authorize a spawn: exact-build
+    // admission (admitCursorRuntime) is the async authority.
+    const armed = resolveCursorManagedRunAdmission(true)
+    expect(armed.allowed).toBe(false)
+    expect(armed.securityUnavailable).toBe(false)
   })
 
   it('keeps the production entry point free of every Cursor spawn/resolve path', () => {

@@ -29,19 +29,35 @@ const DEFAULT_JUNIT_OUTPUT_PATH = path.join(
 const PROVIDERS = ['kimi', 'cursor']
 const QUALIFICATION_SCOPES = Object.freeze({
   kimi: 'acp-synthetic-cwd-gateway-v1',
-  cursor: null
+  cursor: 'cursor-startup-containment-v1'
 })
 const KIMI_PRODUCTION_POSTURE_VERSION = 'synthetic-cwd-gateway-v1'
 const KIMI_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
+const CURSOR_STARTUP_POSTURE_VERSION = 'cursor-startup-containment-v1'
+const CURSOR_REVIEWED_ATTESTATION_SOURCE = 'credentialed-live-containment-canary'
+// Per-provider posture/attestation used by qualificationFor(). The manifest
+// providers.cursor roster ships EMPTY, so no Cursor tuple can match regardless
+// of these constants — Cursor stays fail-closed until a real live-canary pass
+// mints its exact fingerprint. These simply make the matcher provider-aware so
+// the pipeline is ready to admit the reviewed Cursor build once one exists.
+const POSTURE_VERSIONS = Object.freeze({
+  kimi: KIMI_PRODUCTION_POSTURE_VERSION,
+  cursor: CURSOR_STARTUP_POSTURE_VERSION
+})
+const REVIEWED_ATTESTATION_SOURCES = Object.freeze({
+  kimi: KIMI_REVIEWED_ATTESTATION_SOURCE,
+  cursor: CURSOR_REVIEWED_ATTESTATION_SOURCE
+})
 const LIVE_TIMEOUT_MS = 25 * 60 * 1000
 // Deliberately reviewed allowlist. Never glob arbitrary *.live.test.ts files on
 // a credentialed worker: adding a file here is part of the release-security
-// review, not ordinary test discovery. Cursor remains empty: the current CLI's
-// credentialed startup may preload account-managed executable surfaces before a
-// Plan turn, so even a plan/no-tools model call is not yet a safe canary.
+// review, not ordinary test discovery. Cursor's DRAFT startup-containment suite
+// is allowlisted so the pipeline is ready to qualify, but the manifest roster
+// stays empty (fail-closed): a live pass mints the fingerprint before Cursor is
+// ever admissible. The suite's live turn self-skips without CURSOR_API_KEY.
 const REVIEWED_LIVE_TESTS = Object.freeze({
   kimi: Object.freeze(['src/main/kimi/KimiProductionContainment.live.test.ts']),
-  cursor: Object.freeze([])
+  cursor: Object.freeze(['src/main/cursor/CursorStartupContainment.live.test.ts'])
 })
 const REVIEWED_LIVE_ASSERTIONS = Object.freeze({
   'src/main/kimi/KimiProductionContainment.live.test.ts': Object.freeze([
@@ -61,6 +77,16 @@ const REVIEWED_LIVE_ASSERTIONS = Object.freeze({
     'returns a same-id structured terminal denial for native Edit with zero client-fs fallback',
     'rejects gateway disablement and bridge startup failure before invoking provider spawn',
     'is gated behind KIMI_ACP_LIVE_TRACE + an authenticated Kimi Code install'
+  ]),
+  'src/main/cursor/CursorStartupContainment.live.test.ts': Object.freeze([
+    'isolates the synthetic Cursor config and data home and leaves the real user config untouched',
+    'never executes a hostile global or project MCP server before the first turn',
+    'lets an in-workspace write land but sandbox-blocks a write to the user home',
+    'spawns no unexpected MCP, skill, or plugin child process before the first turn',
+    'requires a real contained attempt and tears down the synthetic home, workspace, and process',
+    'builds a contained managed argv that enforces the sandbox and never emits force, yolo, or approve-mcps',
+    'denies an unqualified cursor-agent binary while the embedded runtime roster is empty',
+    'is gated behind CURSOR_API_KEY and an installed cursor-agent binary'
   ])
 })
 
@@ -717,10 +743,12 @@ function qualificationFor(manifest, provider, probe) {
   const candidates = Array.isArray(manifest?.providers?.[provider])
     ? manifest.providers[provider]
     : []
+  const expectedPosture = POSTURE_VERSIONS[provider]
+  const expectedAttestation = REVIEWED_ATTESTATION_SOURCES[provider]
   const match = candidates.find((candidate) => {
     if (candidate.scope !== probe.qualificationScope) return false
-    if (candidate.postureVersion !== KIMI_PRODUCTION_POSTURE_VERSION) return false
-    if (candidate.attestationSource !== KIMI_REVIEWED_ATTESTATION_SOURCE) return false
+    if (candidate.postureVersion !== expectedPosture) return false
+    if (candidate.attestationSource !== expectedAttestation) return false
     if (candidate.version !== probe.binary.version) return false
     if (candidate.capabilityFingerprint !== probe.capabilities.fingerprint) return false
     // Qualification is exact. Version/capability matches are useful diagnostics,
@@ -1173,10 +1201,13 @@ function addCounts(target, source) {
 }
 
 function liveExecutionAllowed(provider) {
-  // Cursor credentialed startup is not a canaryable surface today. Keep this
-  // independent of both the reviewed-file allowlist and qualification scope so
-  // neither metadata edit can accidentally launch it.
-  return provider === 'kimi'
+  // Kimi and Cursor both have a reviewed credentialed startup-containment suite.
+  // This gate stays independent of the reviewed-file allowlist and qualification
+  // scope so no single metadata edit can accidentally launch a provider; a live
+  // run still requires the suite, the scope, and (for release) a known
+  // fingerprint. Cursor's manifest roster is empty, so a live pass produces only
+  // unattested review evidence until its exact fingerprint is minted.
+  return provider === 'kimi' || provider === 'cursor'
 }
 
 function livePreflightFailure(probe, options) {
@@ -1275,11 +1306,34 @@ async function runLiveTests(probe, options) {
     XDG_CACHE_HOME: path.join(runtimeRoot, 'xdg-cache'),
     XDG_RUNTIME_DIR: vitestXdgRuntime
   }
-  env.KIMI_ACP_LIVE_TRACE = '1'
-  env.TASKWRAITH_KIMI_CANARY_BIN = probe._binaryPath
-  env.TASKWRAITH_KIMI_CANARY_HOME = path.resolve(
-    String(process.env.TASKWRAITH_KIMI_CANARY_HOME || path.join(os.homedir(), '.kimi-code'))
-  )
+  if (probe.provider === 'cursor') {
+    // Cursor is isolated via CURSOR_CONFIG_DIR/CURSOR_DATA_DIR (set per-turn by
+    // the reviewed suite), NOT via HOME. It requires the REAL HOME: the API-key
+    // path avoids the login Keychain, and a temp HOME is itself sandbox-writable,
+    // which would defeat the write-block probe (that proves the native sandbox
+    // blocks a write into the user's HOME). The credential is passed only for a
+    // cursor live run and is never copied into the sanitized report.
+    const realHome =
+      typeof process.env.HOME === 'string' && process.env.HOME.length > 0
+        ? process.env.HOME
+        : os.homedir()
+    env.HOME = realHome
+    env.USERPROFILE = realHome
+    env.CURSOR_STARTUP_LIVE_TRACE = '1'
+    env.TASKWRAITH_CURSOR_CANARY_BIN = probe._binaryPath
+    if (
+      typeof process.env.CURSOR_API_KEY === 'string' &&
+      process.env.CURSOR_API_KEY.trim().length > 0
+    ) {
+      env.CURSOR_API_KEY = process.env.CURSOR_API_KEY
+    }
+  } else {
+    env.KIMI_ACP_LIVE_TRACE = '1'
+    env.TASKWRAITH_KIMI_CANARY_BIN = probe._binaryPath
+    env.TASKWRAITH_KIMI_CANARY_HOME = path.resolve(
+      String(process.env.TASKWRAITH_KIMI_CANARY_HOME || path.join(os.homedir(), '.kimi-code'))
+    )
+  }
 
   probe.liveTests.status = 'running'
   try {

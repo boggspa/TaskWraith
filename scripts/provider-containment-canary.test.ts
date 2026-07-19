@@ -407,12 +407,18 @@ Commands:
     ])
   })
 
-  it('keeps disabled Cursor out of every reviewed and required live tuple', () => {
+  it('arms the Cursor startup-containment suite but keeps its manifest roster and the required live scripts fail-closed', () => {
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8')) as {
       scripts: Record<string, string>
     }
-    expect(REVIEWED_LIVE_TESTS.cursor).toEqual([])
-    expect(liveExecutionAllowed('cursor')).toBe(false)
+    // Cursor's DRAFT startup-containment suite is allowlisted and live execution
+    // is armed, but the manifest providers.cursor roster stays empty and the
+    // required live/release scripts stay kimi-only — so no managed Cursor run is
+    // admissible until a real live pass mints its exact fingerprint.
+    expect(REVIEWED_LIVE_TESTS.cursor).toEqual([
+      'src/main/cursor/CursorStartupContainment.live.test.ts'
+    ])
+    expect(liveExecutionAllowed('cursor')).toBe(true)
     expect(liveExecutionAllowed('kimi')).toBe(true)
     expect(REVIEWED_LIVE_TESTS.kimi).toEqual([
       'src/main/kimi/KimiProductionContainment.live.test.ts'
@@ -436,6 +442,18 @@ Commands:
       'returns a same-id structured terminal denial for native Edit with zero client-fs fallback',
       'rejects gateway disablement and bridge startup failure before invoking provider spawn',
       'is gated behind KIMI_ACP_LIVE_TRACE + an authenticated Kimi Code install'
+    ])
+    expect(
+      REVIEWED_LIVE_ASSERTIONS['src/main/cursor/CursorStartupContainment.live.test.ts']
+    ).toEqual([
+      'isolates the synthetic Cursor config and data home and leaves the real user config untouched',
+      'never executes a hostile global or project MCP server before the first turn',
+      'lets an in-workspace write land but sandbox-blocks a write to the user home',
+      'spawns no unexpected MCP, skill, or plugin child process before the first turn',
+      'requires a real contained attempt and tears down the synthetic home, workspace, and process',
+      'builds a contained managed argv that enforces the sandbox and never emits force, yolo, or approve-mcps',
+      'denies an unqualified cursor-agent binary while the embedded runtime roster is empty',
+      'is gated behind CURSOR_API_KEY and an installed cursor-agent binary'
     ])
     expect(packageJson.scripts['verify:provider-permissions:live']).toBe(
       'node scripts/provider-containment-canary.cjs --live --providers=kimi --require=kimi'

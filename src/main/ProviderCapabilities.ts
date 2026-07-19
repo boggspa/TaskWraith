@@ -17,6 +17,7 @@ import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { providerLabel } from './ProviderAdapters'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
+import { cursorManagedRunAdmission } from './cursor/CursorManagedRunGate'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
 
@@ -604,14 +605,20 @@ export function buildProviderCapabilityContract({
   const warnings: ProviderCapabilityWarning[] = []
   const label = providerLabel(provider)
   const requestedMode = approvalMode || 'default'
+  // Cursor availability is qualification-driven, not hardcoded: it consults
+  // cursorManagedRunAdmission() -> CursorRuntimeAdmission's embedded roster.
+  // With the shipped EMPTY roster this is securityUnavailable:true, so Cursor
+  // stays unavailable (fail-closed). It flips to available only once a reviewed
+  // exact-build fingerprint is admitted into the roster.
+  const cursorSecurityUnavailable =
+    provider === 'cursor' && cursorManagedRunAdmission().securityUnavailable
   const effectiveMode =
     provider === 'gemini'
       ? effectiveGeminiMode(requestedMode, services)
-      : provider === 'cursor'
+      : cursorSecurityUnavailable
         ? 'unavailable'
         : requestedMode
   const statusRecord = asRecord(status)
-  const cursorSecurityUnavailable = provider === 'cursor'
   const cursorSecurityUnavailableMessage =
     'Cursor managed runs are disabled until an exact-build containment canary covers provider-managed account/team hooks, skills, plugins, and MCP startup sources.'
   const setupRequired = Boolean(statusRecord.setupRequired) || cursorSecurityUnavailable
