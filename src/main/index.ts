@@ -1197,6 +1197,7 @@ import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import { cursorDebugEnabled } from './cursorGate'
 import {
+  cursorEffectiveExitCode,
   cursorEventToRunEvents,
   cursorTerminalCompatOutcome,
   cursorTerminalFailureText,
@@ -15234,7 +15235,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
 
 function runCliProviderProcess(
   event: Electron.IpcMainInvokeEvent,
-  provider: 'claude' | 'kimi' | 'grok',
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor',
   command: string,
   args: string[],
   payload: AgentRunPayload,
@@ -15507,7 +15508,10 @@ function runCliProviderProcess(
     // "Task complete / success". Surface the real reason + a short note instead.
     const grokStopped =
       provider === 'grok' && !!state.grokStopReason && state.grokStopReason !== 'success'
-    const effectiveExitCode = code
+    const effectiveExitCode =
+      provider === 'cursor'
+        ? cursorEffectiveExitCode(code, state.terminalResultFailed === true)
+        : code
     if (grokStopped && !state.completed) {
       sendAgentCompatLine(
         event.sender,
