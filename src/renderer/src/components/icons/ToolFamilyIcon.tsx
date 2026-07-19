@@ -311,6 +311,11 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'inspect_audio_segment':
     case 'transcribe_audio':
       return 'audio'
+    // Document reads (PDF text layer, on-device OCR) ride the `file` family —
+    // they read documents rather than producing or editing media.
+    case 'document_extract_text':
+    case 'document_ocr_image':
+      return 'file'
     case 'video_probe':
     case 'video_thumbnail':
     case 'video_decode_frame':

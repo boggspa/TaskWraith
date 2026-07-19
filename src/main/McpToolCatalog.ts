@@ -4348,6 +4348,47 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'document_extract_text',
+      description:
+        'Read the TEXT out of a workspace PDF. Returns the text plus per-page text, the page count, and ' +
+        'how many pages were read. Use this to actually READ a document — it handles hundreds of pages, ' +
+        'unlike the attachment preview which only rasterizes the first few pages to images. Params: ' +
+        'sourcePath (a PDF inside the workspace), `firstPage` / `lastPage` (1-based, inclusive; default ' +
+        'the whole document). Runs fully in-process with no external tool required, so it works the same ' +
+        'on every machine. If the PDF is scanned or image-only it returns `needsOcr: true` and no text — ' +
+        'rasterize the pages and read them with document_ocr_image instead. Reads a realpath-jailed ' +
+        'workspace path; non-mutating and read-only-safe.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to a PDF.' },
+          firstPage: { type: 'number', description: 'First page to read (1-based, inclusive). Defaults to 1.' },
+          lastPage: { type: 'number', description: 'Last page to read (1-based, inclusive). Defaults to the last page.' }
+        },
+        required: ['sourcePath']
+      }
+    },
+    {
+      name: 'document_ocr_image',
+      description:
+        'Recognize text in a workspace IMAGE ON-DEVICE using the Mac’s built-in Vision framework (no ' +
+        'image ever leaves the machine; no network). Returns the recognized text plus per-block text, ' +
+        'confidence, and normalized bounding boxes, so you can tell WHERE on the page something appeared. ' +
+        'Use it for scans, screenshots, photos of documents, and the rasterized pages of an image-only ' +
+        'PDF. Params: sourcePath (a PNG/JPEG/WebP inside the workspace). macOS only — on other platforms ' +
+        'it returns an actionable capability error. Reads a realpath-jailed workspace path; non-mutating ' +
+        'and read-only-safe.',
+      annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          sourcePath: { type: 'string', description: 'Workspace-relative or absolute path inside the workspace to an image.' }
+        },
+        required: ['sourcePath']
+      }
+    },
+    {
       name: 'transcode_video',
       description:
         'Transcode a workspace VIDEO to H.264/AAC MP4 (faststart) via ffmpeg. Params: sourcePath, `crf` ' +

@@ -2513,6 +2513,8 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'transcode_audio',
     'audio_mix',
     'transcribe_audio',
+    'document_extract_text',
+    'document_ocr_image',
     'transcode_video'
   ],
   creative: [

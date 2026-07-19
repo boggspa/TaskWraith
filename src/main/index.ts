@@ -1086,6 +1086,8 @@ import { createTwMediaRequestGate } from './media/TwMediaRequestAuthority'
 import { readTranscriptMediaRangeSlice } from './media/twMediaRange'
 import { createFfmpegToolExecutors, isFfmpegMcpToolName } from './mcp/FfmpegToolExecutors'
 import { createVtToolExecutors, isVtMcpToolName } from './mcp/VtToolExecutors'
+import { isDocumentMcpToolName } from './mcp/DocumentToolExecutors'
+import { createWiredDocumentToolExecutors } from './documents/DocumentToolWiring'
 import { ffmpegMissingError, resolveFfmpegBinaries } from './media/FfmpegResolver'
 import { createSemaphore } from './media/Semaphore'
 import {
@@ -3745,6 +3747,36 @@ const ffmpegToolExecutors = createFfmpegToolExecutors({
 // (TS owns the security boundary; the daemon just opens the path it's handed).
 // decodeFrame is the `video.decodeFrame` daemon RPC; the decoded PNG rides the
 // PROVEN image-block lane (createToolResultMediaRefs), so no trusted-AV channel.
+// Document tools (PDF text + on-device OCR). The wiring lives in
+// ./documents/DocumentToolWiring so this hotspot only supplies what it actually
+// owns: run authorization and the mutable bridge-daemon handle.
+const documentToolExecutors = createWiredDocumentToolExecutors({
+  authorize: (ctx) => {
+    const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
+    if (!chat?.workspacePath) return null
+    return {
+      workspacePath: chat.workspacePath,
+      externalPathGrants: executableExternalPathGrantsForRun(chat, ctx.appRunId)
+    }
+  },
+  requestDaemon: (method, params, options) => {
+    const daemon = bridgeDaemonRef
+    if (!daemon) throw new Error('OCR bridge daemon is not running')
+    return daemon.request(method, params, options)
+  },
+  // Passed by reference so the staging still runs inside this module's
+  // synchronous history-byte reservation.
+  stageImage: stageWorkspaceMediaSnapshotInHistoryStore,
+  // Vision is macOS-only and rides the bundled daemon, so reuse the same gate the
+  // other native tools report through rather than inventing a second answer.
+  isOcrAvailable: () => {
+    const capabilities = getNativeCapabilitySnapshot()
+    return capabilities.ocr.available
+      ? { available: true }
+      : { available: false, reason: capabilities.ocr.reason }
+  }
+})
+
 const vtToolExecutors = createVtToolExecutors({
   jailInput: async (sourcePath, ctx) => {
     const chat = ctx.appChatId ? AppStore.getChat(ctx.appChatId) : null
@@ -27246,6 +27278,18 @@ async function executeGeminiMcpTool(
           })
         )
       }
+    } else if (isDocumentMcpToolName(toolName)) {
+      // No per-run flood budget here, unlike the media tools: these write no file
+      // and emit no media ref, so a loop costs CPU only — the same reasoning that
+      // leaves transcribe_audio unbudgeted. The per-call caps (bytes, pages,
+      // characters, wall-clock) live in PdfTextExtractor and the daemon.
+      applyRichResult(
+        await documentToolExecutors.executeDocumentTool(toolName, args, {
+          appChatId: context.appChatId,
+          appRunId: context.appRunId,
+          workspacePath: context.workspacePath
+        })
+      )
     } else if (isVtMcpToolName(toolName)) {
       // Native VideoToolbox decode (daemon-backed). Per-run flood budget like the
       // ffmpeg/audio media tools (adversarial review): an agent looping decodes at

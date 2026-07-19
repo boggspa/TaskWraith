@@ -186,6 +186,14 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // external binary, no file output, no network (on-device ONLY) → allowed under
   // read-only. The OS permission grant is enforced at runtime by the daemon.
   'transcribe_audio',
+  // PDF text-layer read. Runs in-process on bundled pdfjs — no workspace mutation,
+  // no external binary, no file output, no network → allowed under read-only,
+  // exactly like transcribe_audio.
+  'document_extract_text',
+  // On-device Vision OCR (native Vision framework). Same posture as
+  // transcribe_audio: no workspace mutation, no external binary, no file output,
+  // no network (on-device ONLY) → allowed under read-only.
+  'document_ocr_image',
   // creative reads / validation — the *import* / applescript / blender / midi
   // mutators stay workspace_write (caught by the default below)
   'creative_project_snapshot',

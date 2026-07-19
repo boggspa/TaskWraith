@@ -292,6 +292,20 @@ export const TASKWRAITH_MCP_TOOLS = [
   // jailed before the daemon runs. Non-mutating, read-only-safe (orchestration). See
   // src/main/mcp/VtToolExecutors.ts.
   'transcribe_audio',
+  // Read the TEXT layer out of a workspace PDF via the BUNDLED pdfjs build — no
+  // host binary, so behaviour is identical on every machine (deliberately unlike
+  // the pdftoppm/sips rasterization in PdfAttachmentRenderService). Writes NO
+  // file and emits NO media ref; returns structured text over a realpath-jailed
+  // read. Non-mutating, read-only-safe (orchestration). See
+  // src/main/mcp/DocumentToolExecutors.ts.
+  'document_extract_text',
+  // ON-DEVICE Vision OCR of a workspace image via the daemon's native
+  // `document.ocrImage` (the same recognizer behind attached-window capture;
+  // on-device ONLY, no network). Writes NO file and emits NO media ref — returns
+  // the recognized text plus per-block boxes. The sourcePath is realpath-jailed
+  // before the daemon runs. Non-mutating, read-only-safe (orchestration). See
+  // src/main/mcp/DocumentToolExecutors.ts.
+  'document_ocr_image',
   'transcode_video'
 ] as const
 

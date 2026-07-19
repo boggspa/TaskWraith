@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 157 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 159 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1380,6 +1380,23 @@ Transcribe a workspace audio file to text ON-DEVICE using the Mac’s built-in S
 - Required args: sourcePath
 - Optional args: localeIdentifier
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"transcribe_audio","arguments":{"sourcePath":"text"}}}}`
+
+## document_extract_text
+
+Read the TEXT out of a workspace PDF. Returns the text plus per-page text, the page count, and how many pages were read. Use this to actually READ a document — it handles hundreds of pages, unlike the attachment preview which only rasterizes the first few pages to images. Params: sourcePath (a PDF inside the workspace), `firstPage` / `lastPage` (1-based, inclusive; default the whole document). Runs fully in-process with no external tool required, so it works the same on every machine. If the PDF is scanned or image-only it returns `needsOcr: true` and no text — rasterize the pages and read them with document_ocr_image instead. Reads a realpath-jailed workspace path; non-mutating and read-only-safe.
+
+- Access: read-only (no approval needed)
+- Required args: sourcePath
+- Optional args: firstPage, lastPage
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"document_extract_text","arguments":{"sourcePath":"text"}}}}`
+
+## document_ocr_image
+
+Recognize text in a workspace IMAGE ON-DEVICE using the Mac’s built-in Vision framework (no image ever leaves the machine; no network). Returns the recognized text plus per-block text, confidence, and normalized bounding boxes, so you can tell WHERE on the page something appeared. Use it for scans, screenshots, photos of documents, and the rasterized pages of an image-only PDF. Params: sourcePath (a PNG/JPEG/WebP inside the workspace). macOS only — on other platforms it returns an actionable capability error. Reads a realpath-jailed workspace path; non-mutating and read-only-safe.
+
+- Access: read-only (no approval needed)
+- Required args: sourcePath
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"document_ocr_image","arguments":{"sourcePath":"text"}}}}`
 
 ## transcode_video
 
