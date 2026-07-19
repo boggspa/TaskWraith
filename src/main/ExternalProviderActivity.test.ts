@@ -172,6 +172,55 @@ describe('loadExternalProviderUsageRecords', () => {
     }
   })
 
+  it('reads Grok turn usage from the unified log without double-counting subsets', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-grok-'))
+    try {
+      await mkdir(join(homeDir, '.grok', 'logs'), { recursive: true })
+      await writeFile(
+        join(homeDir, '.grok', 'logs', 'unified.jsonl'),
+        [
+          // Names the model in play; carries no usage of its own.
+          JSON.stringify({
+            ts: '2026-05-31T09:00:00.000Z',
+            msg: 'model catalog: notifying clients',
+            ctx: { model_count: 2, current_model_id: 'grok-4.5' }
+          }),
+          // Auth chatter — the bulk of the log, and never usage.
+          JSON.stringify({ ts: '2026-05-31T09:00:01.000Z', msg: 'AuthManager::new', ctx: {} }),
+          JSON.stringify({
+            ts: '2026-05-31T09:00:02.000Z',
+            msg: 'shell.turn.inference_done',
+            ctx: {
+              prompt_tokens: 1_000,
+              cached_prompt_tokens: 800,
+              completion_tokens: 120,
+              reasoning_tokens: 90
+            }
+          })
+        ].join('\n')
+      )
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+
+      const grok = records.filter((record) => record.provider === 'grok')
+      expect(grok).toHaveLength(1)
+      expect(grok[0]).toMatchObject({
+        // cached_prompt_tokens is inside prompt_tokens, reasoning inside
+        // completion: 1_000 + 120, never 1_000 + 800 + 120 + 90.
+        totalTokens: 1_120,
+        inputTokens: 200,
+        cacheReadInputTokens: 800,
+        outputTokens: 120,
+        model: 'grok-4.5'
+      })
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
   it('counts one Claude API call once when it spans several content-block rows', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-claude-blocks-'))
     try {

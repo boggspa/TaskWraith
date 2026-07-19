@@ -23,7 +23,7 @@ import {
 
 type ExternalActivityProvider = Extract<
   ProviderId,
-  'codex' | 'claude' | 'gemini' | 'kimi' | 'cursor'
+  'codex' | 'claude' | 'gemini' | 'kimi' | 'cursor' | 'grok'
 >
 
 interface ExternalProviderActivityOptions {
@@ -295,9 +295,10 @@ export async function loadExternalProviderUsageRecords(
     readClaudeActivity,
     readGeminiActivity,
     readKimiActivity,
+    readGrokActivity,
     (homeDir: string, sinceMs: number) => readCursorActivity(homeDir, sinceMs, options)
   ]
-  // Persist as each provider lands, not only once all five have.
+  // Persist as each provider lands, not only once all of them have.
   //
   // A cold-cache scan runs for minutes; persisting only at the end meant
   // quitting mid-scan threw away every file parsed so far, so the next launch
@@ -771,6 +772,79 @@ async function parseKimiWireFile(filePath: string): Promise<ExternalUsageEvent[]
       cacheCreationInputTokens,
       outputTokens,
       totalTokens,
+      sourceKey: `${filePath}:${lineIndex}`
+    })
+  }
+  return events
+}
+
+/** Grok CLI writes no per-session usage file. Its only on-disk record of token
+ * spend is a single append-only log, `~/.grok/logs/unified.jsonl`, where each
+ * completed turn emits a `shell.turn.inference_done` line carrying that turn's
+ * counts. The chip existed here long before this reader did, so Grok read as a
+ * flat zero rather than as "not measurable". */
+async function readGrokActivity(homeDir: string, sinceMs: number): Promise<ExternalUsageEvent[]> {
+  const logPath = join(homeDir, '.grok', 'logs', 'unified.jsonl')
+  let stat: Awaited<ReturnType<typeof fs.stat>>
+  try {
+    stat = await fs.stat(logPath)
+  } catch {
+    return []
+  }
+  if (!stat.isFile()) return []
+
+  pruneExternalActivityFileCache('grok', new Set([logPath]))
+  const events = await readFileEventsThroughCache(
+    'grok',
+    { path: logPath, mtimeMs: stat.mtimeMs, size: stat.size },
+    () => parseGrokUnifiedLog(logPath)
+  )
+  return events.filter((event) => event.timestamp >= sinceMs)
+}
+
+/** Lines that can carry Grok activity: the turn records themselves, plus the
+ * model-catalog lines that name the model in play. The log is dominated by auth
+ * and catalog chatter that can never contribute. */
+function isGrokActivityLine(line: string): boolean {
+  return line.includes('"prompt_tokens"') || line.includes('"current_model_id"')
+}
+
+async function parseGrokUnifiedLog(filePath: string): Promise<ExternalUsageEvent[]> {
+  const events: ExternalUsageEvent[] = []
+  // The turn record names no model; the catalog line preceding it does. Track
+  // the last one seen, exactly as the Codex parser tracks `turn_context`.
+  let sessionModel = ''
+  for await (const { json, lineIndex } of parseJsonLineFile(filePath, isGrokActivityLine)) {
+    const context = json?.ctx
+    if (!context || typeof context !== 'object') continue
+
+    const currentModel =
+      typeof context.current_model_id === 'string' ? context.current_model_id.trim() : ''
+    if (currentModel) sessionModel = currentModel
+    if (context.prompt_tokens === undefined) continue
+
+    const timestamp = parseTimestamp(json.ts)
+    if (!timestamp) continue
+
+    // `cached_prompt_tokens` is a SUBSET of `prompt_tokens`, and
+    // `reasoning_tokens` a subset of `completion_tokens` — the same convention
+    // Codex uses. Verified across this machine's log with zero violations.
+    // Adding either on top of its parent would double-count.
+    const promptTokens = numberValue(context.prompt_tokens)
+    const cacheReadInputTokens = Math.min(promptTokens, numberValue(context.cached_prompt_tokens))
+    const inputTokens = Math.max(0, promptTokens - cacheReadInputTokens)
+    const outputTokens = numberValue(context.completion_tokens)
+    const totalTokens = promptTokens + outputTokens
+    if (totalTokens <= 0) continue
+
+    events.push({
+      provider: 'grok',
+      timestamp,
+      model: sessionModel || 'grok',
+      totalTokens,
+      inputTokens,
+      cacheReadInputTokens,
+      outputTokens,
       sourceKey: `${filePath}:${lineIndex}`
     })
   }
