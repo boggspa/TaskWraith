@@ -1,4 +1,10 @@
-import { createHash } from 'crypto'
+// Namespace import (not `{ createHash }`): this module is transitively reachable
+// from the renderer bundle (App.tsx -> src/main/PromptComposition -> OllamaRunMemory
+// -> here for CANVAS_EVAL_RESULT_REDACTED / assertCanvasEvalApprovalReceipt /
+// isCanvasEvalToolName). A named `crypto` import makes the browser build fail on the
+// missing export; a namespace binding resolves the member only at call time, which
+// only ever happens in the main process. Keep this a namespace import.
+import * as nodeCrypto from 'node:crypto'
 import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
 import type { CanvasEvalApprovalReceipt } from './canvasTypes'
 
@@ -29,10 +35,10 @@ function canvasEvalScriptDigest(script: string): string {
   for (let index = 0; index < script.length; index += 1) {
     codeUnits.writeUInt16LE(script.charCodeAt(index), index * 2)
   }
-  return createHash('sha256').update(codeUnits).digest('hex')
+  return nodeCrypto.createHash('sha256').update(codeUnits).digest('hex')
 }
 
-function updateHashWithCodeUnits(hash: ReturnType<typeof createHash>, value: string): void {
+function updateHashWithCodeUnits(hash: ReturnType<typeof nodeCrypto.createHash>, value: string): void {
   // Length-prefix each component so tuples such as ["a:b", "c"] and
   // ["a", "b:c"] cannot alias when used as correlation identities.
   const length = Buffer.allocUnsafe(8)
@@ -47,7 +53,7 @@ function updateHashWithCodeUnits(hash: ReturnType<typeof createHash>, value: str
 }
 
 function canvasEvalOpaqueIdentityDigest(domain: string, ...values: string[]): string {
-  const hash = createHash('sha256')
+  const hash = nodeCrypto.createHash('sha256')
   updateHashWithCodeUnits(hash, 'taskwraith-canvas-eval-opaque-identity-v1')
   updateHashWithCodeUnits(hash, domain)
   for (const value of values) updateHashWithCodeUnits(hash, value)
