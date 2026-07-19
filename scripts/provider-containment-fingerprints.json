@@ -1,0 +1,8 @@
+{
+  "schemaVersion": 1,
+  "description": "Reviewed provider binary/capability fingerprints for credentialed permission-conformance canaries. Entries must include the exact qualification scope, postureVersion, attestationSource, version, capability fingerprint, binarySha256, distribution, harnessNodeVersion, authentication, backendBaseUrl, modelAlias, model, platform, and arch. Kimi's acp-synthetic-cwd-gateway-v1 scope requires postureVersion synthetic-cwd-gateway-v1 and attestationSource credentialed-live-containment-canary, emitted only by the protected production-composition lane after its exact live assertions pass: a private process/session cwd, no ACP client fs, same-id structured terminal denials for every native tool in the production deny roster, positive authenticated HTTP-gateway workspace access, legacy-resume cold start, pre-spawn gateway admission, and strict teardown. The hosted Kimi lane uses the official checksummed native single-binary distribution plus an explicit non-rotating Kimi Code API-key backend/model contract. Disabled Cursor currently has no admissible scope; re-enabling it requires a reviewed startup-containment suite and an explicit new scope. Ranges and partial tuples are not accepted. This manifest is release evidence only; the shipped runtime consumes only the build-verified stripped projection of exact runtime identity fields.",
+  "providers": {
+    "kimi": [],
+    "cursor": []
+  }
+}

@@ -28,6 +28,10 @@
  *   # APPLE_KEYCHAIN_PROFILE to be set):
  *   TASKWRAITH_VALIDATE_NOTARIZE=1 node scripts/validate-release.cjs
  *
+ *   # On the protected provider-canary worker, also require exact reviewed
+ *   # provider fingerprints and execute the credentialed live suites:
+ *   TASKWRAITH_VALIDATE_PROVIDER_PERMISSIONS=1 node scripts/validate-release.cjs
+ *
  * Exit codes:
  *   0  — all required steps passed
  *   2  — required env / tooling missing
@@ -42,6 +46,7 @@ const REPO_ROOT = join(__dirname, '..')
 
 const SKIP_BUILD = process.env.TASKWRAITH_VALIDATE_SKIP_BUILD === '1'
 const DO_NOTARIZE = process.env.TASKWRAITH_VALIDATE_NOTARIZE === '1'
+const VALIDATE_PROVIDER_PERMISSIONS = process.env.TASKWRAITH_VALIDATE_PROVIDER_PERMISSIONS === '1'
 
 const steps = []
 
@@ -49,11 +54,23 @@ function step(name, opts = {}) {
   steps.push({ name, ...opts })
 }
 
+step('kimi-runtime-qualification-projection', {
+  cmd: 'npm',
+  args: ['run', 'verify:kimi-runtime-qualifications'],
+  required: true
+})
 step('typecheck:node', {
   cmd: 'npm',
   args: ['run', 'typecheck:node'],
   required: true
 })
+if (VALIDATE_PROVIDER_PERMISSIONS) {
+  step('provider-permissions:release', {
+    cmd: 'npm',
+    args: ['run', 'verify:provider-permissions:release'],
+    required: true
+  })
+}
 step('security:deps', {
   cmd: 'npm',
   args: ['run', 'security:deps'],
@@ -141,7 +158,8 @@ const results = []
 
 console.log(`[validate-release] starting (${steps.length} steps)`)
 console.log(
-  `[validate-release] platform=${process.platform} skipBuild=${SKIP_BUILD} notarize=${DO_NOTARIZE}\n`
+  `[validate-release] platform=${process.platform} skipBuild=${SKIP_BUILD} notarize=${DO_NOTARIZE} ` +
+    `providerPermissions=${VALIDATE_PROVIDER_PERMISSIONS}\n`
 )
 
 for (const stepSpec of steps) {

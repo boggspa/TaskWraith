@@ -5,14 +5,16 @@ on:
   pull_request:
   workflow_dispatch:
     inputs:
-      windows_release_tag:
-        description: "Tag to attach an UNSIGNED Windows installer to (e.g. v1.1.0). Blank = skip."
-        required: false
-        default: ""
-      linux_release_tag:
-        description: "Tag to attach an UNSIGNED Linux AppImage/deb to (e.g. v1.5.0). Blank = skip."
-        required: false
-        default: ""
+      build_unsigned_windows:
+        description: "Build SHA/run-labelled unsigned Windows test artifacts. Never publishes a release."
+        required: true
+        type: boolean
+        default: false
+      build_unsigned_linux:
+        description: "Build SHA/run-labelled unsigned Linux test artifacts. Never publishes a release."
+        required: true
+        type: boolean
+        default: false
 
 jobs:
   test:
@@ -31,8 +33,10 @@ jobs:
           - name: Windows
             os: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
@@ -80,31 +84,93 @@ jobs:
       - name: Swift package tests (TaskWraithKit)
         run: swift test --package-path ios/TaskWraithKit
 
+  provider-permission-attestation:
+    name: Exact-SHA provider permission attestation
+    runs-on: ubuntu-latest
+    if: >-
+      startsWith(github.ref, 'refs/tags/v') &&
+      (vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true' ||
+      vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true')
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - name: Require commissioned canary and immutable release-tag controls
+        env:
+          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
+          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
+        run: |
+          test "$PROVIDER_CANARY_ENVIRONMENT_CONFIGURED" = "true"
+          test "$RELEASE_TAG_PROTECTION_CONFIGURED" = "true"
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - name: Require successful provider release canary for this commit
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          response="$RUNNER_TEMP/provider-permission-runs.json"
+          # Join on the actual checked-out artifact source. For annotated tags,
+          # this is the peeled commit rather than a tag-object event SHA.
+          candidate_sha="$(git rev-parse HEAD)"
+          attestation_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" \
+            -f event=repository_dispatch \
+            -f head_sha="$candidate_sha" \
+            -f per_page=100 > "$response"
+          node scripts/verify-provider-release-attestation.cjs \
+            --input="$response" \
+            --sha="$candidate_sha" \
+            --default-branch=master \
+            --now="$attestation_now" \
+            --max-age-hours=24
+
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
-    needs: [test, ios]
+    needs: [test, ios, provider-permission-attestation]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true'
     permissions:
+      actions: read
       contents: write
-    env:
-      CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
-      CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
-      APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
-      APPLE_ID: ${{ secrets.APPLE_ID }}
-      APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
-      APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run security:deps
-      - run: npm run build:mac:notarized
+      - name: Prepare macOS artifacts without signing credentials
+        run: |
+          npm run clean:dist
+          npm run test:swift:bridge
+          TASKWRAITH_BRIDGE_ARCH=universal npm run prebuild:bridge-daemon
+          node scripts/smoke-bridge-daemon-roundtrip.cjs
+          npm run prepare:mac-universal-deps
+          npm run build
+      - name: Sign, package, and notarize macOS artifacts
+        env:
+          CSC_LINK: ${{ secrets.MACOS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MACOS_CSC_KEY_PASSWORD }}
+          CSC_NAME: ${{ secrets.MACOS_CSC_NAME }}
+          APPLE_KEYCHAIN_PROFILE: ${{ secrets.APPLE_KEYCHAIN_PROFILE }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: >-
+          node scripts/run-electron-builder.cjs --mac --universal --publish never
+          -c.npmRebuild=false -c.mac.notarize=true
+      - name: Run post-package macOS checks without signing credentials
+        run: |
+          node scripts/smoke-packaged-electron.cjs dist
+          npm run validate:mac-update-feed
+          npm run security:sbom
       - name: Verify notarized macOS artifacts
         run: |
           set -euo pipefail
@@ -117,6 +183,10 @@ jobs:
             xcrun stapler validate "$artifact"
           done
       - name: Upload verified macOS release artifacts
+        env:
+          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
+          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           shopt -s nullglob
@@ -125,31 +195,82 @@ jobs:
             echo "Expected notarized macOS release artifacts in dist/, found ${#assets[@]}."
             exit 1
           fi
-          gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1 || \
-            gh release create "$GITHUB_REF_NAME" --title "$GITHUB_REF_NAME" --notes "Verified TaskWraith release artifacts for $GITHUB_REF_NAME." || \
-            gh release view "$GITHUB_REF_NAME" >/dev/null
-          gh release upload "$GITHUB_REF_NAME" "${assets[@]}" --clobber
+          release_tag="$GITHUB_REF_NAME"
+          candidate_sha="$(git rev-parse HEAD)"
+          test "$PROVIDER_CANARY_ENVIRONMENT_CONFIGURED" = "true"
+          test "$RELEASE_TAG_PROTECTION_CONFIGURED" = "true"
+          attestation_response="$RUNNER_TEMP/provider-permission-runs-macos.json"
+          attestation_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          gh api --method GET \
+            "repos/$GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" \
+            -f event=repository_dispatch \
+            -f head_sha="$candidate_sha" \
+            -f per_page=100 > "$attestation_response"
+          node scripts/verify-provider-release-attestation.cjs \
+            --input="$attestation_response" \
+            --sha="$candidate_sha" \
+            --default-branch=master \
+            --now="$attestation_now" \
+            --max-age-hours=24
+          verify_remote_release_tag() {
+            local tag_ref="refs/tags/$release_tag"
+            local tag_type
+            local remote_tag_sha
+            git fetch --force --no-tags origin "+$tag_ref:$tag_ref"
+            tag_type="$(git cat-file -t "$tag_ref")"
+            if [ "$tag_type" = "tag" ]; then
+              remote_tag_sha="$(git rev-parse "$tag_ref^{}")"
+            elif [ "$tag_type" = "commit" ]; then
+              remote_tag_sha="$(git rev-parse "$tag_ref")"
+            else
+              echo "Release tag $tag_ref has unsupported object type $tag_type."
+              return 1
+            fi
+            if [ "$remote_tag_sha" != "$candidate_sha" ]; then
+              echo "Remote release tag resolves to $remote_tag_sha; expected $candidate_sha."
+              return 1
+            fi
+          }
+          verify_remote_release_tag
+          gh release view "$release_tag" >/dev/null 2>&1 || \
+            gh release create "$release_tag" --verify-tag --title "$release_tag" --notes "Verified TaskWraith release artifacts for $release_tag." || \
+            gh release view "$release_tag" >/dev/null
+          # Re-resolve after release creation and immediately before mutation.
+          verify_remote_release_tag
+          gh release upload "$release_tag" "${assets[@]}" --clobber
 
   signed-windows-release:
     name: Signed Windows Release
     runs-on: windows-latest
-    needs: [test, ios]
+    needs: [test, ios, provider-permission-attestation]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
     permissions:
+      actions: read
       contents: write
-    env:
-      CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
-      CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: 22
           cache: npm
       - run: npm ci
       - run: npm run security:deps
-      - run: npm run build:win:signed
+      - name: Compile Windows artifacts without signing credentials
+        run: npm run build:win:compile
+      - name: Sign and package Windows artifacts
+        env:
+          CSC_LINK: ${{ secrets.WINDOWS_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WINDOWS_CSC_KEY_PASSWORD }}
+        shell: pwsh
+        run: |
+          node scripts/require-windows-signing-env.cjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          & .\node_modules\.bin\electron-builder.cmd --win --x64 --arm64 --publish never
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Run post-package Windows checks without signing credentials
+        run: npm run build:win:checks
       - name: Verify signed Windows artifacts
         shell: pwsh
         run: |
@@ -174,6 +295,10 @@ jobs:
           }
       - name: Upload verified Windows release artifacts
         shell: pwsh
+        env:
+          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
+          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
           $assets = @(
@@ -184,27 +309,91 @@ jobs:
           if ($assets.Count -lt 4) {
             throw "Expected signed Windows installers, blockmaps, and update feeds in dist/, found $($assets.Count)."
           }
-          gh release view "$env:GITHUB_REF_NAME" *> $null
+          $releaseTag = $env:GITHUB_REF_NAME
+          $candidateSha = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) {
-            gh release create "$env:GITHUB_REF_NAME" --title "$env:GITHUB_REF_NAME" --notes "Verified TaskWraith release artifacts for $env:GITHUB_REF_NAME."
+            throw "Could not resolve the checked-out release commit."
+          }
+          if ($env:PROVIDER_CANARY_ENVIRONMENT_CONFIGURED -ne "true") {
+            throw "Provider canary environment is not currently commissioned."
+          }
+          if ($env:RELEASE_TAG_PROTECTION_CONFIGURED -ne "true") {
+            throw "Immutable release-tag controls are not currently commissioned."
+          }
+          $attestationResponse = Join-Path $env:RUNNER_TEMP "provider-permission-runs-windows.json"
+          $attestationNow = [DateTime]::UtcNow.ToString(
+            "yyyy-MM-ddTHH:mm:ssZ",
+            [Globalization.CultureInfo]::InvariantCulture
+          )
+          $apiResponse = gh api --method GET `
+            "repos/$env:GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" `
+            -f event=repository_dispatch `
+            -f "head_sha=$candidateSha" `
+            -f per_page=100
+          if ($LASTEXITCODE -ne 0) {
+            throw "Could not query provider permission attestations."
+          }
+          [IO.File]::WriteAllText(
+            $attestationResponse,
+            ($apiResponse -join "`n"),
+            [Text.UTF8Encoding]::new($false)
+          )
+          node scripts/verify-provider-release-attestation.cjs `
+            "--input=$attestationResponse" `
+            "--sha=$candidateSha" `
+            --default-branch=master `
+            "--now=$attestationNow" `
+            --max-age-hours=24
+          if ($LASTEXITCODE -ne 0) {
+            throw "No fresh exact-SHA provider permission release attestation is valid."
+          }
+          function Assert-RemoteReleaseTag {
+            $tagRef = "refs/tags/$releaseTag"
+            $refspec = "+{0}:{0}" -f $tagRef
+            git fetch --force --no-tags origin $refspec
             if ($LASTEXITCODE -ne 0) {
-              gh release view "$env:GITHUB_REF_NAME" *> $null
+              throw "Could not fetch exact remote release tag $tagRef."
+            }
+            $tagType = (git cat-file -t $tagRef).Trim()
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not inspect remote release tag $tagRef."
+            }
+            if ($tagType -eq "tag") {
+              $remoteTagSha = (git rev-parse "$tagRef^{}").Trim()
+            } elseif ($tagType -eq "commit") {
+              $remoteTagSha = (git rev-parse $tagRef).Trim()
+            } else {
+              throw "Release tag $tagRef has unsupported object type $tagType."
+            }
+            if ($LASTEXITCODE -ne 0) {
+              throw "Could not resolve remote release tag $tagRef."
+            }
+            if ($remoteTagSha -ne $candidateSha) {
+              throw "Remote release tag resolves to $remoteTagSha; expected $candidateSha."
+            }
+          }
+          Assert-RemoteReleaseTag
+          gh release view "$releaseTag" *> $null
+          if ($LASTEXITCODE -ne 0) {
+            gh release create "$releaseTag" --verify-tag --title "$releaseTag" --notes "Verified TaskWraith release artifacts for $releaseTag."
+            if ($LASTEXITCODE -ne 0) {
+              gh release view "$releaseTag" *> $null
               if ($LASTEXITCODE -ne 0) {
-                throw "Could not create or verify GitHub release $env:GITHUB_REF_NAME."
+                throw "Could not create or verify GitHub release $releaseTag."
               }
             }
           }
-          gh release upload "$env:GITHUB_REF_NAME" @assets --clobber
+          # Re-resolve after release creation and immediately before mutation.
+          Assert-RemoteReleaseTag
+          gh release upload "$releaseTag" @assets --clobber
 
   unsigned-windows-build:
     name: Unsigned Windows Build (testing)
     runs-on: windows-latest
     needs: [test, ios]
-    if: github.event_name == 'workflow_dispatch' && inputs.windows_release_tag != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_windows == true
     permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -215,38 +404,27 @@ jobs:
       - run: npm run security:deps
       # `build:win:nopublish` shares build:win's recipe (compile + electron-builder
       # + packaged-app smoke + update-feed write/validate) but forces
-      # `--publish never`: electron-builder's implicit CI publish would otherwise
-      # try to attach to the `windows_release_tag` release and refuse any release
-      # created >2h ago. The packaged-app launch smoke now skips the arm64 binary
-      # on this x64 runner (it can't be executed natively) instead of crashing
-      # with "spawn UNKNOWN", so it is safe to run here. Assets are attached by the
-      # gh step below (gh release upload --clobber works on an existing release).
+      # `--publish never`. The packaged-app launch smoke skips the arm64 binary on
+      # this x64 runner because it cannot execute it natively.
       - run: npm run build:win:nopublish
-      - name: Upload unsigned Windows installers to the release
-        shell: pwsh
-        run: |
-          $ErrorActionPreference = "Stop"
-          $tag = "${{ inputs.windows_release_tag }}"
-          $assets = @(
-            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe"
-            Get-ChildItem -Path dist -Filter "TaskWraith-*-win-*-setup.exe.blockmap"
-            Get-ChildItem -Path dist -Filter "*-win-*.yml"
-          ) | ForEach-Object { $_.FullName }
-          if ($assets.Count -lt 2) {
-            throw "Expected Windows installers in dist/, found $($assets.Count)."
-          }
-          Write-Host "Uploading $($assets.Count) asset(s) to release $tag"
-          gh release upload $tag @assets --clobber
+      - name: Upload SHA/run-labelled unsigned Windows test artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-windows-testing-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/TaskWraith-*-win-*-setup.exe
+            dist/TaskWraith-*-win-*-setup.exe.blockmap
+            dist/*-win-*.yml
+          if-no-files-found: error
+          retention-days: 14
 
   unsigned-linux-build:
     name: Unsigned Linux Build (testing)
     runs-on: ubuntu-latest
     needs: [test, ios]
-    if: github.event_name == 'workflow_dispatch' && inputs.linux_release_tag != ''
+    if: github.event_name == 'workflow_dispatch' && inputs.build_unsigned_linux == true
     permissions:
-      contents: write
-    env:
-      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      contents: read
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -256,19 +434,16 @@ jobs:
       - run: npm ci
       - run: npm run security:deps
       # AppImage + deb only — snap needs snapcraft (absent on the default
-      # runner). `--publish never` stops electron-builder's implicit CI publish
-      # from trying to attach to a release created >2h ago; the gh step below
-      # attaches the assets (gh release upload --clobber on an existing release).
+      # runner). `--publish never` keeps this manual testing lane outside the
+      # GitHub Release publication surface.
       - run: npm run build:linux:nopublish
-      - name: Upload unsigned Linux artifacts to the release
-        run: |
-          set -euo pipefail
-          tag="${{ inputs.linux_release_tag }}"
-          shopt -s nullglob
-          assets=(dist/*.AppImage dist/*.deb dist/latest-linux*.yml)
-          if [ ${#assets[@]} -lt 1 ]; then
-            echo "Expected Linux artifacts in dist/, found none."
-            exit 1
-          fi
-          echo "Uploading ${#assets[@]} asset(s) to release $tag"
-          gh release upload "$tag" "${assets[@]}" --clobber
+      - name: Upload SHA/run-labelled unsigned Linux test artifacts
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: unsigned-linux-testing-${{ github.sha }}-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            dist/*.AppImage
+            dist/*.deb
+            dist/latest-linux*.yml
+          if-no-files-found: error
+          retention-days: 14

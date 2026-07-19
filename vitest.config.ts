@@ -7,6 +7,15 @@ const includeSwiftInterop = process.env.RUN_SWIFT_INTEROP === '1'
 // Swift<->Node driver is opt-in via RUN_SWIFT_INTEROP.
 export default defineConfig({
   test: {
+    // Coverage is opt-in (`npm run test:coverage:baseline`). This deliberately
+    // records a measured baseline without imposing a threshold or PR ratchet.
+    coverage: {
+      provider: 'v8',
+      reportsDirectory: 'artifacts/coverage',
+      reporter: ['text-summary', 'json-summary', 'json', 'lcov'],
+      include: ['src/**/*.{ts,tsx}'],
+      exclude: ['src/**/*.d.ts', 'src/**/*.test.{ts,tsx}', 'src/**/*.live.test.{ts,tsx}']
+    },
     exclude: [
       ...configDefaults.exclude,
       '.local-only/**',

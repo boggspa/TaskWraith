@@ -1,0 +1,163 @@
+{
+  "schemaVersion": 1,
+  "description": "Grandfathered runtime dependency and hotspot debt. CI compares this file with the base commit: allowances and budgets may only decrease.",
+  "rendererMainRuntimeEdges": [
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/EnsembleRosterPresetApply"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/GoalState"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/PromptComposition"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/RuntimeProfileResolution"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/ollama/OllamaEnsembleContext"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/providerChangeQueue"
+    },
+    {
+      "from": "src/renderer/src/App.tsx",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/components/ActivityStack.tsx",
+      "to": "src/main/TodoList"
+    },
+    {
+      "from": "src/renderer/src/components/ChatMediaPanel.tsx",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/components/CompactToolTrace.lib.ts",
+      "to": "src/main/TodoList"
+    },
+    {
+      "from": "src/renderer/src/components/Composer.tsx",
+      "to": "src/main/GoalState"
+    },
+    {
+      "from": "src/renderer/src/components/Composer.tsx",
+      "to": "src/main/providerChangeQueue"
+    },
+    {
+      "from": "src/renderer/src/components/ComposerPlanPopoverButton.tsx",
+      "to": "src/main/TodoList"
+    },
+    {
+      "from": "src/renderer/src/components/ParticipantMention.tsx",
+      "to": "src/main/services/EnsembleMentionAlias"
+    },
+    {
+      "from": "src/renderer/src/components/SettingsPanel.tsx",
+      "to": "src/main/PlaintextSecretPolicy"
+    },
+    {
+      "from": "src/renderer/src/components/SettingsPanel.tsx",
+      "to": "src/main/TaskWraithMcpTools"
+    },
+    {
+      "from": "src/renderer/src/components/Sidebar.tsx",
+      "to": "src/main/remote/RemoteDraftChats"
+    },
+    {
+      "from": "src/renderer/src/components/TodoChecklistCard.tsx",
+      "to": "src/main/TodoList"
+    },
+    {
+      "from": "src/renderer/src/components/ToolClassBreakdown.tsx",
+      "to": "src/main/ToolClassTaxonomy"
+    },
+    {
+      "from": "src/renderer/src/components/TranscriptPanel.tsx",
+      "to": "src/main/collaboration/HumanCollaboratorMessages"
+    },
+    {
+      "from": "src/renderer/src/lib/ComposerMentionTrigger.ts",
+      "to": "src/main/services/EnsembleMentionAlias"
+    },
+    {
+      "from": "src/renderer/src/lib/HandoffPrompt.ts",
+      "to": "src/main/MarkdownFenceSerializer"
+    },
+    {
+      "from": "src/renderer/src/lib/TranscriptVirtualWindow.ts",
+      "to": "src/main/collaboration/HumanCollaboratorMessages"
+    },
+    {
+      "from": "src/renderer/src/lib/ensembleRosterPresets.ts",
+      "to": "src/main/EnsembleRosterPresetContract"
+    },
+    {
+      "from": "src/renderer/src/lib/ensembleWelcomeWorkspace.ts",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/lib/externalPathGrantPreflight.ts",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/lib/mentionHighlight.ts",
+      "to": "src/main/services/EnsembleMentionAlias"
+    },
+    {
+      "from": "src/renderer/src/lib/multiviewEnsembleComposer.ts",
+      "to": "src/main/ollama/OllamaEnsembleContext"
+    },
+    {
+      "from": "src/renderer/src/lib/multiviewWorkspaceIsolation.ts",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/lib/normalizeExternalPathGrants.ts",
+      "to": "src/main/store/ExternalPathGrants"
+    },
+    {
+      "from": "src/renderer/src/lib/taskWraithCloseoutMessage.ts",
+      "to": "src/main/GoalState"
+    }
+  ],
+  "mainRendererRuntimeEdges": [
+    {
+      "from": "src/main/WelcomeDashboardRemote.ts",
+      "to": "src/renderer/src/lib/welcomeUsageDashboard"
+    }
+  ],
+  "mainComputedRuntimeLoadAllowances": [
+    {
+      "from": "src/main/GeminiApiProvider.ts",
+      "kind": "indirect Function runtime loader",
+      "expression": "new Function('specifier', 'return import(specifier)')"
+    },
+    {
+      "from": "src/main/index.ts",
+      "kind": "indirect Function runtime loader",
+      "expression": "new Function('specifier', 'return import(specifier)')"
+    }
+  ],
+  "sharedUpwardRuntimeEdges": [],
+  "hotspotBudgets": {
+    "src/main/index.ts": {
+      "maxLines": 41624,
+      "maxBranchPoints": 7733
+    },
+    "src/renderer/src/App.tsx": {
+      "maxLines": 29397,
+      "maxBranchPoints": 5666
+    },
+    "src/main/services/EnsembleOrchestrator.ts": {
+      "maxLines": 15502,
+      "maxBranchPoints": 3074
+    }
+  }
+}
