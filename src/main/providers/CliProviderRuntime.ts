@@ -528,7 +528,6 @@ export async function readResolvedCliVersion(
   resolved: ResolvedProviderBinary,
   deps?: CliProviderRuntimeDependencies
 ): Promise<string> {
-  if (resolved.provider === 'cursor') return 'security-unavailable'
   if (!resolved.binaryPath) return 'missing'
   const output = await captureProcessOutput(
     resolved.binaryPath,
@@ -574,26 +573,9 @@ export async function getCliProviderStatus(
   provider: ProviderId,
   deps?: CliProviderRuntimeDependencies
 ) {
-  if (provider === 'cursor') {
-    const admission = cursorManagedRunAdmission()
-    return {
-      provider,
-      label: providerDisplayName(provider),
-      available: false,
-      version: 'security-unavailable',
-      appServer: 'unsupported',
-      authState: 'unavailable',
-      setupRequired: true,
-      securityUnavailable: admission.securityUnavailable,
-      binaryPath: null,
-      binarySource: 'disabled',
-      error: admission.message,
-      supportsSessions: false,
-      supportsApprovals: false,
-      supportsQuota: false,
-      supportsMcpStatus: false
-    }
-  }
+  // Cursor is a normal CLI provider now (no per-build fingerprint gate): it falls
+  // through to generic binary resolution + status below. Its run is contained at
+  // spawn by the --sandbox argv (runCursorProvider), not a status gate.
   if (provider === 'kimi' && deps?.getKimiStatusSnapshot) {
     return deps.getKimiStatusSnapshot()
   }
@@ -705,8 +687,8 @@ export async function getAgentStatusSnapshotDirect(
   deps?: CliProviderRuntimeDependencies
 ): Promise<unknown> {
   if (provider === 'cursor') {
-    // getCliProviderStatus returns the static no-process security posture before
-    // settings, profile, binary, version, or auth discovery.
+    // Cursor is a normal CLI provider now: generic status (binary resolution +
+    // version + availability), contained at spawn by the --sandbox argv.
     return getCliProviderStatus(provider, deps)
   }
   if (provider === 'codex') {

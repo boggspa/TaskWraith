@@ -351,57 +351,18 @@ describe('getCliProviderMcpStatus', () => {
   })
 })
 
-describe('Cursor no-process status/version admission', () => {
-  it('keeps the direct status wrapper on the static no-process path', async () => {
-    const getSettings = vi.fn(() => {
-      throw new Error('must not read settings')
-    })
-    const getRuntimeProfiles = vi.fn(() => {
-      throw new Error('must not read runtime profiles')
-    })
-
-    await expect(
-      getAgentStatusSnapshotDirect('cursor', { getSettings, getRuntimeProfiles })
-    ).resolves.toMatchObject({
+describe('Cursor CLI status/version (un-gated: normal provider)', () => {
+  it('probes for version instead of returning the removed static security-unavailable sentinel', async () => {
+    // Cursor is un-gated (no per-build fingerprint / no-process status gate): it
+    // resolves + probes like a normal CLI provider. Version discovery actually
+    // probes the binary, so a non-existent binary yields a probe error, NOT the
+    // old 'security-unavailable' sentinel.
+    const version = await readResolvedCliVersion({
       provider: 'cursor',
-      available: false,
-      securityUnavailable: true,
-      version: 'security-unavailable'
+      binaryPath: '/definitely/not/a/real/cursor-agent-sentinel',
+      source: 'settings'
     })
-    expect(getSettings).not.toHaveBeenCalled()
-    expect(getRuntimeProfiles).not.toHaveBeenCalled()
-  })
-
-  it('returns status before reading runtime profiles or settings', async () => {
-    const getSettings = vi.fn(() => {
-      throw new Error('must not read settings')
-    })
-    const getRuntimeProfiles = vi.fn(() => {
-      throw new Error('must not resolve profiles')
-    })
-
-    await expect(
-      getCliProviderStatus('cursor', { getSettings, getRuntimeProfiles })
-    ).resolves.toMatchObject({
-      provider: 'cursor',
-      available: false,
-      setupRequired: true,
-      securityUnavailable: true,
-      binaryPath: null,
-      version: 'security-unavailable'
-    })
-    expect(getSettings).not.toHaveBeenCalled()
-    expect(getRuntimeProfiles).not.toHaveBeenCalled()
-  })
-
-  it('never executes a resolved Cursor binary for version discovery', async () => {
-    await expect(
-      readResolvedCliVersion({
-        provider: 'cursor',
-        binaryPath: '/definitely/not/a/real/cursor-agent-sentinel',
-        source: 'settings'
-      })
-    ).resolves.toBe('security-unavailable')
+    expect(version).not.toBe('security-unavailable')
   })
 })
 
