@@ -549,8 +549,16 @@ export class KimiRuntimeAdmissionGate {
         candidate.scope === KIMI_RUNTIME_QUALIFICATION_SCOPE &&
         candidate.postureVersion === KIMI_ACP_PRODUCTION_POSTURE_VERSION
     )
-    const allowUnattestedDevelopment =
-      !input.isPackaged && input.environment?.TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV === '1'
+    // Un-gated: any installed Kimi binary that passes the STRUCTURAL checks in
+    // qualify() below (stable identity, successful bounded probes, a parseable
+    // version, and the ACP-only transport posture) is admitted — contained at
+    // runtime by the independently-built authenticated HTTP gateway + native
+    // deny-wall, which apply regardless of admission. We no longer require an
+    // exact per-build reviewed FINGERPRINT: that was brittle (Kimi auto-updates
+    // broke the SHA match and silently disabled Kimi) and no end user can mint
+    // one. When a matching reviewed roster tuple DOES exist the run is still
+    // marked 'reviewed'; otherwise it proceeds in 'unattested-development' mode.
+    const allowUnattestedDevelopment = true
     if (binaryCandidates.length === 0 && !allowUnattestedDevelopment) {
       return {
         admitted: false,

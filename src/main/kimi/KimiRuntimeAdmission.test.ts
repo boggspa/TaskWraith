@@ -134,18 +134,20 @@ function qualification(
 }
 
 describe('Kimi runtime admission ordering and exact qualification', () => {
-  it('blocks an empty roster and unknown SHA without executing the binary', async () => {
+  it('admits an unknown SHA in unattested mode (un-gated) after the structural probes pass', async () => {
     const probeSurfaces = vi.fn(async () => inventorySurfaces())
     const gate = new KimiRuntimeAdmissionGate([], {
       captureIdentity: async () => binaryIdentity(),
       probeSurfaces
     })
 
-    await expect(gate.admit(admissionInput())).resolves.toMatchObject({
-      admitted: false,
-      reason: 'unknown_binary'
-    })
-    expect(probeSurfaces).not.toHaveBeenCalled()
+    // Un-gated: an empty roster no longer blocks. The binary is still structurally
+    // validated (probed for the ACP-only transport posture) and admitted in
+    // unattested-development mode; runtime containment (the authenticated HTTP
+    // gateway + native deny-wall) is applied independently of admission.
+    const decision = await gate.admit(admissionInput())
+    expect(decision).toMatchObject({ admitted: true, mode: 'unattested-development' })
+    expect(probeSurfaces).toHaveBeenCalled()
   })
 
   it('blocks a malformed embedded roster before hashing or probing', async () => {
@@ -243,41 +245,28 @@ describe('Kimi runtime admission ordering and exact qualification', () => {
     expect(probeSurfaces).toHaveBeenCalledTimes(1)
   })
 
-  it('ignores the dev escape hatch when packaged and requires the exact value 1 unpackaged', async () => {
+  it('admits in unattested mode regardless of isPackaged or the retired dev env flag', async () => {
     const probeSurfaces = vi.fn(async () => inventorySurfaces())
     const gate = new KimiRuntimeAdmissionGate([], {
       captureIdentity: async () => binaryIdentity(),
       probeSurfaces
     })
-    await expect(
-      gate.admit(
-        admissionInput({
-          isPackaged: true,
-          environment: { TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV: '1' }
-        })
-      )
-    ).resolves.toMatchObject({ admitted: false, reason: 'unknown_binary' })
-    await expect(
-      gate.admit(
-        admissionInput({
-          isPackaged: false,
-          environment: { TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV: 'true' }
-        })
-      )
-    ).resolves.toMatchObject({ admitted: false, reason: 'unknown_binary' })
-    await expect(
-      gate.admit(
-        admissionInput({
-          isPackaged: false,
-          environment: { TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV: '1' }
-        })
-      )
-    ).resolves.toMatchObject({
-      admitted: true,
-      mode: 'unattested-development',
-      qualification: null,
-      attestationSource: KIMI_UNATTESTED_DEVELOPMENT_SOURCE
-    })
+    // Un-gated: admission no longer depends on isPackaged or the old
+    // TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV escape hatch. Any structurally valid
+    // Kimi binary admits in unattested mode when no reviewed tuple matches.
+    for (const input of [
+      { isPackaged: true, environment: {} },
+      { isPackaged: false, environment: {} },
+      { isPackaged: true, environment: { TASKWRAITH_ALLOW_UNATTESTED_KIMI_DEV: '1' } }
+    ]) {
+      await expect(gate.admit(admissionInput(input))).resolves.toMatchObject({
+        admitted: true,
+        mode: 'unattested-development',
+        qualification: null,
+        attestationSource: KIMI_UNATTESTED_DEVELOPMENT_SOURCE
+      })
+    }
+    // The three admits share one identity + mode, so the flight cache probes once.
     expect(probeSurfaces).toHaveBeenCalledTimes(1)
   })
 
