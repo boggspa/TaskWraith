@@ -35543,9 +35543,11 @@ if (isGeminiMcpBridgeProcess) {
       await restartIosRemoteBridge(reason)
     }
 
-    if (iosRemoteResolution.shouldRun) {
-      void startIosRemoteBridge('startup')
-    }
+    // iOS remote bridge startup boot is deferred to just after the human-
+    // collaboration cluster is declared (search: startIosRemoteBridge('startup')).
+    // The relay ready-callback calls reopenCollaborationRooms(), which reads that
+    // cluster (store/runtime/transport) — booting here, before it initializes,
+    // threw "Cannot access 'reopenCollaborationRooms' before initialization".
 
     const subscribeBridgeRunEvents = (_daemon: BridgeDaemonClient): void => {
       if (unsubscribeBridgeRunSink) return
@@ -37614,6 +37616,14 @@ if (isGeminiMcpBridgeProcess) {
       })
       humanCollaborationHostTransport.attachRuntime(humanCollaborationRuntime)
       return humanCollaborationRuntime
+    }
+    // Boot the iOS remote bridge now that the human-collaboration cluster above is
+    // initialized (humanCollaborationStore / -Runtime / -HostTransport /
+    // collaborationHostRelayUrl / reopenCollaborationRooms / getHumanCollaborationRuntime).
+    // startIosRemoteBridge('startup') -> relay ready -> reopenCollaborationRooms() reads
+    // that cluster, so booting before these declarations hit a TDZ. Moved from ~L35546.
+    if (iosRemoteResolution.shouldRun) {
+      void startIosRemoteBridge('startup')
     }
     registerUpdateHandlers({
       updateService,
