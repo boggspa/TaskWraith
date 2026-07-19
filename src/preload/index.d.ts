@@ -1579,7 +1579,14 @@ declare global {
         chatId: string
         index: number
         textPrefix?: string
-      }) => Promise<{ ok: boolean; prompt?: string; queuedPrompts?: string[]; error?: string }>
+      }) => Promise<{
+        ok: boolean
+        prompt?: string
+        queuedPrompts?: string[]
+        imageAttachments?: Array<{ id?: string; path: string; name?: string }>
+        dmTargetParticipantId?: string
+        error?: string
+      }>
       /** Consume a queued ensemble prompt into a user-authored blackboard
        * note (session scope) WITHOUT interrupting the live round. Queue
        * mutation matches Delete (textPrefix race-guard + restart recovery). */
