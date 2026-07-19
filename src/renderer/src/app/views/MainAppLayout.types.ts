@@ -68,6 +68,8 @@ type MainAppLayoutSidebarProps = {
   handleAddWorkflowToWorkspaceBoard: NonNullable<SidebarProps['onAddWorkflowToWorkspaceBoard']>
   handleArchiveWorkspaceBoard: NonNullable<SidebarProps['onArchiveWorkspaceBoard']>
   handleAgentApprovalAction: NonNullable<SidebarProps['onRespondAgentApproval']>
+  handleAgentQuestionSubmit: NonNullable<SidebarProps['onAnswerAgentQuestion']>
+  handleAgentQuestionDismiss: NonNullable<SidebarProps['onDismissAgentQuestion']>
   handleCancelWorkflowExecution: NonNullable<SidebarProps['onCancelWorkflowExecution']>
   handleCreateWorkspaceBoard: NonNullable<SidebarProps['onCreateWorkspaceBoard']>
   handleDeleteChat: NonNullable<SidebarProps['onDeleteChat']>
@@ -121,6 +123,7 @@ type MainAppLayoutSidebarProps = {
   overestimatePercent: NonNullable<SidebarModelUsageApiSpend['overestimatePercent']>
   pendingAgentApprovalByChatId: SidebarProps['pendingAgentApprovalByChatId']
   pendingApprovalQueueByChatId: SidebarProps['pendingApprovalQueueByChatId']
+  pendingAgentQuestionsByChatId: SidebarProps['pendingAgentQuestionsByChatId']
   providerRates: SidebarProviderRates
   runningChatIdsArray: NonNullable<SidebarProps['runningChatIds']>
   scheduledTasks: NonNullable<SidebarProps['scheduledTasks']>
@@ -279,8 +282,8 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleAddTranscriptMessageToPrompt: any
   handleAddWorkflowToWorkspaceBoard: MainAppLayoutSidebarProps['handleAddWorkflowToWorkspaceBoard']
   handleAddWorkspaceBoardCard: any
-  handleAgentQuestionDismiss: any
-  handleAgentQuestionSubmit: any
+  handleAgentQuestionDismiss: MainAppLayoutSidebarProps['handleAgentQuestionDismiss']
+  handleAgentQuestionSubmit: MainAppLayoutSidebarProps['handleAgentQuestionSubmit']
   handleArchiveHandoff: any
   handleArchiveWorkspaceBoard: MainAppLayoutSidebarProps['handleArchiveWorkspaceBoard']
   handleCancelAuditRun: any
@@ -440,7 +443,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   pendingAgentApproval: any
   pendingAgentApprovalByChatId: MainAppLayoutSidebarProps['pendingAgentApprovalByChatId']
   pendingAgentQuestions: any
-  pendingAgentQuestionsByChatId: any
+  pendingAgentQuestionsByChatId: MainAppLayoutSidebarProps['pendingAgentQuestionsByChatId']
   pendingApprovalQueueByChatId: MainAppLayoutSidebarProps['pendingApprovalQueueByChatId']
   pendingPlanChoice: any
   pendingProposedPlan: any

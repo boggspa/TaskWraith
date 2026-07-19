@@ -1281,6 +1281,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
                 pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
                 onRespondAgentApproval={handleAgentApprovalAction}
+                pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
+                onAnswerAgentQuestion={handleAgentQuestionSubmit}
+                onDismissAgentQuestion={handleAgentQuestionDismiss}
                 collaborationShares={humanCollaborationShares}
                 onRevokeShare={handleRevokeHumanShare}
                 hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
@@ -1725,6 +1728,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               }}
               pendingAgentApprovalByChatId={pendingAgentApprovalByChatId}
               pendingApprovalQueueByChatId={pendingApprovalQueueByChatId}
+              onRespondAgentApproval={handleAgentApprovalAction}
+              pendingAgentQuestionsByChatId={pendingAgentQuestionsByChatId}
+              onAnswerAgentQuestion={handleAgentQuestionSubmit}
+              onDismissAgentQuestion={handleAgentQuestionDismiss}
               collaborationShares={humanCollaborationShares}
               collaboratingChatIds={collaboratingChatIds}
               hasConnectedCollaborator={connectedCollaborationChatIds.size > 0}
