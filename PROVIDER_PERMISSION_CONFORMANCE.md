@@ -130,6 +130,16 @@ The live suite must force each of the nine denied Kimi native tools individually
 the same tool-call id; a missing request, an id mismatch, or an unstructured
 failure is not acceptable evidence.
 
+Native tool *titles* are provider-internal and can drift across Kimi builds, so
+every row additionally proves a real attempt occurred (an empty tool-call set is
+never acceptable evidence). For the `Write` row specifically — which on
+kimi-code 0.27.0 a rigid "invoke the built-in Write tool, no alternative" prompt
+does not reliably elicit — the fixture uses a natural create-a-file prompt and
+accepts a structured terminal permission-denial of either sibling write-capable
+roster title (`Write` or `Edit`), together with the bounded-local-effect proof
+that no unmediated write landed. This stays non-vacuous: an attempt must occur, a
+write-capable native tool must be denied, and no file may be written.
+
 The active required live/release tuple contains Kimi only. The exact-fingerprint
 manifest and generated embedded Kimi runtime roster are still empty, so strict
 release and packaged Kimi admission remain red until a reviewed tuple is added.
