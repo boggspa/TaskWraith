@@ -3673,6 +3673,26 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   color: color-mix(in srgb, var(--danger, #e2554f) 82%, var(--text-primary));
 }
 
+.sidebar-footer-question-context {
+  padding: 0 8px 2px 24px;
+  font-size: var(--font-size-xs, 11px);
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+/* Compact Recents/Pinned rows: squeeze a short "Needs input" chip when an
+   agent is blocked on ask_user_question. */
+.sidebar-compact-needs-input {
+  flex: 0 0 auto;
+  margin-left: auto;
+  max-width: 5.5rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 10px;
+  line-height: 1.2;
+}
+
 .sidebar-footer-approval-title {
   flex: 1;
   min-width: 0;

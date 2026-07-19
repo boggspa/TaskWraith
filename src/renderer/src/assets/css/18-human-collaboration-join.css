@@ -221,3 +221,150 @@
   color: var(--text-primary);
   background: color-mix(in srgb, var(--text-primary) 10%, transparent);
 }
+
+/* ---------------------------------------------------------------------------
+ * Needs-your-input banners — out-of-thread `ask_user_question` attention.
+ * Same top-centre stack as host admission; amber accent so it reads as a
+ * blocking human turn rather than a red permission denial.
+ * --------------------------------------------------------------------------- */
+.needs-input-banner-stack {
+  position: fixed;
+  top: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  z-index: 241;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.needs-input-banner,
+.needs-input-banner-overflow {
+  pointer-events: auto;
+}
+
+.needs-input-banner {
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  max-width: min(560px, calc(100vw - 32px));
+  padding: 12px 14px;
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface-1, #1c1f2a) 92%, transparent);
+  border: 1px solid color-mix(in srgb, var(--warning, #f5a524) 48%, transparent);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  backdrop-filter: blur(18px);
+  -webkit-backdrop-filter: blur(18px);
+}
+
+.needs-input-banner-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 0;
+  flex: 1;
+}
+
+.needs-input-banner-kicker {
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--warning, #f5a524) 88%, var(--text-primary));
+}
+
+.needs-input-banner-text {
+  font-size: 12.5px;
+  color: var(--text-primary);
+  line-height: 1.35;
+}
+
+.needs-input-banner-context {
+  font-size: 11.5px;
+  color: var(--text-secondary);
+  line-height: 1.35;
+}
+
+.needs-input-banner-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+.needs-input-banner-option {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--warning, #f5a524) 42%, transparent);
+  background: color-mix(in srgb, var(--warning, #f5a524) 14%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  max-width: 100%;
+  text-align: left;
+}
+
+.needs-input-banner-option:hover,
+.needs-input-banner-option:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--warning, #f5a524) 24%, transparent);
+}
+
+.needs-input-banner-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+
+.needs-input-banner-open {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 18%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 600;
+  border-radius: 8px;
+  padding: 5px 10px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.needs-input-banner-open:hover,
+.needs-input-banner-open:focus-visible {
+  outline: none;
+  background: color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.needs-input-banner-dismiss {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: var(--text-secondary);
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px 6px;
+  border-radius: 8px;
+}
+
+.needs-input-banner-dismiss:hover {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--text-primary) 10%, transparent);
+}
+
+.needs-input-banner-overflow {
+  align-self: center;
+  padding: 6px 12px;
+  border-radius: 999px;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--surface-1, #1c1f2a) 88%, transparent);
+  border: 1px solid color-mix(in srgb, var(--panel-border) 70%, transparent);
+}
