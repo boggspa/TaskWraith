@@ -294,6 +294,8 @@ import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
   ensembleQueuedPromptsFromRound,
+  ensembleRoundQueuePatch,
+  mapQueuedAttachmentsForComposer,
   preserveOptimisticEnsembleQueue,
   queuedRunRequestChatId
 } from './lib/queuedMessageRows'
@@ -318,6 +320,10 @@ import { ProposedPlanApprovalModal } from './components/ProposedPlanApprovalModa
 import { WorkspaceRemoteAccessModal } from './components/WorkspaceRemoteAccessModal'
 import { JoinSharedChatModal } from './components/JoinSharedChatModal'
 import { HostAdmissionBanner } from './components/HostAdmissionBanner'
+import {
+  NeedsInputBanner,
+  useNeedsInputBannerController
+} from './components/NeedsInputBanner'
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
@@ -2913,6 +2919,11 @@ function App(): React.JSX.Element {
   // to keep each pending question's synthetic marker pinned to the live tail.
   const pendingAgentQuestionsByChatIdRef = useRef(pendingAgentQuestionsByChatId)
   pendingAgentQuestionsByChatIdRef.current = pendingAgentQuestionsByChatId
+  // Out-of-thread attention: short-lived global banner when a question lands
+  // on a chat the user is not currently viewing.
+  const needsInputBanner = useNeedsInputBannerController()
+  const needsInputBannerRef = useRef(needsInputBanner)
+  needsInputBannerRef.current = needsInputBanner
   const [slashCommandsOpenRequestByChatId, setSlashCommandsOpenRequestForChat] =
     usePerChatState(0)
   const [scheduledTasks, setScheduledTasks] = useState<ScheduledTask[]>([])
@@ -5328,8 +5339,7 @@ function App(): React.JSX.Element {
             ...source.ensemble!,
             activeRound: {
               ...round,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
+              ...ensembleRoundQueuePatch(round, nextQueue, { appendedPrompt: prompt })
             },
             updatedAt: new Date().toISOString()
           },
@@ -5359,8 +5369,7 @@ function App(): React.JSX.Element {
             ...source.ensemble!,
             activeRound: {
               ...round,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
+              ...ensembleRoundQueuePatch(round, nextQueue, { removedIndex: index })
             },
             updatedAt: new Date().toISOString()
           },
@@ -9546,6 +9555,9 @@ function App(): React.JSX.Element {
 
   const handleSelectChat = async (chat: ChatRecord) => {
     setActiveWorkspaceBoardId(null)
+    // Opening the thread is enough attention — drop the global banner for
+    // this chat so the in-transcript question card becomes the focus.
+    needsInputBannerRef.current.clearForChat(chat.appChatId)
     const currentMainChat =
       (currentChatIdRef.current
         ? chatByIdRef.current.get(currentChatIdRef.current) ||
@@ -11552,6 +11564,23 @@ function App(): React.JSX.Element {
               askedAt: Date.now()
             })
           )
+          // In-app attention when the user is not already looking at this
+          // thread. The in-transcript card still mounts when they open it;
+          // the banner is the place-marker + deep-link for elsewhere.
+          const viewingChatId = currentChatIdRef.current
+          if (request.appChatId && request.appChatId !== viewingChatId) {
+            const chatTitle = chatByIdRef.current.get(request.appChatId)?.title
+            needsInputBannerRef.current.push({
+              questionId: request.questionId,
+              appChatId: request.appChatId,
+              chatTitle,
+              provider: (request.provider as ProviderId | undefined) ?? null,
+              question: request.question,
+              options: request.options,
+              context: request.context,
+              askedAt: Date.now()
+            })
+          }
         })
       )
     }
@@ -11561,6 +11590,7 @@ function App(): React.JSX.Element {
           // Clear the pending-question slot for the chat that owned the
           // question. appChatId comes back on the cancellation payload so
           // we don't have to maintain our own questionId → chatId map.
+          needsInputBannerRef.current.dismiss(info.questionId)
           if (info.appChatId) {
             setPendingAgentQuestionsForChat(info.appChatId, (prev) =>
               removeAgentQuestionFromQueue(prev, info.questionId)
@@ -17873,6 +17903,7 @@ function App(): React.JSX.Element {
         appRunId: pending.appRunId
       })
       if (!response.ok) {
+        needsInputBanner.dismiss(questionId)
         setPendingAgentQuestionsForChat(targetChatId, (prev) =>
           removeAgentQuestionFromQueue(prev, questionId)
         )
@@ -17896,11 +17927,17 @@ function App(): React.JSX.Element {
         if (prev.messages?.some((m) => m.id === replyMsg.id)) return prev
         return { ...prev, messages: [...(prev.messages || []), replyMsg] }
       })
+      needsInputBanner.dismiss(questionId)
       setPendingAgentQuestionsForChat(targetChatId, (prev) =>
         removeAgentQuestionFromQueue(prev, questionId)
       )
     },
-    [pendingAgentQuestionsByChatId, updateChatById, setPendingAgentQuestionsForChat]
+    [
+      pendingAgentQuestionsByChatId,
+      updateChatById,
+      setPendingAgentQuestionsForChat,
+      needsInputBanner
+    ]
   )
 
   // QMOD (1.0.3) — user dismissed the modal without answering. The
@@ -17918,11 +17955,12 @@ function App(): React.JSX.Element {
         appChatId: targetChatId,
         appRunId: question.appRunId
       })
+      needsInputBanner.dismiss(questionId)
       setPendingAgentQuestionsForChat(targetChatId, (prev) =>
         removeAgentQuestionFromQueue(prev, questionId)
       )
     },
-    [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat]
+    [pendingAgentQuestionsByChatId, setPendingAgentQuestionsForChat, needsInputBanner]
   )
 
   const handleEnsemblePollVote = useCallback(
@@ -21517,7 +21555,8 @@ function App(): React.JSX.Element {
     (
       chatId: string,
       roundId: string,
-      nextQueueOrReducer: string[] | ((currentQueue: string[]) => string[])
+      nextQueueOrReducer: string[] | ((currentQueue: string[]) => string[]),
+      options?: { removedIndex?: number }
     ): void => {
       updateChatByIdLocalOnly(chatId, (source) => {
         const activeRound = source.ensemble?.activeRound
@@ -21546,8 +21585,11 @@ function App(): React.JSX.Element {
             ...source.ensemble,
             activeRound: {
               ...activeRound,
-              queuedPrompt: nextQueue[0],
-              queuedPrompts: nextQueue
+              ...ensembleRoundQueuePatch(activeRound, nextQueue, {
+                ...(typeof options?.removedIndex === 'number'
+                  ? { removedIndex: options.removedIndex }
+                  : {})
+              })
             },
             updatedAt: new Date().toISOString()
           },
@@ -21569,6 +21611,8 @@ function App(): React.JSX.Element {
       // FIFO position in `activeRound.queuedPrompts`. Edit hoists THAT
       // index's prompt into the composer and splices the same index
       // out of the array so the chain continues with the rest.
+      // Attachments ride the structured entry so Edit restores them
+      // into the composer instead of silently dropping them.
       const ensembleMatch = entryId.match(/^ensemble-queued-(.+)-(\d+)$/)
       if (ensembleMatch) {
         const queuedRoundId = ensembleMatch[1]
@@ -21584,6 +21628,13 @@ function App(): React.JSX.Element {
               : []
         const target = currentQueue[idx]
         if (!target) return
+        // Prefer the structured mirror when present so attachment restore
+        // does not depend solely on the main process round-trip.
+        const localEntryAttachments =
+          Array.isArray(round.queuedPromptEntries) &&
+          round.queuedPromptEntries.length === currentQueue.length
+            ? round.queuedPromptEntries[idx]?.imageAttachments
+            : undefined
         void window.api
           .removeQueuedEnsemblePrompt({
             chatId: chat.appChatId,
@@ -21599,6 +21650,21 @@ function App(): React.JSX.Element {
               return
             }
             setChatPromptDraft(chat.appChatId, result.prompt || target)
+            const restoredAttachments = mapQueuedAttachmentsForComposer(
+              result.imageAttachments?.length
+                ? result.imageAttachments
+                : localEntryAttachments,
+              `ensemble-edit-${chat.appChatId}`
+            )
+            if (restoredAttachments.length > 0) {
+              setImageAttachmentsByChatId((prev) => ({
+                ...prev,
+                [chat.appChatId]: mergeImageAttachments(
+                  prev[chat.appChatId] || [],
+                  restoredAttachments
+                )
+              }))
+            }
             const nextQueue = Array.isArray(result.queuedPrompts)
               ? result.queuedPrompts
               : [...currentQueue.slice(0, idx), ...currentQueue.slice(idx + 1)]
@@ -21606,7 +21672,8 @@ function App(): React.JSX.Element {
               chat.appChatId,
               queuedRoundId,
               (latestQueue) =>
-                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue)
+                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue),
+              { removedIndex: idx }
             )
           })
           .catch((error) => {
@@ -21639,6 +21706,29 @@ function App(): React.JSX.Element {
             job?.promptPreview ||
             ''
         )
+        const restoredAttachments = mapQueuedAttachmentsForComposer(
+          match?.imageAttachments?.length
+            ? match.imageAttachments
+            : job?.request?.imageAttachments,
+          `queue-edit-${entryId}`
+        )
+        if (restoredAttachments.length > 0) {
+          setImageAttachmentsByChatId((prev) => ({
+            ...prev,
+            [targetChatId]: mergeImageAttachments(
+              prev[targetChatId] || [],
+              restoredAttachments
+            )
+          }))
+        }
+        const discordSelection =
+          match?.discordContextSelection || job?.request?.discordContextSelection
+        if (discordSelection) {
+          setDiscordContextSelectionByChatId((prev) => ({
+            ...prev,
+            [targetChatId]: discordSelection
+          }))
+        }
       }
       const scheduledRunAt = match?.scheduledRunAt || job?.request?.scheduledRunAt
       if (scheduledRunAt && targetChatId) {
@@ -21714,7 +21804,8 @@ function App(): React.JSX.Element {
               chat.appChatId,
               queuedRoundId,
               (latestQueue) =>
-                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue)
+                mergeEnsembleQueuedPromptMutationResult(currentQueue, nextQueue, latestQueue),
+              { removedIndex: idx }
             )
           })
           .catch((error) => {
@@ -29001,6 +29092,20 @@ function App(): React.JSX.Element {
       */}
       {IOS_REMOTE_ENABLED && <IncomingPairingPrompt />}
       <HostAdmissionBanner />
+      <NeedsInputBanner
+        entries={needsInputBanner.entries}
+        onOpen={(entry) => {
+          needsInputBanner.dismiss(entry.questionId)
+          const chat =
+            chatByIdRef.current.get(entry.appChatId) ||
+            chats.find((candidate) => candidate.appChatId === entry.appChatId)
+          if (chat) void handleSelectChat(chat)
+        }}
+        onAnswer={(entry, answer) => {
+          void handleAgentQuestionSubmit(entry.questionId, answer, false)
+        }}
+        onDismiss={(questionId) => needsInputBanner.dismiss(questionId)}
+      />
       <JoinSharedChatModal
         open={joinSharedChatOpen}
         onClose={() => setJoinSharedChatOpen(false)}

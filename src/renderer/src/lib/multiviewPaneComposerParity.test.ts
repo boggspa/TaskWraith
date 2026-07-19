@@ -157,6 +157,11 @@ describe('Multiview pane Composer context parity', () => {
     expect(builder).toContain('paneCtxHelpers.handleDeleteQueuedMessage(entryId, viewerChat)')
     expect(builder).toContain('paneCtxHelpers.handleBlackboardQueuedMessage(entryId, viewerChat)')
     expect(builder).toContain('paneCtxHelpers.handleSteerToQueuedMessage(entryId, viewerChat)')
+    // Edit must restore attachments from the queue snapshot into the composer;
+    // hoisting only the prompt text is the regression that drops attached files.
+    expect(editQueue).toContain('mapQueuedAttachmentsForComposer')
+    expect(editQueue).toContain('setImageAttachmentsByChatId')
+    expect(editQueue).toContain('result.imageAttachments')
     expect(builder).toContain(
       'handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)'
     )
