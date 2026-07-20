@@ -23,10 +23,12 @@ size of the feature list.
   loading vary, so their containment claims require version-pinned live
   canaries. A Read-only label is not, by itself, proof that a hostile native MCP
   server cannot start.
-  Source-ahead Cursor takes the fail-closed route: TaskWraith starts no managed
-  Cursor process because the authenticated CLI can preload provider-managed
-  hooks, skills, plugins, and MCP despite local isolation flags. Both Plan and
-  tool modes are unavailable/unqualified pending stronger evidence or a sandbox.
+  Managed Cursor uses Path-B: always-enabled contained `cursor-agent` with
+  hard-pinned `--sandbox enabled` and seat-routed read-only vs write argv.
+  Own-account skills/plugins/MCP may load but are sandbox-bounded; TaskWraith
+  does not mediate Cursor per-tool approvals. Treat the sandbox as an honest
+  partial backstop (file-write impact bound for normal project workspaces, not
+  a full egress seal).
 - **Honesty is part of the product:** Cache behaviour is labelled Guaranteed
   only where TaskWraith controls the API request, Automatic where a provider
   reports observed implicit caching, and Best-effort on opaque CLI paths.

@@ -33,10 +33,12 @@ Responsible for the UI:
    (including paused-provider failover and retired-provider fallback), applies
    active goal context, and starts the selected provider command, SDK,
    app-server, or Ollama harness. Architecturally supported selectable provider
-   ids are Codex, Claude, Kimi, Grok, and local Ollama, but a run still requires
-   provider-specific admission. Gemini and Cursor are retained for historical
-   chats/configuration and decode paths only; source-ahead Cursor dispatch
-   returns a typed security-unavailable result without starting a process. Kimi
+   ids are Codex, Claude, Kimi, Cursor, Grok, and local Ollama, but a run still
+   requires provider-specific admission. Gemini is retained for historical
+   chats/configuration and decode paths only. Managed Cursor uses Path-B: the
+   shared CLI transport always-enables `cursor-agent` with hard-pinned
+   `--sandbox enabled` argv (read-only vs write by seat); containment lives on
+   the run argv, not a brittle per-build fingerprint gate. Kimi
    Code, when admitted, runs over its `kimi acp` (Agent Client Protocol)
    transport inside a seat-isolated `KIMI_CODE_HOME`. Chats,
    delegated sub-threads, and ensemble participants use durable seat homes and

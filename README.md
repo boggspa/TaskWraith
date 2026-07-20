@@ -43,10 +43,12 @@ packaged qualification roster is currently empty, so packaged builds reject
 Kimi before launch; an explicit unpackaged developer admission is labelled
 unattested and cannot qualify a release.
 
-Cursor records and configuration interchange remain readable, but the
-source-ahead checkout starts no TaskWraith-managed Cursor process. Both Cursor
-Plan and tool modes are unavailable/unqualified pending stronger containment
-evidence or a sandbox that excludes provider-managed startup extensions.
+Managed **Cursor** is live again under **Path-B**: TaskWraith starts a
+contained `cursor-agent` with hard-pinned `--sandbox enabled`, seat-routed
+read-only vs write argv, and the user's real `~/.cursor` login. Native Cursor
+tools run under the OS sandbox; TaskWraith does not inject host MCP tools or
+per-tool grant UX. Containment is an honest partial backstop (not a full
+egress or arbitrary-workspace seal).
 
 This is not just provider switching. Ensemble participants see the same
 transcript, can build on each other's work, hand off deliberately, run
@@ -147,14 +149,15 @@ baseline.
 
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
-- **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Grok,
-  and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
+- **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Cursor,
+  Grok, and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
   presets).
   Kimi's integrated surface is admission-dependent: the current source-ahead
   packaged roster contains no commissioned runtime tuple, so credentials or a
   visible picker row alone cannot make it runnable.
-  Historical Gemini and Cursor records remain readable, but neither provider is
-  available for a new source-ahead run.
+  Managed Cursor uses Path-B contained `--sandbox` argv (native tools under the
+  OS sandbox; no TaskWraith host MCP injection). Historical Gemini remains
+  readable but retired for new runs.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.
@@ -197,9 +200,10 @@ baseline.
   policy gates as cloud providers.
 - **Custom MCP Servers**: User-defined MCP servers can be managed, validated,
   imported, exported, and attached to compatible provider runtimes with
-  provider-specific JSON/TOML snippets and readiness checks. Source-ahead Cursor
-  import/export is configuration interchange only; TaskWraith starts no managed
-  Cursor process.
+  provider-specific JSON/TOML snippets and readiness checks. Cursor JSON
+  import/export remains useful for configuration interchange; Path-B managed
+  Cursor runs use native tools under the OS sandbox rather than TaskWraith-injected
+  host MCP.
 - **Activity Review**: Live activity viewport for in-flight tools and thinking,
   compact timelines, durations, and raw event inspection.
 - **AI Close-Out Summaries**: Run and ensemble-round close-out cards show

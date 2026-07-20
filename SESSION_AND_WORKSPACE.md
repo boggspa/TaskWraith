@@ -58,9 +58,9 @@ providers to report cache hits.
 - **Claude Code, runtime-admitted Kimi, and Grok** are **Best effort** opaque
   transports — TaskWraith records cache stats only when the transport emits
   them and cannot force provider-side caching.
-- **Cursor** is **Unsupported** in the source-ahead checkout because TaskWraith
-  starts no managed Cursor run. The v1.8.4 release classified its then-runnable
-  opaque CLI path as Best effort; historical usage can still decode.
+- **Cursor** (Path-B managed runs) is **Best effort** opaque CLI: TaskWraith
+  records cache stats only when the transport emits them. The v1.8.4 release
+  already classified Cursor's then-runnable path the same way.
 - **Claude Agent SDK / Claude Code** may not expose raw Messages API
   `cache_control` even in BYOK mode; guarantee tier reflects what TaskWraith
   can honestly control on that transport.
@@ -96,12 +96,8 @@ approach without losing the original timeline.
   native vs emulated for the active provider).
 - Inspector / thread controls use the same capability summary.
 - **Codex** is the only provider with true native fork support today. Runnable
-  Claude, Kimi, Grok, and Ollama seats use **emulated** fork fallbacks until a
-  provider adds native fork APIs.
-
-Historical Cursor records may describe an emulated fork, but source-ahead
-TaskWraith cannot launch or continue one because it starts no managed Cursor
-process.
+  Claude, Kimi, Cursor, Grok, and Ollama seats use **emulated** fork fallbacks
+  until a provider adds native fork APIs.
 
 Emulated forks preserve TaskWraith audit and workspace boundaries; they do not
 merge provider-native session state the provider never exposed.

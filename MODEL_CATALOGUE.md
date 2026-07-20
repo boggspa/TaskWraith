@@ -105,17 +105,14 @@ not the monoline glyph set.
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-cursor-on-light.png" alt="Cursor logo" width="34" />
     </td>
-    <td valign="middle"><strong>Cursor</strong><br /><sub>Mustard provider hue · configuration/history only; unavailable for new source-ahead runs</sub></td>
+    <td valign="middle"><strong>Cursor</strong><br /><sub>Mustard provider hue · Path-B managed runs (native tools under OS sandbox)</sub></td>
   </tr>
 </table>
 
-TaskWraith starts no managed Cursor process in the source-ahead checkout.
-Exact-build review found that authenticated Cursor can preload account/team
-hooks, managed skills/plugins, and plugin/team/bundled MCP despite fresh roots,
-excluded workspace context, disabled project configs, and Plan mode. The model
-rows below are retained for configuration/history continuity; both Cursor Plan
-and tool modes are unavailable/unqualified pending an exact-build containment
-canary or a stronger sandbox.
+Managed Cursor is live again under Path-B: TaskWraith starts a contained
+`cursor-agent` with hard-pinned `--sandbox enabled` and seat-routed read-only
+vs write argv. Models below are selectable for new runs. Path-B uses native
+Cursor tools under the OS sandbox and does not inject TaskWraith host MCP tools.
 
 | Model                                                   | Reasoning           | Fast     | Notes                                                 |
 | ------------------------------------------------------- | ------------------- | -------- | ----------------------------------------------------- |
