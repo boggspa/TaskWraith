@@ -1212,7 +1212,6 @@ import {
   cursorTerminalFailureText,
   type NormalizedCursorRunEvent
 } from './cursor/CursorStreamJson'
-import { cursorManagedRunAdmission } from './cursor/CursorManagedRunGate'
 import {
   buildContainedCursorReadOnlyArgv,
   buildContainedCursorWriteArgv,
@@ -18254,13 +18253,6 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
 async function probeEnsembleParticipant(
   participant: EnsembleParticipant
 ): Promise<ParticipantProbeResult> {
-  if (participant.provider === 'cursor') {
-    return {
-      reachable: false,
-      reason: cursorManagedRunAdmission().message,
-      underlyingCode: 'SECURITY_UNAVAILABLE'
-    }
-  }
   if (participant.provider === 'codex') {
     const runtimeProfile = participant.runtimeProfileId
       ? AppStore.getRuntimeProfiles('codex').find(
@@ -21448,7 +21440,7 @@ async function compactProviderContextForRequest(payload: {
     return {
       ok: false,
       error:
-        'Cursor host-seat compaction is unavailable because TaskWraith starts no managed Cursor process; both Plan and tool transports remain disabled and unqualified.'
+        'Cursor host-seat compaction is not implemented for Path-B sandbox runs yet; start a fresh Cursor turn instead of compacting the seat.'
     }
   }
   const admissionChat = AppStore.getChat(payload.chatId)
@@ -21493,7 +21485,7 @@ async function compactProviderContextForReservedRequest(
     return {
       ok: false,
       error:
-        'Cursor host-seat compaction is unavailable because TaskWraith starts no managed Cursor process; both Plan and tool transports remain disabled and unqualified.'
+        'Cursor host-seat compaction is not implemented for Path-B sandbox runs yet; start a fresh Cursor turn instead of compacting the seat.'
     }
   }
   let providerSessionId = payload.providerSessionId
@@ -25229,8 +25221,7 @@ const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent
   }
 ]
 
-// Cursor remains registered only so historical records and attempted dispatches
-// receive a typed fail-closed result. runCursorProvider starts no process.
+// Cursor Path-B: resolve cursor-agent and spawn the contained --sandbox argv.
 const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('cursor'),
@@ -40569,12 +40560,6 @@ if (isGeminiMcpBridgeProcess) {
     // (get-agent-models IPC) and the paired-device broadcast both call this,
     // so the phone's hierarchical picker can never drift from the desktop's.
     const listAgentModelsForProvider = async (provider: ProviderId): Promise<unknown[]> => {
-      if (provider === 'cursor') {
-        const reason = cursorManagedRunAdmission().message
-        return getStaticProviderModels('cursor', {
-          includePreviewModels: previewModelCatalogEnabledForProvider('cursor', process.env)
-        }).map((model) => ({ ...model, disabled: true, disabledReason: reason }))
-      }
       if (provider === 'ollama') {
         try {
           const settings = AppStore.getSettings()

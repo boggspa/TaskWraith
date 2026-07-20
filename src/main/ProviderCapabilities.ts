@@ -803,37 +803,6 @@ export function buildProviderCapabilityContract({
         )
       )
     }
-  } else if (provider === 'cursor') {
-    const unqualifiedMessage = cursorSecurityUnavailableMessage
-    mcp = {
-      state: 'unavailable',
-      source: 'unsupported',
-      available: false,
-      enabled: false,
-      installed: false,
-      serverName: 'not connected',
-      tools: [],
-      message: unqualifiedMessage
-    }
-    shellCommands = unavailableCapability('shellCommands', 'taskwraith', unqualifiedMessage)
-    fileChanges = unavailableCapability('fileChanges', 'taskwraith', unqualifiedMessage)
-    externalPublish = unavailableCapability('externalPublish', 'taskwraith', unqualifiedMessage)
-    mcpTools = unavailableCapability('mcpTools', 'bridge', unqualifiedMessage)
-    elicit = elicitCapability('taskwraith', false, unqualifiedMessage)
-    delegate = delegateCapability(
-      'taskwraith',
-      services.subThreadDelegation,
-      false,
-      unqualifiedMessage
-    )
-    warnings.push(
-      warning(
-        'cursor-tool-mode-unqualified',
-        'warning',
-        'Cursor managed runs are temporarily unavailable',
-        `${unqualifiedMessage} TaskWraith will not start Cursor, including in plan mode.`
-      )
-    )
   } else if (provider === 'ollama') {
     // Ollama advertises the same compact gateway profile as remote providers;
     // hidden canonical tools remain reachable on demand through the gateway.

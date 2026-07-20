@@ -123,7 +123,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   kimi:
     'Moonshot Kimi over admitted ACP. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml; neither bypasses runtime admission.',
   cursor:
-    'Cursor configuration/history remains visible, but TaskWraith starts no managed Cursor process. Plan and tool modes are disabled.',
+    'Cursor Composer via the Cursor CLI. Sign in on the Mac with cursor-agent login; runs use a contained OS sandbox.',
   grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
   ollama:
     'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.'
@@ -136,7 +136,7 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   kimi:
     'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml, then confirm the exact runtime is admitted. The key saved in TaskWraith Settings is usage-only.',
   cursor:
-    'No setup action enables Cursor runs in this source-ahead build. Use another provider while startup containment remains unqualified.',
+    'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
   ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.'
 }
@@ -231,14 +231,6 @@ function deriveProviderStatus(
   contract: ProviderCapabilityContract | null,
   usage: ProviderUsageSummary | null
 ): { kind: RemoteFirstLaunchProviderStatusKind; text: string; detail?: string } {
-  if (provider === 'cursor') {
-    return {
-      kind: 'notObservable',
-      text: 'Managed runs unavailable',
-      detail:
-        'TaskWraith will not start Cursor, including Plan runs, until provider-managed startup surfaces pass exact-build containment qualification.'
-    }
-  }
   const exhausted = usage?.windows.some(
     (window) => typeof window.usedPercent === 'number' && window.usedPercent >= 99
   )
@@ -312,13 +304,14 @@ function deriveProviderStatus(
     availability.authState === 'unknown' ||
     availability.authState === 'not-observable' ||
     availability.authState === 'not-queried' ||
-    provider === 'grok'
+    provider === 'grok' ||
+    provider === 'cursor'
   ) {
     return {
       kind: 'notObservable',
       text: 'Not observable',
       detail:
-        provider === 'grok'
+        provider === 'grok' || provider === 'cursor'
           ? `${providerLabel(provider)} CLI is available on the Mac; the CLI may still ask for sign-in when a run starts.`
           : `${providerLabel(provider)} is available, but TaskWraith cannot prove account sign-in from the remote snapshot.`
     }
@@ -352,7 +345,6 @@ function setupCommandsForProvider(
   provider: ProviderId,
   setupCommands: ReturnType<typeof providerSetupCommands>
 ) {
-  if (provider === 'cursor') return []
   return setupCommands.filter((entry) =>
     provider === 'ollama'
       ? entry.id === 'ollama' || entry.id === 'ollama-windows'

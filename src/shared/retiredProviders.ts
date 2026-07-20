@@ -22,12 +22,13 @@ export const RETIRED_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(['gemin
 /**
  * Canonical offer/run set. Known ids omitted here remain valid for historical
  * decode and rendering, but must not be used to create or dispatch new work.
- * Cursor is temporarily absent until exact-build startup containment qualifies.
+ * Cursor is live again: Path-B runs use the contained `--sandbox` argv.
  */
 export const LIVE_SELECTABLE_PROVIDER_IDS = [
   'codex',
   'claude',
   'kimi',
+  'cursor',
   'grok',
   'ollama'
 ] as const

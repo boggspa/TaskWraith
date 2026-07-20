@@ -244,10 +244,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'cursor') {
-    // Cursor stays decodable/renderable for historical records, but managed
-    // runs are disabled for the current exact CLI build. Provider-managed
-    // startup hooks/plugins/MCP load before a turn, so neither plan nor tool
-    // transport is qualified.
+    // Path B: real ~/.cursor login + contained --sandbox argv. Native tools
+    // stay provider-managed; TaskWraith does not mediate per-tool approvals.
     return {
       provider,
       label: providerLabel(provider),
@@ -259,28 +257,28 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         appManagedApprovals: false,
         workspaceGrants: false,
         agentBenchMcpBridge: false,
-        providerManagedMcp: false,
-        nativeThreadTools: false,
+        providerManagedMcp: true,
+        nativeThreadTools: true,
         hostCommandFallback: false
       },
       capabilities: {
-        approvalModes: [],
+        approvalModes: ['plan', 'default'],
         reasoningEffort: true,
         speedTiers: ['fast'],
         imageAttachments: false,
         contextInjection: false,
-        sessionResumption: false,
+        sessionResumption: true,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       },
       capabilityCaveats: [
         {
-          id: 'cursor-tool-mode-unqualified',
-          severity: 'warning',
+          id: 'cursor-sandbox-partial',
+          severity: 'info',
           capability: 'approvalModes',
-          title: 'Cursor managed runs are temporarily unavailable',
+          title: 'Cursor uses native tools under OS sandbox',
           message:
-            'TaskWraith will not start Cursor, including in plan mode, until an exact-build canary covers provider-managed account/team hooks, skills, plugins, MCP sources, and session state.'
+            'Cursor runs are contained by --sandbox enabled (honest partial backstop). TaskWraith does not mediate Cursor per-tool approvals.'
         }
       ]
     }

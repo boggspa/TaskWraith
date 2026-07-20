@@ -10,7 +10,6 @@ import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
-import { cursorManagedRunAdmission } from '../cursor/CursorManagedRunGate'
 import type { ExtensionSecretRef, ExtensionSecretResolution } from '../ExtensionSecretStore'
 import type {
   AppSettings,
@@ -650,11 +649,12 @@ export function getCliProviderMcpStatus(
       provider,
       available: false,
       enabled: false,
-      source: 'unsupported',
+      source: 'provider-managed',
       serverName: null,
       tools: [],
       sections: [],
-      message: cursorManagedRunAdmission().message
+      message:
+        'Cursor MCP is provider-managed. Path-B runs use native Cursor tools under the OS sandbox; TaskWraith host tools are not injected.'
     }
   }
   const settings = runtimeSettingsFromDeps(deps)

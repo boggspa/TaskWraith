@@ -45,16 +45,6 @@ async function openProviderAuthTerminal(
   action: TerminalAction
 ): Promise<ProviderTerminalResult> {
   try {
-    // Cursor authenticates via its own cursor-agent login; Path B runs Cursor
-    // with that existing login, so TaskWraith does not open a Cursor sign-in,
-    // sign-out, or upgrade terminal (run cursor-agent directly for those).
-    if (provider === 'cursor') {
-      return {
-        ok: false,
-        error:
-          'Cursor signs in with its own cursor-agent login command; TaskWraith uses your existing Cursor login and does not open a Cursor sign-in, sign-out, or upgrade terminal. Run cursor-agent directly for those.'
-      }
-    }
     let commandParts: string[] | null = null
     let rawCommand: string | null = null
     let label: string
@@ -118,6 +108,14 @@ async function openProviderAuthTerminal(
       } else {
         // login → `kimi login` (device-code flow).
         commandParts = [resolved.binaryPath || 'kimi', 'login']
+      }
+    } else if (provider === 'cursor') {
+      label = 'Cursor'
+      const resolved = await deps.resolveCliProviderBinary('cursor')
+      if (action === 'upgrade') {
+        rawCommand = 'curl https://cursor.com/install -fsS | bash'
+      } else {
+        commandParts = [resolved.binaryPath || 'cursor-agent', action]
       }
     } else if (provider === 'grok') {
       label = 'Grok'
