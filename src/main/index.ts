@@ -507,6 +507,11 @@ import {
 import { shouldDeferEagerProviderTerminalization } from './run/ProviderTerminalizationPolicy'
 import { classifyProviderQuotaWall } from './ProviderQuotaWallClassifier'
 import { evaluateBossQuotaSoftUnavailable } from './BossQuotaSoftUnavailable'
+import {
+  isEnsembleParentBusy,
+  resolveAuthoritySeat,
+  shouldDrainEnsembleMailbox
+} from './EnsembleSubThreadMailboxDelivery'
 import { gateBlocksActiveGoal } from './ReviewGateScope'
 import { isNonEscalatingPreset, reroutePresetId } from './RerouteFailoverPosture'
 import {
@@ -7410,6 +7415,190 @@ function reconcileSubThreadMailboxClaims(parent: ChatRecord): void {
   }
 }
 
+/**
+ * Ensemble parent drain: deliver join-ready mailbox events to the authority
+ * seat (Boss, or Captain while Boss is unavailable) via a directed Ensemble
+ * round. Solo parents keep the legacy auto-resume path below.
+ *
+ * Captain-amended idle gate: join-ready AND !parentBusy AND authority
+ * resolvable. Busy parents retain events; terminal-run / startup recovery
+ * replays this drain when the panel is idle again.
+ */
+async function maybeDrainEnsembleSubThreadMailbox(parentChatId: string): Promise<void> {
+  let parent = AppStore.getChat(parentChatId)
+  if (!parent || parent.chatKind !== 'ensemble' || !parent.ensemble) return
+  reconcileSubThreadMailboxClaims(parent)
+
+  const mailbox = AppStore.getSubThreadMailbox(parentChatId)
+  let pending = pendingSubThreadMailboxEvents(mailbox)
+  if (pending.length === 0) return
+  // Another drain owns a claimed batch. Completion or recovery will
+  // acknowledge/release before a later terminal-run drain proceeds.
+  if (pending.some((event) => event.deliveryRunId)) return
+  let deliverable = deliverableSubThreadMailboxEvents(parentChatId, pending)
+  const refreshedPending = pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId))
+  if (refreshedPending.length !== pending.length) {
+    pending = refreshedPending
+    deliverable = deliverableSubThreadMailboxEvents(parentChatId, pending)
+  }
+  if (deliverable.length === 0) return
+
+  const settings = AppStore.getSettings()
+  const ensemble = parent.ensemble
+  const bossParticipant = ensemble.participants.find(
+    (participant) => participant.id === ensemble.bossmanParticipantId
+  )
+  const roundLive = isEnsembleRoundDispatchLive(ensemble.activeRound)
+  const authority = resolveAuthoritySeat({
+    bossmanParticipantId: ensemble.bossmanParticipantId,
+    secondInCommandParticipantId: ensemble.secondInCommandParticipantId,
+    participants: ensemble.participants.map((participant) => ({
+      id: participant.id,
+      provider: participant.provider,
+      role: participant.role,
+      enabled: participant.enabled
+    })),
+    bossSoftUnavailable: evaluateBossQuotaSoftUnavailable(
+      parent,
+      ensemble.activeRound?.roundId,
+      bossParticipant
+        ? { id: bossParticipant.id, provider: bossParticipant.provider }
+        : null
+    ),
+    roundParticipantStates: ensemble.activeRound?.participants?.map((state) => ({
+      participantId: state.participantId,
+      status: state.status,
+      lastFailureReason: state.lastFailureReason,
+      reason: state.reason
+    })),
+    roundLive
+  })
+  const parentBusy = isEnsembleParentBusy({
+    parentChatHasActiveRun: parentChatHasActiveRun(parentChatId),
+    ensembleRoundDispatchLive: roundLive
+  })
+  const sender = mainWindow?.webContents
+  const deliveryRuntimeReady = Boolean(
+    sender && !sender.isDestroyed() && ensembleOrchestratorRef
+  )
+  const decision = shouldDrainEnsembleMailbox({
+    autoResumeSetting: settings.autoResumeParentOnSubThreadCompletion,
+    parentChatExists: true,
+    parentChatIsEnsemble: true,
+    parentBusy,
+    hasDeliverableEvents: deliverable.length > 0,
+    authoritySeatResolvable: Boolean(authority),
+    deliveryRuntimeReady
+  })
+  // Busy / unresolved authority / runtime-not-ready → retain (processedAt stays null).
+  if (!decision || !authority || !ensembleOrchestratorRef || !sender || sender.isDestroyed()) {
+    return
+  }
+
+  const batch = deliverable.slice(0, SUBTHREAD_MAILBOX_DELIVERY_BATCH_LIMIT)
+  const deliveryRunId = createSubThreadMailboxDeliveryRunId(
+    parentChatId,
+    batch.map((event) => event.id)
+  )
+  if (subThreadMailboxDeliveriesInFlight.has(deliveryRunId)) return
+  subThreadMailboxDeliveriesInFlight.add(deliveryRunId)
+  const claimed = AppStore.claimSubThreadMailboxEvents(parentChatId, {
+    deliveryRunId,
+    eventIds: batch.map((event) => event.id)
+  })
+  if (claimed.events.length === 0) {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
+    return
+  }
+
+  try {
+    parent = AppStore.getChat(parentChatId)
+    if (!parent?.ensemble || parent.chatKind !== 'ensemble') {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: 'Ensemble parent chat disappeared before mailbox delivery.'
+      })
+      return
+    }
+    // Re-check idle after claim so a concurrent participant start cannot race
+    // the gate; if the parent became busy, release and let a later drain retry.
+    const liveAfterClaim = isEnsembleRoundDispatchLive(parent.ensemble.activeRound)
+    if (
+      isEnsembleParentBusy({
+        parentChatHasActiveRun: parentChatHasActiveRun(parentChatId),
+        ensembleRoundDispatchLive: liveAfterClaim
+      })
+    ) {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: 'Ensemble parent became busy before authority-seat mailbox delivery.'
+      })
+      return
+    }
+    const continuationPrompt = buildSubThreadMailboxContinuationPrompt(claimed.events)
+    try {
+      appendDurableRunEventForRoute(
+        authority.provider as ProviderId,
+        { appRunId: deliveryRunId, appChatId: parent.appChatId },
+        'subthread_autoresume_dispatched',
+        'control',
+        `Dispatched ${claimed.events.length} queued sub-thread mailbox event(s) to Ensemble ${authority.seatRoleLabel}`,
+        {
+          parentChatId,
+          continuationRunId: deliveryRunId,
+          mailboxEventIds: claimed.events.map((event) => event.id),
+          subThreadIds: claimed.events.map((event) => event.source.subThreadId),
+          ensembleAuthorityParticipantId: authority.participantId,
+          ensembleAuthorityRole: authority.role,
+          ensembleDelivery: true
+        }
+      )
+    } catch {
+      // Audit is observability; the durable mailbox remains authoritative.
+    }
+    const startResult = ensembleOrchestratorRef.startRound({
+      chatId: parentChatId,
+      prompt: continuationPrompt,
+      event: { sender },
+      dmTargetParticipantId: authority.participantId,
+      // Directed authority delivery must never inherit roster fan-out.
+      concurrentMode: false,
+      fanoutPolicy: 'off'
+    })
+    if (startResult.status !== 'started' && startResult.status !== 'steered') {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: `EnsembleOrchestrator rejected authority mailbox delivery (status=${startResult.status}).`
+      })
+      return
+    }
+    AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+  } catch (error) {
+    const latestParent = AppStore.getChat(parentChatId)
+    const lifecycleExists =
+      Boolean(runManager.get(deliveryRunId)) ||
+      Boolean(latestParent?.runs?.some((run) => run.runId === deliveryRunId))
+    if (lifecycleExists) {
+      AppStore.acknowledgeSubThreadMailboxDelivery(parentChatId, deliveryRunId)
+    } else {
+      AppStore.releaseSubThreadMailboxDelivery(parentChatId, deliveryRunId, {
+        error: error instanceof Error ? error.message : String(error)
+      })
+    }
+    throw error
+  } finally {
+    subThreadMailboxDeliveriesInFlight.delete(deliveryRunId)
+  }
+
+  if (pendingSubThreadMailboxEvents(AppStore.getSubThreadMailbox(parentChatId)).length > 0) {
+    setTimeout(() => {
+      void maybeDrainParentSubThreadMailbox(parentChatId).catch((error) => {
+        console.warn(
+          `[SubThreadMailbox] ensemble follow-up drain failed for parentChatId=${parentChatId}:`,
+          error instanceof Error ? error.message : String(error)
+        )
+      })
+    }, 0)
+  }
+}
+
 /** Drain one ordered mailbox batch into one parent continuation. No synthetic
  * prompt/card is appended to the local transcript: the existing sub-thread
  * return card is the user-facing receipt, while this delivery stays under the
@@ -7417,6 +7606,12 @@ function reconcileSubThreadMailboxClaims(parent: ChatRecord): void {
 async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<void> {
   let parent = AppStore.getChat(parentChatId)
   if (!parent) return
+  // Ensemble parents own a separate authority-seat delivery path. Do not flip
+  // shouldAutoResumeParent's ensemble block — that would solo-wake the chat.
+  if (parent.chatKind === 'ensemble') {
+    await maybeDrainEnsembleSubThreadMailbox(parentChatId)
+    return
+  }
   reconcileSubThreadMailboxClaims(parent)
 
   const mailbox = AppStore.getSubThreadMailbox(parentChatId)

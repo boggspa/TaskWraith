@@ -44,6 +44,10 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(drain).toContain('AppStore.releaseSubThreadMailboxDelivery(')
     expect(drain).toContain('createSubThreadMailboxDeliveryRunId(')
     expect(drain).toContain('sessionTrust: false')
+    // Solo drain must not flip ensembles through shouldAutoResumeParent —
+    // ensemble parents branch to maybeDrainEnsembleSubThreadMailbox first.
+    expect(drain).toContain("parent.chatKind === 'ensemble'")
+    expect(drain).toContain('maybeDrainEnsembleSubThreadMailbox(parentChatId)')
   })
 
   it('keeps delivery under the hood and wires terminal/startup replay seams', () => {
@@ -56,6 +60,7 @@ describe('sub-thread mailbox main-process integration', () => {
     expect(drain).not.toContain('AUTO_RESUME_CONTINUATION_KIND')
     expect(indexSource).toContain('void maybeDrainParentSubThreadMailbox(event.session.appChatId)')
     expect(indexSource).toContain('recoverPendingSubThreadMailboxes()')
+    expect(indexSource).toContain('async function maybeDrainEnsembleSubThreadMailbox(')
   })
 
   it('attaches pending events to the next ordinary parent dispatch without bypassing main', () => {
@@ -95,12 +100,18 @@ describe('sub-thread mailbox main-process integration', () => {
       'async function maybeDrainParentSubThreadMailbox(',
       'function recoverPendingSubThreadMailboxes()'
     )
+    const ensembleDrain = sourceBetween(
+      'async function maybeDrainEnsembleSubThreadMailbox(',
+      'async function maybeDrainParentSubThreadMailbox('
+    )
     const delegation = sourceBetween(
       "} else if (toolName === 'delegate_to_subthread') {",
       'const finalRichResult = richResult as McpToolExecutionResult | null'
     )
 
     expect(drain).toContain('deliverableSubThreadMailboxEvents(parentChatId, pending)')
+    expect(ensembleDrain).toContain('deliverableSubThreadMailboxEvents(parentChatId, pending)')
+    expect(ensembleDrain).toContain('shouldDrainEnsembleMailbox({')
     expect(indexSource).toContain('scheduleSubThreadJoinEvaluation(')
     expect(indexSource).toContain("outcome: 'requires_action'")
     expect(delegation).toContain('joinPolicy')
