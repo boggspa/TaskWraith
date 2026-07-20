@@ -335,6 +335,15 @@ export function classifyForInspector(event: RunEventRecord): InspectorRow {
         raw: event
       }
     }
+    case 'host_rerun_continuation_dispatched': {
+      const p = isRecord(event.payload) ? event.payload : {}
+      return {
+        kind: 'subthread_autoresume',
+        subThreadId: asString(p.parentRunId),
+        continuationRunId: asString(p.continuationRunId),
+        raw: event
+      }
+    }
     case 'side_chat_created':
       return { kind: 'delegation', raw: event }
     case 'delegation':

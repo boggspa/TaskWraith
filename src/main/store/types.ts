@@ -3674,6 +3674,7 @@ export type RunEventKind =
   | 'subthread_returned'
   | 'subthread_dispatch_failed'
   | 'subthread_autoresume_dispatched'
+  | 'host_rerun_continuation_dispatched'
   | 'side_chat_created'
   | 'diff'
   | 'final_message'

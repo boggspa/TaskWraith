@@ -7634,13 +7634,14 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
   if (deliverable.length === 0) return
 
   const settings = AppStore.getSettings()
+  // Ensemble parents already returned above; this is the solo drain path only.
   const decision = shouldAutoResumeParent({
     setting: settings.autoResumeParentOnSubThreadCompletion,
     returnResultToParent: true,
     parentChatExists: true,
     parentChatIsRunning: parentChatHasActiveRun(parentChatId),
     parentChatHasProvider: Boolean(parent.provider),
-    parentChatIsEnsemble: parent.chatKind === 'ensemble'
+    parentChatIsEnsemble: false
   })
   if (!decision || !parent.provider) return
 
