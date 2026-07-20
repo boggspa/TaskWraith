@@ -11,6 +11,7 @@ import {
   applyMcpBridgeProfileArgvToEnv,
   beginBridgeSubprocessLogHistoryClear,
   buildBridgeStartupLogMessage,
+  canonicalBridgeLogDirectory,
   clearBridgeSubprocessLogHistory,
   endBridgeSubprocessLogHistoryClear,
   GEMINI_MCP_CORE_SUBSET_ARG,
@@ -198,7 +199,9 @@ describe('MCP bridge stream writes', () => {
     `
     try {
       const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
-        env: { ...process.env, HOME: home },
+        // Windows os.homedir() prefers USERPROFILE over HOME; pin both so the
+        // bridge child writes under the test home on every platform.
+        env: { ...process.env, HOME: home, USERPROFILE: home },
         stdio: ['ignore', 'pipe', 'pipe']
       })
       let stderr = ''
@@ -209,7 +212,7 @@ describe('MCP bridge stream writes', () => {
       const code = await new Promise<number | null>((resolve) => child.once('exit', resolve))
       expect(code, stderr).toBe(0)
 
-      const logPath = join(home, 'Library', 'Logs', 'TaskWraith', 'bridge-subprocess.log')
+      const logPath = join(canonicalBridgeLogDirectory(home), 'bridge-subprocess.log')
       const persisted = fs.readFileSync(logPath, 'utf8')
       expect(persisted).toContain('--token')
       expect(persisted).toContain('<redacted>')
@@ -235,9 +238,10 @@ describe('MCP bridge stream writes', () => {
 
   it('fences an old child that never resolved the log before clear and admits a newly stamped child', async () => {
     const home = fs.mkdtempSync(join(tmpdir(), 'taskwraith-bridge-epoch-'))
-    const logPath = join(home, 'Library', 'Logs', 'TaskWraith', 'bridge-subprocess.log')
-    fs.mkdirSync(join(home, 'Library', 'Logs', 'TaskWraith'), { recursive: true })
-    fs.chmodSync(join(home, 'Library', 'Logs', 'TaskWraith'), 0o700)
+    const logDirectory = canonicalBridgeLogDirectory(home)
+    const logPath = join(logDirectory, 'bridge-subprocess.log')
+    fs.mkdirSync(logDirectory, { recursive: true })
+    fs.chmodSync(logDirectory, 0o700)
     const bundledRuntimePath = join(home, 'McpBridgeRuntime.mjs')
     buildSync({
       entryPoints: [fileURLToPath(new URL('./McpBridgeRuntime.ts', import.meta.url))],
@@ -260,7 +264,8 @@ describe('MCP bridge stream writes', () => {
         });
       `
       const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
-        env: { ...process.env, HOME: home },
+        // Pin both home envs so Windows os.homedir() and POSIX HOME agree.
+        env: { ...process.env, HOME: home, USERPROFILE: home },
         stdio: ['pipe', 'pipe', 'pipe']
       })
       let output = ''
@@ -316,7 +321,7 @@ describe('MCP bridge stream writes', () => {
 
   it('serializes a paused pre-clear append before the final strict truncate', async () => {
     const home = privateBridgeTestDirectory('taskwraith-bridge-append-clear-race-')
-    const logDirectory = join(home, 'Library', 'Logs', 'TaskWraith')
+    const logDirectory = canonicalBridgeLogDirectory(home)
     const logPath = join(logDirectory, 'bridge-subprocess.log')
     const releasePath = join(home, 'release-paused-append')
     fs.mkdirSync(logDirectory, { recursive: true })
@@ -355,7 +360,7 @@ describe('MCP bridge stream writes', () => {
       process.exit(0);
     `
     const child = spawn(process.execPath, ['--input-type=module', '-e', source], {
-      env: { ...process.env, HOME: home },
+      env: { ...process.env, HOME: home, USERPROFILE: home },
       stdio: ['ignore', 'pipe', 'pipe']
     })
     let output = ''
@@ -426,8 +431,14 @@ describe('MCP bridge stream writes', () => {
       const result = await beginBridgeSubprocessLogHistoryClear(logPath)
       expect(result).toEqual({ status: 'missing', epoch: 1 })
       expect(fs.existsSync(logPath)).toBe(false)
-      expect(fs.statSync(directory).mode & 0o777).toBe(0o700)
-      expect(fs.statSync(`${logPath}.epoch`).mode & 0o777).toBe(0o600)
+      // Windows does not expose POSIX mode authority; production already skips
+      // 0700/0600 enforcement there (assertBridgePrivateMode).
+      if (process.platform !== 'win32') {
+        expect(fs.statSync(directory).mode & 0o777).toBe(0o700)
+        expect(fs.statSync(`${logPath}.epoch`).mode & 0o777).toBe(0o600)
+      } else {
+        expect(fs.existsSync(`${logPath}.epoch`)).toBe(true)
+      }
     } finally {
       endBridgeSubprocessLogHistoryClear()
       fs.rmSync(directory, { recursive: true, force: true })
@@ -712,40 +723,46 @@ describe('MCP bridge stream writes', () => {
     expect(chunks.join('')).not.toContain(sentinel)
   })
 
-  it('returns a constant broker parse error without reflecting malformed provider bytes', async () => {
-    const socketPath = join(
-      tmpdir(),
-      `taskwraith-malformed-broker-${process.pid}-${Math.random().toString(36).slice(2)}.sock`
-    )
-    const runtime = new McpBridgeRuntime({
-      getGeminiMcpSocketPath: () => socketPath,
-      getGeminiMcpBrokerToken: () => 'token-1',
-      executeGeminiMcpTool: vi.fn()
-    } as never)
-    await runtime.startGeminiMcpBroker()
-    try {
-      const response = await new Promise<string>((resolve, reject) => {
-        const socket = createConnection(socketPath)
-        let buffer = ''
-        socket.setEncoding('utf8')
-        socket.once('connect', () => {
-          socket.write('{"secret":"__MALFORMED_BROKER_SECRET__"\n')
+  // Windows GitHub runners reject AF_UNIX listen() with EACCES on pathname
+  // sockets under %TEMP%. Gemini MCP broker remains a Unix-domain socket path
+  // (historical/retired transport); named-pipe migration is out of 1.8.5 scope.
+  it.skipIf(process.platform === 'win32')(
+    'returns a constant broker parse error without reflecting malformed provider bytes',
+    async () => {
+      const socketPath = join(
+        tmpdir(),
+        `taskwraith-malformed-broker-${process.pid}-${Math.random().toString(36).slice(2)}.sock`
+      )
+      const runtime = new McpBridgeRuntime({
+        getGeminiMcpSocketPath: () => socketPath,
+        getGeminiMcpBrokerToken: () => 'token-1',
+        executeGeminiMcpTool: vi.fn()
+      } as never)
+      await runtime.startGeminiMcpBroker()
+      try {
+        const response = await new Promise<string>((resolve, reject) => {
+          const socket = createConnection(socketPath)
+          let buffer = ''
+          socket.setEncoding('utf8')
+          socket.once('connect', () => {
+            socket.write('{"secret":"__MALFORMED_BROKER_SECRET__"\n')
+          })
+          socket.on('data', (chunk) => {
+            buffer += chunk
+            if (!buffer.includes('\n')) return
+            socket.destroy()
+            resolve(buffer)
+          })
+          socket.once('error', reject)
         })
-        socket.on('data', (chunk) => {
-          buffer += chunk
-          if (!buffer.includes('\n')) return
-          socket.destroy()
-          resolve(buffer)
-        })
-        socket.once('error', reject)
-      })
-      expect(response).toContain('Malformed broker JSON request.')
-      expect(response).not.toContain('__MALFORMED_BROKER_SECRET__')
-    } finally {
-      runtime.closeGeminiMcpBroker()
-      fs.rmSync(socketPath, { force: true })
+        expect(response).toContain('Malformed broker JSON request.')
+        expect(response).not.toContain('__MALFORMED_BROKER_SECRET__')
+      } finally {
+        runtime.closeGeminiMcpBroker()
+        fs.rmSync(socketPath, { force: true })
+      }
     }
-  })
+  )
 
   it('canonicalizes AskUserQuestion aliases before brokered tool calls', async () => {
     const brokerRequest = vi.fn(async () => ({ ok: true, text: 'ok' }))
@@ -840,7 +857,10 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
-  it('redacts a real broker executor rejection and client socket path end to end', async () => {
+  // See skip rationale on the malformed-broker AF_UNIX case above.
+  it.skipIf(process.platform === 'win32')(
+    'redacts a real broker executor rejection and client socket path end to end',
+    async () => {
     const directory = privateBridgeTestDirectory('tw-br-')
     const socketPath = join(directory, 'broker.sock')
     const rejectionSentinel =
@@ -880,7 +900,8 @@ describe('MCP bridge stream writes', () => {
     })
     expect(JSON.stringify(socketResponse)).not.toContain(missingSocket)
     fs.rmSync(directory, { recursive: true, force: true })
-  })
+    }
+  )
 
   it('canonicalizes AskUserQuestion aliases before main MCP execution', async () => {
     const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))

@@ -203,7 +203,13 @@ export async function prepareKimiPrivateRunCwd(input: {
     input.fs.realpath(input.isolatedHome),
     input.fs.lstat(input.isolatedHome)
   ])
-  if (!homeStat.isDirectory() || homeStat.isSymbolicLink() || (homeStat.mode & 0o077) !== 0) {
+  // Windows does not expose POSIX owner/group/other mode authority; require
+  // directory identity only there (same posture as McpBridge / media stores).
+  if (
+    !homeStat.isDirectory() ||
+    homeStat.isSymbolicLink() ||
+    (process.platform !== 'win32' && (homeStat.mode & 0o077) !== 0)
+  ) {
     throw new Error('Kimi isolated home failed its private-directory boundary check.')
   }
   try {
@@ -223,7 +229,7 @@ export async function prepareKimiPrivateRunCwd(input: {
   if (
     !rootStat.isDirectory() ||
     rootStat.isSymbolicLink() ||
-    (rootStat.mode & 0o077) !== 0 ||
+    (process.platform !== 'win32' && (rootStat.mode & 0o077) !== 0) ||
     !isWithin(homeReal, rootReal)
   ) {
     throw new Error('Kimi private runtime root escaped the isolated home.')
@@ -250,7 +256,7 @@ export async function prepareKimiPrivateRunCwd(input: {
     ) {
       throw new Error('Kimi private runtime cwd failed its ownership boundary check.')
     }
-    if ((stat.mode & 0o077) !== 0) {
+    if (process.platform !== 'win32' && (stat.mode & 0o077) !== 0) {
       throw new Error('Kimi private runtime cwd is not mode 0700.')
     }
     const entries = await input.fs.readdir(cwd)

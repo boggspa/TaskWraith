@@ -411,8 +411,20 @@ function assertExpectedBridgeIdentity(
   }
 }
 
-function canonicalBridgeLogDirectory(): string {
-  return join(os.homedir(), 'Library', 'Logs', 'TaskWraith')
+/**
+ * Platform-native bridge diagnostic log directory under the process home.
+ * Darwin keeps the historical ~/Library/Logs path; Windows uses
+ * %USERPROFILE%\AppData\Local\TaskWraith\logs (homedir-relative so HOME/
+ * USERPROFILE test pins work); Linux uses XDG state under ~/.local/state.
+ */
+export function canonicalBridgeLogDirectory(home: string = os.homedir()): string {
+  if (process.platform === 'darwin') {
+    return join(home, 'Library', 'Logs', 'TaskWraith')
+  }
+  if (process.platform === 'win32') {
+    return join(home, 'AppData', 'Local', 'TaskWraith', 'logs')
+  }
+  return join(home, '.local', 'state', 'TaskWraith', 'logs')
 }
 
 function ensurePrivateBridgeLogDirectory(path: string): BridgeFsIdentity {
@@ -1944,13 +1956,20 @@ export class McpBridgeRuntime {
     if (this.geminiMcpBroker) {
       const broker = this.geminiMcpBroker
       const socketPath = this.deps.getGeminiMcpSocketPath()
+      // Windows AF_UNIX socket identity is unreliable across runners (listen may
+      // use path forms that isSocket() does not report). Treat a live broker as
+      // present on win32; on POSIX, EACCES on the path means the socket is not
+      // usable and must be recreated (common after a path-permission race).
       const socketPresent =
         process.platform === 'win32'
           ? true
           : await fs
               .stat(socketPath)
               .then((stat) => stat.isSocket())
-              .catch(() => false)
+              .catch((error) => {
+                if ((error as NodeJS.ErrnoException).code === 'EACCES') return false
+                return false
+              })
       if (this.geminiMcpBroker === broker && broker.listening && socketPresent) return
       // A Unix server can remain `listening` after its pathname is unlinked.
       // In that state every new provider bridge gets ENOENT while this field

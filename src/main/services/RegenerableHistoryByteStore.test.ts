@@ -59,7 +59,11 @@ describe('RegenerableHistoryByteStore', () => {
     expect(media.generationId).toBe(pdf.generationId)
     expect(fs.existsSync(path.join(fixture.media, 'composer-dictation-old.wav'))).toBe(false)
     expect(fs.existsSync(path.join(fixture.pdf, 'page-old.png'))).toBe(false)
-    expect(fs.statSync(media.root).mode & 0o777).toBe(0o700)
+    // Windows does not expose POSIX mode authority; production already skips
+    // 0700 enforcement there (see RegenerableHistoryByteStore).
+    if (process.platform !== 'win32') {
+      expect(fs.statSync(media.root).mode & 0o777).toBe(0o700)
+    }
     expect(fixture.store.end(media)).toBe(true)
     expect(fixture.store.end(pdf)).toBe(true)
   })
@@ -542,8 +546,10 @@ describe('RegenerableHistoryByteStore', () => {
     fs.mkdirSync(fixture.media, { mode: 0o700 })
     fs.mkdirSync(fixture.pdf, { mode: 0o700 })
     fs.writeFileSync(path.join(fixture.media, 'secret.wav'), 'secret')
+    // Must use bigint stats: Windows file IDs exceed Number.MAX_SAFE_INTEGER and
+    // production durable identities are captured via BigIntStats.
     const identity = (filePath: string) => {
-      const stat = fs.lstatSync(filePath)
+      const stat = fs.lstatSync(filePath, { bigint: true })
       return { dev: String(stat.dev), ino: String(stat.ino) }
     }
     fs.writeFileSync(

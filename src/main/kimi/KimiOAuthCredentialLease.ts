@@ -195,7 +195,12 @@ async function assertPrivateDirectory(path: string): Promise<string> {
   }
   await nodeFs.chmod(path, PRIVATE_DIRECTORY_MODE)
   const privateStat = await nodeFs.lstat(path)
-  if ((privateStat.mode & 0o077) !== 0 || privateStat.isSymbolicLink()) {
+  // Windows does not expose POSIX owner/group/other mode authority; identity
+  // checks above still apply. Match McpBridge / media private-mode posture.
+  if (
+    (process.platform !== 'win32' && (privateStat.mode & 0o077) !== 0) ||
+    privateStat.isSymbolicLink()
+  ) {
     throw new Error('Kimi OAuth authority directory is not mode 0700.')
   }
   return nodeFs.realpath(path)
@@ -229,7 +234,7 @@ async function readPrivateFileWithin(root: string, path: string): Promise<Buffer
       pathStat.isSymbolicLink() ||
       opened.nlink !== 1 ||
       (currentUid !== undefined && opened.uid !== currentUid) ||
-      (opened.mode & 0o077) !== 0
+      (process.platform !== 'win32' && (opened.mode & 0o077) !== 0)
     ) {
       throw new Error('Kimi OAuth credential artefact is not a private regular file.')
     }
@@ -284,7 +289,7 @@ async function atomicWritePrivateFile(root: string, path: string, data: Buffer):
       !committed.isFile() ||
       committed.isSymbolicLink() ||
       committed.nlink !== 1 ||
-      (committed.mode & 0o077) !== 0
+      (process.platform !== 'win32' && (committed.mode & 0o077) !== 0)
     ) {
       throw new Error('Kimi OAuth atomic write did not commit a private regular file.')
     }

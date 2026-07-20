@@ -108,10 +108,13 @@ describe('createOllamaMainRuntime', () => {
     })
     const runtime = createOllamaMainRuntime(deps)
 
+    // Resolve once so Windows absolute form (e.g. D:\repo) matches production
+    // canonicalPath(resolve) rather than a POSIX-only literal.
+    const workspacePath = resolve('/repo')
     const result = await runtime.executeLocalTool({
       toolName: 'workspace_search',
       arguments: { query: 'needle' },
-      workspacePath: '/repo'
+      workspacePath
     })
 
     expect(result).toMatchObject({ ok: true })
@@ -120,8 +123,8 @@ describe('createOllamaMainRuntime', () => {
     )
     expect(executeWorkspaceSearch).toHaveBeenCalledWith(
       { query: 'needle' },
-      expect.objectContaining({ workspacePath: '/repo' }),
-      '/repo'
+      expect.objectContaining({ workspacePath }),
+      workspacePath
     )
   })
 

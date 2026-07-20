@@ -1,3 +1,4 @@
+import { join } from 'path'
 import { describe, it, expect } from 'vitest'
 import { CanvasDeviceDriver, type SimctlResult } from './CanvasDeviceDriver'
 
@@ -534,15 +535,14 @@ describe('CanvasDeviceDriver', () => {
 
     await driver.open({ bundleId: 'com.example.App' })
     expect(madePrefixes[0]).toMatch(/canvas-shot-privatesession-$/)
-    expect(modes).toContainEqual(['/tmp/private-canvas-shot', 0o700])
-    expect(calls).toContainEqual([
-      'io',
-      UDID_A,
-      'screenshot',
-      '/tmp/private-canvas-shot/screenshot.png'
-    ])
-    expect(removedFiles).toContain('/tmp/private-canvas-shot/screenshot.png')
-    expect(removedDirectories).toContain('/tmp/private-canvas-shot')
+    // path.join uses the host separator even when the driver platform is mocked
+    // as darwin — accept either form so Windows CI does not false-fail.
+    const shotDir = '/tmp/private-canvas-shot'
+    const shotPath = join(shotDir, 'screenshot.png')
+    expect(modes).toContainEqual([shotDir, 0o700])
+    expect(calls).toContainEqual(['io', UDID_A, 'screenshot', shotPath])
+    expect(removedFiles).toContain(shotPath)
+    expect(removedDirectories).toContain(shotDir)
   })
 
   it('throws a clear error for the unsupported DOM verbs', async () => {

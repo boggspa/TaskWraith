@@ -341,13 +341,17 @@ describe('Cursor binary identity and bounded inventory roots', () => {
   it('uses two distinct scrubbed synthetic homes/cwds without leaking Cursor auth', async () => {
     const root = await fs.mkdtemp(join(tmpdir(), 'taskwraith-cursor-probe-test-'))
     tempRoots.push(root)
-    const binary = join(root, 'fake-cursor-agent')
-    const script = `#!/usr/bin/env node
-const args = process.argv.slice(2)
+    // Windows cannot exec shebang scripts; use a .cmd launcher + .js body so
+    // execFile resolves via PATHEXT the same way a real cursor-agent.cmd would.
+    const binary =
+      process.platform === 'win32'
+        ? join(root, 'fake-cursor-agent.cmd')
+        : join(root, 'fake-cursor-agent')
+    const scriptBody = `const args = process.argv.slice(2)
 const evidence = {
   args,
   cwd: process.cwd(),
-  home: process.env.HOME,
+  home: process.env.HOME || process.env.USERPROFILE,
   cursorConfig: process.env.CURSOR_CONFIG_DIR,
   leakedKey: process.env.CURSOR_API_KEY || null,
   leakedToken: process.env.CURSOR_AUTH_TOKEN || null
@@ -356,8 +360,17 @@ process.stderr.write('EVIDENCE:' + Buffer.from(JSON.stringify(evidence)).toStrin
 if (args[0] === '--version') process.stdout.write('2026.07.16-899851b\\n')
 else process.stdout.write('Options:\\n  -p, --print  Print\\n  --sandbox <mode>  Sandbox\\n\\nCommands:\\n  mcp  Manage MCP\\n')
 `
-    await fs.writeFile(binary, script, { mode: 0o700 })
-    await fs.chmod(binary, 0o700)
+    if (process.platform === 'win32') {
+      const jsPath = join(root, 'fake-cursor-agent.js')
+      await fs.writeFile(jsPath, scriptBody)
+      await fs.writeFile(
+        binary,
+        `@echo off\r\n"${process.execPath}" "${jsPath}" %*\r\n`
+      )
+    } else {
+      await fs.writeFile(binary, `#!/usr/bin/env node\n${scriptBody}`, { mode: 0o700 })
+      await fs.chmod(binary, 0o700)
+    }
     const surfaces = await runBoundedCursorInventoryProbes(binary, {
       sourceEnvironment: {
         PATH: process.env.PATH,

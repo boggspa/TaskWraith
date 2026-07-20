@@ -147,8 +147,9 @@ describe('provider containment canary runner', () => {
     expect(
       parseArgs(['--output=artifacts/custom.json', '--junit-output=artifacts/custom.xml'])
     ).toMatchObject({
-      outputPath: expect.stringMatching(/artifacts\/custom\.json$/),
-      junitOutputPath: expect.stringMatching(/artifacts\/custom\.xml$/)
+      // path.resolve uses platform separators (Windows → artifacts\custom.json).
+      outputPath: expect.stringMatching(/artifacts[/\\]custom\.json$/),
+      junitOutputPath: expect.stringMatching(/artifacts[/\\]custom\.xml$/)
     })
   })
 
@@ -380,20 +381,21 @@ Commands:
   })
 
   it('uses fresh unauthenticated homes and synthetic cwd for provider inventory', () => {
-    const kimi = providerInventoryProbeLayout('kimi', '/owned/probe')
-    expect(kimi.home).toBe('/owned/probe/home')
-    expect(kimi.workspace).toBe('/owned/probe/workspace')
+    const root = join('/owned', 'probe')
+    const kimi = providerInventoryProbeLayout('kimi', root)
+    expect(kimi.home).toBe(join(root, 'home'))
+    expect(kimi.workspace).toBe(join(root, 'workspace'))
     expect(kimi.env.HOME).toBe(kimi.home)
-    expect(kimi.env.TMPDIR).toBe('/owned/probe/tmp')
-    expect(kimi.env.XDG_RUNTIME_DIR).toBe('/owned/probe/xdg-runtime')
-    expect(kimi.env.KIMI_CODE_HOME).toBe('/owned/probe/kimi-code')
+    expect(kimi.env.TMPDIR).toBe(join(root, 'tmp'))
+    expect(kimi.env.XDG_RUNTIME_DIR).toBe(join(root, 'xdg-runtime'))
+    expect(kimi.env.KIMI_CODE_HOME).toBe(join(root, 'kimi-code'))
     expect(kimi.env.CURSOR_AUTH_TOKEN).toBeUndefined()
 
-    const cursor = providerInventoryProbeLayout('cursor', '/owned/probe')
-    expect(cursor.workspace).toBe('/owned/probe/workspace')
-    expect(cursor.env.HOME).toBe('/owned/probe/home')
-    expect(cursor.env.CURSOR_CONFIG_DIR).toBe('/owned/probe/home/.cursor')
-    expect(cursor.env.CURSOR_DATA_DIR).toBe('/owned/probe/cursor-data')
+    const cursor = providerInventoryProbeLayout('cursor', root)
+    expect(cursor.workspace).toBe(join(root, 'workspace'))
+    expect(cursor.env.HOME).toBe(join(root, 'home'))
+    expect(cursor.env.CURSOR_CONFIG_DIR).toBe(join(root, 'home', '.cursor'))
+    expect(cursor.env.CURSOR_DATA_DIR).toBe(join(root, 'cursor-data'))
     expect(cursor.env.KIMI_CODE_HOME).toBeUndefined()
   })
 

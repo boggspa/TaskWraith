@@ -1904,40 +1904,47 @@ describe('TranscriptMediaAssetStore', () => {
     }
   )
 
-  it('detects a shard-directory swap at rename time and never unlinks the substituted file', async () => {
-    const root = makeRoot()
-    const store = new TranscriptMediaAssetStore(root)
-    const persisted = store.writeContentAddressed({
-      mimeType: 'image/png',
-      buffer: Buffer.from('directory-race-original'),
-      appChatId: 'chat-a'
-    })
-    expect(persisted.ok).toBe(true)
-    if (!persisted.ok) return
-    const shard = path.dirname(persisted.path)
-    const movedShard = path.join(root, 'moved-original-shard')
-    const originalRename = fs.renameSync.bind(fs)
-    let swapped = false
-    vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
-      if (!swapped && oldPath === persisted.path) {
-        swapped = true
-        originalRename(shard, movedShard)
-        fs.mkdirSync(shard, { mode: 0o700 })
-        fs.writeFileSync(persisted.path, 'substituted-race-file', { mode: 0o600 })
-      }
-      return originalRename(oldPath, newPath)
-    })
+  // Windows cannot rename a directory that still has open handles the same way
+  // POSIX can, and path equality for rename mocks is case/separator sensitive.
+  // Keep the race detector on POSIX; on win32 the production fsyncDirectoryStrict
+  // already treats EPERM/EACCES as best-effort and identity checks still apply.
+  it.skipIf(process.platform === 'win32')(
+    'detects a shard-directory swap at rename time and never unlinks the substituted file',
+    async () => {
+      const root = makeRoot()
+      const store = new TranscriptMediaAssetStore(root)
+      const persisted = store.writeContentAddressed({
+        mimeType: 'image/png',
+        buffer: Buffer.from('directory-race-original'),
+        appChatId: 'chat-a'
+      })
+      expect(persisted.ok).toBe(true)
+      if (!persisted.ok) return
+      const shard = path.dirname(persisted.path)
+      const movedShard = path.join(root, 'moved-original-shard')
+      const originalRename = fs.renameSync.bind(fs)
+      let swapped = false
+      vi.spyOn(fs, 'renameSync').mockImplementation((oldPath, newPath) => {
+        if (!swapped && path.resolve(String(oldPath)) === path.resolve(persisted.path)) {
+          swapped = true
+          originalRename(shard, movedShard)
+          fs.mkdirSync(shard, { mode: 0o700 })
+          fs.writeFileSync(persisted.path, 'substituted-race-file', { mode: 0o600 })
+        }
+        return originalRename(oldPath, newPath)
+      })
 
-    await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow()
+      await expect(store.revokeChatOwnershipStrict(['chat-a'])).rejects.toThrow()
 
-    expect(swapped).toBe(true)
-    expect(fs.readFileSync(path.join(movedShard, path.basename(persisted.path)), 'utf8'))
-      .toBe('directory-race-original')
-    const substitutedEntries = fs.readdirSync(shard)
-    expect(substitutedEntries).toHaveLength(1)
-    expect(fs.readFileSync(path.join(shard, substitutedEntries[0]), 'utf8'))
-      .toBe('substituted-race-file')
-  })
+      expect(swapped).toBe(true)
+      expect(fs.readFileSync(path.join(movedShard, path.basename(persisted.path)), 'utf8'))
+        .toBe('directory-race-original')
+      const substitutedEntries = fs.readdirSync(shard)
+      expect(substitutedEntries).toHaveLength(1)
+      expect(fs.readFileSync(path.join(shard, substitutedEntries[0]), 'utf8'))
+        .toBe('substituted-race-file')
+    }
+  )
 
   it('finishes a committed purge from its fsynced journal after restart', async () => {
     const root = makeRoot()

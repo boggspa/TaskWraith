@@ -177,14 +177,19 @@ describe('extractPdfText', () => {
  * rather than the feature silently dying in a packaged app.
  */
 describe('extractPdfText (real pdfjs)', () => {
-  it('reads text out of an actual PDF', async () => {
-    const pdf = buildMinimalPdf('Hello TaskWraith')
-    const result = await extractPdfText({ data: pdf })
+  // Windows CI cold-loads pdfjs slower than the default 5s vitest timeout.
+  it(
+    'reads text out of an actual PDF',
+    async () => {
+      const pdf = buildMinimalPdf('Hello TaskWraith')
+      const result = await extractPdfText({ data: pdf })
 
-    expect(result.pageCount).toBe(1)
-    expect(result.text).toContain('Hello TaskWraith')
-    expect(result.needsOcr).toBe(false)
-  })
+      expect(result.pageCount).toBe(1)
+      expect(result.text).toContain('Hello TaskWraith')
+      expect(result.needsOcr).toBe(false)
+    },
+    20_000
+  )
 
   it('reports needsOcr for a page with no text layer', async () => {
     const pdf = buildMinimalPdf(null)

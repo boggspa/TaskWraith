@@ -178,7 +178,25 @@ export function purgeLegacyRemoteAttachmentTempRoot(rootPath: string): number {
         fs.closeSync(fd)
       }
     }
-    fs.fsyncSync(directoryFd)
+    // Directory-handle fsync is best-effort: Windows maps fsync to
+    // FlushFileBuffers, which rejects directory handles with EPERM/EACCES.
+    // File unlinks above already completed; this barrier only strengthens
+    // directory durability on platforms that support it.
+    try {
+      fs.fsyncSync(directoryFd)
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code
+      if (
+        code !== 'EPERM' &&
+        code !== 'EACCES' &&
+        code !== 'EINVAL' &&
+        code !== 'EBADF' &&
+        code !== 'EISDIR' &&
+        code !== 'ENOTSUP'
+      ) {
+        throw error
+      }
+    }
     const finalRoot = fs.lstatSync(rootPath)
     if (!sameIdentity(openedRoot, finalRoot)) {
       throw new Error('Legacy remote attachment root changed during deletion.')

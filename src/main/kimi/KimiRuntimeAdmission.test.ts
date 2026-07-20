@@ -295,13 +295,15 @@ describe('Kimi binary identity and bounded inventory roots', () => {
   it('uses three distinct scrubbed synthetic homes/cwds and removes them', async () => {
     const root = await fs.mkdtemp(join(tmpdir(), 'taskwraith-kimi-probe-test-'))
     tempRoots.push(root)
-    const binary = join(root, 'fake-kimi')
-    const script = `#!/usr/bin/env node
-const args = process.argv.slice(2)
+    // Windows cannot exec shebang scripts; .cmd launcher + .js body matches how
+    // installers expose CLI tools under PATHEXT.
+    const binary =
+      process.platform === 'win32' ? join(root, 'fake-kimi.cmd') : join(root, 'fake-kimi')
+    const scriptBody = `const args = process.argv.slice(2)
 const evidence = {
   args,
   cwd: process.cwd(),
-  home: process.env.HOME,
+  home: process.env.HOME || process.env.USERPROFILE,
   kimiHome: process.env.KIMI_CODE_HOME,
   leaked: process.env.ADMISSION_TEST_SECRET || null
 }
@@ -310,8 +312,14 @@ if (args[0] === '--version') process.stdout.write('Kimi Code 1.2.3\\n')
 else if (args[0] === '--help') process.stdout.write('Options:\\n  --quiet  Quiet\\n\\nCommands:\\n  acp  Start ACP\\n')
 else process.stdout.write('Options:\\n  --stdio  Use stdio\\n')
 `
-    await fs.writeFile(binary, script, { mode: 0o700 })
-    await fs.chmod(binary, 0o700)
+    if (process.platform === 'win32') {
+      const jsPath = join(root, 'fake-kimi.js')
+      await fs.writeFile(jsPath, scriptBody)
+      await fs.writeFile(binary, `@echo off\r\n"${process.execPath}" "${jsPath}" %*\r\n`)
+    } else {
+      await fs.writeFile(binary, `#!/usr/bin/env node\n${scriptBody}`, { mode: 0o700 })
+      await fs.chmod(binary, 0o700)
+    }
     const surfaces = await runBoundedKimiInventoryProbes(binary, {
       sourceEnvironment: { PATH: process.env.PATH, ADMISSION_TEST_SECRET: 'must-not-leak' }
     })

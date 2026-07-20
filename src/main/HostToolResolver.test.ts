@@ -47,13 +47,19 @@ describe('findExecutableOnHost', () => {
     expect(findExecutableOnHost('ffmpeg')).toBe(expected)
   })
 
-  it('rejects a present-but-not-executable file', () => {
-    // The regression this guards: resolveCliProviderBinary uses a stat-only
-    // `fileExists`, so a non-executable file named `ffmpeg` would resolve there
-    // and then fail at spawn time. This resolver checks X_OK.
-    writeBinary('ffmpeg', 0o644)
-    expect(findExecutableOnHost('ffmpeg')).toBeNull()
-  })
+  // Windows does not honour POSIX execute bits: access(X_OK) succeeds for any
+  // readable file. The production X_OK probe remains correct on POSIX; on
+  // win32 we cannot refuse a present non-executable via mode alone.
+  it.skipIf(process.platform === 'win32')(
+    'rejects a present-but-not-executable file',
+    () => {
+      // The regression this guards: resolveCliProviderBinary uses a stat-only
+      // `fileExists`, so a non-executable file named `ffmpeg` would resolve there
+      // and then fail at spawn time. This resolver checks X_OK.
+      writeBinary('ffmpeg', 0o644)
+      expect(findExecutableOnHost('ffmpeg')).toBeNull()
+    }
+  )
 
   it('returns null when the binary is absent', () => {
     expect(findExecutableOnHost('ffmpeg')).toBeNull()
