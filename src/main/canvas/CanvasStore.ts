@@ -46,6 +46,32 @@ const CANVAS_DRIVER_KINDS: ReadonlySet<CanvasDriverKind> = new Set([
 ])
 const SKETCH_ELEMENT_KINDS = new Set(['rect', 'ellipse', 'line', 'arrow', 'text', 'path'])
 
+/**
+ * Best-effort directory-handle fsync. Windows maps fsync to FlushFileBuffers,
+ * which rejects directory handles with EPERM (and occasionally EACCES). Some
+ * other platforms/filesystems surface EINVAL/EBADF/EISDIR/ENOTSUP. File-handle
+ * fsync remains strict at call sites; only directory barriers use this helper
+ * (matches UsageJournalStore / ExecutionGraphRepository durability posture).
+ */
+function fsyncDirectoryFdBestEffort(fd: number): void {
+  try {
+    fs.fsyncSync(fd)
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException)?.code
+    if (
+      code === 'EPERM' ||
+      code === 'EACCES' ||
+      code === 'EINVAL' ||
+      code === 'EBADF' ||
+      code === 'EISDIR' ||
+      code === 'ENOTSUP'
+    ) {
+      return
+    }
+    throw error
+  }
+}
+
 interface CanvasSketchDocumentRecord {
   schemaVersion: 1
   scope: string
@@ -236,7 +262,7 @@ function purgeCanvasRecoveryArtifactsStrict(
       assertDirectoryIdentity(directoryPath, directory.stat)
       if (pinned) assertPinnedDirectory(directoryPath, pinned)
     }
-    fs.fsyncSync(directory.fd)
+    fsyncDirectoryFdBestEffort(directory.fd)
   } finally {
     fs.closeSync(directory.fd)
   }
@@ -280,7 +306,7 @@ function writeJsonStrict<T>(filePath: string, data: T, pinned?: PinnedDirectory)
     assertSameFileIdentity(filePath, fs.fstatSync(fd), destination)
     assertDirectoryIdentity(directoryPath, directory.stat)
     if (pinned) assertPinnedDirectory(directoryPath, pinned)
-    fs.fsyncSync(directory.fd)
+    fsyncDirectoryFdBestEffort(directory.fd)
     fs.closeSync(fd)
     fd = null
   } catch (e) {
@@ -575,7 +601,7 @@ export class CanvasStore {
       writeJsonStrict(this.evalApprovalUsesPath, [], pinned)
       purgeCanvasRecoveryArtifactsStrict(this.baseDir, pinned)
       assertPinnedDirectory(this.baseDir, pinned)
-      fs.fsyncSync(pinned.fd)
+      fsyncDirectoryFdBestEffort(pinned.fd)
     } finally {
       fs.closeSync(pinned.fd)
     }
@@ -714,7 +740,7 @@ export class CanvasStore {
         pinned
       )
       assertPinnedDirectory(this.baseDir, pinned)
-      fs.fsyncSync(pinned.fd)
+      fsyncDirectoryFdBestEffort(pinned.fd)
     } finally {
       fs.closeSync(pinned.fd)
     }
@@ -754,7 +780,7 @@ export class CanvasStore {
       const events = [...this.listEventsStrict(pinned), normalized].slice(-EVENT_HISTORY_LIMIT)
       writeJsonStrict(this.eventsPath, events, pinned)
       assertPinnedDirectory(this.baseDir, pinned)
-      fs.fsyncSync(pinned.fd)
+      fsyncDirectoryFdBestEffort(pinned.fd)
       return normalized
     } finally {
       fs.closeSync(pinned.fd)

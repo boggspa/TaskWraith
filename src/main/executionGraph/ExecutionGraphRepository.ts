@@ -469,9 +469,17 @@ function fsyncDirectory(path: string): void {
     fsyncSync(fd)
   } catch (error) {
     const code = isRecord(error) && typeof error.code === 'string' ? error.code : undefined
-    if (!code || !['EBADF', 'EINVAL', 'EISDIR', 'ENOTSUP'].includes(code)) throw error
     // Directory fsync is unsupported on a small set of platforms/filesystems.
-    // All other failures are durability failures and must reach the caller.
+    // Windows maps fsync to FlushFileBuffers, which rejects directory handles
+    // with EPERM (and occasionally EACCES) — match UsageJournalStore /
+    // store/index fsyncDirectoryBestEffort comments. All other failures are
+    // durability failures and must reach the caller.
+    if (
+      !code ||
+      !['EBADF', 'EINVAL', 'EISDIR', 'ENOTSUP', 'EPERM', 'EACCES'].includes(code)
+    ) {
+      throw error
+    }
   } finally {
     if (fd !== undefined) closeSync(fd)
   }
