@@ -262,6 +262,7 @@ export interface McpBridgeRuntimeDeps {
     cwd?: string,
     timeoutMs?: number
   ) => Promise<CaptureProcessOutputResult>
+  resolveBrokerParentProviderFromRunId?: (appRunId: string) => ProviderId | undefined
   readGeminiCapabilitySection: (
     kind: GeminiCapabilityKind,
     cwd?: string
@@ -322,7 +323,9 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   'claude',
   'kimi',
   // Grok reaches the broker through its provider-native MCP registration.
-  'grok'
+  'grok',
+  // Cursor ensemble seats stamp taskwraith-broker with parentProvider=cursor.
+  'cursor'
 ])
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
 const BRIDGE_LOG_MAX_LINE_CHARS = 32_768
@@ -788,6 +791,24 @@ export function normalizeBrokerParentProvider(value: unknown): ProviderId {
     return value as ProviderId
   }
   return 'gemini'
+}
+
+/**
+ * Prefer the run-session provider when an appRunId is present so a wrong
+ * stamped TASKWRAITH_PARENT_PROVIDER (e.g. Cursor leftover on a Grok run)
+ * cannot bind the wrong agent tool context.
+ */
+export function resolveBrokerParentProvider(
+  stamped: unknown,
+  runSessionProvider?: ProviderId | null
+): ProviderId {
+  if (
+    typeof runSessionProvider === 'string' &&
+    VALID_BROKER_PARENT_PROVIDERS.has(runSessionProvider)
+  ) {
+    return runSessionProvider
+  }
+  return normalizeBrokerParentProvider(stamped)
 }
 
 export function normalizeRunRoute(route?: McpBridgeAgentRunRoute | null): McpBridgeAgentRunRoute {
@@ -1889,7 +1910,14 @@ export class McpBridgeRuntime {
     ) {
       return { ok: false, error: `Unknown TaskWraith MCP tool: ${String(rawToolName || 'unknown')}` }
     }
-    const parentProvider = normalizeBrokerParentProvider(brokerRequestRecord.parentProvider)
+    const route = normalizeRunRoute(brokerRequestRecord)
+    const routeProvider = route.appRunId
+      ? this.deps.resolveBrokerParentProviderFromRunId?.(route.appRunId)
+      : undefined
+    const parentProvider = resolveBrokerParentProvider(
+      brokerRequestRecord.parentProvider,
+      routeProvider
+    )
     const callerContext: McpCallerContext = {
       ...(typeof brokerRequestRecord.callerCwd === 'string'
         ? { callerCwd: brokerRequestRecord.callerCwd }
@@ -1903,7 +1931,7 @@ export class McpBridgeRuntime {
       // catalog. The main executor validates the active audit registry/role.
       toolName as TaskWraithMcpToolName | CapabilityGatewayToolName,
       brokerRequestRecord.arguments ?? brokerRequestRecord.args ?? brokerRequestRecord.input,
-      normalizeRunRoute(brokerRequestRecord),
+      route,
       parentProvider,
       callerContext
     )

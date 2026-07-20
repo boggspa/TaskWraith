@@ -1128,6 +1128,7 @@ import {
   endBridgeSubprocessLogHistoryClear,
   GEMINI_MCP_AUDIT_SUBSET_ARG,
   mcpToolCallResponseFromBrokerResult as mcpBridgeToolCallResponseFromBrokerResult,
+  resolveBrokerParentProvider,
   startGeminiMcpBridgeProcess as startGeminiMcpBridgeProcessWithDeps
 } from './mcp/McpBridgeRuntime'
 import {
@@ -2254,6 +2255,7 @@ const mcpBridgeRuntime = createMcpBridgeRuntime({
   createCliEnv,
   appendLimitedOutput,
   executeGeminiMcpTool,
+  resolveBrokerParentProviderFromRunId: (appRunId) => runManager.get(appRunId)?.provider,
   installGeminiToolContextForRun,
   sendAgentCompatLine
 })
@@ -26527,6 +26529,10 @@ async function executeGeminiMcpTool(
     parentProvider === 'codex' && !route?.appRunId && !route?.appChatId
       ? resolveCodexMcpRouteFromHints(toolName, args) || route
       : route
+  parentProvider = resolveBrokerParentProvider(
+    parentProvider,
+    effectiveRoute?.appRunId ? runManager.get(effectiveRoute.appRunId)?.provider : undefined
+  )
 
   if (historyClearAdmissionBlocked(effectiveRoute?.appRunId)) {
     return {
