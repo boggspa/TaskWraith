@@ -208,6 +208,18 @@ function buildResumePermissionSnapshot(
 }
 
 /**
+ * True when `prompt` is a main-built solo wakeup resume (see
+ * `buildSoloWakeupResumePayload`). User-send cancel must skip these so a
+ * resume is never treated as user input that cancels pending wakeups.
+ */
+export function isSoloWakeupResumePrompt(prompt: unknown): boolean {
+  if (typeof prompt !== 'string') return false
+  return (
+    prompt.startsWith('[Resumed at ') && prompt.includes(' from your scheduled wakeup.')
+  )
+}
+
+/**
  * Build the continuation `AgentRunPayload` we dispatch when a solo
  * wakeup fires. Pure — exported for tests so we can pin the prompt
  * + provider-session-id wiring without spinning up the full
@@ -584,6 +596,30 @@ export class SoloChatWakeupService {
       cancelled,
       message: `Cancelled ${cancelled.length} wakeup${cancelled.length === 1 ? '' : 's'}.`
     }
+  }
+
+  /**
+   * Cancel pending solo wakeups that opted into cancel-on-user-input
+   * (default true). Mirrors ensemble `cancelWakeupsOnUserInput` /
+   * `cancelPersistedWakeupsOnUserInput`. Ensemble chats are ignored —
+   * the ensemble path owns those wakeups.
+   *
+   * Call from the solo user-send / dispatch path; do not call for
+   * main-built wakeup resumes (see `isSoloWakeupResumePrompt`).
+   */
+  cancelWakeupsOnUserInput(chatId: string): SoloChatWakeupRecord[] {
+    if (!chatId) return []
+    const chat = this.deps.getChat(chatId)
+    if (!chat || chat.chatKind === 'ensemble') return []
+    const wakeups = Object.values(chat.soloWakeups || {}).filter(
+      (wakeup) => wakeup.status === 'pending' && wakeup.cancelOnUserInput !== false
+    )
+    if (wakeups.length === 0) return []
+    const cancelled = wakeups.map((wakeup) =>
+      this.markCancelled(chat, wakeup, 'cancelled by user input')
+    )
+    for (const wakeup of cancelled) this.deps.cancelWakeupTimer(wakeup.wakeupId)
+    return cancelled
   }
 
   /**

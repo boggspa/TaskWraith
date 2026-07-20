@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildSoloScratchpadRecall,
   buildSoloWakeupResumePayload,
+  isSoloWakeupResumePrompt,
   resolveSoloWakeAtMs,
   SOLO_MAX_WAKEUP_DELAY_MS,
   SoloChatWakeupService
@@ -537,6 +538,117 @@ describe('SoloChatWakeupService — cancelWakeup', () => {
     const result = service.cancelWakeup('chat-solo-1', 'non-existent')
     expect(result.ok).toBe(false)
     expect(result.error).toMatch(/No matching pending wakeup/)
+  })
+})
+
+describe('SoloChatWakeupService — cancelWakeupsOnUserInput', () => {
+  let chats: Map<string, ChatRecord>
+  let cancelledTimers: string[]
+  let service: SoloChatWakeupService
+
+  beforeEach(() => {
+    chats = new Map<string, ChatRecord>()
+    cancelledTimers = []
+    service = new SoloChatWakeupService({
+      getChat: (id) => chats.get(id),
+      saveChat: (chat) => chats.set(chat.appChatId, chat),
+      listChats: () => Array.from(chats.values()),
+      dispatchRun: async () => ({ dispatched: true, appRunId: 'r' }),
+      scheduleWakeupTimer: () => {},
+      cancelWakeupTimer: (id) => {
+        cancelledTimers.push(id)
+      },
+      createRunId: () => 'run-id',
+      now: () => 1_700_000_000_000,
+      nowIso: () => '2026-05-27T10:00:00.000Z'
+    })
+  })
+
+  it('cancels pending wakeups when cancelOnUserInput defaults to true', () => {
+    const chat = makeChat()
+    chats.set(chat.appChatId, chat)
+    const scheduled = service.scheduleWakeup('chat-solo-1', 'codex', 'run-1', {
+      delayMs: 60_000
+    })
+    expect(scheduled.wakeup?.cancelOnUserInput).toBe(true)
+
+    const cancelled = service.cancelWakeupsOnUserInput('chat-solo-1')
+    expect(cancelled).toHaveLength(1)
+    expect(cancelled[0].status).toBe('cancelled')
+    expect(cancelledTimers).toEqual([scheduled.wakeup!.wakeupId])
+    expect(chats.get('chat-solo-1')?.soloWakeups?.[scheduled.wakeup!.wakeupId]?.status).toBe(
+      'cancelled'
+    )
+  })
+
+  it('retains pending wakeups when cancelOnUserInput is explicitly false', () => {
+    const chat = makeChat()
+    chats.set(chat.appChatId, chat)
+    const scheduled = service.scheduleWakeup('chat-solo-1', 'codex', 'run-1', {
+      delayMs: 60_000,
+      cancelOnUserInput: false
+    })
+    expect(scheduled.wakeup?.cancelOnUserInput).toBe(false)
+
+    const cancelled = service.cancelWakeupsOnUserInput('chat-solo-1')
+    expect(cancelled).toEqual([])
+    expect(cancelledTimers).toEqual([])
+    expect(chats.get('chat-solo-1')?.soloWakeups?.[scheduled.wakeup!.wakeupId]?.status).toBe(
+      'pending'
+    )
+  })
+
+  it('does not touch ensemble chat wakeups (ensemble path owns those)', () => {
+    const ensembleChat = makeChat({
+      appChatId: 'chat-ensemble-1',
+      chatKind: 'ensemble',
+      soloWakeups: {
+        'solo-should-not-exist': {
+          wakeupId: 'solo-should-not-exist',
+          chatId: 'chat-ensemble-1',
+          provider: 'codex',
+          scheduledAt: '2026-05-27T10:00:00.000Z',
+          wakeAt: '2026-05-27T11:00:00.000Z',
+          status: 'pending',
+          cancelOnUserInput: true
+        }
+      }
+    })
+    chats.set(ensembleChat.appChatId, ensembleChat)
+
+    const cancelled = service.cancelWakeupsOnUserInput('chat-ensemble-1')
+    expect(cancelled).toEqual([])
+    expect(cancelledTimers).toEqual([])
+    expect(
+      chats.get('chat-ensemble-1')?.soloWakeups?.['solo-should-not-exist']?.status
+    ).toBe('pending')
+  })
+
+  it('returns empty when chat has no pending wakeups', () => {
+    chats.set(makeChat().appChatId, makeChat())
+    expect(service.cancelWakeupsOnUserInput('chat-solo-1')).toEqual([])
+  })
+})
+
+describe('isSoloWakeupResumePrompt', () => {
+  it('matches the main-built solo wakeup resume preamble', () => {
+    const chat = makeChat()
+    const wakeup: SoloChatWakeupRecord = {
+      wakeupId: 'w1',
+      chatId: chat.appChatId,
+      provider: 'codex',
+      scheduledAt: '2026-05-27T10:00:00.000Z',
+      wakeAt: '2026-05-27T11:00:00.000Z',
+      status: 'pending'
+    }
+    const payload = buildSoloWakeupResumePayload(chat, wakeup, 'run-1', '2026-05-27T11:00:00Z')
+    expect(isSoloWakeupResumePrompt(payload.prompt)).toBe(true)
+  })
+
+  it('rejects ordinary user prompts', () => {
+    expect(isSoloWakeupResumePrompt('Please continue the refactor.')).toBe(false)
+    expect(isSoloWakeupResumePrompt('')).toBe(false)
+    expect(isSoloWakeupResumePrompt(undefined)).toBe(false)
   })
 })
 

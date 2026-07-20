@@ -561,6 +561,7 @@ import {
 import { WakeupTimerService, classifyWakeupRecovery } from './WakeupTimerService'
 import {
   SoloChatWakeupService,
+  isSoloWakeupResumePrompt,
   type SoloWakeupHistoryClearScope,
   type SoloWakeupHistoryHold
 } from './SoloChatWakeupService'
@@ -40770,6 +40771,22 @@ if (isGeminiMcpBridgeProcess) {
         return Promise.reject(
           new Error('TaskWraith is clearing all history; new runs are temporarily blocked.')
         )
+      }
+      // Solo wakeups: cancel pending cancelOnUserInput wakeups on user send.
+      // Skip main-built wakeup resumes, ensemble/audit identity, and scheduled
+      // occurrences. Ensemble wakeups stay on EnsembleOrchestrator.
+      const soloChatId =
+        typeof payload.appChatId === 'string' && payload.appChatId.length > 0
+          ? payload.appChatId
+          : ''
+      if (
+        soloChatId &&
+        !payload.ensembleRun &&
+        !payload.auditRun &&
+        !Object.prototype.hasOwnProperty.call(payload, 'scheduledTaskId') &&
+        !isSoloWakeupResumePrompt(payload.prompt)
+      ) {
+        soloChatWakeupServiceRef?.cancelWakeupsOnUserInput(soloChatId)
       }
       return dispatchParentRunWithPendingSubThreadMailbox(
         payload,
