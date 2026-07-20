@@ -200,14 +200,13 @@ describe('FirstLaunchSheet', () => {
     expect(grokCard).toContain('data-provider-logo="grok"')
     expect(grokCard).toContain('<img class="provider-brand-logo-image')
     expect(grokCard).not.toContain('provider-glyph-grok')
-    // Cursor remains configuration/history-only even when legacy availability
-    // state is true; disabled Grok retains its ordinary disabled state.
-    expect(cursorCard).toContain('Managed runs unavailable')
-    expect(cursorCard).toContain('first-launch-sheet-provider-status-dot-not-available')
+    // Cursor and Grok are both CLI-login providers when available.
+    expect(cursorCard).toContain('Available · CLI sign-in')
+    expect(cursorCard).toContain('first-launch-sheet-provider-status-dot-signed-in')
     expect(html).toContain('Grok disabled')
   })
 
-  it('keeps Cursor unavailable while using ready dots for runnable Grok and Ollama cards', () => {
+  it('uses ready dots for runnable Cursor, Grok, and Ollama cards', () => {
     const html = renderToStaticMarkup(
       <FirstLaunchSheet
         open={true}
@@ -219,17 +218,16 @@ describe('FirstLaunchSheet', () => {
         cursorProviderAvailable={true}
         grokProviderAvailable={true}
         ollamaProviderAvailable={true}
+        onProviderLogin={() => {}}
       />
     )
 
-    expect(providerCardMarkup(html, 'cursor')).toContain(
-      'first-launch-sheet-provider-status-dot-not-available'
-    )
-    for (const provider of ['grok', 'ollama']) {
+    for (const provider of ['cursor', 'grok', 'ollama']) {
       expect(providerCardMarkup(html, provider)).toContain(
         'first-launch-sheet-provider-status-dot-signed-in'
       )
     }
+    expect(providerCardMarkup(html, 'cursor')).toContain('Sign in')
     expect(html).toContain('Needs setup or sign-in')
     expect(html).not.toContain('stay amber')
   })

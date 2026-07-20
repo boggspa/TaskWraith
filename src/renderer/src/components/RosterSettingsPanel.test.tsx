@@ -125,8 +125,8 @@ describe('RosterSettingsPanel', () => {
     expect(html).toContain('Role / nickname')
   })
 
-  it('renders stored Cursor seats as security-unavailable configuration/history rows', () => {
-    const preset = createEmptyEnsembleRosterPreset('Historical Cursor panel')
+  it('renders stored Cursor seats as live editable roster rows', () => {
+    const preset = createEmptyEnsembleRosterPreset('Cursor panel')
     const participants = materializeParticipantsFromPresetWithBossman(
       preset.participants
     ).participants
@@ -145,7 +145,7 @@ describe('RosterSettingsPanel', () => {
         canRemove
         composerStyle="default"
         grokAvailable={false}
-        cursorAvailable={false}
+        cursorAvailable={true}
         showApplyToAll
         isBossman={false}
         isSecondInCommand={false}
@@ -160,10 +160,11 @@ describe('RosterSettingsPanel', () => {
       />
     )
 
-    expect(html).toContain('Cursor · Security unavailable')
-    expect(html).toContain('security unavailable')
-    expect(html).toContain('Cursor is security-unavailable for new runs')
-    expect(html).toContain('retained for configuration and history only')
+    expect(html).toContain('Cursor reviewer')
+    expect(html).toContain('data-provider="cursor"')
+    expect(html).not.toContain('Security unavailable')
+    expect(html).not.toContain('security unavailable')
+    expect(html).not.toContain('security-unavailable')
     expect(html).not.toContain('retired')
   })
 

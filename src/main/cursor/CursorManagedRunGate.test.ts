@@ -184,13 +184,15 @@ describe('Cursor managed-run release gate', () => {
     expect(resolver).not.toContain('? participant.provider\n      : assertLiveProviderId')
   })
 
-  it('reports an ensemble Cursor seat unreachable before binary resolution', () => {
+  it('probes Cursor ensemble seats through the shared CLI participant path', () => {
     const source = readFileSync(fileURLToPath(new URL('../index.ts', import.meta.url)), 'utf8')
     const start = source.indexOf('async function probeEnsembleParticipant(')
     const end = source.indexOf('async function probeCodexParticipant(', start)
     const probe = source.slice(start, end)
-    expect(probe.indexOf("participant.provider === 'cursor'")).toBeGreaterThan(0)
-    expect(probe.indexOf('cursorManagedRunAdmission()')).toBeGreaterThan(0)
-    expect(probe).not.toContain('resolveCliProviderBinary')
+    // Cursor is no longer short-circuited as SECURITY_UNAVAILABLE; it falls
+    // through to probeCliParticipant like Grok/Claude.
+    expect(probe).not.toContain("participant.provider === 'cursor'")
+    expect(probe).not.toContain('cursorManagedRunAdmission()')
+    expect(probe).toContain('return probeCliParticipant(participant)')
   })
 })

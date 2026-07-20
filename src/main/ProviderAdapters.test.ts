@@ -128,9 +128,7 @@ describe('defaultProviderDescriptor capabilities', () => {
   for (const provider of allProviders) {
     it(`${provider} declares a non-empty approvalModes list`, () => {
       const cap = defaultProviderDescriptor(provider).capabilities
-      if (provider === 'cursor') {
-        expect(cap.approvalModes).toEqual([])
-      } else if (provider === 'ollama') {
+      if (provider === 'ollama') {
         expect(cap.approvalModes).toEqual(['plan'])
       } else {
         expect(cap.approvalModes.length).toBeGreaterThan(0)
@@ -194,21 +192,23 @@ describe('defaultProviderDescriptor capabilities', () => {
     for (const provider of ['codex', 'claude', 'kimi', 'grok', 'ollama'] as const) {
       expect(defaultProviderDescriptor(provider).features.workspaceGrants).toBe(true)
     }
-    // Cursor managed runs are unavailable; do not advertise grant UX for it.
+    // Cursor Path-B: sandbox-contained native tools; no TaskWraith grant UX.
     expect(defaultProviderDescriptor('cursor').features.workspaceGrants).toBe(false)
   })
 
-  it('pins Cursor to unavailable with no approval or resume surface', () => {
+  it('pins Cursor to Path-B sandbox-contained native tools', () => {
     const descriptor = defaultProviderDescriptor('cursor')
     expect(descriptor.features.persistentSessions).toBe(false)
     expect(descriptor.features.agentBenchMcpBridge).toBe(false)
-    expect(descriptor.capabilities.approvalModes).toEqual([])
-    expect(descriptor.capabilities.sessionResumption).toBe(false)
+    expect(descriptor.features.providerManagedMcp).toBe(true)
+    expect(descriptor.features.nativeThreadTools).toBe(true)
+    expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
+    expect(descriptor.capabilities.sessionResumption).toBe(true)
     expect(descriptor.capabilityCaveats).toContainEqual(
       expect.objectContaining({
-        id: 'cursor-tool-mode-unqualified',
-        severity: 'warning',
-        title: 'Cursor managed runs are temporarily unavailable'
+        id: 'cursor-sandbox-partial',
+        severity: 'info',
+        title: 'Cursor uses native tools under OS sandbox'
       })
     )
   })

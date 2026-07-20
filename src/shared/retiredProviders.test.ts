@@ -32,18 +32,19 @@ describe('retiredProviders', () => {
     expect(coerceLiveProvider('codex')).toBe('codex')
     expect(coerceLiveProvider('claude')).toBe('claude')
     expect(coerceLiveProvider('kimi')).toBe('kimi')
+    expect(coerceLiveProvider('cursor')).toBe('cursor')
   })
 
-  it('keeps one canonical live-selection set and excludes Cursor', () => {
-    expect(LIVE_SELECTABLE_PROVIDER_IDS).toEqual(['codex', 'claude', 'kimi', 'grok', 'ollama'])
+  it('keeps one canonical live-selection set including Cursor', () => {
+    expect(LIVE_SELECTABLE_PROVIDER_IDS).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama'])
     expect(isLiveSelectableProvider('codex')).toBe(true)
-    expect(isLiveSelectableProvider('cursor')).toBe(false)
+    expect(isLiveSelectableProvider('cursor')).toBe(true)
     expect(isLiveSelectableProvider('gemini')).toBe(false)
   })
 
   it('coerceLiveProvider migrates retired/empty/missing to the default', () => {
     expect(coerceLiveProvider('gemini')).toBe(DEFAULT_PROVIDER)
-    expect(coerceLiveProvider('cursor')).toBe(DEFAULT_PROVIDER)
+    expect(coerceLiveProvider('cursor')).toBe('cursor')
     expect(coerceLiveProvider(null)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider(undefined)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider('')).toBe(DEFAULT_PROVIDER)

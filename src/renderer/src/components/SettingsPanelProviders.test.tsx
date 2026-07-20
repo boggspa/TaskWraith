@@ -220,15 +220,20 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('aria-label="FX Labs intensity"')
   })
 
-  it('renders Cursor as unavailable and runnable Grok without raw env flags', () => {
-    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
-
-    expect(html).toContain('settings-provider-auth-card-not-available provider-cursor')
-    expect(html).toContain('Managed runs unavailable')
-    expect(html).toContain(
-      'No login, logout, upgrade, Plan, MCP, shell, write, or resume action is'
+  it('renders Cursor and Grok as CLI-login providers without raw env flags', () => {
+    const html = renderToStaticMarkup(
+      <SettingsPanel
+        {...makeSettingsProps({
+          onProviderLogin: () => {},
+          onProviderLogout: () => {},
+          onProviderUpgrade: () => {}
+        })}
+      />
     )
-    expect(html).not.toContain('cursor-agent login')
+
+    expect(html).toContain('settings-provider-auth-card-partial provider-cursor')
+    expect(html).toContain('cursor-agent login')
+    expect(html).toContain('Open Terminal to sign in')
     expect(html).toContain('settings-provider-auth-card-partial provider-grok')
     expect(html).toContain('Available · CLI sign-in')
     expect(html).toContain(
@@ -237,6 +242,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Provider tools')
     expect(html).not.toContain('TASKWRAITH_DISABLE_CURSOR')
     expect(html).not.toContain('TASKWRAITH_DISABLE_GROK')
+    expect(html).not.toContain('Managed runs unavailable')
   })
 
   it('renders the Ollama cloud sign-in card in the Providers sign-in grid', () => {
@@ -467,7 +473,7 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('runtime: Claude')
     expect(html).toContain('Ready for Codex + Claude')
     expect(html).toContain('Ready for Claude')
-    expect(html).toContain('Cursor JSON is export-only; TaskWraith starts no managed Cursor run')
+    expect(html).toContain('Cursor JSON exports for Cursor MCP config; TaskWraith Path-B runs use the real ~/.cursor login under OS sandbox')
     expect(html).toContain('SSE attaches to Claude only')
     expect(html).toContain('Codex TOML')
     expect(html).toContain('Claude JSON')

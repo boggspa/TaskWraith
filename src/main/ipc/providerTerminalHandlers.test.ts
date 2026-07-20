@@ -90,22 +90,39 @@ describe('registerProviderTerminalHandlers', () => {
     })
   })
 
-  it.each(['login', 'logout', 'upgrade'] as const)(
-    'blocks Cursor %s before binary resolution or terminal creation',
+  it.each(['login', 'logout'] as const)(
+    'opens a Cursor %s terminal via cursor-agent',
     async (action) => {
       const { deps } = createDeps()
+      deps.resolveCliProviderBinary.mockResolvedValueOnce(
+        createResolved('/usr/local/bin/cursor-agent')
+      )
       registerProviderTerminalHandlers(deps)
 
       await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'cursor')).resolves.toEqual({
-        ok: false,
-        error: expect.stringMatching(/Cursor signs in with its own cursor-agent login/i)
+        ok: true
       })
-      expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
-      expect(deps.mkdirSync).not.toHaveBeenCalled()
-      expect(deps.writeFileSync).not.toHaveBeenCalled()
-      expect(deps.openPath).not.toHaveBeenCalled()
+      expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('cursor')
+      expect(deps.mkdirSync).toHaveBeenCalled()
+      expect(deps.writeFileSync).toHaveBeenCalled()
+      const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+      expect(script).toContain('cursor-agent')
+      expect(script).toContain(action)
+      expect(deps.openPath).toHaveBeenCalled()
     }
   )
+
+  it('opens a Cursor upgrade terminal via the official installer', async () => {
+    const { deps } = createDeps()
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'cursor')).resolves.toEqual({
+      ok: true
+    })
+    expect(deps.resolveCliProviderBinary).toHaveBeenCalledWith('cursor')
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('curl https://cursor.com/install -fsS | bash')
+  })
 
   it('preserves raw-command fallback branches', async () => {
     const { deps } = createDeps()

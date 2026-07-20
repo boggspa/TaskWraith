@@ -348,18 +348,17 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(makeChat({ title: 'Needs trim' }))
   })
 
-  it('rejects changing a live chat to a historical provider through saveChat', () => {
+  it('allows changing a live chat to Cursor through saveChat', () => {
     const current = makeChat({ provider: 'claude' })
     const store = makeStatefulStore(current)
     const { deps } = makeDeps({ appStore: store })
 
-    expect(() =>
-      new ChatService(deps).saveChat({
-        ...current,
-        provider: 'cursor'
-      })
-    ).toThrow('cursor is unavailable for new chats or delegated runs.')
-    expect(store.saveChat).not.toHaveBeenCalled()
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      provider: 'cursor'
+    })
+    expect(saved).toMatchObject({ provider: 'cursor' })
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
   it('allows an unchanged historical provider record to round-trip for decode and display', () => {
@@ -376,7 +375,7 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
-  it('rejects adding a historical provider to an existing ensemble roster', () => {
+  it('allows adding Cursor to an existing ensemble roster', () => {
     const current = makeChat({
       provider: 'claude',
       chatKind: 'ensemble',
@@ -398,45 +397,43 @@ describe('ChatService', () => {
     const store = makeStatefulStore(current)
     const { deps } = makeDeps({ appStore: store })
 
-    expect(() =>
-      new ChatService(deps).saveChat({
-        ...current,
-        ensemble: {
-          ...current.ensemble!,
-          participants: [
-            ...current.ensemble!.participants,
-            {
-              id: 'seat-cursor',
-              provider: 'cursor',
-              enabled: true,
-              role: 'Reviewer',
-              instructions: '',
-              order: 1
-            }
-          ]
-        }
-      })
-    ).toThrow('cursor is unavailable for new chats or delegated runs.')
-    expect(store.saveChat).not.toHaveBeenCalled()
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      ensemble: {
+        ...current.ensemble!,
+        participants: [
+          ...current.ensemble!.participants,
+          {
+            id: 'seat-cursor',
+            provider: 'cursor',
+            enabled: true,
+            role: 'Reviewer',
+            instructions: '',
+            order: 1
+          }
+        ]
+      }
+    })
+    expect(saved.ensemble?.participants.some((p) => p.provider === 'cursor')).toBe(true)
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
-  it('rejects newly queued provider changes to historical providers', () => {
+  it('allows newly queued provider changes to Cursor', () => {
     const current = makeChat({ provider: 'claude', providerMetadata: {} })
     const store = makeStatefulStore(current)
     const { deps } = makeDeps({ appStore: store })
 
-    expect(() =>
-      new ChatService(deps).saveChat({
-        ...current,
-        providerMetadata: {
-          pendingProviderChange: {
-            provider: 'cursor',
-            queuedAt: '2026-07-19T00:00:00.000Z'
-          }
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      providerMetadata: {
+        pendingProviderChange: {
+          provider: 'cursor',
+          queuedAt: '2026-07-19T00:00:00.000Z'
         }
-      })
-    ).toThrow('cursor is unavailable for new chats or delegated runs.')
-    expect(store.saveChat).not.toHaveBeenCalled()
+      }
+    })
+    expect(saved.providerMetadata?.pendingProviderChange).toMatchObject({ provider: 'cursor' })
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
   it('clears canonical historical pending-provider control state on save', () => {
@@ -445,7 +442,7 @@ describe('ChatService', () => {
       providerMetadata: {
         retainedSetting: true,
         pendingProviderChange: {
-          provider: 'cursor',
+          provider: 'gemini',
           queuedAt: '2026-07-18T00:00:00.000Z'
         }
       }

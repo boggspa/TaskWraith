@@ -117,10 +117,15 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
     expect(state.providerCards.find((card) => card.id === 'kimi')?.statusKind).toBe('cliMissing')
     expect(state.providerCards.find((card) => card.id === 'cursor')).toMatchObject({
-      statusText: 'Managed runs unavailable',
-      setupCommands: []
+      statusKind: 'notObservable',
+      statusText: 'Not observable'
     })
-    expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(false)
+    expect(
+      state.providerCards.find((card) => card.id === 'cursor')?.setupCommands.some(
+        (entry) => entry.id === 'cursor'
+      )
+    ).toBe(true)
+    expect(state.setupCommands.some((entry) => entry.id === 'cursor')).toBe(true)
     expect(state.providerCards.find((card) => card.id === 'ollama')?.statusKind).toBe('localReady')
   })
 
