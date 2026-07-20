@@ -1,12 +1,13 @@
 /*
  * QueuedMessagesAboveRow — 1.0.3 ship-night.
  *
- * Renders the chat's pending run-queue jobs as a stack of bubbles
+ * Renders the chat's pending run-queue jobs as flat satellite rows
  * inside the composer's `.composer-above-bar-stack` (the same
  * container that holds the Ensemble chip strip and the Create-PR
- * row). Auto-joins Codex's unified-container via the existing
- * `> *:not(:first-child)` divider rule; in other shells it
- * renders as its own pill.
+ * row). Shell-native chrome lives on the above-row / tucked stack
+ * (Codex + Grok tuck under the composer lip; Claude/Gemini/Kimi
+ * paint provider pills). Items themselves stay chrome-free — no
+ * nested gray capsules.
  *
  * Replaces the in-transcript "Queued (#2): …" system-card UX:
  * those cards remain in `chat.messages` for historical record

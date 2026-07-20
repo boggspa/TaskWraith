@@ -710,16 +710,16 @@
 /* Queued-messages above-row (1.0.3 post-ship UX rework).
  *
  * Sibling of the Ensemble chip strip + Create-PR row inside
- * `.composer-above-bar-stack`. Hosts a stack of pending run-queue
- * items as bubbles, one per row, with per-row Edit / Delete /
- * Steer actions and drag-to-reorder.
+ * `.composer-above-bar-stack`. Hosts pending run-queue items as
+ * flat satellite content inside the shell-native container — not
+ * nested gray capsules. Per-row Edit / Delete / Steer actions and
+ * drag-to-reorder stay on each item.
  *
- * Codex unified-container compatibility: the existing
- * `[data-composer-style="codex"] .composer-above-bar-stack:has(
- * .ensemble-above-row) > *:not(:first-child)` divider rule
- * automatically slots dividers above this row when it sits in the
- * unified container. Other shells render it as its own
- * pill-shaped pane via the rule below.
+ * Shell hierarchy: `.queued-messages-above-row` is the chrome
+ * carrier (or transparent inside a tucked/merged stack). Codex and
+ * Grok tuck the stack under the composer lip; Claude/Gemini/Kimi
+ * paint shell-native pills on this row. Inner `.queued-messages-row`
+ * items stay chrome-free so they never double-wrap.
  *
  * `pointer-events: auto` for the same reason `.ensemble-above-row`
  * needs it — the `.composer-area` parent is pointer-events: none
@@ -745,35 +745,36 @@
 .queued-messages-above-row-list {
   display: flex;
   flex-direction: column;
-  gap: 6px;
+  gap: 2px;
   max-height: 200px;
   overflow-y: auto;
 }
 
+/* Flat satellite item — no nested capsule. Shell chrome lives on
+ * `.queued-messages-above-row` (or the tucked stack parent). */
 .queued-messages-row {
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 6px 10px;
-  border: 1px solid color-mix(in srgb, var(--border-color) 70%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-elevated) 65%, transparent);
+  padding: 4px 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
   color: var(--text-primary);
   cursor: grab;
   font-size: 12px;
   font-weight: 500;
   line-height: 1.3;
-  transition: border-color 120ms ease, background 120ms ease, opacity 120ms ease,
-    box-shadow 120ms ease;
+  transition: background 120ms ease, opacity 120ms ease, box-shadow 120ms ease;
 }
 .queued-messages-row.is-dragging {
   opacity: 0.45;
   cursor: grabbing;
 }
 .queued-messages-row.is-drag-over {
-  border-color: color-mix(in srgb, var(--accent) 60%, var(--border-color));
-  background: color-mix(in srgb, var(--accent) 10%, color-mix(in srgb, var(--surface-elevated) 65%, transparent));
-  box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+  background: color-mix(in srgb, var(--accent) 10%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 50%, transparent);
+  border-radius: 8px;
 }
 
 .queued-messages-row-meta {
@@ -2266,6 +2267,7 @@
  * still want their accent borders but on a light base, mirroring
  * the composer-surface light-mode treatment. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .queued-messages-above-row,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"]
   .composer-above-bar-stack
@@ -2276,6 +2278,7 @@
   color: var(--surface-text);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .queued-messages-above-row,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"]
   .composer-above-bar-stack
@@ -2317,7 +2320,7 @@
  * the same white pill family as its sibling chrome above, not a
  * darker contrasting surface). The purple accent moves to the
  * border only, kept subtle so it doesn't fight the bright base. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) {
   background: #e3e3e9;
   border-color: color-mix(in srgb, #000000 12%, transparent);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
@@ -2385,10 +2388,10 @@
  * win the cascade, mirroring the same pattern. The chip-strip
  * also gets the same strip so the unified container is the only
  * visible chrome (matches the dark-mode unified treatment). */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .composer-above-bar,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .ensemble-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .queued-messages-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .ensemble-roster-preset-picker.is-compact {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-roster-preset-picker.is-compact {
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -2410,7 +2413,7 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > *:not(:first-child) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -2734,8 +2737,11 @@
   padding: 12px 14px;
   font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "Segoe UI", sans-serif;
 }
+/* Queue items stay flat inside the Claude shell pill — no nested capsule. */
 [data-composer-style="claude"] .queued-messages-row {
-  border-radius: 8px;
+  border-radius: 0;
+  background: transparent;
+  border: 0;
 }
 /* Interactive chips inside these rows join the shell's squared
  * rounded-rect language (8px, same as the git-row chips). */
@@ -2844,8 +2850,11 @@
  * match the COMPOSER-SURFACE chrome instead of a satellite-flat
  * treatment so the chip strip reads as a sibling to the composer
  * pill below it (Gemini composer-surface: 28px radius / `#0e1218
- * 94%` / provider-blue 18% border / `0 4px 28px` shadow). */
+ * 94%` / provider-blue 18% border / `0 4px 28px` shadow).
+ * Queued-messages share the same blue shell chrome so the DOM
+ * hierarchy (stack → above-row → flat items) matches ensemble. */
 [data-composer-style="gemini"] .ensemble-above-row,
+[data-composer-style="gemini"] .queued-messages-above-row,
 [data-composer-style="gemini"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 28px;
   background: color-mix(in srgb, #0e1218 94%, transparent);
@@ -2871,8 +2880,9 @@
  * strip is sole above-row. Per the maintainer's smoke pass, mirror the
  * Kimi composer-surface chrome (18px radius / `#0a0a0c 96%` /
  * `#ffffff 8%` border / `0 4px 16px` shadow) so the strip reads
- * as a matching pill. */
+ * as a matching pill. Queue rows share the same shell chrome. */
 [data-composer-style="kimi"] .ensemble-above-row,
+[data-composer-style="kimi"] .queued-messages-above-row,
 [data-composer-style="kimi"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 18px;
   background: color-mix(in srgb, #1f2227 92%, transparent);
@@ -2900,8 +2910,9 @@
  * `panel-border 82%` / `0 4px 18px` shadow). Per the maintainer's smoke
  * pass, match the textarea chrome instead of the flat above-bar
  * so the chip strip reads as a matching sibling pill to the
- * composer below. */
+ * composer below. Queue rows share the same shell chrome. */
 [data-composer-style="modular"] .ensemble-above-row,
+[data-composer-style="modular"] .queued-messages-above-row,
 [data-composer-style="modular"] .composer-above-bar-stack > .ensemble-roster-preset-picker.is-compact {
   border-radius: 18px;
   background: color-mix(in srgb, var(--composer-bg-solid) 88%, transparent);
@@ -3133,7 +3144,7 @@
   display: none;
 }
 
-[data-composer-style="codex"] .composer-above-bar-stack:has(.ensemble-above-row) > .ensemble-above-row::before {
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-above-row::before {
   display: none;
 }
 

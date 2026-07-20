@@ -17,7 +17,7 @@ const cssBlockStartingAt = (source: string, selector: string): string => {
 }
 
 describe('Claude composer queued message CSS', () => {
-  it('keeps the Queue/Steer above-row corners aligned with Claude row chrome', () => {
+  it('keeps the Queue/Steer above-row shell chrome without nested item capsules', () => {
     const css = readCss()
 
     const shellBlock = cssBlockStartingAt(
@@ -28,10 +28,28 @@ describe('Claude composer queued message CSS', () => {
       css,
       '[data-composer-style="claude"] .queued-messages-row {'
     )
+    const baseItemBlock = cssBlockStartingAt(css, '.queued-messages-row {')
 
     expect(shellBlock).toContain('border-radius: 14px;')
-    expect(itemBlock).toContain('border-radius: 8px;')
     expect(shellBlock).not.toContain('calc(var(--radius-lg) * 1.6)')
+    // Shell-native container carries chrome; queue items stay flat satellites.
+    expect(baseItemBlock).toContain('background: transparent;')
+    expect(baseItemBlock).toContain('border-radius: 0;')
+    expect(baseItemBlock).not.toContain('border-radius: 999px')
+    expect(itemBlock).toContain('background: transparent;')
     expect(itemBlock).not.toContain('border-radius: 999px')
+  })
+
+  it('gives Gemini queue the same blue shell chrome as ensemble above-rows', () => {
+    const css = readCss()
+    // Prefer the dark shell block (line-start selector), not a light-theme
+    // rule that merely contains the same class substring mid-selector.
+    const geminiBlockStart = css.search(
+      /^\[data-composer-style="gemini"\] \.ensemble-above-row,/m
+    )
+    expect(geminiBlockStart).toBeGreaterThanOrEqual(0)
+    const geminiBlock = css.slice(geminiBlockStart, geminiBlockStart + 600)
+    expect(geminiBlock).toContain('[data-composer-style="gemini"] .queued-messages-above-row,')
+    expect(geminiBlock).toContain('var(--provider-gemini-color)')
   })
 })
