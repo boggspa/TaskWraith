@@ -6,9 +6,14 @@ import {
 import { isReadOnlyAdvertisedTool } from '../mcp/McpAutoAllowedTools'
 import { isCapabilityGatewayToolName } from '../mcp/McpToolGateway'
 
+const GROK_LEGACY_BROKER_MCP_TOOL_NAMESPACE = 'taskwraith-broker'
+
 const GROK_TASKWRAITH_MCP_TOOL_NAMESPACES = [
   GROK_SCOPED_MCP_SERVER_NAME,
-  GROK_BROKER_MCP_TOOL_NAMESPACE
+  GROK_BROKER_MCP_TOOL_NAMESPACE,
+  // Legacy Cursor-colliding alias — keep unqualifying so old ACP sessions
+  // and leftover permission requests still parse as TaskWraith tools.
+  GROK_LEGACY_BROKER_MCP_TOOL_NAMESPACE
 ] as const
 
 function unqualifyGrokTaskWraithMcpTool(value: unknown): string | null {

@@ -27,7 +27,7 @@ export const GROK_PROJECTED_OUTPUT_USD_PER_MILLION = 15.0
 export const GROK_SCOPED_MCP_SERVER_NAME = 'taskwraith-grok'
 
 /** Tool namespace reported by Grok ACP for the per-run TaskWraith broker. */
-export const GROK_BROKER_MCP_TOOL_NAMESPACE = 'taskwraith-broker'
+export const GROK_BROKER_MCP_TOOL_NAMESPACE = 'TaskWraith'
 
 export const PROBE_TIMEOUT_MS = 1000
 

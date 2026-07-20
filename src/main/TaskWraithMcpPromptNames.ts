@@ -16,7 +16,7 @@ export function taskWraithToolNamespaceHint(provider: ProviderId): string {
     return 'Cursor managed runs are unavailable; TaskWraith does not start Cursor or expose MCP tools to it.'
   }
   if (provider === 'grok') {
-    return 'Grok exposes TaskWraith tools as `taskwraith-broker__<tool>`; ACP may report the read-only scoped alias `taskwraith-grok__<tool>`.'
+    return 'Grok exposes TaskWraith tools as `TaskWraith__<tool>`; ACP may report the read-only scoped alias `taskwraith-grok__<tool>`.'
   }
   if (provider === 'codex') {
     return 'Codex may expose TaskWraith tools as `TaskWraith__<tool>` or as bare tool names depending on CLI version.'
