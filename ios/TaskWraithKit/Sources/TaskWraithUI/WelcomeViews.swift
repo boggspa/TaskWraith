@@ -286,7 +286,7 @@ struct TaskCompleteCard: View {
                 Circle()
                     .strokeBorder(accent.opacity(0.28), lineWidth: 0.75)
                     .frame(width: 18, height: 18)
-                ProviderGlyphIcon(provider: cell.provider, modelId: cell.model, size: 11)
+                ProviderLogoIcon(provider: cell.provider, modelId: cell.model, size: 11)
             }
             Text(dense ? cell.numberLabel : "\(cell.numberLabel) \(cell.roleLabel)")
                 .font(.caption2.weight(.semibold))

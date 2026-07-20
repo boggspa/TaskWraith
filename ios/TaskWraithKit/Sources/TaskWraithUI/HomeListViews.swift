@@ -1242,7 +1242,7 @@ struct WorkflowRowContent: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
-            ProviderGlyphIcon(provider: workflow.provider, size: 16)
+            ProviderLogoIcon(provider: workflow.provider, size: 16)
                 .padding(.top, 2)
                 .opacity(workflow.isPaused ? 0.5 : 1)
             VStack(alignment: .leading, spacing: 4) {
@@ -1339,17 +1339,16 @@ struct TaskRow: View {
                     .foregroundStyle(TWTheme.textTertiary)
                     .padding(.top, 4)
             }
-            // Provider glyph — monoline mnemonic tinted with the provider
-            // accent, with dot fallback for providers with no baked glyph.
-            // Sub-agents with a character identity get their identicon badge
-            // instead.
+            // First-party provider logo from design-assets (vendored package
+            // resources). Ensemble / unknown providers fall back to the monoline
+            // glyph. Sub-agents with a character identity get their identicon.
             if let agentName = card.agentName {
                 AgentIdentityBadge(
                     name: agentName, accentHex: card.agentAccent,
                     slug: card.agentSlug, size: appScale.scaled(18))
                     .padding(.top, 2)
             } else {
-                ProviderGlyphIcon(
+                ProviderLogoIcon(
                     provider: card.provider, isEnsemble: card.isEnsemble, size: appScale.scaled(16)
                 )
                 .padding(.top, 2)
