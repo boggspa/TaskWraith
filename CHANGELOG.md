@@ -8,10 +8,11 @@ to answer.
 
 ## Unreleased — source-ahead
 
-This entry tracks the checkout currently ahead of v1.8.4. It describes the
-source tree only; it does not assign a release version or imply that artifacts
-have been built or published. The exact candidate SHA and divergence count live
-in the internal pre-release ledger because the source-ahead boundary can move.
+This entry tracks the checkout currently ahead of the latest tagged release. It
+describes the source tree only; it does not assign a release version or imply
+that artifacts have been built or published.
+
+## 1.8.5 - 2026-07-20
 
 ### Added
 - **Kimi ACP sessions can resume as durable, isolated seats.** Native ACP
@@ -22,13 +23,21 @@ in the internal pre-release ledger because the source-ahead boundary can move.
   Low, High, and Max reasoning controls, while the usable context limit follows
   the detected Moonshot plan from 256K through as much as 1M rather than
   advertising one fixed window to every account.
-- **The host sky follows local conditions.** Weather, solar and lunar state,
-  and the starfield can now shape the optional sky effects. When those effects
-  are enabled, TaskWraith resolves the host's approximate location through
-  `ipapi.co` with `ipwho.is` as fallback, rounds coordinates to 0.1 degrees
-  (about 11 km) before requesting Open-Meteo data, and stores the result in the
-  local `host-weather-cache.json`. No workspace or task content is sent as part
-  of that lookup.
+- **Needs your input surfaces pending agent questions.** A global banner and
+  Sidebar/Approvals attention markers call out chats that are waiting on a
+  user answer, and the unfocused desktop window can bounce or flash so a
+  parked question is harder to miss.
+- **Node Graphs show project thread relationships.** A Work-scoped sidebar
+  section and thread-graph pane project user-drawn dependency edges between
+  chats, with SVG connectors for the active project map.
+- **Execution Graph, Stack, and Map inspect main-owned run structure.** Main
+  owns stack runtime, permission ceilings, terminal joins, and dispatch wiring
+  so repository diagnostics and attention stacks stay coherent across
+  multi-step work.
+- **PDF text extraction and on-device OCR are brokered tools.** Bundled
+  `pdfjs-dist` text-layer extraction plus generalized Vision OCR let agents
+  read PDF text and image contents through TaskWraith-hosted tools rather than
+  opaque provider-side parsing.
 - **Projects have a guarded reference library.** A selected project now exposes
   a References section for cataloguing relevant files, folders, and links. Each
   row can be excluded from or restored to the library, removed, and—when it is
@@ -39,18 +48,46 @@ in the internal pre-release ledger because the source-ahead boundary can move.
   without reading content, and URL verification is rejected rather than
   fetching the network. A reference grants no file or network access and is
   never indexed or injected into agent context.
+- **Sub-thread status ticker and Ensemble mailbox delivery.** Parent chats show
+  a live sub-thread status ticker, and Ensemble parents can drain a durable
+  sub-thread mailbox into the idle authority seat once so returned worker
+  results reach Boss/Captain context without a manual paste.
+- **Host-rerun continuation keeps Codex work on a fresh run identity.** After a
+  host rerun, TaskWraith mints an independent continuation run that resumes the
+  existing provider session instead of double-joining history on the approval
+  run or spawning a virgin seat.
+- **The host sky follows local conditions.** Weather, solar and lunar state,
+  and the starfield can now shape the optional sky effects. When those effects
+  are enabled, TaskWraith resolves the host's approximate location through
+  `ipapi.co` with `ipwho.is` as fallback, rounds coordinates to 0.1 degrees
+  (about 11 km) before requesting Open-Meteo data, and stores the result in the
+  local `host-weather-cache.json`. No workspace or task content is sent as part
+  of that lookup.
 
 ### Changed
-- **Fresh Ensemble panels start small and role-shaped.** Source-ahead new
-  Ensemble chats now seed at most four active seats (Boss, Captain, Specialist,
-  and an independent Outsider), while new saved roster presets begin with the
-  first three roles and room for at most five. The twenty-seat limit remains a
-  capacity ceiling rather than the default panel size.
+- **Cursor runs again under Path-B contained native sandbox (+ write).**
+  Managed Cursor is always-enabled (no brittle per-build fingerprint gate) and
+  re-admitted through the shared CLI transport. Production argv always comes
+  from the contained builders that hard-pin `--sandbox enabled`, with separate
+  read-only and write-capable argv shapes routed by seat permission—never a
+  bare uncontained `cursor-agent` spawn, never sandbox-disabled / force /
+  yolo / resume-token argv from the production entry.
+- **Fresh Ensemble panels start small and role-shaped.** New Ensemble chats now
+  seed at most four active seats (Boss, Captain, Specialist, and an independent
+  Outsider), while new saved roster presets begin with the first three roles
+  and room for at most five. The twenty-seat limit remains a capacity ceiling
+  rather than the default panel size.
 - **Primary navigation is organized as Chat, Code, and Work.** The surface
   split makes conversation, workspace activity, and projects/workflows easier
   to distinguish. Switching or choosing a workspace from a pristine draft now
   preserves its selected provider, model, reasoning, permission posture, and
   unsent composer text.
+- **Provider brand marks appear on the transcript filter rail.** Official
+  provider logos replace ad-hoc colour-only chips so multi-provider transcripts
+  are easier to scan.
+- **Solo tool grants stay editable while a run is live.** Permission grants for
+  solo seats can be adjusted during an active turn without waiting for the run
+  to finish.
 - **Projects now use a main-backed optimistic registry.** Shared pure registry
   operations, a main-owned `projects.json`, snapshot/apply/import IPC, change
   broadcasts, one-shot legacy import, and explicit main-renderer channel
@@ -70,27 +107,34 @@ in the internal pre-release ledger because the source-ahead boundary can move.
   the same destination; ambiguous membership safely falls back to the chat.
 
 ### Fixed
-- **Provider and orchestration edges are more resilient.** Source-ahead fixes
-  cover Kimi transport and usage hardening, Ensemble roster imports, stale
-  broker sockets, and related run-lifecycle cleanup.
-- **Cursor dispatch now fails closed before process launch.** A 2026.07.16
-  exact-build startup review showed that authenticated Cursor can preload
-  account/team hooks, managed skills/plugins, and plugin/team/bundled MCP even
-  with fresh roots, an empty synthetic workspace, disabled project configs,
-  excluded workspace context, and Plan mode. Source-ahead TaskWraith therefore
-  starts no managed `cursor-agent` process. Both Cursor Plan and tool modes are
-  unavailable/unqualified pending an exact-build containment canary or a
-  stronger sandbox; the earlier source-ahead Plan-only design is superseded.
+- **Provider and orchestration edges are more resilient.** Fixes cover Kimi
+  transport and usage hardening, Ensemble roster imports, stale broker sockets,
+  and related run-lifecycle cleanup.
+- **Grok broker tools advertise under the TaskWraith MCP namespace.** The
+  progressive gateway presents Grok-facing broker tools as TaskWraith rather
+  than a legacy unqualified surface, and parent-provider binding prefers the
+  live run session so approval modals name the correct seat.
+- **External activity includes Grok and keeps paired-device rollups honest.**
+  The activity scan reads Grok usage instead of reporting zero, and the paired
+  device rollup agrees with the header totals.
+- **Universal Mac builds ship both `@napi-rs/canvas` architectures.** The
+  notarized macOS package includes the canvas native binaries required on both
+  Apple Silicon and Intel so Canvas/PDF paths do not miss one arch.
+- **iOS reconnect wakes coalesce instead of flap.** APNs, foreground, and path
+  reconnect signals single-flight through one coordinator so the companion no
+  longer races competing reconnects after push or resume.
 
 ### Security
 
-- **Managed Kimi authentication and admission now fail closed.** Rotating Kimi
-  OAuth credentials use a source-home-keyed durable authority across isolated
-  ACP seats and crash recovery. Packaged source-ahead builds also require an
-  exact reviewed runtime tuple; the embedded roster is intentionally empty, so
-  packaged Kimi and sealed scheduled Kimi execution remain unavailable until
-  their respective admission/authority evidence is commissioned. A successful
-  `kimi login` or a Settings usage key does not qualify a managed run.
+- **Managed Kimi authentication and admission stay fail-closed where it
+  matters.** Rotating Kimi OAuth credentials use a source-home-keyed durable
+  authority across isolated ACP seats and crash recovery. The brittle per-build
+  fingerprint gate is dropped for always-enabled development admission, but
+  packaged builds still require an exact reviewed runtime tuple and the
+  embedded qualification roster remains intentionally empty—so packaged Kimi
+  and sealed scheduled Kimi execution stay unavailable until their respective
+  admission/authority evidence is commissioned. A successful `kimi login` or a
+  Settings usage key does not qualify a managed run.
 - **Manual unsigned builds cannot write GitHub Release assets.** Windows and
   Linux testing builds now upload only immutable SHA/run-labelled Actions
   artifacts under read-only repository permission. The credentialed provider
@@ -100,11 +144,10 @@ in the internal pre-release ledger because the source-ahead boundary can move.
   controls. Both signed publishers re-resolve the remote tag and reject
   auto-created or moved tags before uploading.
 - **Deleting chat history now clears the adjoining TaskWraith audit state.** The
-  source-ahead Settings action removes chats, run/run-queue and execution-graph
-  history, approval/feedback ledgers, sub-thread mailboxes, Canvas
-  workspaces/artifacts, Kimi seat state, and the bridge subprocess log.
-  Provider-native history and provider credentials remain separate and are not
-  removed by that control.
+  Settings action removes chats, run/run-queue and execution-graph history,
+  approval/feedback ledgers, sub-thread mailboxes, Canvas workspaces/artifacts,
+  Kimi seat state, and the bridge subprocess log. Provider-native history and
+  provider credentials remain separate and are not removed by that control.
 - **`canvas_eval` receipts retain correlation metadata instead of executable
   content.** Human-approved execution and Canvas-audit receipts retain the
   joined approval id, unkeyed SHA-256 digest, lengths, and outcome rather than
