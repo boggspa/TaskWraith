@@ -4188,10 +4188,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               }
                               return option
                             })
-                          const normalizedWorkspacePath = (currentWorkspace?.path || '').replace(
-                            /\/+$/,
-                            ''
-                          )
+                          const normalizedWorkspacePath = currentWorkspace?.path
+                            ? pathComparisonKey(currentWorkspace.path)
+                            : ''
                           const enabledGrantIds = ensembleBinding
                             ? getParticipantToolGrantIds(ensembleBinding)
                             : new Set(
@@ -4203,8 +4202,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                       !grant.workspacePath
                                     )
                                       return false
+                                    // Match PermissionService's resolved path storage, not just
+                                    // a trailing-slash strip — otherwise grants appear un-toggled
+                                    // after a successful upsert.
                                     return (
-                                      grant.workspacePath.replace(/\/+$/, '') ===
+                                      pathComparisonKey(grant.workspacePath) ===
                                       normalizedWorkspacePath
                                     )
                                   })

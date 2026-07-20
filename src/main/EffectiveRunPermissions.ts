@@ -1,3 +1,4 @@
+import { resolve } from 'path'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
@@ -391,10 +392,13 @@ function workspaceGrantServiceIdsFor(
   workspacePath?: string
 ): AgenticServiceId[] {
   if (!workspacePath) return []
+  // Match PermissionService storage: grants are stored under path.resolve(...).
+  // Strict string equality misses trailing-slash / relative-path variants.
+  const normalizedWorkspace = resolve(workspacePath)
   const serviceIds = new Set<AgenticServiceId>()
   for (const grant of grants) {
     if (grant.provider !== provider) continue
-    if (grant.workspacePath !== workspacePath) continue
+    if (!grant.workspacePath || resolve(grant.workspacePath) !== normalizedWorkspace) continue
     if (grant.expiresAt && Date.parse(grant.expiresAt) <= Date.now()) continue
     // Non-grantable services: stale/forged workspace grants must never promote
     // these above a per-action prompt. PermissionService enforces the same for

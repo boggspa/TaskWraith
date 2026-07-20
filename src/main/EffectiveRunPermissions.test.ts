@@ -257,6 +257,29 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.workspaceGrantServiceIds).toEqual([])
   })
 
+  it('matches workspace grants when run path and stored path differ only by trailing slash', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo/',
+      settings: settings({
+        agenticWorkspaceGrants: [
+          {
+            id: 'workspace-grant-slash',
+            provider: 'codex',
+            workspacePath: '/repo',
+            service: 'shellCommands',
+            createdAt: '2026-05-24T00:00:00.000Z',
+            updatedAt: '2026-05-24T00:00:00.000Z'
+          }
+        ]
+      }),
+      presetId: 'default'
+    })
+
+    expect(resolved.workspaceGrantServiceIds).toEqual(['shellCommands'])
+    expect(resolved.agenticServices.shellCommands).toBe('workspace')
+  })
+
   it('lets participant denies override workspace grants', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',
