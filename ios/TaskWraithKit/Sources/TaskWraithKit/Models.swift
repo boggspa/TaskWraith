@@ -438,6 +438,24 @@ public struct ModelOption: Codable, Sendable, Identifiable, Hashable {
     public let disabledReason: String?
     public let supportedReasoningEfforts: [ReasoningEffortOption]?
     public let defaultReasoningEffort: String?
+
+    public init(
+        id: String,
+        label: String? = nil,
+        isDefault: Bool? = nil,
+        disabled: Bool? = nil,
+        disabledReason: String? = nil,
+        supportedReasoningEfforts: [ReasoningEffortOption]? = nil,
+        defaultReasoningEffort: String? = nil
+    ) {
+        self.id = id
+        self.label = label
+        self.isDefault = isDefault
+        self.disabled = disabled
+        self.disabledReason = disabledReason
+        self.supportedReasoningEfforts = supportedReasoningEfforts
+        self.defaultReasoningEffort = defaultReasoningEffort
+    }
 }
 
 public struct ReasoningEffortOption: Codable, Sendable, Identifiable, Hashable {
@@ -446,6 +464,18 @@ public struct ReasoningEffortOption: Codable, Sendable, Identifiable, Hashable {
     public let disabled: Bool?
     public let disabledReason: String?
     public var id: String { reasoningEffort }
+
+    public init(
+        reasoningEffort: String,
+        description: String? = nil,
+        disabled: Bool? = nil,
+        disabledReason: String? = nil
+    ) {
+        self.reasoningEffort = reasoningEffort
+        self.description = description
+        self.disabled = disabled
+        self.disabledReason = disabledReason
+    }
 }
 
 public struct WorkspaceSummary: Codable, Sendable, Identifiable, Hashable {
