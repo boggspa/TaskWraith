@@ -37,6 +37,7 @@ import type {
   BridgeSetThreadTitleAction,
   BridgeSetChatKindAction,
   BridgeGoalUpdateAction,
+  BridgeBlackboardPostAction,
   BridgeToggleMessagePinAction,
   BridgeProposedPlanDecisionAction,
   BridgeCanvasActionAction,
@@ -200,6 +201,7 @@ export interface BridgeActionExecutor {
   executeSetThreadTitle(action: BridgeSetThreadTitleAction): Promise<BridgeActionExecutionResult>
   executeSetChatKind(action: BridgeSetChatKindAction): Promise<BridgeActionExecutionResult>
   executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult>
+  executeBlackboardPost(action: BridgeBlackboardPostAction): Promise<BridgeActionExecutionResult>
   executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
   ): Promise<BridgeActionExecutionResult>
@@ -436,6 +438,11 @@ export class NoopActionExecutor implements BridgeActionExecutor {
   }
   async executeGoalUpdate(action: BridgeGoalUpdateAction): Promise<BridgeActionExecutionResult> {
     return notWired('goalUpdate', action.threadId)
+  }
+  async executeBlackboardPost(
+    action: BridgeBlackboardPostAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('blackboardPost', action.threadId)
   }
   async executeToggleMessagePin(
     action: BridgeToggleMessagePinAction
@@ -794,6 +801,11 @@ export interface MainProcessActionExecutorDependencies {
     ok: boolean
     goal?: unknown
     reason?: string
+  }>
+  blackboardPostFn?: (action: BridgeBlackboardPostAction) => Promise<{
+    ok: boolean
+    reason?: string
+    entry?: unknown
   }>
   toggleMessagePinFn?: (action: BridgeToggleMessagePinAction) => Promise<unknown>
   proposedPlanDecisionFn?: (action: BridgeProposedPlanDecisionAction) => Promise<unknown>
@@ -1772,6 +1784,32 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const errMessage = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] goalUpdate failed: ${errMessage}`)
       return { executed: false, message: `Goal update failed: ${errMessage}` }
+    }
+  }
+
+  async executeBlackboardPost(
+    action: BridgeBlackboardPostAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.blackboardPostFn) {
+      this.log(
+        `[BridgeActionExecutor] blackboardPost has no blackboardPostFn — threadId=${action.threadId}`
+      )
+      return notWired('blackboardPost', action.threadId)
+    }
+    try {
+      const result = await this.deps.blackboardPostFn(action)
+      if (!result.ok) {
+        return { executed: false, message: result.reason || 'Blackboard post was declined' }
+      }
+      return {
+        executed: true,
+        message: 'Posted to blackboard.',
+        data: { threadId: action.threadId, entry: result.entry ?? null }
+      }
+    } catch (err) {
+      const errMessage = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] blackboardPost failed: ${errMessage}`)
+      return { executed: false, message: `Blackboard post failed: ${errMessage}` }
     }
   }
 

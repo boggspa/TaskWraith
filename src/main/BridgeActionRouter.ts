@@ -742,6 +742,8 @@ export class BridgeActionRouter {
         return this.executor.executeSetChatKind(payload)
       case 'goalUpdate':
         return this.executor.executeGoalUpdate(payload)
+      case 'blackboardPost':
+        return this.executor.executeBlackboardPost(payload)
       case 'toggleMessagePin':
         return this.executor.executeToggleMessagePin(payload)
       case 'proposedPlanDecision':
@@ -1353,6 +1355,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'setThreadTitle':
     case 'setChatKind':
     case 'goalUpdate':
+    case 'blackboardPost':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
     case 'canvasAction':

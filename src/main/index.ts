@@ -32762,6 +32762,68 @@ if (isGeminiMcpBridgeProcess) {
           pushRemoteTaskCardDelta(updated.appChatId)
           return { ok: true, goal: activeGoal }
         },
+        blackboardPostFn: async (action) => {
+          if (AppStore.getSettings().ensembleModeEnabled === false) {
+            return { ok: false, reason: 'Ensemble Mode is disabled.' }
+          }
+          const chat = AppStore.getChat(action.threadId)
+          if (!chat) return { ok: false, reason: 'Thread not found' }
+          if (!chat.ensemble) {
+            return { ok: false, reason: 'Blackboard entries require an Ensemble chat.' }
+          }
+          const canonicalActionWs =
+            canonicalRemoteWorkspaceId(action.workspaceId) ?? action.workspaceId
+          const chatWs = canonicalRemoteWorkspaceId(chat.workspaceId) ?? chat.workspaceId
+          if (chat.scope !== 'global' && chatWs && chatWs !== canonicalActionWs) {
+            return {
+              ok: false,
+              reason: `Thread does not belong to workspace "${action.workspaceId}"`
+            }
+          }
+          const roundResolution = resolveBlackboardPostRound({
+            scope: action.scope,
+            activeRoundId: chat.ensemble.activeRound?.roundId
+          })
+          if (!roundResolution.ok) {
+            return { ok: false, reason: roundResolution.error || 'Blackboard post not allowed' }
+          }
+          const value =
+            typeof action.value === 'string' ? action.value.trim() : ''
+          if (!value) return { ok: false, reason: 'Blackboard entry value is required' }
+          const createdAt = new Date().toISOString()
+          const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
+          const entry = makeBlackboardEntry({
+            id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+            chatId: chat.appChatId,
+            roundId: roundResolution.roundId,
+            participantId: 'user',
+            key:
+              typeof action.key === 'string' && action.key.trim()
+                ? action.key.trim()
+                : fallbackKey,
+            value,
+            category: action.category,
+            scope: roundResolution.scope,
+            createdAt
+          })
+          if (!entry) {
+            return { ok: false, reason: 'Blackboard entry requires non-empty key and value.' }
+          }
+          const updated = {
+            ...chat,
+            ensemble: {
+              ...chat.ensemble,
+              blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+              updatedAt: createdAt
+            },
+            updatedAt: Date.now()
+          }
+          saveAndBroadcastChat(updated)
+          const canonical = canonicalRemoteWorkspaceId(updated.workspaceId)
+          if (canonical) pushRemoteThreadSnapshot(updated, canonical)
+          pushRemoteTaskCardDelta(updated.appChatId)
+          return { ok: true, entry }
+        },
         proposedPlanDecisionFn: async (action) => {
           const chat = AppStore.getChat(action.threadId)
           if (!chat) return { ok: false, error: 'Thread not found' }

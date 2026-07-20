@@ -622,6 +622,17 @@ export interface BridgeGoalUpdateAction extends BridgeActionMetadata {
   reason?: string
 }
 
+/** Phone-authored Ensemble blackboard note (desktop post-blackboard-entry parity). */
+export interface BridgeBlackboardPostAction extends BridgeActionMetadata {
+  kind: 'blackboardPost'
+  workspaceId: string
+  threadId: string
+  value: string
+  category?: string
+  scope?: string
+  key?: string
+}
+
 export interface BridgeToggleMessagePinAction extends BridgeActionMetadata {
   kind: 'toggleMessagePin'
   workspaceId: string
@@ -814,6 +825,7 @@ export type BridgeActionPayload =
   | BridgeSetThreadTitleAction
   | BridgeSetChatKindAction
   | BridgeGoalUpdateAction
+  | BridgeBlackboardPostAction
   | BridgeToggleMessagePinAction
   | BridgeProposedPlanDecisionAction
   | BridgeCanvasActionAction
@@ -948,6 +960,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'setThreadTitle':
     case 'setChatKind':
     case 'goalUpdate':
+    case 'blackboardPost':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1027,6 +1040,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'setThreadTitle':
     case 'setChatKind':
     case 'goalUpdate':
+    case 'blackboardPost':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1108,6 +1122,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'setThreadTitle':
     case 'setChatKind':
     case 'goalUpdate':
+    case 'blackboardPost':
     case 'toggleMessagePin':
     case 'proposedPlanDecision':
     case 'canvasAction':
@@ -1322,6 +1337,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isGoalUpdate(parsed)
         ? (parsed as unknown as BridgeGoalUpdateAction)
         : { kind: 'unknown', rawKind: 'goalUpdate', raw: parsed }
+    case 'blackboardPost':
+      return isBlackboardPost(parsed)
+        ? (parsed as unknown as BridgeBlackboardPostAction)
+        : { kind: 'unknown', rawKind: 'blackboardPost', raw: parsed }
     case 'toggleMessagePin':
       return isToggleMessagePin(parsed)
         ? (parsed as unknown as BridgeToggleMessagePinAction)
@@ -1934,6 +1953,42 @@ function isGoalUpdate(v: Record<string, unknown>): boolean {
     (typeof v.reason === 'string' && v.reason.length <= BRIDGE_GOAL_REASON_MAX_CHARS)
   )
 }
+
+
+const BRIDGE_BLACKBOARD_VALUE_MAX_CHARS = 1000
+const BRIDGE_BLACKBOARD_KEY_MAX_CHARS = 80
+
+function isBlackboardPost(v: Record<string, unknown>): boolean {
+  if (!isWorkspaceThreadAction(v)) return false
+  if (typeof v.value !== 'string' || v.value.trim().length === 0) return false
+  if (v.value.length > BRIDGE_BLACKBOARD_VALUE_MAX_CHARS) return false
+  if (
+    v.category !== undefined &&
+    !(
+      v.category === 'decision' ||
+      v.category === 'fact' ||
+      v.category === 'risk' ||
+      v.category === 'do-not-repeat' ||
+      v.category === 'note'
+    )
+  ) {
+    return false
+  }
+  if (
+    v.scope !== undefined &&
+    !(v.scope === 'round' || v.scope === 'session' || v.scope === 'chat')
+  ) {
+    return false
+  }
+  if (
+    v.key !== undefined &&
+    !(typeof v.key === 'string' && v.key.length <= BRIDGE_BLACKBOARD_KEY_MAX_CHARS)
+  ) {
+    return false
+  }
+  return true
+}
+
 
 function isToggleMessagePin(v: Record<string, unknown>): boolean {
   return (

@@ -1642,6 +1642,53 @@ describe('decodeBridgeActionPayload', () => {
       expect(payloadIsMutating(payload)).toBe(true)
     })
 
+    it('decodes blackboardPost as a workspace-bound chat control', () => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'blackboardPost',
+          actionId: 'bb-1',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          value: 'Prefer the new TokenService',
+          category: 'decision',
+          scope: 'session'
+        })
+      )
+      expect(payload.kind).toBe('blackboardPost')
+      if (payload.kind !== 'blackboardPost') throw new Error('expected blackboardPost')
+      expect(payload.value).toBe('Prefer the new TokenService')
+      expect(payload.category).toBe('decision')
+      expect(payload.scope).toBe('session')
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it('rejects malformed blackboardPost payloads', () => {
+      for (const variant of [
+        { kind: 'blackboardPost', workspaceId: 'ws-1', threadId: 't-1' },
+        { kind: 'blackboardPost', workspaceId: 'ws-1', threadId: 't-1', value: '   ' },
+        {
+          kind: 'blackboardPost',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          value: 'ok',
+          category: 'mystery'
+        },
+        {
+          kind: 'blackboardPost',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          value: 'ok',
+          scope: 'forever'
+        }
+      ]) {
+        const { payload } = decodeBridgeActionPayload(encode(variant))
+        expect(payload.kind).toBe('unknown')
+        if (payload.kind === 'unknown') expect(payload.rawKind).toBe('blackboardPost')
+      }
+    })
+
     it('decodes setThreadTitle as a workspace-bound chat control', () => {
       const { payload } = decodeBridgeActionPayload(
         encode({
