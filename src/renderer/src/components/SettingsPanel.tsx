@@ -335,8 +335,7 @@ interface SettingsPanelProps {
   claudeAuthStatus?: ProviderApiKeyStatus | null
   kimiAuthStatus?: ProviderApiKeyStatus | null
   ollamaStatus?: any
-  /** Historical Cursor availability is always false under the no-spawn gate;
-   * Grok remains a CLI-login provider with terminal-managed auth. */
+  /** Cursor and Grok are CLI-login providers with terminal-managed auth. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
   claudeLoginState?: 'idle' | 'loading' | 'success' | 'error'
@@ -349,8 +348,7 @@ interface SettingsPanelProps {
   onStoreKimiApiKey?: (key: string) => void
   onClearKimiApiKey?: () => void
   onProviderUpgrade?: (provider: ProviderId) => void
-  // Open a Terminal running a qualified provider's interactive CLI login. Grok
-  // remains supported; historical Cursor requests are rejected main-side.
+  // Open a Terminal running a provider's interactive CLI login (Cursor, Grok, …).
   onProviderLogin?: (provider: ProviderId) => void
   onProviderLogout?: (provider: ProviderId) => void
   onRemoveAgenticWorkspaceGrant?: (
@@ -1113,7 +1111,7 @@ export function userMcpServerReadiness(server: UserMcpServerConfig): UserMcpServ
   if (server.transport === 'sse') {
     notes.push('SSE attaches to Claude only')
   } else {
-    notes.push('Cursor JSON is export-only; TaskWraith starts no managed Cursor run')
+    notes.push('Cursor JSON exports for Cursor MCP config; TaskWraith Path-B runs use the real ~/.cursor login under OS sandbox')
   }
   if (!server.enabled) {
     return {
@@ -3265,8 +3263,8 @@ function SettingsProviderAuthCard({
   // borrow the amber `partial` dot styling rather than fall back to the
   // neutral base dot. Grok is a CLI-owned auth surface: when the adapter is
   // available, its card should read as ready/connected even though TaskWraith
-  // cannot inspect the provider's private login state. Cursor uses the
-  // explicit security-unavailable summary and never enters this partial path.
+  // cannot inspect the provider's private login state. Cursor and Grok both
+  // use that partial → ready-dot path.
   const dotVariant =
     summary.variant === 'out-of-usage'
       ? 'partial'
@@ -4745,13 +4743,11 @@ export function SettingsPanel({
     ? !claudeAuthStatus.encryptionAvailable
     : false
   const kimiApiKeyStorageUnavailable = kimiAuthStatus ? !kimiAuthStatus.encryptionAvailable : false
-  void cursorProviderAvailable
-  const cursorAuthSummary: ProviderAuthSummary = {
-    variant: 'not-available',
-    statusText: 'Managed runs unavailable',
-    hint:
-      'TaskWraith starts no Cursor process while provider-managed startup hooks, skills, plugins, and MCP sources remain unqualified.'
-  }
+  const cursorAuthSummary = summariseCliProviderEnabled(
+    cursorProviderAvailable,
+    'Cursor',
+    'Sign in once with `cursor-agent login` in your shell; runs are contained by the native OS sandbox.'
+  )
   const grokAuthSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
     'Grok',
@@ -4813,21 +4809,20 @@ export function SettingsPanel({
       (provider === activeProvider ? providerCapabilities : null)
     const status = mcpStatusByProvider?.[provider]
     // Grok gets the brokered TaskWraith MCP bridge through its provider-native
-    // MCP surface. Cursor is disabled. The accurate per-provider state/source/tools
-    // message comes from the capability contract; these blocks only seed the card
-    // BEFORE the contract has loaded so it doesn't flash stale delegated copy.
+    // MCP surface. Cursor uses native tools under the OS sandbox. These blocks only
+    // seed the card BEFORE the contract has loaded so it doesn't flash stale copy.
     const provisionalFallback =
       contract?.mcp
         ? null
         : provider === 'cursor'
           ? {
-              state: 'unavailable' as const,
-              source: 'unsupported',
-              serverName: 'not connected',
+              state: 'delegated' as const,
+              source: 'provider-managed',
+              serverName: 'provider-managed',
               toolCount: 0,
-              providerManaged: false,
+              providerManaged: true,
               message:
-                'Cursor managed runs and MCP attachment are unavailable pending exact-build startup-containment qualification.'
+                'Cursor runs native tools contained by the OS sandbox. TaskWraith host tools are not injected into Cursor.'
             }
           : provider === 'grok'
             ? {
@@ -7037,14 +7032,38 @@ export function SettingsPanel({
                     provider="cursor"
                     label="Cursor"
                     summary={cursorAuthSummary}
-                    description="Configuration/history only. Managed Cursor runs are disabled before process launch."
+                    description="Cursor Composer 2.5 for write-capable agentic runs via the Cursor CLI, contained by the native OS sandbox."
                     optional
                   >
+                    <div className="settings-provider-auth-command">
+                      <code>cursor-agent login</code>
+                      <span>Run once in Terminal for official Cursor CLI runtime auth.</span>
+                    </div>
+                    <div className="settings-provider-auth-action-row">
+                      <PillButton
+                        size="compact"
+                        variant="primary"
+                        onClick={() => onProviderLogin?.('cursor')}
+                        disabled={!onProviderLogin}
+                      >
+                        Open Terminal to sign in
+                      </PillButton>
+                      <PillButton
+                        size="compact"
+                        variant="danger"
+                        onClick={() => onProviderLogout?.('cursor')}
+                        disabled={!onProviderLogout}
+                      >
+                        Open Terminal to sign out
+                      </PillButton>
+                      {renderProviderUpgradeButton('cursor')}
+                    </div>
                     <p className="settings-provider-auth-footnote">
-                      No login, logout, upgrade, Plan, MCP, shell, write, or resume action is
-                      offered because each would initialize unqualified provider-managed startup
-                      surfaces. Use another provider while the exact-build canary is pending.
+                      TaskWraith stores no Cursor credential; auth stays inside the Cursor CLI.
+                      Runs use the real ~/.cursor login under a contained --sandbox argv.
+                      {renderProviderUpgradeHint('cursor')}
                     </p>
+                    {renderProviderPauseControls('cursor')}
                   </SettingsProviderAuthCard>
                   <SettingsProviderAuthCard
                     provider="grok"

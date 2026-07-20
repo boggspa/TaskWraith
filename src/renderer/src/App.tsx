@@ -6385,10 +6385,7 @@ function App(): React.JSX.Element {
             ? adapters.map((adapter) => (adapter as { provider?: string } | null)?.provider)
             : []
           setGrokProviderAvailable(ids.includes('grok'))
-          // Adapter registration preserves historical decoding; it is not
-          // live-run admission. Cursor remains unavailable until its exact CLI
-          // build passes startup-containment qualification.
-          setCursorProviderAvailable(false)
+          setCursorProviderAvailable(ids.includes('cursor'))
         })
         .catch(() => {})
     }

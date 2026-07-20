@@ -92,10 +92,8 @@ export interface FirstLaunchSheetProps {
   /** Claude / Kimi auth status objects from App.tsx. */
   claudeAuthStatus: ProviderApiKeyStatus | null
   kimiAuthStatus: ProviderApiKeyStatus | null
-  /** Cursor remains visible as disabled configuration/history; Grok is a
-   * CLI-login provider. Cursor availability must not be presented as run
-   * readiness because production starts no managed Cursor process.
-   * Optional so older hosts / static tests can omit them. */
+  /** Cursor and Grok are CLI-login providers. Optional so older hosts /
+   * static tests can omit them. */
   cursorProviderAvailable?: boolean
   grokProviderAvailable?: boolean
   /** Ollama local mode has no sign-in; this only reflects whether
@@ -357,13 +355,11 @@ export function FirstLaunchSheet({
   const codexSummary = summariseCodexStatus(codexStatus)
   const claudeSummary = summariseProviderApiKeyStatus(claudeAuthStatus, 'Claude')
   const kimiSummary = summariseProviderApiKeyStatus(kimiAuthStatus, 'Kimi')
-  void cursorProviderAvailable
-  const cursorSummary: ProviderAuthSummary = {
-    variant: 'not-available',
-    statusText: 'Managed runs unavailable',
-    hint:
-      'TaskWraith will not start Cursor, including Plan runs, until the exact CLI build passes startup-containment qualification.'
-  }
+  const cursorSummary = summariseCliProviderEnabled(
+    cursorProviderAvailable,
+    'Cursor',
+    'Sign in once with `cursor-agent login` in your shell, then launch Cursor runs.'
+  )
   const grokSummary = summariseCliProviderEnabled(
     grokProviderAvailable,
     'Grok',
@@ -398,9 +394,8 @@ export function FirstLaunchSheet({
       id: 'cursor',
       label: 'Cursor',
       description:
-        'Configuration and historical records remain visible, but TaskWraith starts no managed Cursor process. Plan and tool modes are disabled pending stronger startup containment.',
+        'Cursor Composer 2.5. Write-capable agentic runs via the Cursor CLI, contained by the native OS sandbox. Sign-in is at the OS level — run `cursor-agent login` in your terminal once.',
       ...cursorSummary,
-      localOnly: true,
       optional: true
     },
     {
@@ -567,9 +562,9 @@ export function FirstLaunchSheet({
             usage-only, and its exact runtime must also pass admission. <strong>Ollama</strong>{' '}
             is local-first: install
             Ollama and pull a model with no cloud account, or optionally sign in for Ollama Cloud /
-            Turbo and private models. Grok auth stays inside its CLI, so TaskWraith may ask you to
-            finish login in Terminal. Cursor is shown for configuration/history only; authentication
-            does not make managed Cursor runs available in this source-ahead build.
+            Turbo and private models. <strong>Cursor</strong> and Grok auth stay inside their CLIs,
+            so TaskWraith may ask you to finish login in Terminal (<code>cursor-agent login</code>
+            / Grok CLI). Cursor runs use the real ~/.cursor login under a contained --sandbox argv.
           </p>
           <div className="first-launch-sheet-provider-grid">
             {providerRows.map((row) => (
