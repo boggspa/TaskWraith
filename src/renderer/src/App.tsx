@@ -661,13 +661,17 @@ import {
 } from './lib/projectReferenceContextSelection'
 import { projectReferenceContextDisclosure } from '../../shared/projectReferenceContext'
 import {
+  addProjectGraphEdge,
   addProjectReference,
   getProjectWorkProfile,
+  listProjectGraphEdges,
   listProjectReferences,
   listProjects,
+  removeProjectGraphEdge,
   setProjectHomeChat,
   subscribeProjects
 } from './lib/projectsStore'
+import { buildProjectThreadGraphProjection } from './lib/projectThreadGraphProjection'
 import { summarizeReferenceAttention } from './lib/projectReferencePresentation'
 import { planPendingHomeClaims, resolveStartProjectHomeTarget } from './lib/projectHomeClaims'
 import {
@@ -2966,6 +2970,12 @@ function App(): React.JSX.Element {
   const [workspaceBoards, setWorkspaceBoards] = useState<WorkspaceBoardDefinition[]>([])
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
+  const [activeProjectGraphId, setActiveProjectGraphId] = useState<string | null>(null)
+  // A focused chat always closes the project thread-graph overlay (mirrors how
+  // opening a chat clears the workspace-board overlay), so the two never stack.
+  useEffect(() => {
+    if (currentChat?.appChatId) setActiveProjectGraphId(null)
+  }, [currentChat?.appChatId])
   const [workspaceBoardCreatorOpen, setWorkspaceBoardCreatorOpen] = useState(false)
   const [capabilityLedgerSnapshot, setCapabilityLedgerSnapshot] =
     useState<CapabilityLedgerSnapshot | null>(null)
@@ -16088,11 +16098,55 @@ function App(): React.JSX.Element {
     setSideChatId(null)
     setSideChatMenuOpen(false)
     setActiveWorkspaceBoardId(boardId)
+    setActiveProjectGraphId(null)
     setRawLogs([])
     setRunCompleteNotice(null)
     setDiff(null)
     setRunDiff(null)
     setShowGeminiTerminal(false)
+  }
+
+  const enterProjectGraphMode = (projectId: string): void => {
+    setCurrentChatIdForNavigation(null)
+    setCurrentChat(null)
+    setActiveSidebarChatId(null)
+    setSideChatId(null)
+    setSideChatMenuOpen(false)
+    setActiveWorkspaceBoardId(null)
+    setActiveProjectGraphId(projectId)
+    setRawLogs([])
+    setRunCompleteNotice(null)
+    setDiff(null)
+    setRunDiff(null)
+    setShowGeminiTerminal(false)
+  }
+
+  const handleOpenProjectGraph = (project: { id: string }): void => {
+    enterProjectGraphMode(project.id)
+  }
+
+  const handleBackFromProjectGraph = (): void => {
+    setActiveProjectGraphId(null)
+  }
+
+  const handleOpenThreadFromProjectGraph = (chatId: string): void => {
+    const chat = chats.find((candidate) => candidate.appChatId === chatId)
+    if (chat) void handleSelectChat(chat)
+  }
+
+  const handleAddProjectDependency = (fromChatId: string, toChatId: string): void => {
+    if (activeProjectGraphId == null) return
+    void addProjectGraphEdge({ projectId: activeProjectGraphId, fromChatId, toChatId }).catch(
+      (error) => {
+        console.error('Failed to add project dependency edge', error)
+      }
+    )
+  }
+
+  const handleRemoveProjectDependency = (edgeId: string): void => {
+    void removeProjectGraphEdge(edgeId).catch((error) => {
+      console.error('Failed to remove project dependency edge', error)
+    })
   }
 
   const handleCreateWorkspaceBoard = async (input?: WorkspaceBoardCreateInput) => {
@@ -28529,6 +28583,26 @@ function App(): React.JSX.Element {
     ? workspaceBoardCards.filter((card) => card.boardId === activeWorkspaceBoard.id)
     : []
 
+  const activeProjectGraphProjection = useMemo(() => {
+    void projectsRevision
+    if (activeProjectGraphId == null) return null
+    const project = listProjects().find(
+      (candidate) => candidate.id === activeProjectGraphId && !candidate.archived
+    )
+    if (!project) return null
+    const homeChatId = getProjectWorkProfile(project.id)?.homeChatId
+    return buildProjectThreadGraphProjection({
+      projectId: project.id,
+      projectName: project.name,
+      memberChatIds: project.memberChatIds,
+      chats,
+      graphEdges: listProjectGraphEdges(project.id),
+      runningChatIds,
+      ...(homeChatId ? { homeChatId } : {})
+    })
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeProjectGraphId, projectsRevision, chats, runningChatIds])
+
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
@@ -28542,6 +28616,13 @@ function App(): React.JSX.Element {
     activeWorkspaceBoardCards,
     activeWorkspaceBoardId,
     activeWorkspaceBoardWorkspace,
+    activeProjectGraphId,
+    activeProjectGraphProjection,
+    onOpenProjectGraph: handleOpenProjectGraph,
+    onBackFromProjectGraph: handleBackFromProjectGraph,
+    onOpenThreadFromProjectGraph: handleOpenThreadFromProjectGraph,
+    onAddProjectDependency: handleAddProjectDependency,
+    onRemoveProjectDependency: handleRemoveProjectDependency,
     advancedFxIntensity,
     agentMcpStatusByProvider,
     agentStatusByProvider,

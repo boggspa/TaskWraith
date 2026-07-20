@@ -70,6 +70,8 @@ interface ProjectsSidebarViewProps {
   /** Open the References dock panel for this project — the discoverable link
    * from the sidebar's compact library section to the full dock surface. */
   onOpenReferencesLibrary?: (projectId: string) => void
+  /** Open the project's thread-graph pane (nodes = the project's threads). */
+  onOpenThreadGraph?: (projectId: string) => void
   /** Registered workspaces, for the profile's preferred-workspace picker. */
   workspaces?: readonly WorkspaceRecord[]
   onSearchResultCountChange?: (count: number) => void
@@ -236,6 +238,7 @@ export function ProjectsSidebarView({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  onOpenThreadGraph,
   workspaces = [],
   onSearchResultCountChange,
   initialSelectedProjectId = null
@@ -1013,6 +1016,17 @@ export function ProjectsSidebarView({
                       aria-label={`Open ${project.name} reference library`}
                     >
                       Library
+                    </button>
+                  )}
+                  {onOpenThreadGraph && (
+                    <button
+                      type="button"
+                      className="sidebar-project-icon-button sidebar-project-open-graph"
+                      onClick={() => onOpenThreadGraph(project.id)}
+                      title="Open thread graph"
+                      aria-label={`Open ${project.name} thread graph`}
+                    >
+                      Graph
                     </button>
                   )}
                   <button

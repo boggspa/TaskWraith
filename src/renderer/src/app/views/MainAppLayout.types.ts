@@ -166,6 +166,13 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   activeWorkspaceBoardCards: any
   activeWorkspaceBoardId: any
   activeWorkspaceBoardWorkspace: any
+  activeProjectGraphId: string | null
+  activeProjectGraphProjection: import('../../lib/projectThreadGraphProjection').ProjectThreadGraphProjection | null
+  onOpenProjectGraph: (project: { id: string }) => void
+  onBackFromProjectGraph: () => void
+  onOpenThreadFromProjectGraph: (chatId: string) => void
+  onAddProjectDependency: (fromChatId: string, toChatId: string) => void
+  onRemoveProjectDependency: (edgeId: string) => void
   capabilityLedgerSnapshot: any
   advancedFxIntensity: any
   agentMcpStatusByProvider: any

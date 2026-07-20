@@ -36,6 +36,7 @@ import { DigitOdometer } from '../../components/DigitOdometer'
 import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
+import { ProjectThreadGraphView } from '../../components/ProjectThreadGraphView'
 import { Inspector, INSPECTOR_TAB_META } from '../../components/Inspector'
 import { RightDockSurfaceSwitcher } from '../../components/RightDockSurfaceSwitcher'
 import { MainPaneActionPill } from '../../components/MainPaneActionPill'
@@ -101,6 +102,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   activeWorkspaceBoardCards,
   activeWorkspaceBoardId,
   activeWorkspaceBoardWorkspace,
+  activeProjectGraphProjection,
+  onOpenProjectGraph,
+  onBackFromProjectGraph,
+  onOpenThreadFromProjectGraph,
+  onAddProjectDependency,
+  onRemoveProjectDependency,
   advancedFxIntensity,
   agentMcpStatusByProvider,
   agentStatusByProvider,
@@ -1204,6 +1211,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onStartProjectHome={handleStartProjectHome}
                 onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
+                onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }
@@ -1504,6 +1512,17 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
           />
         )}
 
+        {!isChatPopoutWindow && !showSettings && activeProjectGraphProjection && (
+          <ProjectThreadGraphView
+            projection={activeProjectGraphProjection}
+            projectName={activeProjectGraphProjection.title}
+            onBack={onBackFromProjectGraph}
+            onOpenThread={onOpenThreadFromProjectGraph}
+            onAddDependency={onAddProjectDependency}
+            onRemoveDependency={onRemoveProjectDependency}
+          />
+        )}
+
         {isLinkedChatPopout && currentChat && (
           <div
             className="side-chat-floating-actions side-chat-popout-actions"
@@ -1565,7 +1584,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         <div
           ref={chatSplitRegionRef}
           className={`chat-split-region ${sidePanelLayoutClass} ${
-            showSettings || (workspaceBoardApiReady && Boolean(activeWorkspaceBoard))
+            showSettings ||
+            (workspaceBoardApiReady && Boolean(activeWorkspaceBoard)) ||
+            Boolean(activeProjectGraphProjection)
               ? 'chat-split-hidden-for-settings'
               : ''
           }`}

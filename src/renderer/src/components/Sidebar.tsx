@@ -211,6 +211,7 @@ interface SidebarProps {
   onSelectedProjectChange?: (projectId: string | null) => void
   /** Open the References dock panel for a project (Work panel pass-through). */
   onOpenReferencesLibrary?: (projectId: string) => void
+  onOpenThreadGraph?: (projectId: string) => void
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
@@ -2813,6 +2814,7 @@ export function Sidebar({
   onStartProjectHome,
   onSelectedProjectChange,
   onOpenReferencesLibrary,
+  onOpenThreadGraph,
   onOpenChatInSidePanel,
   onOpenInMultiview,
   onOpenSettings,
@@ -4691,6 +4693,7 @@ export function Sidebar({
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
+                onOpenThreadGraph={onOpenThreadGraph}
                 workspaces={workspaces}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
