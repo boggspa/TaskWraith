@@ -93,11 +93,13 @@ describe('one-shot provider transport history join', () => {
       'async function runApprovedHostCommand('
     )
 
-    expect(continuation).toContain('createFallbackRunId(\'codex\')')
-    expect(continuation).toContain('appRunId: continuationRunId')
+    expect(continuation).toContain('createHostRerunContinuationCorrelation({')
+    expect(continuation).toContain('resolveHostRerunContinuationSession({')
     expect(continuation).toContain('providerSessionId: resumeProviderSessionId')
+    expect(continuation).toContain('appRunId: continuationRunId')
+    expect(continuation).toContain('host_rerun_continuation_dispatched')
     expect(continuation).toContain("runCoordinatorRef.dispatch")
-    expect(continuation).toContain('result.dispatched')
+    expect(continuation).toContain('dispatchResult.dispatched')
   })
 
   it('tracks native Codex review before review admission', () => {
