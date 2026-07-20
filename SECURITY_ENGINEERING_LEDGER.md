@@ -1133,10 +1133,11 @@ this file or its verification artifacts.
     revocation tests prove deletion during setup produces zero child spawn.
     Ambiguous Codex app-server start/review timeouts retain the operation and
     await a delayed terminal notification instead of falling back into a second
-    transport. The unsafe same-run-id automatic continuation after the narrow
-    approved host-rerun fallback is fail-closed pending a fresh durable
-    continuation identity; the command result remains projected and the product
-    restoration is tracked in `papercuts/2026-07-19-retro.md`.
+    transport. Automatic continuation after the narrow approved host-rerun
+    fallback now mints an independent continuation run R1
+    (`HostRerunContinuation`) that resumes the existing Codex provider session
+    rather than reusing R0; missing session fails closed. See
+    `papercuts/2026-07-19-retro.md` (Remediated).
   - Solo and Ensemble wakeup services synchronously fence chat/workspace/global
     generations, cancel target timers (including persisted orphan timers), join
     already-fired callbacks, round/fan-out activities, and exact provider
