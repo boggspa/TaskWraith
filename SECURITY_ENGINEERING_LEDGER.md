@@ -33,7 +33,7 @@ this file or its verification artifacts.
 | --- | --- | --- | --- | --- | --- |
 | TW-SEC-2026-001 | Desktop same-provider mention could route to an order-selected seat | High | Remediated | TaskWraith maintainers — Ensemble routing | Verify on the exact candidate tip before clearing the block |
 | TW-SEC-2026-002 | `canvas_eval` exact scripts and results could enter first-party durable history without an approval-bound receipt | Medium | Remediated | TaskWraith maintainers — Canvas/audit | Verify every first-party durable sink; do not broaden the privacy claim beyond the tested boundary |
-| TW-SEC-2026-003 | Authenticated Cursor startup can preload provider-managed execution surfaces before a turn | High | Remediated | TaskWraith maintainers — Cursor runtime | Ship only with unconditional no-spawn intact; block Cursor re-entry until exact-build startup containment qualifies |
+| TW-SEC-2026-003 | Authenticated Cursor startup can preload provider-managed execution surfaces before a turn | High | Remediated (Path-B re-entry) | TaskWraith maintainers — Cursor runtime | Ship Path-B contained `--sandbox` argv only; never bare uncontained spawn; disclose partial-backstop residual risks |
 | TW-SEC-2026-004 | A signed-elevated approval could be accepted after cancellation or history-clear authority ended | High | Remediated | TaskWraith maintainers — Approval lifecycle | Verify the exact integrated cancellation/clear gate before release |
 | TW-SEC-2026-005 | Conflicting compatibility aliases could evade `canvas_eval` redaction or result correlation | Medium | Remediated | TaskWraith maintainers — Canvas compatibility/audit | Verify all provider adapters and durable compatibility lanes on the candidate |
 | TW-SEC-2026-006 | Provider-authored Canvas receipts could contaminate forensic attribution | Medium | Remediated | TaskWraith maintainers — Canvas receipt authority | Verify native and gateway paths use only host-minted receipts |
@@ -148,7 +148,7 @@ this file or its verification artifacts.
 ## TW-SEC-2026-003 — Cursor's authenticated startup surface is outside the broker boundary
 
 - **Date:** 2026-07-19
-- **Severity/status:** High / `Remediated` (source-ahead candidate; verification pending)
+- **Severity/status:** High / `Remediated` via Path-B re-entry (source-ahead; residual partial-backstop residual risk accepted)
 - **Owner:** TaskWraith maintainers — Cursor provider containment
 - **Original evidence and superseded narrow hypothesis:**
   - The first assessment focused on TaskWraith's then-production Cursor launch:
@@ -163,42 +163,47 @@ this file or its verification artifacts.
     `--disable-project-configs`, `--exclude-workspace-context`, and Plan mode.
     This is an authenticated startup-surface finding, not merely a project-MCP
     merge bug.
-- **Impact:** TaskWraith cannot currently bind those opaque startup sources to a
-  seat's signed permission posture or audit every resulting action. Neither
-  Plan nor tool mode has an admissible Cursor production scope.
-- **2026-07-19 remediation update:**
-  - `cursorManagedRunAdmission` in
-    [`CursorManagedRunGate.ts`](src/main/cursor/CursorManagedRunGate.ts) is an
-    unconditional denial. `runCursorProvider`, capability/status projections,
-    ensemble probes, generic CLI launch, terminal auth actions, and renderer
-    dispatch all fail closed without resolving or spawning `cursor-agent`.
-  - Cursor is absent from `LIVE_SELECTABLE_PROVIDER_IDS` in
-    [`retiredProviders.ts`](src/shared/retiredProviders.ts). Historical Cursor
-    records remain decodable, but TaskWraith does not offer Cursor setup or a
-    path to create, mutate, queue, delegate, fork, schedule, or start a live
-    Cursor seat.
-  - The offline helper in
-    [`CursorCliProbe.ts`](src/main/cursor/CursorCliProbe.ts) has no production
-    caller. Its retained `status`/`models` branches are non-admissible historical
-    helper surface; only unauthenticated offline `--version`/`--help` inventory
-    is permitted for qualification work, and that output is not containment
-    evidence.
-  - Regression coverage is anchored by
-    [`CursorManagedRunGate.test.ts`](src/main/cursor/CursorManagedRunGate.test.ts),
-    [`retiredProviders.test.ts`](src/shared/retiredProviders.test.ts),
-    [`ChatService.test.ts`](src/main/services/ChatService.test.ts),
-    [`CliProviderRuntime.test.ts`](src/main/providers/CliProviderRuntime.test.ts),
-    and [`providerTerminalHandlers.test.ts`](src/main/ipc/providerTerminalHandlers.test.ts).
-- **Re-entry criteria:** Cursor may return only after a reviewed exact-build
-  startup-containment suite or stronger sandbox covers account/team hooks,
-  skills, plugins, MCP sources, retained approvals, and the complete runtime
-  tuple; the resulting admissible scope must then be added explicitly to the
-  live-provider and required-verification sets. A future Plan-only fingerprint
-  would not qualify tool mode.
-- **Release disposition:** The product may ship with Cursor unavailable if the
-  unconditional no-spawn path survives the exact candidate gate. Cursor itself
-  remains `Block`ed from re-entry. This entry is not `Verified` merely because
-  focused source-ahead tests are green.
+- **Impact (pre Path-B):** TaskWraith could not bind those opaque startup sources
+  to a seat's signed permission posture or audit every resulting action under
+  the old uncontained argv path. Fail-closed no-spawn was the interim product
+  response.
+- **2026-07-19 interim remediation (fail-closed; superseded for product spawn):**
+  - `cursorManagedRunAdmission` temporarily denied managed runs; Cursor was
+    removed from live-selectable surfaces while historical records stayed
+    decodable. That interim product posture is **no longer** the source-ahead
+    runtime path (see Path-B re-entry below). The gate module remains as
+    qualification/coarse-sync infrastructure and must not be confused with the
+    production `runCursorProvider` entry.
+- **2026-07-20 Path-B re-entry (current source-ahead product posture):**
+  - Managed Cursor is live again in
+    [`LIVE_SELECTABLE_PROVIDER_IDS`](src/shared/retiredProviders.ts).
+  - Production `runCursorProvider` is **always-enabled** (no brittle per-build
+    fingerprint gate on the spawn path). Containment lives on the argv:
+    `buildContainedCursorReadOnlyArgv` / `buildContainedCursorWriteArgv` both
+    hard-pin `--sandbox enabled`, seat-route read-only vs write, guard the
+    prompt behind `--`, and never emit force / yolo / sandbox-disabled /
+    resume-token flags from the production entry.
+  - Path B uses the user's real `~/.cursor` login (own-account trust). Account
+    skills/plugins/MCP may load but are sandbox-bounded. TaskWraith does **not**
+    inject host MCP tools or mediate Cursor per-tool approvals
+    (`taskWraithMcpAdvertised = false`).
+  - Honest residual risk (accepted, not denied): sandbox is validated primarily
+    as a FILE WRITE impact bound for normal project workspaces; a workspace
+    placed directly under `$HOME` can leave `$HOME` writable; network egress is
+    not proven blocked.
+  - Regression anchors include
+    [`CursorManagedRunGate.test.ts`](src/main/cursor/CursorManagedRunGate.test.ts)
+    (production entry uses contained builders only),
+    [`CursorCliArgs.test.ts`](src/main/cursor/CursorCliArgs.test.ts),
+    [`ProviderAdapters.test.ts`](src/main/ProviderAdapters.test.ts),
+    [`retiredProviders.test.ts`](src/shared/retiredProviders.test.ts), and the
+    credentialed live suite
+    [`CursorStartupContainment.live.test.ts`](src/main/cursor/CursorStartupContainment.live.test.ts).
+- **Release disposition:** Source-ahead may ship Path-B Cursor as a selectable
+  managed provider with the residual partial-backstop risks disclosed above.
+  Do not reintroduce bare uncontained `cursor-agent` argv or claim TaskWraith
+  per-tool mediation for Path-B Cursor. Prefer project workspaces outside
+  `$HOME` when untrusted repos matter.
 
 ## TW-SEC-2026-004 — Signed-elevated acceptance could race lifecycle revocation
 

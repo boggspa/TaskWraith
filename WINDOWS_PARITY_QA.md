@@ -75,11 +75,10 @@ Capture each at 100%, 125%, 150%, and 200% scale where the OS supports it:
 - Workflows welcome, sidebar section, scheduled recovery banner, and Run as
   ensemble when the feature gate is enabled.
 - Reusable notification cards on welcome/first-launch surfaces.
-- Provider paths for Codex, Claude, Grok, local Ollama, and admission-gated
-  Kimi, including the packaged source-ahead Kimi-unavailable state while its
-  commissioned qualification roster is empty; plus Cursor's source-ahead
-  security-unavailable/configuration-history surface and the retired-Gemini
-  historical state.
+- Provider paths for Codex, Claude, Grok, local Ollama, Path-B managed Cursor,
+  and admission-gated Kimi, including the packaged source-ahead Kimi-unavailable
+  state while its commissioned qualification roster is empty; plus the
+  retired-Gemini historical state.
 
 ## Themes And Materials
 

@@ -10,8 +10,8 @@ credential, or treats a skipped live suite as a pass.
   binary/version/help/auth probes and writes sanitized aggregate JSON and JUnit.
   `runtimeAvailable`, `reviewedSuiteAvailable`, and `executionPosture` are
   separate. Cursor's binary surfaces are probed in a fresh unauthenticated root;
-  explicit-token presence is checked without starting a credentialed Cursor
-  process, and its TaskWraith posture remains disabled/unqualified.
+  product Path-B managed runs are always-enabled with contained `--sandbox`
+  argv (separate from this probe-only inventory path).
 - `npm run verify:provider-permissions:live` runs the explicit reviewed-suite
   allowlist serially. Unknown binary/capability tuples may produce an
   `unattested_pass` report for human review; they are not release-qualified.
@@ -27,10 +27,12 @@ Live execution is never inferred from credentials being present. It requires the
 explicit `--live` entry point, and the runner executes only files listed in
 `REVIEWED_LIVE_TESTS` in `scripts/provider-containment-canary.cjs`. That allowlist
 contains Kimi's reviewed ACP containment suite and Cursor's reviewed
-native-sandbox read-only suite. Cursor's manifest roster is empty (fail-closed),
-so no managed Cursor run is admissible and the required/release lists stay
-Kimi-only until a live pass mints Cursor's exact fingerprint; a `--live` Cursor
-run only produces review evidence and mints nothing on its own.
+native-sandbox Path-B suite. **Product admission for Cursor is Path-B
+always-enabled** (contained argv on `runCursorProvider`); the live suite is
+containment *evidence*, not the desktop spawn switch. Kimi packaged admission
+still depends on an exact reviewed runtime tuple (embedded roster may be empty).
+A `--live` Cursor run produces review evidence for the sandbox differential; it
+is not required to flip a desktop availability gate.
 
 ## Protected worker workflow
 
@@ -105,8 +107,8 @@ The qualification fingerprint manifest is intentionally empty until live reports
 have been reviewed. Each accepted entry must match all of the following exactly:
 
 - qualification scope (`acp-synthetic-cwd-gateway-v1` for Kimi;
-  `cursor-native-sandbox-readonly-v1` for Cursor, whose manifest roster is empty
-  so it is not yet admissible);
+  `cursor-native-sandbox-readonly-v1` for Cursor Path-B / native-sandbox
+  posture);
 - provider version;
 - normalized capability fingerprint;
 - binary SHA-256;
@@ -122,22 +124,27 @@ access only through the authenticated per-run TaskWraith HTTP gateway.
 
 Cursor's `cursor-native-sandbox-readonly-v1` scope covers its Path-B posture:
 cursor-agent runs against the user's real `~/.cursor` login, contained by the
-native OS sandbox (`--sandbox enabled`, Seatbelt) and a read-only `--mode`, with
-an end-of-options `--` guard immediately before the prompt so a flag-shaped
-prompt cannot re-widen tools or disable the sandbox. The reviewed live suite
-proves the differential: with Write pre-approved, an in-workspace write lands
-while a write to the user's HOME is sandbox-blocked, and the contained argv the
-runtime actually spawns never emits write-widening or sandbox-disabling flags.
-HONEST SCOPE (egress caveat): the sandbox is validated to block FILE WRITES to
-the user HOME only; it is NOT proven to block NETWORK EGRESS, and cursor-agent
-uses the network normally (its own web tools, npx-installed language servers), so
-a non-scrubbed env secret is egress-exfiltratable by a compromised session —
-bounded by own-account trust (Path B), not by the sandbox. The account's own
+native OS sandbox (`--sandbox enabled`, Seatbelt). Read-only seats add a
+read-only `--mode`; write-capable seats use Cursor's default write+shell mode
+still sandboxed. Both production argv builders hard-pin sandbox enablement and
+place an end-of-options `--` guard immediately before the prompt so a
+flag-shaped prompt cannot re-widen tools or disable the sandbox. The reviewed
+live suite proves the differential: with Write pre-approved, an in-workspace
+write lands while a write to the user's HOME is sandbox-blocked for a normal
+project workspace, and the contained argv the runtime actually spawns never
+emits write-widening or sandbox-disabling flags. HONEST SCOPE (egress and
+workspace-placement caveats): the sandbox is validated primarily as a FILE WRITE
+impact bound; it is NOT proven to block NETWORK EGRESS, and cursor-agent uses
+the network normally (its own web tools, npx-installed language servers), so a
+non-scrubbed env secret is egress-exfiltratable by a compromised session —
+bounded by own-account trust (Path B), not by the sandbox. A workspace placed
+directly under `$HOME` can leave `$HOME` writable. The account's own
 skills/plugins/MCP load but are sandbox-bounded; a malicious repo is the main
 residual threat, handled by the sandbox + read-only mode + prompt guard.
-`providers.cursor` is empty, so no managed Cursor run is admissible until a live
-pass mints its exact fingerprint; any legacy `plan-no-tools` probe/fingerprint is
-non-admissible inventory, not containment evidence.
+Product Path-B managed runs are always-enabled on the production spawn path
+(not gated on minting a fingerprint at desktop launch). Any legacy
+`plan-no-tools` probe/fingerprint is non-admissible inventory for Path-B, not
+the production containment story.
 
 The live suite must force each of the nine denied Kimi native tools individually
 (`Bash`, `Glob`, `Grep`, `Read`, `Write`, `Edit`, `WebSearch`, `FetchURL`, and

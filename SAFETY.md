@@ -98,12 +98,15 @@ false`, and a narrow preload bridge.
   TaskWraith-owned home/config roots and advertise only the sanctioned surface.
   A legacy adapter that must mutate provider configuration must restore the
   exact original bytes afterward and fail closed on unsafe config targets.
-- Source-ahead Cursor fails closed before process launch. Authenticated Cursor
-  can preload account/team hooks, managed skills/plugins, and
-  plugin/team/bundled MCP despite fresh roots, excluded workspace context,
-  disabled project configs, and Plan mode. Start no TaskWraith-managed
-  `cursor-agent` process; both Plan and tool modes remain unavailable/unqualified
-  pending an exact-build containment canary or a stronger sandbox.
+- Managed Cursor (Path-B) is always-enabled with containment on the argv:
+  hard-pinned `--sandbox enabled`, seat-routed read-only vs write shapes, and
+  never sandbox-disabled / force / yolo / resume-token from the production
+  entry. Path B accepts own-account trust (real `~/.cursor` login; account
+  skills/plugins/MCP may load but are sandbox-bounded). The sandbox is an
+  honest partial backstop — it blocks many `$HOME`-root sensitive writes for a
+  normal project workspace, but a workspace under `$HOME` can leave `$HOME`
+  writable, and network egress is not proven blocked. Prefer project workspaces
+  outside `$HOME` when untrusted repos matter.
 - External links and file paths should route through the safe shell-open policy;
   do not call `shell.openExternal` directly for untrusted renderer input.
 
