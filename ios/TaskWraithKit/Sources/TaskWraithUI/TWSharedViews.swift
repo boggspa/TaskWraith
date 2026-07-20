@@ -1002,7 +1002,7 @@ struct ProviderModelPicker: View {
     @Binding var fastModeEnabled: Bool
     @Binding var kimiThinkingEnabled: Bool
     var allowsProviderChange: Bool = true
-    /// Compact trigger — a tiny provider-dot + chevron pill (for the unfocused
+    /// Compact trigger — a tiny provider logo + chevron pill (for the unfocused
     /// composer's top-left corner) instead of the full flat-text label. The
     /// popover it opens is identical.
     var compact: Bool = false
@@ -1098,13 +1098,12 @@ struct ProviderModelPicker: View {
         return value
     }
 
-    /// Tiny pill for the unfocused composer's top-left corner: the provider-hued
-    /// dot + a chevron in a small capsule. Opens the same picker popover.
+    /// Tiny pill for the unfocused composer's top-left corner: the first-party
+    /// provider logo + a chevron in a small capsule. Opens the same picker popover.
     private var compactPickerLabel: some View {
         HStack(spacing: 3) {
-            Circle()
-                .fill(TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: displayModelLabel))
-                .frame(width: 7, height: 7)
+            ProviderLogoIcon(
+                provider: provider, modelId: displayModelId, size: 12)
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundStyle(TWTheme.textMuted)
@@ -1121,17 +1120,17 @@ struct ProviderModelPicker: View {
         // text is the tap target; no pill chrome. Ollama-backed display
         // brands spoof their upstream brand name + hue (e.g. Qwen → Alibaba)
         // so the pill matches the transcript header and the Mac.
+        // Density: caption2 chip keeps the composer chrome compact on phone.
         let modelLabel = displayModelLabel
-        return HStack(spacing: 6) {
-            Circle()
-                .fill(TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: modelLabel))
-                .frame(width: 7, height: 7)
+        return HStack(spacing: 4) {
+            ProviderLogoIcon(
+                provider: provider, modelId: displayModelId, size: 12)
             Text(TWTheme.providerLabel(provider, modelId: displayModelId, modelLabel: modelLabel))
-                .font(.caption.weight(.semibold))
+                .font(.caption2.weight(.semibold))
                 .foregroundStyle(
                     TWTheme.providerAccent(provider, modelId: displayModelId, modelLabel: modelLabel))
             Text(modelLabel ?? "")
-                .font(.caption)
+                .font(.caption2)
                 .foregroundStyle(TWTheme.textPrimary)
                 .lineLimit(1)
             if let reasoningLabel {
@@ -1147,10 +1146,10 @@ struct ProviderModelPicker: View {
                 .id(reasoningEffort ?? "")
             }
             Image(systemName: "chevron.up.chevron.down")
-                .font(.system(size: 8, weight: .semibold))
+                .font(.system(size: 7, weight: .semibold))
                 .foregroundStyle(TWTheme.textMuted)
         }
-        .padding(.vertical, 3)
+        .padding(.vertical, 2)
         .contentShape(Rectangle())
     }
 
@@ -1161,11 +1160,13 @@ struct ProviderModelPicker: View {
     // grabber is layered on in a follow-up slice.
     @ViewBuilder
     private var pickerPopover: some View {
+        // Compact density: tighter list + sidecar so the glass panel sits
+        // smaller on phone without losing the ladder / Fast controls.
         VStack(spacing: 0) {
             grabber
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
-                    VStack(alignment: .leading, spacing: 2) {
+                    VStack(alignment: .leading, spacing: 1) {
                         if allowsProviderChange {
                             ForEach(catalogs) { catalog in
                                 providerSection(catalog)
@@ -1174,21 +1175,21 @@ struct ProviderModelPicker: View {
                             modelRows(for: catalog)
                         }
                     }
-                    .padding(.top, 2)
-                    .padding(.bottom, 8)
+                    .padding(.top, 1)
+                    .padding(.bottom, 6)
                 }
-                .frame(width: showsReasoningSidecar ? 232 : 240)
+                .frame(width: showsReasoningSidecar ? 200 : 208)
                 .frame(maxHeight: .infinity)
                 if showsReasoningSidecar {
                     reasoningSidecar
                         .frame(maxHeight: .infinity)
                 }
             }
-            .frame(height: showsReasoningSidecar ? 322 : nil)
-            .frame(maxHeight: 360)
+            .frame(height: showsReasoningSidecar ? 276 : nil)
+            .frame(maxHeight: 308)
         }
-        .frame(width: showsReasoningSidecar ? 312 : 240)
-        .twPickerGlassSurface()
+        .frame(width: showsReasoningSidecar ? 268 : 208)
+        .twPickerGlassSurface(cornerRadius: 14)
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
     }
@@ -1200,10 +1201,10 @@ struct ProviderModelPicker: View {
     private var grabber: some View {
         Capsule()
             .fill(TWTheme.textMuted.opacity(0.5))
-            .frame(width: 36, height: 5)
+            .frame(width: 28, height: 4)
             .frame(maxWidth: .infinity)
-            .padding(.top, 8)
-            .padding(.bottom, 2)
+            .padding(.top, 6)
+            .padding(.bottom, 1)
             .contentShape(Rectangle())
             .gesture(
                 DragGesture(minimumDistance: 6)
@@ -1226,17 +1227,17 @@ struct ProviderModelPicker: View {
     private func providerSection(_ catalog: ProviderModelCatalog) -> some View {
         let isCurrent = catalog.provider.lowercased() == provider.lowercased()
         let accent = TWTheme.providerAccent(catalog.provider)
-        HStack(spacing: 8) {
-            Circle().fill(accent).frame(width: 7, height: 7)
+        HStack(spacing: 6) {
+            ProviderLogoIcon(provider: catalog.provider, size: 12)
             Text(TWTheme.providerLabel(catalog.provider))
-                .font(.caption2.weight(.semibold))
+                .font(.system(size: 10, weight: .semibold))
                 .textCase(.uppercase)
                 .foregroundStyle(isCurrent ? accent : TWTheme.textSecondary)
             Spacer()
         }
-        .padding(.horizontal, 14)
-        .padding(.top, 10)
-        .padding(.bottom, 2)
+        .padding(.horizontal, 10)
+        .padding(.top, 6)
+        .padding(.bottom, 1)
         modelRows(for: catalog)
     }
 
@@ -1293,10 +1294,10 @@ struct ProviderModelPicker: View {
     }
 
     private var reasoningSidecar: some View {
-        VStack(spacing: 10) {
+        VStack(spacing: 6) {
             if !enabledLadderIndices.isEmpty {
                 Text(currentLadderLabel)
-                    .font(.caption2.weight(.semibold))
+                    .font(.system(size: 10, weight: .semibold))
                     .foregroundStyle(TWTheme.providerAccent(provider))
                     .lineLimit(1)
                     .minimumScaleFactor(0.6)
@@ -1314,10 +1315,10 @@ struct ProviderModelPicker: View {
                 fastPill(for: fast)
             }
         }
-        .padding(.top, 12)
-        .padding(.bottom, 14)
-        .padding(.horizontal, 6)
-        .frame(width: 80)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .padding(.horizontal, 4)
+        .frame(width: 68)
         .overlay(alignment: .leading) {
             Rectangle().fill(TWTheme.border).frame(width: 0.5)
         }
@@ -1362,13 +1363,13 @@ struct ProviderModelPicker: View {
             case .locked: break
             }
         } label: {
-            HStack(spacing: 3) {
-                Image(systemName: "bolt.fill").font(.system(size: 8, weight: .bold))
-                Text("Fast").font(.caption2.weight(.semibold))
+            HStack(spacing: 2) {
+                Image(systemName: "bolt.fill").font(.system(size: 7, weight: .bold))
+                Text("Fast").font(.system(size: 10, weight: .semibold))
             }
             .foregroundStyle(on ? Color.white : TWTheme.textSecondary)
-            .padding(.horizontal, 8)
-            .padding(.vertical, 4)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 3)
             .frame(maxWidth: .infinity)
             .background(Capsule().fill(on ? accent : Color.clear))
             .overlay(Capsule().strokeBorder(on ? Color.clear : TWTheme.border, lineWidth: 0.5))
@@ -1398,26 +1399,26 @@ struct ProviderModelPicker: View {
             guard !disabled else { return }
             action()
         } label: {
-            HStack(spacing: 8) {
+            HStack(spacing: 6) {
                 Text(title)
-                    .font(.subheadline)
+                    .font(.caption)
                     .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
                     .lineLimit(1)
                 Spacer()
                 if fast {
                     Image(systemName: "bolt.fill")
-                        .font(.system(size: 10, weight: .bold))
+                        .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(accent.opacity(0.85))
                 }
                 if selected {
                     Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
+                        .font(.caption2.weight(.bold))
                         .foregroundStyle(accent)
                 }
             }
             .contentShape(Rectangle())
-            .padding(.horizontal, 14)
-            .padding(.vertical, 8)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
         }
         .buttonStyle(.plain)
         .disabled(disabled)
@@ -1454,6 +1455,13 @@ struct ProviderModelPicker: View {
         if id.count > 22 { return String(id.prefix(20)) + "…" }
         return id
     }
+
+    #if DEBUG
+    /// Canvas-only surface: the open glass panel without popover presentation
+    /// chrome. Used by `ProviderModelPicker+Previews.swift` so phone vs pad
+    /// spacing can be tuned in Xcode without Simulator/device.
+    var twCanvasOpenPanel: some View { pickerPopover }
+    #endif
 }
 
 // MARK: - Reasoning ladder (sidecar slider)
@@ -1591,7 +1599,7 @@ private struct ChipReasoningSuffix: View {
     }
 
     private func suffixText(weight: Font.Weight) -> Text {
-        Text("· \(label)").font(.caption.weight(weight))
+        Text("· \(label)").font(.caption2.weight(weight))
     }
 
     private func shimmering(
@@ -1743,10 +1751,10 @@ private struct ReasoningLadder: View {
         GeometryReader { geo in
             let h = geo.size.height
             let cx = geo.size.width / 2
-            let trackW: CGFloat = 30
+            let trackW: CGFloat = 24
             // Coloured fill reaches up to the thumb (its centre offset from the
             // bottom); above that stays the neutral empty rail.
-            let fillH = 11 + max(1, h - 22) * CGFloat(currentIndex) / 6
+            let fillH = 9 + max(1, h - 18) * CGFloat(currentIndex) / 6
             let effects = TWReasoningLadderEffectProfile.forIndex(currentIndex)
             ZStack {
                 // Empty base track (unfilled rail above the thumb).
@@ -1838,13 +1846,13 @@ private struct ReasoningLadder: View {
     }
 
     private func yFor(_ index: Int, height: CGFloat) -> CGFloat {
-        let inset: CGFloat = 11
+        let inset: CGFloat = 9
         let usable = max(1, height - inset * 2)
         return inset + usable * (1 - CGFloat(index) / 6)
     }
 
     private func snap(toY y: CGFloat, height: CGFloat) {
-        let inset: CGFloat = 11
+        let inset: CGFloat = 9
         let usable = max(1, height - inset * 2)
         let frac = max(0, min(1, 1 - (y - inset) / usable))
         let raw = Int((frac * 6).rounded())
@@ -1859,7 +1867,7 @@ private struct ReasoningLadder: View {
     }
 
     private var metallicThumb: some View {
-        RoundedRectangle(cornerRadius: 3, style: .continuous)
+        RoundedRectangle(cornerRadius: 2.5, style: .continuous)
             .fill(
                 LinearGradient(
                     colors: [
@@ -1869,16 +1877,16 @@ private struct ReasoningLadder: View {
                     startPoint: .top, endPoint: .bottom
                 )
             )
-            .frame(width: 43, height: 15)
+            .frame(width: 34, height: 12)
             .overlay(
-                RoundedRectangle(cornerRadius: 3, style: .continuous)
+                RoundedRectangle(cornerRadius: 2.5, style: .continuous)
                     .strokeBorder(Color.black.opacity(0.25), lineWidth: 0.5)
             )
             .overlay(
                 Rectangle().fill(Color.white.opacity(0.65))
-                    .frame(height: 0.5).padding(.horizontal, 7)
+                    .frame(height: 0.5).padding(.horizontal, 5)
             )
-            .shadow(color: .black.opacity(0.32), radius: 1.5, y: 0.5)
+            .shadow(color: .black.opacity(0.32), radius: 1.2, y: 0.5)
     }
 
     private func sparkleField(
@@ -2141,7 +2149,7 @@ private struct ProviderModelPickerSheet: View {
             }
         } label: {
             HStack(spacing: 10) {
-                Circle().fill(accent).frame(width: 8, height: 8)
+                ProviderLogoIcon(provider: catalog.provider, size: 16)
                 Text(TWTheme.providerLabel(catalog.provider))
                     .foregroundStyle(selected ? accent : TWTheme.textPrimary)
                     .fontWeight(selected ? .semibold : .regular)
@@ -3379,12 +3387,12 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 // AttributedString and @mentions tinted by participant provider accent.
 // Deliberately dependency-free and bounded (preview text is ≤ a few KB).
 
-/// Provider mnemonic glyph — the sidebar's upgrade from the plain colored
-/// dot. Loads a white-on-alpha template PNG from the app asset catalog or
-/// package resources and paints it twice at runtime: a black contrast
-/// silhouette behind the provider accent. One master still serves every theme.
-/// Ensembles and providers with a baked glyph use the template PNG;
-/// providers without one (qwen, unknown) keep the original dot.
+/// Monoline mnemonic glyph — fallback when no first-party logo exists
+/// (Ensemble, unknown providers). Prefer ``ProviderLogoIcon`` for ordinary
+/// provider identity. Loads a white-on-alpha template PNG from the app asset
+/// catalog or package resources and paints a black contrast silhouette behind
+/// the provider accent. One master still serves every theme; providers without
+/// a baked glyph keep a colored dot.
 public struct ProviderGlyphIcon: View {
     let provider: String?
     let modelId: String?
@@ -3505,9 +3513,10 @@ enum ProviderLogoAssetResolver {
     }
 }
 
-/// Original-colour provider identity mark for use directly beside a provider
-/// or model label. Generic identity pickers and icon-only contexts continue to
-/// use ``ProviderGlyphIcon``; Ensemble and unknown providers fall back to it.
+/// Original-colour first-party provider mark (design-assets provider-logos,
+/// vendored under package Resources). Prefer this over ``ProviderGlyphIcon``
+/// for provider identity anywhere beside a label or in list chrome. Ensemble
+/// and unknown providers fall back to the monoline glyph.
 public struct ProviderLogoIcon: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -5805,7 +5814,7 @@ public struct EditableRosterStrip: View {
                         .font(.system(size: 8, weight: .bold))
                         .foregroundStyle(TWTheme.textMuted)
                 } else {
-                    ProviderGlyphIcon(provider: entry.provider, modelId: entry.model, size: 12)
+                    ProviderLogoIcon(provider: entry.provider, modelId: entry.model, size: 12)
                         .opacity(live ? 1 : 0.45)
                 }
                 Text(title)
