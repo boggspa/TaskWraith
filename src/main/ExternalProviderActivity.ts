@@ -308,17 +308,21 @@ export async function loadExternalProviderUsageRecords(
   // A cold-cache scan runs for minutes; persisting only at the end meant
   // quitting mid-scan threw away every file parsed so far, so the next launch
   // redid the whole walk — and a user who quits during launch never escapes
-  // that loop. Checkpointing per provider makes progress durable. Persist is
-  // dirty-gated and atomic (tmp + rename), so the extra calls are cheap no-ops
-  // when a provider parsed nothing new.
-  const nested = await Promise.all(
-    readers.map(async (reader) => {
-      const events = await safeRead(reader, homeDir, sinceMs)
-      await persistExternalActivityFileCacheIfDirty(fileCachePath)
-      return events
-    })
-  )
-  await persistExternalActivityFileCacheIfDirty(fileCachePath)
+  // that loop. Checkpointing per provider makes progress durable.
+  //
+  // CRITICAL: providers MUST run serially for checkpoint persists. The file
+  // cache module clears `dirty` at the end of every persist. Under Promise.all,
+  // one provider's setCached(dirty=true) can race another provider's in-flight
+  // persist which then sets dirty=false — the waiting provider's checkpoint
+  // no-ops and its entries never reach disk. Linux CI then fails "persists
+  // across process restarts" (codex totalTokens undefined) after
+  // resetExternalActivityFileCacheForTests(). Serial read+checkpoint avoids
+  // that wipe race without changing ExternalActivityFileCache.
+  const nested: ExternalUsageEvent[][] = []
+  for (const reader of readers) {
+    nested.push(await safeRead(reader, homeDir, sinceMs))
+    await persistExternalActivityFileCacheIfDirty(fileCachePath)
+  }
   const byId = new Map<string, UsageRecord>()
   for (const event of nested.flat()) {
     const record = eventToUsageRecord(event)
