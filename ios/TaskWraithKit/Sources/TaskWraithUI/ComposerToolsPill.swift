@@ -43,9 +43,9 @@ private struct ComposerAbovePillChrome: ViewModifier {
 
 // MARK: - Pill
 
-/// Compact floating tools pill (blurred composer). Opens a hierarchical
-/// picker for Ensemble / Goal / Plan / Blackboard — the controls that only
-/// live on the focused telemetry rail.
+/// Compact floating tools pill (blurred composer). Icon-only chip using the
+/// same Ensemble / Goal / Plan / Blackboard glyphs as the focused telemetry
+/// rail; opens a hierarchical picker for those controls.
 public struct ComposerToolsPill: View {
     let isEnsemble: Bool
     let ensembleToggleVisible: Bool
@@ -112,24 +112,54 @@ public struct ComposerToolsPill: View {
         Button {
             presented = true
         } label: {
-            HStack(spacing: 6) {
-                Image(systemName: "slider.horizontal.3")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TWTheme.textSecondary)
-                Text("Tools")
-                    .font(.caption.weight(.semibold))
-                    .foregroundStyle(TWTheme.textSecondary)
-                if isEnsemble {
-                    Image(systemName: "person.3.fill")
-                        .font(.system(size: 9, weight: .semibold))
-                        .foregroundStyle(TWTheme.chroma2)
+            // Dedicated Ensemble / Goal / Plan / Blackboard glyphs — same icons as
+            // the focused telemetry rail — rather than a generic "Tools" label.
+            HStack(spacing: 8) {
+                if ensembleToggleVisible {
+                    Image(systemName: isEnsemble ? "person.3.fill" : "person.3")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary)
+                        .frame(width: 16, height: 16)
                 }
-                if activeGoal?.status == "active" || activeGoal?.status == "paused"
-                    || activeGoal?.status == "blocked"
-                {
-                    Circle()
-                        .fill(goalAccent)
-                        .frame(width: 5, height: 5)
+
+                ZStack(alignment: .topTrailing) {
+                    Image(
+                        systemName: activeGoal?.status == "completed"
+                            ? "checkmark.circle.fill" : "scope"
+                    )
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(goalAccent)
+                    .frame(width: 16, height: 16)
+                    if activeGoal?.status == "active" || activeGoal?.status == "paused"
+                        || activeGoal?.status == "blocked"
+                    {
+                        Circle()
+                            .fill(goalAccent)
+                            .frame(width: 5, height: 5)
+                            .offset(x: 2, y: -2)
+                    }
+                }
+
+                ZStack(alignment: .topTrailing) {
+                    Image(systemName: "checklist")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(planAccent)
+                        .frame(width: 16, height: 16)
+                    if planHasInProgress {
+                        Circle()
+                            .fill(planAccent)
+                            .frame(width: 5, height: 5)
+                            .offset(x: 2, y: -2)
+                    }
+                }
+
+                if isEnsemble {
+                    Image(systemName: "rectangle.and.pencil.and.ellipsis")
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(
+                            blackboardEntries.isEmpty ? TWTheme.textTertiary : TWTheme.chroma1
+                        )
+                        .frame(width: 16, height: 16)
                 }
             }
             .modifier(ComposerAbovePillChrome())
@@ -154,6 +184,10 @@ public struct ComposerToolsPill: View {
         }
     }
 
+    private var planHasInProgress: Bool {
+        planLanes.contains { $0.currentStep?.isInProgress == true }
+    }
+
     @MainActor
     private var goalAccent: Color {
         switch activeGoal?.status {
@@ -163,6 +197,15 @@ public struct ComposerToolsPill: View {
         case "completed": return TWTheme.statusSuccess
         default: return TWTheme.textTertiary
         }
+    }
+
+    @MainActor
+    private var planAccent: Color {
+        let active = planLanes.reduce(0) { $0 + $1.activeCount }
+        let done = planLanes.reduce(0) { $0 + $1.completedCount }
+        if planHasInProgress { return TWTheme.chroma1 }
+        if active > 0 && done >= active { return TWTheme.statusSuccess }
+        return TWTheme.textTertiary
     }
 }
 
