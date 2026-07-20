@@ -103,6 +103,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   activeWorkspaceBoardId,
   activeWorkspaceBoardWorkspace,
   activeProjectGraphProjection,
+  activeProjectGraphId,
+  projectGraphEntries,
   onOpenProjectGraph,
   onBackFromProjectGraph,
   onOpenThreadFromProjectGraph,
@@ -1212,6 +1214,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onSelectedProjectChange={handleSelectedProjectChange}
                 onOpenReferencesLibrary={handleOpenProjectReferencesLibrary}
                 onOpenThreadGraph={(projectId) => onOpenProjectGraph({ id: projectId })}
+                projectGraphEntries={projectGraphEntries}
+                activeThreadGraphProjectId={activeProjectGraphId}
                 onOpenChatInSidePanel={(chat, presentation) =>
                   void handleOpenLinkedChatInSidePanelFromSidebar(chat, presentation)
                 }

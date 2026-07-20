@@ -212,6 +212,8 @@ interface SidebarProps {
   /** Open the References dock panel for a project (Work panel pass-through). */
   onOpenReferencesLibrary?: (projectId: string) => void
   onOpenThreadGraph?: (projectId: string) => void
+  projectGraphEntries?: { id: string; name: string; memberCount: number }[]
+  activeThreadGraphProjectId?: string | null
   onOpenChatInSidePanel?: (chat: ChatRecord, presentation?: 'split' | 'drawer') => void
   /** Open this chat in a Multiview pane (all chat types). */
   onOpenInMultiview?: (chat: ChatRecord) => void
@@ -2815,6 +2817,8 @@ export function Sidebar({
   onSelectedProjectChange,
   onOpenReferencesLibrary,
   onOpenThreadGraph,
+  projectGraphEntries,
+  activeThreadGraphProjectId,
   onOpenChatInSidePanel,
   onOpenInMultiview,
   onOpenSettings,
@@ -4693,10 +4697,43 @@ export function Sidebar({
                 onStartProjectHome={onStartProjectHome}
                 onSelectedProjectChange={onSelectedProjectChange}
                 onOpenReferencesLibrary={onOpenReferencesLibrary}
-                onOpenThreadGraph={onOpenThreadGraph}
                 workspaces={workspaces}
                 onSearchResultCountChange={setProjectsSearchResultCount}
               />
+              {onOpenThreadGraph && projectGraphEntries && projectGraphEntries.length > 0 && (
+                <section className="sidebar-project-graphs-section" aria-label="Node graphs">
+                  <div className="sidebar-project-graphs-header">
+                    <span className="sidebar-project-graphs-title">Node Graphs</span>
+                    <span className="sidebar-project-graphs-hint">Map a project&apos;s threads</span>
+                  </div>
+                  <div className="sidebar-project-graphs-list">
+                    {projectGraphEntries.map((entry) => (
+                      <div
+                        key={entry.id}
+                        role="button"
+                        tabIndex={0}
+                        className={`sidebar-project-graph-item ${
+                          activeThreadGraphProjectId === entry.id ? 'active' : ''
+                        }`}
+                        onClick={() => onOpenThreadGraph(entry.id)}
+                        onKeyDown={(event) => {
+                          if (event.key === 'Enter' || event.key === ' ') {
+                            event.preventDefault()
+                            onOpenThreadGraph(entry.id)
+                          }
+                        }}
+                        title={`Open ${entry.name} node graph`}
+                      >
+                        <span className="sidebar-project-graph-glyph" aria-hidden="true">
+                          ◇
+                        </span>
+                        <span className="sidebar-project-graph-name">{entry.name}</span>
+                        <span className="sidebar-project-graph-count">{entry.memberCount}</span>
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              )}
             </div>
           ) : (
             <div

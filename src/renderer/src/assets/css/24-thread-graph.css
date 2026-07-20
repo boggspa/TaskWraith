@@ -80,3 +80,133 @@
   color: var(--text-primary, #eef1f7);
   font-size: 12px;
 }
+
+/*
+ * SVG connector overlay. The canvas wraps the topological stages so the derived
+ * connector lines can be absolutely positioned behind the node cards; the cards
+ * keep a higher stacking order and stay clickable. The `.graph-connector*`
+ * classes are intentionally unscoped so the Execution Map can reuse them.
+ */
+.graph-node-canvas {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  display: grid;
+}
+
+.graph-node-canvas > .execution-map-stages {
+  position: relative;
+  z-index: 1;
+}
+
+.graph-connectors {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  z-index: 0;
+  pointer-events: none;
+  overflow: visible;
+}
+
+.graph-connector {
+  fill: none;
+  stroke: var(--text-tertiary, #818896);
+  stroke-width: 1.5;
+  opacity: 0.55;
+}
+
+.graph-connector.variant-user {
+  stroke: var(--accent, #7c9cff);
+  opacity: 0.72;
+}
+
+.graph-connector.variant-derived {
+  stroke: var(--text-tertiary, #818896);
+  stroke-dasharray: 4 4;
+  opacity: 0.5;
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .graph-connector {
+    transition: opacity 120ms ease;
+  }
+}
+
+/*
+ * "Node Graphs" sidebar section (Work tab). A dedicated, framed entry point
+ * for the per-project node graphs — kept separate from the project tree so
+ * node management reads as its own surface, and scoped to the Work tab so it
+ * never appears over a chat you are reading.
+ */
+.sidebar-project-graphs-section {
+  margin-top: 14px;
+  padding: 0 4px;
+}
+
+.sidebar-project-graphs-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 0 6px 6px;
+}
+
+.sidebar-project-graphs-title {
+  font-size: 11px;
+  font-weight: 720;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--text-secondary, #c1c6d0);
+}
+
+.sidebar-project-graphs-hint {
+  font-size: 10px;
+  color: var(--text-tertiary, #818896);
+}
+
+.sidebar-project-graphs-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.sidebar-project-graph-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text-primary, #eef1f7);
+  border: 1px solid transparent;
+}
+
+.sidebar-project-graph-item:hover {
+  background: color-mix(in srgb, var(--surface-raised, #252933) 82%, transparent);
+}
+
+.sidebar-project-graph-item.active {
+  background: color-mix(in srgb, var(--accent, #7c9cff) 16%, transparent);
+  border-color: color-mix(in srgb, var(--accent, #7c9cff) 40%, transparent);
+}
+
+.sidebar-project-graph-glyph {
+  color: var(--accent, #7c9cff);
+  font-size: 12px;
+}
+
+.sidebar-project-graph-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+
+.sidebar-project-graph-count {
+  font-size: 11px;
+  color: var(--text-tertiary, #818896);
+  font-variant-numeric: tabular-nums;
+}

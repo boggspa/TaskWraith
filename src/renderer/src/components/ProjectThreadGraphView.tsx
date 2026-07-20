@@ -3,6 +3,7 @@ import type {
   ProjectThreadGraphProjection,
   ThreadGraphNodeProjection
 } from '../lib/projectThreadGraphProjection'
+import { GraphConnectors } from './GraphConnectors'
 
 /** Map the thread-graph's domain tones onto the shared execution-map tone
  * classes so the node cards and status tokens inherit the existing styling. */
@@ -27,15 +28,18 @@ export interface ProjectThreadGraphViewProps {
 function ThreadNode({
   node,
   selected,
-  onSelect
+  onSelect,
+  registerRef
 }: {
   node: ThreadGraphNodeProjection
   selected: boolean
   onSelect: () => void
+  registerRef: (element: HTMLElement | null) => void
 }): JSX.Element {
   return (
     <li className="execution-map-node-item">
       <button
+        ref={registerRef}
         type="button"
         className={`execution-map-node tone-${TOKEN_TONE[node.statusTone]} ${selected ? 'is-selected' : ''} ${
           node.isPlaceholder ? 'thread-graph-node-placeholder' : ''
@@ -195,9 +199,25 @@ export function ProjectThreadGraphView({
 }: ProjectThreadGraphViewProps): JSX.Element {
   const [internalSelectedChatId, setInternalSelectedChatId] = useState<string | null>(null)
   const mapRef = useRef<HTMLElement>(null)
+  const canvasRef = useRef<HTMLDivElement>(null)
+  const stagesRef = useRef<HTMLOListElement>(null)
+  const nodeRefs = useRef<Map<string, HTMLElement>>(new Map())
   useEffect(() => {
     mapRef.current?.focus()
   }, [projection?.projectId])
+
+  const connectorEdges = useMemo(
+    () =>
+      projection
+        ? projection.edges.map((edge) => ({
+            id: edge.id,
+            from: edge.fromChatId,
+            to: edge.toChatId,
+            variant: edge.source
+          }))
+        : [],
+    [projection]
+  )
 
   const selectedNode = useMemo(() => {
     if (!projection) return null
@@ -274,27 +294,45 @@ export function ProjectThreadGraphView({
       )}
 
       <div className="execution-map-body">
-        <ol className="execution-map-stages" aria-label="Thread dependency stages">
-          {projection.stages.map((stage) => (
-            <li key={stage.index} className="execution-map-stage">
-              <section aria-labelledby={`thread-graph-${projection.projectId}-stage-${stage.index}`}>
-                <h2 id={`thread-graph-${projection.projectId}-stage-${stage.index}`}>
-                  {stage.label}
-                </h2>
-                <ol className="execution-map-stage-steps">
-                  {stage.nodes.map((node) => (
-                    <ThreadNode
-                      key={node.chatId}
-                      node={node}
-                      selected={selectedNode?.chatId === node.chatId}
-                      onSelect={() => handleSelect(node.chatId)}
-                    />
-                  ))}
-                </ol>
-              </section>
-            </li>
-          ))}
-        </ol>
+        <div className="graph-node-canvas" ref={canvasRef}>
+          <GraphConnectors
+            hostRef={canvasRef}
+            scrollRef={stagesRef}
+            nodeRefs={nodeRefs}
+            edges={connectorEdges}
+          />
+          <ol
+            className="execution-map-stages"
+            ref={stagesRef}
+            aria-label="Thread dependency stages"
+          >
+            {projection.stages.map((stage) => (
+              <li key={stage.index} className="execution-map-stage">
+                <section
+                  aria-labelledby={`thread-graph-${projection.projectId}-stage-${stage.index}`}
+                >
+                  <h2 id={`thread-graph-${projection.projectId}-stage-${stage.index}`}>
+                    {stage.label}
+                  </h2>
+                  <ol className="execution-map-stage-steps">
+                    {stage.nodes.map((node) => (
+                      <ThreadNode
+                        key={node.chatId}
+                        node={node}
+                        selected={selectedNode?.chatId === node.chatId}
+                        onSelect={() => handleSelect(node.chatId)}
+                        registerRef={(element) => {
+                          if (element) nodeRefs.current.set(node.chatId, element)
+                          else nodeRefs.current.delete(node.chatId)
+                        }}
+                      />
+                    ))}
+                  </ol>
+                </section>
+              </li>
+            ))}
+          </ol>
+        </div>
 
         {selectedNode && (
           <ThreadInspector

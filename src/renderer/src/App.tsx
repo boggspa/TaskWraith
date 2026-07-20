@@ -2971,11 +2971,6 @@ function App(): React.JSX.Element {
   const [workspaceBoardCards, setWorkspaceBoardCards] = useState<WorkspaceBoardCard[]>([])
   const [activeWorkspaceBoardId, setActiveWorkspaceBoardId] = useState<string | null>(null)
   const [activeProjectGraphId, setActiveProjectGraphId] = useState<string | null>(null)
-  // A focused chat always closes the project thread-graph overlay (mirrors how
-  // opening a chat clears the workspace-board overlay), so the two never stack.
-  useEffect(() => {
-    if (currentChat?.appChatId) setActiveProjectGraphId(null)
-  }, [currentChat?.appChatId])
   const [workspaceBoardCreatorOpen, setWorkspaceBoardCreatorOpen] = useState(false)
   const [capabilityLedgerSnapshot, setCapabilityLedgerSnapshot] =
     useState<CapabilityLedgerSnapshot | null>(null)
@@ -16107,18 +16102,14 @@ function App(): React.JSX.Element {
   }
 
   const enterProjectGraphMode = (projectId: string): void => {
-    setCurrentChatIdForNavigation(null)
-    setCurrentChat(null)
-    setActiveSidebarChatId(null)
-    setSideChatId(null)
-    setSideChatMenuOpen(false)
+    // The node graph is a Work-tab overlay. It deliberately does NOT clear the
+    // current chat (so leaving the Work tab or opening a thread restores it) —
+    // it only replaces the mutually-exclusive workspace-board overlay. Opening
+    // is only reachable from the Work-tab "Node Graphs" section, and leaving the
+    // Work tab closes it (handleActiveSidebarTabChange), so it never appears
+    // over a chat you're actively reading.
     setActiveWorkspaceBoardId(null)
     setActiveProjectGraphId(projectId)
-    setRawLogs([])
-    setRunCompleteNotice(null)
-    setDiff(null)
-    setRunDiff(null)
-    setShowGeminiTerminal(false)
   }
 
   const handleOpenProjectGraph = (project: { id: string }): void => {
@@ -16131,7 +16122,9 @@ function App(): React.JSX.Element {
 
   const handleOpenThreadFromProjectGraph = (chatId: string): void => {
     const chat = chats.find((candidate) => candidate.appChatId === chatId)
-    if (chat) void handleSelectChat(chat)
+    if (!chat) return
+    setActiveProjectGraphId(null)
+    void handleSelectChat(chat)
   }
 
   const handleAddProjectDependency = (fromChatId: string, toChatId: string): void => {
@@ -28603,6 +28596,18 @@ function App(): React.JSX.Element {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeProjectGraphId, projectsRevision, chats, runningChatIds])
 
+  // Computed inline (not memoized): the projects store's member lists can
+  // settle a beat after the project rows appear, and a projectsRevision-keyed
+  // memo can miss that second update. Recomputing each render keeps the
+  // "Node Graphs" section in step with the tree, which does the same.
+  const projectGraphEntries = listProjects()
+    .filter((project) => !project.archived && project.memberChatIds.length > 0)
+    .map((project) => ({
+      id: project.id,
+      name: project.name,
+      memberCount: project.memberChatIds.length
+    }))
+
   const mainAppLayoutProps = {
     acknowledgedElevationDefaults,
     activateRightDockTab,
@@ -28618,6 +28623,7 @@ function App(): React.JSX.Element {
     activeWorkspaceBoardWorkspace,
     activeProjectGraphId,
     activeProjectGraphProjection,
+    projectGraphEntries,
     onOpenProjectGraph: handleOpenProjectGraph,
     onBackFromProjectGraph: handleBackFromProjectGraph,
     onOpenThreadFromProjectGraph: handleOpenThreadFromProjectGraph,
@@ -28841,7 +28847,12 @@ function App(): React.JSX.Element {
     handleSideToggleFastMode,
     handleActiveSidebarTabChange: (tab) => {
       setSidebarActiveTab(tab)
-      if (tab !== 'projects') setActiveWorkProjectId(null)
+      if (tab !== 'projects') {
+        setActiveWorkProjectId(null)
+        // The node graph lives only in the Work (projects) tab — leaving it
+        // restores the chat surface instead of hijacking it.
+        setActiveProjectGraphId(null)
+      }
     },
     handleOpenProjectReferencesLibrary,
     handleSelectedProjectChange: setActiveWorkProjectId,

@@ -168,6 +168,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   activeWorkspaceBoardWorkspace: any
   activeProjectGraphId: string | null
   activeProjectGraphProjection: import('../../lib/projectThreadGraphProjection').ProjectThreadGraphProjection | null
+  projectGraphEntries: { id: string; name: string; memberCount: number }[]
   onOpenProjectGraph: (project: { id: string }) => void
   onBackFromProjectGraph: () => void
   onOpenThreadFromProjectGraph: (chatId: string) => void
