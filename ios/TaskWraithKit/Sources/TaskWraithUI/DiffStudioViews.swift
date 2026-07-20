@@ -401,11 +401,10 @@ struct DiffStudioCompactView: View {
 
 // ── Sheet glass chrome policy ─────────────────────────────────────────────────
 
-/// How the panes paint beneath their content per host. The compact composer
-/// sheet rides the shared liquid-glass backdrop (`twSheetLiquidGlass`), where a
-/// full-bleed opaque canvas would smother the glass — panes go transparent and
-/// drop shared surfaces to a translucent wash there. The full-screen hosts
-/// (iPad split view, the phone file-mode cover) keep the opaque app canvas.
+/// How the panes paint beneath their content per host. Glass-hosted covers
+/// (composer sheet + phone file-mode fullScreenCover via `twFullScreenLiquidGlass`)
+/// keep the canvas clear and wash shared surfaces translucent so the liquid-glass
+/// backdrop reads through. Non-glass hosts (iPad split view) keep the opaque app canvas.
 enum DiffStudioSheetGlassPolicy {
     static func paintsOpaqueCanvas(glassSheetHosted: Bool) -> Bool {
         !glassSheetHosted

@@ -9,9 +9,14 @@ struct FirstLaunchSheetView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     let onOpenSettings: () -> Void
     let onDone: () -> Void
+
+    private var canvasFill: Color {
+        glassSheetHosted ? Color.clear : TWTheme.appBg
+    }
 
     private var state: FirstLaunchState? { model.firstLaunchState }
     private var providerCards: [ProviderDisplay] {

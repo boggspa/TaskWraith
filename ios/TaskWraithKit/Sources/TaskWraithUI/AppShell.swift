@@ -521,7 +521,14 @@ private extension View {
         isPresented: Binding<Bool>, @ViewBuilder content: @escaping () -> Content
     ) -> some View {
         #if os(iOS)
-            self.fullScreenCover(isPresented: isPresented, content: content)
+            // Keep full-screen UX, but ride the same liquid-glass presentation
+            // backdrop as compact sheets so Diff Studio / Files no longer paint
+            // system gray over the glass (content panes already clear when
+            // twGlassSheetHosted is set).
+            self.fullScreenCover(isPresented: isPresented) {
+                content()
+                    .twFullScreenLiquidGlass()
+            }
         #else
             self.sheet(isPresented: isPresented, content: content)
         #endif

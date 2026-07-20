@@ -285,7 +285,9 @@ private func decodeFilterableWorkspaceDiff() throws -> WorkspaceDiffResult {
 
 @Suite("Diff Studio sheet glass policy")
 struct DiffStudioSheetGlassPolicyTests {
-    @Test func fullScreenHostsKeepTheOpaqueCanvasAndDefaultFills() {
+    /// Non-glass hosts (iPad split view) keep opaque fills. Phone file-mode
+    /// fullScreenCover now stamps `twGlassSheetHosted` via twFullScreenLiquidGlass.
+    @Test func nonGlassHostsKeepTheOpaqueCanvasAndDefaultFills() {
         #expect(DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: false))
         #expect(
             DiffStudioSheetGlassPolicy.chromeFillAlpha(

@@ -699,12 +699,15 @@ extension View {
             let rimBottom: Color =
                 TWThemeStore.shared.systemTheme.isLight
                 ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
+            // Do not wrap glass in compositingGroup — that flattens the effect into
+            // an opaque gray slab and smothers the live backdrop sample.
             Group {
                 if TWTheme.composerGlassEnabled {
                     if #available(iOS 26.0, macOS 26.0, *) {
                         shape
-                            .fill(TWTheme.composerBg.opacity(0.08))
+                            .fill(Color.clear)
                             .glassEffect(.regular, in: shape)
+                            .overlay(shape.fill(TWTheme.composerBg.opacity(0.08)))
                     } else {
                         shape
                             .fill(.ultraThinMaterial)
@@ -716,7 +719,6 @@ extension View {
                     shape.fill(TWTheme.surface2)
                 }
             }
-            .compositingGroup()
             .ignoresSafeArea()
             .overlay {
                 if TWTheme.composerGlassEnabled, rimmed {
@@ -741,10 +743,11 @@ private struct TWGlassSheetHostedKey: EnvironmentKey {
 }
 
 extension EnvironmentValues {
-    /// True for content hosted inside a `twSheetLiquidGlass` presentation.
-    /// A full-bleed opaque canvas smothers the glass backdrop, so panes shared
-    /// with full-screen hosts (Diff Studio) check this to keep their sheet
-    /// canvas transparent while the full-screen hosts keep the opaque canvas.
+    /// True for content hosted inside a `twSheetLiquidGlass` or
+    /// `twFullScreenLiquidGlass` presentation. A full-bleed opaque canvas
+    /// smothers the glass backdrop, so panes shared with non-glass hosts
+    /// (e.g. iPad Diff Studio split) check this to keep glass covers transparent
+    /// while non-glass hosts keep the opaque app canvas.
     var twGlassSheetHosted: Bool {
         get { self[TWGlassSheetHostedKey.self] }
         set { self[TWGlassSheetHostedKey.self] = newValue }
@@ -833,6 +836,24 @@ extension View {
                 .presentationCornerRadius(cornerRadius)
                 .presentationBackground {
                     TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
+                }
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .background(Color.clear)
+                .environment(\.twGlassSheetHosted, true)
+        #else
+            self
+        #endif
+    }
+
+    /// Liquid-glass chrome for fullScreenCover hosts (Diff Studio / Files).
+    /// Same transparent + glassEffect backdrop and `twGlassSheetHosted` flag as
+    /// sheets, without presentation detents or sheet corner rims.
+    @ViewBuilder
+    func twFullScreenLiquidGlass() -> some View {
+        #if os(iOS)
+            self
+                .presentationBackground {
+                    TWSheetGlassBackdrop(cornerRadius: 0, rimmed: false)
                 }
                 .toolbarBackground(.hidden, for: .navigationBar)
                 .background(Color.clear)
@@ -2074,6 +2095,7 @@ private struct ProviderModelPickerSheet: View {
     var allowsProviderChange: Bool = true
     var onConfirm: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
     @State private var expandedProvider: String?
 
     private var currentCatalog: ProviderModelCatalog? {
@@ -2081,6 +2103,10 @@ private struct ProviderModelPickerSheet: View {
     }
     private var reasoningOptions: [ReasoningEffortOption] {
         twReasoningOptions(in: currentCatalog, modelId: modelId)
+    }
+
+    private var canvasFill: Color {
+        glassSheetHosted ? Color.clear : TWTheme.appBg
     }
 
     var body: some View {
@@ -2092,6 +2118,7 @@ private struct ProviderModelPickerSheet: View {
                             providerTree(catalog)
                         }
                     }
+                    .twGlassSheetRowBackground()
                 } else {
                     Section(TWTheme.providerLabel(provider)) {
                         ForEach(currentCatalog?.models ?? []) { option in
@@ -2101,10 +2128,12 @@ private struct ProviderModelPickerSheet: View {
                             reasoningRow(option)
                         }
                     }
+                    .twGlassSheetRowBackground()
                 }
             }
+            .twGlassSheetListCanvas()
             .scrollContentBackground(.hidden)
-            .background(TWTheme.appBg)
+            .background(canvasFill)
             .navigationTitle(title)
             .toolbar {
                 ToolbarItem(placement: .confirmationAction) {
@@ -6655,6 +6684,7 @@ public struct AppSettingsSheet: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     @Environment(\.appScale) private var appScale
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
     @ObservedObject private var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
     @State private var appIcon: TWAppIconVariant = TWAppIconController.selected
@@ -6666,6 +6696,17 @@ public struct AppSettingsSheet: View {
     public init(model: RemoteSessionModel, onOpenFirstLaunchGuide: (() -> Void)? = nil) {
         self.model = model
         self.onOpenFirstLaunchGuide = onOpenFirstLaunchGuide
+    }
+
+    /// Clear over liquid-glass sheets; opaque app canvas only when not glass-hosted.
+    private var canvasFill: Color {
+        glassSheetHosted ? Color.clear : TWTheme.appBg
+    }
+
+    private var sidebarFill: Color {
+        glassSheetHosted
+            ? (twGlassSheetChromeFill(glassSheetHosted: true) ?? TWTheme.sidebarBg.opacity(0.72))
+            : TWTheme.sidebarBg
     }
 
     private var sections: [MobileSettingsSection] {
@@ -6684,7 +6725,7 @@ public struct AppSettingsSheet: View {
                 compactBody
             }
         }
-        .background(TWTheme.appBg.ignoresSafeArea())
+        .background(canvasFill.ignoresSafeArea())
         .twColorScheme()
     }
 
@@ -6699,7 +6740,7 @@ public struct AppSettingsSheet: View {
                 .padding(.horizontal, 16)
                 .padding(.vertical, 18)
             }
-            .background(TWTheme.appBg.ignoresSafeArea())
+            .background(canvasFill.ignoresSafeArea())
             .navigationTitle("Settings")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -6720,11 +6761,11 @@ public struct AppSettingsSheet: View {
             HStack(spacing: 0) {
                 settingsSidebar
                     .frame(width: appScale.scaled(300))
-                    .background(TWTheme.sidebarBg)
+                    .background(sidebarFill)
                     .iPadSidebarInnerRim(edge: .trailing)
                 detailScroll(selectedSection)
             }
-            .background(TWTheme.appBg.ignoresSafeArea())
+            .background(canvasFill.ignoresSafeArea())
             .toolbar { closeToolbarItem }
         }
     }
@@ -6816,7 +6857,10 @@ public struct AppSettingsSheet: View {
     }
 
     private var searchField: some View {
-        HStack(spacing: 8) {
+        let fieldFill =
+            twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted)
+            ?? TWTheme.surface1.opacity(0.86)
+        return HStack(spacing: 8) {
             Image(systemName: "magnifyingglass")
                 .foregroundStyle(TWTheme.textTertiary)
             TextField("Search settings...", text: $searchText)
@@ -6825,7 +6869,7 @@ public struct AppSettingsSheet: View {
         .font(.body)
         .padding(.horizontal, 12)
         .padding(.vertical, 10)
-        .background(TWTheme.surface1.opacity(0.86), in: RoundedRectangle(cornerRadius: 11, style: .continuous))
+        .background(fieldFill, in: RoundedRectangle(cornerRadius: 11, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 11, style: .continuous)
                 .strokeBorder(TWTheme.border, lineWidth: 1)
@@ -6840,7 +6884,11 @@ public struct AppSettingsSheet: View {
     }
 
     private func sectionButton(_ section: MobileSettingsSection) -> some View {
-        Button {
+        let rowFill =
+            section == selectedSection
+            ? TWTheme.chroma1.opacity(0.16)
+            : (twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted) ?? TWTheme.surface1)
+        return Button {
             if horizontalSizeClass == .regular {
                 selectedSection = section
             } else {
@@ -6865,7 +6913,7 @@ public struct AppSettingsSheet: View {
             }
             .padding(12)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(section == selectedSection ? TWTheme.chroma1.opacity(0.16) : TWTheme.surface1, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
+            .background(rowFill, in: RoundedRectangle(cornerRadius: 13, style: .continuous))
             .overlay(
                 RoundedRectangle(cornerRadius: 13, style: .continuous)
                     .strokeBorder(section == selectedSection ? TWTheme.chroma1.opacity(0.38) : TWTheme.border, lineWidth: 1)
@@ -6897,7 +6945,7 @@ public struct AppSettingsSheet: View {
                 .frame(maxWidth: horizontalSizeClass == .regular ? appScale.scaled(840) : .infinity, alignment: .topLeading)
             .frame(maxWidth: .infinity, alignment: .topLeading)
         }
-        .background(TWTheme.appBg.ignoresSafeArea())
+        .background(canvasFill.ignoresSafeArea())
     }
 
     private func detailHeader(_ section: MobileSettingsSection) -> some View {
@@ -7702,11 +7750,16 @@ private struct SettingsCard<Content: View>: View {
     let systemImage: String
     private let content: Content
     @Environment(\.appScale) private var appScale
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     init(title: String, systemImage: String, @ViewBuilder content: () -> Content) {
         self.title = title
         self.systemImage = systemImage
         self.content = content()
+    }
+
+    private var cardFill: Color {
+        twGlassSheetChromeFill(glassSheetHosted: glassSheetHosted) ?? TWTheme.surface1
     }
 
     var body: some View {
@@ -7718,7 +7771,7 @@ private struct SettingsCard<Content: View>: View {
         }
         .padding(appScale.scaled(14))
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: appScale.scaled(16), style: .continuous))
+        .background(cardFill, in: RoundedRectangle(cornerRadius: appScale.scaled(16), style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: appScale.scaled(16), style: .continuous)
                 .strokeBorder(TWTheme.border, lineWidth: 1)
@@ -8948,16 +9001,21 @@ public struct ComposerDiffPill: View {
     let deletions: Int
     let commitsAhead: Int
     var onTap: (() -> Void)? = nil
+    /// Intrinsic-width tappable chip without drag-to-reposition. Used when the
+    /// tools pill sits beside this chip in a shared above-composer row.
+    var compactInline: Bool = false
 
     public init(
         filesChanged: Int, additions: Int, deletions: Int, commitsAhead: Int = 0,
-        onTap: (() -> Void)? = nil
+        onTap: (() -> Void)? = nil,
+        compactInline: Bool = false
     ) {
         self.filesChanged = filesChanged
         self.additions = additions
         self.deletions = deletions
         self.commitsAhead = max(0, commitsAhead)
         self.onTap = onTap
+        self.compactInline = compactInline
     }
 
     /// 2_100 → "2.1k", 25_000 → "25k", 718 → "718".
@@ -9163,6 +9221,14 @@ public struct ComposerDiffPill: View {
     }
 
     public var body: some View {
+        if compactInline {
+            Button { onTap?() } label: { pillBody }
+                .buttonStyle(.plain)
+                .accessibilityElement(children: .combine)
+                .accessibilityAddTraits(.isButton)
+                .accessibilityLabel(accessibilityText)
+                .accessibilityAction { onTap?() }
+        } else {
         HStack(spacing: 0) {
             // Resting position is a LAYOUT inset so the gesture's hit-frame moves
             // WITH the pill — previously a visual-only .offset left the tap /
@@ -9250,6 +9316,7 @@ public struct ComposerDiffPill: View {
         .accessibilityHint("Touch and hold to move the pill; drag up to recentre.")
         .accessibilityAction { onTap?() }
         .accessibilityAction(named: Text("Recentre")) { persistedOffsetX = 0 }
+        } // !compactInline
     }
 
     private var accessibilityText: String {
@@ -9392,6 +9459,7 @@ struct SideChatsPanel: View {
                         }
                     }
                 }
+                .twSheetLiquidGlass(detents: [.medium, .large])
             }
 
             if sideChats.isEmpty {
