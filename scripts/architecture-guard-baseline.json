@@ -148,16 +148,16 @@
   "sharedUpwardRuntimeEdges": [],
   "hotspotBudgets": {
     "src/main/index.ts": {
-      "maxLines": 41624,
-      "maxBranchPoints": 7733
+      "maxLines": 42851,
+      "maxBranchPoints": 7957
     },
     "src/renderer/src/App.tsx": {
-      "maxLines": 29397,
-      "maxBranchPoints": 5666
+      "maxLines": 29664,
+      "maxBranchPoints": 5697
     },
     "src/main/services/EnsembleOrchestrator.ts": {
-      "maxLines": 15502,
-      "maxBranchPoints": 3074
+      "maxLines": 15840,
+      "maxBranchPoints": 3143
     }
   }
 }
