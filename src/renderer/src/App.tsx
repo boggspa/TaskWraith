@@ -14454,7 +14454,10 @@ function App(): React.JSX.Element {
         workspaceId: targetWorkspace.id,
         rootChatId: targetChatId,
         ...(!targetExecution && liveAnchorRunRef ? { anchorRunRef: liveAnchorRunRef } : {}),
-        title: `${targetChat.title || 'Task'} Stack`,
+        // Stack titles share THREAD_TITLE_MAX_CHARS (160). Appending " Stack" to a
+        // full-length chat title used to exceed optionalString(…, 160) and fail with
+        // "Optional execution value is too long.", blocking busy-queue appends.
+        title: normalizeThreadTitle(`${targetChat.title || 'Task'} Stack`, 'Task Stack'),
         stepTitle: executionStackStepTitle(graphRequest.displayPrompt || graphRequest.prompt),
         objective: graphRequest.prompt,
         provider: graphRequest.provider,

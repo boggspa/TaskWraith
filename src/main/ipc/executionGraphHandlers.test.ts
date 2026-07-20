@@ -358,6 +358,30 @@ describe('registerExecutionGraphHandlers', () => {
     expect(appendInput?.objective).toBe('Inspect this change.')
   })
 
+  it('truncates an overlong display title instead of rejecting the Stack append', () => {
+    const deps = createDeps()
+    registerExecutionGraphHandlers(deps)
+    const longTitle = `${'A'.repeat(160)} Stack`
+
+    handlerFor('execution-runs:append-stack-step')(
+      {},
+      {
+        clientRequestId: 'renderer-run-one',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        title: longTitle,
+        stepTitle: 'Inspect the change',
+        objective: 'Inspect this change.',
+        provider: 'codex',
+        request: { prompt: 'Inspect this change.' }
+      }
+    )
+
+    const appendInput = vi.mocked(deps.coordinator.appendStackStep).mock.calls[0]?.[0]
+    expect(appendInput?.title).toHaveLength(160)
+    expect(appendInput?.title).toBe(longTitle.slice(0, 160))
+  })
+
   it('returns an exact committed receipt before resolving a stale live target', () => {
     const deps = createDeps()
     const committed = projection({

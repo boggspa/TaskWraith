@@ -82,6 +82,10 @@ describe('live execution graph integration', () => {
     expect(append).toContain('preferredExecutionByChatIdRef.current[targetChatId]')
     expect(append).toContain('activeRunChatIdRef.current === targetChatId')
     expect(append).toContain('rootChatId: targetChatId')
+    expect(append).toContain(
+      "title: normalizeThreadTitle(`${targetChat.title || 'Task'} Stack`, 'Task Stack')"
+    )
+    expect(append).not.toContain('title: `${targetChat.title || \'Task\'} Stack`')
     expect(append).toContain("settleProjectReferenceContextForRequest(graphRequest, 'accepted')")
     expect(
       append.indexOf('clearSubmittedExecutionStackContext(graphRequest, targetChatId)')

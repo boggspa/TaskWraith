@@ -162,6 +162,14 @@ function optionalString(value: unknown, max = 512): string | undefined {
   return normalized
 }
 
+/** Display-only optional text: trim and hard-cap instead of rejecting the command. */
+function optionalBoundedDisplayString(value: unknown, max: number): string | undefined {
+  if (typeof value !== 'string' || !value.trim()) return undefined
+  const normalized = value.trim()
+  if (normalized.length <= max) return normalized
+  return normalized.slice(0, max).trimEnd() || undefined
+}
+
 function executionId(value: unknown): string {
   const id = nonEmpty(value, 'Execution id', 128)
   if (!EXECUTION_ID.test(id)) throw new Error('Execution id is not canonical.')
@@ -517,7 +525,9 @@ export function registerExecutionGraphHandlers(deps: ExecutionGraphHandlersDeps)
     const workspaceId = nonEmpty(raw.workspaceId, 'Workspace id', 128)
     const rootChatId = nonEmpty(raw.rootChatId, 'Root chat id', 128)
     const requestedAnchor = optionalString(raw.anchorRunRef, 128)
-    const title = optionalString(raw.title, 160)
+    // Presentation label only — never fail a Stack append because the chat title
+    // plus " Stack" overflowed the 160-char bound (see THREAD_TITLE_MAX_CHARS).
+    const title = optionalBoundedDisplayString(raw.title, 160)
     const stepTitle = nonEmpty(raw.stepTitle, 'Step title', 160)
     const objective = nonEmpty(raw.objective, 'Step objective', 32_000)
     const provider = providerId(raw.provider)
