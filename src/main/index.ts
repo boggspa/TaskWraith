@@ -23005,25 +23005,99 @@ function maybeRequestCodexHostRerun(
   })
 }
 
-function continueCodexAfterHostRerun(
+async function continueCodexAfterHostRerun(
   approval: HostCommandApproval,
   result: HostCommandResult,
   resultText: string
-): void {
-  // The approved host command result is already projected into the owning run
-  // immediately before this helper. Starting another native turn here used to
-  // reuse that SAME appRunId, which cannot own two exact terminal operations:
-  // the first turn could settle the shared registry entry while the
-  // continuation was still running, allowing destructive-history deletion to
-  // receipt early. Fail closed until continuation has a fresh independently
-  // reserved run identity and persistence authority.
-  void resultText
-  sendAgentCompatError(
-    approval.sender,
-    'codex',
-    `The approved host rerun finished with exit code ${result.exitCode ?? (result.timedOut ? 'timeout' : 'unknown')}, but TaskWraith did not start an automatic Codex continuation because this run has no independent continuation identity. Start a new turn to continue from the recorded output.`,
-    approval
-  )
+): Promise<void> {
+  const approvalRunId = approval.appRunId?.trim()
+  const approvalChatId = approval.appChatId?.trim()
+  if (!approvalRunId || !approvalChatId) return
+
+  const approvalRunState = runManager.get(approvalRunId)
+  const resumeProviderSessionId =
+    approval.threadId.trim() || approvalRunState?.state?.providerSessionId || undefined
+  const continuationRunId = createFallbackRunId('codex')
+  const runState = approvalRunState
+  const runChat = AppStore.getChat(approvalChatId)
+  const scope = runChat?.scope ?? (runChat?.workspacePath ? 'workspace' : 'global')
+  const workspace = runState?.state?.workspacePath || runChat?.workspacePath
+
+  const prompt = `The host command rerun finished with exit code ${
+    result.exitCode ?? (result.timedOut ? 'timeout' : 'unknown')
+  } and output:
+
+${resultText}
+
+Continue from this output and continue the task.`
+
+  const runPayload = {
+    provider: 'codex' as const,
+    scope,
+    workspace,
+    prompt,
+    appRunId: continuationRunId,
+    appChatId: approvalChatId,
+    model: approvalRunState?.state?.model || approval.model,
+    reasoningEffort: approvalRunState?.state?.reasoningEffort || approval.reasoningEffort,
+    approvalMode: approvalRunState?.state?.approvalMode,
+    workflowMode: approvalRunState?.state?.workflowMode,
+    externalPathGrants: approvalRunState?.state?.externalPathGrants,
+    runtimeProfileId: approvalRunState?.state?.runtimeProfileId,
+    sessionTrust: approvalRunState?.state?.sessionTrust,
+    providerSessionId: resumeProviderSessionId,
+    ...(approvalRunState?.state?.effectivePermissions
+      ? {
+          effectivePermissions: approvalRunState.state.effectivePermissions,
+          effectivePermissionsSignature: signRunPosture(
+            approvalRunState?.state?.approvalMode,
+            approvalRunState.state.effectivePermissions,
+            runPostureContextFromPayload({
+              provider: 'codex',
+              scope,
+              workspace,
+              prompt,
+              model: approvalRunState?.state?.model || approval.model,
+              reasoningEffort: approvalRunState?.state?.reasoningEffort || approval.reasoningEffort,
+              approvalMode: approvalRunState?.state?.approvalMode,
+              externalPathGrants: approvalRunState?.state?.externalPathGrants,
+              sessionTrust: approvalRunState?.state?.sessionTrust,
+              providerSessionId: resumeProviderSessionId
+            })
+          )
+        }
+      : {}),
+    handoffSourceRunId: approvalRunId
+  }
+
+  if (!runCoordinatorRef) {
+    sendAgentCompatError(
+      approval.sender,
+      'codex',
+      'Host rerun continuation could not start because the provider dispatcher is unavailable.',
+      approval
+    )
+    return
+  }
+
+  try {
+    const result = await runCoordinatorRef.dispatch(runPayload, { sender: approval.sender })
+    if (!result.dispatched) {
+      sendAgentCompatError(
+        approval.sender,
+        'codex',
+        'Host rerun continuation was not dispatched; please retry in a new turn.',
+        approval
+      )
+    }
+  } catch (error) {
+    sendAgentCompatError(
+      approval.sender,
+      'codex',
+      `Host rerun continuation failed: ${error instanceof Error ? error.message : String(error)}`,
+      approval
+    )
+  }
 }
 
 async function runApprovedHostCommand(requestId: string): Promise<boolean> {

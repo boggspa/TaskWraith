@@ -87,15 +87,17 @@ describe('one-shot provider transport history join', () => {
     expect(projectionComplete).toBeGreaterThan(finished)
   })
 
-  it('fails closed instead of issuing an untracked same-run Codex continuation', () => {
+  it('issues a fresh-run Codex continuation after host rerun', () => {
     const continuation = between(
       'function continueCodexAfterHostRerun(',
       'async function runApprovedHostCommand('
     )
 
-    expect(continuation).not.toContain("'turn/start'")
-    expect(continuation).toContain('no independent continuation identity')
-    expect(continuation).toContain('Start a new turn')
+    expect(continuation).toContain('createFallbackRunId(\'codex\')')
+    expect(continuation).toContain('appRunId: continuationRunId')
+    expect(continuation).toContain('providerSessionId: resumeProviderSessionId')
+    expect(continuation).toContain("runCoordinatorRef.dispatch")
+    expect(continuation).toContain('result.dispatched')
   })
 
   it('tracks native Codex review before review admission', () => {
