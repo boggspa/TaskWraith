@@ -1291,4 +1291,45 @@ describe('MainSanitizers settings patches', () => {
     })
     expect(sanitized.advancedFx).toMatchObject({ agentAura: false, refraction: false })
   })
+
+  it('persists agenticWorkspaceGrants through SettingsService patches (tool-grant enablement)', () => {
+    // Regression: agenticWorkspaceGrants was missing from SETTINGS_PATCH_KEYS, so
+    // PermissionService.upsertWorkspaceGrant → SettingsService.updateSettings
+    // silently dropped every grant write. UI checkboxes never stuck.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    const grant = {
+      id: 'grant-shell-1',
+      workspacePath: '/Users/chris/repo',
+      provider: 'codex' as const,
+      service: 'shellCommands' as const,
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-20T00:00:00.000Z',
+      expiresOn: 'workspace_revocation' as const
+    }
+    const sanitized = sanitizeSettingsPatch({ agenticWorkspaceGrants: [grant] })
+    expect(sanitized.agenticWorkspaceGrants).toEqual([grant])
+
+    // Empty array is a valid revoke-all write.
+    expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [] }).agenticWorkspaceGrants).toEqual([])
+
+    // Non-grantable services and malformed rows are stripped; garbage input drops the key.
+    const mixed = sanitizeSettingsPatch({
+      agenticWorkspaceGrants: [
+        grant,
+        {
+          ...grant,
+          id: 'grant-eval',
+          service: 'canvasEval'
+        },
+        { not: 'a grant' },
+        null
+      ]
+    })
+    expect(mixed.agenticWorkspaceGrants).toEqual([grant])
+    expect('agenticWorkspaceGrants' in sanitizeSettingsPatch({ agenticWorkspaceGrants: 'nope' })).toBe(
+      false
+    )
+  })
+
 })

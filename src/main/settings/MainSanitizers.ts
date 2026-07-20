@@ -2,6 +2,8 @@ import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
 import type {
+  AgenticServiceId,
+  AgenticWorkspaceGrant,
   AppSettings,
   AuditOrchestrationSettings,
   AuditRole,
@@ -79,6 +81,18 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   canvasEval: 'ask',
   networkAccess: 'allow'
 }
+/** Services the workspace-grant picker may pre-authorise. Non-grantable
+ * services (canvasEval / mediaRecording / externalPublish) are deliberately
+ * absent so a forged settings patch cannot promote them. */
+const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
+  'shellCommands',
+  'fileChanges',
+  'mcpTools',
+  'subThreadDelegation',
+  'canvasInteraction',
+  'crossThreadRead',
+  'mediaEditing'
+])
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'activeProvider',
   'providerRunPauses',
@@ -134,6 +148,11 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiSanitiserCustomKeywords',
   'kimiClassifierEnabled',
   'agenticServices',
+  // PermissionService upserts/removes route through SettingsService, so this
+  // key MUST be allowlisted or every workspace tool-grant write is silently
+  // dropped. Renderer `update-settings` still rejects the key (IpcValidation);
+  // only the dedicated grant IPCs + main-side PermissionService write it.
+  'agenticWorkspaceGrants',
   'nativeSubAgentRequests',
   'promptCache',
   'geminiApiRuntime',
@@ -472,6 +491,53 @@ export function sanitizeAgenticServicePolicy(
   return value === 'ask' || value === 'workspace' || value === 'allow' || value === 'deny'
     ? value
     : fallback
+}
+
+/**
+ * Sanitize the agentic workspace-grant list for settings patches.
+ * Returns `undefined` when the value is not an array so the key is dropped
+ * rather than wiping existing grants with garbage. An empty array is valid
+ * (revoke-all). Non-grantable services are stripped.
+ */
+export function sanitizeAgenticWorkspaceGrants(
+  value: unknown
+): AgenticWorkspaceGrant[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const grants: AgenticWorkspaceGrant[] = []
+  for (const entry of value) {
+    if (!isRecord(entry)) continue
+    const id = typeof entry.id === 'string' ? entry.id.trim() : ''
+    const workspacePath =
+      typeof entry.workspacePath === 'string' ? entry.workspacePath.trim() : ''
+    const provider =
+      typeof entry.provider === 'string' && PROVIDER_IDS.has(entry.provider as ProviderId)
+        ? (entry.provider as ProviderId)
+        : null
+    const service =
+      typeof entry.service === 'string' &&
+      GRANTABLE_AGENTIC_SERVICE_IDS.has(entry.service as AgenticServiceId)
+        ? (entry.service as AgenticServiceId)
+        : null
+    const createdAt = typeof entry.createdAt === 'string' ? entry.createdAt : ''
+    const updatedAt = typeof entry.updatedAt === 'string' ? entry.updatedAt : ''
+    if (!id || !workspacePath || !provider || !service || !createdAt || !updatedAt) continue
+    const grant: AgenticWorkspaceGrant = {
+      id,
+      workspacePath,
+      provider,
+      service,
+      createdAt,
+      updatedAt
+    }
+    if (typeof entry.expiresAt === 'string' && entry.expiresAt.trim()) {
+      grant.expiresAt = entry.expiresAt.trim()
+    }
+    if (entry.expiresOn === 'workspace_revocation') {
+      grant.expiresOn = 'workspace_revocation'
+    }
+    grants.push(grant)
+  }
+  return grants
 }
 
 export function sanitizeAgenticNetworkPolicy(
@@ -1456,6 +1522,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         canvasEval: sanitizeAgenticServicePolicy(services.canvasEval, current.canvasEval),
         networkAccess: sanitizeAgenticNetworkPolicy(services.networkAccess, current.networkAccess)
       }
+    }
+    if ('agenticWorkspaceGrants' in sanitized) {
+      const grants = sanitizeAgenticWorkspaceGrants(sanitized.agenticWorkspaceGrants)
+      if (grants) sanitized.agenticWorkspaceGrants = grants
+      else delete sanitized.agenticWorkspaceGrants
     }
     if ('currency' in sanitized) {
       const value = sanitized.currency

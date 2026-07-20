@@ -214,4 +214,44 @@ describe('SettingsService', () => {
       agenticServices: expect.objectContaining({ shellCommands: 'deny' })
     })
   })
+
+  it('persists agenticWorkspaceGrants when the real settings sanitizer is wired', async () => {
+    // PermissionService.upsertWorkspaceGrant routes through SettingsService.
+    // If the real sanitizer drops agenticWorkspaceGrants, tool grants never stick.
+    const { createMainSanitizers } = await import('../settings/MainSanitizers')
+    let settings = makeSettings()
+    const { sanitizeSettingsPatch } = createMainSanitizers({
+      getSettings: () => settings,
+      getScheduledTasks: () => [],
+      getWorkflowDefinitions: () => [],
+      getChat: () => null,
+      findRegisteredWorkspace: () => undefined,
+      requireRegisteredWorkspace: (path: string) => path,
+      canonicalPath: (value: string) => value,
+      normalizeExternalPathGrants: (grants) => grants,
+      stageScheduledAttachments: () => []
+    } as never)
+    const storeUpdate = vi.fn((partial: Partial<AppSettings>) => {
+      settings = { ...settings, ...partial }
+    })
+    const service = new SettingsService({
+      getSettings: () => settings,
+      updateSettings: storeUpdate,
+      sanitizeSettingsPatch
+    })
+
+    const grant = {
+      id: 'grant-1',
+      workspacePath: '/repo',
+      provider: 'codex' as const,
+      service: 'shellCommands' as const,
+      createdAt: '2026-07-20T00:00:00.000Z',
+      updatedAt: '2026-07-20T00:00:00.000Z',
+      expiresOn: 'workspace_revocation' as const
+    }
+    service.updateSettings({ agenticWorkspaceGrants: [grant] })
+
+    expect(storeUpdate).toHaveBeenCalledWith({ agenticWorkspaceGrants: [grant] })
+    expect(settings.agenticWorkspaceGrants).toEqual([grant])
+  })
 })
