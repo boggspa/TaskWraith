@@ -126,6 +126,8 @@ import {
 } from './ProjectRegistry'
 import type {
   Project,
+  ProjectGraphEdge,
+  ProjectGraphEdgeOp,
   ProjectOp,
   ProjectReference,
   ProjectReferenceOp,
@@ -4495,6 +4497,10 @@ export class AppStore {
     return projectRegistry.getReferences()
   }
 
+  static getProjectGraphEdges(): ProjectGraphEdge[] {
+    return projectRegistry.getGraphEdges()
+  }
+
   static applyProjectOp(op: ProjectOp): ProjectRegistryMutationResult {
     const addedChatIds =
       op.kind === 'add-chat'
@@ -4516,6 +4522,10 @@ export class AppStore {
 
   static applyProjectReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult {
     return projectRegistry.applyReferenceOp(op)
+  }
+
+  static applyProjectGraphEdgeOp(op: ProjectGraphEdgeOp): ProjectRegistryMutationResult {
+    return projectRegistry.applyGraphEdgeOp(op)
   }
 
   static setProjectHomeChat(

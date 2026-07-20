@@ -1,8 +1,11 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
+  parseProjectGraphEdgeOp,
   parseProjectOp,
   parseProjectReferenceOp,
   type Project,
+  type ProjectGraphEdge,
+  type ProjectGraphEdgeOp,
   type ProjectOp,
   type ProjectReference,
   type ProjectReferenceAvailability,
@@ -29,6 +32,7 @@ export interface ProjectsSnapshot {
   projects: Project[]
   workProfiles: ProjectWorkProfile[]
   references: ProjectReference[]
+  graphEdges: ProjectGraphEdge[]
   legacyImportMarker: ProjectLegacyImportMarker | null
 }
 
@@ -66,9 +70,11 @@ export interface ProjectHandlerDeps {
   getProjects: () => Project[]
   getWorkProfiles: () => ProjectWorkProfile[]
   getReferences: () => ProjectReference[]
+  getGraphEdges: () => ProjectGraphEdge[]
   getLegacyImportMarker: () => ProjectLegacyImportMarker | null
   applyProjectOp: (op: ProjectOp) => ProjectRegistryMutationResult
   applyReferenceOp: (op: ProjectReferenceOp) => ProjectRegistryMutationResult
+  applyGraphEdgeOp: (op: ProjectGraphEdgeOp) => ProjectRegistryMutationResult
   setProjectHomeChat: (projectId: string, chatId: string | null) => ProjectRegistryMutationResult
   setProjectWorkProfileFields: (
     projectId: string,
@@ -163,6 +169,7 @@ export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
       projects: deps.getProjects(),
       workProfiles: deps.getWorkProfiles(),
       references: deps.getReferences(),
+      graphEdges: deps.getGraphEdges(),
       legacyImportMarker: deps.getLegacyImportMarker()
     }
   })
@@ -213,6 +220,13 @@ export function registerProjectHandlers(deps: ProjectHandlerDeps): void {
       throw new Error('Reference verification is main-initiated.')
     }
     return deps.applyReferenceOp(parsed)
+  })
+
+  ipcMain.handle('projects:graph-edge-op', (event, op: unknown) => {
+    deps.assertSenderCanManageProjects(event)
+    const parsed = parseProjectGraphEdgeOp(op)
+    if (!parsed) throw new Error('Malformed project graph edge operation.')
+    return deps.applyGraphEdgeOp(parsed)
   })
 
   ipcMain.handle('projects:verify-reference', async (event, id: unknown) => {

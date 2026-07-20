@@ -5,6 +5,7 @@ import {
   applyCreateProject,
   applyDeleteProject,
   applyMoveProject,
+  applyProjectGraphEdgeOp,
   applyProjectOp,
   applyProjectReferenceOp,
   applyRemoveChatFromAllProjects,
@@ -13,15 +14,19 @@ import {
   applySetProjectArchived,
   applySetProjectIconAndHue,
   defaultProjectReferenceTitle,
+  migrateProjectGraphEdges,
   migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
   normalizeGitHubReferenceInput,
   parseGitHubReferenceLocator,
+  parseProjectGraphEdgeOp,
   parseProjectOp,
   parseProjectReferenceOp,
+  pruneProjectGraphEdgesForChat,
   sortProjectsForDisplay,
   type Project,
+  type ProjectGraphEdge,
   type ProjectOp,
   type ProjectReferenceOp
 } from './projects'
@@ -566,5 +571,133 @@ describe('migrateProjects', () => {
       order: 3,
       memberChatIds: ['chat-1', 'chat-2']
     })
+  })
+})
+
+describe('project thread-graph edges', () => {
+  const projectWithMembers = (): Project[] => [
+    {
+      schemaVersion: 1,
+      id: 'project-a',
+      name: 'Alpha',
+      icon: { iconKind: 'seed', seed: 'project-a' },
+      hue: 120,
+      parentId: null,
+      order: 0,
+      memberChatIds: ['chat-1', 'chat-2'],
+      createdAt: 1,
+      updatedAt: 1
+    }
+  ]
+
+  it('parses well-formed ops (trimming endpoints) and rejects malformed ones', () => {
+    expect(
+      parseProjectGraphEdgeOp({
+        kind: 'add-edge',
+        id: 'e1',
+        projectId: 'project-a',
+        fromChatId: ' chat-1 ',
+        toChatId: 'chat-2',
+        now: 5
+      })
+    ).toEqual({
+      kind: 'add-edge',
+      id: 'e1',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 5
+    })
+    expect(parseProjectGraphEdgeOp({ kind: 'remove-edge', id: 'e1' })).toEqual({
+      kind: 'remove-edge',
+      id: 'e1'
+    })
+    expect(parseProjectGraphEdgeOp({ kind: 'add-edge', id: 'e1', projectId: 'project-a' })).toBeNull()
+    expect(
+      parseProjectGraphEdgeOp({
+        kind: 'add-edge',
+        id: 'e1',
+        projectId: 'p',
+        fromChatId: 'a',
+        toChatId: 'b',
+        now: Number.NaN
+      })
+    ).toBeNull()
+    expect(parseProjectGraphEdgeOp({ kind: 'nope' })).toBeNull()
+    expect(parseProjectGraphEdgeOp(null)).toBeNull()
+  })
+
+  it('adds, dedupes, and removes edges deterministically', () => {
+    const projects = projectWithMembers()
+    const first = applyProjectGraphEdgeOp([], projects, {
+      kind: 'add-edge',
+      id: 'e1',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 10
+    })
+    expect(first.changed).toBe(true)
+    expect(first.graphEdges).toHaveLength(1)
+    const dup = applyProjectGraphEdgeOp(first.graphEdges, projects, {
+      kind: 'add-edge',
+      id: 'e2',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 11
+    })
+    expect(dup.changed).toBe(false)
+    expect(dup.graphEdges).toBe(first.graphEdges)
+    const removed = applyProjectGraphEdgeOp(first.graphEdges, projects, {
+      kind: 'remove-edge',
+      id: 'e1'
+    })
+    expect(removed.changed).toBe(true)
+    expect(removed.graphEdges).toEqual([])
+  })
+
+  it('rejects self-loops and non-member endpoints', () => {
+    const projects = projectWithMembers()
+    expect(() =>
+      applyProjectGraphEdgeOp([], projects, {
+        kind: 'add-edge',
+        id: 'e1',
+        projectId: 'project-a',
+        fromChatId: 'chat-1',
+        toChatId: 'chat-1',
+        now: 10
+      })
+    ).toThrow('itself')
+    expect(() =>
+      applyProjectGraphEdgeOp([], projects, {
+        kind: 'add-edge',
+        id: 'e1',
+        projectId: 'project-a',
+        fromChatId: 'chat-1',
+        toChatId: 'ghost',
+        now: 10
+      })
+    ).toThrow('members of the project')
+  })
+
+  it('migrate drops edges that self-loop, orphan, or reference a non-member', () => {
+    const projects = projectWithMembers()
+    const stored = [
+      { id: 'keep', projectId: 'project-a', fromChatId: 'chat-1', toChatId: 'chat-2', kind: 'dependency', createdAt: 1 },
+      { id: 'drop', projectId: 'project-a', fromChatId: 'chat-1', toChatId: 'gone', kind: 'dependency', createdAt: 1 },
+      { id: 'self', projectId: 'project-a', fromChatId: 'chat-1', toChatId: 'chat-1', kind: 'dependency', createdAt: 1 },
+      { id: 'orphan', projectId: 'missing', fromChatId: 'chat-1', toChatId: 'chat-2', kind: 'dependency', createdAt: 1 }
+    ]
+    expect(migrateProjectGraphEdges(stored, projects, 99).map((edge) => edge.id)).toEqual(['keep'])
+  })
+
+  it('prunes edges touching a removed chat, scoped or app-wide', () => {
+    const edges: ProjectGraphEdge[] = [
+      { id: 'a', projectId: 'p1', fromChatId: 'c1', toChatId: 'c2', kind: 'dependency', createdAt: 1 },
+      { id: 'b', projectId: 'p2', fromChatId: 'c1', toChatId: 'c3', kind: 'dependency', createdAt: 1 }
+    ]
+    expect(pruneProjectGraphEdgesForChat(edges, 'c1', 'p1').map((edge) => edge.id)).toEqual(['b'])
+    expect(pruneProjectGraphEdgesForChat(edges, 'c1')).toEqual([])
   })
 })

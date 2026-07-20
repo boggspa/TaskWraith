@@ -1173,6 +1173,7 @@ const api = {
     patch: { brief?: string | null; preferredWorkspaceId?: string | null }
   ) => ipcRenderer.invoke('projects:update-work-profile', projectId, patch),
   applyProjectReferenceOp: (op: unknown) => ipcRenderer.invoke('projects:reference-op', op),
+  applyProjectGraphEdgeOp: (op: unknown) => ipcRenderer.invoke('projects:graph-edge-op', op),
   verifyProjectReference: (id: string) => ipcRenderer.invoke('projects:verify-reference', id),
   pickProjectReferencePath: (mode: 'file' | 'folder') =>
     ipcRenderer.invoke('projects:pick-reference-path', mode),

@@ -75,6 +75,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'projects:set-home-chat': ['nonEmptyString', 'optionalString'],
   'projects:update-work-profile': ['nonEmptyString', 'object'],
   'projects:reference-op': ['object'],
+  'projects:graph-edge-op': ['object'],
   'projects:verify-reference': ['nonEmptyString'],
   'projects:pick-reference-path': ['nonEmptyString'],
   'projects:import-legacy': ['optionalString'],

@@ -82,6 +82,8 @@ import {
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type {
   Project,
+  ProjectGraphEdge,
+  ProjectGraphEdgeOp,
   ProjectOp,
   ProjectReference,
   ProjectReferenceOp,
@@ -1509,6 +1511,7 @@ declare global {
         projects: Project[]
         workProfiles: ProjectWorkProfile[]
         references: ProjectReference[]
+        graphEdges: ProjectGraphEdge[]
         legacyImportMarker: ProjectLegacyImportMarker | null
       }>
       applyProjectOp: (op: ProjectOp) => Promise<ProjectRegistryMutationResult>
@@ -1521,6 +1524,7 @@ declare global {
         patch: { brief?: string | null; preferredWorkspaceId?: string | null }
       ) => Promise<ProjectRegistryMutationResult>
       applyProjectReferenceOp: (op: ProjectReferenceOp) => Promise<ProjectRegistryMutationResult>
+      applyProjectGraphEdgeOp: (op: ProjectGraphEdgeOp) => Promise<ProjectRegistryMutationResult>
       verifyProjectReference: (id: string) => Promise<ProjectRegistryMutationResult>
       pickProjectReferencePath: (mode: 'file' | 'folder') => Promise<string | null>
       importLegacyProjects: (rawJson: string | null) => Promise<ProjectLegacyImportResult>

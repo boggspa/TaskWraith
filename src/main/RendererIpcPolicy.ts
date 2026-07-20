@@ -273,6 +273,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'projects:set-home-chat',
   'projects:update-work-profile',
   'projects:reference-op',
+  'projects:graph-edge-op',
   'projects:verify-reference',
   'projects:pick-reference-path',
   'projects:import-legacy',

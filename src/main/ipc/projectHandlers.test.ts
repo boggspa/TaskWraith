@@ -87,10 +87,19 @@ function createDeps() {
       sampleReference,
       { ...sampleReference, id: 'ref-url', kind: 'url' as const, locator: 'https://x.dev' }
     ]),
+    getGraphEdges: vi.fn(() => []),
     applyReferenceOp: vi.fn(() => ({
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
+      changed: true
+    })),
+    applyGraphEdgeOp: vi.fn(() => ({
+      projects: [],
+      workProfiles: [],
+      references: [],
+      graphEdges: [],
       changed: true
     })),
     probeReferenceLocator: vi.fn(() => 'ok' as const),
@@ -101,18 +110,21 @@ function createDeps() {
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
       changed: op.kind !== 'delete'
     })),
     setProjectHomeChat: vi.fn(() => ({
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
       changed: true
     })),
     setProjectWorkProfileFields: vi.fn(() => ({
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
       changed: true
     })),
     chatExists: vi.fn((chatId: string) => chatId !== 'chat-missing'),
@@ -172,6 +184,7 @@ describe('registerProjectHandlers', () => {
       projects: [],
       workProfiles: [{ projectId: 'project-a', homeChatId: 'chat-1', updatedAt: 9 }],
       references: deps.getReferences(),
+      graphEdges: deps.getGraphEdges(),
       legacyImportMarker: marker
     })
   })
@@ -365,6 +378,7 @@ describe('registerProjectHandlers', () => {
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
       changed: true
     })
     expect(deps.setProjectHomeChat).toHaveBeenCalledWith('project-a', 'chat-1')
@@ -390,6 +404,7 @@ describe('registerProjectHandlers', () => {
       projects: [],
       workProfiles: [],
       references: [],
+      graphEdges: [],
       changed: true
     })
     expect(deps.applyProjectOp).toHaveBeenCalledWith(op)

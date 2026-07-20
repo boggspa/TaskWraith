@@ -14,14 +14,17 @@ import {
   cloneProject,
   cloneProjectReference,
   cloneProjectWorkProfile,
+  migrateProjectGraphEdges,
   migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
+  newProjectGraphEdgeId,
   newProjectId,
   newProjectReferenceId,
   projectById,
   sortProjectsForDisplay,
   type Project,
+  type ProjectGraphEdge,
   type ProjectInput,
   type ProjectOp,
   type ProjectPatch,
@@ -81,6 +84,7 @@ type ProjectsBridge = Window['api']
 let snapshot: Project[] = []
 let workProfiles: ProjectWorkProfile[] = []
 let references: ProjectReference[] = []
+let graphEdges: ProjectGraphEdge[] = []
 let pendingOpCount = 0
 let initPromise: Promise<void> | null = null
 let unsubscribeBroadcast: (() => void) | null = null
@@ -124,15 +128,18 @@ function adoptAuthoritative(payload: unknown): void {
   let projectsCandidate: unknown = payload
   let profilesCandidate: unknown
   let referencesCandidate: unknown
+  let graphEdgesCandidate: unknown
   if (payload && typeof payload === 'object' && !Array.isArray(payload)) {
     const state = payload as {
       projects?: unknown
       workProfiles?: unknown
       references?: unknown
+      graphEdges?: unknown
     }
     projectsCandidate = state.projects
     profilesCandidate = state.workProfiles
     referencesCandidate = state.references
+    graphEdgesCandidate = state.graphEdges
   }
   if (!Array.isArray(projectsCandidate)) return
   const now = Date.now()
@@ -144,16 +151,21 @@ function adoptAuthoritative(payload: unknown): void {
   const nextReferences = Array.isArray(referencesCandidate)
     ? migrateProjectReferences(referencesCandidate, validIds, now)
     : references
+  const nextGraphEdges = Array.isArray(graphEdgesCandidate)
+    ? migrateProjectGraphEdges(graphEdgesCandidate, nextProjects, now)
+    : graphEdges
   if (
     JSON.stringify(nextProjects) === JSON.stringify(snapshot) &&
     JSON.stringify(nextProfiles) === JSON.stringify(workProfiles) &&
-    JSON.stringify(nextReferences) === JSON.stringify(references)
+    JSON.stringify(nextReferences) === JSON.stringify(references) &&
+    JSON.stringify(nextGraphEdges) === JSON.stringify(graphEdges)
   ) {
     return
   }
   snapshot = nextProjects
   workProfiles = nextProfiles
   references = nextReferences
+  graphEdges = nextGraphEdges
   notifyProjectListeners()
 }
 
@@ -252,6 +264,7 @@ export function resetProjectsStoreForTests(): void {
   snapshot = []
   workProfiles = []
   references = []
+  graphEdges = []
   pendingOpCount = 0
   initPromise = null
   unsubscribeBroadcast?.()
@@ -408,6 +421,52 @@ export async function removeProjectReference(id: string): Promise<void> {
     throw new Error('Project references need the desktop bridge.')
   }
   const result = await invokeBridge(() => api.applyProjectReferenceOp({ kind: 'remove-reference', id }))
+  adoptAuthoritative(result)
+}
+
+export function listProjectGraphEdges(projectId?: string): ProjectGraphEdge[] {
+  void ensureInitialized()
+  const source = projectId
+    ? graphEdges.filter((edge) => edge.projectId === projectId)
+    : graphEdges
+  return source.map((edge) => ({ ...edge }))
+}
+
+/** Thread-graph edge mutations mirror references: ASYNC, main-authoritative
+ * (referential integrity — both endpoints must be project members — belongs to
+ * main). Edges are an organisational dependency map ONLY; they grant no run. */
+export async function addProjectGraphEdge(input: {
+  projectId: string
+  fromChatId: string
+  toChatId: string
+}): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.applyProjectGraphEdgeOp !== 'function') {
+    throw new Error('Project thread graph needs the desktop bridge.')
+  }
+  const result = await invokeBridge(() =>
+    api.applyProjectGraphEdgeOp({
+      kind: 'add-edge',
+      id: newProjectGraphEdgeId(),
+      projectId: input.projectId,
+      fromChatId: input.fromChatId,
+      toChatId: input.toChatId,
+      now: Date.now()
+    })
+  )
+  adoptAuthoritative(result)
+}
+
+export async function removeProjectGraphEdge(id: string): Promise<void> {
+  await ensureInitialized()
+  const api = bridge()
+  if (!api || typeof api.applyProjectGraphEdgeOp !== 'function') {
+    throw new Error('Project thread graph needs the desktop bridge.')
+  }
+  const result = await invokeBridge(() =>
+    api.applyProjectGraphEdgeOp({ kind: 'remove-edge', id })
+  )
   adoptAuthoritative(result)
 }
 

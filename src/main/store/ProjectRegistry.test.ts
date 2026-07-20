@@ -339,6 +339,94 @@ describe('ProjectRegistry home-chat claims', () => {
     expect(harness.registry.getReferences()).toEqual([])
   })
 
+  it('stores dependency edges, dedupes, and prunes on chat removal', () => {
+    const harness = harnessWithProjects()
+    harness.registry.applyOp({ kind: 'add-chat', projectId: 'project-a', chatId: 'chat-1', now: 40 })
+    harness.registry.applyOp({ kind: 'add-chat', projectId: 'project-a', chatId: 'chat-2', now: 41 })
+
+    const added = harness.registry.applyGraphEdgeOp({
+      kind: 'add-edge',
+      id: 'edge-1',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 50
+    })
+    expect(added.changed).toBe(true)
+    expect(added.graphEdges).toEqual([
+      expect.objectContaining({
+        id: 'edge-1',
+        fromChatId: 'chat-1',
+        toChatId: 'chat-2',
+        kind: 'dependency'
+      })
+    ])
+    expect(harness.changes.at(-1)?.graphEdges).toHaveLength(1)
+
+    // Idempotent per (project, from, to) even under a fresh edge id.
+    const readd = harness.registry.applyGraphEdgeOp({
+      kind: 'add-edge',
+      id: 'edge-dup',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 51
+    })
+    expect(readd.changed).toBe(false)
+    expect(readd.graphEdges).toHaveLength(1)
+
+    // Removing an endpoint from the project prunes the edges that touched it.
+    const afterRemoveChat = harness.registry.applyOp({
+      kind: 'remove-chat',
+      projectId: 'project-a',
+      chatId: 'chat-2',
+      now: 60
+    })
+    expect(afterRemoveChat.graphEdges).toEqual([])
+    expect(afterRemoveChat.changed).toBe(true)
+  })
+
+  it('drops edges with their project and rejects invalid edges', () => {
+    const harness = harnessWithProjects()
+    harness.registry.applyOp({ kind: 'add-chat', projectId: 'project-a', chatId: 'chat-1', now: 40 })
+    harness.registry.applyOp({ kind: 'add-chat', projectId: 'project-a', chatId: 'chat-2', now: 41 })
+    harness.registry.applyGraphEdgeOp({
+      kind: 'add-edge',
+      id: 'edge-1',
+      projectId: 'project-a',
+      fromChatId: 'chat-1',
+      toChatId: 'chat-2',
+      now: 50
+    })
+
+    expect(() =>
+      harness.registry.applyGraphEdgeOp({
+        kind: 'add-edge',
+        id: 'edge-self',
+        projectId: 'project-a',
+        fromChatId: 'chat-1',
+        toChatId: 'chat-1',
+        now: 51
+      })
+    ).toThrow('An edge cannot connect a thread to itself.')
+    expect(() =>
+      harness.registry.applyGraphEdgeOp({
+        kind: 'add-edge',
+        id: 'edge-x',
+        projectId: 'project-a',
+        fromChatId: 'chat-1',
+        toChatId: 'chat-outsider',
+        now: 52
+      })
+    ).toThrow('Both threads must be members of the project.')
+    expect(() =>
+      harness.registry.applyGraphEdgeOp({ kind: 'remove-edge', id: 'edge-none' })
+    ).toThrow('Edge not found.')
+
+    const afterDelete = harness.registry.applyOp({ kind: 'delete', projectId: 'project-a' })
+    expect(afterDelete.graphEdges).toEqual([])
+  })
+
   it('upserts and clears user-authored profile fields without touching the claim', () => {
     const harness = harnessWithProjects()
     harness.registry.setHomeChat('project-a', 'chat-home')

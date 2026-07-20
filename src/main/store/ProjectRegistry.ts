@@ -3,13 +3,18 @@ import { createHash } from 'crypto'
 import {
   MAX_PROJECT_BRIEF_LENGTH,
   applyAddChatToProject,
+  applyProjectGraphEdgeOp,
   applyProjectOp,
   applyProjectReferenceOp,
+  migrateProjectGraphEdges,
   migrateProjectReferences,
   migrateProjectWorkProfiles,
   migrateProjects,
   projectById,
+  pruneProjectGraphEdgesForChat,
   type Project,
+  type ProjectGraphEdge,
+  type ProjectGraphEdgeOp,
   type ProjectOp,
   type ProjectReference,
   type ProjectReferenceOp,
@@ -81,6 +86,7 @@ export interface ProjectRegistryState {
   projects: Project[]
   workProfiles: ProjectWorkProfile[]
   references: ProjectReference[]
+  graphEdges: ProjectGraphEdge[]
 }
 
 export interface ProjectRegistryMutationResult extends ProjectRegistryState {
@@ -92,6 +98,7 @@ interface ProjectRegistryFileV1 {
   projects: Project[]
   workProfiles: ProjectWorkProfile[]
   references: ProjectReference[]
+  graphEdges: ProjectGraphEdge[]
   legacyImport?: ProjectLegacyImportMarker
 }
 
@@ -99,6 +106,7 @@ export interface ProjectRegistry {
   getProjects(): Project[]
   getWorkProfiles(): ProjectWorkProfile[]
   getReferences(): ProjectReference[]
+  getGraphEdges(): ProjectGraphEdge[]
   /** Apply a wire op against authoritative state. Persists and notifies only
    * when the op changed something (profile/reference reconciliation counts).
    * Validation errors propagate to the caller (the IPC handler surfaces them
@@ -107,6 +115,10 @@ export interface ProjectRegistry {
   /** Apply a reference-library op. References are catalogue metadata ONLY —
    * nothing here reads, fetches, or grants access to the referenced source. */
   applyReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult
+  /** Apply a thread-graph edge op. Edges are an organisational dependency map
+   * between member threads ONLY — they grant no execution and never mutate the
+   * project list. Both endpoints must be current members of the project. */
+  applyGraphEdgeOp(op: ProjectGraphEdgeOp): ProjectRegistryMutationResult
   /**
    * The home-chat claim transaction: sets `homeChatId` AND adds the chat to
    * the Project's membership in ONE envelope write, enforcing one-home-per-
@@ -211,10 +223,10 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
     // (readJson has already preserved a .corrupt backup of unparseable files).
     if (Array.isArray(raw)) {
       const projects = migrateProjects(raw, now())
-      return { schemaVersion: 1, projects, workProfiles: [], references: [] }
+      return { schemaVersion: 1, projects, workProfiles: [], references: [], graphEdges: [] }
     }
     if (!raw || typeof raw !== 'object') {
-      return { schemaVersion: 1, projects: [], workProfiles: [], references: [] }
+      return { schemaVersion: 1, projects: [], workProfiles: [], references: [], graphEdges: [] }
     }
     const envelope = raw as Partial<ProjectRegistryFileV1>
     const timestamp = now()
@@ -233,11 +245,17 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
       validIds,
       timestamp
     )
+    const graphEdges = migrateProjectGraphEdges(
+      Array.isArray(envelope.graphEdges) ? envelope.graphEdges : [],
+      projects,
+      timestamp
+    )
     return {
       schemaVersion: 1,
       projects,
       workProfiles,
       references,
+      graphEdges,
       ...(isImportMarker(envelope.legacyImport) ? { legacyImport: envelope.legacyImport } : {})
     }
   }
@@ -268,6 +286,10 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
       return readEnvelope().references
     },
 
+    getGraphEdges(): ProjectGraphEdge[] {
+      return readEnvelope().graphEdges
+    },
+
     applyOp(op: ProjectOp): ProjectRegistryMutationResult {
       const envelope = readEnvelope()
       const { projects, changed: listChanged } = applyProjectOp(envelope.projects, op)
@@ -277,23 +299,34 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         op,
         now()
       )
-      // Deleting a project (or its descendants) takes its library entries
-      // with it — a reference without a project is meaningless.
+      // Deleting a project (or its descendants) takes its library entries and
+      // dependency edges with it; removing a chat from a project (or app-wide)
+      // drops the edges that touched that thread — a dangling edge is meaningless.
       let references = envelope.references
+      let graphEdges = envelope.graphEdges
       if (op.kind === 'delete') {
         const surviving = new Set(projects.map((project) => project.id))
-        const kept = references.filter((reference) => surviving.has(reference.projectId))
-        if (kept.length !== references.length) references = kept
+        const keptRefs = references.filter((reference) => surviving.has(reference.projectId))
+        if (keptRefs.length !== references.length) references = keptRefs
+        const keptEdges = graphEdges.filter((edge) => surviving.has(edge.projectId))
+        if (keptEdges.length !== graphEdges.length) graphEdges = keptEdges
+      } else if (op.kind === 'remove-chat') {
+        const pruned = pruneProjectGraphEdgesForChat(graphEdges, op.chatId, op.projectId)
+        if (pruned.length !== graphEdges.length) graphEdges = pruned
+      } else if (op.kind === 'remove-chat-everywhere') {
+        const pruned = pruneProjectGraphEdgesForChat(graphEdges, op.chatId)
+        if (pruned.length !== graphEdges.length) graphEdges = pruned
       }
       const changed =
         listChanged ||
         workProfiles !== envelope.workProfiles ||
-        references !== envelope.references
+        references !== envelope.references ||
+        graphEdges !== envelope.graphEdges
       if (changed) {
-        writeEnvelope({ ...envelope, projects, workProfiles, references })
-        notify({ projects, workProfiles, references })
+        writeEnvelope({ ...envelope, projects, workProfiles, references, graphEdges })
+        notify({ projects, workProfiles, references, graphEdges })
       }
-      return { projects, workProfiles, references, changed }
+      return { projects, workProfiles, references, graphEdges, changed }
     },
 
     applyReferenceOp(op: ProjectReferenceOp): ProjectRegistryMutationResult {
@@ -308,13 +341,40 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         notify({
           projects: envelope.projects,
           workProfiles: envelope.workProfiles,
-          references
+          references,
+          graphEdges: envelope.graphEdges
         })
       }
       return {
         projects: envelope.projects,
         workProfiles: envelope.workProfiles,
         references,
+        graphEdges: envelope.graphEdges,
+        changed
+      }
+    },
+
+    applyGraphEdgeOp(op: ProjectGraphEdgeOp): ProjectRegistryMutationResult {
+      const envelope = readEnvelope()
+      const { graphEdges, changed } = applyProjectGraphEdgeOp(
+        envelope.graphEdges,
+        envelope.projects,
+        op
+      )
+      if (changed) {
+        writeEnvelope({ ...envelope, graphEdges })
+        notify({
+          projects: envelope.projects,
+          workProfiles: envelope.workProfiles,
+          references: envelope.references,
+          graphEdges
+        })
+      }
+      return {
+        projects: envelope.projects,
+        workProfiles: envelope.workProfiles,
+        references: envelope.references,
+        graphEdges,
         changed
       }
     },
@@ -336,15 +396,22 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
             projects: envelope.projects,
             workProfiles,
             references: envelope.references,
+            graphEdges: envelope.graphEdges,
             changed: false
           }
         }
         writeEnvelope({ ...envelope, workProfiles })
-        notify({ projects: envelope.projects, workProfiles, references: envelope.references })
+        notify({
+          projects: envelope.projects,
+          workProfiles,
+          references: envelope.references,
+          graphEdges: envelope.graphEdges
+        })
         return {
           projects: envelope.projects,
           workProfiles,
           references: envelope.references,
+          graphEdges: envelope.graphEdges,
           changed: true
         }
       }
@@ -364,6 +431,7 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
           projects: envelope.projects,
           workProfiles: envelope.workProfiles,
           references: envelope.references,
+          graphEdges: envelope.graphEdges,
           changed: false
         }
       }
@@ -385,8 +453,19 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         : [...envelope.workProfiles, nextProfile]
 
       writeEnvelope({ ...envelope, projects, workProfiles })
-      notify({ projects, workProfiles, references: envelope.references })
-      return { projects, workProfiles, references: envelope.references, changed: true }
+      notify({
+        projects,
+        workProfiles,
+        references: envelope.references,
+        graphEdges: envelope.graphEdges
+      })
+      return {
+        projects,
+        workProfiles,
+        references: envelope.references,
+        graphEdges: envelope.graphEdges,
+        changed: true
+      }
     },
 
     setWorkProfileFields(
@@ -430,6 +509,7 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
           projects: envelope.projects,
           workProfiles: envelope.workProfiles,
           references: envelope.references,
+          graphEdges: envelope.graphEdges,
           changed: false
         }
       }
@@ -443,11 +523,17 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
           : [...envelope.workProfiles, next]
 
       writeEnvelope({ ...envelope, workProfiles })
-      notify({ projects: envelope.projects, workProfiles, references: envelope.references })
+      notify({
+        projects: envelope.projects,
+        workProfiles,
+        references: envelope.references,
+        graphEdges: envelope.graphEdges
+      })
       return {
         projects: envelope.projects,
         workProfiles,
         references: envelope.references,
+        graphEdges: envelope.graphEdges,
         changed: true
       }
     },
@@ -509,7 +595,8 @@ export function createProjectRegistry(deps: ProjectRegistryPersistenceDeps): Pro
         notify({
           projects: merged,
           workProfiles: envelope.workProfiles,
-          references: envelope.references
+          references: envelope.references,
+          graphEdges: envelope.graphEdges
         })
       }
       return { status, importedCount: added.length, marker }

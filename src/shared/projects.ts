@@ -1342,3 +1342,184 @@ export function applyProjectReferenceOp(
     }
   }
 }
+
+// ---------------------------------------------------------------------------
+// Project thread-graph edges
+//
+// A ProjectGraphEdge is a durable, user-authored dependency link between two
+// member threads of a Project: `fromChatId` is upstream (a prerequisite),
+// `toChatId` is downstream (depends on it). Like ProjectReference, edges are a
+// companion record kept OUTSIDE the V1 Project shape so old builds don't strip
+// them, and they grant NO execution — V1 renders them as an organisational map.
+// Auto-derived relationship edges (parent/sub/side chats) are computed in the
+// renderer projection and NEVER stored here; only explicit user edges are.
+// ---------------------------------------------------------------------------
+
+export type ProjectGraphEdge = {
+  id: string
+  projectId: string
+  /** Upstream thread (the prerequisite). */
+  fromChatId: string
+  /** Downstream thread (depends on `fromChatId`). */
+  toChatId: string
+  kind: 'dependency'
+  createdAt: number
+}
+
+const PROJECT_GRAPH_EDGE_ID_PREFIX = 'pgedge-'
+
+export function newProjectGraphEdgeId(): string {
+  const uuid =
+    typeof globalThis.crypto?.randomUUID === 'function'
+      ? globalThis.crypto.randomUUID()
+      : `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`
+  return `${PROJECT_GRAPH_EDGE_ID_PREFIX}${uuid}`
+}
+
+export type ProjectGraphEdgeOp =
+  | {
+      kind: 'add-edge'
+      id: string
+      projectId: string
+      fromChatId: string
+      toChatId: string
+      now: number
+    }
+  | { kind: 'remove-edge'; id: string }
+
+export function parseProjectGraphEdgeOp(value: unknown): ProjectGraphEdgeOp | null {
+  if (!value || typeof value !== 'object') return null
+  const op = value as Record<string, unknown>
+  switch (op.kind) {
+    case 'add-edge': {
+      if (!isNonEmptyString(op.id) || !isNonEmptyString(op.projectId)) return null
+      if (!isNonEmptyString(op.fromChatId) || !isNonEmptyString(op.toChatId)) return null
+      if (!isFiniteNumber(op.now)) return null
+      return {
+        kind: 'add-edge',
+        id: op.id,
+        projectId: op.projectId,
+        fromChatId: op.fromChatId.trim(),
+        toChatId: op.toChatId.trim(),
+        now: op.now
+      }
+    }
+    case 'remove-edge': {
+      if (!isNonEmptyString(op.id)) return null
+      return { kind: 'remove-edge', id: op.id }
+    }
+    default:
+      return null
+  }
+}
+
+/**
+ * Apply a graph-edge op. `projects` is consulted for referential integrity:
+ * both endpoints must be current members of the target Project, and self-loops
+ * are rejected. Adds are idempotent per (projectId, fromChatId, toChatId).
+ */
+export function applyProjectGraphEdgeOp(
+  graphEdges: ProjectGraphEdge[],
+  projects: Project[],
+  op: ProjectGraphEdgeOp
+): { graphEdges: ProjectGraphEdge[]; changed: boolean } {
+  switch (op.kind) {
+    case 'add-edge': {
+      const project = projectById(projects, op.projectId)
+      if (!project) throw new Error('Project not found.')
+      const from = op.fromChatId.trim()
+      const to = op.toChatId.trim()
+      if (!from || !to) throw new Error('Edge endpoints are required.')
+      if (from === to) throw new Error('An edge cannot connect a thread to itself.')
+      if (!project.memberChatIds.includes(from) || !project.memberChatIds.includes(to)) {
+        throw new Error('Both threads must be members of the project.')
+      }
+      const existing = graphEdges.find(
+        (edge) =>
+          edge.projectId === op.projectId && edge.fromChatId === from && edge.toChatId === to
+      )
+      if (existing) return { graphEdges, changed: false }
+      const next: ProjectGraphEdge = {
+        id: op.id,
+        projectId: op.projectId,
+        fromChatId: from,
+        toChatId: to,
+        kind: 'dependency',
+        createdAt: op.now
+      }
+      return { graphEdges: [...graphEdges, next], changed: true }
+    }
+    case 'remove-edge': {
+      const next = graphEdges.filter((edge) => edge.id !== op.id)
+      if (next.length === graphEdges.length) throw new Error('Edge not found.')
+      return { graphEdges: next, changed: true }
+    }
+    default: {
+      const exhausted: never = op
+      throw new Error(
+        `Unknown project graph edge op: ${String((exhausted as { kind?: string }).kind)}`
+      )
+    }
+  }
+}
+
+/**
+ * Read-time integrity for stored edges: drop entries whose project is gone,
+ * whose endpoints are not BOTH current members, or that self-loop/duplicate.
+ */
+export function migrateProjectGraphEdges(
+  candidates: unknown[],
+  projects: Project[],
+  now: number
+): ProjectGraphEdge[] {
+  const projectMap = new Map(projects.map((project) => [project.id, project]))
+  const seenIds = new Set<string>()
+  const dedupe = new Set<string>()
+  const edges: ProjectGraphEdge[] = []
+  for (const candidate of candidates) {
+    if (!candidate || typeof candidate !== 'object') continue
+    const entry = candidate as Partial<ProjectGraphEdge>
+    if (typeof entry.id !== 'string' || !entry.id.trim()) continue
+    if (seenIds.has(entry.id)) continue
+    if (typeof entry.projectId !== 'string') continue
+    const project = projectMap.get(entry.projectId)
+    if (!project) continue
+    if (typeof entry.fromChatId !== 'string' || typeof entry.toChatId !== 'string') continue
+    const from = entry.fromChatId.trim()
+    const to = entry.toChatId.trim()
+    if (!from || !to || from === to) continue
+    if (!project.memberChatIds.includes(from) || !project.memberChatIds.includes(to)) continue
+    const dedupeKey = `${entry.projectId} ${from} ${to}`
+    if (dedupe.has(dedupeKey)) continue
+    seenIds.add(entry.id)
+    dedupe.add(dedupeKey)
+    edges.push({
+      id: entry.id,
+      projectId: entry.projectId,
+      fromChatId: from,
+      toChatId: to,
+      kind: 'dependency',
+      createdAt:
+        typeof entry.createdAt === 'number' && Number.isFinite(entry.createdAt)
+          ? entry.createdAt
+          : now
+    })
+  }
+  return edges
+}
+
+/**
+ * Drop stored edges that reference a removed chat (either endpoint). Scoped to
+ * one project when `projectId` is given (a chat left a single project), else
+ * app-wide (a chat was deleted everywhere).
+ */
+export function pruneProjectGraphEdgesForChat(
+  graphEdges: ProjectGraphEdge[],
+  chatId: string,
+  projectId?: string
+): ProjectGraphEdge[] {
+  return graphEdges.filter((edge) => {
+    if (projectId !== undefined && edge.projectId !== projectId) return true
+    return edge.fromChatId !== chatId && edge.toChatId !== chatId
+  })
+}
