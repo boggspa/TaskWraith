@@ -205,7 +205,9 @@ export async function prepareKimiIsolatedHome(
     }
     await fs.chmod(boundaryRoot, 0o700)
     boundaryStat = await fs.lstat(boundaryRoot)
-    if ((boundaryStat.mode & 0o077) !== 0) {
+    // Windows does not expose POSIX owner/group/other mode authority after chmod.
+    // Match KimiProductionContainment / OAuth lease private-directory posture.
+    if (process.platform !== 'win32' && (boundaryStat.mode & 0o077) !== 0) {
       throw new Error('the isolated-home root is not mode 0700')
     }
     await fs.mkdir(homeDir)
@@ -223,7 +225,7 @@ export async function prepareKimiIsolatedHome(
     if (
       !homeStat.isDirectory() ||
       homeStat.isSymbolicLink() ||
-      (homeStat.mode & 0o077) !== 0 ||
+      (process.platform !== 'win32' && (homeStat.mode & 0o077) !== 0) ||
       !pathIsWithin(rootReal, homeReal)
     ) {
       throw new Error('the isolated Kimi home escaped its private root')

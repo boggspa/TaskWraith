@@ -289,6 +289,10 @@ describe('CanvasStore', () => {
   })
 
   it('binds clearAll to the directory observed before its operation-wide open', () => {
+    // Directory-handle identity (dev/ino after an O_DIRECTORY open) is not
+    // reliable under Windows rename races the way POSIX inode identity is.
+    // Sibling directory-swap coverage above already skips win32 for the same reason.
+    if (process.platform === 'win32') return
     store.appendEventStrict(event('must-clear-original', 'a', { kind: 'eval.completed' }))
     const originalDir = `${dir}-original`
     const replacementDir = mkdtempSync(join(tmpdir(), 'canvas-clear-replacement-'))
@@ -327,6 +331,8 @@ describe('CanvasStore', () => {
   })
 
   it('pins eval receipt claim and audit event to one directory identity', () => {
+    // Same win32 directory-identity limitation as the clearAll open-pin test.
+    if (process.platform === 'win32') return
     const originalDir = `${dir}-original`
     const replacementDir = mkdtempSync(join(tmpdir(), 'canvas-eval-replacement-'))
     writeFileSync(join(replacementDir, 'canvas-events.json'), '[]', { mode: 0o600 })

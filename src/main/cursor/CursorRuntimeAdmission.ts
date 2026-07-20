@@ -365,10 +365,24 @@ function executeBoundedProbe(
   maxBuffer: number
 ): Promise<CursorProbeCapture> {
   return new Promise((resolve) => {
+    // Node ≥20 rejects .cmd/.bat without shell (CVE-2024-27980 → EINVAL). Official
+    // Windows installers often expose cursor-agent as a .cmd wrapper. Inventory
+    // probes only pass fixed allowlisted args (--version / --help), never freeform
+    // user input, so shell:true is acceptable on this narrow path.
+    const windowsBatch =
+      process.platform === 'win32' && /\.(cmd|bat)$/i.test(binaryPath)
     execFile(
       binaryPath,
       [...args],
-      { cwd, env, encoding: 'utf8', timeout: timeoutMs, maxBuffer, killSignal: 'SIGKILL' },
+      {
+        cwd,
+        env,
+        encoding: 'utf8',
+        timeout: timeoutMs,
+        maxBuffer,
+        killSignal: 'SIGKILL',
+        ...(windowsBatch ? { shell: true } : {})
+      },
       (error, stdout, stderr) => {
         const codeValue = (error as NodeJS.ErrnoException | null)?.code
         resolve({

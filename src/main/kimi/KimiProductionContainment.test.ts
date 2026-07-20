@@ -392,7 +392,10 @@ describe('Kimi production ACP containment', () => {
     const cwd = await prepareKimiPrivateRunCwd({ isolatedHome: home, fs: realFs })
 
     expect(cwd.cwd.startsWith(join(home, 'runtime-cwd', 'run-'))).toBe(true)
-    expect((await lstat(cwd.cwd)).mode & 0o077).toBe(0)
+    // Windows does not enforce POSIX 0700 bits; production already skips that check.
+    if (process.platform !== 'win32') {
+      expect((await lstat(cwd.cwd)).mode & 0o077).toBe(0)
+    }
     expect(await readdir(cwd.cwd)).toEqual([])
     await cwd.assertReadyForSpawn()
     await cwd.cleanup()
