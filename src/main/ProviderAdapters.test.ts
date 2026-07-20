@@ -190,6 +190,14 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(cap.perThreadMcp).toBe(true)
   })
 
+  it('live TaskWraith-gated providers advertise workspace grants', () => {
+    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'ollama'] as const) {
+      expect(defaultProviderDescriptor(provider).features.workspaceGrants).toBe(true)
+    }
+    // Cursor managed runs are unavailable; do not advertise grant UX for it.
+    expect(defaultProviderDescriptor('cursor').features.workspaceGrants).toBe(false)
+  })
+
   it('pins Cursor to unavailable with no approval or resume surface', () => {
     const descriptor = defaultProviderDescriptor('cursor')
     expect(descriptor.features.persistentSessions).toBe(false)
@@ -208,6 +216,7 @@ describe('defaultProviderDescriptor capabilities', () => {
   it('pins Grok mode-scoped TaskWraith bridge caveat', () => {
     const descriptor = defaultProviderDescriptor('grok')
     expect(descriptor.features.agentBenchMcpBridge).toBe(false)
+    expect(descriptor.features.workspaceGrants).toBe(true)
     expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
 
     const caveat = descriptor.capabilityCaveats?.find(

@@ -72,7 +72,19 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       sideGrant,
-      'if (enabled && !isLiveSelectableProvider(sideComposerProvider)) return',
+      'if (enabled && !isLiveSelectableProvider(sideComposerProvider))',
+      'await window.api.upsertAgenticWorkspaceGrant('
+    )
+  })
+
+  it('blocks main-composer new grants for unavailable providers before upsert IPC', () => {
+    const mainGrant = sourceBetween(
+      'const handleSetAgenticWorkspaceGrant = async (',
+      'const handleRemoveAgenticWorkspaceGrant ='
+    )
+    expectBefore(
+      mainGrant,
+      'if (enabled && !isLiveSelectableProvider(targetProvider))',
       'await window.api.upsertAgenticWorkspaceGrant('
     )
   })
@@ -100,7 +112,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       paneGrant,
-      'if (enabled && !isLiveSelectableProvider(paneProvider)) return',
+      'if (enabled && !isLiveSelectableProvider(paneProvider))',
       'await window.api.upsertAgenticWorkspaceGrant('
     )
   })

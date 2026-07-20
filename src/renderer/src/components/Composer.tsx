@@ -4349,8 +4349,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               permissionPresetId: 'workspace_write'
                             })
                           }
+                          // Permission mode + tool grants stay editable while a solo run is
+                          // live. Users must be able to override per-provider workspace grants
+                          // without cancelling a blocked turn. Model/provider/prompt locks still
+                          // use isCurrentComposerLocked elsewhere.
                           const pickerDisabled =
-                            isCurrentComposerLocked ||
                             Boolean(providerRunUnavailableReason(effectiveProvider)) ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
                           // Tier retirement (2026-07): Ollama uses the SAME standard

@@ -6945,10 +6945,40 @@ function App(): React.JSX.Element {
     // default. providerOverride threads it through; falls back to the
     // chat-level currentProvider when not specified (the solo path).
     const targetProvider = providerOverride ?? currentProvider
-    const nextSettings = enabled
-      ? await window.api.upsertAgenticWorkspaceGrant(targetProvider, currentWorkspace.path, service)
-      : await window.api.removeAgenticWorkspaceGrant(targetProvider, currentWorkspace.path, service)
-    applyAgenticWorkspaceGrantSettings(nextSettings)
+    // New grants only for live-selectable providers. Removals still run so
+    // historical/unavailable provider grants can be cleaned up.
+    if (enabled && !isLiveSelectableProvider(targetProvider)) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Cannot enable workspace grants for ${getProviderLabel(targetProvider)} — managed runs are unavailable. Switch to a live provider.`
+        }
+      ])
+      return
+    }
+    try {
+      const nextSettings = enabled
+        ? await window.api.upsertAgenticWorkspaceGrant(
+            targetProvider,
+            currentWorkspace.path,
+            service
+          )
+        : await window.api.removeAgenticWorkspaceGrant(
+            targetProvider,
+            currentWorkspace.path,
+            service
+          )
+      applyAgenticWorkspaceGrantSettings(nextSettings)
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(targetProvider)}: ${redactLog(String(error))}`
+        }
+      ])
+    }
   }
 
   const handleRemoveAgenticWorkspaceGrant = async (
@@ -20460,22 +20490,43 @@ function App(): React.JSX.Element {
     service: AgenticServiceId,
     enabled: boolean
   ) => {
+    // Ensemble side composers use participant-scoped grants; solo side chats keep
+    // workspace grants even while the linked run is live (picker no longer locks).
     if (!sideChat || isSideEnsembleComposerLocked || sideIsGlobalChat || !sideWorkspace?.path) {
       return
     }
-    if (enabled && !isLiveSelectableProvider(sideComposerProvider)) return
-    const nextSettings = enabled
-      ? await window.api.upsertAgenticWorkspaceGrant(
-          sideComposerProvider,
-          sideWorkspace.path,
-          service
-        )
-      : await window.api.removeAgenticWorkspaceGrant(
-          sideComposerProvider,
-          sideWorkspace.path,
-          service
-        )
-    applyAgenticWorkspaceGrantSettings(nextSettings)
+    if (enabled && !isLiveSelectableProvider(sideComposerProvider)) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Cannot enable workspace grants for ${getProviderLabel(sideComposerProvider)} — managed runs are unavailable.`
+        }
+      ])
+      return
+    }
+    try {
+      const nextSettings = enabled
+        ? await window.api.upsertAgenticWorkspaceGrant(
+            sideComposerProvider,
+            sideWorkspace.path,
+            service
+          )
+        : await window.api.removeAgenticWorkspaceGrant(
+            sideComposerProvider,
+            sideWorkspace.path,
+            service
+          )
+      applyAgenticWorkspaceGrantSettings(nextSettings)
+    } catch (error) {
+      setRawLogs((prev) => [
+        ...prev,
+        {
+          type: 'stderr',
+          content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(sideComposerProvider)}: ${redactLog(String(error))}`
+        }
+      ])
+    }
   }
   const sideComposerRunTimecodeStartedAt = isSideChatRunning
     ? sideChat?.ensemble?.activeRound?.startedAt || sideRun?.startedAt || null
@@ -25736,11 +25787,30 @@ function App(): React.JSX.Element {
       const paneWorkspace = getWorkspaceForChat(paneChat)
       if (!paneWorkspace?.path) return
       const paneProvider = getChatProvider(paneChat)
-      if (enabled && !isLiveSelectableProvider(paneProvider)) return
-      const nextSettings = enabled
-        ? await window.api.upsertAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
-        : await window.api.removeAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
-      applyAgenticWorkspaceGrantSettings(nextSettings)
+      if (enabled && !isLiveSelectableProvider(paneProvider)) {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'stderr',
+            content: `Cannot enable workspace grants for ${getProviderLabel(paneProvider)} — managed runs are unavailable.`
+          }
+        ])
+        return
+      }
+      try {
+        const nextSettings = enabled
+          ? await window.api.upsertAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
+          : await window.api.removeAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
+        applyAgenticWorkspaceGrantSettings(nextSettings)
+      } catch (error) {
+        setRawLogs((prev) => [
+          ...prev,
+          {
+            type: 'stderr',
+            content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(paneProvider)}: ${redactLog(String(error))}`
+          }
+        ])
+      }
     },
     []
   )
@@ -29583,6 +29653,16 @@ function App(): React.JSX.Element {
               }
             } catch (err) {
               console.error('approval elevation confirm side-effect failed', err)
+            }
+          }}
+        />
+      )}
+    </div>
+  )
+}
+
+export default App
+'approval elevation confirm side-effect failed', err)
             }
           }}
         />
