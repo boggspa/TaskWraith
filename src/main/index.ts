@@ -1483,9 +1483,14 @@ import {
 import { buildClaudeCliArgs, normalizeClaudeEffortFlagForModel } from './ClaudeCliArgs'
 import {
   getSubThreadResumeSessionId,
-  isActiveSubThreadRunStatus,
   resolveSubThreadRecall
 } from './SubThreadRecall'
+import {
+  CHAT_RUN_STALE_REASON,
+  isActiveChatRunStatus,
+  reconcileStaleChatRuns,
+  settleStaleChatRun
+} from './ChatRunReconciler'
 import { resolveSubThreadDelegationRunSettings } from './SubThreadDelegationRunSettings'
 import { newProjectReferenceId } from '../shared/projects'
 import {
@@ -1678,6 +1683,12 @@ let historyDeletionStartupRecoveryBlockedReason: string | null = null
 // ~10-min floor sweep so a 'due'/'pending'/'running' wedge self-heals even when
 // no occurrence is being materialized (the piggyback path is event-driven).
 let stallReconcilerInterval: ReturnType<typeof setInterval> | null = null
+// ChatRun liveness sweep: settle orphaned `status: 'running'` rows that would
+// otherwise pin iOS Active / thread spinners after crash or missed terminal flush.
+// Startup uses minAgeMs=0; the interval uses a short grace window.
+const CHAT_RUN_RECONCILER_INTERVAL_MS = 2 * 60 * 1000
+const CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS = 30_000
+let chatRunReconcilerInterval: ReturnType<typeof setInterval> | null = null
 const stalledOccurrenceEventKeys = new Set<string>()
 let activeGeminiToolContext: GeminiToolContext | null = null
 const rendererConsoleBuffer: Array<{
@@ -7766,7 +7777,107 @@ async function maybeDrainParentSubThreadMailbox(parentChatId: string): Promise<v
   }
 }
 
+/** True when a ChatRun still has a live owner that may emit a terminal
+ * status. Covers the four process-local owners that can leave `chat.runs`
+ * non-terminal without a durable terminal flush:
+ *   - RunManager session
+ *   - bridge / execution-graph transcript
+ *   - background sub-thread transcript
+ *   - non-terminal run-queue job (mid-dispatch before a session exists)
+ */
+function isChatRunLive(runId: string | undefined | null): boolean {
+  if (!runId || typeof runId !== 'string' || !runId.trim()) return false
+  const id = runId.trim()
+  if (runManager.get(id)) return true
+  if (bridgeRunTranscripts.has(id)) return true
+  if (backgroundSubThreadTranscripts.has(id)) return true
+  if (
+    [...backgroundSubThreadTranscripts.values()].some(
+      (state) => state.runId === id
+    )
+  ) {
+    return true
+  }
+  const job = AppStore.getRunQueueJob(id)
+  if (!job) return false
+  return (
+    job.status === 'queued' ||
+    job.status === 'steer_promoting' ||
+    job.status === 'starting' ||
+    job.status === 'active' ||
+    job.status === 'paused' ||
+    job.status === 'cancelling'
+  )
+}
+
+/**
+ * Settle every ChatRun that still projects as active but has no live owner.
+ * Same spirit as recoverSubThreadWorkerQueues, but for ALL chats (solo parents,
+ * ensemble participants, side chats, sub-threads). After each settlement, push
+ * the remote surfaces iOS reads: task-card, thread-list, and thread snapshot.
+ */
+function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): number {
+  const nowIso = new Date().toISOString()
+  const { chats, settlements } = reconcileStaleChatRuns(
+    AppStore.getChats(),
+    isChatRunLive,
+    nowIso,
+    { minAgeMs: options.minAgeMs ?? 0 }
+  )
+  if (settlements.length === 0) return 0
+
+  for (const chat of chats) {
+    const saved = saveAndBroadcastChat(chat)
+    pushBridgeRunTaskCardDelta?.(saved.appChatId)
+    pushRemoteThreadSnapshotForChat?.(saved)
+    try {
+      bridgeBroadcasterRef?.broadcastThreadUpdated(saved.appChatId)
+    } catch (err) {
+      console.warn(
+        `[chat-run-reconciler] thread-updated broadcast failed for ${saved.appChatId}:`,
+        err instanceof Error ? err.message : String(err)
+      )
+    }
+  }
+
+  try {
+    bridgeBroadcasterRef?.broadcastThreadList()
+    bridgeBroadcasterRef?.broadcastRemoteProjectionSnapshot()
+  } catch (err) {
+    console.warn(
+      '[chat-run-reconciler] thread-list/snapshot broadcast failed:',
+      err instanceof Error ? err.message : String(err)
+    )
+  }
+
+  for (const settlement of settlements) {
+    console.warn(
+      `[chat-run-reconciler] settled stale ChatRun chat=${settlement.chatId} run=${settlement.runId} was=${settlement.previousStatus}: ${CHAT_RUN_STALE_REASON}`
+    )
+    appendDurableRunEvent({
+      runId: settlement.runId,
+      chatId: settlement.chatId,
+      kind: 'lifecycle',
+      phase: 'control',
+      source: 'main',
+      summary: 'Settled orphaned ChatRun with no live process owner',
+      payload: {
+        eventType: 'chat_run_reconciled',
+        previousStatus: settlement.previousStatus,
+        settledStatus: 'failed',
+        reason: CHAT_RUN_STALE_REASON
+      }
+    })
+  }
+
+  return settlements.length
+}
+
 function recoverPendingSubThreadMailboxes(): void {
+  // Universal ChatRun liveness first so iOS task-cards / thread-list stop
+  // advertising orphan "running" rows before sub-thread worker control reclaims
+  // any remaining control-plane state. Worker recovery remains idempotent.
+  reconcileStaleChatRunsProjection({ minAgeMs: 0 })
   recoverSubThreadWorkerQueues()
   const joinGroups = new Set<string>()
   for (const chat of AppStore.getChats()) {
@@ -9455,16 +9566,19 @@ function recoverSubThreadWorkerQueues(): void {
     if (!chat.parentChatId || !control) continue
     const recoveredAt = new Date().toISOString()
     const recoveredRuns = (chat.runs || []).map((run) => {
+      // Prefer the universal liveness probe (RunManager + bridge + bg + queue).
+      // Keep the chat-scoped bg-transcript match as a belt-and-braces path for
+      // legacy map shapes where runId indexing may lag chatId association.
       const live =
-        Boolean(run.runId && runManager.get(run.runId)) ||
+        isChatRunLive(run.runId) ||
         Boolean(
           run.runId &&
           [...backgroundSubThreadTranscripts.values()].some(
             (state) => state.chatId === chat.appChatId && state.runId === run.runId
           )
         )
-      return !live && isActiveSubThreadRunStatus(run.status)
-        ? { ...run, status: 'failed', endedAt: recoveredAt, exitCode: run.exitCode ?? 1 }
+      return !live && isActiveChatRunStatus(run.status)
+        ? settleStaleChatRun(run, recoveredAt)
         : run
     })
     const runSnapshots = recoveredRuns.flatMap((run) =>
@@ -37091,6 +37205,10 @@ if (isGeminiMcpBridgeProcess) {
         clearInterval(stallReconcilerInterval)
         stallReconcilerInterval = null
       }
+      if (chatRunReconcilerInterval) {
+        clearInterval(chatRunReconcilerInterval)
+        chatRunReconcilerInterval = null
+      }
       // Clear every armed wall-clock budget timer so a pending kill never fires
       // mid-quit. (Timers are also .unref()'d, so this is belt-and-braces.)
       workflowBudgetRegistry.disposeAll()
@@ -37232,6 +37350,25 @@ if (isGeminiMcpBridgeProcess) {
         Math.min(10 * 60 * 1000, DEFAULT_STALL_BACKSTOP_MS)
       )
       stallReconcilerInterval.unref?.()
+    }
+    // Floor sweep for orphaned chat.runs that still project as running on iOS
+    // after a crash, missed terminal flush, or bridge drop. Startup already
+    // settles with minAgeMs=0 via recoverPendingSubThreadMailboxes; the interval
+    // uses a short grace window so mid-dispatch seeds are not false-failed.
+    if (!historyDeletionStartupRecoveryBlockedReason) {
+      chatRunReconcilerInterval = setInterval(() => {
+        try {
+          reconcileStaleChatRunsProjection({
+            minAgeMs: CHAT_RUN_RECONCILER_PERIODIC_MIN_AGE_MS
+          })
+        } catch (error) {
+          console.warn(
+            '[chat-run-reconciler] periodic sweep failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+        }
+      }, CHAT_RUN_RECONCILER_INTERVAL_MS)
+      chatRunReconcilerInterval.unref?.()
     }
     AppStore.recoverExpiredApprovalLedger()
     void getGeminiMcpBridgeStatus({

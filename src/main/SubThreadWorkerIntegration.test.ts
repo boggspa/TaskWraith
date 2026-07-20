@@ -92,8 +92,28 @@ describe('sub-thread long-lived worker main-process integration', () => {
     expectContains(indexSource, 'recoverSubThreadWorkerQueues()')
     expectContains(indexSource, 'maybeDrainSubThreadWorkerQueue(')
     expectContains(indexSource, 'child.delegationContext?.workerControl?.events')
-    expectContains(indexSource, 'isActiveSubThreadRunStatus(run.status)')
-    expectContains(indexSource, 'runManager.get(run.runId)')
+    expectContains(indexSource, 'isActiveChatRunStatus(run.status)')
+    expectContains(indexSource, 'isChatRunLive(run.runId)')
+    expectContains(indexSource, 'settleStaleChatRun(run, recoveredAt)')
+  })
+
+  it('reconciles orphaned chat.runs for all chats at startup and on a periodic sweep', () => {
+    expectContains(indexSource, "from './ChatRunReconciler'")
+    expectContains(indexSource, 'function isChatRunLive(')
+    expectContains(indexSource, 'function reconcileStaleChatRunsProjection(')
+    expectContains(indexSource, 'reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    expectContains(indexSource, 'chatRunReconcilerInterval = setInterval')
+    expectContains(indexSource, 'pushBridgeRunTaskCardDelta?.(saved.appChatId)')
+    expectContains(indexSource, 'broadcastThreadList()')
+    expectContains(indexSource, 'broadcastRemoteProjectionSnapshot()')
+    // Universal settle runs before sub-thread worker control recovery.
+    const recoverPending = sourceBetween(
+      'function recoverPendingSubThreadMailboxes(): void {',
+      'function dispatchParentRunWithPendingSubThreadMailbox('
+    )
+    expect(
+      recoverPending.indexOf('reconcileStaleChatRunsProjection({ minAgeMs: 0 })')
+    ).toBeLessThan(recoverPending.indexOf('recoverSubThreadWorkerQueues()'))
   })
 
   it('preserves the frozen Codex startup lease and canonical gateway target dispatch', () => {
