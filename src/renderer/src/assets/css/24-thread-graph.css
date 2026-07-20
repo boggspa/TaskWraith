@@ -1,0 +1,82 @@
+/*
+ * Project Thread-Graph pane.
+ *
+ * The structure (view container, topological stages, node cards, inspector,
+ * status tokens) is shared with the Execution Map (23-execution-map.css): this
+ * pane reuses those classes so the two node/graph surfaces stay visually
+ * consistent. Only the thread-specific additions live here — badges, the
+ * placeholder state, and the add/remove-dependency controls. Like the Execution
+ * Map it is a derived topological projection, NOT a free-position canvas.
+ */
+
+.thread-graph-node-badges {
+  display: inline-flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  margin-inline-start: auto;
+}
+
+.thread-graph-badge {
+  font-size: 10px;
+  line-height: 1.4;
+  padding: 1px 7px;
+  border-radius: 999px;
+  color: var(--text-secondary, #c1c6d0);
+  background: color-mix(in srgb, var(--surface-raised, #252933) 88%, transparent);
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  white-space: nowrap;
+}
+
+.thread-graph-badge.is-home {
+  color: var(--accent, #7c9cff);
+  border-color: color-mix(in srgb, var(--accent, #7c9cff) 42%, transparent);
+}
+
+.thread-graph-badge.is-cycle {
+  color: var(--warning, #f2b84b);
+  border-color: color-mix(in srgb, var(--warning, #f2b84b) 42%, transparent);
+}
+
+.execution-map-node.thread-graph-node-placeholder {
+  opacity: 0.62;
+  border-style: dashed;
+}
+
+.thread-graph-inspector-empty {
+  margin: 0;
+  color: var(--text-tertiary, #818896);
+  font-size: 12px;
+}
+
+.thread-graph-remove-edge {
+  margin-inline-start: auto;
+  border: 0;
+  background: transparent;
+  color: var(--danger, #f17178);
+  font-size: 11px;
+  cursor: pointer;
+  padding: 2px 4px;
+  border-radius: 6px;
+}
+
+.thread-graph-remove-edge:hover {
+  background: color-mix(in srgb, var(--danger, #f17178) 16%, transparent);
+}
+
+.thread-graph-add-dependency {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 10px;
+  font-size: 11px;
+  color: var(--text-tertiary, #818896);
+}
+
+.thread-graph-add-dependency select {
+  padding: 6px 8px;
+  border-radius: 7px;
+  border: 1px solid var(--border-subtle, rgba(255, 255, 255, 0.12));
+  background: color-mix(in srgb, var(--surface-raised, #252933) 94%, transparent);
+  color: var(--text-primary, #eef1f7);
+  font-size: 12px;
+}
