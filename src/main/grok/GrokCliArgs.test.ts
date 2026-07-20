@@ -398,7 +398,7 @@ describe('applyGrokPromptPreamble', () => {
     })
 
     expect(out).toContain(GROK_MCP_QUESTION_PROMPT_NOTE)
-    expect(out).toContain('taskwraith-broker__ask_user_question')
+    expect(out).toContain('TaskWraith__ask_user_question')
     expect(out).toMatch(/do not use Grok native question/i)
   })
 

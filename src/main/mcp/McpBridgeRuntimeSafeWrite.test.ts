@@ -814,6 +814,32 @@ describe('MCP bridge stream writes', () => {
     )
   })
 
+  it('prefers the live run provider when appRunId maps to a different provider stamp', async () => {
+    const executeGeminiMcpTool = vi.fn(async () => ({ text: 'ok' }))
+    const runtime = new McpBridgeRuntime({
+      getGeminiMcpBrokerToken: () => 'token-1',
+      executeGeminiMcpTool,
+      resolveBrokerParentProviderFromRunId: () => 'grok'
+    } as never)
+
+    await runtime.handleGeminiMcpBrokerRequest({
+      token: 'token-1',
+      tool: 'read_file',
+      arguments: { path: 'README.md' },
+      parentProvider: 'cursor',
+      appRunId: 'run-1',
+      appChatId: 'chat-1'
+    })
+
+    expect(executeGeminiMcpTool).toHaveBeenCalledWith(
+      'read_file',
+      { path: 'README.md' },
+      { appRunId: 'run-1', appChatId: 'chat-1' },
+      'grok',
+      {}
+    )
+  })
+
   it('redacts a real broker executor rejection and client socket path end to end', async () => {
     const directory = privateBridgeTestDirectory('tw-br-')
     const socketPath = join(directory, 'broker.sock')

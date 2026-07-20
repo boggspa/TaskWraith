@@ -5,7 +5,18 @@ import {
 } from './GrokMcpAdvertise'
 
 describe('grokTaskWraithSafeToolRequested', () => {
-  it('allows the broker-qualified ask_user_question request emitted by Grok ACP', () => {
+  it('allows the TaskWraith-qualified ask_user_question request emitted by Grok ACP', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'use_tool',
+        rawToolCall: {
+          rawInput: { tool_name: 'TaskWraith__ask_user_question' }
+        }
+      })
+    ).toBe(true)
+  })
+
+  it('still unqualifies the legacy taskwraith-broker alias for safe tools', () => {
     expect(
       grokTaskWraithSafeToolRequested({
         toolName: 'use_tool',
@@ -25,6 +36,11 @@ describe('grokTaskWraithSafeToolRequested', () => {
   })
 
   it('fails closed for mutating tools and unrecognized namespaces', () => {
+    expect(
+      grokTaskWraithSafeToolRequested({
+        toolName: 'TaskWraith__write_file'
+      })
+    ).toBe(false)
     expect(
       grokTaskWraithSafeToolRequested({
         toolName: 'taskwraith-broker__write_file'

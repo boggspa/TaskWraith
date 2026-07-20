@@ -627,9 +627,9 @@ describe('composeRunPrompt sub-thread returns', () => {
     expect(result.contextualPrompt).toContain(
       'this Grok workspace run has access to the TaskWraith MCP server'
     )
-    expect(result.contextualPrompt).toContain('taskwraith-broker__apply_patch')
-    expect(result.contextualPrompt).toContain('taskwraith-broker__ask_user_question')
-    expect(result.contextualPrompt).not.toContain('TaskWraith__ask_user_question')
+    expect(result.contextualPrompt).toContain('TaskWraith__apply_patch')
+    expect(result.contextualPrompt).toContain('TaskWraith__ask_user_question')
+    expect(result.contextualPrompt).not.toContain('taskwraith-broker__ask_user_question')
     expect(result.contextualPrompt).toContain('Native provider write/shell paths are constrained')
   })
 
@@ -639,7 +639,7 @@ describe('composeRunPrompt sub-thread returns', () => {
       ['claude', 'mcp__TaskWraith__delegate_to_subthread'],
       ['kimi', 'TaskWraith__delegate_to_subthread'],
       ['codex', 'TaskWraith__delegate_to_subthread'],
-      ['grok', 'taskwraith-broker__delegate_to_subthread']
+      ['grok', 'TaskWraith__delegate_to_subthread']
     ] as const
 
     for (const [provider, delegateTool] of cases) {
