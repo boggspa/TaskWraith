@@ -34,6 +34,23 @@ import { createInterface } from 'readline'
 // which never matched across the per-content-block rows of one message).
 export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 4
 
+// Bound cache-load CPU the same way the scan duty-cycle does: a warm install
+// can hold multi-MB of JSONL, and parsing it synchronously freezes main.
+const CACHE_LOAD_SLICE_MS = 25
+const CACHE_LOAD_YIELD_MS = 40
+const CACHE_LOAD_CHECK_LINES = 64
+let cacheLoadDeadlineMs = 0
+
+async function yieldCacheLoadSlice(): Promise<void> {
+  const now = Date.now()
+  if (now < cacheLoadDeadlineMs) return
+  await new Promise<void>((resolve) => {
+    setTimeout(resolve, CACHE_LOAD_YIELD_MS)
+  })
+  cacheLoadDeadlineMs = Date.now() + CACHE_LOAD_SLICE_MS
+}
+
+
 interface ExternalActivityFileCacheEntry {
   provider: string
   path: string
@@ -67,7 +84,10 @@ export async function ensureExternalActivityFileCacheLoaded(cachePath: string): 
     const input = createReadStream(cachePath, { encoding: 'utf8' })
     const lines = createInterface({ input, crlfDelay: Infinity })
     try {
+      let lineCount = 0
       for await (const line of lines) {
+        lineCount += 1
+        if (lineCount % CACHE_LOAD_CHECK_LINES === 0) await yieldCacheLoadSlice()
         const trimmed = line.trim()
         if (!trimmed) continue
         let parsed: unknown

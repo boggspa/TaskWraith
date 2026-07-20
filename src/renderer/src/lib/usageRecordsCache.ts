@@ -4,7 +4,10 @@ export type RendererUsageSource = 'taskwraith' | 'external'
 
 const DEFAULT_MAX_AGE_MS: Record<RendererUsageSource, number> = {
   taskwraith: 30_000,
-  external: 5 * 60_000
+  // External history is expensive to assemble. Prefer a long renderer TTL so
+  // welcome remounts / periodic UI ticks reuse the last payload while main
+  // finishes progressive 14d→90d hydration.
+  external: 30 * 60_000
 }
 
 const usageRecordsCache = new Map<

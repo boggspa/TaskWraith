@@ -97,11 +97,20 @@ const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 // responsive app, which is the right side of that trade. A `setImmediate`
 // yield is NOT enough — under sustained CPU it resolves straight back into
 // the scan and the loop re-saturates; only a real timer gap lets work land.
-const SCAN_SLICE_MS = 60
-const SCAN_YIELD_MS = 15
+// Prefer responsiveness over raw scan throughput: a cold 90-day walk can
+// otherwise peg main for minutes and freeze IPC/paint. Shorter slices + longer
+// yields keep the window usable while the background hydrate finishes.
+const SCAN_SLICE_MS = 25
+const SCAN_YIELD_MS = 40
 // Checking the clock per line would itself cost real time on a 400M-line
 // corpus, so amortize it over a batch.
-const SCAN_CLOCK_CHECK_LINES = 512
+const SCAN_CLOCK_CHECK_LINES = 256
+// Between-file duty cycle for collect/stat/cache assembly work that never
+// enters the line reader (and therefore never hits SCAN_CLOCK_CHECK_LINES).
+const SCAN_CLOCK_CHECK_FILES = 8
+// Cold IPC returns a short-window partial first so welcome heatmaps paint
+// without waiting for the full 90-day reparse of multi-GB provider corpora.
+const COLD_PARTIAL_LOOKBACK_DAYS = 14
 
 let scanSliceDeadlineMs = 0
 
@@ -222,21 +231,70 @@ export async function getExternalUsageCached(
   if (cached && now - cached.scannedAt < maxAgeMs && options.force !== true) {
     return cached.records
   }
-  const refresh = (externalUsageInFlight ??= loadExternalProviderUsageRecords({
-    ...options,
-    force: options.force === true || options.maxAgeMs === 0
-  })
-    .then((records) => {
-      externalUsageCache = { records, scannedAt: Date.now() }
-      return records
-    })
-    .finally(() => {
-      externalUsageInFlight = null
-    }))
-  // Stale-while-revalidate: a stale cache answers instantly while the
-  // rescan proceeds; only a COLD cache awaits the scan.
-  if (cached && options.force !== true && options.maxAgeMs !== 0) return cached.records
-  return refresh
+
+  const force = options.force === true || options.maxAgeMs === 0
+  // Stale-while-revalidate: serve the last full result immediately and refresh
+  // in the background. Only a true cold miss (or forced refresh) waits.
+  if (cached && !force) {
+    if (!externalUsageInFlight) {
+      externalUsageInFlight = loadExternalProviderUsageRecords({ ...options, force: false })
+        .then((records) => {
+          externalUsageCache = { records, scannedAt: Date.now() }
+          return records
+        })
+        .finally(() => {
+          externalUsageInFlight = null
+        })
+    }
+    return cached.records
+  }
+
+  if (!externalUsageInFlight) {
+    externalUsageInFlight = (async () => {
+      try {
+        // Cold ordinary load: return a short-window partial first so the welcome
+        // heatmap IPC unblocks quickly, then expand to the full 90-day window.
+        if (!force && !options.lookbackDays) {
+          const partial = await loadExternalProviderUsageRecords({
+            ...options,
+            lookbackDays: COLD_PARTIAL_LOOKBACK_DAYS,
+            force: false
+          })
+          externalUsageCache = { records: partial, scannedAt: Date.now() }
+          // Continue to full window; callers that only waited for the first
+          // partial still see the complete set on the next cache-valid read.
+          const full = await loadExternalProviderUsageRecords({
+            ...options,
+            lookbackDays: DEFAULT_LOOKBACK_DAYS,
+            force: false
+          })
+          externalUsageCache = { records: full, scannedAt: Date.now() }
+          return full
+        }
+        const records = await loadExternalProviderUsageRecords({
+          ...options,
+          force
+        })
+        externalUsageCache = { records, scannedAt: Date.now() }
+        return records
+      } finally {
+        externalUsageInFlight = null
+      }
+    })()
+  }
+
+  // Cold force-or-miss: wait for the in-flight work. For progressive cold the
+  // promise only settles after the full window; poll for the first partial so
+  // the welcome surface paints in seconds rather than minutes.
+  if (!force && !options.lookbackDays) {
+    const started = Date.now()
+    while (!externalUsageCache && externalUsageInFlight) {
+      await new Promise<void>((resolve) => setTimeout(resolve, 50))
+      if (Date.now() - started > 120_000) break
+    }
+    if (externalUsageCache) return externalUsageCache.records
+  }
+  return externalUsageInFlight
 }
 
 /** Kick off a background external-usage hydrate at app launch. Cursor IDE
@@ -272,6 +330,7 @@ async function readFileEventsThroughCache(
   file: CollectedSessionFile,
   parse: () => Promise<ExternalUsageEvent[]>
 ): Promise<ExternalUsageEvent[]> {
+  await yieldScanSlice()
   const cached = getCachedExternalFileEvents(provider, file.path, file.mtimeMs, file.size)
   if (cached) return cached as ExternalUsageEvent[]
   let events: ExternalUsageEvent[]
@@ -912,6 +971,7 @@ async function collectFiles(
 
   const files: CollectedSessionFile[] = []
   const stack = [root]
+  let visited = 0
   while (stack.length > 0) {
     const dir = stack.pop()!
     let entries
@@ -934,6 +994,8 @@ async function collectFiles(
       } catch {
         continue
       }
+      visited += 1
+      if (visited % SCAN_CLOCK_CHECK_FILES === 0) await yieldScanSlice()
     }
   }
   const sorted = files.sort((a, b) => b.mtimeMs - a.mtimeMs)
