@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session). The selectable architecture includes Codex, Claude, Kimi, Grok, and local Ollama, but packaged source-ahead Kimi has no commissioned runtime tuple and is unavailable until its qualification roster is populated. Cursor may remain visible for configuration/history continuity but is disabled for source-ahead runs.
+These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session). The selectable architecture includes Codex, Claude, Kimi, Cursor, Grok, and local Ollama. Packaged source-ahead Kimi has no commissioned runtime tuple and is unavailable until its qualification roster is populated. Managed Cursor uses Path-B contained sandbox argv (native tools; no TaskWraith host MCP injection).
 
 In a normal top-level chat, these pickers stay usable even after the thread has
 history. If the chat is idle, changes apply immediately. If a turn is already
@@ -28,10 +28,9 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
    the current linked session; a genuine provider switch resets provider-linked
    session state before the next turn.
 
-Source-ahead Cursor may remain visible for configuration/history continuity but
-cannot launch. TaskWraith starts no managed Cursor process; both Plan and tool
-modes are unavailable/unqualified, and selecting a higher permission preset does
-not change that boundary.
+Path-B Cursor is selectable and launches under contained sandbox argv. Higher
+permission presets still only shape the seat argv (read-only vs write under
+`--sandbox enabled`); they do not add TaskWraith per-tool grant UX for Cursor.
 
 ## Tips & related
 - [Model Catalogue](../../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.

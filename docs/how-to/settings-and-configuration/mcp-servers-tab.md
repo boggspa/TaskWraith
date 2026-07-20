@@ -9,13 +9,14 @@ endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and
 Claude launches; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP
 bridge and tool catalog, which live on the Provider Tools tab.
 
-In the current source-ahead checkout, TaskWraith starts no managed Cursor
-process. Importing or exporting Cursor JSON here remains useful configuration
-interchange for Cursor outside TaskWraith; it does not attach those servers to a
-source-ahead run. This is newer than v1.8.4. On the released
-baseline, disable untrusted project-local Cursor servers or use a disposable
-workspace rather than treating Read-only as proof that those external
-namespaces are mediated.
+Path-B Cursor does not receive TaskWraith-injected host MCP from this tab.
+Importing or exporting Cursor JSON here remains useful configuration
+interchange (including for Cursor outside TaskWraith). Path-B may still load
+account or project MCP under own-account trust and the OS sandbox — do not treat
+Read-only as proof that every Cursor-native server is mediated by TaskWraith.
+Disable untrusted project-local servers or use a disposable workspace outside
+`$HOME` when that risk matters. This Path-B product posture is newer than
+v1.8.4.
 
 ## Where to find it
 **Settings → Integrations → MCP Servers**
@@ -33,6 +34,6 @@ namespaces are mediated.
 
 ## Tips & related
 - [Provider Tools tab](provider-tools-tab.md) — TaskWraith's own built-in MCP bridge status and tool catalog, separate from your user-managed servers here.
-- [Providers tab](providers-tab.md) — sign in and configure providers; note that source-ahead TaskWraith starts no Cursor run to attach these MCP servers to.
+- [Providers tab](providers-tab.md) — sign in and configure providers; Path-B Cursor uses native tools under the OS sandbox rather than TaskWraith-injected MCP from this tab.
 - [Local servers tab](local-servers-tab.md) — manage dev servers and watchers running under your workspaces, a different kind of "server" from MCP definitions.
 - [Plugins tab](plugins-tab.md) — another integrations surface for extending TaskWraith's capabilities.

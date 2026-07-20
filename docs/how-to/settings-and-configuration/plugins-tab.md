@@ -19,10 +19,12 @@ The Plugins tab is a catalog of declarative capability bundles — manifests tha
 6. Click **Update** when a plugin shows "update available", or **Uninstall** to remove it.
 
 Materialized plugin MCP presets attach only to compatible, tool-capable
-provider runtimes. Source-ahead TaskWraith starts no managed Cursor process, so
-an enabled plugin or materialized preset cannot attach tools to Cursor.
+provider runtimes. Path-B Cursor uses native tools under the OS sandbox and
+does not receive TaskWraith-injected host MCP; an enabled plugin or
+materialized TaskWraith preset does not attach brokered tools to Cursor the way
+it can for gateway seats.
 
 ## Tips & related
 - [MCP servers tab](mcp-servers-tab.md) — manage the user-defined MCP servers that plugin presets get added to.
 - [Provider Tools tab](provider-tools-tab.md) — TaskWraith's own built-in MCP bridge and tool catalog, separate from plugin-provided servers.
-- [Providers tab](providers-tab.md) — sign in and configure providers; source-ahead TaskWraith starts no Cursor run to attach plugin-added MCP servers to.
+- [Providers tab](providers-tab.md) — sign in and configure providers; Path-B Cursor runs native tools under the OS sandbox rather than TaskWraith-injected plugin MCP.

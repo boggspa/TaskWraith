@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-Provider health chips are small status pills in the composer that report whether the current chat's provider is ready to run. For CLI provider paths that can become runnable (Codex, Claude, Grok, and runtime-admitted Kimi), this is a warning chip that only appears when something needs attention — for example the provider binary or login isn't ready, runtime admission fails, network access is blocked, or a tool category is blocked by settings. Packaged source-ahead Kimi currently fails admission because its commissioned qualification roster is empty. Source-ahead Cursor always reports the security no-spawn boundary. For Ollama, readiness is shown alongside the normal permissions/runtime controls: the local model uses the same permission roles as cloud providers, while the Ollama run profile controls local prompting/runtime behavior.
+Provider health chips are small status pills in the composer that report whether the current chat's provider is ready to run. For CLI provider paths that can become runnable (Codex, Claude, Cursor, Grok, and runtime-admitted Kimi), this is a warning chip that only appears when something needs attention — for example the provider binary or login isn't ready, runtime admission fails, network access is blocked, or a tool category is blocked by settings. Packaged source-ahead Kimi currently fails admission because its commissioned qualification roster is empty. Path-B Cursor is always-enabled for product admission; chips report ordinary setup/binary/login readiness rather than a no-spawn security boundary. For Ollama, readiness is shown alongside the normal permissions/runtime controls: the local model uses the same permission roles as cloud providers, while the Ollama run profile controls local prompting/runtime behavior.
 
 ## Where to find it
 Warning chips appear in the **composer chips row**, just above the prompt input, alongside the queued-run-count chip — the row only renders when there's something to show. For Ollama specifically, status appears with the standard permission role and run-profile controls rather than a separate tool-tier picker.
@@ -17,10 +17,9 @@ Warning chips appear in the **composer chips row**, just above the prompt input,
 4. If the Ollama trigger shows a ⚠, open it and check whether the local server/model is unavailable or a standard permission/network policy is blocking the requested capability.
 5. Fix the underlying issue (sign in where relevant, start the local Ollama server, select an installed model, or adjust agentic service policy) and the chip clears automatically once the provider reports healthy.
 
-Source-ahead Cursor cannot become runnable by changing authentication. Its
-health/status warning reflects the unconditional no-spawn boundary: both Plan
-and tool modes are unavailable/unqualified pending reviewed startup containment
-or a stronger sandbox.
+Path-B Cursor becomes runnable when `cursor-agent` is installed and logged in.
+Health chips report ordinary setup/binary/login readiness; they no longer encode
+an unconditional no-spawn security boundary.
 
 ## Tips & related
 - [Provider, Model, and Permissions Pickers](../composer/provider-model-permissions-pickers.md) — the composer chips these health warnings sit alongside, including the standard permissions picker used by Ollama.

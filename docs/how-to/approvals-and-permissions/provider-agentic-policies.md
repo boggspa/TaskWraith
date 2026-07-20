@@ -6,9 +6,10 @@
 Agentic services are the global policy switches that decide whether an agent's shell commands, file edits, provider tools, sub-thread delegation, canvas interaction, media editing, and network access run automatically, prompt you first, or are blocked outright. The policy schema is retained across canonical provider records (Codex, Claude, Kimi, Grok, Cursor, Ollama), but it gates only capabilities exposed by a runnable, admitted seat.
 
 These rows are policy ceilings, not capability guarantees. A provider can expose
-less authority than the selected policy permits. In particular, source-ahead
-TaskWraith starts no managed Cursor process; neither Plan nor tool mode becomes
-available when a broader policy is selected.
+less authority than the selected policy permits. In particular, Path-B Cursor is
+managed under sandbox argv containment; agentic-service policy still applies
+where TaskWraith mediates, but Cursor native tools are not brokered through the
+TaskWraith host MCP catalogue.
 
 ## Where to find it
 **Settings → AI & Providers → Providers → Agentic services.** A read-only summary ("Policy posture") also appears on **Settings → Data → Safety & Privacy**, with an **Edit policies** button that jumps back here.

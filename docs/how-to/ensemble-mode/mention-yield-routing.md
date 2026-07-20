@@ -45,8 +45,9 @@ Type `@` followed by a participant's role or model name in the composer during a
    unresolved or ambiguous yield target falls through to ordinary ordering;
    ambiguous text mentions instead post a warning. Yielding to `user`, `human`,
    or `you` explicitly returns control in Continuous mode.
-   Source-ahead Cursor cannot be a participant because TaskWraith starts no
-   managed Cursor process.
+   Path-B Cursor can be a participant but cannot call TaskWraith
+   `ensemble_yield` (native tools only); use @-mention routing from a
+   tool-capable peer or ordinary turn order.
 5. If a participant's in-round tagged name matches more than one seat, the
    orchestrator posts an ambiguity notice and leaves routing unchanged. For a
    user/composer direct prompt, main rejects the ambiguous launch instead. Use
