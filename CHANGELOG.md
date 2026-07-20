@@ -12,6 +12,19 @@ This entry tracks the checkout currently ahead of the latest tagged release. It
 describes the source tree only; it does not assign a release version or imply
 that artifacts have been built or published.
 
+### Fixed
+- **Composer queue and Steer are classic again.** Follow-up messages while a
+  chat is busy go back through the durable RunQueue and `QueuedMessagesAboveRow`
+  (Edit / Delete / Steer), instead of being redirected onto the Execution Stack
+  strip above the composer. Execution Graph / Stack / Map remain Work-tab and
+  map tooling — they no longer own day-to-day message queueing.
+- **Queued messages sit shell-native, not double-wrapped.** The gray nested
+  capsule around each queue item is gone — items are flat satellites inside the
+  Composer-Shell above-row. Codex queue rows tuck like Grok above-rows (still
+  not the detached Primary/Secondary workspace lead pills). Gemini (and
+  matching Kimi/Modular) queue chrome uses the same provider blue/shell border
+  as other above-rows in that hierarchy.
+
 ## 1.8.5 - 2026-07-20
 
 ### Added
