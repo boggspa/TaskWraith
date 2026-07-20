@@ -5203,6 +5203,42 @@ public final class RemoteSessionModel: ObservableObject {
         scheduleThreadRefreshAfterUserAction(thread)
     }
 
+    /// Post a user-authored Ensemble blackboard note (composer Blackboard parity).
+    public func postBlackboardEntry(
+        _ card: RemoteTaskCard, value: String,
+        category: String = "note", scope: String = "session", key: String? = nil
+    ) {
+        guard card.isEnsemble, let thread = card.threadId else { return }
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        let ws = (card.workspaceId ?? "").isEmpty ? "global" : card.workspaceId!
+        if isDemo {
+            editDemoSnapshot(thread) { draft in
+                var entries = draft.blackboardEntries ?? []
+                let createdAt = ISO8601DateFormatter().string(from: Date())
+                let entry = RemoteThreadSnapshot.BlackboardEntry(
+                    id: "bb-demo-\(UUID().uuidString)",
+                    key: key ?? "user-note-\(Int(Date().timeIntervalSince1970))",
+                    value: trimmed,
+                    category: category,
+                    scope: scope,
+                    participantId: "user",
+                    roundId: nil,
+                    createdAt: createdAt)
+                entries.insert(entry, at: 0)
+                draft.blackboardEntries = entries
+            }
+            lastActionMessage = "Posted to blackboard."
+            return
+        }
+        send(
+            BridgeAction.blackboardPost(
+                workspaceId: ws, threadId: thread, value: trimmed,
+                category: category, scope: scope, key: key),
+            successLabel: "Posted to blackboard.")
+        scheduleThreadRefreshAfterUserAction(thread)
+    }
+
     /// Pin or unpin a transcript message.
     public func toggleMessagePin(_ card: RemoteTaskCard, messageId: String, pinned: Bool) {
         if isDemo {

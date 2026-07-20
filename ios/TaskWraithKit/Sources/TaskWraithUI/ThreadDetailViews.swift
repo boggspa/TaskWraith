@@ -121,6 +121,9 @@ private struct CachedComposerDiffPill: View {
     let fallbackDeletions: Int
     let fallbackCommitsAhead: Int
     let reduceMotion: Bool
+    /// When true, renders an intrinsic chip for a shared above-composer pill row
+    /// (tools pill on the right). Host owns padding/transition.
+    var compactInline: Bool = true
     let onTap: () -> Void
 
     private var snapshot: GitWorkspaceSnapshot? {
@@ -142,12 +145,9 @@ private struct CachedComposerDiffPill: View {
                 additions: metrics.additions,
                 deletions: metrics.deletions,
                 commitsAhead: metrics.commitsAhead,
-                onTap: onTap
+                onTap: onTap,
+                compactInline: compactInline
             )
-            .padding(.horizontal, 10)
-            .padding(.bottom, 2)
-            // Lifts in as the keyboard drops; fades when focus returns.
-            .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
         }
     }
 }
@@ -1496,16 +1496,51 @@ struct ThreadDetailView: View {
                     // workspace's own uncommitted changes (which arrive as a git
                     // snapshot). That's why it only showed in demo (both seeded).
                     if !composerFocused {
-                        CachedComposerDiffPill(
-                            model: model,
-                            workspaceId: primaryWorkspaceId,
-                            fallbackFilesChanged: changedFileCount,
-                            fallbackAdditions: diff?.additions ?? 0,
-                            fallbackDeletions: diff?.deletions ?? 0,
-                            fallbackCommitsAhead: 0,
-                            reduceMotion: reduceMotion,
-                            onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
-                        )
+                        // Diff pill (when active) + tools pill for Ensemble/Goal/Plan/
+                        // Blackboard — the focused telemetry-rail icons hide when the
+                        // composer collapses, so this row restores them.
+                        HStack(spacing: 8) {
+                            Spacer(minLength: 0)
+                            CachedComposerDiffPill(
+                                model: model,
+                                workspaceId: primaryWorkspaceId,
+                                fallbackFilesChanged: changedFileCount,
+                                fallbackAdditions: diff?.additions ?? 0,
+                                fallbackDeletions: diff?.deletions ?? 0,
+                                fallbackCommitsAhead: 0,
+                                reduceMotion: reduceMotion,
+                                compactInline: true,
+                                onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
+                            )
+                            ComposerToolsPill(
+                                isEnsemble: card.isEnsemble,
+                                ensembleToggleVisible: showsComposerEnsembleToggle,
+                                ensembleToggleDisabled: isRunning,
+                                ensembleToggleTitle: ensembleToggleTitle,
+                                activeGoal: card.activeGoal,
+                                planLanes: card.todoLanes ?? [],
+                                blackboardEntries: snapshot?.blackboardEntries ?? [],
+                                onEnsembleToggle: { enabled in
+                                    handleComposerEnsembleToggle(
+                                        for: card, enabled: enabled,
+                                        composerProvider: card.provider)
+                                },
+                                onGoalUpdate: { op, objective, reason in
+                                    model.updateGoal(
+                                        card, op: op, objective: objective, reason: reason)
+                                },
+                                onBlackboardPost: card.isEnsemble
+                                    ? { value, category, scope in
+                                        model.postBlackboardEntry(
+                                            card, value: value, category: category, scope: scope)
+                                    }
+                                    : nil
+                            )
+                            Spacer(minLength: 0)
+                        }
+                        .padding(.horizontal, 10)
+                        .padding(.bottom, 2)
+                        .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))
                     }
                     VStack(spacing: tuckedTab ? -10 : (detached ? 6 : 0)) {
                         // Above-rows group: inner VStack spacing matches the outer so

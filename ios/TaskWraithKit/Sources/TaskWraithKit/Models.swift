@@ -1580,6 +1580,20 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         public let participantId: String?
         public let roundId: String?
         public let createdAt: String?
+
+        public init(
+            id: String, key: String, value: String, category: String, scope: String,
+            participantId: String? = nil, roundId: String? = nil, createdAt: String? = nil
+        ) {
+            self.id = id
+            self.key = key
+            self.value = value
+            self.category = category
+            self.scope = scope
+            self.participantId = participantId
+            self.roundId = roundId
+            self.createdAt = createdAt
+        }
     }
     public let threadId: String?
     public let taskId: String?
@@ -2041,6 +2055,22 @@ public enum BridgeAction {
         ]
         if let objective, !objective.isEmpty { payload["objective"] = objective }
         if let reason, !reason.isEmpty { payload["reason"] = reason }
+        return encode(payload)
+    }
+
+    /// Post a user-authored Ensemble blackboard note (desktop composer Blackboard parity).
+    public static func blackboardPost(
+        workspaceId: String, threadId: String, value: String,
+        category: String? = nil, scope: String? = nil, key: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "blackboardPost", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId, "value": value,
+        ]
+        if let category, !category.isEmpty { payload["category"] = category }
+        if let scope, !scope.isEmpty { payload["scope"] = scope }
+        if let key, !key.isEmpty { payload["key"] = key }
         return encode(payload)
     }
 
