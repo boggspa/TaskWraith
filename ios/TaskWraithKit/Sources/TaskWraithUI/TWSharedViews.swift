@@ -687,6 +687,44 @@ extension View {
 // applied via presentationBackground on iOS sheets.
 
 #if os(iOS)
+    /// Walks the UIKit host chain and clears opaque system backgrounds that
+    /// otherwise paint over `presentationBackground` glass (NavigationStack +
+    /// List hosts are the usual offenders).
+    private struct TWClearGlassHostBackground: UIViewRepresentable {
+        func makeUIView(context: Context) -> UIView {
+            let view = UIView()
+            view.isUserInteractionEnabled = false
+            view.backgroundColor = .clear
+            return view
+        }
+
+        func updateUIView(_ uiView: UIView, context: Context) {
+            DispatchQueue.main.async {
+                var node: UIView? = uiView
+                while let current = node {
+                    current.backgroundColor = .clear
+                    node = current.superview
+                }
+                var responder: UIResponder? = uiView.next
+                while let current = responder {
+                    if let controller = current as? UIViewController {
+                        controller.view.backgroundColor = .clear
+                        if let nav = controller as? UINavigationController {
+                            nav.view.backgroundColor = .clear
+                            for child in nav.viewControllers {
+                                child.view.backgroundColor = .clear
+                            }
+                        }
+                        if let nav = controller.navigationController {
+                            nav.view.backgroundColor = .clear
+                        }
+                    }
+                    responder = current.next
+                }
+            }
+        }
+    }
+
     private struct TWSheetGlassBackdrop: View {
         var cornerRadius: CGFloat
         var rimmed: Bool
@@ -801,8 +839,17 @@ private struct TWGlassSheetRowBackgroundModifier: ViewModifier {
 private struct TWGlassSheetListCanvasModifier: ViewModifier {
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
+    @ViewBuilder
     func body(content: Content) -> some View {
-        content.scrollContentBackground(glassSheetHosted ? .hidden : .automatic)
+        // Hide the opaque system List canvas and keep the host clear so the
+        // liquid-glass presentationBackground reads through empty areas.
+        if glassSheetHosted {
+            content
+                .scrollContentBackground(.hidden)
+                .background(Color.clear)
+        } else {
+            content.scrollContentBackground(.automatic)
+        }
     }
 }
 
@@ -821,6 +868,22 @@ extension View {
 }
 
 extension View {
+    /// Shared host hygiene for liquid-glass presentations: clear UIKit nav/
+    /// hosting backgrounds so `presentationBackground` glass is not covered by
+    /// system gray, and stamp `twGlassSheetHosted` for content panes.
+    @ViewBuilder
+    fileprivate func twGlassPresentationHostChrome() -> some View {
+        #if os(iOS)
+            self
+                .toolbarBackground(.hidden, for: .navigationBar)
+                .background(Color.clear)
+                .background(TWClearGlassHostBackground())
+                .environment(\.twGlassSheetHosted, true)
+        #else
+            self
+        #endif
+    }
+
     /// Liquid-glass sheet chrome. Apply to the root of sheet content (inside
     /// any NavigationStack). iOS-only; non-iOS is pass-through.
     @ViewBuilder
@@ -837,9 +900,7 @@ extension View {
                 .presentationBackground {
                     TWSheetGlassBackdrop(cornerRadius: cornerRadius, rimmed: rimmed)
                 }
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .background(Color.clear)
-                .environment(\.twGlassSheetHosted, true)
+                .twGlassPresentationHostChrome()
         #else
             self
         #endif
@@ -855,9 +916,7 @@ extension View {
                 .presentationBackground {
                     TWSheetGlassBackdrop(cornerRadius: 0, rimmed: false)
                 }
-                .toolbarBackground(.hidden, for: .navigationBar)
-                .background(Color.clear)
-                .environment(\.twGlassSheetHosted, true)
+                .twGlassPresentationHostChrome()
         #else
             self
         #endif
@@ -5456,8 +5515,8 @@ public struct TelemetryFooterRail: View {
                 }
             }
             .frame(maxWidth: .infinity)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 7)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 5)
             .background(
                 GeometryReader { proxy in
                     Color.clear.preference(

@@ -2122,6 +2122,7 @@ struct ThreadDetailView: View {
                     composerDiffSheetPresented = false
                 }
             }
+            .background(Color.clear)
             .composerDiffSheetChrome()
         }
         .confirmationDialog(

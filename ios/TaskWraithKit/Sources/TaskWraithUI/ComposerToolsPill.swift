@@ -193,43 +193,47 @@ private struct ComposerToolsPickerSheet: View {
     var body: some View {
         NavigationStack(path: $path) {
             List {
-                if ensembleToggleVisible {
-                    NavigationLink(value: ComposerToolsRoute.ensemble) {
+                Section {
+                    if ensembleToggleVisible {
+                        NavigationLink(value: ComposerToolsRoute.ensemble) {
+                            rootRow(
+                                title: "Ensemble",
+                                subtitle: isEnsemble ? "On" : "Off",
+                                systemImage: isEnsemble ? "person.3.fill" : "person.3",
+                                accent: isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary)
+                        }
+                    }
+                    NavigationLink(value: ComposerToolsRoute.goal) {
                         rootRow(
-                            title: "Ensemble",
-                            subtitle: isEnsemble ? "On" : "Off",
-                            systemImage: isEnsemble ? "person.3.fill" : "person.3",
-                            accent: isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary)
+                            title: "Goal",
+                            subtitle: goalSubtitle,
+                            systemImage: activeGoal?.status == "completed"
+                                ? "checkmark.circle.fill" : "scope",
+                            accent: goalAccent)
+                    }
+                    NavigationLink(value: ComposerToolsRoute.plan) {
+                        rootRow(
+                            title: "Plan",
+                            subtitle: planSubtitle,
+                            systemImage: "checklist",
+                            accent: planAccent)
+                    }
+                    if isEnsemble {
+                        NavigationLink(value: ComposerToolsRoute.blackboard) {
+                            rootRow(
+                                title: "Blackboard",
+                                subtitle: blackboardEntries.isEmpty
+                                    ? "Empty"
+                                    : "\(blackboardEntries.count) entries",
+                                systemImage: "rectangle.and.pencil.and.ellipsis",
+                                accent: TWTheme.chroma1)
+                        }
                     }
                 }
-                NavigationLink(value: ComposerToolsRoute.goal) {
-                    rootRow(
-                        title: "Goal",
-                        subtitle: goalSubtitle,
-                        systemImage: activeGoal?.status == "completed"
-                            ? "checkmark.circle.fill" : "scope",
-                        accent: goalAccent)
-                }
-                NavigationLink(value: ComposerToolsRoute.plan) {
-                    rootRow(
-                        title: "Plan",
-                        subtitle: planSubtitle,
-                        systemImage: "checklist",
-                        accent: planAccent)
-                }
-                if isEnsemble {
-                    NavigationLink(value: ComposerToolsRoute.blackboard) {
-                        rootRow(
-                            title: "Blackboard",
-                            subtitle: blackboardEntries.isEmpty
-                                ? "Empty"
-                                : "\(blackboardEntries.count) entries",
-                            systemImage: "rectangle.and.pencil.and.ellipsis",
-                            accent: TWTheme.chroma1)
-                    }
-                }
+                .twGlassSheetRowBackground()
             }
             .twGlassSheetListCanvas()
+            .background(Color.clear)
             .navigationTitle("Tools")
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
@@ -266,6 +270,7 @@ private struct ComposerToolsPickerSheet: View {
                 }
             }
         }
+        .background(Color.clear)
     }
 
     private var goalSubtitle: String {
@@ -334,44 +339,48 @@ private struct EnsembleToolsPanel: View {
 
     var body: some View {
         List {
-            Section {
-                Text(title)
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textSecondary)
-            }
-            Section {
-                Button {
-                    onSelect(true)
-                } label: {
-                    Label {
-                        Text("Ensemble on")
-                    } icon: {
-                        Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(enabled ? TWTheme.chroma2 : TWTheme.textTertiary)
-                    }
+            Group {
+                Section {
+                    Text(title)
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textSecondary)
                 }
-                .disabled(disabled || enabled)
+                Section {
+                    Button {
+                        onSelect(true)
+                    } label: {
+                        Label {
+                            Text("Ensemble on")
+                        } icon: {
+                            Image(systemName: enabled ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(enabled ? TWTheme.chroma2 : TWTheme.textTertiary)
+                        }
+                    }
+                    .disabled(disabled || enabled)
 
-                Button {
-                    onSelect(false)
-                } label: {
-                    Label {
-                        Text("Ensemble off")
-                    } icon: {
-                        Image(systemName: !enabled ? "checkmark.circle.fill" : "circle")
-                            .foregroundStyle(!enabled ? TWTheme.chroma1 : TWTheme.textTertiary)
+                    Button {
+                        onSelect(false)
+                    } label: {
+                        Label {
+                            Text("Ensemble off")
+                        } icon: {
+                            Image(systemName: !enabled ? "checkmark.circle.fill" : "circle")
+                                .foregroundStyle(!enabled ? TWTheme.chroma1 : TWTheme.textTertiary)
+                        }
+                    }
+                    .disabled(disabled || !enabled)
+                } footer: {
+                    if disabled {
+                        Text("Finish the current turn first to change chat mode.")
+                    } else {
+                        Text("Turning Ensemble on seeds a multi-provider roster. Turning it off returns to a single-provider chat.")
                     }
                 }
-                .disabled(disabled || !enabled)
-            } footer: {
-                if disabled {
-                    Text("Finish the current turn first to change chat mode.")
-                } else {
-                    Text("Turning Ensemble on seeds a multi-provider roster. Turning it off returns to a single-provider chat.")
-                }
             }
+            .twGlassSheetRowBackground()
         }
-            .twGlassSheetListCanvas()
+        .twGlassSheetListCanvas()
+        .background(Color.clear)
         .navigationTitle("Ensemble")
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -414,82 +423,86 @@ private struct GoalToolsPanel: View {
 
     var body: some View {
         List {
-            Section {
-                HStack {
-                    Text(goal == nil ? "No active goal" : "Active goal")
-                        .font(.subheadline.weight(.semibold))
-                    Spacer()
-                    Text(modeLabel)
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(TWTheme.textSecondary)
-                }
-            }
-
-            if goal == nil || editing {
-                Section("Objective") {
-                    TextEditor(text: $draft)
-                        .font(.callout)
-                        .frame(minHeight: 86)
-                    HStack {
-                        Button(goal == nil ? "Set goal" : "Save") {
-                            let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
-                            guard !trimmed.isEmpty else { return }
-                            onUpdate(goal == nil ? "set" : "edit", trimmed, nil)
-                            editing = false
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                        if goal != nil {
-                            Button("Cancel") { editing = false }
-                                .buttonStyle(.bordered)
-                        }
-                    }
-                }
-            } else if let goal {
+            Group {
                 Section {
-                    Text(status.capitalized)
-                        .font(.caption2.weight(.semibold))
-                        .padding(.horizontal, 7).padding(.vertical, 3)
-                        .background(accent.opacity(0.14), in: Capsule())
-                        .foregroundStyle(accent)
-                    Text(goal.objective)
-                        .font(.callout)
-                        .foregroundStyle(TWTheme.textPrimary)
-                        .fixedSize(horizontal: false, vertical: true)
-                    if let blockedReason = goal.blockedReason, !blockedReason.isEmpty {
-                        Text(blockedReason)
-                            .font(.caption)
+                    HStack {
+                        Text(goal == nil ? "No active goal" : "Active goal")
+                            .font(.subheadline.weight(.semibold))
+                        Spacer()
+                        Text(modeLabel)
+                            .font(.caption.weight(.semibold))
                             .foregroundStyle(TWTheme.textSecondary)
                     }
                 }
 
-                Section("Reason (optional)") {
-                    TextField("Reason", text: $reason)
-                }
-
-                Section("Actions") {
-                    Button("Edit objective") {
-                        draft = goal.objective
-                        editing = true
-                    }
-                    if goal.status == "paused" || goal.status == "blocked" {
-                        Button("Resume") { onUpdate("resume", nil, reasonOrNil) }
-                    } else if goal.status != "completed" {
-                        Button("Pause") { onUpdate("pause", nil, reasonOrNil) }
-                    }
-                    if goal.status != "completed" {
-                        Button("Mark complete") { onUpdate("complete", nil, reasonOrNil) }
-                    }
-                    if goal.status != "blocked" && goal.status != "completed" {
-                        Button("Block") {
-                            onUpdate("block", nil, reason.isEmpty ? "Blocked from mobile." : reason)
+                if goal == nil || editing {
+                    Section("Objective") {
+                        TextEditor(text: $draft)
+                            .font(.callout)
+                            .frame(minHeight: 86)
+                        HStack {
+                            Button(goal == nil ? "Set goal" : "Save") {
+                                let trimmed = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                                guard !trimmed.isEmpty else { return }
+                                onUpdate(goal == nil ? "set" : "edit", trimmed, nil)
+                                editing = false
+                            }
+                            .buttonStyle(.borderedProminent)
+                            .disabled(draft.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            if goal != nil {
+                                Button("Cancel") { editing = false }
+                                    .buttonStyle(.bordered)
+                            }
                         }
                     }
-                    Button("Clear goal", role: .destructive) { onUpdate("clear", nil, nil) }
+                } else if let goal {
+                    Section {
+                        Text(status.capitalized)
+                            .font(.caption2.weight(.semibold))
+                            .padding(.horizontal, 7).padding(.vertical, 3)
+                            .background(accent.opacity(0.14), in: Capsule())
+                            .foregroundStyle(accent)
+                        Text(goal.objective)
+                            .font(.callout)
+                            .foregroundStyle(TWTheme.textPrimary)
+                            .fixedSize(horizontal: false, vertical: true)
+                        if let blockedReason = goal.blockedReason, !blockedReason.isEmpty {
+                            Text(blockedReason)
+                                .font(.caption)
+                                .foregroundStyle(TWTheme.textSecondary)
+                        }
+                    }
+
+                    Section("Reason (optional)") {
+                        TextField("Reason", text: $reason)
+                    }
+
+                    Section("Actions") {
+                        Button("Edit objective") {
+                            draft = goal.objective
+                            editing = true
+                        }
+                        if goal.status == "paused" || goal.status == "blocked" {
+                            Button("Resume") { onUpdate("resume", nil, reasonOrNil) }
+                        } else if goal.status != "completed" {
+                            Button("Pause") { onUpdate("pause", nil, reasonOrNil) }
+                        }
+                        if goal.status != "completed" {
+                            Button("Mark complete") { onUpdate("complete", nil, reasonOrNil) }
+                        }
+                        if goal.status != "blocked" && goal.status != "completed" {
+                            Button("Block") {
+                                onUpdate("block", nil, reason.isEmpty ? "Blocked from mobile." : reason)
+                            }
+                        }
+                        Button("Clear goal", role: .destructive) { onUpdate("clear", nil, nil) }
+                    }
                 }
             }
+            .twGlassSheetRowBackground()
         }
         .twGlassSheetListCanvas()
+        .background(Color.clear)
         .navigationTitle("Goal")
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)
@@ -578,6 +591,7 @@ private struct PlanToolsPanel: View {
             }
         }
         .twGlassSheetListCanvas()
+        .background(Color.clear)
         .navigationTitle("Plan")
         #if os(iOS)
             .navigationBarTitleDisplayMode(.inline)

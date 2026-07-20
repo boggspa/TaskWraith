@@ -313,6 +313,17 @@ struct Composer: View {
         "codex", "claude", "kimi", "grok", "ollama",
     ]
 
+    /// Phone / compact-width: Claude/Codex-style single shell — model +
+    /// approval live inside the input card (trailing action strip) instead of
+    /// a second full-width band, reclaiming transcript height.
+    private var foldsControlsIntoInput: Bool {
+        #if os(iOS)
+            horizontalSizeClass != .regular
+        #else
+            false
+        #endif
+    }
+
     var body: some View {
         // CS12: input-owning shells gap the framed input from the bare control
         // row below it (desktop flex-column gap); others stay flush (spacing 0).
@@ -325,7 +336,11 @@ struct Composer: View {
                     .padding(.top, 8)
                     .accessibilityLabel(providerUnavailableReason)
             }
-            if shell.layout.controlsBelowTextarea {
+            if foldsControlsIntoInput {
+                // Compact phone chrome: one card, controls folded into the input
+                // footer (Claude/Codex). No separate model/approval band.
+                composerInputBody
+            } else if shell.layout.controlsBelowTextarea {
                 // CS10: text input first, control row BELOW it (codex/claude/…
                 // desktop parity). No hairline — the controls float under the
                 // input separated only by the rows' own padding, mirroring the
@@ -336,7 +351,7 @@ struct Composer: View {
                 }
             } else {
                 // Signed-off native arrangement: controls ABOVE the input with a
-                // hairline divider. Unchanged (default parity).
+                // hairline divider. Unchanged (default parity on regular width).
                 if !card.isEnsemble {
                     composerControlsRow
                     if isExpanded {
@@ -663,61 +678,110 @@ struct Composer: View {
             #endif
             // Input cluster: the composer body supplies the darker fill, so
             // this row stays flat like the desktop central panel.
-            HStack(spacing: 8) {
-                // Idle/unfocused: the collapsed control row is gone, so surface a
-                // tiny picker pill in the input's top-left corner (the transcript
-                // keeps the reclaimed vertical space). Solo chats only — ensemble
-                // uses the roster, not this picker.
-                if !isExpanded && !card.isEnsemble {
-                    compactModelPickerControl
-                    pendingProviderPill
-                }
-                #if canImport(UIKit)
-                    // Ensembles included: steer now carries attachments.
-                    photosButton
-                #endif
-                if shell.effects.contains(.terminalCaret) {
-                    Text(">")
-                        .font(twComposerFont(.monospaced).weight(.bold))
-                        .foregroundStyle(shell.sendButton.tint)
-                }
-                composerTextInput
-                if canQueueCurrentPrompt {
-                    queueButton
-                }
-                if !card.isEnsemble {
-                    scheduleButton
-                }
-                if let pct = contextUsedPercent {
-                    Button {
-                        showContextMeter = true
-                    } label: {
-                        ContextDonut(percent: pct, color: shell.palette.textPrimary)
+            //
+            // Compact phone (foldsControlsIntoInput): Claude/Codex layout —
+            // text on its own line, then a thin action strip with model +
+            // approval + trailing send controls. Regular-width keeps the
+            // single-row cluster (model/approval stay in the separate band).
+            if foldsControlsIntoInput {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(alignment: .bottom, spacing: 8) {
+                        #if canImport(UIKit)
+                            photosButton
+                        #endif
+                        if shell.effects.contains(.terminalCaret) {
+                            Text(">")
+                                .font(twComposerFont(.monospaced).weight(.bold))
+                                .foregroundStyle(shell.sendButton.tint)
+                        }
+                        composerTextInput
                     }
-                    .buttonStyle(.plain)
-                    .accessibilityLabel("Context usage")
-                    .accessibilityValue("\(Int(pct.rounded())) percent used")
-                    .popover(isPresented: $showContextMeter) {
-                        ContextMeterPopoverBody(
-                            rows: contextMeterRows, ensemble: contextMeterIsEnsemble
-                        )
-                        .frame(width: 280)
-                        .padding(12)
-                        .background(TWTheme.surface2)
-                        .presentationCompactAdaptation(.popover)
+                    HStack(spacing: 6) {
+                        if !card.isEnsemble {
+                            if isExpanded {
+                                compactModelPickerControl
+                                pendingProviderPill
+                                approvalControl
+                            } else {
+                                compactModelPickerControl
+                                pendingProviderPill
+                            }
+                        }
+                        Spacer(minLength: 4)
+                        if canQueueCurrentPrompt {
+                            queueButton
+                        }
+                        if !card.isEnsemble {
+                            scheduleButton
+                        }
+                        contextDonutButton
+                        primaryActionButton
                     }
                 }
-                primaryActionButton
+                .padding(.horizontal, 10)
+                .padding(.vertical, 7)
+            } else {
+                HStack(spacing: 8) {
+                    // Idle/unfocused: the collapsed control row is gone, so surface a
+                    // tiny picker pill in the input's top-left corner (the transcript
+                    // keeps the reclaimed vertical space). Solo chats only — ensemble
+                    // uses the roster, not this picker.
+                    if !isExpanded && !card.isEnsemble {
+                        compactModelPickerControl
+                        pendingProviderPill
+                    }
+                    #if canImport(UIKit)
+                        // Ensembles included: steer now carries attachments.
+                        photosButton
+                    #endif
+                    if shell.effects.contains(.terminalCaret) {
+                        Text(">")
+                            .font(twComposerFont(.monospaced).weight(.bold))
+                            .foregroundStyle(shell.sendButton.tint)
+                    }
+                    composerTextInput
+                    if canQueueCurrentPrompt {
+                        queueButton
+                    }
+                    if !card.isEnsemble {
+                        scheduleButton
+                    }
+                    contextDonutButton
+                    primaryActionButton
+                }
+                .padding(.horizontal, 10)
+                .padding(.vertical, 8)
             }
-            .padding(.horizontal, 10)
-            .padding(.vertical, 8)
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.horizontal, foldsControlsIntoInput ? 10 : 12)
+        .padding(.vertical, foldsControlsIntoInput ? 7 : 9)
         .background(composerBodyBackground)
         // CS12: input-owning shells (claude bubble / gemini-cursor capsule /
         // obsidian-alabaster rect) frame ONLY the input here; the footer is bare.
         .composerShellIf(shell.layout.inputOwnsSurface, shell)
+    }
+
+    @ViewBuilder
+    private var contextDonutButton: some View {
+        if let pct = contextUsedPercent {
+            Button {
+                showContextMeter = true
+            } label: {
+                ContextDonut(percent: pct, color: shell.palette.textPrimary)
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Context usage")
+            .accessibilityValue("\(Int(pct.rounded())) percent used")
+            .popover(isPresented: $showContextMeter) {
+                ContextMeterPopoverBody(
+                    rows: contextMeterRows, ensemble: contextMeterIsEnsemble
+                )
+                .frame(width: 280)
+                .padding(12)
+                .background(TWTheme.surface2)
+                .presentationCompactAdaptation(.popover)
+            }
+        }
     }
 
     private var queueButton: some View {
