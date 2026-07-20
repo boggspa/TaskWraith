@@ -5,7 +5,6 @@ import {
   getCliProviderStatus,
   getCliProviderMcpStatus,
   getAgentMcpStatusSnapshotDirect,
-  getAgentStatusSnapshotDirect,
   readResolvedCliVersion,
   runtimeSettings,
   type CliProviderRuntimeDependencies,

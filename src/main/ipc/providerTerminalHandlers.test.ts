@@ -98,7 +98,7 @@ describe('registerProviderTerminalHandlers', () => {
 
       await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'cursor')).resolves.toEqual({
         ok: false,
-        error: expect.stringMatching(/Cursor managed runs are temporarily disabled.*No Cursor process was started/i)
+        error: expect.stringMatching(/Cursor signs in with its own cursor-agent login/i)
       })
       expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
       expect(deps.mkdirSync).not.toHaveBeenCalled()

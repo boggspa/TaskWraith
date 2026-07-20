@@ -2,7 +2,6 @@ import { join, basename } from 'path'
 import { ipcMain } from 'electron'
 import type { ProviderId } from '../store/types'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
-import { cursorManagedRunAdmission } from '../cursor/CursorManagedRunGate'
 
 type TerminalAction = 'login' | 'logout' | 'upgrade'
 
@@ -46,11 +45,15 @@ async function openProviderAuthTerminal(
   action: TerminalAction
 ): Promise<ProviderTerminalResult> {
   try {
-    // Cursor auth/upgrade commands still initialize provider-managed startup
-    // surfaces. Keep the no-process invariant broader than ordinary runs: do
-    // not resolve a binary, write a launcher, or open a terminal for Cursor.
+    // Cursor authenticates via its own cursor-agent login; Path B runs Cursor
+    // with that existing login, so TaskWraith does not open a Cursor sign-in,
+    // sign-out, or upgrade terminal (run cursor-agent directly for those).
     if (provider === 'cursor') {
-      return { ok: false, error: cursorManagedRunAdmission().message }
+      return {
+        ok: false,
+        error:
+          'Cursor signs in with its own cursor-agent login command; TaskWraith uses your existing Cursor login and does not open a Cursor sign-in, sign-out, or upgrade terminal. Run cursor-agent directly for those.'
+      }
     }
     let commandParts: string[] | null = null
     let rawCommand: string | null = null
