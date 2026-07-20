@@ -10,6 +10,14 @@ const DARWIN_CLAUDE_SDK_PACKAGES = [
   '@anthropic-ai/claude-agent-sdk-darwin-x64'
 ]
 
+// pdfjs-dist legacy requires @napi-rs/canvas for DOMMatrix under Node.
+// Optional platform packages only install for the host arch, so the universal
+// mac build must explicitly land both Darwin slices before electron-builder.
+const DARWIN_NAPI_CANVAS_PACKAGES = [
+  '@napi-rs/canvas-darwin-arm64',
+  '@napi-rs/canvas-darwin-x64'
+]
+
 const DARWIN_NODE_PTY_PREBUILDS = [
   path.join('prebuilds', 'darwin-arm64', 'pty.node'),
   path.join('prebuilds', 'darwin-arm64', 'spawn-helper'),
@@ -22,15 +30,23 @@ const DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS = [
   path.join('prebuilds', 'darwin-x64', 'spawn-helper')
 ]
 
-function resolveDarwinClaudeSdkPackages(lock) {
+function resolveLockPackages(lock, packageNames) {
   const packages = lock && typeof lock === 'object' ? lock.packages || {} : {}
-  return DARWIN_CLAUDE_SDK_PACKAGES.map((name) => {
+  return packageNames.map((name) => {
     const entry = packages[`node_modules/${name}`]
     if (!entry || typeof entry.version !== 'string' || entry.version.length === 0) {
       throw new Error(`Missing ${name} version in package-lock.json.`)
     }
     return { name, version: entry.version, spec: `${name}@${entry.version}` }
   })
+}
+
+function resolveDarwinClaudeSdkPackages(lock) {
+  return resolveLockPackages(lock, DARWIN_CLAUDE_SDK_PACKAGES)
+}
+
+function resolveDarwinNapiCanvasPackages(lock) {
+  return resolveLockPackages(lock, DARWIN_NAPI_CANVAS_PACKAGES)
 }
 
 function missingPackageSpecs(repoRoot, packages) {
@@ -66,12 +82,29 @@ function pruneMacNodePtyHostBuild(repoRoot) {
   return existed
 }
 
+function hasNativeNodeBinding(packagePath) {
+  if (!fs.existsSync(packagePath)) return false
+  try {
+    return fs.readdirSync(packagePath).some((entry) => entry.endsWith('.node'))
+  } catch {
+    return false
+  }
+}
+
 function missingPackages(repoRoot, packages) {
   return packages.filter(({ name }) => {
     const packagePath = packageDir(repoRoot, name)
     const packageJson = path.join(packagePath, 'package.json')
     const claudeBinary = path.join(packagePath, 'claude')
     return !fs.existsSync(packageJson) || !fs.existsSync(claudeBinary)
+  })
+}
+
+function missingNapiCanvasPackages(repoRoot, packages) {
+  return packages.filter(({ name }) => {
+    const packagePath = packageDir(repoRoot, name)
+    const packageJson = path.join(packagePath, 'package.json')
+    return !fs.existsSync(packageJson) || !hasNativeNodeBinding(packagePath)
   })
 }
 
@@ -127,8 +160,11 @@ function ensureMacUniversalOptionalDeps({
 
   const lockPath = path.join(repoRoot, 'package-lock.json')
   const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'))
-  const packages = resolveDarwinClaudeSdkPackages(lock)
-  const missing = missingPackages(repoRoot, packages)
+  const claudePackages = resolveDarwinClaudeSdkPackages(lock)
+  const canvasPackages = resolveDarwinNapiCanvasPackages(lock)
+  const missingClaude = missingPackages(repoRoot, claudePackages)
+  const missingCanvas = missingNapiCanvasPackages(repoRoot, canvasPackages)
+  const missing = [...missingClaude, ...missingCanvas]
 
   for (const packageInfo of missing) {
     installPackageFromPack({ repoRoot, npmCommand, exec, packageInfo })
@@ -166,14 +202,17 @@ if (require.main === module) {
 
 module.exports = {
   DARWIN_CLAUDE_SDK_PACKAGES,
+  DARWIN_NAPI_CANVAS_PACKAGES,
   DARWIN_NODE_PTY_EXECUTABLE_PREBUILDS,
   DARWIN_NODE_PTY_PREBUILDS,
   ensureDarwinNodePtyPrebuilds,
   ensureMacUniversalOptionalDeps,
   installPackageFromPack,
+  missingNapiCanvasPackages,
   missingPackageSpecs,
   missingPackages,
   parseNpmPackOutput,
   pruneMacNodePtyHostBuild,
-  resolveDarwinClaudeSdkPackages
+  resolveDarwinClaudeSdkPackages,
+  resolveDarwinNapiCanvasPackages
 }

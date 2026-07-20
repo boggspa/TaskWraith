@@ -58,9 +58,23 @@ files:
   - '!node_modules/pdfjs-dist/web/**'
   - '!node_modules/pdfjs-dist/types/**'
   - '!node_modules/pdfjs-dist/image_decoders/**'
+  # LANDMINE: do NOT exclude @napi-rs/canvas to dodge the universal-merge
+  # error. pdfjs's legacy build runs `new DOMMatrix()` at MODULE TOP LEVEL
+  # (pdf.mjs ~16605) and @napi-rs/canvas is the only thing that polyfills
+  # DOMMatrix under Node. Dropping it still builds, then throws
+  # "ReferenceError: DOMMatrix is not defined" on the first PDF extraction.
+  # (The package's own "Cannot polyfill DOMMatrix … rendering may be broken"
+  # warning is misleading — text extraction dies too.) Verified empirically.
+  # The universal build instead needs BOTH arch slices present + an
+  # x64ArchFiles entry, the same treatment claude-agent-sdk/node-pty get.
 asarUnpack:
   - resources/**
   - node_modules/node-pty/**
+  # Keep @napi-rs/canvas native bindings loadable outside asar. Both Darwin
+  # platform packages must be present (see prepare:mac-universal-deps) so the
+  # universal merge can keep single-arch skia.*.node files as resources.
+  - node_modules/@napi-rs/canvas/**
+  - node_modules/@napi-rs/canvas-darwin-*/**
 afterPack: build/validate-native-modules.cjs
 win:
   executableName: TaskWraith
@@ -93,7 +107,7 @@ mac:
   # resources. Each helper binary is intentionally single-arch and
   # identical in the x64/arm64 temp apps, so @electron/universal must
   # keep them as resources rather than trying to lipo them.
-  x64ArchFiles: '{**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/claude,**/node_modules/node-pty/prebuilds/darwin-*/*}'
+  x64ArchFiles: '{**/node_modules/@anthropic-ai/claude-agent-sdk-darwin-*/claude,**/node_modules/node-pty/prebuilds/darwin-*/*,**/node_modules/@napi-rs/canvas-darwin-*/*}'
   entitlementsInherit: build/entitlements.mac.plist
   sign: build/sign-with-identity-hash.cjs
   # extendInfo MUST be a flat dict, not a list-of-dicts. The list form

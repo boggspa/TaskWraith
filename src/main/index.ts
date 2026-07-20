@@ -11756,7 +11756,6 @@ function runHostCommand(
     let child: ChildProcess
     let childError: Error | undefined
     let timedOut = false
-    let timeout: NodeJS.Timeout | undefined
     let timeoutKill: NodeJS.Timeout | undefined
     const commandText = codexCommandText(command)
     const resolveCommand = (result: HostCommandResult): void => {
@@ -11903,7 +11902,9 @@ function runHostCommand(
       kill: signalChild
     })
 
-    timeout = setTimeout(() => {
+    // Declared here (not above with timeoutKill): the only reader is the
+    // 'close' handler, which cannot run before this synchronous assignment.
+    const timeout = setTimeout(() => {
       if (settled || timedOut) return
       timedOut = true
       try {

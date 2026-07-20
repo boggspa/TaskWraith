@@ -37,6 +37,7 @@ async function validateNativeModules(context) {
   if (platform === 'darwin' && expectedMacArchs.length > 0) {
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
+    validateMacNapiCanvasBindings(unpackedDir, expectedMacArchs)
   }
   if (platform === 'win32') {
     validateWindowsNodePtyBindings(unpackedDir, arch)
@@ -221,6 +222,53 @@ function validateMacClaudeAgentSdkBinaries(unpackedDir, expectedArchs) {
   if (requiredPackages.length > 0) {
     console.log(
       `Validated Claude Agent SDK Darwin helpers: ${requiredPackages
+        .map((item) => item.packageName)
+        .join(', ')}`
+    )
+  }
+}
+
+function validateMacNapiCanvasBindings(unpackedDir, expectedArchs) {
+  const nodeModulesDir = findNodeModulesDir(unpackedDir)
+  if (!nodeModulesDir) return
+
+  const requiredPackages = []
+  if (expectedArchs.includes('arm64')) {
+    requiredPackages.push({
+      packageName: '@napi-rs/canvas-darwin-arm64',
+      bindingName: 'skia.darwin-arm64.node',
+      machArch: 'arm64'
+    })
+  }
+  if (expectedArchs.includes('x86_64')) {
+    requiredPackages.push({
+      packageName: '@napi-rs/canvas-darwin-x64',
+      bindingName: 'skia.darwin-x64.node',
+      machArch: 'x86_64'
+    })
+  }
+
+  for (const requiredPackage of requiredPackages) {
+    const bindingPath = path.join(
+      nodeModulesDir,
+      ...requiredPackage.packageName.split('/'),
+      requiredPackage.bindingName
+    )
+    if (!fs.existsSync(bindingPath)) {
+      throw new Error(
+        `Required @napi-rs/canvas Darwin binding is missing: ${bindingPath}. ` +
+          'Did `npm run prepare:mac-universal-deps` install both canvas-darwin packages?'
+      )
+    }
+    verifyMachOArchitectures(
+      bindingPath,
+      [requiredPackage.machArch],
+      requiredPackage.packageName
+    )
+  }
+  if (requiredPackages.length > 0) {
+    console.log(
+      `Validated @napi-rs/canvas Darwin bindings: ${requiredPackages
         .map((item) => item.packageName)
         .join(', ')}`
     )

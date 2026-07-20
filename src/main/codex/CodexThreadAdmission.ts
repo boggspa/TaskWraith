@@ -255,8 +255,7 @@ export class CodexThreadAdmissionRegistry {
         if (scopeMatches(waiter, scope)) reservations.add(waiter)
       }
     }
-    let hold!: CodexThreadAdmissionHistoryHold
-    hold = Object.freeze({
+    const hold: CodexThreadAdmissionHistoryHold = Object.freeze({
       scope,
       completion: Promise.all(
         [...reservations].map((reservation) => {

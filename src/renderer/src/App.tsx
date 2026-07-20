@@ -29662,13 +29662,3 @@ function App(): React.JSX.Element {
 }
 
 export default App
-'approval elevation confirm side-effect failed', err)
-            }
-          }}
-        />
-      )}
-    </div>
-  )
-}
-
-export default App

@@ -102,14 +102,13 @@ function createSoloRuntime(options: {
 } {
   const dispatched: AgentRunPayload[] = []
   let lastFire: Promise<boolean> | null = null
-  let service!: SoloChatWakeupService
   const timer = new WakeupTimerService({
     now: () => Date.now(),
     onFire: (wakeupId) => {
       lastFire = service.handleWakeupFired(wakeupId)
     }
   })
-  service = new SoloChatWakeupService({
+  const service = new SoloChatWakeupService({
     getChat: (chatId) => AppStore.getChat(chatId),
     saveChat: (chat) => AppStore.saveChat(chat),
     listChats: () => AppStore.getChats(),
