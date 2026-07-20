@@ -381,7 +381,7 @@ struct IosParityFixesTests {
 
         let candidate = try #require(twMentionCandidates(participants: state.displayParticipants).first)
         #expect(candidate.display == "Alibaba")
-        #expect(candidate.insertText == "@Alibaba")
+        #expect(candidate.insertText == "[@Alibaba](ensemble-dm://p-ollama)")
         #expect(candidate.model == "qwen3:4b")
     }
 

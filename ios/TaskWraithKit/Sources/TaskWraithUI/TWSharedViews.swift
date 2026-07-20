@@ -3250,8 +3250,12 @@ public struct WeeklyRhythmHeatmap: View {
 
 /// Ensemble @-mention engine — mirrors the Mac's EnsembleMentionAlias
 /// normalization (lowercase, hyphens/underscores → spaces; a no-space
-/// concat variant is also registered Mac-side, so inserting
-/// "@RoleNoSpaces" always resolves).
+/// concat variant is also registered Mac-side).
+///
+/// Picker inserts use the desktop structured link form
+/// `[@Label](ensemble-dm://participant-id)` so MAIN can authorize the exact
+/// seat when role/provider/model aliases collide. Plain `@Token` remains
+/// valid for free-typed mentions.
 public struct MentionCandidate: Identifiable {
     public let id: String
     public let insertText: String
@@ -3269,6 +3273,20 @@ public struct MentionCandidate: Identifiable {
         self.model = model
     }
 }
+
+/// Desktop composer picker contract (`formatEnsembleDmMention`). Escapes
+/// `]` in the label so markdown link parsing stays unambiguous.
+public func twFormatEnsembleDmMention(label: String, participantId: String) -> String {
+    let trimmedId = participantId.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard !trimmedId.isEmpty else { return "" }
+    let trimmedLabel = label.trimmingCharacters(in: .whitespacesAndNewlines)
+    let display = trimmedLabel.isEmpty ? trimmedId : trimmedLabel
+    let escapedLabel = display
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "]", with: "\\]")
+    return "[@\(escapedLabel)](ensemble-dm://\(trimmedId))"
+}
+
 
 @MainActor private func twMentionAccent(for participant: RemoteEnsembleState.Participant) -> Color {
     TWTheme.providerAccent(twMentionHueClass(for: participant))
@@ -3308,10 +3326,14 @@ public func twMentionCandidates(
 ) -> [MentionCandidate] {
     participants
         .sorted(by: RemoteEnsembleState.rosterOrder)
-        .map { participant in
+        .compactMap { participant in
             let role = participant.role?.trimmingCharacters(in: .whitespaces) ?? ""
             let label = role.isEmpty ? twMentionProviderLabel(participant) : role
-            let insert = "@" + label.replacingOccurrences(of: " ", with: "")
+            // Structured picker link preserves exact participant identity when
+            // aliases collide (desktop ComposerMentionTrigger parity).
+            let insert = twFormatEnsembleDmMention(
+                label: label, participantId: participant.participantId)
+            guard !insert.isEmpty else { return nil }
             return MentionCandidate(
                 id: participant.participantId,
                 insertText: insert,
@@ -3575,6 +3597,82 @@ public struct ProviderLogoIcon: View {
     }
 }
 
+/// Desktop-style fenced code chrome: language label + one-tap copy.
+/// Syntax colouring stays out of scope (AttributedString limitation on iOS);
+/// language identity + copy is the day-to-day fidelity win.
+private struct MarkdownCodeBlockCard: View {
+    let language: String?
+    let lines: [String]
+
+    @State private var copied = false
+
+    private var source: String {
+        lines.joined(separator: "\n")
+    }
+
+    private var languageLabel: String? {
+        guard let language, !language.isEmpty else { return nil }
+        return language
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            HStack(spacing: 8) {
+                if let languageLabel {
+                    Text(languageLabel)
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .lineLimit(1)
+                        .textCase(.lowercase)
+                } else {
+                    Text("code")
+                        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+                        .foregroundStyle(TWTheme.textMuted)
+                }
+                Spacer(minLength: 8)
+                Button {
+                    #if canImport(UIKit)
+                        UIPasteboard.general.string = source
+                    #endif
+                    copied = true
+                    Task { @MainActor in
+                        try? await Task.sleep(nanoseconds: 1_200_000_000)
+                        copied = false
+                    }
+                } label: {
+                    Label(
+                        copied ? "Copied" : "Copy",
+                        systemImage: copied ? "checkmark" : "doc.on.doc"
+                    )
+                    .font(.caption2.weight(.semibold))
+                    .labelStyle(.titleAndIcon)
+                    .foregroundStyle(copied ? TWTheme.statusSuccess : TWTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(copied ? "Copied code block" : "Copy code block")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 7)
+            .background(TWTheme.surface3.opacity(0.72))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                Text(source)
+                    .font(.system(size: 13, design: .monospaced))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .padding(10)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+        }
+        .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+        .clipShape(RoundedRectangle(cornerRadius: 10))
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(
+            languageLabel.map { "Code block, \($0)" } ?? "Code block")
+    }
+}
+
 public struct MarkdownLite: View {
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
@@ -3596,7 +3694,8 @@ public struct MarkdownLite: View {
         case heading(level: Int, text: String)
         case bullet(items: [String])
         case numbered(items: [String])
-        case code(lines: [String])
+        /// Fenced code — `language` is the optional info string after ```.
+        case code(language: String?, lines: [String])
         case table(MarkdownTable)
         case quote(text: String)
         case paragraph(text: String)
@@ -3683,6 +3782,7 @@ public struct MarkdownLite: View {
         var numbers: [String] = []
         var tableRows: [String] = []
         var codeLines: [String] = []
+        var codeLanguage: String?
         var inFence = false
 
         func flushParagraph() {
@@ -3741,8 +3841,13 @@ public struct MarkdownLite: View {
                 flushParagraph()
                 flushLists()
                 if inFence {
-                    out.append(.code(lines: codeLines))
+                    out.append(.code(language: codeLanguage, lines: codeLines))
                     codeLines = []
+                    codeLanguage = nil
+                } else {
+                    let info = String(trimmed.dropFirst(3))
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                    codeLanguage = info.isEmpty ? nil : info
                 }
                 inFence.toggle()
                 continue
@@ -3792,7 +3897,9 @@ public struct MarkdownLite: View {
             flushLists()
             paragraph.append(trimmed)
         }
-        if inFence, !codeLines.isEmpty { out.append(.code(lines: codeLines)) }
+        if inFence, !codeLines.isEmpty {
+            out.append(.code(language: codeLanguage, lines: codeLines))
+        }
         flushParagraph()
         flushLists()
         return out
@@ -3842,7 +3949,9 @@ public struct MarkdownLite: View {
             case .heading: return "heading"
             case .bullet: return "bullet"
             case .numbered: return "numbered"
-            case .code: return "code"
+            case .code(let language, _):
+                if let language, !language.isEmpty { return "code:\(language)" }
+                return "code"
             case .table: return "table"
             case .quote: return "quote"
             case .paragraph: return "paragraph"
@@ -3894,15 +4003,8 @@ public struct MarkdownLite: View {
                     }
                 }
             }
-        case .code(let lines):
-            ScrollView(.horizontal, showsIndicators: false) {
-                Text(lines.joined(separator: "\n"))
-                    .font(.system(size: 13, design: .monospaced))
-                    .foregroundStyle(TWTheme.textPrimary)
-                    .padding(10)
-            }
-            .background(TWTheme.surface2, in: RoundedRectangle(cornerRadius: 10))
-            .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+        case .code(let language, let lines):
+            MarkdownCodeBlockCard(language: language, lines: lines)
         case .table(let table):
             tableView(table)
         case .quote(let text):
