@@ -1,7 +1,8 @@
 import { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { ReactNode } from 'react'
 import type { ComposerStyle } from '../../../main/store/types'
-import { TranscriptPanel } from './TranscriptPanel'
+import { TranscriptPanel, transcriptRunningChatIdsSignature } from './TranscriptPanel'
+import { SubThreadStatusTicker } from './SubThreadStatusTicker'
 import { Composer, type ComposerProps } from './Composer'
 import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildChatViewProps'
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
@@ -212,6 +213,11 @@ export function chatViewPanePropsEqual(a: ChatViewPaneProps, b: ChatViewPaneProp
     a.interfaceStyle === b.interfaceStyle &&
     a.providerClass === b.providerClass &&
     a.isEnsemble === b.isEnsemble &&
+    // Sub-thread status ticker depends on which child chats are running.
+    // Compare by content signature so identity churn from other panes still
+    // skips, while an active-child start/stop reconciles this pane.
+    transcriptRunningChatIdsSignature(a.runningChatIds) ===
+      transcriptRunningChatIdsSignature(b.runningChatIds) &&
     // Per-pane agent-aura — MUST be compared or the pane won't re-tint when its
     // own run/approval/queue state (auraStatus) or provider/intensity changes.
     a.showAura === b.showAura &&
@@ -530,6 +536,12 @@ function ChatViewPaneInner(props: ChatViewPaneProps) {
       )}
       {!props.isWelcomeChat && (
         <div className="multiview-pane-content">
+          <SubThreadStatusTicker
+            currentChat={props.chat}
+            chats={props.chats}
+            runningChatIds={props.runningChatIds}
+            onOpenSubThread={props.onOpenSubThread}
+          />
           <TranscriptPanel
             {...buildChatViewProps({
               ...props,

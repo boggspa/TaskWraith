@@ -75,6 +75,7 @@ import {
 } from '../../components/FxLayers'
 import { WelcomeUsageDashboard } from '../../components/WelcomeUsageDashboard'
 import { TranscriptPanel } from '../../components/TranscriptPanel'
+import { SubThreadStatusTicker } from '../../components/SubThreadStatusTicker'
 import { ThreadSearchBar } from '../../components/ThreadSearchBar'
 import { AuditRunCard } from '../../components/AuditRunCard'
 import { AuditRunNotice } from '../../components/AuditRunNotice'
@@ -2057,6 +2058,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onPrevious={() => selectThreadSearchMatch(activeThreadSearchIndex - 1)}
                 onClose={closeThreadSearch}
               />
+              <SubThreadStatusTicker
+                currentChat={currentChat}
+                chats={chats}
+                runningChatIds={runningChatIdsArray}
+                onOpenSubThread={handleOpenCockpitThread}
+              />
               <TranscriptPanel
                 key={isWelcomeChat ? 'welcome' : 'transcript'}
                 scrollRef={transcriptScrollRef}
@@ -2392,6 +2399,12 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 </h2>
               </div>
             )}
+            <SubThreadStatusTicker
+              currentChat={sideChat}
+              chats={chats}
+              runningChatIds={runningChatIdsArray}
+              onOpenSubThread={handleOpenCockpitThread}
+            />
             <TranscriptPanel
               key={`side-${sideChat.appChatId}`}
               scrollRef={sideTranscriptScrollRef}
