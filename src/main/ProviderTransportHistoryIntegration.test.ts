@@ -93,13 +93,19 @@ describe('one-shot provider transport history join', () => {
       'async function runApprovedHostCommand('
     )
 
+    // R1 from HostRerunContinuation mint — never random fallback, never R0 reuse.
     expect(continuation).toContain('createHostRerunContinuationCorrelation({')
     expect(continuation).toContain('resolveHostRerunContinuationSession({')
+    expect(continuation).toContain('buildHostRerunContinuationPrompt(')
     expect(continuation).toContain('providerSessionId: resumeProviderSessionId')
+    expect(continuation).toContain('linkedProviderSessionId')
     expect(continuation).toContain('appRunId: continuationRunId')
+    expect(continuation).toContain('handoffSourceRunId: approvalRunId')
     expect(continuation).toContain('host_rerun_continuation_dispatched')
-    expect(continuation).toContain("runCoordinatorRef.dispatch")
+    expect(continuation).toContain('runCoordinatorRef.dispatch')
     expect(continuation).toContain('dispatchResult.dispatched')
+    expect(continuation).not.toContain("createFallbackRunId('codex')")
+    expect(continuation).not.toContain('appRunId: approvalRunId')
   })
 
   it('tracks native Codex review before review admission', () => {
