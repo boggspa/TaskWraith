@@ -1419,6 +1419,7 @@ export async function fetchCursorUsageSnapshot(
   })
   if (snapshot.configured && !snapshot.error) {
     cursorUsageCache = { snapshot, fetchedAt: Date.now() }
+    cacheProviderUsageSnapshot('cursor', snapshot)
     return snapshot
   }
   if (cursorUsageCache && now - cursorUsageCache.fetchedAt < CURSOR_USAGE_STALE_TTL_MS) {

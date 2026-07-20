@@ -972,6 +972,7 @@ import {
   ensureGeminiAuthProfileMaterialized as ensureGeminiAuthProfileMaterializedViaProviderAuth,
   fetchClaudeUsageSnapshot,
   fetchCodexUsageSnapshot,
+  fetchCursorUsageSnapshot,
   fetchKimiUsageSnapshot,
   getDefaultGeminiAuthProfileId,
   getGeminiAuthProfiles,
@@ -39215,6 +39216,7 @@ if (isGeminiMcpBridgeProcess) {
       fetchCodexUsageSnapshot,
       fetchClaudeUsageSnapshot,
       fetchKimiUsageSnapshot,
+      fetchCursorUsageSnapshot,
       getProviderCapabilityContract,
       getPluginActivationSnapshot: () =>
         pluginContributionManagerRef?.getActivationSnapshot() || {
@@ -39988,9 +39990,11 @@ if (isGeminiMcpBridgeProcess) {
         if (provider === 'claude') {
           return fetchClaudeUsageSnapshot({ force })
         }
-        // Cursor managed runs are disabled. Do not inspect the editor's local
-        // auth state or access token merely to populate an unavailable card.
-        if (provider === 'cursor') return null
+        // Cursor has no CLI usage command — read the editor dashboard token
+        // and hit Cursor's period-usage RPC (same path as Limit Counter).
+        if (provider === 'cursor') {
+          return fetchCursorUsageSnapshot({ force })
+        }
         if (provider !== 'codex') {
           return null
         }
