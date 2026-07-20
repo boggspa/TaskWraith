@@ -27,6 +27,7 @@ import {
   loadCursorUsageSnapshot,
   type CursorUsageSnapshot
 } from '../cursor/CursorUsage'
+import { decideUsageSnapshotServe, shouldCopyCursorStateDbForUsage } from './ProviderUsageServePolicy'
 import {
   extractClaudeAccountPlanType,
   extractKimiPlanType
@@ -943,18 +944,95 @@ const CODEX_USAGE_STALE_TTL_MS = 4 * 60 * 60_000
 const CODEX_USAGE_FAILURE_BACKOFF_MS = 90_000
 let codexUsageCache: { snapshot: NormalizedProviderUsageSnapshot; fetchedAt: number } | null = null
 let codexUsageLastFailureAt = 0
+let codexUsageInFlight: Promise<NormalizedProviderUsageSnapshot> | null = null
+
+function readPersistedStaleUsageSnapshot(
+  provider: ProviderId
+): NormalizedProviderUsageSnapshot | null {
+  const cached = AppStore.getProviderUsageSnapshot(provider)
+  if (!hasProviderUsageSnapshotContent(cached)) return null
+  const projected = projectStaleSnapshotForward(cached)
+  return {
+    ...projected,
+    provider,
+    stale: true
+  }
+}
+
+function markStaleUsageSnapshot(
+  snapshot: NormalizedProviderUsageSnapshot
+): NormalizedProviderUsageSnapshot {
+  return { ...snapshot, stale: true }
+}
+
+async function loadCodexUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
+  if (codexUsageInFlight) return codexUsageInFlight
+  codexUsageInFlight = (async () => {
+    // Prefer the live, CLI-rotated token from ~/.codex/auth.json; fall back to the
+    // one-time encrypted import only when the file is missing/unreadable.
+    const credential = (await readCodexUsageCredentialLive()) ?? storedCodexUsageCredential()
+    if (!credential) {
+      const stored = AppStore.getSettings().codexUsageCredential
+      return usageSnapshotWithPersistedFallback('codex', {
+        provider: 'codex',
+        configured: Boolean(stored?.accountId),
+        source: stored?.source || null,
+        accountId: redactAccountId(stored?.accountId),
+        importedAt: stored?.importedAt,
+        encryptionAvailable: stored?.encryptionAvailable ?? safeStorage.isEncryptionAvailable(),
+        error: stored?.accountId
+          ? 'Codex usage token is not available in this session. Re-import Codex auth to refresh usage.'
+          : 'Codex usage import is not configured.'
+      })
+    }
+
+    try {
+      const response = await fetch('https://chatgpt.com/backend-api/wham/usage', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credential.accessToken}`,
+          'chatgpt-account-id': credential.accountId,
+          Accept: 'application/json'
+        }
+      })
+      if (response.status === 401 || response.status === 403) {
+        throw new Error('Imported Codex session is expired or not authorized.')
+      }
+      if (response.status === 429) {
+        throw new Error('Codex usage endpoint is rate limited.')
+      }
+      if (!response.ok) {
+        throw new Error(`Codex usage endpoint returned HTTP ${response.status}.`)
+      }
+      const payload = await response.json()
+      const snapshot = normalizeCodexUsagePayload(payload, credential)
+      codexUsageCache = { snapshot, fetchedAt: Date.now() }
+      codexUsageLastFailureAt = 0
+      cacheProviderUsageSnapshot('codex', snapshot)
+      return snapshot
+    } catch (error) {
+      codexUsageLastFailureAt = Date.now()
+      const fallback = usageSnapshotWithPersistedFallback('codex', {
+        provider: 'codex',
+        configured: true,
+        source: 'chatgpt-wham',
+        accountId: redactAccountId(credential.accountId),
+        importedAt: credential.importedAt,
+        error: error instanceof Error ? error.message : 'Codex usage fetch failed.'
+      })
+      if (hasProviderUsageSnapshotContent(fallback)) return fallback
+      throw error
+    }
+  })().finally(() => {
+    codexUsageInFlight = null
+  })
+  return codexUsageInFlight
+}
 
 export async function fetchCodexUsageSnapshot(
   options: ProviderUsageSnapshotOptions = {}
 ): Promise<NormalizedProviderUsageSnapshot> {
   const now = Date.now()
-  if (
-    !options.force &&
-    codexUsageCache &&
-    now - codexUsageCache.fetchedAt < CODEX_USAGE_FRESH_TTL_MS
-  ) {
-    return codexUsageCache.snapshot
-  }
   // Recent failure → don't re-hit the endpoint yet; serve the last snapshot
   // as stale. Force bypasses (explicit user refresh).
   if (
@@ -977,61 +1055,30 @@ export async function fetchCodexUsageSnapshot(
     })
   }
 
-  // Prefer the live, CLI-rotated token from ~/.codex/auth.json; fall back to the
-  // one-time encrypted import only when the file is missing/unreadable.
-  const credential = (await readCodexUsageCredentialLive()) ?? storedCodexUsageCredential()
-  if (!credential) {
-    const stored = AppStore.getSettings().codexUsageCredential
-    return usageSnapshotWithPersistedFallback('codex', {
-      provider: 'codex',
-      configured: Boolean(stored?.accountId),
-      source: stored?.source || null,
-      accountId: redactAccountId(stored?.accountId),
-      importedAt: stored?.importedAt,
-      encryptionAvailable: stored?.encryptionAvailable ?? safeStorage.isEncryptionAvailable(),
-      error: stored?.accountId
-        ? 'Codex usage token is not available in this session. Re-import Codex auth to refresh usage.'
-        : 'Codex usage import is not configured.'
-    })
+  const serve = decideUsageSnapshotServe({
+    force: options.force === true,
+    nowMs: now,
+    memoryFetchedAtMs: codexUsageCache?.fetchedAt ?? null,
+    freshTtlMs: CODEX_USAGE_FRESH_TTL_MS,
+    staleTtlMs: CODEX_USAGE_STALE_TTL_MS,
+    hasMemoryContent: hasProviderUsageSnapshotContent(codexUsageCache?.snapshot),
+    hasPersistedContent: hasProviderUsageSnapshotContent(
+      AppStore.getProviderUsageSnapshot('codex')
+    )
+  })
+  if (serve.action === 'return-fresh' && codexUsageCache) {
+    return codexUsageCache.snapshot
+  }
+  if (serve.action === 'return-stale-and-revalidate') {
+    void loadCodexUsageSnapshotLive().catch(() => {})
+    if (hasProviderUsageSnapshotContent(codexUsageCache?.snapshot) && codexUsageCache) {
+      return markStaleUsageSnapshot(codexUsageCache.snapshot)
+    }
+    const persisted = readPersistedStaleUsageSnapshot('codex')
+    if (persisted) return persisted
   }
 
-  try {
-    const response = await fetch('https://chatgpt.com/backend-api/wham/usage', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${credential.accessToken}`,
-        'chatgpt-account-id': credential.accountId,
-        Accept: 'application/json'
-      }
-    })
-    if (response.status === 401 || response.status === 403) {
-      throw new Error('Imported Codex session is expired or not authorized.')
-    }
-    if (response.status === 429) {
-      throw new Error('Codex usage endpoint is rate limited.')
-    }
-    if (!response.ok) {
-      throw new Error(`Codex usage endpoint returned HTTP ${response.status}.`)
-    }
-    const payload = await response.json()
-    const snapshot = normalizeCodexUsagePayload(payload, credential)
-    codexUsageCache = { snapshot, fetchedAt: Date.now() }
-    codexUsageLastFailureAt = 0
-    cacheProviderUsageSnapshot('codex', snapshot)
-    return snapshot
-  } catch (error) {
-    codexUsageLastFailureAt = Date.now()
-    const fallback = usageSnapshotWithPersistedFallback('codex', {
-      provider: 'codex',
-      configured: true,
-      source: 'chatgpt-wham',
-      accountId: redactAccountId(credential.accountId),
-      importedAt: credential.importedAt,
-      error: error instanceof Error ? error.message : 'Codex usage fetch failed.'
-    })
-    if (hasProviderUsageSnapshotContent(fallback)) return fallback
-    throw error
-  }
+  return loadCodexUsageSnapshotLive()
 }
 
 // Gemini is retired and reads only the user's OWN local token from
@@ -1257,98 +1304,146 @@ export async function getKimiUsageAccessToken(): Promise<string | null> {
   return getStoredKimiApiKey() || (await readKimiOAuthAccessToken())
 }
 
+let kimiUsageInFlight: Promise<NormalizedProviderUsageSnapshot> | null = null
+
+async function loadKimiUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
+  if (kimiUsageInFlight) return kimiUsageInFlight
+  kimiUsageInFlight = (async () => {
+    const accessToken = await getKimiUsageAccessToken()
+    if (!accessToken) {
+      return usageSnapshotWithPersistedFallback('kimi', {
+        provider: 'kimi',
+        source: 'kimi-live-usage',
+        configured: false,
+        error: 'Kimi credentials were not found. Run Kimi Code once or configure a Kimi API token.'
+      })
+    }
+
+    try {
+      const response = await fetch('https://api.kimi.com/coding/v1/usages', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${accessToken}`,
+          Accept: 'application/json'
+        }
+      })
+      if (!response.ok) {
+        throw new Error(`Kimi usage endpoint returned HTTP ${response.status}.`)
+      }
+      const payload = await response.json()
+      const planType = extractKimiPlanType(payload)
+      const snapshot = {
+        ...normalizeKimiUsageSnapshot(payload),
+        ...(planType ? { planType } : {})
+      }
+      kimiUsageCache = { snapshot, fetchedAt: Date.now() }
+      cacheProviderUsageSnapshot('kimi', snapshot)
+      return snapshot
+    } catch (error) {
+      const now = Date.now()
+      if (kimiUsageCache && now - kimiUsageCache.fetchedAt < KIMI_USAGE_STALE_TTL_MS) {
+        return {
+          ...kimiUsageCache.snapshot,
+          stale: true,
+          error: error instanceof Error ? error.message : 'Kimi usage fetch failed.'
+        }
+      }
+      return usageSnapshotWithPersistedFallback('kimi', {
+        provider: 'kimi',
+        source: 'kimi-live-usage',
+        configured: true,
+        error: error instanceof Error ? error.message : 'Kimi usage fetch failed.'
+      })
+    }
+  })().finally(() => {
+    kimiUsageInFlight = null
+  })
+  return kimiUsageInFlight
+}
+
 export async function fetchKimiUsageSnapshot(
   options: ProviderUsageSnapshotOptions = {}
 ): Promise<NormalizedProviderUsageSnapshot> {
   const now = Date.now()
-  if (
-    !options.force &&
-    kimiUsageCache &&
-    now - kimiUsageCache.fetchedAt < KIMI_USAGE_FRESH_TTL_MS
-  ) {
+  const serve = decideUsageSnapshotServe({
+    force: options.force === true,
+    nowMs: now,
+    memoryFetchedAtMs: kimiUsageCache?.fetchedAt ?? null,
+    freshTtlMs: KIMI_USAGE_FRESH_TTL_MS,
+    staleTtlMs: KIMI_USAGE_STALE_TTL_MS,
+    hasMemoryContent: hasProviderUsageSnapshotContent(kimiUsageCache?.snapshot),
+    hasPersistedContent: hasProviderUsageSnapshotContent(
+      AppStore.getProviderUsageSnapshot('kimi')
+    )
+  })
+  if (serve.action === 'return-fresh' && kimiUsageCache) {
     return kimiUsageCache.snapshot
   }
-
-  const accessToken = await getKimiUsageAccessToken()
-  if (!accessToken) {
-    return usageSnapshotWithPersistedFallback('kimi', {
-      provider: 'kimi',
-      source: 'kimi-live-usage',
-      configured: false,
-      error: 'Kimi credentials were not found. Run Kimi Code once or configure a Kimi API token.'
-    })
+  if (serve.action === 'return-stale-and-revalidate') {
+    void loadKimiUsageSnapshotLive().catch(() => {})
+    if (hasProviderUsageSnapshotContent(kimiUsageCache?.snapshot) && kimiUsageCache) {
+      return markStaleUsageSnapshot(kimiUsageCache.snapshot)
+    }
+    const persisted = readPersistedStaleUsageSnapshot('kimi')
+    if (persisted) return persisted
   }
 
-  try {
-    const response = await fetch('https://api.kimi.com/coding/v1/usages', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${accessToken}`,
-        Accept: 'application/json'
-      }
-    })
-    if (!response.ok) {
-      throw new Error(`Kimi usage endpoint returned HTTP ${response.status}.`)
-    }
-    const payload = await response.json()
-    const planType = extractKimiPlanType(payload)
-    const snapshot = {
-      ...normalizeKimiUsageSnapshot(payload),
-      ...(planType ? { planType } : {})
-    }
-    kimiUsageCache = { snapshot, fetchedAt: Date.now() }
-    cacheProviderUsageSnapshot('kimi', snapshot)
-    return snapshot
-  } catch (error) {
-    if (kimiUsageCache && now - kimiUsageCache.fetchedAt < KIMI_USAGE_STALE_TTL_MS) {
-      return {
-        ...kimiUsageCache.snapshot,
-        stale: true,
-        error: error instanceof Error ? error.message : 'Kimi usage fetch failed.'
-      }
-    }
-    return usageSnapshotWithPersistedFallback('kimi', {
-      provider: 'kimi',
-      source: 'kimi-live-usage',
-      configured: true,
-      error: error instanceof Error ? error.message : 'Kimi usage fetch failed.'
-    })
-  }
+  return loadKimiUsageSnapshotLive()
 }
 
-const CURSOR_USAGE_FRESH_TTL_MS = 2 * 60_000
+// Match Claude/Codex fresh TTL so cold launch + heartbeat do not re-hit Cursor
+// sqlite/network every couple of minutes. Manual ↻ still force-bypasses.
+const CURSOR_USAGE_FRESH_TTL_MS = 10 * 60_000
 const CURSOR_USAGE_STALE_TTL_MS = 4 * 60 * 60_000
+const CURSOR_SQLITE_TIMEOUT_MS = 3_000
 let cursorUsageCache: { snapshot: CursorUsageSnapshot; fetchedAt: number } | null = null
+let cursorUsageInFlight: Promise<CursorUsageSnapshot> | null = null
 
 function runCursorSqliteScalar(dbPath: string, query: string): Promise<string | null> {
   return new Promise((resolve) => {
-    const opts = { timeout: 8_000, maxBuffer: 1024 * 1024 }
-    execFile('/usr/bin/sqlite3', ['-readonly', dbPath, query], opts, (err, stdout) => {
-      if (!err) {
-        const value = String(stdout || '').trim()
-        resolve(value || null)
+    const opts = { timeout: CURSOR_SQLITE_TIMEOUT_MS, maxBuffer: 1024 * 1024 }
+    // Prefer URI immutable/ro mode: often readable even when the editor holds
+    // a write lock, without needing a temp copy of multi-GB state.vscdb.
+    const uriPath = `file:${dbPath}?mode=ro&immutable=1`
+    execFile('/usr/bin/sqlite3', [uriPath, query], opts, (uriErr, uriStdout) => {
+      if (!uriErr) {
+        resolve(String(uriStdout || '').trim() || null)
         return
       }
-      void (async () => {
-        let tmpDir: string | null = null
-        try {
-          tmpDir = await fs.mkdtemp(join(os.tmpdir(), 'cursor-usage-'))
-          const tmpDb = join(tmpDir, 'state.vscdb')
-          await fs.copyFile(dbPath, tmpDb)
-          execFile('/usr/bin/sqlite3', ['-readonly', tmpDb, query], opts, (err2, stdout2) => {
-            const dir = tmpDir
-            if (dir) void fs.rm(dir, { recursive: true, force: true }).catch(() => {})
-            if (err2) {
+      execFile('/usr/bin/sqlite3', ['-readonly', dbPath, query], opts, (err, stdout) => {
+        if (!err) {
+          resolve(String(stdout || '').trim() || null)
+          return
+        }
+        void (async () => {
+          let tmpDir: string | null = null
+          try {
+            // Real Cursor installs commonly hold multi-GB state.vscdb files.
+            // A full copyFile of those froze main on cold launch when sqlite
+            // was locked. Only tiny DBs may still use the temp-copy recovery.
+            const stat = await fs.stat(dbPath)
+            if (!shouldCopyCursorStateDbForUsage(stat.size)) {
               resolve(null)
               return
             }
-            resolve(String(stdout2 || '').trim() || null)
-          })
-        } catch {
-          if (tmpDir) void fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
-          resolve(null)
-        }
-      })()
+            tmpDir = await fs.mkdtemp(join(os.tmpdir(), 'cursor-usage-'))
+            const tmpDb = join(tmpDir, 'state.vscdb')
+            await fs.copyFile(dbPath, tmpDb)
+            execFile('/usr/bin/sqlite3', ['-readonly', tmpDb, query], opts, (err2, stdout2) => {
+              const dir = tmpDir
+              if (dir) void fs.rm(dir, { recursive: true, force: true }).catch(() => {})
+              if (err2) {
+                resolve(null)
+                return
+              }
+              resolve(String(stdout2 || '').trim() || null)
+            })
+          } catch {
+            if (tmpDir) void fs.rm(tmpDir, { recursive: true, force: true }).catch(() => {})
+            resolve(null)
+          }
+        })()
+      })
     })
   })
 }
@@ -1400,32 +1495,88 @@ export async function fetchCursorUsageRpc(token: string): Promise<unknown> {
   return response.json()
 }
 
+function cursorSnapshotFromPersisted(
+  persisted: NormalizedProviderUsageSnapshot,
+  error?: string
+): CursorUsageSnapshot {
+  return {
+    provider: 'cursor',
+    source: String(persisted.source || 'cursor-dashboard-usage'),
+    windows: Array.isArray(persisted.windows)
+      ? (persisted.windows as CursorUsageSnapshot['windows'])
+      : [],
+    balances: Array.isArray(persisted.balances)
+      ? (persisted.balances as CursorUsageSnapshot['balances'])
+      : [],
+    configured: true,
+    stale: true,
+    ...(error ? { error } : {}),
+    fetchedAt:
+      typeof persisted.fetchedAt === 'string' ? persisted.fetchedAt : new Date().toISOString(),
+    ...(typeof (persisted as { planType?: unknown }).planType === 'string'
+      ? { planType: (persisted as { planType: string }).planType }
+      : {})
+  }
+}
+
+async function loadCursorUsageSnapshotLive(): Promise<CursorUsageSnapshot> {
+  if (cursorUsageInFlight) return cursorUsageInFlight
+  const pending = (async (): Promise<CursorUsageSnapshot> => {
+    const snapshot = await loadCursorUsageSnapshot({
+      readAccessToken: readCursorEditorAccessToken,
+      readPlanType: readCursorEditorPlanType,
+      fetchUsageRpc: fetchCursorUsageRpc,
+      now: () => Date.now()
+    })
+    if (snapshot.configured && !snapshot.error) {
+      cursorUsageCache = { snapshot, fetchedAt: Date.now() }
+      cacheProviderUsageSnapshot('cursor', snapshot)
+      return snapshot
+    }
+    const now = Date.now()
+    if (cursorUsageCache && now - cursorUsageCache.fetchedAt < CURSOR_USAGE_STALE_TTL_MS) {
+      return { ...cursorUsageCache.snapshot, stale: true, error: snapshot.error }
+    }
+    const persisted = readPersistedStaleUsageSnapshot('cursor')
+    if (persisted) return cursorSnapshotFromPersisted(persisted, snapshot.error)
+    return snapshot
+  })()
+  cursorUsageInFlight = pending
+  try {
+    return await pending
+  } finally {
+    if (cursorUsageInFlight === pending) cursorUsageInFlight = null
+  }
+}
+
 export async function fetchCursorUsageSnapshot(
   options: ProviderUsageSnapshotOptions = {}
 ): Promise<CursorUsageSnapshot | null> {
   const now = Date.now()
-  if (
-    !options.force &&
-    cursorUsageCache &&
-    now - cursorUsageCache.fetchedAt < CURSOR_USAGE_FRESH_TTL_MS
-  ) {
+  const serve = decideUsageSnapshotServe({
+    force: options.force === true,
+    nowMs: now,
+    memoryFetchedAtMs: cursorUsageCache?.fetchedAt ?? null,
+    freshTtlMs: CURSOR_USAGE_FRESH_TTL_MS,
+    staleTtlMs: CURSOR_USAGE_STALE_TTL_MS,
+    hasMemoryContent: hasProviderUsageSnapshotContent(cursorUsageCache?.snapshot),
+    hasPersistedContent: hasProviderUsageSnapshotContent(
+      AppStore.getProviderUsageSnapshot('cursor')
+    )
+  })
+  if (serve.action === 'return-fresh' && cursorUsageCache) {
     return cursorUsageCache.snapshot
   }
-  const snapshot = await loadCursorUsageSnapshot({
-    readAccessToken: readCursorEditorAccessToken,
-    readPlanType: readCursorEditorPlanType,
-    fetchUsageRpc: fetchCursorUsageRpc,
-    now: () => Date.now()
-  })
-  if (snapshot.configured && !snapshot.error) {
-    cursorUsageCache = { snapshot, fetchedAt: Date.now() }
-    cacheProviderUsageSnapshot('cursor', snapshot)
-    return snapshot
+  if (serve.action === 'return-stale-and-revalidate') {
+    void loadCursorUsageSnapshotLive().catch(() => {})
+    if (hasProviderUsageSnapshotContent(cursorUsageCache?.snapshot) && cursorUsageCache) {
+      return { ...cursorUsageCache.snapshot, stale: true }
+    }
+    const persisted = readPersistedStaleUsageSnapshot('cursor')
+    if (persisted) return cursorSnapshotFromPersisted(persisted)
   }
-  if (cursorUsageCache && now - cursorUsageCache.fetchedAt < CURSOR_USAGE_STALE_TTL_MS) {
-    return { ...cursorUsageCache.snapshot, stale: true, error: snapshot.error }
-  }
-  return snapshot
+
+  return loadCursorUsageSnapshotLive()
 }
 
 /*
@@ -1561,17 +1712,67 @@ export async function getClaudeOAuthCredential(): Promise<ClaudeOAuthCredential 
   }
 }
 
+let claudeUsageInFlight: Promise<NormalizedProviderUsageSnapshot> | null = null
+
+async function loadClaudeUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
+  if (claudeUsageInFlight) return claudeUsageInFlight
+  claudeUsageInFlight = (async () => {
+    const credential = await getClaudeOAuthCredential()
+    if (!credential) {
+      return usageSnapshotWithPersistedFallback('claude', {
+        provider: 'claude',
+        source: 'claude-oauth-usage',
+        configured: false,
+        error:
+          'Claude OAuth credentials were not found. Run Claude Code once to populate ~/.claude/.credentials.json.'
+      })
+    }
+
+    try {
+      const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+        method: 'GET',
+        headers: {
+          Authorization: `Bearer ${credential.accessToken}`,
+          'anthropic-beta': 'oauth-2025-04-20',
+          Accept: 'application/json'
+        }
+      })
+      if (!response.ok) {
+        throw new Error(`Claude OAuth usage endpoint returned HTTP ${response.status}.`)
+      }
+      const payload = await response.json()
+      const snapshot = normalizeClaudeUsageSnapshot(payload, credential)
+      claudeUsageCache = { snapshot, fetchedAt: Date.now() }
+      claudeUsageLastFailureAt = 0
+      cacheProviderUsageSnapshot('claude', snapshot)
+      return snapshot
+    } catch (error) {
+      claudeUsageLastFailureAt = Date.now()
+      const now = Date.now()
+      if (claudeUsageCache && now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_STALE_TTL_MS) {
+        return {
+          ...claudeUsageCache.snapshot,
+          stale: true,
+          error: error instanceof Error ? error.message : 'Claude OAuth usage fetch failed.'
+        }
+      }
+      return usageSnapshotWithPersistedFallback('claude', {
+        provider: 'claude',
+        source: 'claude-oauth-usage',
+        configured: true,
+        error: error instanceof Error ? error.message : 'Claude OAuth usage fetch failed.'
+      })
+    }
+  })().finally(() => {
+    claudeUsageInFlight = null
+  })
+  return claudeUsageInFlight
+}
+
 export async function fetchClaudeUsageSnapshot(
   options: ProviderUsageSnapshotOptions = {}
 ): Promise<NormalizedProviderUsageSnapshot> {
   const now = Date.now()
-  if (
-    !options.force &&
-    claudeUsageCache &&
-    now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_FRESH_TTL_MS
-  ) {
-    return claudeUsageCache.snapshot
-  }
   // Recent failure (usually a 429) → don't re-hit the endpoint yet; serve
   // the last snapshot as stale. Force bypasses (explicit user refresh).
   if (
@@ -1594,51 +1795,30 @@ export async function fetchClaudeUsageSnapshot(
     })
   }
 
-  const credential = await getClaudeOAuthCredential()
-  if (!credential) {
-    return usageSnapshotWithPersistedFallback('claude', {
-      provider: 'claude',
-      source: 'claude-oauth-usage',
-      configured: false,
-      error:
-        'Claude OAuth credentials were not found. Run Claude Code once to populate ~/.claude/.credentials.json.'
-    })
+  const serve = decideUsageSnapshotServe({
+    force: options.force === true,
+    nowMs: now,
+    memoryFetchedAtMs: claudeUsageCache?.fetchedAt ?? null,
+    freshTtlMs: CLAUDE_USAGE_FRESH_TTL_MS,
+    staleTtlMs: CLAUDE_USAGE_STALE_TTL_MS,
+    hasMemoryContent: hasProviderUsageSnapshotContent(claudeUsageCache?.snapshot),
+    hasPersistedContent: hasProviderUsageSnapshotContent(
+      AppStore.getProviderUsageSnapshot('claude')
+    )
+  })
+  if (serve.action === 'return-fresh' && claudeUsageCache) {
+    return claudeUsageCache.snapshot
+  }
+  if (serve.action === 'return-stale-and-revalidate') {
+    void loadClaudeUsageSnapshotLive().catch(() => {})
+    if (hasProviderUsageSnapshotContent(claudeUsageCache?.snapshot) && claudeUsageCache) {
+      return markStaleUsageSnapshot(claudeUsageCache.snapshot)
+    }
+    const persisted = readPersistedStaleUsageSnapshot('claude')
+    if (persisted) return persisted
   }
 
-  try {
-    const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
-      method: 'GET',
-      headers: {
-        Authorization: `Bearer ${credential.accessToken}`,
-        'anthropic-beta': 'oauth-2025-04-20',
-        Accept: 'application/json'
-      }
-    })
-    if (!response.ok) {
-      throw new Error(`Claude OAuth usage endpoint returned HTTP ${response.status}.`)
-    }
-    const payload = await response.json()
-    const snapshot = normalizeClaudeUsageSnapshot(payload, credential)
-    claudeUsageCache = { snapshot, fetchedAt: Date.now() }
-    claudeUsageLastFailureAt = 0
-    cacheProviderUsageSnapshot('claude', snapshot)
-    return snapshot
-  } catch (error) {
-    claudeUsageLastFailureAt = Date.now()
-    if (claudeUsageCache && now - claudeUsageCache.fetchedAt < CLAUDE_USAGE_STALE_TTL_MS) {
-      return {
-        ...claudeUsageCache.snapshot,
-        stale: true,
-        error: error instanceof Error ? error.message : 'Claude OAuth usage fetch failed.'
-      }
-    }
-    return usageSnapshotWithPersistedFallback('claude', {
-      provider: 'claude',
-      source: 'claude-oauth-usage',
-      configured: true,
-      error: error instanceof Error ? error.message : 'Claude OAuth usage fetch failed.'
-    })
-  }
+  return loadClaudeUsageSnapshotLive()
 }
 
 export async function importCodexUsageCredential(
