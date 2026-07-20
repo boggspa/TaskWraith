@@ -269,6 +269,9 @@ struct ThreadDetailView: View {
     private var snapshot: RemoteThreadSnapshot? { threadValue(model.threadSnapshots) }
     private var ensembleState: RemoteEnsembleState? { threadValue(model.ensembleStates) }
     private var diffSummary: MobileDiffSummary? { threadValue(model.diffSummaries) }
+    private func isMessagePinned(_ messageId: String) -> Bool {
+        snapshot?.pinnedRows?.contains(where: { $0.id == messageId }) == true
+    }
     /// Slice 5 (RC4): this thread's current wake generation (bumped by a
     /// notification tap / foreground targeting it).
     private var wakeRefreshGeneration: Int { model.wakeRefreshGeneration[taskId] ?? 0 }
@@ -1057,7 +1060,8 @@ struct ThreadDetailView: View {
                                 threadProvider: card?.provider,
                                 agentIdentity: threadAgentIdentity,
                                 isExpanding: model.expandingRows.contains(row.id),
-                                participants: transcriptParticipants
+                                participants: transcriptParticipants,
+                                isPinned: isMessagePinned(row.id)
                             )
                             .equatable()
                         case .toolBurst(_, let rows, _):
@@ -1128,7 +1132,8 @@ struct ThreadDetailView: View {
                                     threadProvider: card?.provider,
                                     agentIdentity: threadAgentIdentity,
                                     isExpanding: model.expandingRows.contains(row.id),
-                                    participants: transcriptParticipants
+                                    participants: transcriptParticipants,
+                                    isPinned: isMessagePinned(row.id)
                                 )
                                 .equatable()
                             case .toolBurst(_, let rows, _):
@@ -1373,7 +1378,8 @@ struct ThreadDetailView: View {
                 threadProvider: card?.provider,
                 agentIdentity: threadAgentIdentity,
                 isExpanding: model.expandingRows.contains(row.id),
-                participants: transcriptParticipants
+                participants: transcriptParticipants,
+                isPinned: isMessagePinned(row.id)
             )
             .equatable()
         case .text(_, let content, let isTail):
@@ -2819,6 +2825,141 @@ struct SubThreadReturnSummaryCard: View {
 // MarkdownLite re-parse — for any row whose inputs are unchanged. The two
 // formerly model-derived inputs (`isExpanding`, `participants`) are resolved
 // at the call site and passed in, so they participate in equality.
+
+/// Lightweight context-compaction card for system rows whose Mac preview is
+/// `formatContextCompactionSummary` ("Context compacted · …").
+struct ContextCompactionSummaryCard: View {
+    let preview: String
+
+    static func matches(preview: String?, role: String?, kind: String?) -> Bool {
+        guard let preview, !preview.isEmpty else { return false }
+        guard role == "system" || kind == "system" else { return false }
+        let lower = preview.lowercased()
+        return lower.hasPrefix("context compacted")
+            || lower.hasPrefix("context compaction failed")
+            || lower.hasPrefix("compacting context")
+    }
+
+    private var failed: Bool {
+        preview.lowercased().hasPrefix("context compaction failed")
+    }
+
+    private var inProgress: Bool {
+        preview.lowercased().hasPrefix("compacting context")
+    }
+
+    private var accent: Color {
+        if failed { return TWTheme.statusFailed }
+        if inProgress { return TWTheme.chroma1 }
+        return TWTheme.statusSuccess
+    }
+
+    private var title: String {
+        if failed { return "Context compaction failed" }
+        if inProgress { return "Compacting context…" }
+        return "Context compacted"
+    }
+
+    private var detail: String? {
+        for separator in [" · ", " — "] {
+            if let range = preview.range(of: separator) {
+                let rest = String(preview[range.upperBound...])
+                    .trimmingCharacters(in: .whitespaces)
+                if !rest.isEmpty { return rest }
+            }
+        }
+        return nil
+    }
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 8) {
+            Image(
+                systemName: failed
+                    ? "exclamationmark.triangle.fill"
+                    : "arrow.down.right.and.arrow.up.left"
+            )
+            .font(.caption.weight(.bold))
+            .foregroundStyle(accent)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                if let detail {
+                    Text(detail)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textSecondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(accent.opacity(0.10), in: RoundedRectangle(cornerRadius: 10))
+        .overlay(
+            RoundedRectangle(cornerRadius: 10)
+                .strokeBorder(accent.opacity(0.35), lineWidth: 1)
+        )
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel([title, detail].compactMap { $0 }.joined(separator: ". "))
+    }
+}
+
+/// Compact always-visible message action strip — desktop MessageActionsChip
+/// parity for iOS (copy / add-to-prompt / pin / open side chat).
+struct MessageActionsBar: View {
+    let isPinned: Bool
+    let onCopy: () -> Void
+    let onAddToPrompt: (() -> Void)?
+    let onTogglePin: (() -> Void)?
+    let onOpenSideChat: (() -> Void)?
+
+    var body: some View {
+        HStack(spacing: 2) {
+            actionButton(systemImage: "doc.on.doc", label: "Copy", action: onCopy)
+            if let onAddToPrompt {
+                actionButton(
+                    systemImage: "text.append", label: "Add to prompt",
+                    action: onAddToPrompt)
+            }
+            if let onTogglePin {
+                actionButton(
+                    systemImage: isPinned ? "pin.fill" : "pin",
+                    label: isPinned ? "Unpin" : "Pin",
+                    accented: isPinned,
+                    action: onTogglePin)
+            }
+            if let onOpenSideChat {
+                actionButton(
+                    systemImage: "rectangle.split.2x1",
+                    label: "Open side chat",
+                    action: onOpenSideChat)
+            }
+            Spacer(minLength: 0)
+        }
+        .padding(.top, 2)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Message actions")
+    }
+
+    private func actionButton(
+        systemImage: String,
+        label: String,
+        accented: Bool = false,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(accented ? TWTheme.chroma1 : TWTheme.textTertiary)
+                .frame(width: 28, height: 24)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(label)
+    }
+}
+
 struct ThreadRowView: View, Equatable {
     let model: RemoteSessionModel
     let threadId: String
@@ -2827,6 +2968,7 @@ struct ThreadRowView: View, Equatable {
     let agentIdentity: ThreadAgentIdentity?
     let isExpanding: Bool
     let participants: [RemoteEnsembleState.Participant]
+    let isPinned: Bool
 
     // Compare ONLY the inputs that change rendering. The `model` reference is
     // constant (same object) so it's excluded; participant `status`/`order`
@@ -2842,6 +2984,7 @@ struct ThreadRowView: View, Equatable {
             && lhs.threadProvider == rhs.threadProvider
             && lhs.agentIdentity == rhs.agentIdentity
             && lhs.isExpanding == rhs.isExpanding
+            && lhs.isPinned == rhs.isPinned
             && twParticipantsSignature(lhs.participants)
                 == twParticipantsSignature(rhs.participants)
     }
@@ -2850,7 +2993,7 @@ struct ThreadRowView: View, Equatable {
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
     private var showExpand: Bool {
         row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
-            && !hasAgentQuestionCard
+            && !hasAgentQuestionCard && !hasContextCompactionCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -2858,16 +3001,20 @@ struct ThreadRowView: View, Equatable {
     private var hasSubThreadReturnCard: Bool { row.subThreadReturn != nil }
     private var hasProposedPlanCard: Bool { row.proposedPlan != nil }
     private var hasAgentQuestionCard: Bool { row.agentQuestion?.promptId != nil }
+    private var hasContextCompactionCard: Bool {
+        ContextCompactionSummaryCard.matches(
+            preview: row.preview, role: row.role, kind: row.kind)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(
                 identity: activeAgentIdentity,
                 fallbackAccent: accentColor,
-                hidden: isUser || hasParticipantHealthCard)
+                hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard
+                    && !hasAgentQuestionCard && !hasContextCompactionCard
                 {
                     HStack(spacing: 0) {
                         Text(label)
@@ -2883,6 +3030,8 @@ struct ThreadRowView: View, Equatable {
                 }
                 if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
                     AgentQuestionRow(model: model, question: agentQuestion)
+                } else if hasContextCompactionCard {
+                    ContextCompactionSummaryCard(preview: row.preview ?? "")
                 } else if let plan = row.proposedPlan {
                     ProposedPlanRow(
                         model: model, threadId: threadId, rowId: row.id, plan: plan)
@@ -2898,22 +3047,14 @@ struct ThreadRowView: View, Equatable {
                         participants: participants
                     )
                     .contextMenu {
-                        Section(deliveredCaption ?? "") {
-                            Button {
-                                #if canImport(UIKit)
-                                    UIPasteboard.general.string = row.preview ?? ""
-                                #endif
-                            } label: {
-                                Label("Copy result", systemImage: "doc.on.doc")
-                            }
-                            if let card = model.taskCards.first(where: { $0.id == threadId }) {
-                                Button {
-                                    model.toggleMessagePin(card, messageId: row.id, pinned: true)
-                                } label: {
-                                    Label("Pin result", systemImage: "pin")
-                                }
-                            }
-                        }
+                        messageActionMenu(
+                            content: row.preview ?? "",
+                            copyLabel: "Copy result",
+                            pinLabelPinned: "Unpin result",
+                            pinLabelUnpinned: "Pin result",
+                            showAddToPrompt: false,
+                            showSideChat: true
+                        )
                     }
                 } else if let tools = row.toolSummary, let count = tools.activityCount, count > 0 {
                     if let entries = tools.tools, !entries.isEmpty {
@@ -2976,7 +3117,7 @@ struct ThreadRowView: View, Equatable {
                         })
                 }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard,
+                    && !hasAgentQuestionCard && !hasContextCompactionCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
@@ -2992,34 +3133,27 @@ struct ThreadRowView: View, Equatable {
                                 .foregroundStyle(TWTheme.textMuted.opacity(0.88))
                                 .monospacedDigit()
                         }
+                        if showsMessageActionChrome {
+                            MessageActionsBar(
+                                isPinned: isPinned,
+                                onCopy: { copyText(preview) },
+                                onAddToPrompt: {
+                                    model.requestComposerAppend(preview, threadId: threadId)
+                                },
+                                onTogglePin: { togglePin() },
+                                onOpenSideChat: { openSideChatFromMessage() }
+                            )
+                        }
                     }
                     .contextMenu {
-                        // Read-only delivery moment rides as the section
-                        // header; the actions sit beneath it.
-                        Section(deliveredCaption ?? "") {
-                            Button {
-                                #if canImport(UIKit)
-                                    UIPasteboard.general.string = preview
-                                #endif
-                            } label: {
-                                Label("Copy message", systemImage: "doc.on.doc")
-                            }
-                            // T1 — routes through the model because this row is an
-                            // Equatable-gated value type; ThreadDetailView appends to
-                            // the LIVE composer draft (ios-t1-draft-append-seam).
-                            Button {
-                                model.requestComposerAppend(preview, threadId: threadId)
-                            } label: {
-                                Label("Add to prompt", systemImage: "text.append")
-                            }
-                            if let card = model.taskCards.first(where: { $0.id == threadId }) {
-                                Button {
-                                    model.toggleMessagePin(card, messageId: row.id, pinned: true)
-                                } label: {
-                                    Label("Pin message", systemImage: "pin")
-                                }
-                            }
-                        }
+                        messageActionMenu(
+                            content: preview,
+                            copyLabel: "Copy message",
+                            pinLabelPinned: "Unpin message",
+                            pinLabelUnpinned: "Pin message",
+                            showAddToPrompt: true,
+                            showSideChat: true
+                        )
                     }
                 }
                 if showExpand {
@@ -3074,6 +3208,83 @@ struct ThreadRowView: View, Equatable {
             let caption = TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
         else { return nil }
         return "Delivered \(caption)"
+    }
+
+    /// User + assistant prose rows get the action chrome; special cards keep
+    /// their own surface (plans, questions, health, pure tool chips).
+    private var showsMessageActionChrome: Bool {
+        !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
+            && !hasAgentQuestionCard && !hasContextCompactionCard && !isTool
+            && (row.role == "user" || row.role == "assistant" || row.kind == "assistant"
+                || row.kind == "user" || row.kind == "message")
+    }
+
+    private var threadCard: RemoteTaskCard? {
+        model.taskCards.first { $0.id == threadId || $0.threadId == threadId }
+    }
+
+    private func copyText(_ text: String) {
+        #if canImport(UIKit)
+            UIPasteboard.general.string = text
+        #endif
+    }
+
+    private func togglePin() {
+        guard let card = threadCard else { return }
+        model.toggleMessagePin(card, messageId: row.id, pinned: !isPinned)
+    }
+
+    private func openSideChatFromMessage() {
+        guard let card = threadCard else { return }
+        let modelId: String?
+        if card.selectedModelType == "custom" {
+            modelId = card.customModel
+        } else if let selected = card.selectedModelType, selected != "cli-default" {
+            modelId = selected
+        } else {
+            modelId = nil
+        }
+        model.createSideChat(
+            card,
+            provider: card.provider ?? threadProvider,
+            model: modelId,
+            navigateOnAck: true
+        )
+    }
+
+    @ViewBuilder
+    private func messageActionMenu(
+        content: String,
+        copyLabel: String,
+        pinLabelPinned: String,
+        pinLabelUnpinned: String,
+        showAddToPrompt: Bool,
+        showSideChat: Bool
+    ) -> some View {
+        Section(deliveredCaption ?? "") {
+            Button { copyText(content) } label: {
+                Label(copyLabel, systemImage: "doc.on.doc")
+            }
+            if showAddToPrompt, !content.isEmpty {
+                Button {
+                    model.requestComposerAppend(content, threadId: threadId)
+                } label: {
+                    Label("Add to prompt", systemImage: "text.append")
+                }
+            }
+            if threadCard != nil {
+                Button { togglePin() } label: {
+                    Label(
+                        isPinned ? pinLabelPinned : pinLabelUnpinned,
+                        systemImage: isPinned ? "pin.slash" : "pin")
+                }
+                if showSideChat {
+                    Button { openSideChatFromMessage() } label: {
+                        Label("Open side chat", systemImage: "rectangle.split.2x1")
+                    }
+                }
+            }
+        }
     }
 
     /// Always-visible footer time (Electron message-footer-time parity).

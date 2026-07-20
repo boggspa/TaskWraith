@@ -9752,7 +9752,8 @@ struct MiniThreadView: View {
                         threadProvider: card.provider,
                         agentIdentity: ThreadAgentIdentity(card: card),
                         isExpanding: model.expandingRows.contains(row.id),
-                        participants: model.ensembleStates[threadId]?.displayParticipants ?? []
+                        participants: model.ensembleStates[threadId]?.displayParticipants ?? [],
+                        isPinned: snapshot?.pinnedRows?.contains(where: { $0.id == row.id }) == true
                     )
                     .equatable()
                 }
