@@ -835,13 +835,13 @@ public final class RemoteSessionModel: ObservableObject {
                     return true
                 }
             }
-            autoReconnectAttempt = 0
-            reconnectTrusted()
+            // Half-open from connected — allowed supersede source (b).
+            requestReconnect(.health, socketAlive: false)
         case .connecting, .awaitingMacConfirm:
-            break
+            // Coalesce APNs into the live dial; never restart on connecting&&!alive.
+            requestReconnect(.apns)
         case .idle, .error:
-            autoReconnectAttempt = 0
-            reconnectTrusted()
+            requestReconnect(.apns)
         }
         return await waitForRemoteWakeConnection(timeoutMs: timeoutMs)
     }
@@ -1047,6 +1047,8 @@ public final class RemoteSessionModel: ObservableObject {
     private var pathMonitor: NWPathMonitor?
     private var lastPathSignature = ""
     private var trustedReconnectAttempt: Int?
+    /// Single-flight policy for APNs / foreground / path / health wakes.
+    private var reconnectCoordinator = ReconnectCoordinator()
 
     private func startPathMonitor() {
         guard pathMonitor == nil else { return }
@@ -1068,16 +1070,7 @@ public final class RemoteSessionModel: ObservableObject {
                 // only matters when a reconnect is winnable AND wanted.
                 guard !previous.isEmpty, path.status == .satisfied, self.hasStoredPairing
                 else { return }
-                switch self.phase {
-                case .error, .idle:
-                    self.autoReconnectAttempt = 0
-                    self.reconnectTrusted()
-                case .connecting where self.trustedReconnectAttempt == self.connectAttempt:
-                    self.autoReconnectAttempt = 0
-                    self.reconnectTrusted()
-                default:
-                    break
-                }
+                self.requestReconnect(.path)
             }
         }
         monitor.start(queue: .global(qos: .utility))
@@ -1097,7 +1090,7 @@ public final class RemoteSessionModel: ObservableObject {
             guard !Task.isCancelled else { return }
             await MainActor.run {
                 guard let self, self.hasStoredPairing else { return }
-                if case .error = self.phase { self.reconnectTrusted() }
+                if case .error = self.phase { self.requestReconnect(.resume) }
             }
         }
     }
@@ -1480,6 +1473,7 @@ public final class RemoteSessionModel: ObservableObject {
         connectAttempt += 1
         let attempt = connectAttempt
         trustedReconnectAttempt = attempt
+        reconnectCoordinator.markAttemptStarted()
         Task {
             var lastFailure: String? = nil
             var sawAtsSkip = false
@@ -1551,6 +1545,7 @@ public final class RemoteSessionModel: ObservableObject {
                     + "once with the Mac's current QR to add its Tailscale door."
             }
             self.phase = .error(detail)
+            self.reconnectCoordinator.markAttemptFinished()
             // Self-heal: cold cellular launches race the VPN tunnel — keep
             // re-walking on a backoff (the path monitor also fires the
             // moment a new route appears, whichever comes first).
@@ -1561,21 +1556,35 @@ public final class RemoteSessionModel: ObservableObject {
     /// Launch-time resume: silently try the stored pairing once.
     public func resumeIfIdle() {
         guard case .idle = phase, hasStoredPairing else { return }
-        autoReconnectAttempt = 0
-        reconnectTrusted()
+        requestReconnect(.resume)
     }
 
     /// Foreground resume: iOS can leave a killed background socket looking
     /// connected until URLSession times out, so prove connected sockets with
     /// a short WebSocket ping and reconnect quickly on failure.
     public func reconnectIfStale() {
+        requestReconnect(.foreground)
+    }
+
+    /// Single-flight reconnect entry — coalesces competing wakes via
+    /// `ReconnectCoordinator`. Supersedes only on timeout / half-open-from-
+    /// connected / explicit `.user` generation bump.
+    public func requestReconnect(
+        _ reason: ReconnectWakeReason,
+        socketAlive: Bool? = nil
+    ) {
+        guard !isDemo else { return }
         guard hasStoredPairing else { return }
-        switch phase {
-        case .connected:
-            verifyConnectedSocket()
-        case .connecting, .awaitingMacConfirm:
+        let action = reconnectCoordinator.evaluate(
+            reason: reason,
+            phase: phase,
+            socketAlive: socketAlive)
+        switch action {
+        case .ignore:
             return
-        case .idle, .error:
+        case .probeHealth:
+            verifyConnectedSocket()
+        case .start, .supersede:
             autoReconnectAttempt = 0
             reconnectTrusted()
         }
@@ -1584,8 +1593,7 @@ public final class RemoteSessionModel: ObservableObject {
     private func verifyConnectedSocket() {
         guard socketHealthTask == nil else { return }
         guard let client else {
-            autoReconnectAttempt = 0
-            reconnectTrusted()
+            requestReconnect(.health, socketAlive: false)
             return
         }
         let attempt = connectAttempt
@@ -1603,8 +1611,8 @@ public final class RemoteSessionModel: ObservableObject {
                     self.rehydrateAfterAliveWake()
                     return
                 }
-                self.autoReconnectAttempt = 0
-                self.reconnectTrusted()
+                // Half-open from connected — allowed supersede source (b).
+                self.requestReconnect(.health, socketAlive: false)
             }
         }
     }
@@ -2721,6 +2729,7 @@ public final class RemoteSessionModel: ObservableObject {
                         guard self.client === client else { return }
                         self.cancelAutoReconnect(resetAttempts: true)
                         self.phase = .connected
+                        self.reconnectCoordinator.markAttemptFinished()
                         self.wasEverConnected = true
                         self.persistCurrentPairing()
                         // Cold-launch deep link: a notification tap set a target

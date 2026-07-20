@@ -78,7 +78,7 @@ public struct RootView: View {
             ConnectionBanner(state: .reconnecting(detail: nil)) {}
         case .error(let message):
             ConnectionBanner(state: .offline(detail: twFriendlyMessage(message))) {
-                model.reconnectIfStale()
+                model.requestReconnect(.user)
             }
         default:
             EmptyView()
@@ -184,7 +184,7 @@ public struct RootView: View {
             // iOS kills sockets in the background — coming back to the
             // foreground silently re-resolves the stored pairing.
             if phase == .active {
-                model.reconnectIfStale()
+                model.requestReconnect(.foreground)
                 model.handleScenePhaseWatchAssertion(isActive: true)
             } else {
                 // Leaving the foreground: flush any debounced composer draft now, so
