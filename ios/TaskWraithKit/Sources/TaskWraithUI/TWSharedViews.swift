@@ -687,40 +687,117 @@ extension View {
 // applied via presentationBackground on iOS sheets.
 
 #if os(iOS)
-    /// Walks the UIKit host chain and clears opaque system backgrounds that
-    /// otherwise paint over `presentationBackground` glass (NavigationStack +
-    /// List hosts are the usual offenders).
+    /// Clears opaque system List/Form/Navigation hosts that otherwise paint
+    /// over `presentationBackground` glass. Intentionally does **not** walk
+    /// every superview wiping `backgroundColor` — that path also hits
+    /// `UIVisualEffectView` / sheet presentation layers and collapses liquid
+    /// glass into an opaque gray plate.
     private struct TWClearGlassHostBackground: UIViewRepresentable {
         func makeUIView(context: Context) -> UIView {
             let view = UIView()
             view.isUserInteractionEnabled = false
             view.backgroundColor = .clear
+            view.isOpaque = false
             return view
         }
 
         func updateUIView(_ uiView: UIView, context: Context) {
             DispatchQueue.main.async {
-                var node: UIView? = uiView
-                while let current = node {
-                    current.backgroundColor = .clear
-                    node = current.superview
+                Self.clearOpaqueGlassHosts(from: uiView)
+            }
+        }
+
+        private static func clearOpaqueGlassHosts(from uiView: UIView) {
+            func shouldSkip(_ view: UIView) -> Bool {
+                if view is UIVisualEffectView { return true }
+                let name = String(describing: type(of: view))
+                // Presentation/glass material hosts must keep their effect layers.
+                if name.contains("VisualEffect")
+                    || name.contains("Glass")
+                    || name.contains("Material")
+                    || name.contains("UIDropShadow")
+                {
+                    return true
                 }
-                var responder: UIResponder? = uiView.next
-                while let current = responder {
-                    if let controller = current as? UIViewController {
-                        controller.view.backgroundColor = .clear
-                        if let nav = controller as? UINavigationController {
-                            nav.view.backgroundColor = .clear
-                            for child in nav.viewControllers {
-                                child.view.backgroundColor = .clear
-                            }
+                return false
+            }
+
+            func clearListHosts(in root: UIView) {
+                if shouldSkip(root) { return }
+                if let table = root as? UITableView {
+                    table.backgroundColor = .clear
+                    table.isOpaque = false
+                    table.backgroundView = nil
+                    table.sectionIndexBackgroundColor = .clear
+                }
+                if let collection = root as? UICollectionView {
+                    collection.backgroundColor = .clear
+                    collection.isOpaque = false
+                    collection.backgroundView = nil
+                }
+                for child in root.subviews {
+                    clearListHosts(in: child)
+                }
+            }
+
+            func clearControllerView(_ view: UIView) {
+                if shouldSkip(view) { return }
+                view.backgroundColor = .clear
+                view.isOpaque = false
+                clearListHosts(in: view)
+            }
+
+            // Near ancestors only (hosting + scroll wrappers) — stop before
+            // window / sheet presentation chrome.
+            var node: UIView? = uiView
+            var depth = 0
+            while let current = node, depth < 8 {
+                if current is UIWindow { break }
+                let name = String(describing: type(of: current))
+                if name.contains("Presentation") || name.contains("SheetContainer") {
+                    break
+                }
+                if !shouldSkip(current) {
+                    let isHost =
+                        depth <= 3
+                        || current is UITableView
+                        || current is UICollectionView
+                        || current is UIScrollView
+                        || name.contains("Hosting")
+                        || name.contains("Navigation")
+                        || name.contains("UIKit")
+                    if isHost {
+                        current.backgroundColor = .clear
+                        current.isOpaque = false
+                        if let table = current as? UITableView {
+                            table.backgroundView = nil
+                            table.sectionIndexBackgroundColor = .clear
                         }
-                        if let nav = controller.navigationController {
-                            nav.view.backgroundColor = .clear
+                        if let collection = current as? UICollectionView {
+                            collection.backgroundView = nil
                         }
                     }
-                    responder = current.next
                 }
+                node = current.superview
+                depth += 1
+            }
+
+            var responder: UIResponder? = uiView.next
+            while let current = responder {
+                if current is UIWindow { break }
+                if let controller = current as? UIViewController {
+                    clearControllerView(controller.view)
+                    if let nav = controller as? UINavigationController {
+                        clearControllerView(nav.view)
+                        for child in nav.viewControllers {
+                            clearControllerView(child.view)
+                        }
+                    }
+                    if let nav = controller.navigationController {
+                        clearControllerView(nav.view)
+                    }
+                }
+                responder = current.next
             }
         }
     }
@@ -731,27 +808,31 @@ extension View {
 
         var body: some View {
             let shape = RoundedRectangle(cornerRadius: cornerRadius, style: .continuous)
+            let isLight = TWThemeStore.shared.systemTheme.isLight
             let rimTop: Color =
-                TWThemeStore.shared.systemTheme.isLight
-                ? Color.black.opacity(0.10) : Color.white.opacity(0.18)
+                isLight ? Color.black.opacity(0.10) : Color.white.opacity(0.18)
             let rimBottom: Color =
-                TWThemeStore.shared.systemTheme.isLight
-                ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
+                isLight ? Color.black.opacity(0.02) : Color.white.opacity(0.02)
+            // Light legibility scrim only — heavy composerBg washes read as solid
+            // gray over sheet presentation backgrounds.
+            let scrim =
+                isLight ? Color.white.opacity(0.06) : Color.black.opacity(0.10)
             // Do not wrap glass in compositingGroup — that flattens the effect into
             // an opaque gray slab and smothers the live backdrop sample.
+            // Prefer clear liquid glass; always keep ultraThinMaterial under it so
+            // Diff Studio / Tools / schedule / settings sheets never fall back to
+            // an opaque system gray plate when glass sampling is empty.
             Group {
                 if TWTheme.composerGlassEnabled {
                     if #available(iOS 26.0, macOS 26.0, *) {
                         shape
-                            .fill(Color.clear)
-                            .glassEffect(.regular, in: shape)
-                            .overlay(shape.fill(TWTheme.composerBg.opacity(0.08)))
+                            .fill(.ultraThinMaterial)
+                            .glassEffect(.clear, in: shape)
+                            .overlay(shape.fill(scrim))
                     } else {
                         shape
                             .fill(.ultraThinMaterial)
-                            .overlay(
-                                shape.fill(
-                                    TWTheme.composerBg.opacity(0.12)))
+                            .overlay(shape.fill(scrim))
                     }
                 } else {
                     shape.fill(TWTheme.surface2)
@@ -2212,6 +2293,9 @@ private struct ProviderModelPickerSheet: View {
             }
             .onChange(of: modelId) { _, _ in normalizeReasoningSelection() }
         }
+        .background(canvasFill)
+        // Prefer the caller's `twSheetLiquidGlass` for detents + glass. Keep a
+        // local detent fallback for any presentation that omits that chrome.
         #if os(iOS)
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)

@@ -317,6 +317,7 @@ struct ConnectedShell: View {
                         model.inspectorPresented = previousInspectorPresented
                     }
                 }
+                .background(Color.clear)
                 .interactiveDismissDisabled(fileState.isDirty)
             }
             .fileModeCover(isPresented: $compactDiffPresented) {
@@ -330,6 +331,7 @@ struct ConnectedShell: View {
                         model.inspectorPresented = previousInspectorPresented
                     }
                 }
+                .background(Color.clear)
             }
     }
 

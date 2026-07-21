@@ -89,6 +89,7 @@ struct ComposerScheduleSheet: View {
                 .twGlassSheetRowBackground()
             }
             .twGlassSheetListCanvas()
+            .background(Color.clear)
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -106,6 +107,7 @@ struct ComposerScheduleSheet: View {
             }
             .onAppear { now = Date() }
         }
+        .background(Color.clear)
         .twColorScheme()
     }
 

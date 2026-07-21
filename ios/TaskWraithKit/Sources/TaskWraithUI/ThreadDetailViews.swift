@@ -2120,6 +2120,7 @@ struct ThreadDetailView: View {
                     composerDiffSheetPresented = false
                 }
             }
+            // Keep Nav host transparent so twSheetLiquidGlass backdrop shows through.
             .background(Color.clear)
             .composerDiffSheetChrome()
         }
