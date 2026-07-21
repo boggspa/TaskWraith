@@ -3113,39 +3113,54 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               Use TaskWraith Sub-thread
                             </PillButton>
                           )}
-                          {(pendingAgentApproval.actions || []).includes('acceptForWorkspace') && (
-                            <PillButton
-                              variant="ghost"
-                              size="compact"
-                              type="button"
-                              title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'acceptForWorkspace'
-                                )
-                              }
+                          {((pendingAgentApproval.actions || []).includes('acceptForWorkspace') ||
+                            (pendingAgentApproval.actions || ['acceptForSession']).includes(
+                              'acceptForSession'
+                            )) && (
+                            <div
+                              className="composer-permission-scope-actions"
+                              role="group"
+                              aria-label="Longer approval scopes"
                             >
-                              Allow in workspace
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || ['acceptForSession']).includes(
-                            'acceptForSession'
-                          ) && (
-                            <PillButton
-                              variant="ghost"
-                              size="compact"
-                              type="button"
-                              title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'acceptForSession'
-                                )
-                              }
-                            >
-                              Allow for session
-                            </PillButton>
+                              {(pendingAgentApproval.actions || ['acceptForSession']).includes(
+                                'acceptForSession'
+                              ) && (
+                                <PillButton
+                                  className="composer-permission-scope-action"
+                                  variant="secondary"
+                                  size="compact"
+                                  type="button"
+                                  title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
+                                  onClick={() =>
+                                    void handleAgentApprovalAction(
+                                      pendingAgentApproval.id,
+                                      'acceptForSession'
+                                    )
+                                  }
+                                >
+                                  Allow for session
+                                </PillButton>
+                              )}
+                              {(pendingAgentApproval.actions || []).includes(
+                                'acceptForWorkspace'
+                              ) && (
+                                <PillButton
+                                  className="composer-permission-scope-action"
+                                  variant="secondary"
+                                  size="compact"
+                                  type="button"
+                                  title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
+                                  onClick={() =>
+                                    void handleAgentApprovalAction(
+                                      pendingAgentApproval.id,
+                                      'acceptForWorkspace'
+                                    )
+                                  }
+                                >
+                                  Allow in workspace
+                                </PillButton>
+                              )}
+                            </div>
                           )}
                           {/* Trusted Session is lane-scoped: the current ensemble participant or solo
                             chat receives the signed full_access preset, then this request is
@@ -3177,7 +3192,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             )}
                           {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
                             <PillButton
-                              variant="ghost"
+                              variant="danger"
                               size="compact"
                               type="button"
                               title="Deny this request and let the current run continue or fail according to the provider."
@@ -3190,7 +3205,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           )}
                           {(pendingAgentApproval.actions || ['cancel']).includes('cancel') && (
                             <PillButton
-                              variant="ghost"
+                              variant="danger"
                               size="compact"
                               type="button"
                               title={

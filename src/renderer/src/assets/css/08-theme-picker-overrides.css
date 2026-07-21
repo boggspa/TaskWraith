@@ -584,40 +584,105 @@
   position: fixed;
   inset: 0;
   z-index: 200;
-  background: color-mix(in srgb, #000000 60%, transparent);
+  background: color-mix(in srgb, #000000 48%, transparent);
   display: flex;
   align-items: center;
   justify-content: center;
-  padding: 40px;
-  backdrop-filter: blur(4px);
+  padding: 24px;
+  backdrop-filter: blur(10px) saturate(120%);
+  -webkit-backdrop-filter: blur(10px) saturate(120%);
 }
 .creative-approval-modal {
+  position: relative;
   width: min(640px, 100%);
-  /* Opaque surface — a decision modal must not let the transcript bleed
-     through. --panel-elevated-bg is very translucent in some themes
-     (e.g. rgba(0,0,0,.035)), so composite the theme tint over a solid base.
-     Light themes override the base below. */
-  background: linear-gradient(var(--panel-elevated-bg), var(--panel-elevated-bg)), #181818;
+  max-height: calc(100vh - 48px);
+  overflow: auto;
+  /* Approval dialogs intentionally use the same 80%-opaque material as
+     pickers and popovers. The backdrop still keeps the pending decision
+     distinct; this makes the interaction feel native to the surrounding
+     chrome without reducing the detail or focus treatment of a modal. */
+  background: var(--tw-popover-glass-bg);
   border: 1px solid color-mix(in srgb, var(--panel-border) 82%, transparent);
   border-radius: 14px;
-  padding: 24px 26px;
+  padding: 20px;
   box-shadow:
-    0 30px 80px rgba(0, 0, 0, 0.5),
-    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 14%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
   color: var(--text-primary);
+  isolation: isolate;
 }
 
-/* In light themes the elevated panel token resolves to a translucent
- * white that lets the transcript bleed through the modal — readability
- * suffers and the modal stops feeling like a stop-the-world surface.
- * Force an opaque surface for approval-class modals where decision
- * legibility matters more than the glass effect. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .creative-approval-modal {
-  background: linear-gradient(var(--panel-elevated-bg), var(--panel-elevated-bg)), #fbfaf7;
-  border-color: color-mix(in srgb, var(--panel-border) 92%, transparent);
+.creative-approval-modal::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
   box-shadow:
-    0 30px 80px rgba(15, 23, 42, 0.18),
-    inset 0 1px 0 rgba(255, 255, 255, 0.9);
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.5)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent),
+    0 1px 2px rgba(0, 0, 0, 0.18);
+}
+
+:root[data-advanced-fx-refraction="true"] .creative-approval-modal::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  background:
+    radial-gradient(
+      120% 80% at 50% -8%,
+      var(--tw-glass-sheen, rgba(196, 200, 208, 0.09)),
+      transparent 62%
+    ),
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 60%, transparent) 0%,
+      transparent 38%,
+      transparent 64%,
+      color-mix(in srgb, var(--tw-glass-sheen, #fff) 32%, transparent) 100%
+    );
+}
+
+.creative-approval-modal > * {
+  position: relative;
+  z-index: 2;
+}
+
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .creative-approval-modal {
+  background: var(--tw-popover-glass-bg);
+  border-color: var(--surface-border);
+  color: var(--surface-text);
+  box-shadow:
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
+}
+
+:root[data-reduce-transparency="true"] .creative-approval-modal {
+  background: var(--tw-glass-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+:root[data-reduce-transparency="true"] .creative-approval-modal::before {
+  display: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .creative-approval-modal {
+    background: var(--tw-glass-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
+
+  .creative-approval-modal::before {
+    display: none;
+  }
 }
 
 /* Approval-mode elevation sheet — reuses the creative-approval modal chrome,
@@ -628,6 +693,7 @@
 }
 .approval-elevation-modal[data-elevation-tier='2'] {
   max-width: 520px;
+  --tw-glass-rim-light: color-mix(in srgb, var(--danger, #e5484d) 42%, #ffffff);
 }
 .approval-elevation-caution {
   border-left: 3px solid var(--danger, #e5484d);
@@ -685,8 +751,18 @@
   letter-spacing: 0.12em;
   color: color-mix(in srgb, var(--accent) 90%, transparent);
   font-weight: 600;
-  display: block;
+  display: flex;
+  align-items: center;
+  gap: 6px;
   margin-bottom: 4px;
+}
+.creative-approval-modal-eyebrow::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 65%, transparent);
 }
 .creative-approval-modal-title {
   font-size: var(--font-size-lg);
@@ -704,6 +780,10 @@
   grid-template-columns: max-content minmax(0, 1fr);
   gap: 6px 14px;
   margin: 0 0 16px;
+  padding: 10px 12px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 52%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
 }
 .creative-approval-modal-fields dt {
   font-size: var(--font-size-xs);
@@ -758,16 +838,17 @@
   color: var(--text-primary);
 }
 .creative-approval-modal-actions {
-  display: flex;
-  gap: 10px;
-  justify-content: flex-end;
-  flex-wrap: wrap;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(132px, 1fr));
+  gap: 8px;
 }
 .creative-approval-modal-actions button {
   appearance: none;
-  border: 0;
+  width: 100%;
+  min-height: 32px;
+  border: 1px solid transparent;
   border-radius: 7px;
-  padding: 9px 16px;
+  padding: 7px 12px;
   font: inherit;
   font-size: var(--font-size-sm);
   font-weight: 500;
@@ -794,6 +875,7 @@
 }
 .creative-approval-modal-approve-remember {
   background: var(--accent);
+  border-color: color-mix(in srgb, var(--accent) 70%, var(--panel-border));
   color: white;
 }
 .creative-approval-modal-approve-remember:hover {

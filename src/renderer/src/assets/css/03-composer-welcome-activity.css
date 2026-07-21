@@ -8162,14 +8162,40 @@ button.composer-run-timecode.is-open {
 }
 
 .composer-permission-card {
+  position: relative;
   margin: 0 var(--space-md) 0;
-  border-radius: var(--radius-sm);
+  border-radius: 14px;
   border: 1px solid rgba(255, 165, 0, 0.24);
-  background: rgba(255, 165, 0, 0.06);
+  background:
+    linear-gradient(135deg, color-mix(in srgb, var(--warning) 12%, transparent), transparent 52%),
+    var(--tw-popover-glass-bg);
   padding: var(--space-sm);
   display: flex;
   flex-direction: column;
   gap: var(--space-sm);
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 12px 28px rgba(0, 0, 0, 0.2);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  isolation: isolate;
+}
+
+.composer-permission-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  border-radius: inherit;
+  pointer-events: none;
+  box-shadow:
+    inset 0 1px 0 var(--tw-glass-rim-light, rgba(255, 255, 255, 0.5)),
+    inset 0 0 0 1px color-mix(in srgb, var(--tw-glass-rim-light, #fff) 14%, transparent);
+}
+
+.composer-permission-card > * {
+  position: relative;
+  z-index: 2;
 }
 
 .composer-seat-change-notice {
@@ -8213,17 +8239,35 @@ button.composer-run-timecode.is-open {
 
 .composer-permission-card.provider-codex {
   border-color: color-mix(in srgb, var(--provider-codex-color) 26%, transparent);
-  background: color-mix(in srgb, var(--provider-codex-color) 8%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-codex-color) 14%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
 }
 
 .composer-permission-card.provider-claude {
   border-color: color-mix(in srgb, var(--provider-claude-color) 28%, transparent);
-  background: color-mix(in srgb, var(--provider-claude-color) 8%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-claude-color) 14%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
 }
 
 .composer-permission-card.provider-kimi {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 28%, transparent);
-  background: color-mix(in srgb, var(--provider-kimi-color) 8%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-kimi-color) 14%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
 }
 
 /* Light-mode awareness for the composer-area approval card.
@@ -8237,19 +8281,53 @@ button.composer-run-timecode.is-open {
  * vocabulary that's already wired across the rest of the app. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card {
   border-color: rgba(196, 110, 0, 0.42);
-  background: rgba(255, 213, 130, 0.22);
+  background:
+    linear-gradient(135deg, rgba(255, 213, 130, 0.34), transparent 52%),
+    var(--tw-popover-glass-bg);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {
   border-color: color-mix(in srgb, var(--provider-codex-color) 42%, transparent);
-  background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-codex-color) 24%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-claude {
   border-color: color-mix(in srgb, var(--provider-claude-color) 42%, transparent);
-  background: color-mix(in srgb, var(--provider-claude-color) 22%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-claude-color) 28%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-kimi {
   border-color: color-mix(in srgb, var(--provider-kimi-color) 45%, transparent);
-  background: color-mix(in srgb, var(--provider-kimi-color) 22%, transparent);
+  background:
+    linear-gradient(
+      135deg,
+      color-mix(in srgb, var(--provider-kimi-color) 28%, transparent),
+      transparent 52%
+    ),
+    var(--tw-popover-glass-bg);
+}
+
+:root[data-reduce-transparency="true"] .composer-permission-card {
+  background: var(--tw-glass-solid);
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+@supports not ((backdrop-filter: blur(1px)) or (-webkit-backdrop-filter: blur(1px))) {
+  .composer-permission-card {
+    background: var(--tw-glass-solid);
+    backdrop-filter: none;
+    -webkit-backdrop-filter: none;
+  }
 }
 
 .composer-permission-title {
@@ -8260,6 +8338,22 @@ button.composer-run-timecode.is-open {
   align-items: center;
   justify-content: space-between;
   gap: var(--space-sm);
+}
+
+.composer-permission-title > :first-child {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.composer-permission-title > :first-child::before {
+  content: '';
+  flex: 0 0 auto;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: currentColor;
+  box-shadow: 0 0 8px color-mix(in srgb, currentColor 65%, transparent);
 }
 
 .composer-permission-source {
@@ -8317,8 +8411,36 @@ button.composer-run-timecode.is-open {
 
 .composer-permission-actions {
   display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  flex-wrap: wrap;
+}
+
+/* Scope controls are always rendered when available. The divider gives their
+   broader consent a clear boundary without making users hunt through an
+   overflow menu or settings panel. */
+.composer-permission-scope-actions {
+  display: flex;
   align-items: center;
   gap: var(--space-sm);
+  flex-wrap: wrap;
+  margin-left: 2px;
+  padding-left: var(--space-sm);
+  border-left: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+}
+
+.composer-permission-scope-action {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+}
+
+@media (max-width: 620px) {
+  .composer-permission-scope-actions {
+    width: 100%;
+    margin-left: 0;
+    padding: var(--space-xs) 0 0;
+    border-top: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+    border-left: 0;
+  }
 }
 
 .composer-plan-import-card {
