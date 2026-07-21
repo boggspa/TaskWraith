@@ -10,7 +10,6 @@ import {
   summariseCliProviderEnabled,
   summariseCodexStatus,
   summariseProviderApiKeyStatus,
-  type ProviderAuthSummary,
   type ProviderAuthVariant
 } from '../lib/providerAuthSummary'
 import taskwraithGhostMonolineSvg from '../assets/taskwraith-ghost-monoline.svg?raw'

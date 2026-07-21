@@ -30,9 +30,7 @@ export function buildStaticForkCapability(provider: ProviderId): ForkCapabilityS
       kind: 'unsupported',
       label: 'Fork unavailable',
       detail:
-        provider === 'cursor'
-          ? 'Cursor managed runs are unavailable pending startup-containment qualification. Historical chats remain readable, but new forks are not offered.'
-          : 'Gemini is retired in TaskWraith. Historical chats may still decode, but new forks are not offered.',
+        'This provider is retired in TaskWraith. Historical chats may still decode, but new forks are not offered.',
       requiresLinkedSession: false
     }
   }
@@ -48,6 +46,7 @@ export function buildStaticForkCapability(provider: ProviderId): ForkCapabilityS
   if (
     provider === 'claude' ||
     provider === 'kimi' ||
+    provider === 'cursor' ||
     provider === 'grok' ||
     provider === 'ollama'
   ) {

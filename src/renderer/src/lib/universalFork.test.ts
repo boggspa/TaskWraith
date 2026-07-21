@@ -18,12 +18,15 @@ describe('universalFork', () => {
     expect(forkSlashDescription(capability)).toContain('emulated')
   })
 
-  it.each([
-    ['gemini', 'retired'],
-    ['cursor', 'managed runs are unavailable']
-  ] as const)('marks unavailable %s forks as unsupported', (provider, detail) => {
-    const capability = buildStaticForkCapability(provider)
+  it('marks Cursor as emulated fork (Path-B live seat)', () => {
+    const capability = buildStaticForkCapability('cursor')
+    expect(capability.kind).toBe('emulated')
+    expect(forkActionLabel(capability)).toBe('Fork (emulated)')
+  })
+
+  it('marks retired Gemini forks as unsupported', () => {
+    const capability = buildStaticForkCapability('gemini')
     expect(capability.kind).toBe('unsupported')
-    expect(capability.detail).toContain(detail)
+    expect(capability.detail).toContain('retired')
   })
 })
