@@ -35,9 +35,12 @@ describe('agent-started background-process destructive-history main integration'
       genericFence
     )
     const processJoin = broad.indexOf('await holds.backgroundProcessHold.completion', processFence)
+    // The commit phase now purges checkpoint/collaboration state under the
+    // frozen intent before the store commit; anchor on the store call itself.
+    const commitPhase = broad.indexOf('commit: (operationId) => {', processJoin)
     const commit = broad.indexOf(
-      'commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId)',
-      processJoin
+      'AppStore.commitPreparedHistoryDeletion(operationId)',
+      commitPhase
     )
     const release = broad.indexOf(
       'backgroundProcessRegistry.endHistoryDeletion(holds.backgroundProcessHold)',

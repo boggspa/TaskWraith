@@ -113,7 +113,7 @@ describe('main maintenance compaction history-deletion integration', () => {
     expect(deletion).toContain('maintenanceCompactionRegistry.cancelAndJoin(')
     expect(deletion).toContain('maintenanceCompactionRegistry.cancelAndJoinHold(')
     expect(deletion.indexOf('await quiescePreparedHistoryDeletion(')).toBeLessThan(
-      deletion.indexOf('commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId)')
+      deletion.indexOf('AppStore.commitPreparedHistoryDeletion(operationId)')
     )
   })
 })

@@ -68,10 +68,19 @@ describe('history deletion startup integration', () => {
   })
 
   it('releases the correlated usage hold only from the post-commit release phase', () => {
-    const commit = indexSource.indexOf(
-      'commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId)'
+    const commit = indexSource.indexOf('commit: (operationId) => {')
+    // Checkpoint and collaboration purges run under the frozen intent, before
+    // the store commit inside the same commit phase (TW-SEC-2026-014).
+    const checkpointPurge = indexSource.indexOf('store.purgeForHistoryDeletionScope(', commit)
+    const collaborationPurge = indexSource.indexOf(
+      'purgeHumanCollaborationForErasure(pending.kind',
+      commit
     )
-    const release = indexSource.indexOf('releaseHolds: (preparation, holds) =>', commit)
+    const commitCall = indexSource.indexOf(
+      'AppStore.commitPreparedHistoryDeletion(operationId)',
+      commit
+    )
+    const release = indexSource.indexOf('releaseHolds: (preparation, holds) =>', commitCall)
     const usageRelease = indexSource.indexOf(
       'usageHistoryDeletionTarget.releaseAfterCommit(',
       release
@@ -82,7 +91,11 @@ describe('history deletion startup integration', () => {
     )
 
     expect(commit).toBeGreaterThanOrEqual(0)
-    expect(release).toBeGreaterThan(commit)
+    expect(checkpointPurge).toBeGreaterThan(commit)
+    expect(checkpointPurge).toBeLessThan(commitCall)
+    expect(collaborationPurge).toBeGreaterThan(checkpointPurge)
+    expect(collaborationPurge).toBeLessThan(commitCall)
+    expect(release).toBeGreaterThan(commitCall)
     expect(usageRelease).toBeGreaterThan(release)
     expect(usageRelease).toBeLessThan(nextCoordinatorSection)
   })

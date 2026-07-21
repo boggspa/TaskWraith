@@ -177,9 +177,7 @@ describe('regenerable history-byte main integration', () => {
     expect(broad).toContain('derivedByteHold: RegenerableHistoryByteHistoryHold')
     expect(broad).toContain('regenerableHistoryByteStore.beginHistoryMutation(')
     expect(broad).toContain('await regenerableHistoryByteStore.purgeStrict(holds.derivedByteHold)')
-    const commitAt = broad.indexOf(
-      'commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId)'
-    )
+    const commitAt = broad.indexOf('AppStore.commitPreparedHistoryDeletion(operationId)')
     const releaseAt = broad.indexOf(
       'regenerableHistoryByteStore.endHistoryMutation(holds.derivedByteHold)'
     )
