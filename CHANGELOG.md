@@ -12,6 +12,26 @@ This entry tracks the checkout currently ahead of the latest tagged release. It
 describes the source tree only; it does not assign a release version or imply
 that artifacts have been built or published.
 
+Snapshot at paperwork pass (2026-07-21): HEAD `4baebc136`, **30 commits** after
+`v1.8.5` (`314c2338a`). Package still **1.8.5**; iOS still **0.1.0 (80)**. Target
+candidate name for the next ship is **1.8.6** until a different version is chosen
+at bump time.
+
+### Added
+- **Path-B Cursor is selectable again after the 1.8.5 product path.** Managed
+  Cursor stays on contained native-sandbox argv (read-only vs write by seat),
+  First Launch and Settings restore CLI login, and sidebar Model Usage meters
+  report Cursor quota again. Product, safety, how-to, and AGENTS docs match the
+  live Path-B story rather than the interim fail-closed posture.
+- **iOS companion parity advances across transcript, tools, and Diff Studio.**
+  Structured `@mentions` and fenced code chrome land in the transcript; message
+  actions and context-compaction cards are available; brand logos densify the
+  provider/model picker and home list; an unfocused tools pill covers Ensemble,
+  Goal, Plan, and Blackboard with glyphs; Diff Studio expands Codex-style file
+  cards with inline hunks on liquid glass; Copy Transcript matches peer toolbar
+  pill chrome; and the bridge gains a `blackboardPost` action for paired
+  clients.
+
 ### Fixed
 - **Composer queue and Steer are classic again.** Follow-up messages while a
   chat is busy go back through the durable RunQueue and `QueuedMessagesAboveRow`
@@ -24,6 +44,28 @@ that artifacts have been built or published.
   not the detached Primary/Secondary workspace lead pills). Gemini (and
   matching Kimi/Modular) queue chrome uses the same provider blue/shell border
   as other above-rows in that hierarchy.
+- **Busy sends never force the Execution Stack gate.**
+  `shouldAppendBusySendToExecutionStack` stays hard-off so ordinary above-row
+  busy follow-ups cannot rewire into Stack/Map without an explicit future opt-in.
+- **Overlong Execution Stack titles truncate on busy-queue append** so the Stack
+  strip stays readable when a long prompt is attached as a queue title.
+- **Workspace tool grants survive settings sanitization and path matching.**
+  Grants persist through the main sanitizer and compare with resolved paths, so
+  a granted workspace root is not dropped or missed after normalize/resolve.
+- **Usage and quota fetches no longer freeze the desktop.** Cold-launch provider
+  quota work and 90-day external heatmap loads stay non-blocking so the app
+  remains responsive while meters catch up.
+- **Orphaned `chat.runs` reconcile so iOS drops stale Active cards.** Desktop
+  main reaps run records that no longer have a live owner; the companion stops
+  showing Active for work that already finished.
+- **iOS glass sheets keep liquid glass on sheet and fullScreenCover hosts**, with
+  a more compact Claude-style composer chrome on the phone.
+
+### Changed
+- **Docs realign to Path-B Cursor as a live, non-MCP managed seat.** README,
+  architecture, safety, permission conformance, how-tos, and design-asset notes
+  describe contained `--sandbox enabled` argv and the honest partial-backstop
+  residual risks instead of the retired fail-closed no-spawn story.
 
 ## 1.8.5 - 2026-07-20
 

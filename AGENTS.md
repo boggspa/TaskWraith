@@ -116,8 +116,10 @@ appended to the parent transcript for UI/audit visibility. For a solo parent,
 the mailbox delivers the result to provider context exactly once, through an
 auto-wake or the next ordinary parent turn. Ensemble parents currently retain
 the mailbox event and transcript card but do **not** automatically inject it
-into any participant seat's provider context; this limitation exists in v1.8.4
-and the current source-ahead checkout.
+into any participant seat's provider context; this limitation existed in v1.8.4;
+v1.8.5 added Ensemble mailbox drain into the idle authority seat (see
+`CHANGELOG.md`), while broader auto-injection nuances may still evolve
+source-ahead.
 
 ```
 ↩ Result from <Provider> sub-thread (<title>):
@@ -701,7 +703,7 @@ unshipped until it appears in the next release notes:
   approval gates. Gemini is retained for historical chats and decode paths
   only. See `src/main/ProviderCapabilities.ts` and
   `src/main/mcp/McpSessionProfileFence.ts`.
-- **Managed Cursor Path-B (source-ahead; newer than v1.8.4)** — Cursor is live
+- **Managed Cursor Path-B (shipped in v1.8.5; residual risk still disclosed)** — Cursor is live
   in `LIVE_SELECTABLE_PROVIDER_IDS` again. TaskWraith always-enables managed
   Cursor (no brittle per-build fingerprint gate on the production spawn path)
   and contains it with hard-pinned `--sandbox enabled` argv builders:

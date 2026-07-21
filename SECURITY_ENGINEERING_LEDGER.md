@@ -10,7 +10,13 @@ The original evidence was assessed on **2026-07-19** at commit
 `87c8c0645a4d9d8a6a2c3c8e0f3646cfac05b0da`. Dated remediation updates below
 also inspect the source-ahead working tree on 2026-07-19. Unless an entry is
 `Verified`, that newer code may be uncommitted, unshipped, and absent from the
-v1.8.4 release baseline. References use stable symbols and test names rather
+v1.8.4 release baseline. **2026-07-21 ship-prep note:** public baseline is now
+**v1.8.5** (`314c2338a`); the next candidate is **1.8.6** source-ahead
+(`d29d46b6c`, 31 commits). Path-B Cursor (TW-SEC-2026-003) shipped in 1.8.5 with
+residual partial-backstop disclosure. **TW-SEC-2026-014 remains `Open`** and is
+the primary ledger attention item for the 1.8.6 candidate; other remediated
+entries keep their per-entry verify/`Block` dispositions until exact-candidate
+verification is recorded. References use stable symbols and test names rather
 than line numbers. Do not add secrets, raw scripts, or weaponized payloads to
 this file or its verification artifacts.
 
