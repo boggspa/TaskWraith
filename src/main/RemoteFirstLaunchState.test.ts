@@ -140,7 +140,7 @@ describe('buildRemoteFirstLaunchState', () => {
           binaryPath: '/Users/alice/.kimi-code/bin/kimi',
           version: 'security-unavailable',
           authState: 'oauth',
-          error: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
+          error: 'Kimi bounded inventory probes failed.'
         })
       },
       usage: {},
@@ -152,7 +152,7 @@ describe('buildRemoteFirstLaunchState', () => {
       statusKind: 'notObservable',
       statusText: 'Managed runtime unavailable'
     })
-    expect(kimi?.detail).toContain('embedded reviewed roster')
+    expect(kimi?.detail).toContain('bounded startup probes')
     expect(kimi?.detail).toContain('does not bypass')
     expect(JSON.stringify(kimi)).not.toContain('/Users/alice')
   })

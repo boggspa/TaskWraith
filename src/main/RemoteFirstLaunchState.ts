@@ -277,7 +277,7 @@ function deriveProviderStatus(
         kind: 'notObservable',
         text: 'Managed runtime unavailable',
         detail:
-          'Kimi Code is installed, but this exact runtime is not admitted by TaskWraith’s embedded reviewed roster. OAuth login or an API key does not bypass this gate.'
+          'Kimi Code is installed, but this runtime has not passed TaskWraith’s admission checks: a stable binary identity, successful bounded startup probes, and the ACP-only transport posture are required before any managed Kimi process starts. OAuth login or an API key does not bypass these checks.'
       }
     }
     return {

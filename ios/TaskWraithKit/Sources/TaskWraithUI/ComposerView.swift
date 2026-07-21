@@ -309,10 +309,10 @@ struct Composer: View {
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
     }
 
-    private static let fallbackProviderIds = [
-        // Historical/unqualified providers are never offered for new iOS runs.
-        "codex", "claude", "kimi", "grok", "ollama",
-    ]
+    // Pre-catalog picker fallback: the canonical live set from Theme.swift,
+    // not another hand-copied roster (retired/historical providers are still
+    // filtered above via isLiveSelectableProvider).
+    private static let fallbackProviderIds = Array(TWTheme.liveSelectableProviderIds)
 
     /// Phone / compact-width: Claude/Codex-style single shell — model +
     /// approval live inside the input card (trailing action strip) instead of

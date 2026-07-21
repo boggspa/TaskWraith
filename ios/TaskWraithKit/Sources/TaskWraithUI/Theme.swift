@@ -232,11 +232,15 @@ public enum TWTheme {
         return retiredProviderIds.contains(provider.lowercased())
     }
 
-    /// Canonical providers that may be offered for a new remote run. Cursor
-    /// remains decodable/renderable but is excluded until its startup surfaces
-    /// can be contained by an exact-build qualification.
+    /// Canonical providers that may be offered for a new remote run. Cursor is
+    /// live again: the Mac contains its runs via the native `--sandbox` argv,
+    /// so no iOS-side exclusion applies. Hand-mirrored copy of the Mac's
+    /// LIVE_SELECTABLE_PROVIDER_IDS in src/shared/retiredProviders.ts — there
+    /// is no shared source of truth, so every desktop live-set change must be
+    /// mirrored here or iOS ships with a stale roster (build 81 shipped a
+    /// Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
-        "codex", "claude", "kimi", "grok", "ollama",
+        "codex", "claude", "kimi", "cursor", "grok", "ollama",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {
