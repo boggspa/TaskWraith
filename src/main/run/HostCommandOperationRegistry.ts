@@ -1,3 +1,5 @@
+import { resolve as resolvePath } from 'path'
+
 export const DEFAULT_HOST_COMMAND_KILL_GRACE_MS = 4_000
 
 export interface HostCommandOperationIdentityInput {
@@ -74,7 +76,7 @@ export type HostCommandOperationScope =
   | Readonly<{
       kind: 'workspace'
       workspaceId?: string | null
-      /** Must be the same already-canonical path captured on registration. */
+      /** Resolve()-normalized on both sides; symlinked twins still miss. */
       workspacePath?: string | null
       /** Frozen deletion preview used when older operations lack workspace metadata. */
       chatIds?: readonly string[]
@@ -105,10 +107,15 @@ function exactId(value: string | null | undefined, label: string): string | unde
 
 function exactPath(value: string | null | undefined): string | undefined {
   if (value == null) return undefined
-  if (!value.trim()) {
+  const trimmed = value.trim()
+  if (!trimmed) {
     throw new Error('Host command workspace path must be an exact non-empty value when provided.')
   }
-  return value
+  // Normalize both registration identities and cancellation scopes through the
+  // same deterministic resolver so a stored raw workspace path (trailing
+  // slash, `.`/`..` segments) still matches its resolve()'d identity twin.
+  // Symlinks are deliberately not chased — no fs access here.
+  return resolvePath(trimmed)
 }
 
 function normalizeIdentity(input: HostCommandOperationIdentityInput): HostCommandOperationIdentity {

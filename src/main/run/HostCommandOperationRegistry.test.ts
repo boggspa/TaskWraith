@@ -347,6 +347,30 @@ describe('HostCommandOperationRegistry', () => {
     }
   })
 
+  it('matches a raw stored workspace path against its resolve()-normalized identity twin', async () => {
+    const registry = new HostCommandOperationRegistry()
+    // Identity captured via path.resolve (agent tool context); the workspace
+    // record may still hold the raw user-entered form with a trailing slash
+    // and a `.` segment. Both sides normalize, so the scope still joins —
+    // and identities lacking workspaceId/chatIds no longer slip a
+    // workspace-scoped clear.
+    const controller = registry.register({
+      operationId: 'raw-vs-resolved',
+      appRunId: 'run-a',
+      appChatId: null,
+      workspaceId: null,
+      workspacePath: '/workspace/a'
+    })
+    const cancellation = registry.beginCancellation({
+      kind: 'workspace',
+      workspacePath: '/workspace/./a/'
+    })
+    expect(cancellation.operationIds).toEqual(['raw-vs-resolved'])
+    await expectPending(cancellation.completion)
+    finishWithoutChild(controller)
+    await cancellation.completion
+  })
+
   it('rejects incomplete identities, scopes, and invalid kill bounds', () => {
     const registry = new HostCommandOperationRegistry()
     expect(() => registry.register(identity('   '))).toThrow('operation id')
