@@ -2041,29 +2041,27 @@ struct ThreadDetailView: View {
             // local build over the 24-row snapshot window would silently
             // truncate (ios-t2-transcript-wire-ruling). Failure copy rides
             // the ack banner verbatim. Individual pill (landmine ④).
+            // Use a Button (not a one-item Menu) so toolbar chrome matches
+            // Files / Diffs / Inspector — Menu labels can drop the circular
+            // pill treatment in the glass nav bar.
             if let card {
                 ToolbarItem(placement: .primaryAction) {
-                    Menu {
-                        Button {
-                            model.fetchChatMarkdownTranscript(card) { transcript in
-                                guard let transcript else { return }
-                                #if canImport(UIKit)
-                                    UIPasteboard.general.string = transcript.markdown
-                                #endif
-                                // Ack banner copy ("Transcript copied.") is posted
-                                // by the model's successLabel — the setter is
-                                // private(set) out here by design.
-                            }
-                        } label: {
-                            Label("Copy full transcript", systemImage: "doc.on.doc")
+                    Button {
+                        model.fetchChatMarkdownTranscript(card) { transcript in
+                            guard let transcript else { return }
+                            #if canImport(UIKit)
+                                UIPasteboard.general.string = transcript.markdown
+                            #endif
+                            // Ack banner copy ("Transcript copied.") is posted
+                            // by the model's successLabel — the setter is
+                            // private(set) out here by design.
                         }
                     } label: {
                         ToolbarIconPillLabel(
                             "Transcript", systemImage: "square.and.arrow.up.on.square")
                     }
                     .buttonStyle(.plain)
-                    .tint(TWTheme.textPrimary)
-                    .accessibilityLabel("Export transcript")
+                    .accessibilityLabel("Copy transcript")
                     .accessibilityHint("Copies the full chat transcript as Markdown.")
                 }
             }
