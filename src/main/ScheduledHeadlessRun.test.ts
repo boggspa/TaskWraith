@@ -282,4 +282,24 @@ describe('scheduled headless dispatch integration', () => {
       "requireNonEmptyString(payload.appChatId, 'Ensemble dispatch chat id')"
     )
   })
+
+  it('mints and freshly verifies the solo seal before transcript seed or provider dispatch', () => {
+    const solo = sourceBetween(
+      'async function dispatchDueScheduledTaskHeadless(',
+      'function emitDueScheduledTasks() {'
+    )
+    const compose = solo.indexOf('const composed = composer.composeRun({')
+    const seal = solo.indexOf('const sealService = scheduledOccurrenceSealServiceRef')
+    const seed = solo.indexOf('seedScheduledSoloTranscript(')
+    const dispatch = solo.indexOf('const result = await dispatch(')
+
+    expect(compose).toBeGreaterThanOrEqual(0)
+    expect(seal).toBeGreaterThan(compose)
+    expect(seed).toBeGreaterThan(seal)
+    expect(dispatch).toBeGreaterThan(seed)
+    expect(solo).toContain('sealService.sealSoloOccurrence({')
+    expect(solo).toContain(
+      'Scheduled occurrence seal verification failed: ${sealOutcome.reason}'
+    )
+  })
 })

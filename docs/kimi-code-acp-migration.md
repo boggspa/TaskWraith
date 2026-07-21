@@ -90,10 +90,14 @@ The scheduled launch authority schema (`KimiLaunchControls` in
 transport, the pinned `synthetic-cwd-gateway-v1` posture, private synthetic
 cwd, absent client-fs capability, the mandatory authenticated loopback HTTP
 gateway, and the admission roster digest/mode. The retired Wire/print controls
-are unrepresentable. Note the seal itself
+are unrepresentable. The seal engine itself
 (`mintScheduledOccurrenceSeal`/`verifyScheduledOccurrenceSealAgainstCurrentContext`)
-is not yet wired into live dispatch — scheduled runs today go through the same
-ungated `runCoordinator.dispatch` as interactive runs.
+is live for the Stage-2 claimed solo Cursor lane: TaskWraith mints, persists,
+then immediately re-derives and verifies the occurrence before provider
+dispatch. Kimi remains intentionally unsealed for now. Its ACP process uses a
+fresh isolated home, private cwd, and gateway route created inside its launch
+path; that exact dispatch-owned evidence is not yet injected into the seal
+service, and it must not be approximated.
 
 ## Production launch composition
 

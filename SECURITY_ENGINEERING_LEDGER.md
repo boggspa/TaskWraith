@@ -656,18 +656,15 @@ weaponized payloads to this file or its verification artifacts.
   the former bare Kimi account/session handoff is removed. Ensemble readiness
   now consults admission, but binary presence alone must never be described as
   containment qualification.
-- **Scheduled-run exclusion:** The launch-authority schema in
-  [`ProviderLaunchAuthorityDigest.ts`](src/main/ProviderLaunchAuthorityDigest.ts)
-  still models Kimi as `wire` or `cli-print`; it cannot bind the admitted ACP
-  executable, containment-posture version, private cwd, or authenticated
-  governed gateway. The source-ahead `runnableProviderId` gate in
-  [`ScheduledOccurrenceSeal.ts`](src/main/ScheduledOccurrenceSeal.ts) now rejects
-  Kimi before both seal minting and current-context verification, so that stale
-  authority cannot authorize a scheduled launch. The regression in
-  [`ScheduledOccurrenceSeal.test.ts`](src/main/ScheduledOccurrenceSeal.test.ts)
-  proves the exclusion. Scheduled Kimi remains intentionally unavailable until
-  the schema, mint/verify path, and dispatch enforcement bind ACP posture and
-  receive independent review.
+- **Scheduled-run seal scope (2026-07-21):** The launch-authority schema now
+  models Kimi's ACP posture, admission roster, private cwd, and authenticated
+  gateway. Stage 2 wires live mint/persist/fresh-verify enforcement only for
+  claimed solo Cursor occurrences, whose contained argv and inherited
+  environment can be re-derived from the same dispatch seams. Kimi scheduled
+  runs remain available but intentionally unsealed: its isolated-home, private
+  cwd, and per-run gateway are created inside the ACP launch path and have not
+  yet been injected as exact evidence. No Kimi digest is fabricated; Stage 3
+  must wire those dispatch-owned facts before Kimi is added to the sealed lane.
 - **Verification required:** Unit tests must reject unknown, partially matching,
   stale, and identity-swapped binaries. Production wiring tests must prove that
   neither a rejected binary nor any pre-admission helper reaches process spawn,
@@ -678,11 +675,11 @@ weaponized payloads to this file or its verification artifacts.
   additional evidence, not a substitute for runtime admission.
 - **Release disposition:** `Block` Kimi production qualification until the
   runtime consumes and enforces a commissioned executable tuple. With an empty
-  embedded roster, packaged Kimi execution must remain unavailable; Kimi
-  scheduling must remain unavailable until its authority seal binds the ACP
-  posture. Keep this entry `Remediated`, not `Verified`, until the credentialed
-  exact tuple, populated generated roster, strict rerun, schedule migration,
-  and whole-tree check are green.
+  embedded roster, reviewed Kimi provenance remains unavailable. Kimi
+  scheduling remains available but unsealed until its authority seal binds the
+  exact ACP launch post-image. Keep this entry `Remediated`, not `Verified`,
+  until the credentialed exact tuple, populated generated roster, strict rerun,
+  schedule migration, and whole-tree check are green.
 - **2026-07-21 disposition update:** The shipped 1.8.5 admission seam
   deliberately drops the exact-tuple fence for desktop seats:
   [`KimiRuntimeAdmission.ts`](src/main/kimi/KimiRuntimeAdmission.ts) hardcodes
@@ -695,10 +692,9 @@ weaponized payloads to this file or its verification artifacts.
   the statements above that the escape hatch "cannot run in a packaged build"
   and that "packaged Kimi execution must remain unavailable". Unchanged: the
   embedded reviewed roster remains empty, unattested admission mints no
-  reviewed provenance and cannot satisfy release attestation, and sealed
-  scheduled Kimi execution still fails closed in
-  [`ScheduledOccurrenceSeal.ts`](src/main/ScheduledOccurrenceSeal.ts) pending
-  the signed-authority schema migration.
+  reviewed provenance and cannot satisfy release attestation. Kimi scheduled
+  execution remains intentionally unsealed pending Stage-3 injection of its
+  isolated-home, private-cwd, and authenticated-gateway launch evidence.
 
 ## TW-SEC-2026-011 — Provider diagnostics exposed live authority material
 

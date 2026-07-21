@@ -243,6 +243,40 @@ export function createCliEnv(
   return createResolvedProviderEnv(extra, binaryPath, deps)
 }
 
+/**
+ * Exact environment used by one-shot CLI provider dispatch. Keep this builder
+ * shared with launch-authority evidence: a seal must bind the process env that
+ * is actually handed to spawn, including its per-run routing identity.
+ */
+export function createCliProviderRunEnv(input: {
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor'
+  command: string
+  appRunId: string | null | undefined
+  appChatId: string | null | undefined
+  scope: ChatScope
+  workspace: string | null | undefined
+  runtimeProfileId: string | null | undefined
+  auditRun?: boolean
+  extraEnv?: Record<string, string>
+  deps?: CliProviderRuntimeDependencies
+}): Record<string, string> {
+  return createCliEnv(
+    {
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      TASKWRAITH_RUNTIME_PROFILE_ID: input.runtimeProfileId || '',
+      TASKWRAITH_PARENT_PROVIDER: input.provider,
+      TASKWRAITH_RUN_ID: input.appRunId || '',
+      TASKWRAITH_CHAT_ID: input.appChatId || '',
+      TASKWRAITH_WORKSPACE_PATH: input.scope === 'global' ? '' : input.workspace || '',
+      ...(input.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
+      ...(input.extraEnv || {})
+    },
+    input.command,
+    input.deps
+  )
+}
+
 export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | null): AppSettings {
   if (!profile?.agenticServices) return base
   return {

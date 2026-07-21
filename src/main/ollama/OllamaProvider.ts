@@ -359,8 +359,10 @@ const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
 // Finalize gracefully after this many CONSECUTIVE non-productive turns (empty,
 // reasoning-only, malformed tool JSON, tool-intent stub, arg-invalid, degenerate)
 // instead of nudging the model forever.
-const OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
-const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
+// Exported for the scheduled-occurrence seal evidence layer, which must bind
+// the exact runtime constants dispatch enforces rather than duplicating them.
+export const OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS = 4
+export const OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS = [250, 750]
 const OLLAMA_LOCAL_TOOL_SERVER = 'TaskWraith-local'
 
 export interface OllamaOpeningMessagesInput {
@@ -2121,7 +2123,9 @@ function shouldReleaseOllamaThinkingUpdate(input: {
   return thinking.length >= OLLAMA_DEGENERATE_STUB_MAX_CHARS || /[.!?\n]\s*$/.test(input.thinking)
 }
 
-function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boolean {
+// Exported for the scheduled-occurrence seal evidence layer (same dispatch
+// semantics: absent capability metadata defaults to native tool support).
+export function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boolean {
   if (!modelInfo?.capabilities?.length) return true
   return modelInfo.capabilities.some((capability) => capability.toLowerCase() === 'tools')
 }

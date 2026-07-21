@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
   createCliEnv,
+  createCliProviderRunEnv,
   getCliProviderStatus,
   getCliProviderMcpStatus,
   getAgentMcpStatusSnapshotDirect,
@@ -284,6 +285,36 @@ describe('createCliEnv', () => {
         }
       )
     ).toThrow(/encrypted env secret SERVICE_TOKEN is missing/)
+  })
+
+  it('builds the exact one-shot dispatch routing environment', () => {
+    const env = createCliProviderRunEnv({
+      provider: 'cursor',
+      command: '/opt/taskwraith/bin/cursor-agent',
+      appRunId: 'run-1',
+      appChatId: 'chat-1',
+      scope: 'workspace',
+      workspace: '/repo',
+      runtimeProfileId: 'profile-1',
+      auditRun: true,
+      extraEnv: { SCHEDULED_OCCURRENCE: '1' },
+      deps: {
+        getRuntimeProfiles: () => [makeProfile({ id: 'profile-1', env: { PROFILE: 'yes' } })]
+      }
+    })
+
+    expect(env).toMatchObject({
+      FORCE_COLOR: '0',
+      NO_COLOR: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'cursor',
+      TASKWRAITH_RUN_ID: 'run-1',
+      TASKWRAITH_CHAT_ID: 'chat-1',
+      TASKWRAITH_WORKSPACE_PATH: '/repo',
+      TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-1',
+      TASKWRAITH_MCP_AUDIT: '1',
+      SCHEDULED_OCCURRENCE: '1',
+      PROFILE: 'yes'
+    })
   })
 })
 

@@ -534,6 +534,9 @@ import {
   type ScheduledOccurrenceOwner
 } from './ScheduledOccurrenceOwnerRegistry'
 import { ScheduledOccurrenceTransaction } from './ScheduledOccurrenceTransaction'
+import { scheduledSealComposedFacts } from './scheduling/ScheduledOccurrenceSealComposerFacts'
+import { createCursorScheduledOccurrenceSealService } from './scheduling/ScheduledOccurrenceSealBootstrap'
+import type { ScheduledOccurrenceSealService } from './scheduling/ScheduledOccurrenceSealService'
 import type { ScheduledOccurrenceTerminalStatus } from './ScheduledOccurrenceMutationSemantics'
 import { assertPinnedWorkspaceTarget } from './WorkspaceTargetAuthority'
 import {
@@ -941,6 +944,7 @@ import {
   applyRuntimeProfileToPayload as applyRuntimeProfileToPayloadViaCliRuntime,
   captureProcessOutput,
   createCliEnv,
+  createCliProviderRunEnv,
   createCliSpawnPlan,
   expandHomePath,
   getAgentMcpStatusSnapshotDirect as getAgentMcpStatusSnapshotDirectViaCliRuntime,
@@ -1677,6 +1681,7 @@ let codexExecProcess: ChildProcess | null = null
 // Fire the "a newer codex is installed" hint at most once per app session so we
 // don't nag on every run. See `maybeWarnNewerCodexBinary`.
 let codexNewerBinaryWarned = false
+let scheduledOccurrenceSealServiceRef: ScheduledOccurrenceSealService | null = null
 let scheduledTaskTimer: ReturnType<typeof setTimeout> | null = null
 let scheduledOccurrenceRecoveryBlockedReason: string | null = null
 let historyDeletionStartupRecoveryBlockedReason: string | null = null
@@ -13366,6 +13371,25 @@ async function dispatchDueScheduledTaskHeadless(
       handoffSourceRunId: task.handoffSourceRunId,
       scheduledTaskId: task.id
     })
+    const sealService = scheduledOccurrenceSealServiceRef
+    if (sealService) {
+      const sealOutcome = await sealService.sealSoloOccurrence({
+        task,
+        ownerRunId: owner.ownerRunId,
+        workspaceRealPath: executionWorkspacePath,
+        composed: scheduledSealComposedFacts(composed, AppStore.getChat(task.chatId))
+      })
+      if (sealOutcome.ok === false) {
+        failScheduledOccurrence(
+          owner,
+          `Scheduled occurrence seal verification failed: ${sealOutcome.reason}`
+        )
+        return
+      }
+      if (sealOutcome.ok === 'skipped') {
+        console.warn(`[scheduled-occurrence] ${sealOutcome.reason}`)
+      }
+    }
     transcriptSeeded = true
     seedScheduledSoloTranscript(task, owner, composed, executionWorkspacePath)
     const result = await dispatch({ ...composed, scheduledTaskId: task.id } as AgentRunPayload, {
@@ -15736,23 +15760,17 @@ function runCliProviderProcess(
       shell: false,
       env:
         options.resolvedEnv ??
-        createCliEnv(
-          {
-            FORCE_COLOR: '0',
-            NO_COLOR: '1',
-            TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-            TASKWRAITH_PARENT_PROVIDER: provider,
-            TASKWRAITH_RUN_ID: route.appRunId || '',
-            TASKWRAITH_CHAT_ID: route.appChatId || '',
-            TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || '',
-            // Audit role-run: advertise the audit_* MCP tools to THIS run's bridge
-            // child (it inherits the CLI's env). Set only for audit runs; a normal
-            // run never carries payload.auditRun, so the namespace stays hidden.
-            ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {}),
-            ...(options.extraEnv || {})
-          },
-          command
-        )
+        createCliProviderRunEnv({
+          provider,
+          command,
+          appRunId: route.appRunId,
+          appChatId: route.appChatId,
+          scope: payload.scope,
+          workspace: payload.workspace,
+          runtimeProfileId: payload.runtimeProfileId,
+          auditRun: Boolean(payload.auditRun),
+          extraEnv: options.extraEnv
+        })
     })
   } catch (error) {
     sendAgentCompatError(
@@ -30545,6 +30563,29 @@ if (isGeminiMcpBridgeProcess) {
         '[history-deletion] PDF/media staging startup recovery failed; derived-byte admission remains closed:',
         error
       )
+    }
+    // The authority root must never be touched before Electron has selected its
+    // final safeStorage backend. A missing or locked backend disables scheduled
+    // dispatch loudly instead of falling back to an in-memory/rootless seal.
+    try {
+      scheduledOccurrenceSealServiceRef = createCursorScheduledOccurrenceSealService({
+        userDataPath: app.getPath('userData'),
+        safeStorage,
+        mainPostureSecret: externalGrantSigningSecret,
+        appVersion: app.getVersion(),
+        canonicalizePath: canonicalPath,
+        signRunPermissionPosture: signRunPosture,
+        resolveUnattendedElevation: (taskId) => {
+          const elevation = resolveUnattendedElevation(taskId)
+          return elevation ? { ack: elevation.ack } : null
+        }
+      })
+    } catch (error) {
+      scheduledOccurrenceRecoveryBlockedReason =
+        `Scheduled occurrence authority root is unavailable: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      console.error(`[scheduled-occurrence] dispatch disabled: ${scheduledOccurrenceRecoveryBlockedReason}`)
     }
     // Transcript metadata is presentation data, not migration provenance. Old
     // unowned assets remain fail-closed; only the durable main-owned ownership
