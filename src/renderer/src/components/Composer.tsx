@@ -70,7 +70,6 @@ import { MultiviewLayoutPicker } from '../components/MultiviewLayoutPicker'
 import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
-import { ExecutionStackAboveRow } from '../components/ExecutionStackAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
@@ -740,12 +739,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     onNotifyThreadOfCi,
     providerRates,
     queuedMessagesAboveRowEntries,
-    executionStackProjection,
-    executionHistory = [],
-    onOpenExecutionMap,
-    onAddToExecutionStack,
-    onSaveExecutionGraph,
-    onCancelExecutionStackStep,
+    // executionStackProjection / executionHistory / stack handlers remain on
+    // ComposerProps for App call-site stability but are intentionally unused:
+    // Stack/Map belong to Work tab + Execution Map, not this above-row.
     queuedRunQueueCount,
     refreshWorkflowState,
     rememberCurrentChatComposerSelection,
@@ -1720,10 +1716,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     return true
   }
 
+  // Classic queue/steer above-row only. Execution Graph Stack / history live on
+  // the Work tab and Execution Map — not in the Composer above-row strip.
   const canRenderComposerAboveRowStack = Boolean(
     queuedMessagesAboveRowEntries.length > 0 ||
-      executionStackProjection ||
-      executionHistory.length > 0 ||
       (!isCurrentGlobalChat &&
         currentWorkspace &&
         ((showWorkspaceGitAboveRows && !isWelcomeChat) || isCurrentEnsembleChat)) ||
@@ -1733,8 +1729,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     canRenderComposerAboveRowStack &&
     ((showWorkspaceGitAboveRows && !isWelcomeChat && Boolean(currentWorkspace)) ||
       isCurrentEnsembleChat ||
-      Boolean(executionStackProjection) ||
-      executionHistory.length > 0 ||
       queuedMessagesAboveRowEntries.length > 0)
   const nativeNoAboveRowsClass =
     appearance.composerStyle === 'default' && !hasComposerAboveRows
@@ -2326,57 +2320,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     providerGroups={buildUnifiedProviderModelGroups(false)}
                   />
                 )}
-                <ExecutionStackAboveRow
-                  projection={executionStackProjection ?? null}
-                  onOpenMap={(runId, stepId) => onOpenExecutionMap?.(runId, stepId)}
-                  onAddToStack={
-                    onAddToExecutionStack
-                      ? (runId) => {
-                          onAddToExecutionStack(runId)
-                          focusComposerTextarea()
-                        }
-                      : undefined
-                  }
-                  onSaveGraph={onSaveExecutionGraph}
-                  onCancelStep={onCancelExecutionStackStep}
-                />
-                {executionHistory.length > 0 && onOpenExecutionMap && (
-                  <details className="queued-messages-above-row execution-stack-history-row">
-                    <summary>
-                      Execution history · {executionHistory.length}
-                    </summary>
-                    <ol className="execution-stack-list">
-                      {executionHistory.map((item) => (
-                        <li key={item.runId} className="execution-stack-step tone-muted">
-                          <button
-                            type="button"
-                            className="execution-stack-step-summary"
-                            onClick={() => onOpenExecutionMap(item.runId)}
-                          >
-                            <span className="execution-stack-step-copy">
-                              <span className="execution-stack-step-title">{item.title}</span>
-                              {item.updatedAt && (
-                                <span className="execution-stack-step-blocker">
-                                  {new Date(item.updatedAt).toLocaleString()}
-                                </span>
-                              )}
-                            </span>
-                            <span className="execution-status-token tone-muted">
-                              {item.statusLabel}
-                            </span>
-                          </button>
-                        </li>
-                      ))}
-                    </ol>
-                  </details>
-                )}
                 {/*
-                  Queued-messages above-row. Renders the chat's pending
-                  run-queue jobs as a stack of bubbles with per-row
-                  Edit / Delete / Steer actions, drag-to-reorder, and
-                  scroll past 5 entries. Returns null when empty so
-                  it adds nothing to the stack for chats without
-                  queued work. See `QueuedMessagesAboveRow.tsx`.
+                  Queued-messages above-row. Classic RunQueue + Steer for
+                  follow-ups while a chat is busy. Execution Graph Stack /
+                  Map are Work-tab surfaces and must not replace this strip.
+                  See `QueuedMessagesAboveRow.tsx`.
                 */}
                 <QueuedMessagesAboveRow
                   chat={currentChat}

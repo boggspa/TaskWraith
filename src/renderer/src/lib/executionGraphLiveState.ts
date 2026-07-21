@@ -73,7 +73,16 @@ export function executionAppendSubmissionKey(value: string): string {
   return `${value.length.toString(36)}-${first.toString(36)}-${second.toString(36)}`
 }
 
-export function shouldAppendBusySendToExecutionStack(input: {
+/**
+ * Product rule: ordinary Composer busy-sends use classic RunQueue + Steer.
+ * Execution Graph / Stack / Map stay available as Work-tab / map projections
+ * and for deliberate graph tooling — they must not own the above-row queue
+ * or intercept follow-up messages while a chat is busy.
+ *
+ * The gate is kept (and the call sites remain) so a future explicit “add to
+ * graph” path can opt in without rewiring Send. Until then, always false.
+ */
+export function shouldAppendBusySendToExecutionStack(_input: {
   busy: boolean
   hasWorkspace: boolean
   isTopLevel: boolean
@@ -85,16 +94,5 @@ export function shouldAppendBusySendToExecutionStack(input: {
   directedParticipant?: boolean
   specialOverride?: boolean
 }): boolean {
-  return Boolean(
-    input.busy &&
-    input.hasWorkspace &&
-    input.isTopLevel &&
-    !input.isPopout &&
-    !input.isGlobal &&
-    input.chatKind !== 'ensemble' &&
-    !input.existingPrompt &&
-    !input.scheduled &&
-    !input.directedParticipant &&
-    !input.specialOverride
-  )
+  return false
 }

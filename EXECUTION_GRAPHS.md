@@ -7,11 +7,19 @@ Map are projections of that same state.
 
 ## V1 product surface
 
-- Sending another ordinary solo-chat task while that chat is busy appends it to
-  the chat's **Stack**.
-- Each Stack row is a real `solo_agent` step connected by a success-only control
-  edge. The next provider run is not published to RunQueue until its predecessor
-  succeeds.
+- **Composer / above-row queue / Steer are classic RunQueue paths.** Sending
+  another message while a chat is busy enqueues it on the durable desktop run
+  queue and surfaces it in `QueuedMessagesAboveRow` with Edit / Delete / Steer.
+  Steer still cancels the live turn and dispatches (or re-queues) the follow-up.
+  The Execution Graph **does not** intercept ordinary busy-sends and **does not**
+  render a Stack strip above the Composer.
+- **Execution Graph, Stack, and Map remain Work-tab / map tooling.** They inspect
+  and formalize main-owned multi-step run structure (serial `solo_agent` chains,
+  success-only control edges, permission ceilings, recovery). They are not the
+  day-to-day message queue.
+- When graph tooling does create Stack steps, each row is a real `solo_agent`
+  step connected by a success-only control edge. The next provider run is not
+  published to RunQueue until its predecessor succeeds.
 - **Execution Map** is a semantic topological view of the persisted run. It is
   not a free-position canvas and does not own execution state.
 - **Save graph** creates an immutable graph revision from the verified effective

@@ -51,7 +51,9 @@ describe('executionGraphLiveState', () => {
     expect(mergeExecutionRunProjection(current, stale)).toBe(current)
   })
 
-  it('admits only interactive busy solo workspace sends', () => {
+  it('never routes ordinary composer busy-sends onto the Execution Stack', () => {
+    // Product rule: classic RunQueue + Steer own follow-ups. Stack/Map stay on
+    // Work tab / Execution Map projections only.
     const ordinary = {
       busy: true,
       hasWorkspace: true,
@@ -60,7 +62,7 @@ describe('executionGraphLiveState', () => {
       isGlobal: false,
       chatKind: 'single'
     }
-    expect(shouldAppendBusySendToExecutionStack(ordinary)).toBe(true)
+    expect(shouldAppendBusySendToExecutionStack(ordinary)).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, chatKind: 'ensemble' })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, scheduled: true })).toBe(false)
     expect(shouldAppendBusySendToExecutionStack({ ...ordinary, existingPrompt: true })).toBe(false)

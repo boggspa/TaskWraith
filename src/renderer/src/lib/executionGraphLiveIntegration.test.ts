@@ -62,62 +62,26 @@ describe('live execution graph integration', () => {
     expect(appSource).toContain('Stack history needs attention')
   })
 
-  it('routes an eligible busy target chat to Stack before the legacy queue fallback', () => {
+  it('routes busy composer sends to classic queue; Stack append is gated off', () => {
     const handleRun = slice(appSource, 'const handleRun =', 'const createSideChatFromCurrentChat =')
     const busyBranch = slice(
       handleRun,
       'shouldQueueRunBeforeDispatch({',
       'void executeRun(request)'
     )
+    // Call site may still consult the stack helper, but the product gate is
+    // always false so the durable classic queue is what actually receives the
+    // follow-up (see shouldAppendBusySendToExecutionStack).
+    expect(busyBranch).toContain('queueRunRequest(request)')
     expect(busyBranch).toContain('appendBusyRunToExecutionStack(')
-    expect(busyBranch.indexOf('appendBusyRunToExecutionStack(')).toBeLessThan(
-      busyBranch.indexOf('queueRunRequest(request)')
-    )
 
     const append = slice(appSource, 'const appendBusyRunToExecutionStack =', 'const handleRun =')
-    expect(append).toContain('isPopout: isChatPopoutWindow')
+    expect(append).toContain('shouldAppendBusySendToExecutionStack({')
     expect(append).toContain('const requestSnapshot = createRunQueueRequestSnapshot(request)')
-    expect(append).toContain('request: requestSnapshot')
-    expect(append).toContain('(executionRunIdsByChatId[targetChatId] || [])')
-    expect(append).toContain('preferredExecutionByChatIdRef.current[targetChatId]')
-    expect(append).toContain('activeRunChatIdRef.current === targetChatId')
     expect(append).toContain('rootChatId: targetChatId')
     expect(append).toContain(
       "title: normalizeThreadTitle(`${targetChat.title || 'Task'} Stack`, 'Task Stack')"
     )
-    expect(append).not.toContain('title: `${targetChat.title || \'Task\'} Stack`')
-    expect(append).toContain("settleProjectReferenceContextForRequest(graphRequest, 'accepted')")
-    expect(
-      append.indexOf('clearSubmittedExecutionStackContext(graphRequest, targetChatId)')
-    ).toBeGreaterThan(append.indexOf('.then((run) => {'))
-    const collision = slice(
-      append,
-      'const inFlightFingerprint = executionAppendInFlightRef.current.get(targetChatId)',
-      'const liveAnchorRunRef ='
-    )
-    expect(collision).toContain('if (inFlightFingerprint === appendFingerprint)')
-    expect(collision).toContain('This message is already being added to the Stack.')
-    expect(collision).toContain('this message was queued safely.')
-    expect(collision).toContain('return true')
-    expect(collision).toContain('return false')
-    expect(collision).not.toContain('settleProjectReferenceContextForRequest')
-    expect(append).toContain(
-      '...(!targetExecution && liveAnchorRunRef ? { anchorRunRef: liveAnchorRunRef } : {})'
-    )
-    expect(append).not.toContain('targetExecution?.anchorRunRef')
-
-    const receiptWriteIndex = append.indexOf('window.localStorage.setItem(')
-    expect(receiptWriteIndex).toBeGreaterThan(append.indexOf('if (inFlightFingerprint)'))
-    expect(append).toContain(
-      'appRunId: recoveredClientRequestId || request.appRunId || createAppRunId()'
-    )
-    expect(append).toContain('clientRequestId: graphRequest.appRunId!')
-    const accepted = slice(append, '.then((run) => {', '.catch((error) => {')
-    expect(accepted).toContain('window.localStorage.removeItem(pendingStorageKey)')
-    const rejected = slice(append, '.catch((error) => {', '.finally(() => {')
-    expect(rejected).not.toContain('window.localStorage.removeItem')
-    expect(rejected).toContain('updateChatById(targetChatId')
-    expect(rejected).toContain("role: 'error'")
 
     const contextClear = slice(
       appSource,
@@ -146,7 +110,7 @@ describe('live execution graph integration', () => {
     )
   })
 
-  it('gives resting Multiview panes the same target-scoped Stack behavior and projection', () => {
+  it('gives resting Multiview panes the same target-scoped classic queue path', () => {
     const paneRun = slice(
       appSource,
       'const handleRunMultiviewPane =',
@@ -156,25 +120,22 @@ describe('live execution graph integration', () => {
     expect(paneRun).toContain('prompt: panePrompt')
     expect(paneRun).toContain('imageAttachments: paneAttachments')
     expect(paneRun).toContain('discordContextSelectionByChatIdRef.current[chatId]')
-    expect(
-      paneRun.indexOf('appendBusyRunToExecutionStackRef.current(request, false)')
-    ).toBeLessThan(paneRun.indexOf('queueRunRequestRef.current('))
-    expect(
-      appSource.match(/const paneExecutionStackView = executionStackViewForChat\(viewerChatId\)/g)
-    ).toHaveLength(2)
-    expect(
-      appSource.match(/executionStackProjection: paneExecutionStackView\.projection/g)
-    ).toHaveLength(2)
+    expect(paneRun).toContain('queueRunRequestRef.current(')
+    // Stack projection wiring may still flow for Execution Map focus, but the
+    // composer above-row no longer mounts Stack UI (see Composer.tsx).
     expect(appSource).toContain(
       'handleFocusMultiviewPane(viewerPaneIndex, viewerChatId)\n          handleOpenExecutionMap(runId, stepId)'
     )
   })
 
-  it('renders Stack before queued rows and keeps terminal maps discoverable', () => {
-    const aboveRows = slice(composerSource, '<ExecutionStackAboveRow', '<QueuedMessagesAboveRow')
-    expect(aboveRows).toContain('Execution history · {executionHistory.length}')
-    expect(aboveRows).toContain('onSaveGraph={onSaveExecutionGraph}')
-    expect(aboveRows).not.toContain('Save as Workflow')
+  it('keeps classic queued rows in Composer and leaves Stack/Map off the above-row', () => {
+    expect(composerSource).toContain('<QueuedMessagesAboveRow')
+    expect(composerSource).not.toContain('<ExecutionStackAboveRow')
+    expect(composerSource).not.toContain('Execution history ·')
+    expect(composerSource).not.toContain('Write next step')
+    expect(composerSource).not.toContain('Save graph')
+    expect(composerSource).not.toContain('Open map')
+    // Graph-owned jobs stay out of the ordinary queue strip / badge.
     expect(appSource).toContain('.filter((job) => !job.executionGraph)')
     expect(appSource).toContain('runQueueJobs,\n        chatId,')
   })
