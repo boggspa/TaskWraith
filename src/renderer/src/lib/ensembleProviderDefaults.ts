@@ -175,14 +175,14 @@ const KIMI_MODELS: CombinedModelPickerModelOption[] = [
 const KIMI_FAST_CAPABLE = new Set<string>(['kimi-k2.7-code'])
 
 // Grok — mirrors App.tsx GROK_DEFAULT_MODELS. Its Composer id stays distinct
-// from the historical Cursor catalog retained below for decode/render.
+// from the Cursor catalog below.
 const GROK_MODELS: CombinedModelPickerModelOption[] = [
   { id: GROK_45_MODEL_ID, label: 'Grok 4.5 Fast' },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
-// Historical Cursor model catalog retained for decoding and rendering stored
-// ensemble seats. Source-ahead builds do not offer or dispatch these routes.
+// Cursor model catalog — backs live Path-B Cursor seats and decodes stored
+// historical ensemble seats.
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },

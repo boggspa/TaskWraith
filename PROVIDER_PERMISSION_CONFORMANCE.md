@@ -29,8 +29,11 @@ explicit `--live` entry point, and the runner executes only files listed in
 contains Kimi's reviewed ACP containment suite and Cursor's reviewed
 native-sandbox Path-B suite. **Product admission for Cursor is Path-B
 always-enabled** (contained argv on `runCursorProvider`); the live suite is
-containment *evidence*, not the desktop spawn switch. Kimi packaged admission
-still depends on an exact reviewed runtime tuple (embedded roster may be empty).
+containment *evidence*, not the desktop spawn switch. Kimi desktop admission is
+likewise always-enabled and structural (packaged builds included); while the
+embedded reviewed roster stays empty, managed runs are labelled
+`unattested-development`, and only a reviewed exact runtime tuple can mark them
+`reviewed` or satisfy release attestation.
 A `--live` Cursor run produces review evidence for the sandbox differential; it
 is not required to flip a desktop availability gate.
 
@@ -164,13 +167,16 @@ write-capable native tool must be denied, and no file may be written.
 
 The active required live/release tuple contains Kimi only. The exact-fingerprint
 manifest and generated embedded Kimi runtime roster are still empty, so strict
-release and packaged Kimi admission remain red until a reviewed tuple is added.
-The exact-SHA dependency therefore blocks signed release-artifact publication;
-deliberately disabled Cursor does not block every release. Re-enabling Cursor
-requires both a reviewed exact-build startup-containment suite and an admissible
-exact scope tuple, followed by an explicit change adding Cursor back to both
-required-provider lists. Adding a live test alone cannot make the runner spawn
-Cursor. A Plan-only tuple could never qualify Cursor tool mode.
+release attestation remains red until a reviewed tuple is added; desktop Kimi
+admission is not gated on it and proceeds in labelled `unattested-development`
+mode. The exact-SHA dependency therefore blocks signed release-artifact
+publication. Cursor is product-enabled (Path-B always-on contained argv) but
+sits outside the required release tuple, so its absence does not block a
+release; its reviewed canary roster also ships empty, and adding a live test
+alone cannot add Cursor to the required lists — that takes a reviewed
+exact-build suite, an admissible exact scope tuple, and an explicit change to
+both required-provider lists. A Plan-only tuple could never qualify Cursor tool
+mode.
 
 ## Evidence and privacy
 

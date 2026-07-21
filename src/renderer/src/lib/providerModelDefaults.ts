@@ -260,8 +260,8 @@ const GROK_DEFAULT_MODELS = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
-// Historical Cursor model catalog retained for decoding and rendering stored
-// selections. Source-ahead builds do not offer or dispatch these routes.
+// Cursor model catalog — backs live Path-B Cursor selection and decodes
+// stored historical selections.
 const CURSOR_DEFAULT_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },

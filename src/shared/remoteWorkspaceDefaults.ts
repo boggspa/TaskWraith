@@ -48,10 +48,10 @@ export interface RemoteWorkspaceEntry {
   updatedAt: number
 }
 
-/** Active providers for new remote-workspace grants. Unavailable canonical
- * providers such as Cursor and retired providers such as Gemini remain readable
- * through compatibility/history paths, but are not granted for new phone-origin
- * remote actions. */
+/** Active providers for new remote-workspace grants — the canonical
+ * live-selectable set (Path-B Cursor included). Retired providers such as
+ * Gemini remain readable through compatibility/history paths, but are not
+ * granted for new phone-origin remote actions. */
 export const PROVIDER_OPTIONS = LIVE_SELECTABLE_PROVIDER_IDS
 
 export const APPROVAL_MODE_OPTIONS = ['default', 'plan'] as const

@@ -45,10 +45,10 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-006 | Provider-authored Canvas receipts could contaminate forensic attribution | Medium | Remediated | TaskWraith maintainers — Canvas receipt authority | Verify native and gateway paths use only host-minted receipts |
 | TW-SEC-2026-007 | Canvas operations and live surfaces can outlive run cancellation or scoped history erasure | High | Remediated | TaskWraith maintainers — Canvas lifecycle | Source candidate accepted; verify the exact integrated scoped-erasure matrix before release |
 | TW-SEC-2026-008 | Kimi production containment had check/use races around workspace config and client filesystem authority | High | Remediated | TaskWraith maintainers — Kimi runtime | Verify the exact integrated production composition and live native trace before clearing the block |
-| TW-SEC-2026-009 | Concurrent Kimi OAuth refresh and writeback was not serialized or crash-replayable | Medium | Remediated | TaskWraith maintainers — Kimi authentication | Source candidate accepted; keep packaged Kimi unavailable until runtime qualification is externally commissioned |
-| TW-SEC-2026-010 | Unknown Kimi runtime builds lacked an enforced normal-seat admission fence | High | Remediated | TaskWraith maintainers — Provider qualification | Source candidate accepted for managed ACP seats; packaged and scheduled Kimi stay blocked pending their distinct qualification requirements |
+| TW-SEC-2026-009 | Concurrent Kimi OAuth refresh and writeback was not serialized or crash-replayable | Medium | Remediated | TaskWraith maintainers — Kimi authentication | Source candidate accepted; packaged Kimi now admits as labelled unattested-development (2026-07-21 update) — reviewed qualification remains externally commissioned |
+| TW-SEC-2026-010 | Unknown Kimi runtime builds lacked an enforced normal-seat admission fence | High | Remediated | TaskWraith maintainers — Provider qualification | Source candidate accepted for managed ACP seats; scheduled Kimi stays sealed-off, while packaged Kimi admits as labelled unattested-development pending reviewed qualification (2026-07-21 update) |
 | TW-SEC-2026-011 | Provider diagnostics exposed live broker bearer tokens and local prompt/path data | High | Remediated | TaskWraith maintainers — MCP bridge and Kimi ACP diagnostics | Source candidate and focused bridge suite accepted; whole-tree and exact packaged verification remain pending |
-| TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; runtime build fencing remains separately blocked |
+| TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
 | TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Open | TaskWraith maintainers — Data lifecycle and history erasure | Close remaining exact host-command, cancel/delete, and Codex app-server lifecycle joins; then rerun exact-candidate gates |
 | TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Remediated | TaskWraith maintainers — Release attestation | Code candidate reviewed clean; protected environment and immutable release tags remain separate commissioning blocks |
@@ -468,6 +468,11 @@ weaponized payloads to this file or its verification artifacts.
 - **Release disposition:** Keep `Remediated`, not `Verified`, and retain the
   `Block` until the exact integrated candidate passes its focused tests,
   all credentialed production-composition assertions, and packaged trace.
+- **2026-07-21 disposition update:** Desktop Kimi admission now always-enables
+  labelled `unattested-development` seats in packaged builds too (see the
+  TW-SEC-2026-010 2026-07-21 update); the containment composition described
+  here applies to those seats regardless of admission mode. The
+  exact-candidate verification and packaged-trace demands above are unchanged.
 
 ## TW-SEC-2026-009 — Kimi OAuth rotation is not concurrency-safe
 
@@ -550,6 +555,12 @@ weaponized payloads to this file or its verification artifacts.
   intentionally empty and external commissioning remains red, so packaged Kimi
   must stay unavailable until TW-SEC-2026-010's distinct live qualification
   requirements pass.
+- **2026-07-21 disposition update:** The "packaged Kimi must stay unavailable"
+  rider above is superseded by the shipped always-enabled admission decision
+  (see the TW-SEC-2026-010 2026-07-21 update): packaged Kimi now admits as
+  labelled `unattested-development`. The OAuth authority fix and its
+  verification demands are unchanged; external commissioning of a reviewed
+  runtime tuple remains red.
 
 ## TW-SEC-2026-010 — Kimi qualification evidence was not a runtime admission fence
 
@@ -669,6 +680,22 @@ weaponized payloads to this file or its verification artifacts.
   posture. Keep this entry `Remediated`, not `Verified`, until the credentialed
   exact tuple, populated generated roster, strict rerun, schedule migration,
   and whole-tree check are green.
+- **2026-07-21 disposition update:** The shipped 1.8.5 admission seam
+  deliberately drops the exact-tuple fence for desktop seats:
+  [`KimiRuntimeAdmission.ts`](src/main/kimi/KimiRuntimeAdmission.ts) hardcodes
+  `allowUnattestedDevelopment = true` with no packaged-build branch, so an
+  unknown binary that passes the structural gate (descriptor-bound identity,
+  bounded probes, exact version parse, ACP-only posture) admits as explicitly
+  labelled `unattested-development` in any build, packaged included. The
+  runtime containment — authenticated loopback gateway plus the native
+  nine-tool deny wall — applies regardless of admission mode. This supersedes
+  the statements above that the escape hatch "cannot run in a packaged build"
+  and that "packaged Kimi execution must remain unavailable". Unchanged: the
+  embedded reviewed roster remains empty, unattested admission mints no
+  reviewed provenance and cannot satisfy release attestation, and sealed
+  scheduled Kimi execution still fails closed in
+  [`ScheduledOccurrenceSeal.ts`](src/main/ScheduledOccurrenceSeal.ts) pending
+  the signed-authority schema migration.
 
 ## TW-SEC-2026-011 — Provider diagnostics exposed live authority material
 
@@ -810,6 +837,12 @@ weaponized payloads to this file or its verification artifacts.
 - **Release disposition:** Keep `Remediated`, not `Verified`, until the exact
   candidate passes that lifecycle matrix. Do not claim that only session state
   remains in released builds before then.
+- **2026-07-21 disposition update:** The boundary note above ("an unknown build
+  must still be rejected by the separate runtime qualification control in
+  TW-SEC-2026-010") no longer holds as written: unknown builds now admit as
+  labelled `unattested-development` (see the TW-SEC-2026-010 2026-07-21
+  update), which makes this continuity allowlist and scrub path the operative
+  controls for those seats. The verification matrix above is unchanged.
 
 ## TW-SEC-2026-013 — Provider dispatch lacks a final chat/history mutation fence
 

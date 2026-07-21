@@ -271,9 +271,11 @@ Cursor's Path-B native-sandbox suite. **Desktop product admission for Cursor is
 Path-B always-enabled** (contained `--sandbox` argv on `runCursorProvider`);
 the live suite is containment evidence, not a fail-closed desktop kill switch.
 The active required *release* fingerprint tuple may still be Kimi-weighted while
-the exact Kimi packaged roster remains empty — strict packaged Kimi admission
-and signed `v*` publication jobs that require a successful protected provider
-release attestation stay red until a reviewed Kimi tuple is commissioned. Probe-
+the exact Kimi reviewed roster remains empty — desktop Kimi admission is
+always-enabled (structural checks; unreviewed runs are labelled
+`unattested-development`), but signed `v*` publication jobs that require a
+successful protected provider release attestation stay red until a reviewed
+Kimi tuple is commissioned. Probe-
 only inventory may still invoke `--version` and `--help` in an unauthenticated
 root. Prefer project workspaces outside `$HOME` for untrusted Cursor work; the
 sandbox is an honest partial backstop (see TW-SEC-2026-003). The workflow is

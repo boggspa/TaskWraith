@@ -45,10 +45,11 @@ Responsible for the UI:
    native ACP session resume; legacy probes may still use a per-run home. ACP
    is the only managed Kimi transport. `TASKWRAITH_KIMI_ACP` only decides
    whether ACP may be considered; setting it to `0` makes Kimi unavailable and
-   never opens a Wire/print fallback. Packaged source-ahead builds currently
-   carry an empty reviewed runtime roster, so they reject Kimi before launch;
-   only unpackaged development can use the explicitly labelled, non-release-
-   qualifying admission path. See
+   never opens a Wire/print fallback. The embedded reviewed runtime roster is
+   currently empty, so managed Kimi admission runs in the explicitly labelled,
+   non-release-qualifying `unattested-development` mode in every build
+   (packaged included), gated by structural identity/probe/posture checks
+   rather than an exact reviewed tuple. See
    [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
 4. Sensitive actions route through TaskWraith policy, approval ledgers, and

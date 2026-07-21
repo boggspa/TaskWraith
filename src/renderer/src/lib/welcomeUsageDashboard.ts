@@ -1121,8 +1121,8 @@ export const buildWelcomeUsageDashboardData = (
           ? (providerCostAggregate[provider].tokens / totalProviderTokensForBreakdown) * 100
           : 0
     }))
-    // Keep historical Cursor usage visible even though new managed Cursor runs
-    // are unavailable; this breakdown is a ledger view, not a provider offer.
+    // Cursor rows cover live Path-B runs as well as historical usage; this
+    // breakdown is a ledger view, not a provider offer.
     .sort(
       (a, b) =>
         b.tokens - a.tokens || b.costUsd - a.costUsd || a.displayName.localeCompare(b.displayName)

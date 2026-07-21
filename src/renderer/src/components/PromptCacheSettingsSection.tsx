@@ -210,9 +210,9 @@ export function PromptCacheSettingsSection(): React.JSX.Element {
 
       {error && <p className="prompt-cache-settings-error">{error}</p>}
       <p className="prompt-cache-settings-footnote">
-        Runnable opaque CLI paths (Codex login, Claude Code, Kimi/Grok) cannot be forced to cache
-        from TaskWraith. Historical Cursor cache metadata may remain visible, but managed Cursor
-        runs and cache controls are unavailable in this source-ahead build.
+        Runnable opaque CLI paths (Codex login, Claude Code, Kimi/Grok, Path-B Cursor) cannot be
+        forced to cache from TaskWraith. Cursor rows cover live Path-B managed runs as well as
+        historical cache metadata.
       </p>
     </div>
   )

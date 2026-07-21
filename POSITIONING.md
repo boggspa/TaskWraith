@@ -51,8 +51,9 @@ context, so extra participants add cost and noise as well as perspective.
 Start with **Boss + Captain + one Specialist**. Add a second Specialist only
 when the task crosses domains, and add one **Outsider** when independent dissent
 is worth the extra turn. Keep one write-capable seat by default; give review and
-outsider seats Read-only posture until the task requires more. In source-ahead
-builds, Cursor cannot be assigned any runnable seat.
+outsider seats Read-only posture until the task requires more. Cursor seats run
+under Path-B native-sandbox containment without TaskWraith per-tool approvals,
+so keep Cursor on Read-only posture where approval-mediated review matters.
 
 - **Delivery (3–4):** Boss, Captain/writer, test Specialist, optional Outsider.
 - **Risky change (4–5):** Boss, Captain/writer, security Specialist, test
@@ -64,7 +65,7 @@ Twenty participants is a capacity ceiling, not a recommended starting panel.
 
 ## Release boundary
 
-The latest tagged public baseline is **v1.8.4**. This checkout is source-ahead;
+The latest tagged public baseline is **v1.8.5**. This checkout is source-ahead;
 its compact default panels and any other Unreleased entries are implementation
 evidence, not shipped capability, until a new tag and matching artifacts are
 published. Public claims should name the release or commit they were verified

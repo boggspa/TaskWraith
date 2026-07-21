@@ -38,10 +38,11 @@ of living in separate tabs. A thread can include up to twenty named participants
 across Codex, Claude, Kimi, Grok, and local Ollama, each with its own
 model, role, order, and permission posture.
 
-Kimi seats additionally require exact runtime admission. The source-ahead
-packaged qualification roster is currently empty, so packaged builds reject
-Kimi before launch; an explicit unpackaged developer admission is labelled
-unattested and cannot qualify a release.
+Kimi seats additionally require runtime admission: structural checks (stable
+binary identity, bounded probes, the ACP-only posture) that are always
+enabled, packaged builds included. While the reviewed qualification roster is
+empty, admitted runs are labelled `unattested-development`; that labelling
+cannot qualify a release.
 
 Managed **Cursor** is live again under **Path-B**: TaskWraith starts a
 contained `cursor-agent` with hard-pinned `--sandbox enabled`, seat-routed

@@ -3,8 +3,8 @@
 Developer reference for TaskWraith's source-ahead Kimi runtime after the
 `kimi-cli` to Kimi Code migration.
 
-> **Version boundary:** v1.8.4 is the released baseline. This document describes
-> the current source-ahead checkout and must not be read as a v1.8.4 guarantee.
+> **Version boundary:** v1.8.5 is the released baseline. This document describes
+> the current source-ahead checkout and must not be read as a v1.8.5 guarantee.
 > The next release notes decide when this posture becomes shipped behavior.
 
 ## Current status
@@ -13,12 +13,13 @@ Managed Kimi execution is ACP-only. `TASKWRAITH_KIMI_ACP` selects whether that
 transport may be considered; it is not qualification evidence. There is no
 Wire or print fallback.
 
-Packaged builds additionally require an exact reviewed runtime tuple from the
-embedded qualification roster. That roster is intentionally empty today, so a
-packaged Kimi binary is blocked before capability probes or provider startup.
-An unpackaged developer may opt into explicitly labelled
-`unattested-development` admission, which is not credentialed canary evidence
-and cannot qualify a release.
+Runtime admission is always enabled and structural in every build, packaged
+included: descriptor-bound identity capture, bounded probes, an exact version
+parse, and the ACP-only posture gate the seat. The embedded qualification
+roster is intentionally empty today, so admitted runs are explicitly labelled
+`unattested-development` rather than `reviewed`; that labelling is not
+credentialed canary evidence and cannot qualify a release. A commissioned
+reviewed roster tuple upgrades a matching binary's runs to `reviewed`.
 
 The production guarantee is deliberately scoped to TaskWraith-managed Kimi
 turns and native compaction. Explicit user-owned `kimi login` and `kimi upgrade`
@@ -72,21 +73,27 @@ an executable descriptor to:
 - posture `synthetic-cwd-gateway-v1`; and
 - reviewed attestation source.
 
-The executable is opened, hashed, and stat-bound before probing. An unknown
-packaged binary is rejected without executing `--version`, `--help`, or
-`acp --help`. A recognized tuple is probed with bounded output/time limits,
-then identity is checked again. Every managed spawn calls the branded
-`assertReadyForSpawn` callback immediately before process creation.
+The executable is opened, hashed, and stat-bound before probing. Known and
+unknown binaries alike are probed with bounded output/time limits
+(`--version`, `--help`, `acp --help`), then identity is checked again; a
+reviewed roster match decides the `reviewed` vs `unattested-development`
+labelling rather than whether probing happens. Every managed spawn calls the
+branded `assertReadyForSpawn` callback immediately before process creation.
 
 Admission runs before ordinary managed turns, native compaction, status/auth
 inspection, and ensemble preflight. A PATH hit is not reported as a runnable
 Kimi seat. Admission proves the local executable/startup surface; it does not
 prove remote account entitlement, backend identity, or model equivalence.
 
-Sealed scheduled Kimi execution is temporarily unavailable. The existing
-scheduled authority schema models the retired Wire/print controls and cannot
-bind ACP admission, synthetic cwd, and authenticated gateway posture. Mint and
-verification therefore fail closed until that signed schema is migrated.
+The scheduled launch authority schema (`KimiLaunchControls` in
+`ProviderLaunchAuthorityDigest`) signs this ACP composition directly: `acp`
+transport, the pinned `synthetic-cwd-gateway-v1` posture, private synthetic
+cwd, absent client-fs capability, the mandatory authenticated loopback HTTP
+gateway, and the admission roster digest/mode. The retired Wire/print controls
+are unrepresentable. Note the seal itself
+(`mintScheduledOccurrenceSeal`/`verifyScheduledOccurrenceSealAgainstCurrentContext`)
+is not yet wired into live dispatch — scheduled runs today go through the same
+ungated `runCoordinator.dispatch` as interactive runs.
 
 ## Production launch composition
 
@@ -194,10 +201,11 @@ and forces each of the nine native tools to produce a structured terminal denial
 with the same tool-call id. It also proves authenticated gateway-only workspace access,
 legacy-posture cold start, strict teardown, and pre-spawn gateway failure.
 
-Qualification evidence may be produced for review, but strict packaged/release
+Qualification evidence may be produced for review, but strict release
 admission remains red until the reviewed tuple is intentionally projected into
-the embedded roster. Ordinary CI and this documentation do not convert a
-skipped or unattested live run into a pass.
+the embedded roster; desktop admission is not gated on it and keeps running in
+labelled `unattested-development` mode. Ordinary CI and this documentation do
+not convert a skipped or unattested live run into a pass.
 
 ## Key files
 

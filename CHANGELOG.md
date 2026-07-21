@@ -12,6 +12,16 @@ This entry tracks the checkout currently ahead of the latest tagged release. It
 describes the source tree only; it does not assign a release version or imply
 that artifacts have been built or published.
 
+### Changed
+- **Docs realign to always-enabled Kimi admission and live Path-B Cursor.**
+  The 1.8.5 note claiming packaged builds still reject Kimi is corrected in
+  place (admission is structural and always-enabled; unreviewed runs are
+  labelled `unattested-development`), the security ledger gains dated
+  superseding updates, and product/QA/how-to notes stop describing Cursor
+  seats or the sub-thread status ticker as unavailable. Sealed scheduled
+  Kimi/Cursor execution remains genuinely unavailable and stays documented as
+  such.
+
 ## 1.8.6 - 2026-07-21
 
 ### Added
@@ -193,12 +203,18 @@ that artifacts have been built or published.
 - **Managed Kimi authentication and admission stay fail-closed where it
   matters.** Rotating Kimi OAuth credentials use a source-home-keyed durable
   authority across isolated ACP seats and crash recovery. The brittle per-build
-  fingerprint gate is dropped for always-enabled development admission, but
-  packaged builds still require an exact reviewed runtime tuple and the
-  embedded qualification roster remains intentionally empty—so packaged Kimi
-  and sealed scheduled Kimi execution stay unavailable until their respective
-  admission/authority evidence is commissioned. A successful `kimi login` or a
-  Settings usage key does not qualify a managed run.
+  fingerprint gate is dropped for always-enabled structural admission in every
+  build, packaged included: stable binary identity, bounded probes, a
+  parseable version, and the ACP-only posture still gate the seat, runs
+  without a reviewed roster tuple are explicitly labelled
+  `unattested-development`, and the gateway/deny-wall containment applies
+  regardless of admission mode. The embedded qualification roster remains
+  intentionally empty, so release qualification stays red and sealed scheduled
+  Kimi execution stays unavailable until their respective admission/authority
+  evidence is commissioned. A successful `kimi login` or a Settings usage key
+  does not qualify a managed run. *(Corrected 2026-07-21: this entry
+  originally claimed packaged builds still reject Kimi; the admission that
+  shipped in 1.8.5 is always-enabled in packaged builds too.)*
 - **Manual unsigned builds cannot write GitHub Release assets.** Windows and
   Linux testing builds now upload only immutable SHA/run-labelled Actions
   artifacts under read-only repository permission. The credentialed provider

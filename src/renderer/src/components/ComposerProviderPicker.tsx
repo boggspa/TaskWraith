@@ -18,9 +18,10 @@
  * branches in this component and NO per-shell CSS.
  *
  * Behaviour parity with the old <select>:
- *   - Available providers come from the canonical live-provider contract;
- *     the legacy Cursor availability flag cannot reintroduce an unqualified
- *     provider.
+ *   - Available providers come from the canonical live-provider contract
+ *     (the shared live-selectable predicate is the final gate); the Grok
+ *     and Path-B Cursor rows additionally require their runtime
+ *     availability advertisements.
  *   - The active provider carries a checkmark.
  *   - Selection calls `onSelect(providerId)` — wired by App.tsx to
  *     the same `handleComposerProviderChange` the <select> used, so
@@ -51,7 +52,7 @@ interface ComposerProviderPickerProps {
   composerStyle: ComposerStyle
   /** Show the Grok row only when the runtime advertises Grok. */
   grokAvailable: boolean
-  /** Legacy compatibility input; Cursor remains excluded by live admission. */
+  /** Show the Cursor row only when the runtime advertises Path-B Cursor. */
   cursorAvailable: boolean
   /** Same handler the old <select>'s onChange called. */
   onSelect: (provider: ProviderId) => void
@@ -108,8 +109,9 @@ export function providerRunUnavailableReason(provider: ProviderId): string | nul
 
 /**
  * Resolve the visible provider rows. The shared live-provider predicate is the
- * final gate even when a stale caller still reports Cursor as available.
- * Exported so the popover body can be unit-tested via SSR without a
+ * final gate, so a retired id (Gemini) never renders even when seeded; Grok
+ * and Path-B Cursor rows additionally require their runtime availability
+ * flags. Exported so the popover body can be unit-tested via SSR without a
  * DOM (the live popover only mounts after a click + layout effect).
  */
 export function resolveProviderRows(
