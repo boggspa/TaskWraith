@@ -17,69 +17,6 @@ export type SenderChatReadScope =
   | { kind: 'all' }
   | { kind: 'chat'; chatId: string; workspaceId?: string }
 
-interface ChatDeletionLifecycleDeps {
-  getChats: () => ChatRecord[]
-  deleteChat: (chatId: string) => void
-  beginChatHistoryMutation: (chatId: string) => void | Promise<void>
-  finishChatHistoryMutation: (chatId: string) => void
-  revokeApprovalsForChat: (chatId: string) => void
-  deleteExecutionGraphHistoryForChat: (chatId: string) => Promise<void>
-}
-
-function deletionCascadeIds(chats: ChatRecord[], rootChatId: string): string[] {
-  const ids = new Set<string>([rootChatId])
-  let changed = true
-  while (changed) {
-    changed = false
-    for (const chat of chats) {
-      if (chat.parentChatId && ids.has(chat.parentChatId) && !ids.has(chat.appChatId)) {
-        ids.add(chat.appChatId)
-        changed = true
-      }
-    }
-  }
-  return [...ids]
-}
-
-/**
- * One deletion choke for renderer, remote-draft, and reaper paths. Every
- * descendant is fenced synchronously before the first await, then receives the
- * same approval/run and graph cleanup as the requested root.
- */
-export async function deleteChatCascadeWithLifecycle(
-  deps: ChatDeletionLifecycleDeps,
-  rootChatId: string
-): Promise<string[]> {
-  const held: string[] = []
-  const prepared = new Set<string>()
-  try {
-    // Repeat defensively before commit. Relationship-creation callsites also
-    // reject a held parent, so a second pass should normally be empty.
-    while (true) {
-      const next = deletionCascadeIds(deps.getChats(), rootChatId).filter(
-        (chatId) => !prepared.has(chatId)
-      )
-      if (next.length === 0) break
-      const preparations: Promise<void>[] = []
-      for (const chatId of next) {
-        const preparation = deps.beginChatHistoryMutation(chatId)
-        held.push(chatId)
-        prepared.add(chatId)
-        preparations.push(Promise.resolve(preparation))
-      }
-      for (const chatId of next) deps.revokeApprovalsForChat(chatId)
-      // All holds and revocations above were raised synchronously before this
-      // first await; a pending modal cannot win while Canvas close stalls.
-      await Promise.all(preparations)
-      await Promise.all(next.map((chatId) => deps.deleteExecutionGraphHistoryForChat(chatId)))
-    }
-    deps.deleteChat(rootChatId)
-    return [...prepared]
-  } finally {
-    for (const chatId of held.reverse()) deps.finishChatHistoryMutation(chatId)
-  }
-}
-
 export interface ChatHandlerDeps {
   chatService: Pick<
     ChatService,
@@ -116,6 +53,12 @@ export interface ChatHandlerDeps {
   deleteChatWithLifecycle: (chatId: string) => Promise<unknown>
   /** Shared strict lifecycle choke used by every chat-truncation path. */
   truncateChatWithLifecycle: (chatId: string) => Promise<ChatRecord | null>
+  /**
+   * True while a durable history-deletion intent is pending (fail closed on an
+   * unreadable intent). The store admits one durable intent at a time, so the
+   * reaper defers instead of colliding with an in-flight erasure.
+   */
+  isHistoryErasureInFlight: () => boolean
   /** Reject child/side-chat persistence while a parent/ancestor is mutating. */
   assertParentChatCreationAllowed: (parentChatId: string) => void
   /** Global clear erases the entire graph repository; scoped clear erases that workspace. */
@@ -498,7 +441,14 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
    * popouts plus workflow + scheduled-task links. Ensembles are never reaped
    * (the service supplies no default-roster check), so a curated roster is
    * never lost.
-   * Returns the reaped ids so the renderer can drop them from its own state.
+   *
+   * Deletions are sequential and fenced: the store admits one durable
+   * deletion intent at a time, so a Promise.all fan-out would self-collide,
+   * and a candidate inside an in-flight erasure must be deferred, never
+   * adopted. Each candidate is re-validated against the live records
+   * immediately before its own deletion so a chat that gained content or
+   * links while an earlier candidate was deleting stays protected.
+   * Returns the ids actually deleted so the renderer drops exactly those.
    */
   ipcMain.handle(
     'reap-abandoned-chats',
@@ -507,6 +457,7 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
       renderer: { protectedChatIds?: string[]; draftChatIds?: string[]; keepChatId?: string } = {}
     ) => {
       deps.assertSenderCanManageChatCollection(event, 'reap-abandoned-chats')
+      const deleted: string[] = []
       try {
         const openChatPopoutIds = deps.getOpenChatPopoutIds()
         const effectiveRenderer =
@@ -522,22 +473,34 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
                 )
               }
             : renderer ?? {}
-        const candidates: string[] = []
-        const reaped = deps.reapAbandonedChats(
-          {
-            getChats: () => deps.chatService.getChats(),
-            getWorkflowChatIds: deps.getWorkflowChatIds,
-            getScheduledChatIds: deps.getScheduledChatIds,
-            deleteChat: (id) => candidates.push(id)
-          },
-          effectiveRenderer
-        )
-        await Promise.all(candidates.map((id) => deps.deleteChatWithLifecycle(id)))
-        if (reaped.length > 0) deps.broadcastThreadList()
-        return { ok: true, reaped }
+        const selectCandidates = (): string[] => {
+          const collected: string[] = []
+          deps.reapAbandonedChats(
+            {
+              getChats: () => deps.chatService.getChats(),
+              getWorkflowChatIds: deps.getWorkflowChatIds,
+              getScheduledChatIds: deps.getScheduledChatIds,
+              deleteChat: (id) => collected.push(id)
+            },
+            effectiveRenderer
+          )
+          return collected
+        }
+        const candidates = deps.isHistoryErasureInFlight() ? [] : selectCandidates()
+        for (const id of candidates) {
+          // Defer the remainder as soon as any erasure is pending — every
+          // further deletion attempt would reject against that intent anyway.
+          if (deps.isHistoryErasureInFlight()) break
+          if (!selectCandidates().includes(id)) continue
+          await deps.deleteChatWithLifecycle(id)
+          deleted.push(id)
+        }
+        if (deleted.length > 0) deps.broadcastThreadList()
+        return { ok: true, reaped: deleted }
       } catch (error) {
         console.warn('[reap-abandoned-chats] failed:', error)
-        return { ok: false, reaped: [] as string[] }
+        if (deleted.length > 0) deps.broadcastThreadList()
+        return { ok: false, reaped: deleted }
       }
     }
   )

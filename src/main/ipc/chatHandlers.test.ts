@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain } from 'electron'
-import { deleteChatCascadeWithLifecycle, registerChatHandlers } from './chatHandlers'
+import { registerChatHandlers } from './chatHandlers'
 import type { AppSettings, ChatListItem, ChatRecord } from '../store/types'
 import type { RebindChatWorkspaceInput, RebindChatWorkspaceOptions } from '../services/ChatService'
 
@@ -109,6 +109,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     getScheduledChatIds: vi.fn(() => new Set(['scheduled-chat'])),
     getOpenChatPopoutIds: vi.fn(() => new Set<string>()),
     getOpenCanvasChatIds: vi.fn(() => new Set<string>()),
+    isHistoryErasureInFlight: vi.fn(() => false),
     resolveSenderChatReadScope: vi.fn(() => ({ kind: 'all' as const })),
     assertSenderCanManageChatCollection: vi.fn(),
     assertSenderChatScope: vi.fn(),
@@ -850,47 +851,24 @@ describe('registerChatHandlers', () => {
     expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
   })
 
-  it('delete-chat revokes chat authority before awaiting graph cleanup', async () => {
-      let releaseGraph!: () => void
-      const graphClear = new Promise<void>((resolve) => {
-        releaseGraph = resolve
-      })
-      const order: string[] = []
-      const deps = createDeps({
-        beginChatHistoryMutation: vi.fn(() => {
-          order.push('begin')
-        }),
-        revokeApprovalsForChat: vi.fn(() => order.push('revoke')),
-        deleteExecutionGraphHistoryForChat: vi.fn(() => {
-          order.push('graph')
-          return graphClear
-        }),
-        finishChatHistoryMutation: vi.fn(() => order.push('finish'))
-      })
-      deps.deleteChatWithLifecycle = vi.fn((chatId: string) =>
-        deleteChatCascadeWithLifecycle(
-          {
-            getChats: deps.chatService.getChats,
-            deleteChat: deps.chatService.deleteChat,
-            beginChatHistoryMutation: deps.beginChatHistoryMutation,
-            finishChatHistoryMutation: deps.finishChatHistoryMutation,
-            revokeApprovalsForChat: deps.revokeApprovalsForChat,
-            deleteExecutionGraphHistoryForChat: deps.deleteExecutionGraphHistoryForChat
-          },
-          chatId
-        )
-      )
-      vi.mocked(deps.chatService.getChat).mockReturnValue(chat('chat-1'))
-      registerChatHandlers(deps)
+  it('delete-chat awaits the shared lifecycle choke before broadcasting', async () => {
+    let releaseDelete!: () => void
+    const deleting = new Promise<void>((resolve) => {
+      releaseDelete = resolve
+    })
+    const deps = createDeps({
+      deleteChatWithLifecycle: vi.fn(() => deleting)
+    })
+    registerChatHandlers(deps)
 
-      const deleting = handlerFor('delete-chat')({} as any, 'chat-1')
-      await vi.waitFor(() => expect(order).toEqual(['begin', 'revoke', 'graph']))
-      expect(deps.chatService.deleteChat).not.toHaveBeenCalled()
-      expect(deps.chatService.saveChat).not.toHaveBeenCalled()
+    const request = handlerFor('delete-chat')({} as any, 'chat-1')
+    await Promise.resolve()
+    expect(deps.deleteChatWithLifecycle).toHaveBeenCalledWith('chat-1')
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
 
-      releaseGraph()
-      await deleting
-      expect(order.at(-1)).toBe('finish')
+    releaseDelete()
+    await request
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
   })
 
   it('reaps abandoned chats with delete-only store guards and broadcasts only on changes', async () => {
@@ -962,5 +940,132 @@ describe('registerChatHandlers', () => {
       draftChatIds: ['draft-chat'],
       keepChatId: 'created-chat'
     })
+  })
+
+  it('reaps multiple candidates strictly sequentially — the store admits one intent at a time', async () => {
+    const available = ['stale-1', 'stale-2', 'stale-3']
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      for (const id of available) reaperDeps.deleteChat(id)
+      return [...available]
+    })
+    let inFlight = 0
+    let maxInFlight = 0
+    const deleteChatWithLifecycle = vi.fn(async (chatId: string) => {
+      inFlight += 1
+      maxInFlight = Math.max(maxInFlight, inFlight)
+      await Promise.resolve()
+      available.splice(available.indexOf(chatId), 1)
+      inFlight -= 1
+    })
+    const deps = createDeps({ reapAbandonedChats, deleteChatWithLifecycle })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: true,
+      reaped: ['stale-1', 'stale-2', 'stale-3']
+    })
+    expect(maxInFlight).toBe(1)
+    expect(deleteChatWithLifecycle).toHaveBeenCalledTimes(3)
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+
+  it('defers entirely while a durable history erasure is in flight', async () => {
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      reaperDeps.deleteChat('stale-1')
+      return ['stale-1']
+    })
+    const deps = createDeps({
+      reapAbandonedChats,
+      isHistoryErasureInFlight: vi.fn(() => true)
+    })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: true,
+      reaped: []
+    })
+    expect(reapAbandonedChats).not.toHaveBeenCalled()
+    expect(deps.deleteChatWithLifecycle).not.toHaveBeenCalled()
+    expect(deps.broadcastThreadList).not.toHaveBeenCalled()
+  })
+
+  it('stops mid-loop when an erasure starts, keeping the already-reaped ids honest', async () => {
+    const available = ['stale-1', 'stale-2']
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      for (const id of available) reaperDeps.deleteChat(id)
+      return [...available]
+    })
+    let erasing = false
+    const deleteChatWithLifecycle = vi.fn(async (chatId: string) => {
+      available.splice(available.indexOf(chatId), 1)
+      // A user-initiated delete/clear lands right after the first reap.
+      erasing = true
+    })
+    const deps = createDeps({
+      reapAbandonedChats,
+      deleteChatWithLifecycle,
+      isHistoryErasureInFlight: vi.fn(() => erasing)
+    })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: true,
+      reaped: ['stale-1']
+    })
+    expect(deleteChatWithLifecycle).toHaveBeenCalledTimes(1)
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
+  })
+
+  it('re-validates each candidate against live records before its own deletion', async () => {
+    const available = ['stale-1', 'stale-2']
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      for (const id of available) reaperDeps.deleteChat(id)
+      return [...available]
+    })
+    const deleteChatWithLifecycle = vi.fn(async (chatId: string) => {
+      available.splice(available.indexOf(chatId), 1)
+      // While stale-1 deletes, stale-2 gains protection (message/draft/link).
+      const index = available.indexOf('stale-2')
+      if (index >= 0) available.splice(index, 1)
+    })
+    const deps = createDeps({ reapAbandonedChats, deleteChatWithLifecycle })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: true,
+      reaped: ['stale-1']
+    })
+    expect(deleteChatWithLifecycle).toHaveBeenCalledTimes(1)
+    expect(deleteChatWithLifecycle).not.toHaveBeenCalledWith('stale-2')
+  })
+
+  it('reports the partially-reaped ids when a lifecycle deletion rejects', async () => {
+    const available = ['stale-1', 'stale-2']
+    const reapAbandonedChats = vi.fn<
+      Parameters<typeof registerChatHandlers>[0]['reapAbandonedChats']
+    >((reaperDeps) => {
+      for (const id of available) reaperDeps.deleteChat(id)
+      return [...available]
+    })
+    const deleteChatWithLifecycle = vi.fn(async (chatId: string) => {
+      if (chatId === 'stale-2') throw new Error('History deletion is still pending.')
+      available.splice(available.indexOf(chatId), 1)
+    })
+    const deps = createDeps({ reapAbandonedChats, deleteChatWithLifecycle })
+    registerChatHandlers(deps)
+
+    await expect(handlerFor('reap-abandoned-chats')({} as any, {})).resolves.toEqual({
+      ok: false,
+      reaped: ['stale-1']
+    })
+    expect(deps.broadcastThreadList).toHaveBeenCalledTimes(1)
   })
 })
