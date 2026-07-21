@@ -309,15 +309,14 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
         runtime: cli,
         tools,
         controls: {
-          transport: 'wire',
-          wireProtocolVersion: '1',
-          serviceTier: 'standard',
+          transport: 'acp',
+          acpPostureVersion: 'synthetic-cwd-gateway-v1',
+          workspaceCwdExposure: 'private-synthetic',
+          clientFsCapability: 'none',
+          taskWraithMcpAttachmentMode: 'authenticated-loopback-http-gateway',
+          runtimeAdmissionRosterSha256: hex('1'),
+          runtimeAdmissionMode: 'reviewed',
           thinking: false,
-          planMode: false,
-          taskWraithMcpAttachmentMode: 'isolated-broker-only-file',
-          agentFileSha256: hex('1'),
-          sanitizerPolicySha256: hex('2'),
-          contentFilterRetryPolicySha256: hex('3'),
           fallbackPolicy: 'forbid'
         }
       }
@@ -399,7 +398,13 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
   }
 }
 
-function contradictoryPosturePlan(provider: Exclude<ProviderId, 'gemini'>): ProviderLaunchAuthorityInput {
+/**
+ * ACP Kimi is excluded: it has no posture-dependent control — its sealed
+ * posture is structural (digest invariants + the pinned posture version).
+ */
+function contradictoryPosturePlan(
+  provider: Exclude<ProviderId, 'gemini' | 'kimi'>
+): ProviderLaunchAuthorityInput {
   const plan = providerLaunchPlan(provider)
   switch (provider) {
     case 'codex':
@@ -412,20 +417,17 @@ function contradictoryPosturePlan(provider: Exclude<ProviderId, 'gemini'>): Prov
         ...plan,
         controls: { ...plan.controls, permissionMode: 'plan' }
       } as ProviderLaunchAuthorityInputByProvider['claude']
-    case 'kimi':
-      return {
-        ...plan,
-        controls: { ...plan.controls, planMode: true }
-      } as ProviderLaunchAuthorityInputByProvider['kimi']
     case 'grok':
       return {
         ...plan,
         controls: { ...plan.controls, readOnlySeat: false }
       } as ProviderLaunchAuthorityInputByProvider['grok']
     case 'cursor':
+      // Keep the default tool surface (profile intact) so the read-only
+      // posture contradiction is the write-tier execution mode, not the bridge.
       return {
         ...plan,
-        controls: { ...plan.controls, executionMode: 'plan' }
+        controls: { ...plan.controls, executionMode: 'contained-default' }
       } as ProviderLaunchAuthorityInputByProvider['cursor']
     case 'ollama':
       return {
@@ -2003,6 +2005,7 @@ describe('runtime launch and loop verifier authority', () => {
       'codex',
       'claude',
       'grok',
+      'cursor',
       'ollama'
     ] as const) {
       const scheduled = task({
@@ -2030,14 +2033,13 @@ describe('runtime launch and loop verifier authority', () => {
 
   it('accepts the exact read-only transport controls used by each provider path', () => {
     const cases: Array<
-      [
-        Exclude<ProviderId, 'gemini' | 'kimi' | 'grok' | 'cursor' | 'ollama'>,
-        ProviderLaunchAuthorityInput
-      ]
+      [Exclude<ProviderId, 'gemini' | 'grok' | 'ollama'>, ProviderLaunchAuthorityInput]
     > = [
       ['codex', providerLaunchPlan('codex')],
       ['claude', providerLaunchPlan('claude')],
-      ['claude', claudeCliReadOnlyPlan()]
+      ['claude', claudeCliReadOnlyPlan()],
+      ['kimi', providerLaunchPlan('kimi')],
+      ['cursor', cursorBridgePlan('none')]
     ]
     for (const [provider, providerLaunchAuthority] of cases) {
       const scheduled = task({
@@ -2051,7 +2053,10 @@ describe('runtime launch and loop verifier authority', () => {
           context(scheduled, {
             runtimeSeats: [
               defaultSeat(provider, {
-                effective: effectiveAuthority(provider, { providerLaunchAuthority })
+                effective: effectiveAuthority(provider, {
+                  effectiveMcpProfileId: providerLaunchAuthority.tools.taskWraithMcpProfileId,
+                  providerLaunchAuthority
+                })
               })
             ]
           }),
@@ -2304,33 +2309,84 @@ describe('runtime launch and loop verifier authority', () => {
     ).toMatchObject({ schemaVersion: 2 })
   })
 
-  it('rejects every Cursor scheduled posture before launch authority is minted', () => {
-    const permissions = effectivePermissions()
+  it('seals contained Cursor postures for both seat tiers and rejects bridge/resume drift', () => {
+    const readOnlyPermissions = effectivePermissions()
+    const writePermissions = effectivePermissions({
+      presetId: 'workspace_write',
+      approvalMode: 'auto_edit',
+      readOnly: false,
+      agenticServices: {
+        ...effectivePermissions().agenticServices,
+        shellCommands: 'allow',
+        fileChanges: 'allow'
+      }
+    })
     const scheduled = task({
       provider: 'cursor',
       runtimeProfileId: undefined,
       selectedModelType: 'cursor-model'
     })
+    expect(
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [
+            defaultSeatForPermissions('cursor', readOnlyPermissions, cursorBridgePlan('none'))
+          ]
+        }),
+        now
+      )
+    ).toMatchObject({ schemaVersion: 2 })
+    expect(
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [
+            defaultSeatForPermissions(
+              'cursor',
+              writePermissions,
+              cursorBridgePlan('none', 'contained-default')
+            )
+          ]
+        }),
+        now
+      )
+    ).toMatchObject({ schemaVersion: 2 })
     expect(() =>
       mintScheduledOccurrenceSeal(
         ROOT,
         context(scheduled, {
           runtimeSeats: [
-            defaultSeatForPermissions('cursor', permissions, cursorBridgePlan('none'))
+            defaultSeatForPermissions('cursor', writePermissions, cursorBridgePlan('none'))
           ]
         }),
         now
       )
-    ).toThrow(/Cursor scheduled launches are disabled/i)
+    ).toThrow(/Cursor execution mode does not match/i)
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [
+            defaultSeatForPermissions(
+              'cursor',
+              readOnlyPermissions,
+              cursorBridgePlan('safe-subset', 'plan')
+            )
+          ]
+        }),
+        now
+      )
+    ).toThrow(/do not advertise a TaskWraith MCP bridge/i)
   })
 
-  it('rejects Kimi scheduled posture until the seal binds ACP production containment', () => {
+  it('seals the Kimi ACP production posture and rejects a gateway-less authority', () => {
     const scheduled = task({
       provider: 'kimi',
       runtimeProfileId: undefined,
       selectedModelType: 'kimi-model'
     })
-    expect(() =>
+    expect(
       mintScheduledOccurrenceSeal(
         ROOT,
         context(scheduled, {
@@ -2338,7 +2394,29 @@ describe('runtime launch and loop verifier authority', () => {
         }),
         now
       )
-    ).toThrow(/unavailable for sealed scheduled execution.*Kimi ACP runtime admission/i)
+    ).toMatchObject({ schemaVersion: 2 })
+
+    const plan = providerLaunchPlan('kimi') as ProviderLaunchAuthorityInputByProvider['kimi']
+    const gatewayless = {
+      ...plan,
+      tools: { ...plan.tools, taskWraithMcpAdvertised: false, taskWraithMcpProfileId: null }
+    }
+    expect(() =>
+      mintScheduledOccurrenceSeal(
+        ROOT,
+        context(scheduled, {
+          runtimeSeats: [
+            defaultSeat('kimi', {
+              effective: effectiveAuthority('kimi', {
+                effectiveMcpProfileId: null,
+                providerLaunchAuthority: gatewayless
+              })
+            })
+          ]
+        }),
+        now
+      )
+    ).toThrow(/governed TaskWraith MCP gateway advertised/i)
   })
 
   it('uses a canonical Ollama HTTP marker and rejects selected CLI-style overrides', () => {

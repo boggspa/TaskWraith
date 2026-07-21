@@ -1,5 +1,6 @@
 import { createHash, timingSafeEqual } from 'node:crypto'
 import { isAbsolute, parse, resolve } from 'node:path'
+import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../shared/kimiAcpPosture'
 import { isLiveSelectableProvider, isRetiredProvider } from '../shared/retiredProviders'
 import type {
   AgenticNetworkPolicy,
@@ -29,6 +30,7 @@ import {
   type CanonicalProviderLaunchAuthority,
   type ClaudeLaunchControls,
   type CodexLaunchControls,
+  type CursorLaunchControls,
   type GrokLaunchControls,
   type KimiLaunchControls,
   type OllamaLaunchControls,
@@ -1081,10 +1083,15 @@ function assertProviderPostureControls(
     }
     case 'kimi': {
       const controls = launch.controls as KimiLaunchControls
-      const expectedPlanMode =
-        controls.transport === 'cli-print' || (approvalMode === 'plan' && !recon)
-      if (controls.planMode !== expectedPlanMode) {
-        throw new TypeError('Kimi plan mode does not match the signed posture.')
+      // Compile-time tripwire: the schema pins the posture literal, so bumping
+      // KIMI_ACP_PRODUCTION_POSTURE_VERSION makes this comparison a ts(2367)
+      // no-overlap error — a posture bump must re-decide the signed schema, not
+      // silently re-mean it. Gateway-mandatory and reusable-seat rules are
+      // enforced by the canonical digest invariants; read-only/plan posture
+      // rides the generic TaskWraith MCP profile checks (ACP Kimi has no
+      // provider-native plan flag).
+      if (controls.acpPostureVersion !== KIMI_ACP_PRODUCTION_POSTURE_VERSION) {
+        throw new TypeError('Kimi ACP posture version does not match the production posture.')
       }
       return
     }
@@ -1108,9 +1115,24 @@ function assertProviderPostureControls(
       return
     }
     case 'cursor': {
-      throw new TypeError(
-        'Cursor scheduled launches are disabled pending exact-build containment qualification.'
-      )
+      const controls = launch.controls as CursorLaunchControls
+      // Mirror of the live contained argv (runCursorProvider): `--sandbox
+      // enabled` is pinned for BOTH seat tiers; a read-only seat adds a
+      // non-mutating `--mode` (the schema's 'plan' tier) while a write-capable
+      // seat runs Cursor's sandboxed default ('contained-default'); no
+      // TaskWraith MCP bridge is written and no provider session is resumed.
+      // Broker/force/approve consistency with the absent bridge is enforced by
+      // the canonical digest invariants.
+      if (controls.executionMode !== (readOnly ? 'plan' : 'contained-default')) {
+        throw new TypeError('Cursor execution mode does not match the signed posture.')
+      }
+      if (controls.bridgeMode !== 'none' || launch.tools.taskWraithMcpAdvertised) {
+        throw new TypeError('Contained Cursor launches do not advertise a TaskWraith MCP bridge.')
+      }
+      if (launch.common.sessionMode !== 'fresh') {
+        throw new TypeError('Contained Cursor launches never resume a provider session.')
+      }
+      return
     }
     case 'ollama': {
       const controls = launch.controls as OllamaLaunchControls
@@ -1371,11 +1393,6 @@ function runnableProviderId(value: unknown, label: string): ProviderId {
   const provider = providerId(value, label)
   if (isRetiredProvider(provider)) throw new TypeError(`${label} is retired.`)
   if (!isLiveSelectableProvider(provider)) throw new TypeError(`${label} is unavailable.`)
-  if (provider === 'kimi') {
-    throw new TypeError(
-      `${label} is unavailable for sealed scheduled execution until the signed launch authority binds Kimi ACP runtime admission, synthetic cwd, and authenticated per-run gateway posture.`
-    )
-  }
   return provider
 }
 

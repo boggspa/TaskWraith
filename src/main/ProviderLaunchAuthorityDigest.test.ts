@@ -96,15 +96,14 @@ const kimi = {
   runtime: cliRuntime('kimi'),
   tools: tools(),
   controls: {
-    transport: 'wire',
-    wireProtocolVersion: '0.1',
-    serviceTier: 'standard',
+    transport: 'acp',
+    acpPostureVersion: 'synthetic-cwd-gateway-v1',
+    workspaceCwdExposure: 'private-synthetic',
+    clientFsCapability: 'none',
+    taskWraithMcpAttachmentMode: 'authenticated-loopback-http-gateway',
+    runtimeAdmissionRosterSha256: hex('6'),
+    runtimeAdmissionMode: 'reviewed',
     thinking: false,
-    planMode: false,
-    taskWraithMcpAttachmentMode: 'isolated-broker-only-file',
-    agentFileSha256: hex('6'),
-    sanitizerPolicySha256: hex('7'),
-    contentFilterRetryPolicySha256: hex('8'),
     fallbackPolicy: 'forbid'
   }
 } as const satisfies ProviderLaunchAuthorityInputByProvider['kimi']
@@ -374,9 +373,15 @@ describe('ProviderLaunchAuthorityDigest', () => {
     expect(() =>
       buildProviderLaunchAuthority({
         ...kimi,
-        controls: { ...kimi.controls, transport: 'cli-print', wireProtocolVersion: null }
+        tools: { ...kimi.tools, taskWraithMcpAdvertised: false, taskWraithMcpProfileId: null }
       } as never)
-    ).toThrow(/plan mode/i)
+    ).toThrow(/gateway advertised/i)
+    expect(() =>
+      buildProviderLaunchAuthority({
+        ...kimi,
+        controls: { ...kimi.controls, transport: 'wire' }
+      } as never)
+    ).toThrow(/Kimi transport/i)
     expect(() =>
       buildProviderLaunchAuthority({
         ...grok,
@@ -475,12 +480,14 @@ describe('ProviderLaunchAuthorityDigest', () => {
         controls: { ...claude.controls, taskWraithMcpAttachmentMode: 'none' }
       } as never)
     ).toThrow(/Claude TaskWraith MCP advertisement must match/i)
+    // A detached Kimi gateway is structurally unrepresentable, not merely
+    // contradictory: the ACP attachment mode has no 'none' member.
     expect(() =>
       buildProviderLaunchAuthority({
         ...kimi,
         controls: { ...kimi.controls, taskWraithMcpAttachmentMode: 'none' }
       } as never)
-    ).toThrow(/Kimi TaskWraith MCP advertisement must match/i)
+    ).toThrow(/Kimi TaskWraith MCP attachment mode is invalid/i)
     expect(() =>
       buildProviderLaunchAuthority({
         ...grok,

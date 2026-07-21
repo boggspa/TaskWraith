@@ -99,21 +99,34 @@ export interface ClaudeLaunchControls {
 }
 
 /**
- * Historical Wire/print authority shape retained for strict decoding and
- * migration tests only. It cannot authorize the source-ahead ACP production
- * composition. ScheduledOccurrenceSeal rejects Kimi until a new signed schema
- * binds runtime admission, synthetic cwd, and authenticated HTTP gateway state.
+ * ACP production authority — the only signable Kimi launch shape. It expresses
+ * the source-ahead composition that KimiRuntimeAdmission and
+ * launchKimiProductionAcp enforce at spawn: roster-bound runtime admission, a
+ * private synthetic cwd (never the workspace), no ACP client-fs capability, and
+ * a mandatory authenticated loopback HTTP MCP gateway. The retired Wire and
+ * `--print` transports are intentionally unrepresentable; nothing was ever
+ * minted against the historical Wire shape, so it decodes nowhere.
  */
 export interface KimiLaunchControls {
-  readonly transport: 'wire' | 'cli-print'
-  readonly wireProtocolVersion: string | null
-  readonly serviceTier: 'standard' | 'fast' | null
+  readonly transport: 'acp'
+  /**
+   * Literal twin of KIMI_ACP_PRODUCTION_POSTURE_VERSION (shared/kimiAcpPosture).
+   * Kept as a literal so a posture bump cannot silently re-mean schemaVersion 1;
+   * ScheduledOccurrenceSeal compares against the shared constant and turns a
+   * bump into a compile-time error there.
+   */
+  readonly acpPostureVersion: 'synthetic-cwd-gateway-v1'
+  /** The provider cwd is a private, empty, 0700 directory — never the workspace. */
+  readonly workspaceCwdExposure: 'private-synthetic'
+  /** `initialize` omits `clientCapabilities.fs`; all workspace I/O rides the gateway. */
+  readonly clientFsCapability: 'none'
+  /** The governed TaskWraith HTTP MCP gateway is mandatory, not optional. */
+  readonly taskWraithMcpAttachmentMode: 'authenticated-loopback-http-gateway'
+  /** Digest of the embedded runtime qualification roster that admitted the binary. */
+  readonly runtimeAdmissionRosterSha256: string
+  /** admitKimiRuntime mode at mint; a verify-time re-admission must match. */
+  readonly runtimeAdmissionMode: 'reviewed' | 'unattested-development'
   readonly thinking: boolean
-  readonly planMode: boolean
-  readonly taskWraithMcpAttachmentMode: 'isolated-broker-only-file' | 'none'
-  readonly agentFileSha256: string
-  readonly sanitizerPolicySha256: string
-  readonly contentFilterRetryPolicySha256: string
   readonly fallbackPolicy: 'forbid'
 }
 
@@ -269,14 +282,13 @@ export const PROVIDER_LAUNCH_CONTROL_FIELDS = {
   } satisfies Record<keyof ClaudeLaunchControls, true>,
   kimi: {
     transport: true,
-    wireProtocolVersion: true,
-    serviceTier: true,
-    thinking: true,
-    planMode: true,
+    acpPostureVersion: true,
+    workspaceCwdExposure: true,
+    clientFsCapability: true,
     taskWraithMcpAttachmentMode: true,
-    agentFileSha256: true,
-    sanitizerPolicySha256: true,
-    contentFilterRetryPolicySha256: true,
+    runtimeAdmissionRosterSha256: true,
+    runtimeAdmissionMode: true,
+    thinking: true,
     fallbackPolicy: true
   } satisfies Record<keyof KimiLaunchControls, true>,
   grok: {
@@ -587,22 +599,33 @@ function normalizeKimiControls(value: unknown): KimiLaunchControls {
     'Kimi controls'
   )
   return {
-    transport: oneOf(record.transport, ['wire', 'cli-print'], 'Kimi transport'),
-    wireProtocolVersion: nullableText(record.wireProtocolVersion, 'Kimi Wire protocol version'),
-    serviceTier: nullableOneOf(record.serviceTier, ['standard', 'fast'], 'Kimi service tier'),
-    thinking: boolean(record.thinking, 'Kimi thinking'),
-    planMode: boolean(record.planMode, 'Kimi plan mode'),
+    transport: oneOf(record.transport, ['acp'], 'Kimi transport'),
+    acpPostureVersion: oneOf(
+      record.acpPostureVersion,
+      ['synthetic-cwd-gateway-v1'],
+      'Kimi ACP posture version'
+    ),
+    workspaceCwdExposure: oneOf(
+      record.workspaceCwdExposure,
+      ['private-synthetic'],
+      'Kimi workspace cwd exposure'
+    ),
+    clientFsCapability: oneOf(record.clientFsCapability, ['none'], 'Kimi client fs capability'),
     taskWraithMcpAttachmentMode: oneOf(
       record.taskWraithMcpAttachmentMode,
-      ['isolated-broker-only-file', 'none'],
+      ['authenticated-loopback-http-gateway'],
       'Kimi TaskWraith MCP attachment mode'
     ),
-    agentFileSha256: sha256(record.agentFileSha256, 'Kimi agent file digest'),
-    sanitizerPolicySha256: sha256(record.sanitizerPolicySha256, 'Kimi sanitizer policy digest'),
-    contentFilterRetryPolicySha256: sha256(
-      record.contentFilterRetryPolicySha256,
-      'Kimi retry policy digest'
+    runtimeAdmissionRosterSha256: sha256(
+      record.runtimeAdmissionRosterSha256,
+      'Kimi runtime admission roster digest'
     ),
+    runtimeAdmissionMode: oneOf(
+      record.runtimeAdmissionMode,
+      ['reviewed', 'unattested-development'],
+      'Kimi runtime admission mode'
+    ),
+    thinking: boolean(record.thinking, 'Kimi thinking'),
     fallbackPolicy: oneOf(record.fallbackPolicy, ['forbid'], 'Kimi fallback policy')
   }
 }
@@ -782,16 +805,13 @@ function assertCrossFieldInvariants(
       throw new TypeError('Claude CLI transport cannot use SDK-only launch controls.')
     }
   } else if (provider === 'kimi') {
-    const kimi = controls as KimiLaunchControls
-    const attached = kimi.taskWraithMcpAttachmentMode !== 'none'
-    if (attached !== tools.taskWraithMcpAdvertised) {
-      throw new TypeError('Kimi TaskWraith MCP advertisement must match its attachment mode.')
+    // launchKimiProductionAcp refuses gateway-less seats, so a signable Kimi
+    // authority cannot express one either; the attachment mode has no 'none'.
+    if (!tools.taskWraithMcpAdvertised) {
+      throw new TypeError('Kimi ACP requires the governed TaskWraith MCP gateway advertised.')
     }
-    if ((kimi.transport === 'wire') !== (kimi.wireProtocolVersion !== null)) {
-      throw new TypeError('Kimi Wire protocol identity must be present only for Wire transport.')
-    }
-    if (kimi.transport === 'cli-print' && !kimi.planMode) {
-      throw new TypeError('Kimi print transport must remain in plan mode.')
+    if (common.sessionMode === 'reusable') {
+      throw new TypeError('Kimi ACP seats are fresh or posture-matched resume, never reusable.')
     }
   } else if (provider === 'grok') {
     const grok = controls as GrokLaunchControls
