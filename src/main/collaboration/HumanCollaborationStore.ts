@@ -228,6 +228,32 @@ export class HumanCollaborationStore {
     return { share: cloneShare(share)!, invite: { ...invite }, inviteToken, roomId }
   }
 
+  /**
+   * History-erasure step: remove every share record owned by the given chats.
+   * Record removal is the revocation — the runtime denies by absence on the
+   * collaborator's next inbound frame and drops the session — and the persist
+   * throws on failure so the outer deletion transaction stays pending instead
+   * of committing while share records survive. Idempotent per scope.
+   */
+  purgeChatShares(chatIds: readonly string[]): number {
+    const targets = new Set(chatIds)
+    const retained = this.memory.shares.filter((share) => !targets.has(share.chatId))
+    const removed = this.memory.shares.length - retained.length
+    if (removed === 0) return 0
+    this.memory.shares = retained
+    this.persist()
+    return removed
+  }
+
+  /** Global history clear: remove every share record. */
+  purgeAllShares(): number {
+    const removed = this.memory.shares.length
+    if (removed === 0) return 0
+    this.memory.shares = []
+    this.persist()
+    return removed
+  }
+
   revokeShare(shareId: string, now: number = Date.now()): HumanCollaborationShare | null {
     const share = this.memory.shares.find((candidate) => candidate.shareId === shareId)
     if (!share) return null

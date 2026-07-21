@@ -100,4 +100,27 @@ describe('HumanCollaborationAuditLog', () => {
     const broken = new HumanCollaborationAuditLog(join(dir, 'missing.json'))
     expect(broken.list()).toEqual([])
   })
+
+  it('purges rows for erased chats and shares, including chatless share rows', () => {
+    const log = new HumanCollaborationAuditLog(path)
+    log.append({ kind: 'share.created', chatId: 'chat-erased', shareId: 's-erased' })
+    log.append({ kind: 'contribution.received', chatId: 'chat-erased', preview: 'secret text' })
+    // Admission rows carry only the share id — share-id matching must reach them.
+    log.append({ kind: 'admission.began', shareId: 's-erased', collaboratorId: 'c-1' })
+    log.append({ kind: 'share.created', chatId: 'chat-live', shareId: 's-live' })
+
+    expect(
+      log.purgeEntries({ chatIds: ['chat-erased'], shareIds: ['s-erased'] })
+    ).toBe(3)
+    expect(log.purgeEntries({ chatIds: ['chat-erased'], shareIds: ['s-erased'] })).toBe(0)
+    const rows = log.list()
+    expect(rows).toHaveLength(1)
+    expect(rows[0].chatId).toBe('chat-live')
+    // The durable file dropped the erased rows too.
+    expect(readFileSync(path, 'utf8')).not.toContain('chat-erased')
+
+    expect(log.purgeAll()).toBe(1)
+    expect(log.list()).toEqual([])
+    expect(new HumanCollaborationAuditLog(path).list()).toEqual([])
+  })
 })

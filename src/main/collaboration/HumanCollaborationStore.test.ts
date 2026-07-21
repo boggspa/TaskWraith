@@ -352,6 +352,23 @@ describe('HumanCollaborationStore', () => {
     // The surviving invite is the fresh one, not the long-expired original.
     expect(share?.invites[0]?.expiresAt).toBeGreaterThan(2000 + dayMs)
   })
+  it('purges share records for erased chats and denies the runtime by absence', () => {
+    const store = new HumanCollaborationStore()
+    const erased = store.createShare({ chatId: 'chat-erased', mode: 'comments', now: 1000 })
+    const child = store.createShare({ chatId: 'chat-child', mode: 'readOnly', now: 1000 })
+    const survivor = store.createShare({ chatId: 'chat-live', mode: 'comments', now: 1000 })
+
+    expect(store.purgeChatShares(['chat-erased', 'chat-child'])).toBe(2)
+    expect(store.purgeChatShares(['chat-erased', 'chat-child'])).toBe(0)
+    expect(store.getShare(erased.share.shareId)).toBeNull()
+    expect(store.getShare(child.share.shareId)).toBeNull()
+    expect(store.getShareForChat('chat-erased')).toBeNull()
+    expect(store.getShare(survivor.share.shareId)).not.toBeNull()
+
+    expect(store.purgeAllShares()).toBe(1)
+    expect(store.listShares()).toEqual([])
+  })
+
 })
 
 /*

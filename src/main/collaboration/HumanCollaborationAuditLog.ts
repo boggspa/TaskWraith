@@ -121,6 +121,40 @@ export class HumanCollaborationAuditLog implements HumanCollaborationAuditLike {
     this.persist()
   }
 
+  /**
+   * History-erasure step: drop rows for erased chats/shares. Rows carry
+   * bounded previews and content hashes of chat contributions, so they follow
+   * the approval/feedback ledgers out of durable history. Share-id matching
+   * covers rows (admission, invites) that never carried a chat id. Persist
+   * failures throw so the outer deletion transaction stays pending.
+   */
+  purgeEntries(input: {
+    chatIds?: readonly string[]
+    shareIds?: readonly string[]
+  }): number {
+    const chatIds = new Set(input.chatIds ?? [])
+    const shareIds = new Set(input.shareIds ?? [])
+    const retained = this.events.filter(
+      (event) =>
+        !(event.chatId && chatIds.has(event.chatId)) &&
+        !(event.shareId && shareIds.has(event.shareId))
+    )
+    const removed = this.events.length - retained.length
+    if (removed === 0) return 0
+    this.events = retained
+    this.persist()
+    return removed
+  }
+
+  /** Global history clear: remove every audit row. */
+  purgeAll(): number {
+    const removed = this.events.length
+    if (removed === 0) return 0
+    this.events = []
+    this.persist()
+    return removed
+  }
+
   /** Newest-first, optionally filtered by chat, bounded by `limit`. */
   list(args?: { chatId?: string; limit?: number }): HumanCollaborationAuditEvent[] {
     const limit = Math.max(1, Math.min(1000, Math.floor(args?.limit ?? 200)))
