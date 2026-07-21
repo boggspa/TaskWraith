@@ -220,7 +220,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Jump to latest')
   })
 
-  it('bundles the current 1.8.5 release notes', () => {
+  it('bundles the frozen 1.8.5 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.5' }, null)
     expect(entry).toMatchObject({
       version: '1.8.5',
@@ -230,6 +230,18 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Cursor runs again under Path-B contained native sandbox')
     expect(entry.releaseNotes).toContain('Needs your input surfaces pending agent questions')
     expect(entry.releaseNotes).toContain('canvas_eval')
+  })
+
+  it('bundles the current 1.8.6 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.6' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.6',
+      releaseDate: '2026-07-21'
+    })
+    expect(entry.releaseNotes).toContain('Path-B Cursor is selectable again')
+    expect(entry.releaseNotes).toContain('Composer queue and Steer are classic again')
+    expect(entry.releaseNotes).toContain('iOS companion parity advances')
+    expect(entry.releaseNotes).toContain('Workspace Write no longer demands a second standing workspace grant')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

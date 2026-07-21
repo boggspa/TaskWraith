@@ -12,10 +12,7 @@ This entry tracks the checkout currently ahead of the latest tagged release. It
 describes the source tree only; it does not assign a release version or imply
 that artifacts have been built or published.
 
-Snapshot at final ship-prep pass (2026-07-21): HEAD `0f7daa515`, **36 commits**
-after `v1.8.5` (`314c2338a`). Package still **1.8.5**; iOS still **0.1.0 (80)**.
-Target candidate name for the next ship is **1.8.6** until a different version
-is chosen at bump time. Re-snapshot immediately before any version bump.
+## 1.8.6 - 2026-07-21
 
 ### Added
 - **Path-B Cursor is selectable again after the 1.8.5 product path.** Managed
