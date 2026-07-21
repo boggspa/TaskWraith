@@ -1,0 +1,5 @@
+{
+  "schemaVersion": 1,
+  "description": "User-approved live-selectable provider set (AGENTS.md: 'Capability governance — the user decides'). Membership changes in either direction are reserved to the user; edit this file only with explicit in-session user approval, in the same commit as the code change it authorizes.",
+  "liveSelectableProviderIds": ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
+}
