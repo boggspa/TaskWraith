@@ -9050,6 +9050,69 @@ public struct QueuedComposerPromptsStack: View {
     }
 }
 
+// MARK: - Floating above-composer pill chrome (Diff + Tools)
+
+/// Shared glass chip chrome for the unfocused Diff + Tools pills that float
+/// above the collapsed composer. Applies real Liquid Glass on the content
+/// (not a solid fill behind `glassEffect`), with a slightly taller vertical
+/// pad so icons/labels breathe without growing wider.
+struct ComposerFloatingPillChrome: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    private var pillShape: RoundedRectangle {
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
+    }
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
+        let chrome = content
+            .lineLimit(1)
+            .padding(.horizontal, 12)
+            // Taller than the previous 6pt pad; horizontal stays 12 so chips
+            // don't grow wider.
+            .padding(.vertical, 9)
+
+        if reduceTransparency || !TWTheme.composerGlassEnabled {
+            chrome
+                .background(TWTheme.surface2, in: pillShape)
+                .overlay(pillShape.strokeBorder(TWTheme.border, lineWidth: 1))
+                .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
+        } else if #available(iOS 26.0, macOS 26.0, *) {
+            // Apply glassEffect ON the content — Color.clear + opacity in
+            // .background collapses into an opaque slab and reads solid.
+            chrome
+                .glassEffect(.regular, in: pillShape)
+                .overlay(
+                    pillShape.strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1)
+                )
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+        } else {
+            chrome
+                .background(.ultraThinMaterial, in: pillShape)
+                .overlay(
+                    pillShape.strokeBorder(
+                        LinearGradient(
+                            colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
+                            startPoint: .top, endPoint: .bottom),
+                        lineWidth: 1)
+                )
+                .overlay(pillShape.strokeBorder(TWTheme.border.opacity(0.55), lineWidth: 0.5))
+                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+        }
+    }
+}
+
+extension View {
+    /// Glass chip chrome for floating Diff / Tools pills above the composer.
+    func composerFloatingPillChrome() -> some View {
+        modifier(ComposerFloatingPillChrome())
+    }
+}
+
 /// Compact, generic diff summary shown above the ONE-LINE composer when it's
 /// blurred and there are active changes — a stand-in for the (composer-specific)
 /// changes row, which only returns on focus. Same look for every shell. Tap
@@ -9089,9 +9152,9 @@ public struct ComposerDiffPill: View {
     }
 
     /// Softer rounded-rect (not a full capsule) so the chip reads as a glass
-    /// panel rather than a tablet — single source for the background + rim.
+    /// panel rather than a tablet — matches ComposerFloatingPillChrome radius.
     private var pillShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
+        RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
 
     // Persisted horizontal nudge from centre (points); survives threads + launches.
@@ -9249,34 +9312,8 @@ public struct ComposerDiffPill: View {
                     color: TWTheme.diffStatDel)
             }
         }
-        .lineLimit(1)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        // Liquid Glass where the OS has it; ultra-thin material below. The
-        // frost is dialed back a touch so the glass refracts the composer
-        // behind it more naturalistically instead of reading as a fill.
-        .background {
-            if #available(iOS 26.0, macOS 26.0, *) {
-                Color.clear
-                    .glassEffect(.regular, in: pillShape)
-                    .opacity(0.9)
-            } else {
-                pillShape
-                    .fill(.ultraThinMaterial)
-                    .opacity(0.85)
-                    .overlay(pillShape.strokeBorder(TWTheme.border))
-            }
-        }
-        // Rim highlight: a bright top-edge specular fading down, so the pill
-        // reads as a floating glass chip above the composer.
-        .overlay(
-            pillShape.strokeBorder(
-                LinearGradient(
-                    colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
-                    startPoint: .top, endPoint: .bottom),
-                lineWidth: 1)
-        )
-        .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
+        // Shared chrome with ComposerToolsPill: slightly taller + real glass.
+        .composerFloatingPillChrome()
     }
 
     public var body: some View {

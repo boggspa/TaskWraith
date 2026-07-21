@@ -1,11 +1,12 @@
 // Diff Studio mode — the phone-sized cut of the desktop Diff Studio.
 //
-// Same layout-swap architecture as Files mode (FileEditorViews.swift): the
-// plus.forwardslash.minus toolbar button flips the iPad shell into a
-// NavigationSplitView (left = changed files with +N/−M chips, detail = the
-// unified diff) and presents a full-screen cover on iPhone. The Mac computes
-// the diff with the SAME git surface the desktop Diff Studio renders
-// (`workspaceDiff` bridge action → DiffService.buildBoundedWorkspaceDiff),
+// Compact hosts (composer sheet + phone fullScreenCover) render a Codex-style
+// *inline multi-file review*: each changed file is a translucent card with its
+// hunks expanded in-place so users never have to drill into a file first.
+// iPad split keeps the classic navigator rail + detail viewer.
+//
+// The Mac computes the diff with the SAME git surface the desktop Diff Studio
+// renders (`workspaceDiff` bridge action → DiffService.buildBoundedWorkspaceDiff),
 // hard-capped for the relay budget; read-only, gated by `diffReview`.
 
 import SwiftUI
@@ -43,6 +44,11 @@ enum MobileDiffStageFilter: String, CaseIterable, Identifiable {
         }
     }
 
+    /// Primary segmented chips for the compact inline sheet (Codex-style).
+    static var compactChipFilters: [MobileDiffStageFilter] {
+        [.all, .unstaged, .staged, .untracked]
+    }
+
     func matches(_ file: WorkspaceDiffFile) -> Bool {
         switch self {
         case .all:
@@ -73,6 +79,9 @@ final class MobileDiffStudioState: ObservableObject {
     @Published var isLoading = false
     @Published var fileFilter = ""
     @Published var stageFilter: MobileDiffStageFilter = .all
+    /// Paths the user has collapsed in the inline multi-file review.
+    /// Files default to expanded so hunks are visible without a drill-in tap.
+    @Published var collapsedPaths: Set<String> = []
 
     private var reloadGeneration = 0
 
@@ -108,11 +117,37 @@ final class MobileDiffStudioState: ObservableObject {
         return "No \(stageFilter.emptyLabel) changed files match \"\(query)\"."
     }
 
+    var totalAdditions: Int {
+        Self.sumLineStats(files).additions
+    }
+
+    var totalDeletions: Int {
+        Self.sumLineStats(files).deletions
+    }
+
+    var filteredTotalAdditions: Int {
+        Self.sumLineStats(filteredFiles).additions
+    }
+
+    var filteredTotalDeletions: Int {
+        Self.sumLineStats(filteredFiles).deletions
+    }
+
     static func statusText(visibleFiles: Int, totalFiles: Int?) -> String {
         let count = max(totalFiles ?? visibleFiles, visibleFiles)
         return count == 0
             ? "No changes."
             : "\(count) changed file\(count == 1 ? "" : "s")"
+    }
+
+    static func sumLineStats(_ files: [WorkspaceDiffFile]) -> (additions: Int, deletions: Int) {
+        var additions = 0
+        var deletions = 0
+        for file in files {
+            additions += file.additions ?? 0
+            deletions += file.deletions ?? 0
+        }
+        return (additions, deletions)
     }
 
     static func filterFiles(_ files: [WorkspaceDiffFile], query: String) -> [WorkspaceDiffFile] {
@@ -135,6 +170,27 @@ final class MobileDiffStudioState: ObservableObject {
 
     static let diffColumnLabels = ["Old", "New", "Δ", "Line"]
 
+    func isFileExpanded(_ path: String) -> Bool {
+        !collapsedPaths.contains(path)
+    }
+
+    func toggleFileExpanded(_ path: String) {
+        if collapsedPaths.contains(path) {
+            collapsedPaths.remove(path)
+        } else {
+            collapsedPaths.insert(path)
+        }
+    }
+
+    func expandAllFilteredFiles() {
+        let paths = Set(filteredFiles.map(\.path))
+        collapsedPaths.subtract(paths)
+    }
+
+    func collapseAllFilteredFiles() {
+        collapsedPaths.formUnion(filteredFiles.map(\.path))
+    }
+
     func clearUnavailableWorkspaceStatus() {
         reloadGeneration += 1
         selectedWorkspaceId = nil
@@ -142,6 +198,7 @@ final class MobileDiffStudioState: ObservableObject {
         selectedPath = nil
         fileFilter = ""
         stageFilter = .all
+        collapsedPaths = []
         isLoading = false
         status = "No workspace has diff review enabled."
     }
@@ -157,18 +214,22 @@ final class MobileDiffStudioState: ObservableObject {
 
     var selectedFileCanOpenInEditor: Bool {
         guard let selectedFile else { return false }
-        if let canOpenInEditor = selectedFile.canOpenInEditor {
+        return Self.canOpenInEditor(selectedFile)
+    }
+
+    static func canOpenInEditor(_ file: WorkspaceDiffFile) -> Bool {
+        if let canOpenInEditor = file.canOpenInEditor {
             return canOpenInEditor
         }
-        if selectedFile.kind == "deleted" { return false }
-        if selectedFile.status == "deleted" || selectedFile.status == "binary" {
+        if file.kind == "deleted" { return false }
+        if file.status == "deleted" || file.status == "binary" {
             return false
         }
-        if selectedFile.status == "hidden_sensitive" { return false }
-        if selectedFile.previewKind == "binary" || selectedFile.previewKind == "hidden" {
+        if file.status == "hidden_sensitive" { return false }
+        if file.previewKind == "binary" || file.previewKind == "hidden" {
             return false
         }
-        return selectedFile.isBinary != true && selectedFile.isSensitive != true
+        return file.isBinary != true && file.isSensitive != true
     }
 
     var selectedFileCanStage: Bool {
@@ -177,6 +238,14 @@ final class MobileDiffStudioState: ObservableObject {
 
     var selectedFileCanUnstage: Bool {
         selectedFile?.staged == true
+    }
+
+    static func canStage(_ file: WorkspaceDiffFile) -> Bool {
+        file.unstaged == true
+    }
+
+    static func canUnstage(_ file: WorkspaceDiffFile) -> Bool {
+        file.staged == true
     }
 
     /// "Showing 40 of N" / relay-budget clipping — rendered as the list footer.
@@ -213,9 +282,12 @@ final class MobileDiffStudioState: ObservableObject {
             selectedPath = nil
             fileFilter = ""
             stageFilter = .all
+            collapsedPaths = []
         }
         if let targetPath = Self.normalizedTargetPath(targetPath) {
             selectedPath = targetPath
+            // Ensure the focused file is expanded in the inline review.
+            collapsedPaths.remove(targetPath)
         }
         Task { await reload(model: model) }
     }
@@ -227,6 +299,7 @@ final class MobileDiffStudioState: ObservableObject {
         selectedPath = nil
         fileFilter = ""
         stageFilter = .all
+        collapsedPaths = []
         Task { await reload(model: model) }
     }
 
@@ -248,6 +321,9 @@ final class MobileDiffStudioState: ObservableObject {
             let result = try await model.fetchWorkspaceDiff(workspaceId: workspaceId)
             guard isCurrentRequest() else { return }
             diff = result
+            // Drop collapse state for paths that left the change set.
+            let livePaths = Set(result.files.map(\.path))
+            collapsedPaths = collapsedPaths.intersection(livePaths)
             // The previously open file may have left the change set.
             if let selectedPath, !result.files.contains(where: { $0.path == selectedPath }) {
                 self.selectedPath = nil
@@ -263,15 +339,25 @@ final class MobileDiffStudioState: ObservableObject {
     }
 
     func stageSelectedFile(model: RemoteSessionModel) async {
+        guard let selectedPath else { return }
+        await stageFile(path: selectedPath, model: model)
+    }
+
+    func unstageSelectedFile(model: RemoteSessionModel) async {
+        guard let selectedPath else { return }
+        await unstageFile(path: selectedPath, model: model)
+    }
+
+    func stageFile(path: String, model: RemoteSessionModel) async {
         guard let workspaceId = selectedWorkspaceId,
-              let selectedPath,
-              selectedFileCanStage
+              let file = files.first(where: { $0.path == path }),
+              Self.canStage(file)
         else { return }
         isLoading = true
-        status = "Staging \(selectedPath)..."
+        status = "Staging \(path)..."
         do {
-            _ = try await model.stagePaths(workspaceId: workspaceId, paths: [selectedPath])
-            status = "Staged \(selectedPath)"
+            _ = try await model.stagePaths(workspaceId: workspaceId, paths: [path])
+            status = "Staged \(path)"
             await reload(model: model)
         } catch {
             status = error.localizedDescription
@@ -279,16 +365,16 @@ final class MobileDiffStudioState: ObservableObject {
         isLoading = false
     }
 
-    func unstageSelectedFile(model: RemoteSessionModel) async {
+    func unstageFile(path: String, model: RemoteSessionModel) async {
         guard let workspaceId = selectedWorkspaceId,
-              let selectedPath,
-              selectedFileCanUnstage
+              let file = files.first(where: { $0.path == path }),
+              Self.canUnstage(file)
         else { return }
         isLoading = true
-        status = "Unstaging \(selectedPath)..."
+        status = "Unstaging \(path)..."
         do {
-            _ = try await model.unstagePaths(workspaceId: workspaceId, paths: [selectedPath])
-            status = "Unstaged \(selectedPath)"
+            _ = try await model.unstagePaths(workspaceId: workspaceId, paths: [path])
+            status = "Unstaged \(path)"
             await reload(model: model)
         } catch {
             status = error.localizedDescription
@@ -357,44 +443,55 @@ struct DiffStudioCompactView: View {
     }
 
     var body: some View {
-        Group {
-            if state.selectedPath == nil {
-                DiffFileNavigatorPane(model: model, state: state)
-                    #if os(iOS)
-                        .navigationBarTitleDisplayMode(.inline)
-                    #endif
-                    .toolbar {
-                        ToolbarItem(placement: .principal) {
-                            TWPrincipalTitle(
-                                title: "Diff Studio",
-                                subtitle: diffStudioWorkspaceSubtitle(model: model, state: state))
-                        }
-                        ToolbarItem(placement: .cancellationAction) {
-                            Button("Close") { onClose() }
-                        }
-                        ToolbarItemGroup(placement: .primaryAction) {
-                            if let onExpand {
-                                Button(action: onExpand) {
-                                    Label(
-                                        "Open full Diff Studio",
-                                        systemImage: "arrow.up.left.and.arrow.down.right")
-                                }
-                            }
-                            Button { Task { await state.reload(model: model) } } label: {
-                                Label("Refresh", systemImage: "arrow.clockwise")
-                            }
-                            .disabled(state.selectedWorkspaceId == nil || state.isLoading)
+        // Compact hosts always present the Codex-style inline multi-file review.
+        // Drill-in to a single-file viewer is reserved for the iPad split detail.
+        DiffStudioInlineReviewPane(
+            model: model,
+            state: state,
+            onOpenSelectedFile: onOpenSelectedFile)
+            #if os(iOS)
+                .navigationBarTitleDisplayMode(.inline)
+            #endif
+            .toolbar {
+                ToolbarItem(placement: .principal) {
+                    VStack(spacing: 1) {
+                        TWPrincipalTitle(
+                            title: principalTitle,
+                            subtitle: diffStudioWorkspaceSubtitle(model: model, state: state))
+                        if state.files.isEmpty == false {
+                            DiffStatChips(
+                                additions: state.filteredTotalAdditions,
+                                deletions: state.filteredTotalDeletions)
                         }
                     }
-            } else {
-                DiffViewerPane(
-                    model: model,
-                    state: state,
-                    onBack: onClose,
-                    onExpand: onExpand,
-                    onOpenSelectedFile: onOpenSelectedFile,
-                    compact: true)
+                }
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Close") { onClose() }
+                }
+                ToolbarItemGroup(placement: .primaryAction) {
+                    if let onExpand {
+                        Button(action: onExpand) {
+                            Label(
+                                "Open full Diff Studio",
+                                systemImage: "arrow.up.left.and.arrow.down.right")
+                        }
+                    }
+                    Button { Task { await state.reload(model: model) } } label: {
+                        Label("Refresh", systemImage: "arrow.clockwise")
+                    }
+                    .disabled(state.selectedWorkspaceId == nil || state.isLoading)
+                }
             }
+    }
+
+    private var principalTitle: String {
+        switch state.stageFilter {
+        case .all: return "Diff Studio"
+        case .unstaged: return "Unstaged"
+        case .staged: return "Staged"
+        case .mixed: return "Mixed"
+        case .untracked: return "Untracked"
+        case .other: return "Other"
         }
     }
 }
@@ -423,11 +520,328 @@ enum DiffStudioSheetGlassPolicy {
     /// wash so monospace diff text keeps contrast over the glass.
     static func codePanelFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool) -> Double? {
         guard glassSheetHosted else { return nil }
-        return glassEnabled ? 0.62 : 1.0
+        return glassEnabled ? 0.42 : 1.0
+    }
+
+    /// Card wash for inline file cards on the glass sheet. Lighter than the
+    /// old List row fill so the liquid-glass backdrop reads between cards.
+    static func inlineCardFillAlpha(glassSheetHosted: Bool, glassEnabled: Bool, isLight: Bool = false) -> Double? {
+        guard glassSheetHosted else { return nil }
+        guard glassEnabled else { return 1.0 }
+        return isLight ? 0.55 : 0.22
     }
 }
 
-// ── Changed-file rail ──────────────────────────────────────────────────────────
+// ── Compact inline multi-file review (Codex-style) ────────────────────────────
+
+private struct DiffStudioInlineReviewPane: View {
+    @ObservedObject var model: RemoteSessionModel
+    @ObservedObject var state: MobileDiffStudioState
+    let onOpenSelectedFile: (String) -> Void
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    private var canvasFill: Color {
+        DiffStudioSheetGlassPolicy.paintsOpaqueCanvas(glassSheetHosted: glassSheetHosted)
+            ? TWTheme.sidebarBg : Color.clear
+    }
+
+    private var cardFill: Color {
+        guard
+            let alpha = DiffStudioSheetGlassPolicy.inlineCardFillAlpha(
+                glassSheetHosted: glassSheetHosted,
+                glassEnabled: TWTheme.composerGlassEnabled,
+                isLight: TWThemeStore.shared.systemTheme.isLight)
+        else { return TWTheme.surface1 }
+        return TWTheme.surface1.opacity(alpha)
+    }
+
+    var body: some View {
+        ScrollView {
+            LazyVStack(alignment: .leading, spacing: 12) {
+                controlsCard
+
+                if state.files.isEmpty {
+                    emptyStatusCard(
+                        state.isLoading ? "Computing diff..." : state.status)
+                } else if state.filteredFiles.isEmpty {
+                    emptyStatusCard(state.emptyFilterMessage)
+                } else {
+                    ForEach(state.filteredFiles) { file in
+                        DiffInlineFileCard(
+                            file: file,
+                            expanded: state.isFileExpanded(file.path),
+                            canEdit: model.workspaceCanEditFiles(state.selectedWorkspaceId),
+                            isLoading: state.isLoading,
+                            cardFill: cardFill,
+                            onToggle: { state.toggleFileExpanded(file.path) },
+                            onOpen: { onOpenSelectedFile(file.path) },
+                            onStage: {
+                                Task { await state.stageFile(path: file.path, model: model) }
+                            },
+                            onUnstage: {
+                                Task { await state.unstageFile(path: file.path, model: model) }
+                            })
+                    }
+                }
+
+                footerNotes
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 8)
+            .padding(.bottom, 24)
+        }
+        .scrollContentBackground(.hidden)
+        .background(canvasFill)
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel("Diff studio inline review")
+        .accessibilityValue(state.status)
+        .accessibilityAddTraits(state.isLoading ? .updatesFrequently : [])
+        .onChange(of: state.status) { _, newStatus in
+            if twShouldAnnounceDiffStudioStatus(newStatus) {
+                AccessibilityNotification.Announcement(newStatus).post()
+            }
+        }
+    }
+
+    private var controlsCard: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            if model.diffReviewableWorkspaces.count > 1 {
+                Picker(
+                    "Workspace",
+                    selection: Binding(
+                        get: {
+                            state.selectedWorkspaceId
+                                ?? model.diffReviewableWorkspaces.first?.id ?? ""
+                        },
+                        set: { state.requestWorkspace($0, model: model) }
+                    )
+                ) {
+                    ForEach(model.diffReviewableWorkspaces) { workspace in
+                        Text(workspace.displayName).tag(workspace.id)
+                    }
+                }
+                .pickerStyle(.menu)
+                .accessibilityLabel("Workspace")
+            }
+
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(TWTheme.textMuted)
+                TextField("Filter files", text: $state.fileFilter)
+                    .disableAutocorrection(true)
+                    #if os(iOS)
+                        .textInputAutocapitalization(.never)
+                    #endif
+                    .accessibilityLabel("Filter changed files")
+            }
+            .padding(.horizontal, 10)
+            .padding(.vertical, 8)
+            .background(TWTheme.surface2.opacity(glassSheetHosted ? 0.35 : 0.9), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 8) {
+                    ForEach(MobileDiffStageFilter.compactChipFilters) { filter in
+                        DiffStageChipButton(
+                            title: filter.label,
+                            selected: state.stageFilter == filter
+                        ) {
+                            state.stageFilter = filter
+                        }
+                    }
+                    Menu {
+                        ForEach(MobileDiffStageFilter.allCases) { filter in
+                            Button {
+                                state.stageFilter = filter
+                            } label: {
+                                if state.stageFilter == filter {
+                                    Label(filter.label, systemImage: "checkmark")
+                                } else {
+                                    Text(filter.label)
+                                }
+                            }
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                            .font(.body.weight(.medium))
+                            .foregroundStyle(TWTheme.textSecondary)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 7)
+                    }
+                    .accessibilityLabel("More change groups")
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button("Expand all") { state.expandAllFilteredFiles() }
+                    .font(.caption.weight(.semibold))
+                Button("Collapse all") { state.collapseAllFilteredFiles() }
+                    .font(.caption.weight(.semibold))
+                Spacer()
+                Text(state.status)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+                    .lineLimit(1)
+            }
+            .foregroundStyle(TWTheme.chroma1)
+        }
+        .padding(12)
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(TWTheme.border.opacity(glassSheetHosted ? 0.45 : 0.8), lineWidth: 1)
+        )
+    }
+
+    private func emptyStatusCard(_ message: String) -> some View {
+        Text(message)
+            .font(.callout)
+            .foregroundStyle(TWTheme.textMuted)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .padding(16)
+            .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    @ViewBuilder
+    private var footerNotes: some View {
+        let notes = [state.stageFilterStatus, state.fileFilterStatus, state.truncationFootnote]
+            .compactMap { $0 }
+        if !notes.isEmpty {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(notes, id: \.self) { note in
+                    Text(note)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textMuted)
+                }
+            }
+            .padding(.horizontal, 4)
+            .padding(.top, 4)
+        }
+    }
+}
+
+private struct DiffStageChipButton: View {
+    let title: String
+    let selected: Bool
+    let action: () -> Void
+
+    var body: some View {
+        Button(action: action) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .padding(.horizontal, 12)
+                .padding(.vertical, 7)
+                .background(
+                    Capsule().fill(
+                        selected
+                            ? TWTheme.surface2.opacity(0.95)
+                            : TWTheme.surface2.opacity(0.28))
+                )
+                .foregroundStyle(selected ? TWTheme.textPrimary : TWTheme.textSecondary)
+        }
+        .buttonStyle(.plain)
+        .accessibilityAddTraits(selected ? .isSelected : [])
+        .accessibilityLabel("\(title) change group")
+    }
+}
+
+private struct DiffInlineFileCard: View {
+    let file: WorkspaceDiffFile
+    let expanded: Bool
+    let canEdit: Bool
+    let isLoading: Bool
+    let cardFill: Color
+    let onToggle: () -> Void
+    let onOpen: () -> Void
+    let onStage: () -> Void
+    let onUnstage: () -> Void
+    @Environment(\.twGlassSheetHosted) private var glassSheetHosted
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            if expanded {
+                Divider().overlay(TWTheme.border.opacity(0.55))
+                DiffHunksView(file: file, layout: .inlineCard)
+                    .clipShape(
+                        UnevenRoundedRectangle(
+                            bottomLeadingRadius: 16,
+                            bottomTrailingRadius: 16,
+                            style: .continuous)
+                    )
+            }
+        }
+        .background(cardFill, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 16, style: .continuous)
+                .strokeBorder(TWTheme.border.opacity(glassSheetHosted ? 0.4 : 0.75), lineWidth: 1)
+        )
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
+                Button(action: onToggle) {
+                    HStack(spacing: 8) {
+                        Image(systemName: expanded ? "chevron.down" : "chevron.right")
+                            .font(.caption.weight(.bold))
+                            .foregroundStyle(TWTheme.textMuted)
+                            .frame(width: 12)
+                        Text(file.name)
+                            .font(.callout.weight(.semibold))
+                            .foregroundStyle(TWTheme.textPrimary)
+                            .lineLimit(1)
+                        Spacer(minLength: 6)
+                        DiffStatChips(additions: file.additions, deletions: file.deletions)
+                    }
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(expanded ? "Collapse \(file.name)" : "Expand \(file.name)")
+
+                if MobileDiffStudioState.canOpenInEditor(file) {
+                    Button(action: onOpen) {
+                        Image(systemName: "arrow.up.right.square")
+                            .font(.body.weight(.medium))
+                    }
+                    .buttonStyle(.borderless)
+                    .accessibilityLabel("Open \(file.name) in Files")
+                }
+            }
+
+            HStack(spacing: 6) {
+                DiffKindChip(kind: file.kind)
+                DiffStageChip(file: file)
+                Text(file.path)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(TWTheme.textMuted)
+                    .lineLimit(1)
+                    .truncationMode(.head)
+                Spacer(minLength: 0)
+                if canEdit {
+                    if MobileDiffStudioState.canStage(file) {
+                        Button(action: onStage) {
+                            Image(systemName: "plus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isLoading)
+                        .accessibilityLabel("Stage \(file.name)")
+                    }
+                    if MobileDiffStudioState.canUnstage(file) {
+                        Button(action: onUnstage) {
+                            Image(systemName: "minus.circle")
+                        }
+                        .buttonStyle(.borderless)
+                        .disabled(isLoading)
+                        .accessibilityLabel("Unstage \(file.name)")
+                    }
+                }
+            }
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+    }
+}
+
+// ── Changed-file rail (iPad split navigator) ───────────────────────────────────
 
 private struct DiffFileNavigatorPane: View {
     @ObservedObject var model: RemoteSessionModel
@@ -650,15 +1064,17 @@ struct DiffStatChips: View {
     let deletions: Int?
 
     var body: some View {
-        if let additions, additions > 0 {
-            Text("+\(additions)")
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(TWTheme.diffStatAdd)
-        }
-        if let deletions, deletions > 0 {
-            Text("−\(deletions)")
-                .font(.caption2.weight(.semibold).monospacedDigit())
-                .foregroundStyle(TWTheme.diffStatDel)
+        HStack(spacing: 4) {
+            if let additions, additions > 0 {
+                Text("+\(additions)")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(TWTheme.diffStatAdd)
+            }
+            if let deletions, deletions > 0 {
+                Text("−\(deletions)")
+                    .font(.caption2.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(TWTheme.diffStatDel)
+            }
         }
     }
 }
@@ -694,7 +1110,7 @@ private struct DiffViewerPane: View {
             header
             Divider().overlay(TWTheme.border)
             if let file = state.selectedFile {
-                DiffHunksView(file: file)
+                DiffHunksView(file: file, layout: .pane)
             } else {
                 VStack(spacing: 10) {
                     Image(systemName: "plus.forwardslash.minus")
@@ -830,8 +1246,16 @@ private struct DiffViewerPane: View {
     }
 }
 
+enum DiffHunksLayout {
+    /// Full detail pane: dual-axis scroll with fixed content width.
+    case pane
+    /// Inline file card: vertical-only, fits card width (no nested vertical scroll).
+    case inlineCard
+}
+
 private struct DiffHunksView: View {
     let file: WorkspaceDiffFile
+    var layout: DiffHunksLayout = .pane
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
 
     private var hunks: [WorkspaceDiffHunk] { file.hunks ?? [] }
@@ -842,7 +1266,9 @@ private struct DiffHunksView: View {
                 glassSheetHosted: glassSheetHosted,
                 glassEnabled: TWTheme.composerGlassEnabled)
         else { return TWTheme.appBg }
-        return TWTheme.appBg.opacity(alpha)
+        // Inline cards keep the code panel more transparent so glass shows through.
+        let adjusted: Double = layout == .inlineCard ? min(alpha, 0.28) : alpha
+        return TWTheme.appBg.opacity(adjusted)
     }
 
     /// Widest clipped line (≤400 chars) sets the scrollable width — fixed
@@ -855,19 +1281,40 @@ private struct DiffHunksView: View {
 
     var body: some View {
         if hunks.isEmpty {
-            VStack(spacing: 10) {
+            VStack(spacing: 8) {
                 Image(systemName: "eye.slash")
-                    .font(.system(size: 30))
+                    .font(.system(size: layout == .inlineCard ? 22 : 30))
                     .foregroundStyle(TWTheme.textMuted)
                 Text("No line preview for this file")
+                    .font(layout == .inlineCard ? .footnote : .body)
                     .foregroundStyle(TWTheme.textSecondary)
-                Text("Binary, oversized, or sensitive files keep their counts but ship no hunks.")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textMuted)
-                    .multilineTextAlignment(.center)
-                    .padding(.horizontal, 24)
+                if layout == .pane {
+                    Text("Binary, oversized, or sensitive files keep their counts but ship no hunks.")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 24)
+                }
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, layout == .inlineCard ? 16 : 0)
+            .frame(maxHeight: layout == .pane ? .infinity : nil)
+            .background(codePanelFill)
+        } else if layout == .inlineCard {
+            VStack(alignment: .leading, spacing: 0) {
+                ForEach(Array(hunks.enumerated()), id: \.offset) { _, hunk in
+                    DiffInlineHunkHeader(hunk: hunk, file: file)
+                    ForEach(Array(hunk.lines.enumerated()), id: \.offset) { _, line in
+                        DiffLineRow(line: line, width: nil)
+                    }
+                }
+                if file.truncated == true {
+                    Text("Diff truncated — open Diff Studio on your Mac for the full file.")
+                        .font(.footnote)
+                        .foregroundStyle(TWTheme.textMuted)
+                        .padding(10)
+                }
+            }
             .background(codePanelFill)
         } else {
             ScrollView([.vertical, .horizontal]) {
@@ -890,6 +1337,59 @@ private struct DiffHunksView: View {
             }
             .background(codePanelFill)
         }
+    }
+}
+
+private struct DiffInlineHunkHeader: View {
+    let hunk: WorkspaceDiffHunk
+    let file: WorkspaceDiffFile
+
+    private var rangeLabel: String {
+        let lines = hunk.lines
+        let olds = lines.compactMap(\.oldLine)
+        let news = lines.compactMap(\.newLine)
+        if let lo = olds.min(), let hi = olds.max(), lo != hi {
+            return "Lines \(lo)–\(hi)"
+        }
+        if let lo = news.min(), let hi = news.max(), lo != hi {
+            return "Lines \(lo)–\(hi)"
+        }
+        if let single = olds.first ?? news.first {
+            return "Line \(single)"
+        }
+        // Fall back to the raw @@ header when line numbers are missing.
+        let trimmed = hunk.header.trimmingCharacters(in: .whitespacesAndNewlines)
+        return trimmed.isEmpty ? "Hunk" : trimmed
+    }
+
+    private var hunkAdditions: Int {
+        hunk.lines.filter { $0.type == "add" }.count
+    }
+
+    private var hunkDeletions: Int {
+        hunk.lines.filter { $0.type == "del" }.count
+    }
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Image(systemName: "chevron.down")
+                .font(.caption2.weight(.bold))
+                .foregroundStyle(TWTheme.textMuted)
+            Text(rangeLabel)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TWTheme.textSecondary)
+                .lineLimit(1)
+            Spacer(minLength: 6)
+            DiffStatChips(
+                additions: hunkAdditions > 0 ? hunkAdditions : nil,
+                deletions: hunkDeletions > 0 ? hunkDeletions : nil)
+        }
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(TWTheme.surface2.opacity(0.35))
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(rangeLabel), \(file.name)")
     }
 }
 
@@ -949,7 +1449,10 @@ private struct DiffHunkHeaderRow: View {
 
 private struct DiffLineRow: View {
     let line: WorkspaceDiffLine
-    let width: CGFloat
+    /// Fixed width for dual-axis pane scroll; nil fills the available card width.
+    let width: CGFloat?
+
+    private var isInline: Bool { width == nil }
 
     private var rowBackground: Color {
         switch line.type {
@@ -984,25 +1487,41 @@ private struct DiffLineRow: View {
         }
     }
 
+    /// Codex-style single gutter: prefer old line, else new line.
+    private var inlineGutter: String {
+        if let old = line.oldLine { return String(old) }
+        if let new = line.newLine { return String(new) }
+        return ""
+    }
+
     var body: some View {
         HStack(spacing: 0) {
-            Text(line.oldLine.map(String.init) ?? "")
-                .frame(width: 36, alignment: .trailing)
-                .foregroundStyle(TWTheme.textMuted)
-            Text(line.newLine.map(String.init) ?? "")
-                .frame(width: 36, alignment: .trailing)
-                .foregroundStyle(TWTheme.textMuted)
+            if isInline {
+                Text(inlineGutter)
+                    .frame(width: 28, alignment: .trailing)
+                    .foregroundStyle(TWTheme.textMuted)
+            } else {
+                Text(line.oldLine.map(String.init) ?? "")
+                    .frame(width: 36, alignment: .trailing)
+                    .foregroundStyle(TWTheme.textMuted)
+                Text(line.newLine.map(String.init) ?? "")
+                    .frame(width: 36, alignment: .trailing)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
             Text(marker)
-                .frame(width: 18, alignment: .center)
+                .frame(width: isInline ? 16 : 18, alignment: .center)
                 .foregroundStyle(markerColor)
             Text(line.text.isEmpty ? " " : line.text)
                 .foregroundStyle(textColor)
                 .lineLimit(1)
+                .truncationMode(.tail)
             Spacer(minLength: 0)
         }
-        .font(.system(size: 12, design: .monospaced))
+        .font(.system(size: isInline ? 11.5 : 12, design: .monospaced))
         .padding(.vertical, 1)
+        .padding(.trailing, isInline ? 8 : 0)
         .frame(width: width, alignment: .leading)
+        .frame(maxWidth: isInline ? .infinity : nil, alignment: .leading)
         .background(rowBackground)
     }
 }

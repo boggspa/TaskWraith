@@ -21,6 +21,7 @@ struct MobileDiffStudioStateTests {
         state.fileFilter = "app"
         state.stageFilter = .unstaged
         state.diff = try decodeWorkspaceDiff()
+        state.collapsedPaths = ["src/App.swift"]
         state.isLoading = true
 
         state.clearUnavailableWorkspaceStatus()
@@ -30,6 +31,7 @@ struct MobileDiffStudioStateTests {
         #expect(state.diff == nil)
         #expect(state.fileFilter.isEmpty)
         #expect(state.stageFilter == .all)
+        #expect(state.collapsedPaths.isEmpty)
         #expect(state.files.isEmpty)
         #expect(state.isLoading == false)
         #expect(state.status == "No workspace has diff review enabled.")
@@ -163,6 +165,49 @@ struct MobileDiffStudioStateTests {
     @MainActor
     @Test func diffColumnHeaderLabelsMatchUnifiedDiffGutters() {
         #expect(MobileDiffStudioState.diffColumnLabels == ["Old", "New", "Δ", "Line"])
+    }
+
+    @MainActor
+    @Test func inlineReviewDefaultsExpandedAndTracksCollapseToggle() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        #expect(state.isFileExpanded("src/App.swift"))
+        state.toggleFileExpanded("src/App.swift")
+        #expect(!state.isFileExpanded("src/App.swift"))
+        state.toggleFileExpanded("src/App.swift")
+        #expect(state.isFileExpanded("src/App.swift"))
+
+        state.collapseAllFilteredFiles()
+        #expect(state.filteredFiles.allSatisfy { !state.isFileExpanded($0.path) })
+        state.expandAllFilteredFiles()
+        #expect(state.filteredFiles.allSatisfy { state.isFileExpanded($0.path) })
+    }
+
+    @MainActor
+    @Test func aggregateLineStatsSumVisibleAndFilteredFiles() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+
+        // 2+8+0+0+1+6+0 = 17 adds; 1+0+4+0+1+0+0 = 6 dels
+        #expect(state.totalAdditions == 17)
+        #expect(state.totalDeletions == 6)
+
+        state.stageFilter = .unstaged
+        #expect(state.filteredTotalAdditions == 2)
+        #expect(state.filteredTotalDeletions == 1)
+    }
+
+    @MainActor
+    @Test func canOpenStageHelpersMatchSelectedFileFlags() throws {
+        let state = MobileDiffStudioState()
+        state.diff = try decodeFilterableWorkspaceDiff()
+        let app = try #require(state.files.first { $0.path == "src/App.swift" })
+        let deleted = try #require(state.files.first { $0.path == "docs/Old.md" })
+        #expect(MobileDiffStudioState.canOpenInEditor(app))
+        #expect(!MobileDiffStudioState.canOpenInEditor(deleted))
+        #expect(MobileDiffStudioState.canStage(app))
+        #expect(!MobileDiffStudioState.canUnstage(app))
     }
 }
 
@@ -304,7 +349,7 @@ struct DiffStudioSheetGlassPolicyTests {
         let code = DiffStudioSheetGlassPolicy.codePanelFillAlpha(
             glassSheetHosted: true, glassEnabled: true)
         #expect(chrome == 0.35)
-        #expect(code == 0.62)
+        #expect(code == 0.42)
         // Code stays less transparent than chrome for monospace contrast.
         if let chrome, let code {
             #expect(code > chrome)
@@ -319,5 +364,25 @@ struct DiffStudioSheetGlassPolicyTests {
         #expect(
             DiffStudioSheetGlassPolicy.codePanelFillAlpha(
                 glassSheetHosted: true, glassEnabled: false) == 1.0)
+        #expect(
+            DiffStudioSheetGlassPolicy.inlineCardFillAlpha(
+                glassSheetHosted: true, glassEnabled: false) == 1.0)
+    }
+
+    @Test func inlineCardWashIsLighterThanLegacyChromeSoGlassReadsBetweenCards() {
+        let darkCard = DiffStudioSheetGlassPolicy.inlineCardFillAlpha(
+            glassSheetHosted: true, glassEnabled: true, isLight: false)
+        let lightCard = DiffStudioSheetGlassPolicy.inlineCardFillAlpha(
+            glassSheetHosted: true, glassEnabled: true, isLight: true)
+        let darkChrome = DiffStudioSheetGlassPolicy.chromeFillAlpha(
+            glassSheetHosted: true, glassEnabled: true, isLight: false)
+        #expect(darkCard == 0.22)
+        #expect(lightCard == 0.55)
+        if let darkCard, let darkChrome {
+            #expect(darkCard < darkChrome)
+        }
+        #expect(
+            DiffStudioSheetGlassPolicy.inlineCardFillAlpha(
+                glassSheetHosted: false, glassEnabled: true) == nil)
     }
 }

@@ -22,6 +22,7 @@ struct Composer: View {
     @ObservedObject var model: RemoteSessionModel
     let card: RemoteTaskCard
     @Environment(\.appScale) private var appScale
+    @Environment(\.horizontalSizeClass) private var horizontalSizeClass
     var runModel: String? = nil
     var runStatus: String? = nil
     /// Shell attachment: a diff header above / telemetry rail below flatten

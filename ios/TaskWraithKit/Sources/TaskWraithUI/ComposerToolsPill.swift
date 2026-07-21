@@ -6,42 +6,9 @@
 import SwiftUI
 import TaskWraithKit
 
-// MARK: - Glass pill chrome (shared with ComposerDiffPill look)
-
-private struct ComposerAbovePillChrome: ViewModifier {
-    private var pillShape: RoundedRectangle {
-        RoundedRectangle(cornerRadius: 10, style: .continuous)
-    }
-
-    func body(content: Content) -> some View {
-        content
-            .lineLimit(1)
-            .padding(.horizontal, 12)
-            .padding(.vertical, 6)
-            .background {
-                if #available(iOS 26.0, macOS 26.0, *) {
-                    Color.clear
-                        .glassEffect(.regular, in: pillShape)
-                        .opacity(0.9)
-                } else {
-                    pillShape
-                        .fill(.ultraThinMaterial)
-                        .opacity(0.85)
-                        .overlay(pillShape.strokeBorder(TWTheme.border))
-                }
-            }
-            .overlay(
-                pillShape.strokeBorder(
-                    LinearGradient(
-                        colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
-                        startPoint: .top, endPoint: .bottom),
-                    lineWidth: 1)
-            )
-            .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
-    }
-}
-
 // MARK: - Pill
+// Chrome lives on ComposerFloatingPillChrome (TWSharedViews) so Tools +
+// Diff stay in lockstep: slightly taller padding + real liquid glass.
 
 /// Compact floating tools pill (blurred composer). Icon-only chip using the
 /// same Ensemble / Goal / Plan / Blackboard glyphs as the focused telemetry
@@ -162,7 +129,7 @@ public struct ComposerToolsPill: View {
                         .frame(width: 16, height: 16)
                 }
             }
-            .modifier(ComposerAbovePillChrome())
+            .composerFloatingPillChrome()
         }
         .buttonStyle(.plain)
         .accessibilityLabel("Composer tools. \(summaryLabel)")
