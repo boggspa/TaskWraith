@@ -272,6 +272,22 @@ export class CodexThreadAdmissionRegistry {
     return this.historyHolds.delete(hold)
   }
 
+  /**
+   * Live owner/waiter reservations across all thread lanes. Non-zero means a
+   * turn, native review, or manual compaction still holds or awaits admission
+   * on the shared daemon — including work that owns no RunManager session and
+   * no startup lease, which a daemon restart would otherwise tear down
+   * ungated.
+   */
+  get activeLaneReservationCount(): number {
+    let count = 0
+    for (const lane of this.lanes.values()) {
+      if (lane.owner) count += 1
+      count += lane.waiters.length
+    }
+    return count
+  }
+
   isOwner(reservation: CodexThreadAdmissionReservation): boolean {
     return this.lanes.get(reservation.threadId)?.owner === reservation
   }

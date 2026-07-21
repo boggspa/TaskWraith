@@ -18,15 +18,20 @@ export function shouldRouteCodexRunSession(input: {
  * A Codex app-server run is not registered in RunManager until thread/start or
  * thread/resume returns. The startup lease covers that unregistered interval;
  * registered app-server states then keep the daemon alive until completion.
- * Codex exec-fallback sessions deliberately have no app-server state and do
- * not own the shared daemon.
+ * Admission-lane reservations cover daemon work that owns neither — a manual
+ * compaction or native review holds a thread lane without a RunManager
+ * session or startup lease, and disposing the daemon under it would reject
+ * its pending requests ungated. Codex exec-fallback sessions deliberately
+ * have no app-server state and do not own the shared daemon.
  */
 export function shouldRestartCodexAppServerForMcpConfig(input: {
   stale: boolean
   startupLeaseCount: number
   activeStates: readonly ({ threadId?: string; completed?: boolean } | null | undefined)[]
+  admissionReservationCount?: number
 }): boolean {
   if (!input.stale || input.startupLeaseCount > 0) return false
+  if ((input.admissionReservationCount ?? 0) > 0) return false
   return !input.activeStates.some(
     (state) => Boolean(state?.threadId) && state?.completed !== true
   )

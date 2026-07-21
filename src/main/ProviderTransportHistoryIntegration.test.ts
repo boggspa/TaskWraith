@@ -55,6 +55,16 @@ describe('one-shot provider transport history join', () => {
     const admitted = provider.indexOf("'turn/start'", exposed)
     const awaited = provider.lastIndexOf('await turnOperation')
 
+    // A fresh run holds no admission reservation before thread/start, so the
+    // last authority check must sit between the ensureStarted await and the
+    // RPC that mints a provider-native thread (TW-SEC-2026-014).
+    const ensureStarted = provider.indexOf('await client.ensureStarted(')
+    const threadStartRpc = provider.indexOf("'thread/start'")
+    const preRpcAuthorityCheck = provider.indexOf('historyClearAdmissionBlocked(', ensureStarted)
+    expect(ensureStarted).toBeGreaterThanOrEqual(0)
+    expect(preRpcAuthorityCheck).toBeGreaterThan(ensureStarted)
+    expect(preRpcAuthorityCheck).toBeLessThan(threadStartRpc)
+
     expect(authorityRecheck).toBeGreaterThanOrEqual(0)
     expect(authorityRecheck).toBeLessThan(tracked)
     expect(tracked).toBeLessThan(exposed)

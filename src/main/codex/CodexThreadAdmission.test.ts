@@ -237,4 +237,29 @@ describe('CodexThreadAdmissionRegistry', () => {
     expect(joined).toBe(true)
     expect(registry.endHistoryClear(hold)).toBe(true)
   })
+
+  it('counts live owner and waiter reservations for the daemon-restart guard', async () => {
+    const registry = new CodexThreadAdmissionRegistry()
+    expect(registry.activeLaneReservationCount).toBe(0)
+
+    const owner = registry.reserve({ threadId: 'thread-a', kind: 'manual_compaction', scope })
+    expect(await owner.waitUntilAcquired()).toBe(true)
+    const waiter = registry.reserve({ threadId: 'thread-a', kind: 'turn', scope })
+    const otherLane = registry.reserve({
+      threadId: 'thread-b',
+      kind: 'review',
+      scope: { appChatId: 'chat-b' }
+    })
+    expect(await otherLane.waitUntilAcquired()).toBe(true)
+    expect(registry.activeLaneReservationCount).toBe(3)
+
+    expect(owner.bindExactOperationId('compact-1')).toBe(true)
+    expect(owner.releaseAfterExactTerminal('compact-1')).toBe(true)
+    expect(await waiter.waitUntilAcquired()).toBe(true)
+    expect(registry.activeLaneReservationCount).toBe(2)
+
+    waiter.releaseBeforeAdmission()
+    otherLane.releaseBeforeAdmission()
+    expect(registry.activeLaneReservationCount).toBe(0)
+  })
 })

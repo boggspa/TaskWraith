@@ -79,6 +79,27 @@ describe('CodexRunRouting', () => {
     ).toBe(false)
   })
 
+  it('never disposes the daemon under a live admission lane (manual compaction, review)', () => {
+    // A manual compaction holds an admission lane with no RunManager session
+    // and no startup lease; restarting would reject its pending requests.
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: [],
+        admissionReservationCount: 1
+      })
+    ).toBe(false)
+    expect(
+      shouldRestartCodexAppServerForMcpConfig({
+        stale: true,
+        startupLeaseCount: 0,
+        activeStates: [],
+        admissionReservationCount: 0
+      })
+    ).toBe(true)
+  })
+
   it('does not let exec fallback state pin the shared Codex app-server', () => {
     expect(
       shouldRestartCodexAppServerForMcpConfig({
