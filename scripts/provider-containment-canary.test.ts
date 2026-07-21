@@ -415,7 +415,7 @@ Commands:
     }
     // Cursor's DRAFT startup-containment suite is allowlisted and live execution
     // is armed, but the manifest providers.cursor roster stays empty and the
-    // required live/release scripts stay kimi-only — so no managed Cursor run is
+    // required local live lane stays kimi-only — so no managed Cursor run is
     // admissible until a real live pass mints its exact fingerprint.
     expect(REVIEWED_LIVE_TESTS.cursor).toEqual([
       'src/main/cursor/CursorStartupContainment.live.test.ts'
@@ -459,11 +459,15 @@ Commands:
     expect(packageJson.scripts['verify:provider-permissions:live']).toBe(
       'node scripts/provider-containment-canary.cjs --live --providers=kimi --require=kimi'
     )
-    expect(packageJson.scripts['verify:provider-permissions:release']).toBe(
-      'node scripts/provider-containment-canary.cjs --live --providers=kimi --require=kimi --require-known-fingerprints'
-    )
     expect(packageJson.scripts['verify:provider-permissions:live']).not.toContain('cursor')
-    expect(packageJson.scripts['verify:provider-permissions:release']).not.toContain('cursor')
+    // The strict verify:provider-permissions:release / validate:release:provider-permissions
+    // lanes were deleted by user decision (capability governance; ledger
+    // TW-SEC-2026-015 "Closed by removal"). Assert their absence so the removed
+    // hosted release-attestation apparatus cannot be silently re-added — the
+    // runner still exposes --require-known-fingerprints for the local notary
+    // runbook, but no managed npm/CI lane may wire it back in.
+    expect(packageJson.scripts['verify:provider-permissions:release']).toBeUndefined()
+    expect(packageJson.scripts['validate:release:provider-permissions']).toBeUndefined()
     const runnerSource = readFileSync(
       join(process.cwd(), 'scripts/provider-containment-canary.cjs'),
       'utf8'
