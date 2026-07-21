@@ -1,7 +1,8 @@
 import React, { useEffect, useState } from 'react'
 import type { ChatRecord, ProviderId } from '../../../main/store/types'
 import { isSubThreadChat } from '../lib/chatScope'
-import { isLiveSelectableProvider } from '../../../shared/retiredProviders'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
+import { getProviderLabel } from '../lib/providerLabels'
 import { PillButton } from './PillButton'
 
 /**
@@ -15,7 +16,7 @@ import { PillButton } from './PillButton'
  * verify before submitting.
  *
  * v1 deliberately keeps the surface minimal:
- *   - Provider picker (4 options)
+ *   - Provider picker (every live selectable provider)
  *   - Free-text delegation prompt
  *   - Return-result checkbox (records intent, F2 will auto-propagate)
  *
@@ -24,30 +25,31 @@ import { PillButton } from './PillButton'
  * the parent provider to draft a delegation prompt).
  */
 
-const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> = ([
-  {
-    value: 'gemini',
-    label: 'Gemini',
-    helper: 'Long-context reasoning, image inputs, project-aware planning.'
-  },
-  {
-    value: 'codex',
-    label: 'Codex',
-    helper: 'Fast-twitch CLI work, shell commands, sandboxed execution.'
-  },
-  {
-    value: 'claude',
-    label: 'Claude',
-    helper: 'Deep reasoning, tool use, careful code edits with strong safety.'
-  },
-  {
-    value: 'kimi',
-    label: 'Kimi',
-    helper: 'Admitted ACP runtime with a governed per-run TaskWraith gateway.'
-  }
-] as Array<{ value: ProviderId; label: string; helper: string }>).filter(
-  (opt) => isLiveSelectableProvider(opt.value)
-)
+/**
+ * Delegation-target helper copy, keyed over the canonical live set: admitting
+ * a provider without helper copy fails typecheck, and retiring one (e.g.
+ * gemini) removes its seat with no edit in this file.
+ *
+ * Every live provider is a valid CHILD seat (AGENTS.md "Sub-Threads") — a
+ * sub-thread dispatches through the ordinary per-provider send path. Even
+ * managed Cursor, which cannot CALL delegate_to_subthread as a parent, can be
+ * delegated TO.
+ */
+const PROVIDER_HELPERS: Record<(typeof LIVE_SELECTABLE_PROVIDER_IDS)[number], string> = {
+  codex: 'Fast-twitch CLI work, shell commands, sandboxed execution.',
+  claude: 'Deep reasoning, tool use, careful code edits with strong safety.',
+  kimi: 'Admitted ACP runtime with a governed per-run TaskWraith gateway.',
+  cursor: 'Contained Cursor CLI — native tools inside the OS sandbox, no TaskWraith MCP seat.',
+  grok: 'Grok CLI seat; shell and file tools route through the TaskWraith bridge when enabled.',
+  ollama: 'Local models over HTTP with the curated TaskWraith gateway tool surface.'
+}
+
+const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> =
+  LIVE_SELECTABLE_PROVIDER_IDS.map((value) => ({
+    value,
+    label: getProviderLabel(value),
+    helper: PROVIDER_HELPERS[value]
+  }))
 
 interface SubThreadCreatorProps {
   /** Parent chat. The new sub-thread will inherit its workspace and
