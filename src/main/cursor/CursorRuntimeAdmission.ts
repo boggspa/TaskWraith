@@ -1,3 +1,19 @@
+// ============================================================================
+// DEV-ONLY CONTAINMENT CANARY — NOT A RUNTIME GATE. DO NOT WIRE INTO LAUNCH.
+//
+// The live spawn path (runCursorProvider in index.ts) deliberately does NOT
+// consult this module: exact-SHA admission proved brittle because provider
+// auto-updates changed the binary and silently disabled Cursor. Production
+// containment is the contained argv itself (buildContainedCursorArgv —
+// `--sandbox enabled` hard-pinned, read-only `--mode` for read-only seats).
+// This module and its minted roster exist to power the DEV-only
+// CursorStartupContainment live canary — the per-upgrade tripwire that
+// re-proves the sandbox posture against a real binary — and to keep the
+// canary-derived qualification data (`cursor-native-sandbox-readonly-v1`).
+// Re-wiring it into the launch path would resurrect the auto-update
+// bricking; read the "no per-build fingerprint gate" comment at the
+// runCursorProvider spawn site before touching this.
+// ============================================================================
 import { execFile } from 'child_process'
 import { createHash } from 'crypto'
 import type { BigIntStats } from 'fs'
@@ -34,14 +50,14 @@ export interface CursorRuntimeQualification {
 }
 
 /**
- * Build-generated runtime projection of the reviewed release manifest.
- *
- * It is intentionally empty until a concrete cursor-agent binary tuple has
- * completed the credentialed startup-containment lane. Packaged builds do not
- * read an environment manifest or accept an environment-provided tuple at
- * runtime. While this roster is empty, `admit()` returns `unknown_binary` for
- * every binary and no managed Cursor run is admissible — the fail-closed
- * default the whole pipeline defends.
+ * Build-generated runtime projection of the reviewed release manifest,
+ * written by `generate:cursor-runtime-qualifications` from a credentialed
+ * live-canary pass (classifier-gated; the USER runs the mint). Packaged
+ * builds do not read an environment manifest or accept an
+ * environment-provided tuple at runtime. If the roster is empty, `admit()`
+ * returns `unknown_binary` for every binary — the fail-closed default. The
+ * roster gates only the dev canary, never the live spawn path (see the
+ * header above).
  */
 export const EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS: readonly CursorRuntimeQualification[] =
   Object.freeze(
@@ -51,11 +67,10 @@ export const EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS: readonly CursorRuntimeQuali
 /**
  * Synchronous coarse predicate: is any exact-build Cursor tuple embedded at all?
  *
- * This never authorizes a spawn on its own (the exact binary is only verified by
- * the async `admit()` probe/recheck), but it lets synchronous availability gates
- * — `cursorManagedRunAdmission()` and the provider capability contract — become
- * qualification-driven instead of hardcoded. With the shipped empty roster it
- * returns `false`, so Cursor stays "Managed runs unavailable".
+ * This never authorizes a spawn on its own (the exact binary is only verified
+ * by the async `admit()` probe/recheck). Its one-time consumer, the
+ * `cursorManagedRunAdmission()` coarse gate, was deleted as un-wired re-wire
+ * bait; the predicate remains for the dev canary and roster tooling only.
  */
 export function cursorRuntimeQualificationsPresent(
   roster: readonly CursorRuntimeQualification[] = EMBEDDED_CURSOR_RUNTIME_QUALIFICATIONS

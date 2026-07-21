@@ -89,8 +89,9 @@ export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput
   /** True when the read-only safe-subset broker was set up for this run (only
    *  ever true when `taskWraithMcpActive` is false — the two are exclusive). */
   taskWraithReadOnlyMcpActive?: boolean
-  /** Gate for `--force` (see forceAllowTools). Threaded from cursorForceMcpEnabled();
-   *  index.ts passes `false` when the kill-switch is set. */
+  /** Gate for `--force` (see forceAllowTools). Historical bridge-era input; the
+   *  hard-disabled cursorForceMcpEnabled() switch that fed it was deleted, and
+   *  the live contained argv never emits `--force`. */
   forceAllowMcpTools?: boolean
 }
 
