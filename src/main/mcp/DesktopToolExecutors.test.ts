@@ -281,7 +281,7 @@ describe('DesktopToolExecutors Kimi auth projection', () => {
       providerAuth: providerAuth({
         available: false,
         authState: 'oauth',
-        error: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
+        error: 'Kimi inventory does not advertise the qualified ACP-only transport posture.'
       })
     })
     await expect(
@@ -291,7 +291,7 @@ describe('DesktopToolExecutors Kimi auth projection', () => {
         kimi: {
           serverState: 'unavailable',
           authState: 'missing',
-          authReason: expect.stringContaining('embedded reviewed roster')
+          authReason: expect.stringContaining('ACP-only transport posture')
         }
       }
     })

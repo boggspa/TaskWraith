@@ -227,12 +227,12 @@ describe('buildProviderAuthStatusV2 — kimi', () => {
       provider: 'kimi',
       available: false,
       rawAuthState: 'oauth',
-      errorReason: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.'
+      errorReason: 'Kimi inventory does not advertise the qualified ACP-only transport posture.'
     })
     expect(result.serverState).toBe('unavailable')
     expect(result.transport).toBe('unavailable')
     expect(result.authState).toBe('missing')
-    expect(result.authReason).toContain('embedded reviewed roster')
+    expect(result.authReason).toContain('ACP-only transport posture')
   })
 })
 

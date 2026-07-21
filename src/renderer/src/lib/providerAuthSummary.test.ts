@@ -62,7 +62,7 @@ describe('summariseProviderApiKeyStatus — Kimi', () => {
         authState: 'oauth',
         apiKeyConfigured: false,
         encryptionAvailable: true,
-        version: 'Kimi binary SHA/platform/architecture is not in the embedded reviewed roster.',
+        version: 'Kimi inventory does not advertise the qualified ACP-only transport posture.',
         binaryPath: '/opt/kimi',
         cliFlavour: 'unsupported',
         transportSupported: false

@@ -184,7 +184,9 @@ describe('buildKimiFlavourGateMessage', () => {
     )
     expect(message).toContain('Kimi Code was detected at /Users/x/.kimi-code/bin/kimi')
     expect(message).toContain('generation detection is not runtime admission')
-    expect(message).toContain('embedded reviewed roster')
+    expect(message).toContain('stable binary identity')
+    expect(message).toContain('bounded startup probes')
+    expect(message).toContain('ACP-only transport posture')
     expect(message).toContain('No legacy Wire or print-mode fallback')
   })
 

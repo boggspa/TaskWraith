@@ -161,7 +161,7 @@ export function buildKimiFlavourGateMessage(
   if (findings.flavour === 'kimi-code') {
     return (
       `Kimi Code was detected at ${binaryPath}, but generation detection is not runtime admission. ` +
-      `TaskWraith starts Kimi only through its contained ACP transport when the exact binary tuple is present in the embedded reviewed roster. ` +
+      `TaskWraith starts Kimi only through its contained ACP transport: a stable binary identity, successful bounded startup probes, and the ACP-only transport posture are required before any managed Kimi process starts. ` +
       `No legacy Wire or print-mode fallback is available.`
     )
   }
