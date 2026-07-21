@@ -69,7 +69,9 @@ export function ChangelogSheet({
         : updateStatus === 'downloading'
           ? `Downloading update… ${downloadPercent}%`
           : updateStatus === 'downloaded'
-            ? `Update ${entry.version} downloaded — it installs when you restart.`
+            ? updateSnapshot?.restartPending
+              ? `Update ${entry.version} downloaded — TaskWraith will restart when active work completes.`
+              : `Update ${entry.version} downloaded — ready to restart.`
             : updateStatus === 'not-available'
               ? "You're on the latest version."
               : null

@@ -60,7 +60,7 @@ function labelForSnapshot(snapshot: UpdateStateSnapshot): string {
         ? `${Math.round(snapshot.downloadProgress.percent)}%`
         : 'Downloading'
     case 'downloaded':
-      return 'Restart'
+      return snapshot.restartPending ? 'Restart queued' : 'Restart'
     case 'error':
       return 'Update issue'
     default:
@@ -77,7 +77,9 @@ function titleForSnapshot(snapshot: UpdateStateSnapshot): string {
     case 'downloading':
       return 'TaskWraith update is downloading'
     case 'downloaded':
-      return 'Restart TaskWraith to install the update now'
+      return snapshot.restartPending
+        ? 'TaskWraith will restart when active work completes'
+        : 'Restart TaskWraith to install the update now'
     case 'error':
       return snapshot.errorMessage || 'TaskWraith update check failed'
     default:

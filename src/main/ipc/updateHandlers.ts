@@ -1,12 +1,14 @@
 import { ipcMain } from 'electron'
 import type { ProductChangelogSnapshot } from '../store/types'
+import type { UpdateRestartCoordinator } from '../UpdateRestartCoordinator'
 import type { UpdateService } from '../UpdateService'
 
 export interface UpdateHandlerDeps {
   updateService: Pick<
     UpdateService,
-    'snapshot' | 'checkForUpdates' | 'downloadUpdate' | 'installOnQuit' | 'quitAndInstall'
+    'snapshot' | 'checkForUpdates' | 'downloadUpdate' | 'installOnQuit'
   >
+  updateRestartCoordinator: Pick<UpdateRestartCoordinator, 'requestRestartWhenIdle'>
   changelogSnapshot: () => ProductChangelogSnapshot
   updateLastSeenChangelogVersion: (version: string) => void
 }
@@ -21,12 +23,17 @@ export function registerUpdateHandlers(deps: UpdateHandlerDeps): void {
     await deps.updateService.downloadUpdate()
     return deps.updateService.snapshot()
   })
+  ipcMain.handle('download-update-and-restart', async () => {
+    await deps.updateService.downloadUpdate()
+    deps.updateRestartCoordinator.requestRestartWhenIdle()
+    return deps.updateService.snapshot()
+  })
   ipcMain.handle('install-update-on-quit', () => {
     deps.updateService.installOnQuit()
     return deps.updateService.snapshot()
   })
   ipcMain.handle('install-update-now', () => {
-    deps.updateService.quitAndInstall()
+    deps.updateRestartCoordinator.requestRestartWhenIdle()
     return deps.updateService.snapshot()
   })
   ipcMain.handle('changelog-snapshot', () => deps.changelogSnapshot())

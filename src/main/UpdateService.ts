@@ -82,6 +82,8 @@ export interface UpdateStateSnapshot {
   errorMessage?: string
   /** When the last manual or automatic check was attempted. ISO. */
   lastCheckedAt?: string
+  /** A user requested restart once the app has no live work. */
+  restartPending?: boolean
 }
 
 type Listener = (snapshot: UpdateStateSnapshot) => void
@@ -111,6 +113,7 @@ export class UpdateService {
   private downloadProgress: ProgressInfo | undefined
   private errorMessage: string | undefined
   private lastCheckedAt: string | undefined
+  private restartPending = false
   private listeners = new Set<Listener>()
   private wired = false
   private periodicCheckTimer: ReturnType<typeof setInterval> | null = null
@@ -142,6 +145,7 @@ export class UpdateService {
       autoUpdater.autoInstallOnAppQuit = false
       this.downloadProgress = undefined
       this.errorMessage = undefined
+      this.restartPending = false
       this.clearReleaseMetadata()
       this.stopPeriodicChecks()
       this.publish()
@@ -169,6 +173,7 @@ export class UpdateService {
     this.status = 'idle'
     this.downloadProgress = undefined
     this.errorMessage = undefined
+    this.restartPending = false
     this.clearReleaseMetadata()
     this.startPeriodicChecks()
     this.publish()
@@ -227,6 +232,14 @@ export class UpdateService {
     autoUpdater.quitAndInstall()
   }
 
+  /** Reflect that a user-requested update will restart once live work ends. */
+  setRestartPending(pending: boolean): void {
+    const next = pending && this.status === 'downloaded'
+    if (this.restartPending === next) return
+    this.restartPending = next
+    this.publish()
+  }
+
   snapshot(): UpdateStateSnapshot {
     return {
       status: this.status,
@@ -240,7 +253,8 @@ export class UpdateService {
       updateArchitecture: this.updateArchitecture,
       downloadProgress: this.downloadProgress,
       errorMessage: this.errorMessage,
-      lastCheckedAt: this.lastCheckedAt
+      lastCheckedAt: this.lastCheckedAt,
+      restartPending: this.restartPending
     }
   }
 

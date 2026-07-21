@@ -19,6 +19,7 @@ export type ChangelogUpdateStatus = {
   busy: boolean
   checkForUpdates: () => Promise<UpdateStateSnapshot | null>
   downloadUpdate: () => Promise<UpdateStateSnapshot | null>
+  downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot | null>
   installUpdateNow: () => Promise<UpdateStateSnapshot | null>
 }
 
@@ -95,7 +96,7 @@ export function useChangelog(
   const handleSidebarQuickUpdate = useCallback(() => {
     switch (resolveSidebarQuickUpdateAction(updateStatus.snapshot?.status)) {
       case 'download':
-        void updateStatus.downloadUpdate()
+        void updateStatus.downloadUpdateAndRestart()
         break
       case 'install':
         void updateStatus.installUpdateNow()

@@ -447,6 +447,7 @@ import {
   UpdateService,
   type UpdateStateSnapshot
 } from './UpdateService'
+import { UpdateRestartCoordinator } from './UpdateRestartCoordinator'
 import { LocalServersService } from './LocalServersService'
 import { PluginHost } from './plugins/PluginHost'
 import { PluginSecretStore } from './plugins/PluginSecretStore'
@@ -37863,6 +37864,22 @@ if (isGeminiMcpBridgeProcess) {
       channel: initialSettings.updateChannel,
       enabled: resolveAutoUpdateEnabled(initialSettings)
     })
+    const updateRestartCoordinator = new UpdateRestartCoordinator({
+      updateService,
+      hasActiveWork: () => {
+        if (getActiveTaskWraithThreadCount() > 0) return true
+        if (
+          AppStore.getScheduledTasks().some(
+            (task) => task.status === 'due' || task.status === 'running'
+          )
+        ) {
+          return true
+        }
+        return AppStore.getWorkflowDefinitions().some((workflow) =>
+          Boolean(workflow.activeExecutionId)
+        )
+      }
+    })
 
     // Local Servers — detect dev servers/watchers running under the user's
     // workspaces (and the ones our agents spawned) so the user can see + stop
@@ -38522,6 +38539,7 @@ if (isGeminiMcpBridgeProcess) {
     }
     registerUpdateHandlers({
       updateService,
+      updateRestartCoordinator,
       changelogSnapshot,
       updateLastSeenChangelogVersion: (version) =>
         AppStore.updateSettings({ lastSeenChangelogVersion: version })

@@ -32,8 +32,10 @@ function createDeps(overrides: Partial<Parameters<typeof registerUpdateHandlers>
       snapshot: vi.fn(() => baseSnapshot),
       checkForUpdates: vi.fn(async () => null),
       downloadUpdate: vi.fn(async () => undefined),
-      installOnQuit: vi.fn(),
-      quitAndInstall: vi.fn()
+      installOnQuit: vi.fn()
+    },
+    updateRestartCoordinator: {
+      requestRestartWhenIdle: vi.fn()
     },
     changelogSnapshot: vi.fn(() => baseChangelog),
     updateLastSeenChangelogVersion: vi.fn(),
@@ -97,6 +99,21 @@ describe('registerUpdateHandlers', () => {
     expect(deps.updateService.snapshot).toHaveBeenCalledTimes(1)
   })
 
+  it('downloads then requests a restart when the masthead update action is used', async () => {
+    const snapshot = { ...baseSnapshot, status: 'downloaded' as const }
+    const deps = createDeps({
+      updateService: {
+        ...createDeps().updateService,
+        snapshot: vi.fn(() => snapshot)
+      }
+    })
+    registerUpdateHandlers(deps)
+
+    await expect(handlerFor('download-update-and-restart')({} as any)).resolves.toBe(snapshot)
+    expect(deps.updateService.downloadUpdate).toHaveBeenCalledTimes(1)
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenCalledTimes(1)
+  })
+
   it('installs later or now and returns the latest service snapshot', () => {
     const snapshot = { ...baseSnapshot, status: 'downloaded' as const }
     const deps = createDeps({
@@ -110,7 +127,7 @@ describe('registerUpdateHandlers', () => {
     expect(handlerFor('install-update-on-quit')({} as any)).toBe(snapshot)
     expect(deps.updateService.installOnQuit).toHaveBeenCalledTimes(1)
     expect(handlerFor('install-update-now')({} as any)).toBe(snapshot)
-    expect(deps.updateService.quitAndInstall).toHaveBeenCalledTimes(1)
+    expect(deps.updateRestartCoordinator.requestRestartWhenIdle).toHaveBeenCalledTimes(1)
     expect(deps.updateService.snapshot).toHaveBeenCalledTimes(2)
   })
 

@@ -43,7 +43,7 @@ export function UpdateStatusPane({
     <div className="update-status-pane">
       <div className="update-status-row">
         <span className={`update-status-pill update-status-pill-${snap.status}`}>
-          {labelForStatus(snap.status)}
+          {labelForSnapshot(snap)}
         </span>
         {snap.latestVersion && <span className="update-status-version">v{snap.latestVersion}</span>}
         {snap.lastCheckedAt && (
@@ -123,8 +123,8 @@ export function UpdateStatusPane({
   )
 }
 
-function labelForStatus(status: UpdateStateSnapshot['status']): string {
-  switch (status) {
+function labelForSnapshot(snapshot: UpdateStateSnapshot): string {
+  switch (snapshot.status) {
     case 'disabled':
       return 'Disabled'
     case 'idle':
@@ -138,7 +138,7 @@ function labelForStatus(status: UpdateStateSnapshot['status']): string {
     case 'downloading':
       return 'Downloading'
     case 'downloaded':
-      return 'Ready to install'
+      return snapshot.restartPending ? 'Restart queued' : 'Ready to restart'
     case 'error':
       return 'Error'
   }

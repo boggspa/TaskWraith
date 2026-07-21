@@ -1123,6 +1123,7 @@ declare global {
       updateSnapshot: () => Promise<UpdateStateSnapshot>
       checkForUpdates: () => Promise<UpdateStateSnapshot>
       downloadUpdate: () => Promise<UpdateStateSnapshot>
+      downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot>
       installUpdateOnQuit: () => Promise<UpdateStateSnapshot>
       installUpdateNow: () => Promise<UpdateStateSnapshot>
       changelogSnapshot: () => Promise<ProductChangelogSnapshot>

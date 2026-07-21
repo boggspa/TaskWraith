@@ -924,6 +924,7 @@ const api = {
   updateSnapshot: () => ipcRenderer.invoke('update-snapshot'),
   checkForUpdates: () => ipcRenderer.invoke('check-for-updates'),
   downloadUpdate: () => ipcRenderer.invoke('download-update'),
+  downloadUpdateAndRestart: () => ipcRenderer.invoke('download-update-and-restart'),
   installUpdateOnQuit: () => ipcRenderer.invoke('install-update-on-quit'),
   installUpdateNow: () => ipcRenderer.invoke('install-update-now'),
   changelogSnapshot: () => ipcRenderer.invoke('changelog-snapshot'),

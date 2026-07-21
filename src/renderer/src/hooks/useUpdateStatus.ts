@@ -7,6 +7,7 @@ export function useUpdateStatus(): {
   refresh: () => Promise<UpdateStateSnapshot | null>
   checkForUpdates: () => Promise<UpdateStateSnapshot | null>
   downloadUpdate: () => Promise<UpdateStateSnapshot | null>
+  downloadUpdateAndRestart: () => Promise<UpdateStateSnapshot | null>
   installUpdateNow: () => Promise<UpdateStateSnapshot | null>
 } {
   const [snapshot, setSnapshot] = useState<UpdateStateSnapshot | null>(null)
@@ -52,6 +53,10 @@ export function useUpdateStatus(): {
     () => runUpdateAction(() => window.api.downloadUpdate()),
     [runUpdateAction]
   )
+  const downloadUpdateAndRestart = useCallback(
+    () => runUpdateAction(() => window.api.downloadUpdateAndRestart()),
+    [runUpdateAction]
+  )
   const installUpdateNow = useCallback(
     () => runUpdateAction(() => window.api.installUpdateNow()),
     [runUpdateAction]
@@ -63,6 +68,7 @@ export function useUpdateStatus(): {
     refresh,
     checkForUpdates,
     downloadUpdate,
+    downloadUpdateAndRestart,
     installUpdateNow
   }
 }
