@@ -10,7 +10,7 @@
 .live-activity-viewport {
   position: relative;
   margin: 2px 0 6px;
-  padding-left: 10px;
+  padding-left: 0;
   --live-activity-edge-fade-size: 52px;
 }
 
@@ -40,36 +40,9 @@
   flex: 0 0 auto;
 }
 
-/* Left rail — subtle by default, animated pulse while the run is live. */
+/* Left rail intentionally hidden; activity rows carry their own visual anchors. */
 .live-activity-viewport-rail {
-  position: absolute;
-  left: 0;
-  top: 2px;
-  bottom: 2px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--border, rgba(127, 127, 127, 0.35));
-  transition: background 200ms ease;
-}
-
-.live-activity-viewport.is-active .live-activity-viewport-rail {
-  background: linear-gradient(
-    180deg,
-    color-mix(in srgb, var(--accent, #6ea8fe) 20%, transparent),
-    var(--accent, #6ea8fe),
-    color-mix(in srgb, var(--accent, #6ea8fe) 20%, transparent)
-  );
-  background-size: 100% 220%;
-  animation: live-activity-rail-pulse 1.8s ease-in-out infinite;
-}
-
-@keyframes live-activity-rail-pulse {
-  0% {
-    background-position: 0 0%;
-  }
-  100% {
-    background-position: 0 100%;
-  }
+  display: none;
 }
 
 .live-activity-viewport-scroll {
@@ -247,10 +220,6 @@
 
 .live-activity-viewport-jump:hover {
   border-color: var(--accent, #6ea8fe);
-}
-
-[data-reduce-motion='true'] .live-activity-viewport.is-active .live-activity-viewport-rail {
-  animation: none;
 }
 
 [data-reduce-motion='true'] .live-activity-viewport-scroll {
