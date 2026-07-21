@@ -37095,7 +37095,31 @@ if (isGeminiMcpBridgeProcess) {
           })
           await holds.codexAdmissionHold.completion
         },
-        commit: (operationId) => AppStore.commitPreparedHistoryDeletion(operationId),
+        commit: (operationId) => {
+          // Checkpoint erasure joins the broad transaction pre-commit under the
+          // same durable intent; a purge failure keeps the operation pending.
+          const pending = AppStore.getPendingHistoryDeletion()
+          if (pending && pending.operationId === operationId) {
+            const store = sessionCheckpointStoreRef
+            if (!store) {
+              throw new Error(
+                'Session checkpoint erasure is unavailable; history clear was stopped.'
+              )
+            }
+            store.purgeForHistoryDeletionScope(
+              pending.kind === 'global'
+                ? { kind: 'global' }
+                : pending.kind === 'workspace'
+                  ? {
+                      kind: 'workspace',
+                      workspaceId: pending.workspaceId,
+                      chatIds: pending.chatIds
+                    }
+                  : { kind: pending.kind, chatIds: pending.chatIds }
+            )
+          }
+          AppStore.commitPreparedHistoryDeletion(operationId)
+        },
         releaseHolds: (preparation, holds) => {
           const releaseErrors: unknown[] = []
           try {
@@ -37236,6 +37260,18 @@ if (isGeminiMcpBridgeProcess) {
       AppStore.recoverPendingUsageHistoryMutationStrict()
     }
 
+    // Constructed before startup deletion recovery so a resumed transaction can
+    // purge checkpoint state; the Ensemble orchestrator receives the same
+    // instance later in this ready flow. The fence soft-skips checkpoint writes
+    // for chats inside a prepared erasure or whose record is already gone
+    // (post-commit stragglers bypass the saveChat throw, so the store needs its
+    // own check).
+    sessionCheckpointStoreRef = createDefaultSessionCheckpointStore({
+      log: (line) => console.log(line),
+      isHistoryMutationBlocked: (chatId, workspaceId) =>
+        durableHistoryDeletionBlocks(chatId, workspaceId) || !AppStore.getChat(chatId)
+    })
+
     const drainOrphanSubThreadsBeforeRunQueue = async (): Promise<void> => {
       const candidates = AppStore.listOrphanSubThreadReapCandidates()
       let changed = false
@@ -37332,6 +37368,9 @@ if (isGeminiMcpBridgeProcess) {
       recoverPendingUsageHistoryMutationBeforeOuterDeletion()
       await recoverPendingHistoryDeletionBeforeRunQueue()
       await drainOrphanSubThreadsBeforeRunQueue()
+      // Only after pending erasure fully resumed: checkpoints whose chat record
+      // no longer exists were stranded by pre-join deletions. Delete-only.
+      sessionCheckpointStoreRef?.purgeOrphanRecords((chatId) => Boolean(AppStore.getChat(chatId)))
     } catch (error) {
       if (!projectReferenceOwnershipReconciled) {
         try {
@@ -39055,6 +39094,25 @@ if (isGeminiMcpBridgeProcess) {
       transcript: TranscriptMediaHistoryMutationHold
       derived: RegenerableHistoryByteHistoryHold
     }
+    // Strict checkpoint erasure inside the deletion transaction, before the
+    // store commit: the durable intent is still the frozen cascade authority,
+    // so a purge failure throws and keeps the operation pending/resumable
+    // instead of committing while checkpoint snapshots survive.
+    const purgeSessionCheckpointsForScopedDeletion = (
+      kind: 'chat' | 'truncate',
+      rootChatId: string
+    ): void => {
+      const store = sessionCheckpointStoreRef
+      if (!store) {
+        throw new Error('Session checkpoint erasure is unavailable; chat deletion was stopped.')
+      }
+      const pending = AppStore.getPendingHistoryDeletion()
+      const chatIds =
+        pending && pending.kind === kind && pending.rootChatId === rootChatId
+          ? pending.chatIds
+          : [rootChatId]
+      store.purgeForHistoryDeletionScope({ kind, chatIds })
+    }
     const scopedHistoryDeletionCoordinator = new ScopedHistoryDeletionCoordinator({
       resolveChatIds: (kind, rootChatId) =>
         AppStore.previewHistoryDeletionScope({ kind, rootChatId }).chatIds,
@@ -39073,8 +39131,14 @@ if (isGeminiMcpBridgeProcess) {
       prepare: (input) => AppStore.prepareHistoryDeletion(input),
       recordQuiesced: (operationId, targetIds) =>
         AppStore.recordHistoryDeletionQuiesced(operationId, targetIds),
-      commitDelete: (chatId) => chatService.deleteChat(chatId),
-      commitTruncate: (chatId) => chatService.truncateChatHistory(chatId),
+      commitDelete: (chatId) => {
+        purgeSessionCheckpointsForScopedDeletion('chat', chatId)
+        chatService.deleteChat(chatId)
+      },
+      commitTruncate: (chatId) => {
+        purgeSessionCheckpointsForScopedDeletion('truncate', chatId)
+        return chatService.truncateChatHistory(chatId)
+      },
       beginUsageHistoryMutation: (preparation) => usageHistoryDeletionTarget.acquire(preparation),
       purgeUsageHistoryStrict: async (preparation, hold) => {
         await usageHistoryDeletionTarget.purgeStrict(
@@ -41344,9 +41408,6 @@ if (isGeminiMcpBridgeProcess) {
     composerServiceRef = composerService
     wakeupTimerServiceRef = new WakeupTimerService({
       onFire: handleEnsembleWakeupTimerFired
-    })
-    sessionCheckpointStoreRef = createDefaultSessionCheckpointStore({
-      log: (line) => console.log(line)
     })
     ensembleOrchestratorRef = new EnsembleOrchestrator({
       getChat: (chatId) => AppStore.getChat(chatId),

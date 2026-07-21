@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
@@ -223,5 +223,114 @@ describe('SessionCheckpoint', () => {
     expect(prompt).toContain('provider processes were not auto-resumed')
     expect(prompt).toContain('Run validation once this lands.')
     expect(prompt).toContain('Active participant at checkpoint: Worker (codex) was running.')
+  })
+
+  it('purges frozen history-deletion scopes strictly and idempotently', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-07-21T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      store.upsertFromChat(
+        { ...makeCheckpointChat(), appChatId: 'chat-2', workspaceId: 'ws-2' },
+        'round-started'
+      )
+      store.upsertFromChat(
+        { ...makeCheckpointChat(), appChatId: 'chat-3', workspaceId: 'ws-2' },
+        'round-started'
+      )
+
+      expect(store.purgeForHistoryDeletionScope({ kind: 'chat', chatIds: ['chat-1'] })).toBe(1)
+      expect(store.purgeForHistoryDeletionScope({ kind: 'chat', chatIds: ['chat-1'] })).toBe(0)
+      expect(store.latestForChat('chat-1')).toBeNull()
+      expect(JSON.parse(readFileSync(storagePath, 'utf-8'))).toHaveLength(2)
+
+      // Workspace scope also removes records the frozen chat list missed.
+      expect(
+        store.purgeForHistoryDeletionScope({
+          kind: 'workspace',
+          workspaceId: 'ws-2',
+          chatIds: ['chat-2']
+        })
+      ).toBe(2)
+      expect(JSON.parse(readFileSync(storagePath, 'utf-8'))).toHaveLength(0)
+
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      expect(store.purgeForHistoryDeletionScope({ kind: 'global' })).toBe(1)
+      expect(store.list()).toHaveLength(0)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('soft-skips writer methods for chats inside an in-flight erasure', () => {
+    const blocked = new Set<string>()
+    const logged: string[] = []
+    const store = new SessionCheckpointStore({
+      now: () => '2026-07-21T09:01:00.000Z',
+      idFactory: () => 'tmp',
+      log: (line) => logged.push(line),
+      isHistoryMutationBlocked: (chatId) => blocked.has(chatId)
+    })
+    const checkpoint = store.upsertFromChat(makeCheckpointChat(), 'round-started')
+    expect(checkpoint).not.toBeNull()
+
+    blocked.add('chat-1')
+    // A late round save cannot mint or refresh checkpoint state mid-erasure…
+    expect(store.upsertFromChat(makeCheckpointChat(), 'round-updated')).toBeNull()
+    // …and accept/dismiss cannot hand out or transition frozen snapshots.
+    expect(store.accept(checkpoint!.id)).toBeNull()
+    expect(store.dismiss(checkpoint!.id)).toBeNull()
+    expect(store.latestForChat('chat-1')?.reason).toBe('round-started')
+    expect(logged.some((line) => line.includes('being erased'))).toBe(true)
+
+    // Round supersession still converges the record toward retirement.
+    expect(store.completeRound('chat-1', 'round-1', 'cancelled')?.status).toBe('superseded')
+  })
+
+  it('drops orphaned records for chats that no longer exist, keeping live ones', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-07-21T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      store.upsertFromChat({ ...makeCheckpointChat(), appChatId: 'chat-live' }, 'round-started')
+
+      expect(store.purgeOrphanRecords((chatId) => chatId === 'chat-live')).toBe(1)
+      expect(store.purgeOrphanRecords((chatId) => chatId === 'chat-live')).toBe(0)
+      expect(store.latestForChat('chat-live')).not.toBeNull()
+      expect(JSON.parse(readFileSync(storagePath, 'utf-8'))).toHaveLength(1)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
+
+  it('throws from purge when the strict persist fails instead of logging past it', () => {
+    const tmp = mkdtempSync(join(tmpdir(), 'taskwraith-checkpoints-'))
+    try {
+      const storagePath = join(tmp, 'session-checkpoints.json')
+      const store = new SessionCheckpointStore({
+        storagePath,
+        now: () => '2026-07-21T09:01:00.000Z',
+        idFactory: () => 'tmp'
+      })
+      store.upsertFromChat(makeCheckpointChat(), 'round-started')
+      // Make the atomic tmp+rename write fail by replacing the storage
+      // directory with an unwritable path shape (a file where the dir was).
+      rmSync(tmp, { recursive: true, force: true })
+      writeFileSync(tmp, 'not-a-directory', 'utf-8')
+
+      expect(() => store.purgeForHistoryDeletionScope({ kind: 'global' })).toThrow()
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
   })
 })

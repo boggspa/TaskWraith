@@ -68,7 +68,22 @@ export interface SessionCheckpointStoreOptions {
   now?: () => string
   idFactory?: () => string
   log?: (line: string) => void
+  /**
+   * History-erasure fence. When it returns true for a record's chat, writer
+   * methods (upsert, accept, dismiss) soft-skip instead of persisting: the
+   * chat is inside a prepared deletion or already erased, so a late writer
+   * must not mint or hand out checkpoint state the purge would have to
+   * re-erase. Round supersession is deliberately not fenced — it only
+   * converges an existing record toward retirement.
+   */
+  isHistoryMutationBlocked?: (chatId: string, workspaceId?: string) => boolean
 }
+
+/** Frozen erasure scope, mirroring the durable history-deletion intent. */
+export type SessionCheckpointHistoryDeletionScope =
+  | { kind: 'global' }
+  | { kind: 'workspace'; workspaceId?: string; chatIds: readonly string[] }
+  | { kind: 'chat' | 'truncate'; chatIds: readonly string[] }
 
 export function defaultSessionCheckpointPath(): string | null {
   if (!app || typeof app.getPath !== 'function') return null
@@ -80,10 +95,10 @@ export function defaultSessionCheckpointPath(): string | null {
 }
 
 export function createDefaultSessionCheckpointStore(
-  options: { log?: (line: string) => void } = {}
+  options: Omit<SessionCheckpointStoreOptions, 'storagePath'> = {}
 ): SessionCheckpointStore | null {
   const storagePath = defaultSessionCheckpointPath()
-  return storagePath ? new SessionCheckpointStore({ storagePath, log: options.log }) : null
+  return storagePath ? new SessionCheckpointStore({ ...options, storagePath }) : null
 }
 
 export function buildSessionCheckpointFromChat(
@@ -183,6 +198,7 @@ export class SessionCheckpointStore {
   private readonly now: () => string
   private readonly idFactory: () => string
   private readonly log: (line: string) => void
+  private readonly isHistoryMutationBlocked: (chatId: string, workspaceId?: string) => boolean
   private records: SessionCheckpointRecord[] = []
 
   constructor(options: SessionCheckpointStoreOptions = {}) {
@@ -190,6 +206,7 @@ export class SessionCheckpointStore {
     this.now = options.now ?? (() => new Date().toISOString())
     this.idFactory = options.idFactory ?? (() => randomUUID())
     this.log = options.log ?? (() => {})
+    this.isHistoryMutationBlocked = options.isHistoryMutationBlocked ?? (() => false)
     if (this.storagePath) {
       this.records = this.readFromDisk()
     }
@@ -209,6 +226,12 @@ export class SessionCheckpointStore {
   upsertFromChat(chat: ChatRecord, reason: SessionCheckpointReason): SessionCheckpointRecord | null {
     const round = chat.ensemble?.activeRound
     if (!round) return null
+    if (this.isHistoryMutationBlocked(chat.appChatId, chat.workspaceId)) {
+      this.log(
+        `[SessionCheckpointStore] skipped checkpoint upsert for ${chat.appChatId}: chat history is being erased or is gone`
+      )
+      return null
+    }
     const id = stableCheckpointId(chat.appChatId, round.roundId)
     const existing = this.records.find((record) => record.id === id)
     const record = buildSessionCheckpointFromChat(chat, reason, this.now(), existing)
@@ -282,6 +305,13 @@ export class SessionCheckpointStore {
   ): SessionCheckpointRecord | null {
     const index = this.records.findIndex((record) => record.id === id)
     if (index < 0) return null
+    const existing = this.records[index]
+    if (this.isHistoryMutationBlocked(existing.chatId, existing.workspaceId)) {
+      this.log(
+        `[SessionCheckpointStore] refused ${status} for ${existing.chatId}: chat history is being erased or is gone`
+      )
+      return null
+    }
     const updatedAt = this.now()
     const updated: SessionCheckpointRecord = {
       ...this.records[index],
@@ -292,6 +322,47 @@ export class SessionCheckpointStore {
     this.records[index] = updated
     this.persist()
     return cloneRecord(updated)
+  }
+
+  /**
+   * Strict erasure step for a frozen history-deletion scope. Runs inside the
+   * deletion transaction before the store commit: a failure here throws so the
+   * outer operation stays pending and resumable instead of committing while
+   * checkpoint prompts/blackboard snapshots survive. Idempotent per scope.
+   */
+  purgeForHistoryDeletionScope(scope: SessionCheckpointHistoryDeletionScope): number {
+    const chatIds = new Set(scope.kind === 'global' ? [] : scope.chatIds)
+    const matches = (record: SessionCheckpointRecord): boolean => {
+      if (scope.kind === 'global') return true
+      if (chatIds.has(record.chatId)) return true
+      return (
+        scope.kind === 'workspace' &&
+        Boolean(scope.workspaceId) &&
+        record.workspaceId === scope.workspaceId
+      )
+    }
+    const retained = this.records.filter((record) => !matches(record))
+    const removed = this.records.length - retained.length
+    if (removed === 0) return 0
+    this.records = retained
+    this.persistOrThrow()
+    return removed
+  }
+
+  /**
+   * Startup reconciliation: drop checkpoints whose chat record no longer
+   * exists (deleted before checkpoint erasure joined the transaction, or by an
+   * older build). Delete-only; callers must run it only after pending history
+   * deletion has been resumed to completion, so an in-flight erasure is never
+   * half-cleaned here.
+   */
+  purgeOrphanRecords(chatExists: (chatId: string) => boolean): number {
+    const retained = this.records.filter((record) => chatExists(record.chatId))
+    const removed = this.records.length - retained.length
+    if (removed === 0) return 0
+    this.records = retained
+    this.persistOrThrow()
+    return removed
   }
 
   private readFromDisk(): SessionCheckpointRecord[] {
@@ -309,17 +380,23 @@ export class SessionCheckpointStore {
   }
 
   private persist(): void {
-    if (!this.storagePath) return
     try {
-      mkdirSync(dirname(this.storagePath), { recursive: true })
-      const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
-      writeFileSync(tmpPath, JSON.stringify(this.records), 'utf-8')
-      renameSync(tmpPath, this.storagePath)
+      this.persistOrThrow()
     } catch (err) {
       this.log(
         `[SessionCheckpointStore] persist failed: ${err instanceof Error ? err.message : String(err)}`
       )
     }
+  }
+
+  // Erasure paths need the write failure, not a log line: swallowing it would
+  // let a deletion commit while checkpoint bytes survive on disk.
+  private persistOrThrow(): void {
+    if (!this.storagePath) return
+    mkdirSync(dirname(this.storagePath), { recursive: true })
+    const tmpPath = `${this.storagePath}.${this.idFactory()}.tmp`
+    writeFileSync(tmpPath, JSON.stringify(this.records), 'utf-8')
+    renameSync(tmpPath, this.storagePath)
   }
 }
 
