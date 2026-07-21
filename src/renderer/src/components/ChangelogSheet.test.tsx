@@ -220,6 +220,18 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Jump to latest')
   })
 
+  it('bundles the current 1.8.5 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.5' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.5',
+      releaseDate: '2026-07-20'
+    })
+    expect(entry.releaseNotes).toContain('Kimi ACP sessions can resume as durable, isolated seats')
+    expect(entry.releaseNotes).toContain('Cursor runs again under Path-B contained native sandbox')
+    expect(entry.releaseNotes).toContain('Needs your input surfaces pending agent questions')
+    expect(entry.releaseNotes).toContain('canvas_eval')
+  })
+
   it('formats full changelog arrays from electron-updater metadata', () => {
     expect(
       formatReleaseNotes([
