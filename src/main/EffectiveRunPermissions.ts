@@ -57,7 +57,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
 const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
-  externalPublish: 'deny',
+  externalPublish: 'ask',
   mcpTools: 'ask',
   // No elevation path: a read_only seat may not delegate to a subthread (which
   // would inherit no read_only posture). This is the load-bearing delta from
@@ -88,7 +88,7 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
 const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   shellCommands: 'deny',
   fileChanges: 'deny',
-  externalPublish: 'deny',
+  externalPublish: 'ask',
   mcpTools: 'ask',
   // Plan may delegate to a subthread with per-invocation approval.
   subThreadDelegation: 'ask',
@@ -148,7 +148,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     //   - global agenticServices deny remains absolute (preserveExplicitDeny)
     //   - tool executors reject outside-workspace paths
     //   - external-path detection force-prompts (never auto-allows escapes)
-    //   - externalPublish / canvasEval / mediaRecording stay non-grantable ask/deny
+    //   - canvasEval / mediaRecording stay non-grantable ask/deny
     //   - isFullShellAccessGranted still requires presetId === 'full_access',
     //     so Workspace Write never drops provider sandboxing to danger-full-access
     //   - preview-risk models clamp these services back to 'ask'
@@ -158,7 +158,8 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       // Media editing follows shell/file auto-allow under workspace_write.
       // DELIBERATELY no mediaRecording here — capture is non-grantable and
       // stays at its default-deny.
-      mediaEditing: 'allow'
+      mediaEditing: 'allow',
+      externalPublish: 'allow'
     }
   },
   full_access: {
@@ -168,8 +169,7 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     agenticServices: {
       shellCommands: 'allow',
       fileChanges: 'allow',
-      // External publishing is non-grantable: even Full access must prompt for
-      // each push / PR / future release-center action.
+      externalPublish: 'allow',
       mcpTools: 'allow',
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
@@ -222,6 +222,9 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
 export const PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES: ReadonlySet<AgenticServiceId> =
   new Set<AgenticServiceId>(['canvasInteraction', 'mediaEditing'])
 
+const POSTURE_APPROVAL_ONLY_SERVICES: ReadonlySet<AgenticServiceId> =
+  new Set<AgenticServiceId>(['externalPublish'])
+
 /**
  * Should a would-be automatic approval of `service` be downgraded to a
  * per-invocation prompt because the run is on the `plan` preset and the service
@@ -243,6 +246,17 @@ export function isPlanInstrumentGrantHold(
   service: AgenticServiceId | null | undefined
 ): boolean {
   return presetId === 'plan' && !!service && PLAN_APPROVAL_ONLY_INSTRUMENT_SERVICES.has(service)
+}
+
+export function isPostureApprovalOnlyService(
+  presetId: string | null | undefined,
+  service: AgenticServiceId | null | undefined
+): boolean {
+  return (
+    (presetId === 'plan' || presetId === 'read_only') &&
+    !!service &&
+    POSTURE_APPROVAL_ONLY_SERVICES.has(service)
+  )
 }
 
 /**
@@ -362,9 +376,7 @@ function servicesFromSettings(
   return {
     shellCommands: normalizePolicy(settings?.shellCommands, 'ask'),
     fileChanges: normalizePolicy(settings?.fileChanges, 'ask'),
-    externalPublish: clampNonGrantablePolicy(
-      normalizePolicy(settings?.externalPublish, 'ask')
-    ),
+    externalPublish: normalizePolicy(settings?.externalPublish, 'ask'),
     mcpTools: normalizePolicy(settings?.mcpTools, 'ask'),
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
@@ -420,8 +432,7 @@ function workspaceGrantServiceIdsFor(
     // session grants.
     if (
       grant.service === 'canvasEval' ||
-      grant.service === 'mediaRecording' ||
-      grant.service === 'externalPublish'
+      grant.service === 'mediaRecording'
     )
       continue
     serviceIds.add(grant.service)

@@ -1309,6 +1309,14 @@ describe('MainSanitizers settings patches', () => {
     }
     const sanitized = sanitizeSettingsPatch({ agenticWorkspaceGrants: [grant] })
     expect(sanitized.agenticWorkspaceGrants).toEqual([grant])
+    const publishGrant = {
+      ...grant,
+      id: 'grant-publish-1',
+      service: 'externalPublish' as const
+    }
+    expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [publishGrant] }).agenticWorkspaceGrants).toEqual([
+      publishGrant
+    ])
 
     // Empty array is a valid revoke-all write.
     expect(sanitizeSettingsPatch({ agenticWorkspaceGrants: [] }).agenticWorkspaceGrants).toEqual([])

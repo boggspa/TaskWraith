@@ -921,6 +921,7 @@ import { buildCodexStatusSnapshot } from './CodexStatusSnapshot'
 import {
   resolveEffectiveRunPermissions,
   isPlanInstrumentGrantHold,
+  isPostureApprovalOnlyService,
   isFullShellAccessGranted
 } from './EffectiveRunPermissions'
 import { isReconRunPosture } from './ReconPosture'
@@ -11415,12 +11416,13 @@ function resolveNativeApprovalPreflight(args: {
     // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
     // YOLO or a (non-existent, but defence-in-depth) grant on the Codex path.
     // mediaRecording (future capture) is likewise non-grantable: never auto-allow.
+    // externalPublish is grantable, but read_only / plan keep it approval-only.
     // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
     // a standing/session grant must not zero-click them under `plan` (W7-b rung).
     neverAutoAllow:
       args.service === 'canvasEval' ||
       args.service === 'mediaRecording' ||
-      args.service === 'externalPublish' ||
+      isPostureApprovalOnlyService(effectivePermissions?.presetId, args.service) ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
     effectivePermissions
   })
@@ -22783,9 +22785,13 @@ function handleCodexServerRequest(message: any) {
     toolName: codexCanonicalToolName || probedToolName
   })
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
+  const postureApprovalOnly = isPostureApprovalOnlyService(
+    nativePreflight.kind === 'none' ? undefined : nativePreflight.effectivePermissions?.presetId,
+    gateService
+  )
   const actions: AgentApprovalAction[] = externalPathDetection
     ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
-    : gateService === 'canvasEval'
+    : gateService === 'canvasEval' || postureApprovalOnly
       ? ['accept', 'decline', 'cancel']
       : nativePreflight.kind === 'ask'
         ? approvalActionsForPolicy(
@@ -22822,6 +22828,12 @@ function handleCodexServerRequest(message: any) {
           requiresExactDesktopReview: true,
           requestOnly: true,
           ...(codexCanvasEvalApproval ? { canvasEvalReceipt: codexCanvasEvalApproval } : {})
+        }
+      : {}),
+    ...(postureApprovalOnly
+      ? {
+          requestOnly: true,
+          requestOnlyReason: 'run-posture-approval-only'
         }
       : {}),
     ...(codexEnsembleApproval ? { ensembleParticipant: codexEnsembleApproval.preview } : {})

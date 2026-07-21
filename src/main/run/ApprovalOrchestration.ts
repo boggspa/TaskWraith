@@ -16,7 +16,7 @@ import type {
 } from '../store/types'
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
-import { isPlanInstrumentGrantHold } from '../EffectiveRunPermissions'
+import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
 import {
   assertCanvasEvalApprovalReceipt,
@@ -56,7 +56,7 @@ export interface ApprovalPromptReceipt {
  *   3. the plan-artifact fast-path sits AFTER resolve and BEFORE the plain deny.
  *   4. `registerGeminiTool` (the terminal approval registration read live via
  *      `deps.getApprovalService()`) opens the prompt's REGISTER sequence.
- *   5. `neverAutoAllow` (canvasEval / mediaRecording / externalPublish /
+ *   5. `neverAutoAllow` (canvasEval / mediaRecording / approval-only posture
  *      plan-instrument-grant-hold) forces a prompt on every auto-allow path.
  * `ApprovalOrchestration.test.ts` is the security net — it fences these branches
  * because `ApprovalServiceM3Gate` only guards `ApprovalService.resolve()`, never
@@ -427,6 +427,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     // (deny above still wins). The Codex gate enforces the same via neverAutoAllow.
     // mediaRecording (future capture) shares the same non-grantable invariant: it is
     // never promoted above its default-deny by session-YOLO/grant/preset.
+    // externalPublish is grantable, but read_only / plan keep it approval-only:
+    // each publish action prompts, while workspace_write / trusted full_access
+    // may auto-allow through the normal audited policy path.
     // plan-preset instruments (canvasInteraction/mediaEditing) are approval-only:
     // a standing/session grant must NOT zero-click them under `plan` (standing
     // instrument grants are the conformance-gated W7-b rung), so they join
@@ -434,7 +437,7 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
     const neverAutoAllow =
       service === 'canvasEval' ||
       service === 'mediaRecording' ||
-      service === 'externalPublish' ||
+      isPostureApprovalOnlyService(effectivePermissions?.presetId, service) ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
     if (
       deps.isSessionYoloEffective() &&
@@ -548,8 +551,14 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       request.onApprovalPromptCreated?.({ approvalId })
     }
     const externalPathDetection = request.externalPathDetection
+    const postureApprovalOnly = isPostureApprovalOnlyService(
+      effectivePermissions?.presetId,
+      service
+    )
     const requestOnly =
-      service === 'canvasEval' || (request.forcePrompt === true && !externalPathDetection)
+      service === 'canvasEval' ||
+      postureApprovalOnly ||
+      (request.forcePrompt === true && !externalPathDetection)
     const actions: AgentApprovalAction[] = externalPathDetection
       ? ['grantExternalPathRead', 'grantExternalPathEdit', 'declineExternalPath']
       : requestOnly
@@ -614,7 +623,9 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
             ? {
                 requestOnly: true,
                 requestOnlyReason:
-                  'This approval is per-call only; session/workspace grants are disabled for this request.'
+                  postureApprovalOnly
+                    ? 'run-posture-approval-only'
+                    : 'This approval is per-call only; session/workspace grants are disabled for this request.'
               }
             : {}),
           ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {}),

@@ -38,12 +38,13 @@ vi.mock('../AgenticServiceMessages', () => ({
   approvalActionsForPolicy: vi.fn(() => ['accept', 'decline', 'cancel'])
 }))
 vi.mock('../EffectiveRunPermissions', () => ({
-  isPlanInstrumentGrantHold: vi.fn(() => false)
+  isPlanInstrumentGrantHold: vi.fn(() => false),
+  isPostureApprovalOnlyService: vi.fn(() => false)
 }))
 
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { approvalActionsForPolicy } from '../AgenticServiceMessages'
-import { isPlanInstrumentGrantHold } from '../EffectiveRunPermissions'
+import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 
 type Resolution = {
   policy: string
@@ -161,6 +162,7 @@ beforeEach(() => {
   vi.mocked(effectiveAgenticSettings).mockReturnValue({ agenticServices: {} } as never)
   vi.mocked(approvalActionsForPolicy).mockReturnValue(['accept', 'decline', 'cancel'] as never)
   vi.mocked(isPlanInstrumentGrantHold).mockReturnValue(false)
+  vi.mocked(isPostureApprovalOnlyService).mockReturnValue(false)
 })
 
 describe('createApprovalOrchestration — security guard sequence (faked deps)', () => {
@@ -369,6 +371,37 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(order).not.toContain('audit:autoAllow:bossman_auto')
     // …it reaches the human prompt instead.
     expect(order).toContain('registerGeminiTool')
+  })
+
+  it('(h2) posture approval-only publishing prompts request-only despite an allow decision', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    vi.mocked(isPostureApprovalOnlyService).mockReturnValue(true)
+    vi.mocked(deps.permissionService.resolvePermission).mockReturnValue({
+      policy: 'allow',
+      workspaceGrantAllowed: false,
+      sessionGrantAllowed: false,
+      decision: 'allow'
+    })
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'externalPublish',
+      '/repo',
+      request()
+    )
+    await Promise.resolve()
+
+    expect(order).not.toContain('audit:autoAllow:policy')
+    expect(order).toContain('registerGeminiTool')
+    const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
+    expect(livePayload.actions).toEqual(['accept', 'decline', 'cancel'])
+    expect(livePayload.preview).toMatchObject({
+      requestOnly: true,
+      requestOnlyReason: 'run-posture-approval-only'
+    })
+    void pending
   })
 
   it('(i) keeps the exact canvas_eval script transient while durable sinks receive an approval-bound receipt', async () => {

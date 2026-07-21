@@ -57,7 +57,6 @@ export function approvalActionsForPolicy(
   service?: AgenticServiceId
 ): AgentApprovalAction[] {
   if (
-    service === 'externalPublish' ||
     service === 'canvasEval' ||
     service === 'mediaRecording'
   ) {

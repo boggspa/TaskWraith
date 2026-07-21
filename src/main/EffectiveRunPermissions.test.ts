@@ -96,10 +96,10 @@ describe('resolveEffectiveRunPermissions', () => {
       // untouched. The global-deny kill switch and preview-risk models still force
       // 'deny' ahead of the preset (covered by the deny-path tests below).
       expect(resolved.networkAccess).toBe('allow')
-      // Shared floor: neither preset can write, run shell, eval, capture, or
+      // Shared floor: neither preset can write files, run shell, eval, capture, or
       // cross-thread-read — the split only diverges on the instrument services.
       expect(resolved.agenticServices.fileChanges).toBe('deny')
-      expect(resolved.agenticServices.externalPublish).toBe('deny')
+      expect(resolved.agenticServices.externalPublish).toBe('ask')
       expect(resolved.agenticServices.shellCommands).toBe('deny')
       expect(resolved.agenticServices.mcpTools).toBe('ask')
       expect(resolved.agenticServices.crossThreadRead).toBe('deny')
@@ -131,7 +131,7 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.canvasInteraction).toBe('ask')
     expect(resolved.agenticServices.mediaEditing).toBe('ask')
     expect(resolved.agenticServices.fileChanges).toBe('deny')
-    expect(resolved.agenticServices.externalPublish).toBe('deny')
+    expect(resolved.agenticServices.externalPublish).toBe('ask')
     expect(resolved.agenticServices.shellCommands).toBe('deny')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
     expect(resolved.agenticServices.canvasEval).toBe('deny')
@@ -374,9 +374,9 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'default'
     })
-    // A settings/import value of 'allow' must not produce an auto-allow policy.
+    // A settings/import value of 'allow' must not produce an auto-allow eval policy.
     expect(withAllow.agenticServices.canvasEval).toBe('ask')
-    expect(withAllow.agenticServices.externalPublish).toBe('ask')
+    expect(withAllow.agenticServices.externalPublish).toBe('allow')
 
     const withDeny = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -400,15 +400,37 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(withDeny.agenticServices.externalPublish).toBe('deny')
   })
 
-  it('treats externalPublish as non-grantable and never auto-allows it under full access', () => {
+  it('applies externalPublish according to run posture', () => {
+    const readOnly = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'read_only'
+    })
+    const plan = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'plan'
+    })
+    const workspaceWrite = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'workspace_write'
+    })
     const fullAccess = resolveEffectiveRunPermissions({
       provider: 'codex',
       workspacePath: '/repo',
       settings: settings(),
       presetId: 'full_access'
     })
+
+    expect(readOnly.agenticServices.externalPublish).toBe('ask')
+    expect(plan.agenticServices.externalPublish).toBe('ask')
+    expect(workspaceWrite.agenticServices.externalPublish).toBe('allow')
     expect(fullAccess.agenticServices.fileChanges).toBe('allow')
-    expect(fullAccess.agenticServices.externalPublish).toBe('ask')
+    expect(fullAccess.agenticServices.externalPublish).toBe('allow')
 
     const withGrant = resolveEffectiveRunPermissions({
       provider: 'codex',
@@ -427,8 +449,8 @@ describe('resolveEffectiveRunPermissions', () => {
       }),
       presetId: 'default'
     })
-    expect(withGrant.workspaceGrantServiceIds).not.toContain('externalPublish')
-    expect(withGrant.agenticServices.externalPublish).toBe('ask')
+    expect(withGrant.workspaceGrantServiceIds).toContain('externalPublish')
+    expect(withGrant.agenticServices.externalPublish).toBe('workspace')
   })
 
   it('merges workspace grants and provider-scoped external path grants', () => {
@@ -606,8 +628,8 @@ describe('workspace_write preset — run-level auto-allow without a second grant
     expect(resolved.agenticServices.shellCommands).toBe('allow')
     expect(resolved.agenticServices.fileChanges).toBe('allow')
     expect(resolved.agenticServices.mediaEditing).toBe('allow')
-    // Elevated / non-grantable services stay prompt-or-deny.
-    expect(resolved.agenticServices.externalPublish).toBe('ask')
+    // Publishing follows the signed write posture; true non-grantable services stay prompt-or-deny.
+    expect(resolved.agenticServices.externalPublish).toBe('allow')
     expect(resolved.agenticServices.canvasEval).toBe('ask')
     expect(resolved.agenticServices.mediaRecording).toBe('deny')
     // No standing grants are synthesized — the preset policy is enough.

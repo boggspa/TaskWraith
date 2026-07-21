@@ -38,8 +38,7 @@ export interface ApprovalDecisionInput {
 function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
   return (
     service === 'canvasEval' ||
-    service === 'mediaRecording' ||
-    service === 'externalPublish'
+    service === 'mediaRecording'
   )
 }
 
@@ -174,10 +173,8 @@ export class PermissionService {
     // Gemini/Claude gate and the Codex native gate route through here); the YOLO
     // bypasses are blocked separately, and read-only denies it via the preset.
     // mediaRecording (future mic/camera capture) is non-grantable for the same
-    // reason. externalPublish (push/PR/release surfaces) is also non-grantable:
-    // publication must stay a per-action approval even under workspace/session
-    // grants. EffectiveRunPermissions drops matching workspace grants; this is
-    // the session/resolve half.
+    // reason. externalPublish is grantable, but the run-posture gates clamp it
+    // back to per-action approval under read_only / plan.
     const grantable = !isNonGrantableService(service)
     const workspaceGrantAllowed =
       grantable &&

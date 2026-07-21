@@ -238,15 +238,15 @@ describe('PermissionService', () => {
       service.applyApprovalDecision({
         provider: 'codex',
         workspacePath: '/repo',
-        service: 'externalPublish',
+        service: 'canvasEval',
         runId: 'run-publish',
         action: 'acceptForSession'
       })
     ).toBe(true)
-    expect(service.hasSessionGrant('codex', '/repo', 'externalPublish', 'run-publish')).toBe(false)
+    expect(service.hasSessionGrant('codex', '/repo', 'canvasEval', 'run-publish')).toBe(false)
   })
 
-  it('treats externalPublish as non-grantable — no session/workspace grant auto-allows it', () => {
+  it('treats externalPublish as grantable for session/workspace approvals', () => {
     const runManager = new RunManager()
     runManager.create({ runId: 'run-publish', provider: 'codex', workspacePath: '/repo' })
     const service = new PermissionService({ runManager, sessionGrants: new Set() })
@@ -259,8 +259,8 @@ describe('PermissionService', () => {
       'run-publish',
       settings
     )
-    expect(withSession.sessionGrantAllowed).toBe(false)
-    expect(withSession.decision).toBe('ask')
+    expect(withSession.sessionGrantAllowed).toBe(true)
+    expect(withSession.decision).toBe('allow')
 
     const withWorkspace = service.resolvePermission('codex', 'externalPublish', '/repo', undefined, {
       ...settings,
@@ -275,8 +275,8 @@ describe('PermissionService', () => {
         }
       ]
     })
-    expect(withWorkspace.workspaceGrantAllowed).toBe(false)
-    expect(withWorkspace.decision).toBe('ask')
+    expect(withWorkspace.workspaceGrantAllowed).toBe(true)
+    expect(withWorkspace.decision).toBe('allow')
   })
 
   // Phase I1.b: approval gate on multi-provider delegation.
@@ -695,7 +695,7 @@ describe('PermissionService', () => {
     }
 
     function decisionFor(
-      presetId: 'workspace_write' | 'full_access',
+      presetId: 'read_only' | 'plan' | 'default' | 'workspace_write' | 'full_access',
       service: Parameters<PermissionService['resolvePermission']>[1],
       globals: AppSettings = allAskSettings
     ): string {
@@ -728,9 +728,12 @@ describe('PermissionService', () => {
       expect(decisionFor('full_access', 'crossThreadRead')).toBe('allow')
     })
 
-    it('publication stays a per-action prompt under both write presets', () => {
-      expect(decisionFor('workspace_write', 'externalPublish')).toBe('ask')
-      expect(decisionFor('full_access', 'externalPublish')).toBe('ask')
+    it('publication follows the requested posture split', () => {
+      expect(decisionFor('read_only', 'externalPublish')).toBe('ask')
+      expect(decisionFor('plan', 'externalPublish')).toBe('ask')
+      expect(decisionFor('default', 'externalPublish')).toBe('ask')
+      expect(decisionFor('workspace_write', 'externalPublish')).toBe('allow')
+      expect(decisionFor('full_access', 'externalPublish')).toBe('allow')
     })
 
     it('a global deny survives both write presets (kill switch wins)', () => {

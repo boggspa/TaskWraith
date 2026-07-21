@@ -82,11 +82,12 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   networkAccess: 'allow'
 }
 /** Services the workspace-grant picker may pre-authorise. Non-grantable
- * services (canvasEval / mediaRecording / externalPublish) are deliberately
+ * services (canvasEval / mediaRecording) are deliberately
  * absent so a forged settings patch cannot promote them. */
 const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'shellCommands',
   'fileChanges',
+  'externalPublish',
   'mcpTools',
   'subThreadDelegation',
   'canvasInteraction',
