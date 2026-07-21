@@ -1,15 +1,10 @@
-import { useMemo, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import type {
-  PlanImportChipId,
   PlanImportExecutionEstimate,
-  PlanImportPolicyMode,
-  PlanImportReviewState,
-  PlanImportRunConstraint
+  PlanImportReviewState
 } from '../lib/planImport'
 import {
-  ExclamationShieldIcon,
   GoalSymbolIcon,
-  PermissionSymbolIcon,
   ReviewSymbolIcon,
   RunSymbolIcon,
   XSymbolIcon
@@ -26,15 +21,12 @@ export interface ComposerPlanImportCardProps {
   planImportExecutionEstimate: PlanImportExecutionEstimate | null
   planImportGroundingBusy: boolean
   planImportGroundingDisabledReason?: string
-  PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string>
   PLAN_IMPORT_RISK_LABELS: Record<string, string>
-  PLAN_IMPORT_RUN_CONSTRAINT_LABELS: Record<string, string>
   formatPlanImportCostEstimate: (
     estimate: PlanImportExecutionEstimate,
     currency: string,
     overestimatePercent: number
   ) => string
-  formatPlanImportRunConstraintValue: (constraint: PlanImportRunConstraint) => string
   formatPlanImportTokenEstimate: (tokens: number) => string
   renderPlanImportFileGroundings: (
     groundings: PlanImportReviewState['contract']['fileGroundings'],
@@ -42,7 +34,6 @@ export interface ComposerPlanImportCardProps {
   ) => ReactNode
   renderPlanImportItems: (items: string[]) => ReactNode
   setPendingPlanImport: (next: PlanImportReviewState | null) => void
-  setPlanImportPolicy: (policy: PlanImportPolicyMode) => void
   handleGroundImportedPlanFiles: () => void
   handleRunImportedPlan: () => void
   handleRunRawPrompt: () => void
@@ -56,16 +47,6 @@ function compactSourceLabel(source: string): string {
   return source === 'pasted_plan_untrusted' ? 'Pasted plan - untrusted' : source
 }
 
-function policyLabel(policy: PlanImportPolicyMode): string {
-  return policy === 'read_only' ? 'Read-only' : 'Ask before edits'
-}
-
-function policyDescription(policy: PlanImportPolicyMode): string {
-  return policy === 'read_only'
-    ? 'File writes, shell commands, and network access stay denied.'
-    : 'Uses the default approval flow before edit-capable actions proceed.'
-}
-
 export function ComposerPlanImportCard({
   pendingPlanImport,
   disabled = false,
@@ -75,16 +56,12 @@ export function ComposerPlanImportCard({
   planImportExecutionEstimate,
   planImportGroundingBusy,
   planImportGroundingDisabledReason,
-  PLAN_IMPORT_CHIP_LABELS,
   PLAN_IMPORT_RISK_LABELS,
-  PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
   formatPlanImportCostEstimate,
-  formatPlanImportRunConstraintValue,
   formatPlanImportTokenEstimate,
   renderPlanImportFileGroundings,
   renderPlanImportItems,
   setPendingPlanImport,
-  setPlanImportPolicy,
   handleGroundImportedPlanFiles,
   handleRunImportedPlan,
   handleRunRawPrompt
@@ -97,7 +74,6 @@ export function ComposerPlanImportCard({
   const stageCount = contract.stages.length
   const pathCount = contract.fileGroundings.length || contract.filesMentioned.length
   const assumptionCount = contract.assumptions.length
-  const requestedGuidanceCount = contract.fearTranslations.length + contract.runConstraints.length
   const riskLabel = planImportExecutionEstimate
     ? PLAN_IMPORT_RISK_LABELS[planImportExecutionEstimate.riskLevel]
     : 'Estimate pending'
@@ -111,23 +87,6 @@ export function ComposerPlanImportCard({
   const tokenLabel = planImportExecutionEstimate
     ? formatPlanImportTokenEstimate(planImportExecutionEstimate.totalTokens)
     : null
-  const enforcedSummary = useMemo(
-    () =>
-      pendingPlanImport.enabledChips
-        .map((chip) => PLAN_IMPORT_CHIP_LABELS[chip])
-        .filter(Boolean)
-        .join(' / '),
-    [PLAN_IMPORT_CHIP_LABELS, pendingPlanImport.enabledChips]
-  )
-  const detectedSummary = useMemo(
-    () =>
-      contract.detectedChips
-        .map((chip) => PLAN_IMPORT_CHIP_LABELS[chip])
-        .filter(Boolean)
-        .join(' / '),
-    [PLAN_IMPORT_CHIP_LABELS, contract.detectedChips]
-  )
-
   return (
     <section
       className={`composer-plan-import-card plan-import-card-v2 risk-${planImportExecutionEstimate?.riskLevel ?? 'unknown'}${reviewOpen ? ' is-review-open' : ''}`}
@@ -148,7 +107,6 @@ export function ComposerPlanImportCard({
 
         <div className="plan-import-compact-metrics" aria-label="Detected plan summary">
           <span>{stageCount > 0 ? pluralize(stageCount, 'step') : 'Steps pending'}</span>
-          <span>{policyLabel(pendingPlanImport.selectedPolicy)}</span>
           <span>{riskLabel}</span>
           {costLabel && <span>{costLabel}</span>}
           {pathCount > 0 && <span>{pluralize(pathCount, 'path')}</span>}
@@ -190,35 +148,10 @@ export function ComposerPlanImportCard({
 
       {reviewOpen && (
         <div id={reviewId} className="plan-import-review-panel">
-          <div className="plan-import-review-summary">
-            <div className="plan-import-policy-control" role="radiogroup" aria-label="Plan import policy">
-              <button
-                className={`plan-import-policy-segment${pendingPlanImport.selectedPolicy === 'read_only' ? ' active' : ''}`}
-                type="button"
-                role="radio"
-                aria-checked={pendingPlanImport.selectedPolicy === 'read_only'}
-                onClick={() => setPlanImportPolicy('read_only')}
-                disabled={disabled}
-                title="Run the imported plan with read-only permissions"
-              >
-                <PermissionSymbolIcon />
-                Read-only
-              </button>
-              <button
-                className={`plan-import-policy-segment${pendingPlanImport.selectedPolicy === 'ask_before_edits' ? ' active' : ''}`}
-                type="button"
-                role="radio"
-                aria-checked={pendingPlanImport.selectedPolicy === 'ask_before_edits'}
-                onClick={() => setPlanImportPolicy('ask_before_edits')}
-                disabled={disabled}
-                title="Use default approvals before edit-capable actions"
-              >
-                <ExclamationShieldIcon />
-                Ask before edits
-              </button>
-            </div>
-            <p>{policyDescription(pendingPlanImport.selectedPolicy)}</p>
-          </div>
+          <p className="plan-import-permission-note">
+            Plan Import never changes or recommends permissions. Your composer setting remains in
+            effect.
+          </p>
 
           {planImportExecutionEstimate && (
             <section className="plan-import-review-section plan-import-review-estimate">
@@ -254,40 +187,12 @@ export function ComposerPlanImportCard({
           <div className="plan-import-review-grid">
             <section className="plan-import-review-section">
               <header>
-                <span>Safety</span>
+                <span>Imported context</span>
               </header>
-              <div className="plan-import-summary-line">
-                <span>Enforced</span>
-                <strong>{enforcedSummary || 'Policy selected'}</strong>
-              </div>
-              {detectedSummary && (
-                <div className="plan-import-summary-line">
-                  <span>Detected</span>
-                  <strong>{detectedSummary}</strong>
-                </div>
-              )}
-              {requestedGuidanceCount > 0 && (
-                <div className="plan-import-requested-guidance">
-                  {contract.fearTranslations.map((translation) => (
-                    <div key={`${translation.sourceText}-${translation.requestedSignals.join('-')}`}>
-                      <strong>{translation.sourceText}</strong>
-                      <span>{translation.note}</span>
-                    </div>
-                  ))}
-                  {contract.runConstraints.map((constraint) => {
-                    const value = formatPlanImportRunConstraintValue(constraint)
-                    return (
-                      <div key={`${constraint.kind}-${constraint.sourceText}`}>
-                        <strong>
-                          {PLAN_IMPORT_RUN_CONSTRAINT_LABELS[constraint.kind]}
-                          {value ? `: ${value}` : ''}
-                        </strong>
-                        <span>{constraint.note}</span>
-                      </div>
-                    )
-                  })}
-                </div>
-              )}
+              <p>
+                The pasted plan is untrusted task context. Review its assumptions, paths, and
+                constraints before running it.
+              </p>
             </section>
 
             <section className="plan-import-review-section">

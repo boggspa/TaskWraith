@@ -327,7 +327,6 @@ import {
 import { buildWorkflowCreatorTrigger } from './components/WorkflowCreator'
 import type { UnattendedElevationLevel } from '../../main/UnattendedPostureGate'
 import { ApprovalModeElevationSheet } from './components/ApprovalModeElevationSheet'
-import { decideApprovalElevation } from './lib/approvalElevation'
 import { UsageHeatmap } from './components/UsageHeatmap'
 import { WorkspaceActivityHeatmap } from './components/WorkspaceActivityHeatmap'
 import { type WelcomeHeatmapSlot } from './components/WelcomeHeatmaps'
@@ -533,17 +532,11 @@ import {
   buildPlanImportRunPrompt,
   estimatePlanImportExecution,
   groundPlanImportFileMentions,
-  planImportEnabledChipsForPolicy,
-  planImportApprovalModeForPolicy,
-  type PlanImportChipId,
-  type PlanImportPolicyMode,
   type PlanImportReviewState
 } from './lib/planImport'
 import {
   PLAN_IMPORT_RISK_LABELS,
-  PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
   formatPlanImportCostEstimate,
-  formatPlanImportRunConstraintValue,
   formatPlanImportTokenEstimate,
   renderPlanImportFileGroundings,
   renderPlanImportItems
@@ -1083,14 +1076,6 @@ type SideChatSeedContext = {
   originMessageId?: string
   originRunId?: string
   transcriptVisibility?: NonNullable<ChatRecord['sideChatContext']>['transcriptVisibility']
-}
-const PLAN_IMPORT_CHIP_LABELS: Record<PlanImportChipId, string> = {
-  read_only: READ_ONLY_RECON_LABEL,
-  ask_before_edits: 'Ask before edits',
-  no_shell: 'No shell',
-  no_network: 'No network',
-  no_telemetry: 'No telemetry',
-  quiet_summary: 'Quiet summary'
 }
 function permissionPresetToApprovalMode(preset?: string): string {
   if (preset === 'read_only') return 'plan'
@@ -9197,7 +9182,7 @@ function App(): React.JSX.Element {
       }
       return null
     }
-    const review = buildInitialPlanImportReview(trimmed, approvalMode)
+    const review = buildInitialPlanImportReview(trimmed)
     setPendingPlanImport(review)
     return review
   }
@@ -17215,42 +17200,6 @@ function App(): React.JSX.Element {
     return true
   }
 
-  const setPlanImportPolicy = (policy: PlanImportPolicyMode): void => {
-    const applyPolicy = (): void => {
-      setPendingPlanImport((previous) =>
-        previous
-          ? {
-              ...previous,
-              selectedPolicy: policy,
-              enabledChips: planImportEnabledChipsForPolicy(policy)
-            }
-          : previous
-      )
-    }
-    if (policy === 'ask_before_edits') {
-      const elevation = decideApprovalElevation({
-        from: 'plan',
-        to: 'default',
-        provider: currentProvider,
-        workspacePath: currentWorkspacePath,
-        acknowledgedDefault: acknowledgedElevationDefaults
-      })
-      if (elevation) {
-        setPendingElevation({
-          tier: elevation.tier,
-          provider: currentProvider,
-          workspaceLabel: currentWorkspace?.displayName ?? null,
-          ackKey: elevation.ackKey,
-          persistAck: elevation.persistAckOnConfirm,
-          toMode: 'default',
-          apply: applyPolicy
-        })
-        return
-      }
-    }
-    applyPolicy()
-  }
-
   const handleGroundImportedPlanFiles = async (): Promise<void> => {
     const review = pendingPlanImport
     const chatId = currentComposerChatId
@@ -17319,7 +17268,6 @@ function App(): React.JSX.Element {
     const request = buildRunRequest(undefined, undefined, {
       prompt: buildPlanImportRunPrompt(review),
       displayPrompt: buildPlanImportDisplayPrompt(review),
-      approvalMode: planImportApprovalModeForPolicy(review.selectedPolicy),
       imageAttachments,
       claimProjectReferenceContext: true
     })
@@ -20945,8 +20893,7 @@ function App(): React.JSX.Element {
         provider: currentProvider,
         model: selectedPlanImportModel,
         providerRates,
-        contextTokens: cumulativeChatTokens,
-        approvalsAutoAllowed: sessionYoloMode.enabled
+        contextTokens: cumulativeChatTokens
       })
     : null
   const threadTokenTallyHasValue = chatTokenTally.totalTokens > 0 || liveRunOutputTokens > 0
@@ -27371,7 +27318,6 @@ function App(): React.JSX.Element {
     rememberCurrentChatComposerSelection,
     setGoalFromObjective,
     setPendingPlanImport,
-    setPlanImportPolicy,
     syncPersistentModelSelection,
     updateCurrentGoalStatus
   }
@@ -27460,9 +27406,7 @@ function App(): React.JSX.Element {
       discordContextUnavailableReason: isChatPopoutWindow
         ? 'Open this chat in the main window to add Discord context.'
         : undefined,
-      PLAN_IMPORT_CHIP_LABELS,
       PLAN_IMPORT_RISK_LABELS,
-      PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
       acknowledgedElevationDefaults,
       activeEnsembleConcurrentMode,
       activeEnsembleFanoutPolicy,
@@ -27515,7 +27459,6 @@ function App(): React.JSX.Element {
       externalPathRepoMetadata: currentExternalWorkspaceState.externalPathRepoMetadata,
       externalWorkspaceGroups: currentExternalWorkspaceState.externalWorkspaceGroups,
       formatPlanImportCostEstimate,
-      formatPlanImportRunConstraintValue,
       formatPlanImportTokenEstimate,
       geminiTrustWriteBusy,
       geminiTrustWriteError,

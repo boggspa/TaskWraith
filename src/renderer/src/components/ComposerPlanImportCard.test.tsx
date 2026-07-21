@@ -1,33 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import type {
-  PlanImportChipId,
-  PlanImportExecutionEstimate,
-  PlanImportReviewState,
-  PlanImportRunConstraintKind
-} from '../lib/planImport'
+import type { PlanImportExecutionEstimate, PlanImportReviewState } from '../lib/planImport'
 import { ComposerPlanImportCard, type ComposerPlanImportCardProps } from './ComposerPlanImportCard'
-
-const CHIP_LABELS: Record<PlanImportChipId, string> = {
-  read_only: 'Read-only',
-  ask_before_edits: 'Ask before edits',
-  no_shell: 'No shell',
-  no_network: 'No network',
-  no_telemetry: 'No telemetry',
-  quiet_summary: 'Quiet summary'
-}
-
-const RUN_CONSTRAINT_LABELS: Record<PlanImportRunConstraintKind, string> = {
-  max_changed_files: 'Max changed files',
-  exclude_paths_request: 'Exclude paths',
-  verification_request: 'Verification requested'
-}
 
 const review: PlanImportReviewState = {
   id: 'plan-1',
   rawText: 'Implementation plan',
-  selectedPolicy: 'read_only',
-  enabledChips: ['read_only', 'no_shell', 'no_network'],
   contract: {
     goal: 'Refine the workspace boards interaction model without changing data contracts.',
     constraints: ['Keep storage untouched', 'Preserve existing IPC contracts'],
@@ -43,11 +21,8 @@ const review: PlanImportReviewState = {
     ],
     riskyInstructions: [],
     contradictions: [],
-    fearTranslations: [],
     runConstraints: [],
     stages: ['Audit current board surface', 'Compact the primary controls'],
-    suggestedPreset: 'read_only',
-    detectedChips: ['read_only', 'no_shell'],
     rawPreview: 'Implementation plan',
     source: 'pasted_plan_untrusted'
   }
@@ -62,7 +37,7 @@ const estimate: PlanImportExecutionEstimate = {
   costStatus: 'estimated',
   costAvailable: true,
   riskLevel: 'low',
-  riskReasons: ['Read-only policy selected'],
+  riskReasons: ['Imported paste is untrusted model-facing context.'],
   routingNote: 'Routes through the selected provider.',
   tokenNote: 'Estimate includes pasted plan and workspace context.'
 }
@@ -100,16 +75,12 @@ function props(overrides: Partial<ComposerPlanImportCardProps> = {}): ComposerPl
     planImportExecutionEstimate: estimate,
     planImportGroundingBusy: false,
     planImportGroundingDisabledReason: '',
-    PLAN_IMPORT_CHIP_LABELS: CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS: { low: 'Low risk', medium: 'Medium risk', high: 'High risk' },
-    PLAN_IMPORT_RUN_CONSTRAINT_LABELS: RUN_CONSTRAINT_LABELS,
     formatPlanImportCostEstimate: () => '$0.04',
-    formatPlanImportRunConstraintValue: () => '',
     formatPlanImportTokenEstimate: (tokens) => `${tokens.toLocaleString()} tok`,
     renderPlanImportFileGroundings: renderGroundings,
     renderPlanImportItems: renderItems,
     setPendingPlanImport: () => undefined,
-    setPlanImportPolicy: () => undefined,
     handleGroundImportedPlanFiles: () => undefined,
     handleRunImportedPlan: () => undefined,
     handleRunRawPrompt: () => undefined,
@@ -124,10 +95,10 @@ describe('ComposerPlanImportCard', () => {
     expect(html).toContain('Plan detected')
     expect(html).toContain('Pasted plan - untrusted')
     expect(html).toContain('2 steps')
-    expect(html).toContain('Read-only')
     expect(html).toContain('Low risk')
     expect(html).toContain('$0.04')
     expect(html).toContain('Import &amp; run')
+    expect(html).not.toContain('Read-only')
     expect(html).not.toContain('plan-import-review-panel')
     expect(html).not.toContain('Safety')
   })
@@ -137,11 +108,11 @@ describe('ComposerPlanImportCard', () => {
 
     expect(html).toContain('plan-import-review-panel')
     expect(html).toContain('Estimate')
-    expect(html).toContain('Safety')
+    expect(html).toContain('Imported context')
     expect(html).toContain('Constraints')
     expect(html).toContain('Assumptions')
     expect(html).toContain('Paths')
     expect(html).toContain('Send as-is')
-    expect(html).toContain('File writes, shell commands, and network access stay denied.')
+    expect(html).toContain('Plan Import never changes or recommends permissions.')
   })
 })

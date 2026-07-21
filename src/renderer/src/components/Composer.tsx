@@ -168,9 +168,7 @@ import { createPortal } from 'react-dom'
  */
 export interface ComposerProps {
   prompt: string
-  PLAN_IMPORT_CHIP_LABELS: any
   PLAN_IMPORT_RISK_LABELS: any
-  PLAN_IMPORT_RUN_CONSTRAINT_LABELS: any
   acknowledgedElevationDefaults: any
   activeEnsembleConcurrentMode: any
   activeEnsembleFanoutPolicy: EnsembleFanoutPolicy
@@ -283,7 +281,6 @@ export interface ComposerProps {
   externalPathRepoMetadata: any
   externalWorkspaceGroups: any
   formatPlanImportCostEstimate: any
-  formatPlanImportRunConstraintValue: any
   formatPlanImportTokenEstimate: any
   geminiTrustWriteBusy: any
   geminiTrustWriteError: any
@@ -458,7 +455,6 @@ export interface ComposerProps {
   setLastNonCustomModelType: any
   setPendingElevation: any
   setPendingPlanImport: any
-  setPlanImportPolicy: any
   setPrimaryGitSnapshot: any
   setRawLogs: any
   setSelectedModelType: any
@@ -529,9 +525,7 @@ function patchTouchesProviderOrModel(patch: Partial<EnsembleParticipant>): boole
 function ComposerInner(props: ComposerProps): React.JSX.Element {
   const {
     prompt,
-    PLAN_IMPORT_CHIP_LABELS,
     PLAN_IMPORT_RISK_LABELS,
-    PLAN_IMPORT_RUN_CONSTRAINT_LABELS,
     acknowledgedElevationDefaults,
     activeEnsembleFanoutPolicy,
     activeEnsembleOrchestrationMode,
@@ -628,7 +622,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     externalPathRepoMetadata,
     externalWorkspaceGroups,
     formatPlanImportCostEstimate,
-    formatPlanImportRunConstraintValue,
     formatPlanImportTokenEstimate,
     geminiTrustWriteBusy,
     geminiTrustWriteError,
@@ -781,7 +774,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setLastNonCustomModelType,
     setPendingElevation,
     setPendingPlanImport,
-    setPlanImportPolicy,
     setPrimaryGitSnapshot,
     setRawLogs,
     setSelectedModelType,
@@ -2971,16 +2963,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         planImportExecutionEstimate={planImportExecutionEstimate}
                         planImportGroundingBusy={planImportGroundingBusy}
                         planImportGroundingDisabledReason={planImportGroundingDisabledReason}
-                        PLAN_IMPORT_CHIP_LABELS={PLAN_IMPORT_CHIP_LABELS}
                         PLAN_IMPORT_RISK_LABELS={PLAN_IMPORT_RISK_LABELS}
-                        PLAN_IMPORT_RUN_CONSTRAINT_LABELS={PLAN_IMPORT_RUN_CONSTRAINT_LABELS}
                         formatPlanImportCostEstimate={formatPlanImportCostEstimate}
-                        formatPlanImportRunConstraintValue={formatPlanImportRunConstraintValue}
                         formatPlanImportTokenEstimate={formatPlanImportTokenEstimate}
                         renderPlanImportFileGroundings={renderPlanImportFileGroundings}
                         renderPlanImportItems={renderPlanImportItems}
                         setPendingPlanImport={setPendingPlanImport}
-                        setPlanImportPolicy={setPlanImportPolicy}
                         handleGroundImportedPlanFiles={handleGroundImportedPlanFiles}
                         handleRunImportedPlan={handleRunImportedPlan}
                         handleRunRawPrompt={() => {

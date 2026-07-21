@@ -7,8 +7,7 @@
  * to warn and at *which tier*, so it is trivially unit-testable. Live callers:
  * the composer permission picker (solo AND ensemble-participant raises, in
  * Composer.tsx; full_access raises route to the TrustedSessionConfirmSheet
- * instead), the side-chat picker (MainAppLayout.tsx), and the plan-import
- * policy flow (App.tsx setPlanImportPolicy).
+ * instead), and the side-chat picker (MainAppLayout.tsx).
  *
  * Tiers (mirrors the Claude / Codex desktop failsafes):
  *  - Tier 1 — raising up to Default Approval ('default'): a small, reassuring
