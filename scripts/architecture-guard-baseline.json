@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "description": "Grandfathered runtime dependency and hotspot debt. CI compares this file with the base commit: allowances and budgets may only decrease.",
+  "description": "Grandfathered runtime dependency debt. CI compares this file with the base commit: allowances may only decrease. Hotspot size budgets were removed 2026-07-21 by user decision; see AGENTS.md 'Composition-root growth policy'.",
   "rendererMainRuntimeEdges": [
     {
       "from": "src/renderer/src/App.tsx",
@@ -145,19 +145,5 @@
       "expression": "new Function('specifier', 'return import(specifier)')"
     }
   ],
-  "sharedUpwardRuntimeEdges": [],
-  "hotspotBudgets": {
-    "src/main/index.ts": {
-      "maxLines": 43039,
-      "maxBranchPoints": 7995
-    },
-    "src/renderer/src/App.tsx": {
-      "maxLines": 29664,
-      "maxBranchPoints": 5697
-    },
-    "src/main/services/EnsembleOrchestrator.ts": {
-      "maxLines": 15840,
-      "maxBranchPoints": 3143
-    }
-  }
+  "sharedUpwardRuntimeEdges": []
 }

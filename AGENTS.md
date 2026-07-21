@@ -24,6 +24,23 @@ part of the task.
 
 ---
 
+## Composition-root growth policy
+
+Do not add code to the three composition-root monoliths —
+`src/main/index.ts`, `src/renderer/src/App.tsx`, and
+`src/main/services/EnsembleOrchestrator.ts` — when the logic can live in an
+extracted module instead (`src/main/ipc/*`, service modules, renderer
+`app/`/`lib/` modules). Prefer wiring: the monolith gets one
+import/registration line; the logic gets its own file and its own test.
+
+CI does not block on their size. Post-hoc line/branch budgets existed briefly
+and were removed on 2026-07-21 by user decision: a gate that rejects a diff
+*after* the growth already happened only manufactures friction. This note is
+the pre-write guard that replaced them — apply it while planning an edit, not
+after the diff exists.
+
+---
+
 ## Environment summary
 
 TaskWraith is an Electron desktop app that runs coding agents in isolated

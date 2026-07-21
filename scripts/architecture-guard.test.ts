@@ -16,7 +16,6 @@ type ArchitectureBaseline = {
     expression: string
   }>
   sharedUpwardRuntimeEdges: Array<{ from: string; to: string }>
-  hotspotBudgets: Record<string, { maxLines: number; maxBranchPoints: number }>
 }
 const {
   baselineMonotonicityFailures,
@@ -60,13 +59,11 @@ const {
     baseline: {
       schemaVersion: number
       rendererMainRuntimeEdges: Array<{ from: string; to: string }>
-      hotspotBudgets: Record<string, { maxLines: number; maxBranchPoints: number }>
     }
     currentEdges: Array<{ from: string; to: string }>
     currentMainRendererEdges: Array<{ from: string; to: string }>
     currentMainComputedRuntimeLoads: Array<{ from: string; kind: string; expression: string }>
     currentSharedUpwardEdges: Array<{ from: string; to: string }>
-    hotspotMeasurements: Record<string, { lines: number; branchPoints: number }>
   }) => {
     failures: string[]
     newEdges: string[]
@@ -104,10 +101,7 @@ const baseline: ArchitectureBaseline = {
       expression: "new Function('specifier', 'return import(specifier)')"
     }
   ],
-  sharedUpwardRuntimeEdges: [],
-  hotspotBudgets: {
-    'src/main/index.ts': { maxLines: 10, maxBranchPoints: 2 }
-  }
+  sharedUpwardRuntimeEdges: []
 }
 
 describe('architecture guard import classification', () => {
@@ -410,7 +404,7 @@ describe('architecture guard import classification', () => {
   })
 })
 
-describe('architecture guard budgets', () => {
+describe('architecture guard measurements and ratchets', () => {
   it('counts physical lines without inventing a trailing blank line', () => {
     expect(physicalLineCount('')).toBe(0)
     expect(physicalLineCount('one')).toBe(1)
@@ -430,7 +424,7 @@ describe('architecture guard budgets', () => {
     expect(measureSource(source)).toEqual({ lines: 5, branchPoints: 5 })
   })
 
-  it('fails only new dependency edges and hotspot growth', () => {
+  it('fails only new dependency edges', () => {
     validateBaseline(baseline)
     const result = evaluateArchitecture({
       baseline,
@@ -440,15 +434,12 @@ describe('architecture guard budgets', () => {
       ],
       currentMainRendererEdges: baseline.mainRendererRuntimeEdges,
       currentMainComputedRuntimeLoads: baseline.mainComputedRuntimeLoadAllowances,
-      currentSharedUpwardEdges: [{ from: 'src/shared/upward.ts', to: 'src/main/NewHelper' }],
-      hotspotMeasurements: {
-        'src/main/index.ts': { lines: 11, branchPoints: 3 }
-      }
+      currentSharedUpwardEdges: [{ from: 'src/shared/upward.ts', to: 'src/main/NewHelper' }]
     })
 
     expect(result.newEdges).toEqual(['src/renderer/src/new.ts -> src/main/NewHelper'])
     expect(result.newSharedUpwardEdges).toEqual(['src/shared/upward.ts -> src/main/NewHelper'])
-    expect(result.failures).toHaveLength(4)
+    expect(result.failures).toHaveLength(2)
   })
 
   it('requires obsolete dependency allowances to be removed immediately', () => {
@@ -457,10 +448,7 @@ describe('architecture guard budgets', () => {
       currentEdges: [],
       currentMainRendererEdges: baseline.mainRendererRuntimeEdges,
       currentMainComputedRuntimeLoads: baseline.mainComputedRuntimeLoadAllowances,
-      currentSharedUpwardEdges: [],
-      hotspotMeasurements: {
-        'src/main/index.ts': { lines: 8, branchPoints: 1 }
-      }
+      currentSharedUpwardEdges: []
     })
 
     expect(result.failures).toHaveLength(1)
@@ -468,7 +456,7 @@ describe('architecture guard budgets', () => {
     expect(result.removedEdges).toEqual(['src/renderer/src/legacy.ts -> src/main/LegacyHelper'])
   })
 
-  it('mechanically rejects baseline increases and removed hotspot ratchets', () => {
+  it('mechanically rejects baseline allowance increases', () => {
     const weakened = {
       ...baseline,
       rendererMainRuntimeEdges: [
@@ -486,55 +474,30 @@ describe('architecture guard budgets', () => {
           kind: 'computed import()',
           expression: 'import(target)'
         }
-      ],
-      hotspotBudgets: {
-        'src/main/index.ts': { maxLines: 11, maxBranchPoints: 3 }
-      }
+      ]
     }
     expect(baselineMonotonicityFailures(baseline, weakened)).toEqual([
       'Renderer -> main runtime allowances were added:\n    src/renderer/src/new.ts -> src/main/NewHelper',
       'Main -> renderer runtime allowances were added:\n    src/main/new.ts -> src/renderer/src/NewView',
-      'Main computed runtime-load allowances were added:\n    src/main/new.ts :: computed import(): import(target)',
-      'src/main/index.ts maxLines increased from 10 to 11.',
-      'src/main/index.ts maxBranchPoints increased from 2 to 3.'
+      'Main computed runtime-load allowances were added:\n    src/main/new.ts :: computed import(): import(target)'
     ])
-
-    expect(
-      baselineMonotonicityFailures(baseline, {
-        ...baseline,
-        hotspotBudgets: {}
-      })
-    ).toEqual(['Hotspot budget was removed while its source still exists: src/main/index.ts'])
   })
 
-  it('retires a hotspot budget only after the guarded source is gone', () => {
-    const retired = {
+  it('tolerates a legacy hotspotBudgets key on a previous baseline', () => {
+    const legacyPrevious = {
       ...baseline,
-      hotspotBudgets: {}
+      hotspotBudgets: {
+        'src/main/index.ts': { maxLines: 10, maxBranchPoints: 2 }
+      }
     }
-
-    expect(
-      baselineMonotonicityFailures(baseline, retired, {
-        currentSourcePaths: new Set(['src/main/index.ts'])
-      })
-    ).toEqual(['Hotspot budget was removed while its source still exists: src/main/index.ts'])
-
-    expect(
-      baselineMonotonicityFailures(baseline, retired, {
-        currentSourcePaths: new Set()
-      })
-    ).toEqual([])
+    expect(baselineMonotonicityFailures(legacyPrevious, baseline)).toEqual([])
   })
 
   it('allows only monotonic baseline tightening', () => {
     expect(
       baselineMonotonicityFailures(baseline, {
         ...baseline,
-        rendererMainRuntimeEdges: [],
-        hotspotBudgets: {
-          'src/main/index.ts': { maxLines: 9, maxBranchPoints: 1 },
-          'src/renderer/src/App.tsx': { maxLines: 100, maxBranchPoints: 20 }
-        }
+        rendererMainRuntimeEdges: []
       })
     ).toEqual([])
   })

@@ -21,14 +21,18 @@
  *      Computed import()/require() calls are rejected in both source trees,
  *      and literal Vite import.meta.glob patterns participate in the same
  *      edge check, so runtime loaders cannot bypass the static-import scan.
- *   4. The three named hotspots may not grow beyond their physical-line or
- *      AST branch-point budgets. A branch point is an if/conditional, loop,
- *      catch, non-default switch case, or &&/||/?? expression. This is a
- *      deterministic growth signal, not a claim of full cyclomatic analysis.
  *
- * When an existing edge is removed or a hotspot shrinks, lower the baseline in
- * the same change to make the improvement durable. Never raise a baseline as
- * routine cleanup; an increase should receive explicit architecture review.
+ * Hotspot line/branch-point budgets were removed on 2026-07-21 by user
+ * decision (AGENTS.md "Capability governance"): a post-hoc size gate that
+ * blocks ship on growth that has already happened was judged
+ * counterproductive friction. The pre-write guidance that replaced it lives
+ * in AGENTS.md ("Composition-root growth policy") — the layer agents read
+ * before writing. The measureSource/physicalLineCount helpers remain
+ * exported for tooling.
+ *
+ * When an existing edge is removed, lower the baseline in the same change to
+ * make the improvement durable. Never raise a baseline as routine cleanup; an
+ * increase should receive explicit architecture review.
  * Type-only renderer -> main ownership debt is intentionally not counted by
  * this runtime guard; freezing that broader contract surface is a Horizon-2
  * follow-up rather than a guarantee of this script.
@@ -570,10 +574,6 @@ function validateBaseline(baseline) {
   if (!Array.isArray(baseline.sharedUpwardRuntimeEdges)) {
     throw new Error('architecture baseline must list sharedUpwardRuntimeEdges')
   }
-  if (!baseline.hotspotBudgets || typeof baseline.hotspotBudgets !== 'object') {
-    throw new Error('architecture baseline must define hotspotBudgets')
-  }
-
   const seen = new Set()
   for (const edge of baseline.rendererMainRuntimeEdges) {
     if (
@@ -637,18 +637,6 @@ function validateBaseline(baseline) {
     seen.add(key)
   }
 
-  for (const [filePath, budget] of Object.entries(baseline.hotspotBudgets)) {
-    if (
-      !filePath.startsWith('src/') ||
-      !budget ||
-      !Number.isInteger(budget.maxLines) ||
-      budget.maxLines < 0 ||
-      !Number.isInteger(budget.maxBranchPoints) ||
-      budget.maxBranchPoints < 0
-    ) {
-      throw new Error(`Invalid hotspot budget for ${filePath}`)
-    }
-  }
 }
 
 function edgeDiff(allowedEdges, currentEdges) {
@@ -670,10 +658,9 @@ function unsafeLoadDiff(allowedLoads, currentLoads) {
   }
 }
 
-function baselineMonotonicityFailures(previous, current, options = {}) {
+function baselineMonotonicityFailures(previous, current) {
   validateBaseline(previous)
   validateBaseline(current)
-  const currentSourcePaths = options.currentSourcePaths ?? null
   const failures = []
   const rendererAllowanceGrowth = edgeDiff(
     previous.rendererMainRuntimeEdges,
@@ -711,30 +698,6 @@ function baselineMonotonicityFailures(previous, current, options = {}) {
       `Shared upward runtime allowances were added:\n${sharedAllowanceGrowth.map((edge) => `    ${edge}`).join('\n')}`
     )
   }
-  for (const [filePath, previousBudget] of Object.entries(previous.hotspotBudgets)) {
-    const currentBudget = current.hotspotBudgets[filePath]
-    if (!currentBudget) {
-      // A budget can retire only when the guarded composition root itself has
-      // been fully removed. Callers that do not supply a complete current-tree
-      // path set stay fail-closed, as does a rename that leaves the old path in
-      // place. This lets a successful strangler extraction delete its final
-      // empty shell without making arbitrary budget deletion a bypass.
-      if (!currentSourcePaths || currentSourcePaths.has(filePath)) {
-        failures.push(`Hotspot budget was removed while its source still exists: ${filePath}`)
-      }
-      continue
-    }
-    if (currentBudget.maxLines > previousBudget.maxLines) {
-      failures.push(
-        `${filePath} maxLines increased from ${previousBudget.maxLines} to ${currentBudget.maxLines}.`
-      )
-    }
-    if (currentBudget.maxBranchPoints > previousBudget.maxBranchPoints) {
-      failures.push(
-        `${filePath} maxBranchPoints increased from ${previousBudget.maxBranchPoints} to ${currentBudget.maxBranchPoints}.`
-      )
-    }
-  }
   return failures
 }
 
@@ -743,8 +706,7 @@ function evaluateArchitecture({
   currentEdges,
   currentMainRendererEdges,
   currentMainComputedRuntimeLoads,
-  currentSharedUpwardEdges,
-  hotspotMeasurements
+  currentSharedUpwardEdges
 }) {
   const failures = []
   const rendererMain = edgeDiff(baseline.rendererMainRuntimeEdges, currentEdges)
@@ -789,24 +751,6 @@ function evaluateArchitecture({
     )
   }
 
-  for (const [filePath, budget] of Object.entries(baseline.hotspotBudgets)) {
-    const measurement = hotspotMeasurements[filePath]
-    if (!measurement) {
-      failures.push(`Hotspot is missing or unmeasured: ${filePath}`)
-      continue
-    }
-    if (measurement.lines > budget.maxLines) {
-      failures.push(
-        `${filePath} has ${measurement.lines} lines; budget is ${budget.maxLines} (+${measurement.lines - budget.maxLines}).`
-      )
-    }
-    if (measurement.branchPoints > budget.maxBranchPoints) {
-      failures.push(
-        `${filePath} has ${measurement.branchPoints} branch points; budget is ${budget.maxBranchPoints} (+${measurement.branchPoints - budget.maxBranchPoints}).`
-      )
-    }
-  }
-
   return {
     failures,
     newEdges,
@@ -827,14 +771,7 @@ function main() {
     const comparisonRef = baselineComparisonRef()
     const previousBaseline = readBaselineAtRef(comparisonRef)
     if (previousBaseline) {
-      const currentSourcePaths = new Set(
-        Object.keys(previousBaseline.hotspotBudgets).filter((filePath) =>
-          fs.existsSync(path.join(REPO_ROOT, filePath))
-        )
-      )
-      const monotonicityFailures = baselineMonotonicityFailures(previousBaseline, baseline, {
-        currentSourcePaths
-      })
+      const monotonicityFailures = baselineMonotonicityFailures(previousBaseline, baseline)
       if (monotonicityFailures.length > 0) {
         console.error(
           `[architecture-guard] FAILED — baseline weakens ${comparisonRef}; ratchets are monotonic:`
@@ -851,27 +788,19 @@ function main() {
     const currentEdges = collectRendererMainRuntimeEdges()
     const currentMainRendererSurface = collectMainRendererRuntimeSurface()
     const currentSharedUpwardEdges = collectSharedUpwardRuntimeEdges()
-    const hotspotMeasurements = {}
-
-    for (const filePath of Object.keys(baseline.hotspotBudgets)) {
-      const absolutePath = path.join(REPO_ROOT, filePath)
-      if (!fs.existsSync(absolutePath)) continue
-      hotspotMeasurements[filePath] = measureSource(fs.readFileSync(absolutePath, 'utf8'), filePath)
-    }
 
     const result = evaluateArchitecture({
       baseline,
       currentEdges,
       currentMainRendererEdges: currentMainRendererSurface.edges,
       currentMainComputedRuntimeLoads: currentMainRendererSurface.unsafeLoads,
-      currentSharedUpwardEdges,
-      hotspotMeasurements
+      currentSharedUpwardEdges
     })
     if (result.failures.length > 0) {
       console.error('[architecture-guard] FAILED — architecture debt grew:')
       for (const failure of result.failures) console.error(`  ✗ ${failure}`)
       console.error(
-        '\nMove cross-process contracts/pure helpers to src/shared or extract code from the hotspot. Raise a baseline only after explicit architecture review.'
+        '\nMove cross-process contracts/pure helpers to src/shared. Raise a baseline only after explicit architecture review.'
       )
       process.exitCode = 1
       return
@@ -886,12 +815,6 @@ function main() {
     console.log(
       `  src/shared: ${currentSharedUpwardEdges.length} runtime edges to main/renderer (budget ${baseline.sharedUpwardRuntimeEdges.length})`
     )
-    for (const [filePath, measurement] of Object.entries(hotspotMeasurements)) {
-      const budget = baseline.hotspotBudgets[filePath]
-      console.log(
-        `  ${filePath}: ${measurement.lines}/${budget.maxLines} lines, ${measurement.branchPoints}/${budget.maxBranchPoints} branch points`
-      )
-    }
   } catch (error) {
     console.error(
       `[architecture-guard] FAILED — ${error instanceof Error ? error.message : String(error)}`
