@@ -22,12 +22,15 @@ export interface DetectConfiguredProvidersDependencies {
  *  - kimi: included only when the exact runtime is admitted AND its admitted
  *    snapshot reports OAuth or provider-key authentication. Raw key,
  *    credential, or binary presence is never managed-run readiness.
- *  - grok: no settings auth, so we probe the CLI the same way the runner
- *    resolves it. Cursor is deliberately excluded: binary presence is not a
- *    containment qualification and managed Cursor runs are disabled.
+ *  - grok / cursor: no settings auth (CLI-based), so we probe the CLI the
+ *    same way the runner resolves it — a non-null binary path means present
+ *    and runnable. Cursor is live again (Path-B contained `--sandbox` runs,
+ *    see retiredProviders.ts); seeding is presence-only, and the run path
+ *    still enforces the containment qualification at dispatch.
  *
- * Async because the Grok probe stats the filesystem; callers pre-compute
- * the set and pass it into the (synchronous) ensemble-creation path.
+ * Async because the grok/cursor probes stat the filesystem; callers
+ * pre-compute the set and pass it into the (synchronous) ensemble-creation
+ * path.
  */
 export async function detectConfiguredProviders(
   settings: AppSettings,
@@ -63,12 +66,16 @@ export async function detectConfiguredProviders(
     // Unreachable local service -> not configured.
   }
 
-  try {
-    const resolved = await resolveProviderBinary('grok')
-    if (resolved.binaryPath) configured.add('grok')
-  } catch {
-    // Unresolved / probe error → treat as not configured.
-  }
+  await Promise.all(
+    (['grok', 'cursor'] as const).map(async (provider) => {
+      try {
+        const resolved = await resolveProviderBinary(provider)
+        if (resolved.binaryPath) configured.add(provider)
+      } catch {
+        // Unresolved / probe error → treat as not configured.
+      }
+    })
+  )
 
   return configured
 }

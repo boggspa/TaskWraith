@@ -492,12 +492,14 @@ export const COMPOSER_SLASH_GROUP_ORDER: CommandPaletteGroup[] = [
 
 /** Resolve the per-provider palette core. Mirrors the routing logic at
  * App.tsx:11874 (codex → CODEX, non-Codex CLI providers → CLI_PROVIDER).
- * Grok/Ollama take the generic CLI core: provider-native TUI slash
- * commands are not reachable over our headless/ACP/local run paths. /review
- * here is TaskWraith's own read-only diff review (reviewDiffPrompt + a
- * plan-mode run), provider-agnostic. Providers outside the canonical live set
- * intentionally return an empty command set while their history remains
- * decodable. */
+ * Grok/Cursor/Ollama take the generic CLI core: provider-native TUI slash
+ * commands are not reachable over our headless/ACP/local run paths, and every
+ * Core command dispatches TaskWraith-side (inspector tabs, Diff Studio,
+ * emulated /fork) — nothing assumes an MCP bridge, so contained Path-B Cursor
+ * qualifies. /review here is TaskWraith's own read-only diff review
+ * (reviewDiffPrompt + a plan-mode run), provider-agnostic. Providers outside
+ * the canonical live set intentionally return an empty command set while
+ * their history remains decodable. */
 export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem[] {
   if (!isLiveSelectableProvider(provider)) return RETIRED_PROVIDER_PALETTE_CORE
   if (provider === 'codex') return CODEX_PALETTE_CORE
@@ -505,6 +507,7 @@ export function paletteCoreForProvider(provider: ProviderId): CommandPaletteItem
     provider === 'claude' ||
     provider === 'kimi' ||
     provider === 'grok' ||
+    provider === 'cursor' ||
     provider === 'ollama'
   ) {
     return CLI_PROVIDER_PALETTE_CORE

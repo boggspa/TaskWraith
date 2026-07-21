@@ -36,7 +36,13 @@ describe('ComposerSlashCommands', () => {
   describe('paletteCoreForProvider', () => {
     it('returns no commands for unavailable historical providers', () => {
       expect(paletteCoreForProvider('gemini')).toEqual([])
-      expect(paletteCoreForProvider('cursor')).toEqual([])
+    })
+    it('returns CLI_PROVIDER_PALETTE_CORE for cursor', () => {
+      // Path-B Cursor runs native Cursor tools under --sandbox with no
+      // TaskWraith MCP bridge, but every CLI Core command dispatches
+      // TaskWraith-side (inspector tabs, Diff Studio, plan-mode /review,
+      // emulated /fork) — see handlePaletteCommand's cursor branch.
+      expect(paletteCoreForProvider('cursor')).toBe(CLI_PROVIDER_PALETTE_CORE)
     })
     it('returns CODEX_PALETTE_CORE for codex', () => {
       expect(paletteCoreForProvider('codex')).toBe(CODEX_PALETTE_CORE)

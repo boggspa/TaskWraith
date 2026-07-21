@@ -71,3 +71,39 @@ describe('detectConfiguredProviders — Kimi managed-run readiness', () => {
     expect(configured.has('kimi')).toBe(false)
   })
 })
+
+describe('detectConfiguredProviders — CLI binary probes', () => {
+  it('seeds grok and cursor when their binaries resolve', async () => {
+    const configured = await detectConfiguredProviders({} as AppSettings, {
+      resolveProviderBinary: async (provider) => ({
+        binaryPath:
+          provider === 'grok'
+            ? '/Users/test/.grok/bin/grok'
+            : provider === 'cursor'
+              ? '/usr/local/bin/cursor-agent'
+              : null
+      }),
+      getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+    })
+    expect(configured.has('grok')).toBe(true)
+    expect(configured.has('cursor')).toBe(true)
+  })
+
+  it('excludes grok and cursor when the binary is unresolved or the probe throws', async () => {
+    const unresolved = await detectConfiguredProviders({} as AppSettings, {
+      resolveProviderBinary: async () => ({ binaryPath: null }),
+      getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+    })
+    const throwing = await detectConfiguredProviders({} as AppSettings, {
+      resolveProviderBinary: async () => {
+        throw new Error('probe failed')
+      },
+      getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+    })
+
+    for (const configured of [unresolved, throwing]) {
+      expect(configured.has('grok')).toBe(false)
+      expect(configured.has('cursor')).toBe(false)
+    }
+  })
+})
