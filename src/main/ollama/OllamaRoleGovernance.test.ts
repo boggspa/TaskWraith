@@ -127,7 +127,9 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     expect(readOnly.agenticServices.fileChanges).toBe('deny')
     expect(readOnly.readOnly).toBe(true)
     expect(workspaceWrite.externalPathGrants).toEqual([grant])
-    expect(workspaceWrite.agenticServices.fileChanges).toBe('workspace')
+    // Workspace Write is the run-level opt-in: file/shell auto-allow without a
+    // second standing grant (path containment + elevated services still gate).
+    expect(workspaceWrite.agenticServices.fileChanges).toBe('allow')
     expect(workspaceWrite.readOnly).toBe(false)
   })
 
@@ -152,14 +154,16 @@ describe('Ollama role governance (tier retired) — write/shell approval matrix'
     expect(gateDecision(undefined, 'shellCommands')).toBe('ask')
   })
 
-  it('honors an explicit standing grant under default / workspace_write, and auto-allows under full_access', () => {
-    // The user's own standing workspace grant auto-allows — this is explicit prior
-    // authorization, identical to every provider, NOT a silent tier bump.
+  it('auto-allows workspace_write without a second grant, honors standing grants under default, and keeps full_access open', () => {
+    // Default still needs an explicit standing grant (or Accept for workspace).
     expect(gateDecision('default', 'shellCommands', { grant: true })).toBe('allow')
+    expect(gateDecision('default', 'fileChanges')).toBe('ask')
+    // Workspace Write is the product opt-in for in-workspace shell/file — the
+    // preset itself is the authorization; no separate standing grant required.
+    expect(gateDecision('workspace_write', 'fileChanges')).toBe('allow')
+    expect(gateDecision('workspace_write', 'shellCommands')).toBe('allow')
     expect(gateDecision('workspace_write', 'fileChanges', { grant: true })).toBe('allow')
     expect(gateDecision('workspace_write', 'shellCommands', { grant: true })).toBe('allow')
-    // workspace_write without a grant still prompts.
-    expect(gateDecision('workspace_write', 'fileChanges')).toBe('ask')
     // full_access is an explicit user opt-in -> auto-allow with no grant needed.
     expect(gateDecision('full_access', 'fileChanges')).toBe('allow')
     expect(gateDecision('full_access', 'shellCommands')).toBe('allow')

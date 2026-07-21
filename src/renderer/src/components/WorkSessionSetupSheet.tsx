@@ -42,7 +42,7 @@ const PERMISSION_PRESET_OPTIONS: { value: PermissionPresetId; label: string; hin
   {
     value: 'workspace_write',
     label: 'Workspace write',
-    hint: 'Read + write workspace files. Approval gates remain.'
+    hint: 'Auto-allow in-workspace shell/file edits. External publish and elevated tools still prompt.'
   }
 ]
 

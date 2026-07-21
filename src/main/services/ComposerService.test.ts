@@ -1162,6 +1162,8 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     )
     expect(workspaceWritePayload.effectivePermissions?.readOnly).toBe(false)
     expect(workspaceWritePayload.effectivePermissions?.presetId).toBe('workspace_write')
+    expect(workspaceWritePayload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
+    expect(workspaceWritePayload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
 
     const staleFullAccessPayload = compose(
       { providerMetadata: { approvalMode: 'auto_edit' } },
@@ -1173,8 +1175,10 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     )
     expect(staleFullAccessPayload.effectivePermissions?.readOnly).toBe(false)
     expect(staleFullAccessPayload.effectivePermissions?.presetId).toBe('workspace_write')
+    // Non-durable Full Access clamps to Workspace Write (auto-allow shell/file
+    // for the run; sandbox drop still requires durable full_access + trust).
     expect(staleFullAccessPayload.effectivePermissions?.agenticServices.shellCommands).toBe(
-      'workspace'
+      'allow'
     )
 
     const trustedChat = makeChat({ providerMetadata: { approvalMode: 'auto_edit' } })
@@ -1220,8 +1224,8 @@ describe('composeRun effectivePermissions (single-run read-only enforcement)', (
     expect(payload.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
     expect(payload.effectivePermissions?.approvalMode).toBe('auto_edit')
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('workspace')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('workspace')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
     expect(payload.effectivePermissions?.agenticServices.mcpTools).toBe('ask')
     expect(payload.effectivePermissions?.networkAccess).toBe('allow')
   })
@@ -1841,8 +1845,8 @@ describe('composeRun unattended ELEVATION (P2 verified ack honoring)', () => {
     expect(payload.approvalMode).toBe('auto_edit')
     expect(payload.effectivePermissions?.presetId).toBe('workspace_write')
     expect(payload.effectivePermissions?.readOnly).toBe(false)
-    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('workspace')
-    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('workspace')
+    expect(payload.effectivePermissions?.agenticServices.shellCommands).toBe('allow')
+    expect(payload.effectivePermissions?.agenticServices.fileChanges).toBe('allow')
   })
 
   it('rechecks current service policy for a verified elevated scheduled run', () => {

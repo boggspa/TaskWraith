@@ -137,13 +137,28 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
     id: 'workspace_write',
     label: 'Workspace write',
     approvalMode: 'auto_edit',
+    // Selecting Workspace Write IS the user's run-level authorization for
+    // in-workspace shell / file / media edits. Policy value 'workspace' still
+    // means "prompt until a separate standing workspace grant exists", which
+    // double-taxed users: they chose the preset and still got a card on every
+    // edit (most painful on tool-heavy seats like Grok). Use 'allow' so the
+    // signed run posture auto-approves these services without a second grant.
+    //
+    // Security that still holds under this posture:
+    //   - global agenticServices deny remains absolute (preserveExplicitDeny)
+    //   - tool executors reject outside-workspace paths
+    //   - external-path detection force-prompts (never auto-allows escapes)
+    //   - externalPublish / canvasEval / mediaRecording stay non-grantable ask/deny
+    //   - isFullShellAccessGranted still requires presetId === 'full_access',
+    //     so Workspace Write never drops provider sandboxing to danger-full-access
+    //   - preview-risk models clamp these services back to 'ask'
     agenticServices: {
-      shellCommands: 'workspace',
-      fileChanges: 'workspace',
-      // Media editing follows shell/file: workspace-scoped auto-allow under
-      // workspace_write. DELIBERATELY no mediaRecording here — capture is
-      // non-grantable and stays at its default-deny.
-      mediaEditing: 'workspace'
+      shellCommands: 'allow',
+      fileChanges: 'allow',
+      // Media editing follows shell/file auto-allow under workspace_write.
+      // DELIBERATELY no mediaRecording here — capture is non-grantable and
+      // stays at its default-deny.
+      mediaEditing: 'allow'
     }
   },
   full_access: {

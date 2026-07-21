@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  isFullShellAccessGranted,
   isPlanInstrumentGrantHold,
   resolveEffectiveRunPermissions
 } from './EffectiveRunPermissions'
@@ -588,6 +589,62 @@ describe('resolveEffectiveRunPermissions', () => {
       expect(resolved.approvalMode).not.toBe('plan')
       expect(resolved.readOnly).toBe(false)
     }
+  })
+})
+
+describe('workspace_write preset — run-level auto-allow without a second grant', () => {
+  it('auto-allows shell/file/media under workspace_write without standing grants', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'grok',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'workspace_write'
+    })
+    expect(resolved.presetId).toBe('workspace_write')
+    expect(resolved.approvalMode).toBe('auto_edit')
+    expect(resolved.readOnly).toBe(false)
+    expect(resolved.agenticServices.shellCommands).toBe('allow')
+    expect(resolved.agenticServices.fileChanges).toBe('allow')
+    expect(resolved.agenticServices.mediaEditing).toBe('allow')
+    // Elevated / non-grantable services stay prompt-or-deny.
+    expect(resolved.agenticServices.externalPublish).toBe('ask')
+    expect(resolved.agenticServices.canvasEval).toBe('ask')
+    expect(resolved.agenticServices.mediaRecording).toBe('deny')
+    // No standing grants are synthesized — the preset policy is enough.
+    expect(resolved.workspaceGrantServiceIds).toEqual([])
+  })
+
+  it('does not qualify as Full Access sandbox-drop when shell is allow under workspace_write', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'codex',
+      workspacePath: '/repo',
+      settings: settings(),
+      presetId: 'workspace_write'
+    })
+    expect(resolved.agenticServices.shellCommands).toBe('allow')
+    expect(isFullShellAccessGranted(resolved)).toBe(false)
+  })
+
+  it('still honors a global shell/file deny kill switch over workspace_write', () => {
+    const resolved = resolveEffectiveRunPermissions({
+      provider: 'claude',
+      workspacePath: '/repo',
+      settings: settings({
+        agenticServices: {
+          shellCommands: 'deny',
+          fileChanges: 'deny',
+          externalPublish: 'ask',
+          mcpTools: 'ask',
+          subThreadDelegation: 'ask',
+          canvasInteraction: 'ask',
+          canvasEval: 'ask',
+          networkAccess: 'allow'
+        }
+      }),
+      presetId: 'workspace_write'
+    })
+    expect(resolved.agenticServices.shellCommands).toBe('deny')
+    expect(resolved.agenticServices.fileChanges).toBe('deny')
   })
 })
 
