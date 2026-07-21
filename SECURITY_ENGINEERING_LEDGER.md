@@ -51,7 +51,7 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
 | TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Open | TaskWraith maintainers — Data lifecycle and history erasure | Close remaining exact host-command, cancel/delete, and Codex app-server lifecycle joins; then rerun exact-candidate gates |
-| TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Remediated | TaskWraith maintainers — Release attestation | Code candidate reviewed clean; protected environment and immutable release tags remain separate commissioning blocks |
+| TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Closed | TaskWraith maintainers — Release attestation | Closed by removal 2026-07-21: the hosted attestation apparatus was deleted by user decision (capability governance); fix preserved as provenance |
 | TW-SEC-2026-016 | Usage journals retain content and scope identifiers outside the history-erasure transaction | High | Remediated | TaskWraith maintainers — Usage privacy and data lifecycle | Source candidate accepted; run exact-candidate whole-tree gates before clearing the release block |
 
 ## TW-SEC-2026-001 — Main was not authoritative for desktop mention routing
@@ -1328,6 +1328,20 @@ weaponized payloads to this file or its verification artifacts.
   remediation is on the exact candidate and the external environment/tag
   controls are commissioned. Keep the code finding `Remediated`, not `Verified`,
   and preserve it as release-attestation provenance.
+- **2026-07-21 apparatus removal (user decision):** The hosted release-attestation
+  apparatus this finding governed was removed under AGENTS.md "Capability
+  governance — the user decides": the dispatch workflow, the exact-SHA
+  attestation job and freshness verifier, the release aggregate, and both
+  commissioning variables are deleted from the tree. The user judged the gate
+  over-complex and in conflict with their intent (it blocked signed publication
+  on external commissioning state that was never chosen, against an empty
+  required-fingerprint manifest, while actual releases use the local notary
+  runbook). The timestamp-refresh defect and its fix are preserved above as
+  provenance; with no attestation consumer, the release disposition is
+  inoperative. Live containment canaries remain available as local, user-invoked
+  qualification evidence (`verify:provider-permissions:live`), and the signed
+  release jobs retain their artifact verification and remote-tag integrity
+  checks. Closed by removal.
 
 ## TW-SEC-2026-016 — Usage history is outside scoped and global erasure
 

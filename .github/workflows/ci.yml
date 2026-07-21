@@ -84,54 +84,10 @@ jobs:
       - name: Swift package tests (TaskWraithKit)
         run: swift test --package-path ios/TaskWraithKit
 
-  provider-permission-attestation:
-    name: Exact-SHA provider permission attestation
-    runs-on: ubuntu-latest
-    if: >-
-      startsWith(github.ref, 'refs/tags/v') &&
-      (vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true' ||
-      vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true')
-    permissions:
-      actions: read
-      contents: read
-    steps:
-      - name: Require commissioned canary and immutable release-tag controls
-        env:
-          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
-          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
-        run: |
-          test "$PROVIDER_CANARY_ENVIRONMENT_CONFIGURED" = "true"
-          test "$RELEASE_TAG_PROTECTION_CONFIGURED" = "true"
-      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
-        with:
-          persist-credentials: false
-      - name: Require successful provider release canary for this commit
-        shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          response="$RUNNER_TEMP/provider-permission-runs.json"
-          # Join on the actual checked-out artifact source. For annotated tags,
-          # this is the peeled commit rather than a tag-object event SHA.
-          candidate_sha="$(git rev-parse HEAD)"
-          attestation_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          gh api --method GET \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" \
-            -f event=repository_dispatch \
-            -f head_sha="$candidate_sha" \
-            -f per_page=100 > "$response"
-          node scripts/verify-provider-release-attestation.cjs \
-            --input="$response" \
-            --sha="$candidate_sha" \
-            --default-branch=master \
-            --now="$attestation_now" \
-            --max-age-hours=24
-
   notarized-macos-release:
     name: Notarized macOS Release
     runs-on: macos-15
-    needs: [test, ios, provider-permission-attestation]
+    needs: [test, ios]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_MACOS_NOTARIZED_RELEASE == 'true'
     permissions:
       actions: read
@@ -184,8 +140,6 @@ jobs:
           done
       - name: Upload verified macOS release artifacts
         env:
-          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
-          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -197,21 +151,6 @@ jobs:
           fi
           release_tag="$GITHUB_REF_NAME"
           candidate_sha="$(git rev-parse HEAD)"
-          test "$PROVIDER_CANARY_ENVIRONMENT_CONFIGURED" = "true"
-          test "$RELEASE_TAG_PROTECTION_CONFIGURED" = "true"
-          attestation_response="$RUNNER_TEMP/provider-permission-runs-macos.json"
-          attestation_now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
-          gh api --method GET \
-            "repos/$GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" \
-            -f event=repository_dispatch \
-            -f head_sha="$candidate_sha" \
-            -f per_page=100 > "$attestation_response"
-          node scripts/verify-provider-release-attestation.cjs \
-            --input="$attestation_response" \
-            --sha="$candidate_sha" \
-            --default-branch=master \
-            --now="$attestation_now" \
-            --max-age-hours=24
           verify_remote_release_tag() {
             local tag_ref="refs/tags/$release_tag"
             local tag_type
@@ -242,7 +181,7 @@ jobs:
   signed-windows-release:
     name: Signed Windows Release
     runs-on: windows-latest
-    needs: [test, ios, provider-permission-attestation]
+    needs: [test, ios]
     if: startsWith(github.ref, 'refs/tags/v') && vars.ENABLE_WINDOWS_SIGNED_RELEASE == 'true'
     permissions:
       actions: read
@@ -296,8 +235,6 @@ jobs:
       - name: Upload verified Windows release artifacts
         shell: pwsh
         env:
-          PROVIDER_CANARY_ENVIRONMENT_CONFIGURED: ${{ vars.PROVIDER_CANARY_ENVIRONMENT_CONFIGURED }}
-          RELEASE_TAG_PROTECTION_CONFIGURED: ${{ vars.RELEASE_TAG_PROTECTION_CONFIGURED }}
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = "Stop"
@@ -313,39 +250,6 @@ jobs:
           $candidateSha = (git rev-parse HEAD).Trim()
           if ($LASTEXITCODE -ne 0) {
             throw "Could not resolve the checked-out release commit."
-          }
-          if ($env:PROVIDER_CANARY_ENVIRONMENT_CONFIGURED -ne "true") {
-            throw "Provider canary environment is not currently commissioned."
-          }
-          if ($env:RELEASE_TAG_PROTECTION_CONFIGURED -ne "true") {
-            throw "Immutable release-tag controls are not currently commissioned."
-          }
-          $attestationResponse = Join-Path $env:RUNNER_TEMP "provider-permission-runs-windows.json"
-          $attestationNow = [DateTime]::UtcNow.ToString(
-            "yyyy-MM-ddTHH:mm:ssZ",
-            [Globalization.CultureInfo]::InvariantCulture
-          )
-          $apiResponse = gh api --method GET `
-            "repos/$env:GITHUB_REPOSITORY/actions/workflows/provider-containment-canaries.yml/runs" `
-            -f event=repository_dispatch `
-            -f "head_sha=$candidateSha" `
-            -f per_page=100
-          if ($LASTEXITCODE -ne 0) {
-            throw "Could not query provider permission attestations."
-          }
-          [IO.File]::WriteAllText(
-            $attestationResponse,
-            ($apiResponse -join "`n"),
-            [Text.UTF8Encoding]::new($false)
-          )
-          node scripts/verify-provider-release-attestation.cjs `
-            "--input=$attestationResponse" `
-            "--sha=$candidateSha" `
-            --default-branch=master `
-            "--now=$attestationNow" `
-            --max-age-hours=24
-          if ($LASTEXITCODE -ne 0) {
-            throw "No fresh exact-SHA provider permission release attestation is valid."
           }
           function Assert-RemoteReleaseTag {
             $tagRef = "refs/tags/$releaseTag"

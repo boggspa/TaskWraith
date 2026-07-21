@@ -147,14 +147,12 @@ describe('Kimi runtime qualification projection verifier', () => {
     })
   })
 
-  it('runs parity verification in build, CI, validation, and credentialed canary lanes', () => {
+  it('runs parity verification in build, CI, and validation lanes', () => {
+    // The hosted credentialed canary workflow lane was removed 2026-07-21 by
+    // user decision alongside the release-attestation apparatus.
     const packageJson = JSON.parse(readFileSync(join(process.cwd(), 'package.json'), 'utf8'))
     const releaseValidation = readFileSync(
       join(process.cwd(), 'scripts/validate-release.cjs'),
-      'utf8'
-    )
-    const canaryWorkflow = readFileSync(
-      join(process.cwd(), '.github/workflows/provider-containment-canaries.yml'),
       'utf8'
     )
     expect(packageJson.scripts['verify:kimi-runtime-qualifications']).toBe(
@@ -164,6 +162,5 @@ describe('Kimi runtime qualification projection verifier', () => {
     expect(packageJson.scripts.build).toContain('npm run verify:kimi-runtime-qualifications')
     expect(releaseValidation).toContain("step('kimi-runtime-qualification-projection'")
     expect(releaseValidation).toContain("args: ['run', 'verify:kimi-runtime-qualifications']")
-    expect(canaryWorkflow).toContain('run: npm run verify:kimi-runtime-qualifications')
   })
 })
