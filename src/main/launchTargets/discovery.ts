@@ -21,8 +21,12 @@ export interface DiscoverLaunchTargetsOptions {
 }
 
 const SKIP_DIRS = new Set([
+  '.claude',
+  '.codex',
+  '.cursor',
   '.build',
   '.git',
+  '.local-only',
   '.next',
   '.turbo',
   '.vite',

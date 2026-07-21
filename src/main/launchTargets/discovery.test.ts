@@ -102,6 +102,65 @@ describe('discoverLaunchTargets', () => {
     expect(snapshot.targets.some((target) => target.label === 'pnpm format')).toBe(false)
   })
 
+  it('ignores agent-owned worktree package scripts inside the workspace', async () => {
+    const workspace = await tempWorkspace()
+    await write(
+      path.join(workspace, 'package.json'),
+      JSON.stringify(
+        {
+          scripts: {
+            'build:mac:notarized': 'electron-builder --mac -c.mac.notarize=true'
+          }
+        },
+        null,
+        2
+      )
+    )
+    await write(
+      path.join(workspace, '.claude', 'worktrees', 'agent-a4c3161a435cfe757', 'package.json'),
+      JSON.stringify(
+        {
+          scripts: {
+            'build:mac:notarized': 'echo stale worktree build'
+          }
+        },
+        null,
+        2
+      )
+    )
+    await write(
+      path.join(workspace, '.local-only', 'codex-release-snapshot', 'package.json'),
+      JSON.stringify(
+        {
+          scripts: {
+            'build:mac:notarized': 'echo local-only snapshot build'
+          }
+        },
+        null,
+        2
+      )
+    )
+
+    const snapshot = await discoverLaunchTargets({ workspacePath: workspace })
+    const targets = snapshot.targets.filter(
+      (target) => target.label === 'npm run build:mac:notarized'
+    )
+
+    expect(targets).toHaveLength(1)
+    expect(targets[0]).toMatchObject({
+      source: 'package-script',
+      subtitle: 'package.json script',
+      command: {
+        cwd: workspace
+      },
+      evidence: [
+        {
+          path: path.join(workspace, 'package.json')
+        }
+      ]
+    })
+  })
+
   it('parses JSONC VS Code launch and task definitions', async () => {
     const workspace = await tempWorkspace()
     await write(
