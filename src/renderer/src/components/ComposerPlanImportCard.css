@@ -12,22 +12,6 @@
   overflow: auto;
 }
 
-.composer-plan-import-card.plan-import-card-v2::before {
-  content: '';
-  position: absolute;
-  left: 0;
-  top: 10px;
-  bottom: 10px;
-  width: 2px;
-  border-radius: 2px;
-  background: color-mix(in srgb, var(--accent) 68%, var(--panel-border));
-}
-
-.plan-import-card-v2.risk-medium::before,
-.plan-import-card-v2.risk-high::before {
-  background: color-mix(in srgb, var(--warning) 72%, var(--panel-border));
-}
-
 .plan-import-compact-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto auto;

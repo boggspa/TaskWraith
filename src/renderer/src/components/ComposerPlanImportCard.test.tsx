@@ -83,7 +83,7 @@ function props(overrides: Partial<ComposerPlanImportCardProps> = {}): ComposerPl
     setPendingPlanImport: () => undefined,
     handleGroundImportedPlanFiles: () => undefined,
     handleRunImportedPlan: () => undefined,
-    handleRunRawPrompt: () => undefined,
+    handlePastePlanAsPrompt: () => undefined,
     ...overrides
   }
 }
@@ -97,7 +97,10 @@ describe('ComposerPlanImportCard', () => {
     expect(html).toContain('2 steps')
     expect(html).toContain('Low risk')
     expect(html).toContain('$0.04')
+    expect(html).toContain('Paste as Prompt')
     expect(html).toContain('Import &amp; run')
+    expect(html.indexOf('Review')).toBeLessThan(html.indexOf('Paste as Prompt'))
+    expect(html.indexOf('Paste as Prompt')).toBeLessThan(html.indexOf('Import &amp; run'))
     expect(html).not.toContain('Read-only')
     expect(html).not.toContain('plan-import-review-panel')
     expect(html).not.toContain('Safety')
@@ -112,7 +115,8 @@ describe('ComposerPlanImportCard', () => {
     expect(html).toContain('Constraints')
     expect(html).toContain('Assumptions')
     expect(html).toContain('Paths')
-    expect(html).toContain('Send as-is')
+    expect(html).toContain('Paste as Prompt')
+    expect(html).not.toContain('Send as-is')
     expect(html).toContain('Plan Import never changes or recommends permissions.')
   })
 })

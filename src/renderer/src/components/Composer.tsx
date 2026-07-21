@@ -2971,9 +2971,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         setPendingPlanImport={setPendingPlanImport}
                         handleGroundImportedPlanFiles={handleGroundImportedPlanFiles}
                         handleRunImportedPlan={handleRunImportedPlan}
-                        handleRunRawPrompt={() => {
+                        handlePastePlanAsPrompt={() => {
                           setPendingPlanImport(null)
-                          handleRun()
+                          focusComposerTextarea()
                         }}
                       />
                     )}

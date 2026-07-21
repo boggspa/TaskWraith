@@ -36,7 +36,7 @@ export interface ComposerPlanImportCardProps {
   setPendingPlanImport: (next: PlanImportReviewState | null) => void
   handleGroundImportedPlanFiles: () => void
   handleRunImportedPlan: () => void
-  handleRunRawPrompt: () => void
+  handlePastePlanAsPrompt: () => void
 }
 
 function pluralize(count: number, singular: string, plural = `${singular}s`): string {
@@ -64,7 +64,7 @@ export function ComposerPlanImportCard({
   setPendingPlanImport,
   handleGroundImportedPlanFiles,
   handleRunImportedPlan,
-  handleRunRawPrompt
+  handlePastePlanAsPrompt
 }: ComposerPlanImportCardProps): React.JSX.Element {
   const [reviewOpen, setReviewOpen] = useState(defaultExpanded)
   const reviewId = `plan-import-review-${pendingPlanImport.id}`
@@ -123,6 +123,9 @@ export function ComposerPlanImportCard({
             <ReviewSymbolIcon />
             {reviewOpen ? 'Hide review' : 'Review'}
           </button>
+          <PillButton size="compact" onClick={handlePastePlanAsPrompt} disabled={disabled}>
+            Paste as Prompt
+          </PillButton>
           <PillButton
             variant="primary"
             size="compact"
@@ -261,6 +264,9 @@ export function ComposerPlanImportCard({
           </div>
 
           <div className="plan-import-review-actions">
+            <PillButton size="compact" onClick={handlePastePlanAsPrompt} disabled={disabled}>
+              Paste as Prompt
+            </PillButton>
             <PillButton
               variant="primary"
               size="compact"
@@ -270,9 +276,6 @@ export function ComposerPlanImportCard({
             >
               <RunSymbolIcon />
               Import & run
-            </PillButton>
-            <PillButton size="compact" onClick={handleRunRawPrompt} disabled={disabled}>
-              Send as-is
             </PillButton>
           </div>
         </div>
