@@ -2876,8 +2876,8 @@ interface HostCommandProjectionScope {
     | 'brokered-mcp'
     | 'ollama-local-tool'
     | 'audit-gate'
-  readonly appRunId: string
-  readonly appChatId: string
+  readonly appRunId?: string
+  readonly appChatId?: string
   readonly workspaceId?: string
   readonly workspacePath?: string
   readonly operations: Set<HostCommandOperationController>
@@ -2892,19 +2892,24 @@ function createHostCommandProjectionScope(input: {
   workspaceId?: string | null
   workspacePath?: string | null
 }): HostCommandProjectionScope | null {
-  const appRunId = input.appRunId?.trim()
-  const appChatId = input.appChatId?.trim()
-  if (!appRunId || !appChatId) return null
+  const appRunId = input.appRunId?.trim() || undefined
+  const appChatId = input.appChatId?.trim() || undefined
   const workspacePath = input.workspacePath?.trim() || undefined
-  const chat = AppStore.getChat(appChatId)
+  const chat = appChatId ? AppStore.getChat(appChatId) : null
   const workspaceId =
     input.workspaceId?.trim() ||
     chat?.workspaceId ||
     (workspacePath ? workspaceIdForApprovalPush(workspacePath) || undefined : undefined)
+  // Any surviving identity field is enough for a scoped history join: chat
+  // clears match appChatId, workspace clears match workspaceId/path or the
+  // frozen chat preview. Only a fully anonymous command registers unowned —
+  // joined by global clears alone — so partial context (for example a
+  // workspace tool call without a chat id) no longer widens that class.
+  if (!appRunId && !appChatId && !workspaceId && !workspacePath) return null
   return {
     source: input.source,
-    appRunId,
-    appChatId,
+    ...(appRunId ? { appRunId } : {}),
+    ...(appChatId ? { appChatId } : {}),
     ...(workspaceId ? { workspaceId } : {}),
     ...(workspacePath ? { workspacePath } : {}),
     operations: new Set<HostCommandOperationController>()
@@ -6070,6 +6075,10 @@ function sealSoloCodexRunOnCompletion(args: {
   endedAt: string
 }): void {
   if (!args.appChatId || !args.runId) return
+  // A terminal notification landing during an in-flight erasure of this chat
+  // must skip cleanly: the saveChat fence would throw anyway, and that throw
+  // otherwise propagates out of handleCodexNotification.
+  if (historyClearAdmissionBlocked(args.runId, undefined, args.appChatId)) return
   const chat = AppStore.getChat(args.appChatId)
   if (!chat?.runs?.length) return
   const runIndex = chat.runs.findIndex((run) => run.runId === args.runId)
@@ -7817,9 +7826,29 @@ function isChatRunLive(runId: string | undefined | null): boolean {
  * the remote surfaces iOS reads: task-card, thread-list, and thread snapshot.
  */
 function reconcileStaleChatRunsProjection(options: { minAgeMs?: number } = {}): number {
+  // A chat inside a prepared (uncommitted) erasure must not be settled or
+  // re-projected. Filter fenced chats up front so the sweep continues over the
+  // rest of the batch instead of aborting on the saveChat fence throw.
+  let pendingDeletion: ReturnType<typeof AppStore.getPendingHistoryDeletion>
+  try {
+    pendingDeletion = AppStore.getPendingHistoryDeletion()
+  } catch {
+    // An unreadable destructive intent is not evidence the sweep is safe.
+    return 0
+  }
+  const fencedForErasure = (chat: ChatRecord): boolean => {
+    if (!pendingDeletion) return false
+    if (pendingDeletion.kind === 'global') return true
+    if (pendingDeletion.chatIds.includes(chat.appChatId)) return true
+    return (
+      pendingDeletion.kind === 'workspace' &&
+      Boolean(chat.workspaceId) &&
+      pendingDeletion.workspaceId === chat.workspaceId
+    )
+  }
   const nowIso = new Date().toISOString()
   const { chats, settlements } = reconcileStaleChatRuns(
-    AppStore.getChats(),
+    AppStore.getChats().filter((chat) => !fencedForErasure(chat)),
     isChatRunLive,
     nowIso,
     { minAgeMs: options.minAgeMs ?? 0 }
@@ -18333,7 +18362,10 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
     startupLeaseCount: codexAppServerStartupLeaseCount,
     activeStates: runManager
       .getActiveByProvider('codex')
-      .map((session) => session.state as Partial<CodexRunState> | null | undefined)
+      .map((session) => session.state as Partial<CodexRunState> | null | undefined),
+    // Manual compactions and native reviews hold admission lanes without a
+    // RunManager session or startup lease; never dispose the daemon under one.
+    admissionReservationCount: codexThreadAdmissionRegistry.activeLaneReservationCount
   })
   if (shouldRestart) {
     console.log('[codex] restarting idle app-server to apply MCP configuration changes')
@@ -23675,6 +23707,16 @@ async function runCodexAppServerWithClient(
     console.warn(
       `[codex] non-UUID providerSessionId not resumable on app-server; starting a fresh thread (was: ${payload.providerSessionId})`
     )
+  }
+  // Last synchronous authority check before the RPC that creates or revives a
+  // provider-native thread. A fresh (non-resumable) run holds no admission
+  // reservation yet, so a history clear prepared during the ensureStarted
+  // await cannot join it — without this recheck, thread/start would mint a
+  // native rollout for the frozen scope that TaskWraith never erases.
+  if (historyClearAdmissionBlocked(payload.appRunId, payload.workspace, payload.appChatId)) {
+    admissionReservation?.releaseBeforeAdmission()
+    runManager.finish(payload.appRunId, 'cancelled')
+    return
   }
   try {
     if (resumableThreadId) {
@@ -37096,8 +37138,9 @@ if (isGeminiMcpBridgeProcess) {
           await holds.codexAdmissionHold.completion
         },
         commit: (operationId) => {
-          // Checkpoint erasure joins the broad transaction pre-commit under the
-          // same durable intent; a purge failure keeps the operation pending.
+          // Checkpoint and collaboration erasure join the broad transaction
+          // pre-commit under the same durable intent; a purge failure keeps
+          // the operation pending and resumable.
           const pending = AppStore.getPendingHistoryDeletion()
           if (pending && pending.operationId === operationId) {
             const store = sessionCheckpointStoreRef
@@ -37117,6 +37160,7 @@ if (isGeminiMcpBridgeProcess) {
                     }
                   : { kind: pending.kind, chatIds: pending.chatIds }
             )
+            purgeHumanCollaborationForErasure(pending.kind, pending.chatIds)
           }
           AppStore.commitPreparedHistoryDeletion(operationId)
         },
@@ -37271,6 +37315,44 @@ if (isGeminiMcpBridgeProcess) {
       isHistoryMutationBlocked: (chatId, workspaceId) =>
         durableHistoryDeletionBlocks(chatId, workspaceId) || !AppStore.getChat(chatId)
     })
+
+    // Collaboration share/audit stores are likewise constructed above startup
+    // deletion recovery: the broad commit purges them under the durable intent,
+    // and a startup-resumed erasure must not hit their temporal dead zone.
+    // ChatService receives the same instances later in this ready flow.
+    const humanCollaborationStore = new HumanCollaborationStore(
+      join(app.getPath('userData'), 'human-collaboration.json')
+    )
+    // P2a — bounded, durable audit of host-visible collaboration events
+    // (rules changes, invites, admission, contributions, drafts, revocations).
+    const humanCollaborationAuditLog = new HumanCollaborationAuditLog(
+      join(app.getPath('userData'), 'human-collaboration-audit.json')
+    )
+    /**
+     * Erase collaboration state for a frozen deletion scope, before the store
+     * commit. Delete kinds remove the share records themselves (the runtime
+     * denies by absence on the next inbound frame); truncate keeps the chat
+     * shell and its share capability but still purges the content-adjacent
+     * audit rows (previews/hashes), matching the approval/feedback ledger
+     * steps. Throws on failure so the outer operation stays pending.
+     */
+    const purgeHumanCollaborationForErasure = (
+      kind: 'chat' | 'truncate' | 'workspace' | 'global',
+      chatIds: readonly string[]
+    ): void => {
+      if (kind === 'global') {
+        humanCollaborationAuditLog.purgeAll()
+        humanCollaborationStore.purgeAllShares()
+        return
+      }
+      const targets = new Set(chatIds)
+      const shareIds = humanCollaborationStore
+        .listShares()
+        .filter((share) => targets.has(share.chatId))
+        .map((share) => share.shareId)
+      humanCollaborationAuditLog.purgeEntries({ chatIds, shareIds })
+      if (kind !== 'truncate') humanCollaborationStore.purgeChatShares(chatIds)
+    }
 
     const drainOrphanSubThreadsBeforeRunQueue = async (): Promise<void> => {
       const candidates = AppStore.listOrphanSubThreadReapCandidates()
@@ -38235,14 +38317,6 @@ if (isGeminiMcpBridgeProcess) {
       setupConfigFilePath: discordContextConfig.suggestedConfigFilePath,
       checkedConfigFilePaths: discordContextConfig.checkedConfigFilePaths
     })
-    const humanCollaborationStore = new HumanCollaborationStore(
-      join(app.getPath('userData'), 'human-collaboration.json')
-    )
-    // P2a — bounded, durable audit of host-visible collaboration events
-    // (rules changes, invites, admission, contributions, drafts, revocations).
-    const humanCollaborationAuditLog = new HumanCollaborationAuditLog(
-      join(app.getPath('userData'), 'human-collaboration-audit.json')
-    )
     const chatService = new ChatService({
       appStore: AppStore,
       humanCollaborationStore,
@@ -39112,6 +39186,7 @@ if (isGeminiMcpBridgeProcess) {
           ? pending.chatIds
           : [rootChatId]
       store.purgeForHistoryDeletionScope({ kind, chatIds })
+      purgeHumanCollaborationForErasure(kind, chatIds)
     }
     const scopedHistoryDeletionCoordinator = new ScopedHistoryDeletionCoordinator({
       resolveChatIds: (kind, rootChatId) =>
@@ -39292,6 +39367,15 @@ if (isGeminiMcpBridgeProcess) {
       revokeApprovalsForChat,
       deleteChatWithLifecycle,
       truncateChatWithLifecycle,
+      isHistoryErasureInFlight: () => {
+        try {
+          return AppStore.getPendingHistoryDeletion() !== null
+        } catch {
+          // An unreadable destructive intent is not evidence that no erasure
+          // is in flight; the reaper defers.
+          return true
+        }
+      },
       assertParentChatCreationAllowed: assertParentChatRelationshipCreationAllowed,
       deleteExecutionGraphHistoryForChat: deleteExecutionGraphForChat,
       clearExecutionGraphHistory: async (workspaceId) => {
