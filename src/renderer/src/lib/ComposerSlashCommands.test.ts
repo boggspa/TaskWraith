@@ -216,7 +216,7 @@ describe('ComposerSlashCommands', () => {
       }
       expect(
         buildComposerSlashCommandRegistry({
-          provider: 'cursor',
+          provider: 'gemini',
           paletteItems: CLI_PROVIDER_PALETTE_CORE,
           extraCommands: [extraCommand]
         })

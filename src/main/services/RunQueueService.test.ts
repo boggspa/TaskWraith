@@ -904,10 +904,10 @@ describe('RunQueueService', () => {
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
-  it('rejects Cursor before a new queue job is persisted', () => {
+  it('rejects retired Gemini before a new queue job is persisted', () => {
     const { deps, repository } = makeDeps()
     const service = new RunQueueService(deps)
-    expect(() => service.requestJob({ provider: 'cursor' })).toThrow(
+    expect(() => service.requestJob({ provider: 'gemini' })).toThrow(
       'Provider is unavailable for new runs.'
     )
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()

@@ -3399,7 +3399,8 @@ describe('EnsembleOrchestrator', () => {
           presetId: entry.permissionPresetId,
           readOnly,
           agenticServices: {
-            fileChanges: readOnly ? 'deny' : 'workspace',
+            // workspace_write auto-allows file changes inside the workspace.
+            fileChanges: readOnly ? 'deny' : 'allow',
             mcpTools: 'deny'
           }
         }

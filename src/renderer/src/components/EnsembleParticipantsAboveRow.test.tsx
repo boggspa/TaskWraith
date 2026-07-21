@@ -400,6 +400,7 @@ describe('EnsembleParticipantsAboveRow', () => {
         'claude',
         'kimi',
         'grok',
+        'cursor',
         'ollama'
       ])
       expect(

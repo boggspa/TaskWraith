@@ -32,7 +32,9 @@ describe('Codex composer light chrome', () => {
   it('makes solo and unified above rows white without changing their joined geometry', () => {
     const section = readCodexLightSection()
 
-    expect(section).toContain('.composer-above-bar-stack:has(.ensemble-above-row),')
+    expect(section).toContain(
+      '.composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))'
+    )
     expect(section).toContain('.composer-workspace-above-row,')
     expect(section).toContain('.ensemble-above-row,')
     expect(section).toContain('.queued-messages-above-row,')

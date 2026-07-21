@@ -2321,7 +2321,7 @@ describe('runtime launch and loop verifier authority', () => {
         }),
         now
       )
-    ).toThrow(/scheduled task provider is unavailable/i)
+    ).toThrow(/Cursor scheduled launches are disabled/i)
   })
 
   it('rejects Kimi scheduled posture until the seal binds ACP production containment', () => {

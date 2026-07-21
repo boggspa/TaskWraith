@@ -34,12 +34,13 @@ describe('ExternalPathGrants metadata helpers', () => {
     expect([...EXTERNAL_PATH_GRANT_DISPATCH_PROVIDERS]).toEqual([
       'codex',
       'claude',
+      'cursor',
       'grok',
       'kimi',
       'ollama'
     ])
     expect(isExternalPathGrantDispatchProvider('gemini')).toBe(false)
-    expect(isExternalPathGrantDispatchProvider('cursor')).toBe(false)
+    expect(isExternalPathGrantDispatchProvider('cursor')).toBe(true)
   })
 
   it('reads canonical and legacy grant keys into one coalesced list', () => {

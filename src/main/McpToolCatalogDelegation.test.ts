@@ -16,9 +16,10 @@ describe('delegate_to_subthread MCP schema', () => {
     expect(properties?.reasoningEffort?.enum).toEqual(
       expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     )
-    expect(properties?.provider?.enum).not.toContain('cursor')
+    // Path-B Cursor is a live selectable seat; parents may spawn/recall a Cursor
+    // child even though Cursor itself is not a TaskWraith MCP seat.
+    expect(properties?.provider?.enum).toContain('cursor')
     expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*kimi.*grok/i)
-    expect(properties?.reasoningEffort?.description).not.toMatch(/cursor/i)
     expect(properties?.kimiThinking?.description).toMatch(/kimi/i)
     expect(properties?.subThreadId?.description).toMatch(/inherits.*model.*controls/i)
     expect(properties?.subThreadId?.description).toMatch(/active child.*durably queued/i)

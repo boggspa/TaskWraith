@@ -246,7 +246,7 @@ describe('applyPendingProviderChangeOnFinalize (turn-end)', () => {
   it('drops a queued historical provider without changing the active provider', () => {
     const queued = queueProviderChange(
       chat({ provider: 'claude', linkedProviderSessionId: 'sess-claude' }),
-      { provider: 'cursor', providerMetadata: { selectedModelType: 'composer-2.5' } }
+      { provider: 'gemini', providerMetadata: { selectedModelType: 'gemini-2.5-pro' } }
     )
 
     const finalized = applyPendingProviderChangeOnFinalize(queued)

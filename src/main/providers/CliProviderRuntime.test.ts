@@ -288,7 +288,7 @@ describe('createCliEnv', () => {
 })
 
 describe('getCliProviderMcpStatus', () => {
-  it('returns static Cursor unavailability without consulting settings', () => {
+  it('returns static Cursor provider-managed MCP status without consulting settings', () => {
     const getSettings = vi.fn(() => {
       throw new Error('must not read settings')
     })
@@ -298,12 +298,13 @@ describe('getCliProviderMcpStatus', () => {
       provider: 'cursor',
       available: false,
       enabled: false,
-      source: 'unsupported',
+      source: 'provider-managed',
       serverName: null,
       tools: [],
       sections: []
     })
-    expect(status.message).toContain('No Cursor process was started')
+    expect(status.message).toMatch(/provider-managed/i)
+    expect(status.message).toMatch(/Path-B|OS sandbox|not injected/i)
     expect(getSettings).not.toHaveBeenCalled()
   })
 
@@ -316,7 +317,7 @@ describe('getCliProviderMcpStatus', () => {
       provider: 'cursor',
       available: false,
       enabled: false,
-      source: 'unsupported',
+      source: 'provider-managed',
       serverName: null,
       tools: []
     })

@@ -481,21 +481,29 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(vi.mocked(deps.canonicalWorkspacePath)).not.toHaveBeenCalled()
   })
 
-  it.each(['gemini', 'cursor'] as const)(
-    'rejects unavailable provider %s before invoking any dependency',
-    (provider) => {
-      const deps = makeDeps()
-      expect(() =>
-        normalizeAgentRunPayload(
-          { provider, scope: 'workspace', workspace: '/repo', prompt: 'x' },
-          deps
-        )
-      ).toThrow(/unavailable for new runs/i)
-      for (const dependency of Object.values(deps)) {
-        expect(dependency).not.toHaveBeenCalled()
-      }
+  it('rejects retired Gemini before invoking any dependency', () => {
+    const deps = makeDeps()
+    expect(() =>
+      normalizeAgentRunPayload(
+        { provider: 'gemini', scope: 'workspace', workspace: '/repo', prompt: 'x' },
+        deps
+      )
+    ).toThrow(/unavailable for new runs/i)
+    for (const dependency of Object.values(deps)) {
+      expect(dependency).not.toHaveBeenCalled()
     }
-  )
+  })
+
+  it('admits Path-B Cursor as a live provider at the normalizer chokepoint', () => {
+    const deps = makeDeps()
+    expect(() =>
+      normalizeAgentRunPayload(
+        { provider: 'cursor', scope: 'workspace', workspace: '/repo', prompt: 'x' },
+        deps
+      )
+    ).not.toThrow()
+    expect(vi.mocked(deps.canonicalWorkspacePath)).toHaveBeenCalled()
+  })
 
   it('drops stale Claude Fast mode for Fable while preserving it for supported Opus models', () => {
     const deps = makeDeps()
