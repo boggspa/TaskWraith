@@ -77,6 +77,8 @@ describe('UpdateService', () => {
     expect(svc.snapshot().status).toBe('idle')
     expect(svc.snapshot().enabled).toBe(true)
     expect(mockAutoUpdater.channel).toBe('latest')
+    expect(mockAutoUpdater.autoDownload).toBe(false)
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false)
   })
 
   it('maps nightly channel to electron-updater beta', () => {
@@ -130,6 +132,22 @@ describe('UpdateService', () => {
     const svc = new UpdateService()
     svc.configure({ channel: 'stable', enabled: true })
     await svc.downloadUpdate()
+    expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled()
+  })
+
+  it('does not download an available update until the user explicitly requests it', () => {
+    const svc = new UpdateService({ platform: 'darwin', arch: 'arm64' })
+    svc.configure({ channel: 'stable', enabled: true })
+
+    emitUpdaterEvent('update-available', {
+      version: '1.0.73',
+      files: [],
+      path: 'TaskWraith-1.0.73.dmg',
+      sha512: 'abc'
+    })
+
+    expect(svc.snapshot().status).toBe('available')
+    expect(mockAutoUpdater.autoDownload).toBe(false)
     expect(mockAutoUpdater.downloadUpdate).not.toHaveBeenCalled()
   })
 
@@ -366,8 +384,8 @@ describe('UpdateService', () => {
     // across CI runners.
     const svc = new UpdateService({ platform: 'darwin' })
     svc.configure({ channel: 'stable', enabled: true })
-    expect(mockAutoUpdater.autoDownload).toBe(true)
-    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(true)
+    expect(mockAutoUpdater.autoDownload).toBe(false)
+    expect(mockAutoUpdater.autoInstallOnAppQuit).toBe(false)
 
     emitUpdaterEvent('update-available', {
       version: '1.0.73',

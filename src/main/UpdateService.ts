@@ -22,7 +22,7 @@ import {
  * to electron-updater's channel concept, and exposes a small event
  * surface the renderer can subscribe to via IPC.
  *
- * Default OFF. The service does nothing until `enable()` is called
+ * Default OFF. The service does nothing until `configure()` is called
  * with a non-null channel. The IPC handler in `index.ts` only enables
  * it when:
  *   - The app is packaged (`app.isPackaged`)
@@ -160,12 +160,12 @@ export class UpdateService {
         : args.channel === 'nightly'
           ? 'beta'
           : 'latest'
-    // Auto-update like a standard desktop app: download in the background the
-    // moment an update is found, and install it on the next normal quit — so the
-    // user never has to manually download or restart. The update pill still
-    // offers an immediate "Restart to update" for anyone who wants it now.
-    autoUpdater.autoDownload = true
-    autoUpdater.autoInstallOnAppQuit = true
+    // The enabled preference permits automatic *checks*, not background
+    // downloads. Once an update is found, the user must explicitly choose to
+    // download it from the masthead or Settings; this also prevents a routine
+    // app quit from installing an update the user has not requested.
+    autoUpdater.autoDownload = false
+    autoUpdater.autoInstallOnAppQuit = false
     this.status = 'idle'
     this.downloadProgress = undefined
     this.errorMessage = undefined
