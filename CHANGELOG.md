@@ -12,10 +12,10 @@ This entry tracks the checkout currently ahead of the latest tagged release. It
 describes the source tree only; it does not assign a release version or imply
 that artifacts have been built or published.
 
-Snapshot at paperwork pass (2026-07-21): HEAD `4baebc136`, **30 commits** after
-`v1.8.5` (`314c2338a`). Package still **1.8.5**; iOS still **0.1.0 (80)**. Target
-candidate name for the next ship is **1.8.6** until a different version is chosen
-at bump time.
+Snapshot at final ship-prep pass (2026-07-21): HEAD `0f7daa515`, **36 commits**
+after `v1.8.5` (`314c2338a`). Package still **1.8.5**; iOS still **0.1.0 (80)**.
+Target candidate name for the next ship is **1.8.6** until a different version
+is chosen at bump time. Re-snapshot immediately before any version bump.
 
 ### Added
 - **Path-B Cursor is selectable again after the 1.8.5 product path.** Managed
@@ -49,17 +49,29 @@ at bump time.
   busy follow-ups cannot rewire into Stack/Map without an explicit future opt-in.
 - **Overlong Execution Stack titles truncate on busy-queue append** so the Stack
   strip stays readable when a long prompt is attached as a queue title.
+- **Workspace Write no longer demands a second standing workspace grant** for
+  ordinary shell/file/media services already covered by the signed run posture.
+  Global deny, path containment, external-path force-prompt, elevated services,
+  and Full Access sandbox-drop requirements stay intact.
 - **Workspace tool grants survive settings sanitization and path matching.**
   Grants persist through the main sanitizer and compare with resolved paths, so
   a granted workspace root is not dropped or missed after normalize/resolve.
+- **Recents stop leapfrogging on stream write recency.** The Recents list ranks
+  by the last genuine user message (else `createdAt`) instead of live
+  `updatedAt`, so concurrent active threads no longer race for the top slot
+  while real user compose still promotes a thread.
 - **Usage and quota fetches no longer freeze the desktop.** Cold-launch provider
   quota work and 90-day external heatmap loads stay non-blocking so the app
   remains responsive while meters catch up.
 - **Orphaned `chat.runs` reconcile so iOS drops stale Active cards.** Desktop
   main reaps run records that no longer have a live owner; the companion stops
   showing Active for work that already finished.
-- **iOS glass sheets keep liquid glass on sheet and fullScreenCover hosts**, with
-  a more compact Claude-style composer chrome on the phone.
+- **iOS liquid-glass sheets no longer fall back to an opaque gray plate.**
+  Presentation chrome prefers clear glass over poorly sampling regular glass,
+  host clearing leaves visual-effect layers intact, and Form/Navigation hosts
+  (Diff Studio, Tools, Schedule, provider picker, Settings including App Icon)
+  stay transparent so the sheet glass shows through. The Claude-style phone
+  composer chrome stays compact.
 
 ### Changed
 - **Docs realign to Path-B Cursor as a live, non-MCP managed seat.** README,
