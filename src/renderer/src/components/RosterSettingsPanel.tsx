@@ -439,7 +439,7 @@ export function RosterParticipantRow({
                 title={
                   retired
                     ? 'This provider is retired. Remove this participant to replace it.'
-                    : 'TaskWraith does not start managed Cursor processes in this build. This saved participant remains available for configuration and history only.'
+                    : `TaskWraith does not start managed ${getProviderLabel(participant.provider)} processes in this build. This saved participant remains available for configuration and history only.`
                 }
               >
                 {retired ? 'retired' : 'security unavailable'}
@@ -464,9 +464,9 @@ export function RosterParticipantRow({
                 </>
               ) : (
                 <>
-                  {participant.role || 'Untitled'} — Cursor is security-unavailable for new runs.
-                  This saved row is retained for configuration and history only. Remove it to
-                  replace it with a live provider.
+                  {participant.role || 'Untitled'} — {getProviderLabel(participant.provider)} is
+                  security-unavailable for new runs. This saved row is retained for configuration
+                  and history only. Remove it to replace it with a live provider.
                 </>
               )}
             </p>
