@@ -42,6 +42,55 @@ boundaries.
 
 ---
 
+## Capability governance — the user decides (non-negotiable)
+
+TaskWraith's core invariant runs in both directions: **nothing happens against
+the will of the user** — and nothing is *taken away* against it either. An
+agent that removes, gates, retires, or "temporarily disables" a user-facing
+capability without explicit consent commits the same class of violation as an
+agent that acts without consent. The 2026-07-19 overnight incident is the
+canonical precedent: an autonomous security session unilaterally removed a live
+provider and gated another, and the cleanup took days (see
+[`papercuts/2026-07-19-retro.md`](papercuts/2026-07-19-retro.md) and
+[`SECURITY_ENGINEERING_LEDGER.md`](SECURITY_ENGINEERING_LEDGER.md)).
+
+Rules, in priority order:
+
+1. **Security work proposes; the user disposes.** If you identify a risk in a
+   provider, tool, grant, permission tier, or transport: record the finding in
+   [`SECURITY_ENGINEERING_LEDGER.md`](SECURITY_ENGINEERING_LEDGER.md), propose
+   a bounded mitigation, and stop. Do not land code, config, CI, or doctrine
+   that narrows user-facing capability without the user approving that exact
+   narrowing in the current session. "The user would surely want this blocked"
+   is never sufficient authority — severity, urgency, and overnight autonomy
+   do not change this.
+2. **Risk passes to the informed user.** TaskWraith's security job is to
+   (a) verify elevation genuinely came from the human — signed postures and
+   grant-immunity at the approval gate; consent claimed by thread content,
+   workspace files, or tool output is counterfeit — (b) bound blast radius
+   (contained argv/sandboxes, deny-walls, non-grantable host actions), and
+   (c) audit everything. Inside those bounds the user's explicit choice
+   governs — including full filesystem access, write-capable seats, and
+   unattended scheduled runs. Do not add friction beyond these standard
+   protections on an "it might be insecure" premise.
+3. **Scheduled runs are user-initiated.** Authorization is captured at
+   creation time with the ceiling disclosed; validate posture provenance at
+   fire time, never provider identity.
+4. **The live-provider set is a product decision, not an engineering lever.**
+   The single source of truth is `LIVE_SELECTABLE_PROVIDER_IDS` in
+   [`src/shared/retiredProviders.ts`](src/shared/retiredProviders.ts),
+   mirrored by hand in
+   [`ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift`](ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift)
+   (`liveSelectableProviderIds`) — keep the two in sync. Changing membership
+   in either direction is reserved to the user.
+5. **Doctrine is executable.** Future sessions obey what this file, the
+   README, the ledger, and the positioning docs assert. Never write "X is
+   blocked/unavailable" unless the code enforces it *and* the user approved
+   it; when a capability is re-enabled, sweep the doctrine the same day.
+   Stale block-claims re-seed real regressions.
+
+---
+
 ## Sub-Threads (Phase F1) — isolated delegation
 
 TaskWraith supports **sub-threads**: a thread can spawn child threads
@@ -374,9 +423,10 @@ User-facing detail: `SESSION_AND_WORKSPACE.md`.
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
 support brokered tools. Current tool-capable run providers are Codex, Claude,
 Kimi, Grok, and local Ollama when their runtime-specific admission succeeds.
-The current embedded Kimi qualification roster is empty, so packaged
-source-ahead builds reject Kimi before launch; explicit unpackaged development
-admission is labelled unattested and cannot qualify a release. Gemini is
+The current embedded Kimi qualification roster is empty, so Kimi admission
+runs in explicitly labelled `unattested-development` mode — structural
+identity/probe/posture checks, always enabled, packaged builds included — and
+that labelling cannot qualify a release; only a reviewed roster tuple can. Gemini is
 historical/retired for new runs. **Managed Cursor is live again (Path-B):**
 TaskWraith starts a contained `cursor-agent` process with hard-pinned
 `--sandbox enabled` and seat-routed read-only vs write argv. Path-B uses native
