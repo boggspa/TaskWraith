@@ -17,3 +17,35 @@ export function resolveChatApprovalMode(sources: ChatApprovalModeSources): strin
     'default'
   )
 }
+
+export interface StaleTrustedSessionDemotionInput {
+  rememberedPresetId?: unknown
+  trustedSessionEnabled: boolean
+}
+
+export interface StaleTrustedSessionDemotionPatch {
+  approvalMode: 'auto_edit'
+  workflowMode: 'normal'
+  permissionPresetId: 'workspace_write'
+}
+
+/**
+ * Trusted Session grants live only in main-process memory, but the remembered
+ * composer selection (`permissionPresetId: 'full_access'`) persists across
+ * relaunches. Without reconciliation the picker keeps claiming Trusted Session
+ * while ComposerService silently downgrades the composed posture to
+ * workspace_write — the run is safe, but the UI lies about the active
+ * authority. Returns the same demotion patch the explicit "stop Trusted
+ * Session" picker action applies, or null when the selection is already
+ * truthful (not full_access, or the grant is live).
+ */
+export function staleTrustedSessionDemotionPatch(
+  input: StaleTrustedSessionDemotionInput
+): StaleTrustedSessionDemotionPatch | null {
+  if (input.rememberedPresetId !== 'full_access' || input.trustedSessionEnabled) return null
+  return {
+    approvalMode: 'auto_edit',
+    workflowMode: 'normal',
+    permissionPresetId: 'workspace_write'
+  }
+}

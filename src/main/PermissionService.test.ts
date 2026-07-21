@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from 'vitest'
 import { resolve } from 'path'
 import { PermissionService } from './PermissionService'
 import { RunManager } from './RunManager'
+import { resolveEffectiveRunPermissions } from './EffectiveRunPermissions'
+import { effectiveAgenticSettings } from './NativeApprovalPolicy'
 import type { AppSettings } from './store/types'
 
 vi.mock('electron', () => ({
@@ -664,6 +666,80 @@ describe('PermissionService', () => {
           withGeminiGrant
         ).decision
       ).toBe('ask')
+    })
+  })
+
+  // Posture conformance across the REAL resolver → gate-settings → decision
+  // chain (no mocks): the contract behind "honor Workspace Write without a
+  // second grant". The 2026-07-21 00:21–01:00 regression session showed the
+  // failure mode this fences: preset entries overriding the user's globals back
+  // to a grant-gated policy, with the grant store unable to satisfy it —
+  // 21 manual acceptForWorkspace clicks and 11 timeout auto-denies in one run.
+  describe('write-preset approval conformance (resolver → gate settings → decision)', () => {
+    const allAskSettings: AppSettings = {
+      ...settings,
+      agenticServices: {
+        shellCommands: 'ask',
+        fileChanges: 'ask',
+        externalPublish: 'ask',
+        mcpTools: 'ask',
+        subThreadDelegation: 'ask',
+        canvasInteraction: 'ask',
+        crossThreadRead: 'ask',
+        mediaEditing: 'ask',
+        mediaRecording: 'deny',
+        canvasEval: 'ask',
+        networkAccess: 'allow'
+      },
+      agenticWorkspaceGrants: []
+    }
+
+    function decisionFor(
+      presetId: 'workspace_write' | 'full_access',
+      service: Parameters<PermissionService['resolvePermission']>[1],
+      globals: AppSettings = allAskSettings
+    ): string {
+      const permissions = resolveEffectiveRunPermissions({
+        provider: 'grok',
+        workspacePath: '/repo',
+        settings: globals,
+        presetId
+      })
+      const gateSettings = effectiveAgenticSettings(globals, permissions)
+      const permissionService = new PermissionService({
+        runManager: new RunManager(),
+        sessionGrants: new Set()
+      })
+      return permissionService.resolvePermission('grok', service, '/repo', undefined, gateSettings)
+        .decision
+    }
+
+    it('workspace_write auto-allows shell/file/media with zero grants and all-ask globals', () => {
+      expect(decisionFor('workspace_write', 'shellCommands')).toBe('allow')
+      expect(decisionFor('workspace_write', 'fileChanges')).toBe('allow')
+      expect(decisionFor('workspace_write', 'mediaEditing')).toBe('allow')
+    })
+
+    it('trusted full_access auto-allows the grantable belt the same way', () => {
+      expect(decisionFor('full_access', 'shellCommands')).toBe('allow')
+      expect(decisionFor('full_access', 'fileChanges')).toBe('allow')
+      expect(decisionFor('full_access', 'mcpTools')).toBe('allow')
+      expect(decisionFor('full_access', 'subThreadDelegation')).toBe('allow')
+      expect(decisionFor('full_access', 'crossThreadRead')).toBe('allow')
+    })
+
+    it('publication stays a per-action prompt under both write presets', () => {
+      expect(decisionFor('workspace_write', 'externalPublish')).toBe('ask')
+      expect(decisionFor('full_access', 'externalPublish')).toBe('ask')
+    })
+
+    it('a global deny survives both write presets (kill switch wins)', () => {
+      const globalShellDeny: AppSettings = {
+        ...allAskSettings,
+        agenticServices: { ...allAskSettings.agenticServices, shellCommands: 'deny' }
+      }
+      expect(decisionFor('workspace_write', 'shellCommands', globalShellDeny)).toBe('deny')
+      expect(decisionFor('full_access', 'shellCommands', globalShellDeny)).toBe('deny')
     })
   })
 })

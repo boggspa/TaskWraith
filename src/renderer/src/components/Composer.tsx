@@ -71,6 +71,7 @@ import { CanvasComposerButton } from '../components/CanvasComposerButton'
 import { PillButton } from './PillButton'
 import { QueuedMessagesAboveRow } from '../components/QueuedMessagesAboveRow'
 import type { ExecutionGraphProjection } from '../lib/executionGraphProjection'
+import { staleTrustedSessionDemotionPatch } from '../lib/chatComposerSelection'
 import { WelcomeHeatmaps } from '../components/WelcomeHeatmaps'
 import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import {
@@ -1094,6 +1095,57 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       await handleAgentApprovalAction(approvalId, 'accept')
     }
   }
+
+  // Trusted Session grants are process-lifetime (main-memory only), but the
+  // remembered solo selection persists `full_access` across relaunches. Without
+  // this reconcile the picker keeps showing Trusted Session while
+  // ComposerService silently downgrades every composed run to workspace_write.
+  // Demote the remembered selection so the picker tells the truth; re-arming is
+  // one click through the confirm sheet. Ensemble seats keep per-participant
+  // presets and are downgraded main-side per lane (not reconciled here).
+  const rememberedSoloPermissionPresetId =
+    typeof currentChat?.providerMetadata?.permissionPresetId === 'string'
+      ? currentChat.providerMetadata.permissionPresetId
+      : undefined
+  useEffect(() => {
+    if (!currentChat?.appChatId || isCurrentEnsembleChat || isCurrentGlobalChat) return
+    if (rememberedSoloPermissionPresetId !== 'full_access') return
+    let cancelled = false
+    void window.api
+      .trustedSessionGet({
+        chatId: currentChat.appChatId,
+        provider: currentProvider,
+        workspacePath: currentWorkspacePath || currentChat.workspacePath || null,
+        ensembleParticipantId: null,
+        runtimeProfileId: selectedRuntimeProfileId || null
+      })
+      .then((result) => {
+        if (cancelled) return
+        const patch = staleTrustedSessionDemotionPatch({
+          rememberedPresetId: rememberedSoloPermissionPresetId,
+          trustedSessionEnabled: result?.enabled === true
+        })
+        if (patch) {
+          setApprovalMode(patch.approvalMode)
+          rememberCurrentChatComposerSelection(patch)
+        }
+      })
+      .catch(() => {
+        // Leave the selection untouched if main cannot answer; compose-time
+        // downgrade still keeps the run itself safe.
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [
+    currentChat?.appChatId,
+    rememberedSoloPermissionPresetId,
+    isCurrentEnsembleChat,
+    isCurrentGlobalChat,
+    currentProvider,
+    currentWorkspacePath,
+    selectedRuntimeProfileId
+  ])
 
   useEffect(() => {
     if (!pendingAgentApproval) {
