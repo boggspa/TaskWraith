@@ -11489,13 +11489,3 @@
     var(--transcript-sky-reveal-solid) 100%
   ) !important;
 }
- --transcript-sky-reveal-top: rgba(255, 255, 255, 0);
-  background-image: linear-gradient(
-    180deg,
-    transparent 0,
-    color-mix(in srgb, var(--transcript-sky-reveal-top) 38%, #c8e6ff 62%) 8vh,
-    color-mix(in srgb, var(--transcript-sky-reveal-upper, rgba(255, 255, 255, 0.05)) 58%, #dff2ff 42%) 16vh,
-    var(--transcript-sky-reveal-solid) 34vh,
-    var(--transcript-sky-reveal-solid) 100%
-  ) !important;
-}
