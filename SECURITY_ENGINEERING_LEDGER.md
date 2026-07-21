@@ -13,8 +13,11 @@ also inspect the source-ahead working tree on 2026-07-19. Unless an entry is
 v1.8.4 release baseline. **2026-07-21 final ship-prep note:** public baseline is
 now **v1.8.5** (`314c2338a`); the next candidate is **1.8.6** source-ahead
 (`0f7daa515`, **36 commits**). Path-B Cursor (TW-SEC-2026-003) shipped in 1.8.5
-with residual partial-backstop disclosure. **TW-SEC-2026-014 remains `Open`**
-and is the primary ledger attention item for the 1.8.6 candidate; other
+with residual partial-backstop disclosure. **2026-07-21 later update:**
+TW-SEC-2026-014 — the named 1.8.6 attention item — moved from `Open` to
+`Remediated` after the multi-store completeness pass recorded in its section
+(source-ahead, now **63 commits** past v1.8.5); its exact-candidate gates and
+the explicit provider-native/same-UID boundaries remain release-blocking. Other
 remediated entries keep their per-entry verify/`Block` dispositions until
 exact-candidate verification is recorded. References use stable symbols and
 test names rather than line numbers. Do not add secrets, raw scripts, or
@@ -50,7 +53,7 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-011 | Provider diagnostics exposed live broker bearer tokens and local prompt/path data | High | Remediated | TaskWraith maintainers — MCP bridge and Kimi ACP diagnostics | Source candidate and focused bridge suite accepted; whole-tree and exact packaged verification remain pending |
 | TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
-| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Open | TaskWraith maintainers — Data lifecycle and history erasure | Close remaining exact host-command, cancel/delete, and Codex app-server lifecycle joins; then rerun exact-candidate gates |
+| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); rerun exact-candidate whole-tree gates and keep the provider-native/same-UID boundaries disclosed before any release-level erasure claim |
 | TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Closed | TaskWraith maintainers — Release attestation | Closed by removal 2026-07-21: the hosted attestation apparatus was deleted by user decision (capability governance); fix preserved as provenance |
 | TW-SEC-2026-016 | Usage journals retain content and scope identifiers outside the history-erasure transaction | High | Remediated | TaskWraith maintainers — Usage privacy and data lifecycle | Source candidate accepted; run exact-candidate whole-tree gates before clearing the release block |
 
@@ -966,7 +969,7 @@ weaponized payloads to this file or its verification artifacts.
 ## TW-SEC-2026-014 — History deletion was not one complete multi-store transaction
 
 - **Date:** 2026-07-19
-- **Severity/status:** High / `Open` (source-ahead remediation in progress)
+- **Severity/status:** High / `Remediated` (source-ahead candidate 2026-07-21; exact-candidate verification pending)
 - **Owner:** TaskWraith maintainers — Data lifecycle, history erasure, and orphan recovery
 - **Original evidence:**
   - At initial review, global `AppStore.clearChats` in
@@ -1227,6 +1230,143 @@ weaponized payloads to this file or its verification artifacts.
   lint, and diff checks were green on the same source-ahead candidate. This is
   source verification, not a packaged-release or externally commissioned
   provider-canary attestation.
+- **2026-07-21 completeness-pass remediation update (named joins closed):**
+  This pass re-mapped every durable store a chat id reaches on both erasure
+  paths and closed the three joins the release disposition named, plus two
+  stores the mapping found outside the transaction entirely.
+  - *Store map.* Transactional in-store steps: scheduled orchestration,
+    workflow-run history, run queue, run recovery, approval ledger, message
+    feedback, sub-thread mailboxes, run events, run artifacts, Kimi seat
+    state, chat records/list index, and project membership (including project
+    graph edges and work-profile home bindings). Receipted external sinks:
+    provider runs, maintenance compactions, Canvas, execution graphs, usage,
+    Project-reference artifacts, transcript media plus regenerable bytes, and
+    global bridge logs. Process-local joins: host commands, background
+    processes, Codex thread admission, and solo/Ensemble wakeups. Newly
+    joined this pass: Ensemble session checkpoints and human-collaboration
+    shares/audit (below). Disclosed residuals: `AgentStatsStore` retains
+    aggregate leaderboard rows carrying run/chat ids (no content) by design,
+    and provider-native session files in shared provider homes are out of
+    TaskWraith-owned scope (dedicated boundary below). Read-only tool
+    subprocesses (FCPXML `xmllint` preflight, Canvas `simctl` device driver)
+    write no chat-scoped durable state and stay outside the lifecycle
+    registries.
+  - *Exact host-command joins.* Both erasure paths were confirmed to await
+    the registry cancellation completion before commit (broad quiesce and the
+    per-chat mutation bundle inside the scoped coordinator's fenced begin).
+    Two identity gaps were closed: [`HostCommandOperationRegistry.ts`](src/main/run/HostCommandOperationRegistry.ts)
+    now resolve()-normalizes workspace paths on registration and cancellation
+    scopes (a raw stored `WorkspaceRecord.path` no longer misses its
+    normalized identity twin), and the projection-scope factory accepts
+    partial identity, so a command carrying only workspace context joins
+    workspace-scoped clears instead of registering unowned (unowned commands
+    remain joined by global clears).
+  - *Cancel-during-delete joins.* `AppStore.appendRunEvent` now refuses
+    appends into a prepared (fsynced, uncommitted) deletion scope with the
+    same strict-throw/soft-synthetic semantics as the post-commit tombstones;
+    `saveRunQueueJob` refuses tombstoned inserts — `RunRepository.transition`
+    routes terminal cancels through save-as-insert, which previously let a
+    cancel settling after commit resurrect a queue job for the erased chat
+    (a legitimately re-created chat file queues again, mirroring `saveChat`);
+    `acknowledgeSubThreadMailboxDelivery` gained the durable fence its
+    sibling mailbox writers already had. The Ensemble session-checkpoint
+    store (`checkpoints/session-checkpoints.json` — round prompts, queued
+    prompts, blackboard snapshots) was outside the transaction with no fence
+    and no purge: [`SessionCheckpoint.ts`](src/main/checkpoints/SessionCheckpoint.ts)
+    now soft-skips writers (upsert/accept/dismiss) for chats inside a
+    prepared erasure or whose record is gone, purges strictly under the
+    frozen intent from both scoped commit callbacks and the broad commit
+    (throwing persists keep a failed purge pending/resumable), and runs a
+    delete-only startup orphan sweep strictly after pending recovery
+    resumes. `runManager.claimTerminalStatus` same-status idempotency —
+    which lets a user cancel proceed after deletion claimed `'cancelled'` —
+    is retained deliberately; with the writer-side fences above, that path
+    can no longer produce durable frozen-scope writes. The solo-Codex seal
+    and the stale-run reconciler now skip fenced chats cleanly (the
+    reconciler continues its batch) instead of propagating the store fence
+    throw.
+  - *Codex app-server joins.* A fresh (non-resumable) run holds no admission
+    reservation before `thread/start`, so a clear prepared during the
+    `ensureStarted` await could mint a provider-native rollout for the frozen
+    scope: the adapter now re-checks history authority synchronously between
+    `ensureStarted` and the RPC, and
+    [`ProviderTransportHistoryIntegration.test.ts`](src/main/ProviderTransportHistoryIntegration.test.ts)
+    pins that ordering. The stale-MCP daemon restart guard
+    ([`CodexRunRouting.ts`](src/main/CodexRunRouting.ts)) now also refuses to
+    dispose the shared daemon while any thread-admission lane is held or
+    awaited — a manual compaction or native review owns no RunManager session
+    and no startup lease, so the restart previously tore the daemon down
+    under it ungated. Startup ordering (pending-deletion resume before
+    run-queue/graph/schedule recovery, with recovery skipped on failure) and
+    the ambiguous-timeout retention contract were re-verified on the current
+    tree.
+  - *Reaper fencing.* The abandoned-chat reap handler deleted candidates via
+    `Promise.all`, but the store admits one durable intent at a time, so any
+    multi-candidate reap self-collided (first deletion detached, rest
+    rejected, renderer told the predicted rather than actual list).
+    [`chatHandlers.ts`](src/main/ipc/chatHandlers.ts) now deletes strictly
+    sequentially, defers entirely while a durable erasure is pending (fail
+    closed on an unreadable intent), stops mid-loop when one starts,
+    re-validates every candidate against live records immediately before its
+    own deletion, and returns exactly the deleted ids. The store-side orphan
+    discovery remains read-only with its startup drain routed through the
+    broad coordinator after pending recovery. The dead
+    `deleteChatCascadeWithLifecycle` export — no production callers, a
+    docstring claiming to be the deletion choke, and a direct store-delete
+    call that would mint an empty-target intent if rewired — was removed.
+  - *Stores newly joined to erasure.* `human-collaboration.json` share
+    records were revoke-only on single-chat delete (root chat only) and
+    untouched by broad clears, so enabled shares survived erasure and
+    `reopenCollaborationRooms` re-opened their relay seats after restart;
+    `human-collaboration-audit.json` retained bounded previews/hashes of
+    chat contributions indefinitely.
+    [`HumanCollaborationStore.ts`](src/main/collaboration/HumanCollaborationStore.ts)
+    and [`HumanCollaborationAuditLog.ts`](src/main/collaboration/HumanCollaborationAuditLog.ts)
+    now purge share records and audit rows (by chat id and by share id, since
+    admission/invite rows carry no chat id) under the frozen intent from both
+    commit paths; the runtime already denies by absence and drops the live
+    session on the next inbound frame. Truncate keeps share capability but
+    purges the content-adjacent audit rows, matching the approval/feedback
+    ledger steps. Both stores are constructed above startup deletion
+    recovery so a resumed transaction cannot hit their temporal dead zone.
+  - *Regression evidence.* New deterministic coverage: prepared-window
+    append/acknowledge fences and post-commit queue-insert refusal in
+    [`AppStoreRunEvents.test.ts`](src/main/AppStoreRunEvents.test.ts),
+    [`AppStoreSubThreadMailbox.test.ts`](src/main/AppStoreSubThreadMailbox.test.ts),
+    and [`AppStoreHistoryDeletionTransaction.test.ts`](src/main/AppStoreHistoryDeletionTransaction.test.ts);
+    checkpoint purge/fence/orphan-sweep and strict-persist failure in
+    [`SessionCheckpoint.test.ts`](src/main/checkpoints/SessionCheckpoint.test.ts);
+    reaper sequencing, in-flight-erasure deferral, mid-loop stop,
+    per-candidate revalidation, and honest partial reporting in
+    [`chatHandlers.test.ts`](src/main/ipc/chatHandlers.test.ts);
+    canonical-path scope matching in
+    [`HostCommandOperationRegistry.test.ts`](src/main/run/HostCommandOperationRegistry.test.ts);
+    admission-lane restart refusal in
+    [`CodexRunRouting.test.ts`](src/main/CodexRunRouting.test.ts) and
+    [`CodexThreadAdmission.test.ts`](src/main/codex/CodexThreadAdmission.test.ts);
+    collaboration purge behavior in
+    [`HumanCollaborationStore.test.ts`](src/main/collaboration/HumanCollaborationStore.test.ts)
+    and [`HumanCollaborationAuditLog.test.ts`](src/main/collaboration/HumanCollaborationAuditLog.test.ts).
+    The consolidated lifecycle batch passed 361/361 across 28 files, the 20
+    index-source contract suites passed 132/132, and Node plus web
+    typechecks were green on the source-ahead candidate. The whole-tree
+    vitest run passed 13498/13499 (29 skipped): the single failure is the
+    pre-existing `provider-containment-canary` expectation of the release
+    npm lane that the TW-SEC-2026-015 apparatus removal deliberately
+    deleted — red at this pass's baseline, unrelated to this entry, and
+    tracked for its own fix.
+- **Explicit provider-native session boundary:** TaskWraith's erasure claim
+  covers TaskWraith-owned state: `userData` stores, the external sinks above,
+  and Kimi's TaskWraith-owned isolated seat homes (erased by the
+  `kimi-seat-state` step). Provider-native session files created by
+  provider-owned runtimes in shared user homes — Codex app-server
+  rollouts/session indexes under `~/.codex`, Claude CLI project session files,
+  Cursor state under `~/.cursor` — are the user's own provider-account data,
+  shared with those CLIs outside TaskWraith. Deletion severs TaskWraith's
+  linkage (chat records, participant `linkedProviderSessionId`, run thread
+  ids) and the pre-`thread/start` recheck above stops new native threads from
+  being minted for a frozen scope, but TaskWraith does not delete inside
+  shared provider homes, and no release claim may imply otherwise.
 - **Explicit platform limitation:** Portable Node/Electron does not expose a
   directory-descriptor-relative `unlinkat`/`renameat` primitive for the final
   pathname operation. The store descriptor-checks identity immediately before
@@ -1275,13 +1415,16 @@ weaponized payloads to this file or its verification artifacts.
   TW-SEC-2026-013 covers stale provider dispatch and owned-media rollback;
   TW-SEC-2026-016 covers the independently durable usage-history family.
   Closing any one of them does not prove this multi-store transaction complete.
-- **Release disposition:** Keep the entry `Open` while the exact host-command,
-  cancel/delete, and Codex app-server admission joins above are being closed.
-  After source remediation, keep any release-level claim of complete TaskWraith-owned
-  erasure gated on the exact candidate's whole-tree CI, packaged crash/recovery
-  exercise, and the explicit same-UID limitation above. Provider canary
-  commissioning remains a separate release-attestation gate; it is not evidence
-  for or against this local history transaction.
+- **Release disposition:** `Remediated` as of the 2026-07-21 completeness pass:
+  the exact host-command, cancel/delete, and Codex app-server joins are closed
+  on the source-ahead candidate, the reaper is erasure-fenced, and the
+  checkpoint/collaboration stores joined the transaction. Keep any
+  release-level claim of complete TaskWraith-owned erasure gated on the exact
+  candidate's whole-tree CI, a packaged crash/recovery exercise, and the two
+  explicit boundaries above (provider-native session files in shared homes;
+  the same-UID platform limitation). Provider canary commissioning remains a
+  separate qualification concern; it is not evidence for or against this local
+  history transaction.
 
 ## TW-SEC-2026-015 — Release-attestation freshness was based on a rerunnable timestamp
 
