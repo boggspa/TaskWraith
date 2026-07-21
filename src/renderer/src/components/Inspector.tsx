@@ -20,11 +20,17 @@ import type {
   DiffFileSummary,
   EnsembleParticipant,
   ProviderId,
+  ProviderAdapterTransport,
   ExternalPathGrant,
   GeminiMcpBridgeStatus,
   ProviderCapabilityContract,
   ProviderToolingCapability
 } from '../../../main/store/types'
+import {
+  LIVE_SELECTABLE_PROVIDER_IDS,
+  RETIRED_PROVIDER_IDS
+} from '../../../shared/retiredProviders'
+import { getProviderLabel } from '../lib/providerLabels'
 import {
   extractDelegationAuditItems,
   providerDelegationChips,
@@ -80,13 +86,20 @@ const CAPABILITY_LABELS: Record<CapabilityKind, string> = {
   agents: 'Agents'
 }
 
-function providerLabel(provider: ProviderId): string {
-  if (provider === 'codex') return 'Codex'
-  if (provider === 'claude') return 'Claude'
-  if (provider === 'kimi') return 'Kimi'
-  if (provider === 'grok') return 'Grok'
-  if (provider === 'cursor') return 'Cursor'
-  return 'Gemini'
+const providerLabel = getProviderLabel
+
+// Wire transport per provider, mirrored from the main-process adapter
+// descriptors (ProviderAdapters.ts) — the renderer must stay node-free, so it
+// cannot import them directly. The Record over the full ProviderId union keeps
+// the mirror honest: a provider without a row here fails typecheck.
+const PROVIDER_TRANSPORT: Record<ProviderId, ProviderAdapterTransport> = {
+  gemini: 'gemini-cli',
+  codex: 'codex-app-server',
+  claude: 'claude-sdk-or-cli',
+  kimi: 'kimi-acp-authenticated-http-mcp',
+  grok: 'grok-cli',
+  cursor: 'cursor-cli',
+  ollama: 'ollama-http'
 }
 
 interface InspectorProps {
@@ -1501,15 +1514,29 @@ function formatParticipantProviderList(participants: EnsembleParticipant[]): str
     .join(', ')
 }
 
-function inferProviderFromRawLogContent(content: string): ProviderId | null {
+// Provider ids the delegation audit can attribute raw logs to: the canonical
+// live set plus retired ids (historical Gemini logs must keep attributing).
+// Derived from the shared registry so a newly admitted provider is counted
+// without another edit here.
+const INFERRABLE_PROVIDER_IDS: ReadonlySet<string> = new Set<string>([
+  ...LIVE_SELECTABLE_PROVIDER_IDS,
+  ...RETIRED_PROVIDER_IDS
+])
+
+const RAW_LOG_PROVIDER_PATTERN = new RegExp(
+  `\\b(provider|ensembleProvider|parentProvider|targetProvider)\\s*[:=]\\s*["']?(${Array.from(
+    INFERRABLE_PROVIDER_IDS
+  ).join('|')})\\b`,
+  'i'
+)
+
+export function inferProviderFromRawLogContent(content: string): ProviderId | null {
   const parsed = parseJsonLike(content)
   if (parsed) {
     const found = findProviderInValue(parsed)
     if (found) return found
   }
-  const textMatch = content.match(
-    /\b(provider|ensembleProvider|parentProvider|targetProvider)\s*[:=]\s*["']?(gemini|codex|claude|kimi)\b/i
-  )
+  const textMatch = content.match(RAW_LOG_PROVIDER_PATTERN)
   if (textMatch) return textMatch[2].toLowerCase() as ProviderId
   return null
 }
@@ -1528,12 +1555,7 @@ function findProviderInValue(value: unknown, depth = 0): ProviderId | null {
   if (depth > 4 || value === null || value === undefined) return null
   if (typeof value === 'string') {
     const normalized = value.toLowerCase()
-    return normalized === 'gemini' ||
-      normalized === 'codex' ||
-      normalized === 'claude' ||
-      normalized === 'kimi'
-      ? (normalized as ProviderId)
-      : null
+    return INFERRABLE_PROVIDER_IDS.has(normalized) ? (normalized as ProviderId) : null
   }
   if (Array.isArray(value)) {
     for (const item of value) {
@@ -2062,6 +2084,85 @@ function CapabilitiesTab(props: InspectorProps) {
             Fork (emulated)
           </PillButton>
         </div>
+      </div>
+    )
+  }
+
+  // Every other live provider (grok, cursor, ollama today) gets an honest
+  // generic panel: the shared tooling contract plus provider, transport, and
+  // admission rows from the per-provider agent status. The Gemini panel below
+  // renders only for provider === 'gemini' historical chats — a newly admitted
+  // provider must land here, never fall through to Gemini content.
+  if (props.provider !== 'gemini') {
+    const label = providerLabel(props.provider)
+    const status = props.codexStatus
+    const admissionLabel =
+      status?.transportSupported === true
+        ? status?.cliFlavour
+          ? `admitted (${safeText(status.cliFlavour)})`
+          : 'admitted'
+        : status?.transportSupported === false
+          ? 'not admitted for managed runs'
+          : 'not reported'
+    const mcp = props.providerCapabilities?.mcp
+    return (
+      <div className="safety-panel">
+        <ToolingContractCard contract={props.providerCapabilities} />
+        <div className="safety-card">
+          <h4>{label} capabilities</h4>
+          <p
+            style={{
+              fontSize: 'var(--font-size-sm)',
+              color: 'var(--text-secondary)',
+              margin: '0 0 var(--space-md) 0'
+            }}
+          >
+            {props.provider === 'cursor'
+              ? 'Cursor managed runs are contained: the Cursor CLI executes its own native tools inside the OS-level sandbox (--sandbox) and is intentionally not attached to a TaskWraith MCP bridge. MCP rows here describe that posture, not a fault.'
+              : `${label} is registered as a first-class provider. Structured quota, thread browser, and MCP status are shown only when the provider exposes safe machine-readable APIs.`}
+          </p>
+          <div className="safety-row">
+            <span>Provider</span>
+            <span>{label}</span>
+          </div>
+          <div className="safety-row">
+            <span>Transport</span>
+            <span>{PROVIDER_TRANSPORT[props.provider]}</span>
+          </div>
+          <div className="safety-row">
+            <span>Binary</span>
+            <span>{safeText(status?.binaryPath, 'not found')}</span>
+          </div>
+          <div className="safety-row">
+            <span>Version</span>
+            <span>{safeText(status?.version, 'unknown')}</span>
+          </div>
+          <div className="safety-row">
+            <span>Auth</span>
+            <span>{safeText(status?.authState, 'unknown')}</span>
+          </div>
+          <div className="safety-row">
+            <span>Admission</span>
+            <span>{admissionLabel}</span>
+          </div>
+          <div className="safety-row">
+            <span>Models</span>
+            <span>{props.codexModels?.length || 0}</span>
+          </div>
+          <div className="safety-row">
+            <span>MCP</span>
+            <span>{mcp ? `${safeText(mcp.state)} · ${safeText(mcp.source)}` : 'not loaded'}</span>
+          </div>
+        </div>
+        {(props.codexModels || []).map((model, idx) => (
+          <div key={safeText(model.id) || `provider-model-${idx}`} className="safety-card">
+            <h4>{safeText(model.label) || safeText(model.id, 'Model')}</h4>
+            <div className="safety-row">
+              <span>Model id</span>
+              <span>{safeText(model.id)}</span>
+            </div>
+          </div>
+        ))}
       </div>
     )
   }

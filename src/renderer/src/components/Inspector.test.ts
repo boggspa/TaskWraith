@@ -3,7 +3,8 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { buildDelegationTree } from '../lib/DelegationTree'
 import type { ChatRecord, ProviderCapabilityContract, ProviderId } from '../../../main/store/types'
-import { Inspector } from './Inspector'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
+import { Inspector, inferProviderFromRawLogContent } from './Inspector'
 
 function makeChat(overrides: Partial<ChatRecord> & Pick<ChatRecord, 'appChatId'>): ChatRecord {
   const { appChatId, ...rest } = overrides
@@ -24,14 +25,16 @@ function makeChat(overrides: Partial<ChatRecord> & Pick<ChatRecord, 'appChatId'>
 }
 
 function makeCapabilityContract(provider: ProviderId): ProviderCapabilityContract {
-  const label =
-    provider === 'codex'
-      ? 'Codex'
-      : provider === 'claude'
-        ? 'Claude'
-        : provider === 'kimi'
-          ? 'Kimi'
-          : 'Gemini'
+  const labels: Record<ProviderId, string> = {
+    gemini: 'Gemini',
+    codex: 'Codex',
+    claude: 'Claude',
+    kimi: 'Kimi',
+    grok: 'Grok',
+    cursor: 'Cursor',
+    ollama: 'Ollama'
+  }
+  const label = labels[provider]
   const tool = (id: keyof ProviderCapabilityContract['tools'], toolLabel: string) => ({
     id,
     label: toolLabel,
@@ -284,5 +287,73 @@ describe('Inspector capabilities', () => {
     expect(safetyHtml).toContain('Provider setup')
     expect(safetyHtml).toContain('Read-Only/Recon')
     expect(safetyHtml).not.toContain('Codex safety')
+  })
+
+  it('renders an honest generic capabilities panel for cursor, not the Gemini panel', () => {
+    const html = renderInspector({
+      provider: 'cursor',
+      currentChat: makeChat({ appChatId: 'solo-cursor', provider: 'cursor' }),
+      providerCapabilities: makeCapabilityContract('cursor'),
+      codexStatus: {
+        binaryPath: '/usr/local/bin/cursor-agent',
+        version: '2025.07.1',
+        authState: 'authenticated',
+        transportSupported: true
+      },
+      codexModels: []
+    })
+
+    expect(html).toContain('Cursor capabilities')
+    expect(html).toContain('cursor-cli')
+    expect(html).toContain('OS-level sandbox')
+    expect(html).toContain('admitted')
+    expect(html).not.toContain('Gemini capability state')
+    expect(html).not.toContain('Install / repair')
+    expect(html).not.toContain('Gemini config')
+  })
+
+  it('renders generic capabilities panels for grok and ollama', () => {
+    const cases: Array<{ provider: ProviderId; label: string }> = [
+      { provider: 'grok', label: 'Grok' },
+      { provider: 'ollama', label: 'Ollama' }
+    ]
+    for (const { provider, label } of cases) {
+      const html = renderInspector({
+        provider,
+        currentChat: makeChat({ appChatId: `solo-${provider}`, provider }),
+        providerCapabilities: makeCapabilityContract(provider)
+      })
+
+      expect(html).toContain(`${label} capabilities`)
+      expect(html).toContain(`${label} tooling contract`)
+      expect(html).not.toContain('Gemini capability state')
+      expect(html).not.toContain('Install / repair')
+    }
+  })
+
+  it('keeps the Gemini panel for historical gemini chats', () => {
+    const html = renderInspector({
+      provider: 'gemini',
+      currentChat: makeChat({ appChatId: 'solo-gemini', provider: 'gemini' }),
+      providerCapabilities: makeCapabilityContract('gemini')
+    })
+
+    expect(html).toContain('Gemini capability state')
+    expect(html).toContain('TaskWraith MCP bridge')
+  })
+})
+
+describe('inferProviderFromRawLogContent', () => {
+  it('recognizes every live and retired provider id in JSON and text forms', () => {
+    for (const provider of [...LIVE_SELECTABLE_PROVIDER_IDS, 'gemini']) {
+      expect(inferProviderFromRawLogContent(JSON.stringify({ provider }))).toBe(provider)
+      expect(inferProviderFromRawLogContent(`targetProvider: '${provider}'`)).toBe(provider)
+    }
+  })
+
+  it('returns null for unknown provider tokens', () => {
+    expect(inferProviderFromRawLogContent(JSON.stringify({ provider: 'skynet' }))).toBeNull()
+    expect(inferProviderFromRawLogContent('provider: skynet')).toBeNull()
+    expect(inferProviderFromRawLogContent('no provider here')).toBeNull()
   })
 })
