@@ -6801,6 +6801,12 @@ export class AppStore {
     deliveryRunId: string,
     options: Parameters<typeof acknowledgeMailboxDelivery>[2] = {}
   ): ReturnType<typeof acknowledgeMailboxDelivery> {
+    this.assertHistoryMutationAllowed({
+      operation: 'Sub-thread mailbox delivery acknowledge',
+      chatIds: [parentChatId],
+      workspaceIds: [this.getChat(parentChatId)?.workspaceId],
+      runIds: [deliveryRunId]
+    })
     const ledger = readSubThreadMailboxLedger()
     const mailbox = ledger.mailboxes[parentChatId] || emptySubThreadMailbox(parentChatId)
     const result = acknowledgeMailboxDelivery(mailbox, deliveryRunId, options)
@@ -9905,6 +9911,20 @@ export class AppStore {
   }
 
   static saveRunQueueJob(input: RunQueueJobInput): RunQueueJob {
+    // Terminal transitions route through here as inserts (RunRepository
+    // .transition → saveRunQueueJob), so a cancel/complete racer settling after
+    // a history deletion committed would otherwise resurrect a job record for
+    // the erased chat/run. Mirror saveChat's tombstone rule: refuse while the
+    // erased chat file is still absent, but let a legitimately re-created chat
+    // (import/restore) queue again.
+    if (
+      (typeof input.runId === 'string' && deletedRunIds.has(input.runId)) ||
+      (typeof input.chatId === 'string' &&
+        deletedChatIds.has(input.chatId) &&
+        !fs.existsSync(chatPathForId(chatsDir, input.chatId)))
+    ) {
+      return createRunQueueJob(input, new Date().toISOString())
+    }
     if (
       typeof input.status === 'string' &&
       ['queued', 'steer_promoting', 'starting', 'active'].includes(input.status)
@@ -9985,6 +10005,27 @@ export class AppStore {
     if (deletedRunIds.has(input.runId)) {
       if (options.durability === 'strict') {
         throw new Error('Strict run-event append was rejected for deleted history.')
+      }
+      return createRunEventRecord(input, 1, { storeRawPayload: false })
+    }
+    // A prepared (fsynced) deletion intent freezes its run scope before the
+    // store commit populates deletedRunIds. Refuse late appends for the frozen
+    // scope with the same semantics as the post-commit tombstones above, so a
+    // racer settling during quiescence cannot write bytes the run-events step
+    // must then re-erase.
+    const pendingIntent = readHistoryDeletionIntent()
+    if (
+      pendingIntent &&
+      (pendingIntent.kind === 'global' ||
+        pendingIntent.runIds.includes(input.runId) ||
+        (typeof input.chatId === 'string' && pendingIntent.chatIds.includes(input.chatId)))
+    ) {
+      if (options.durability === 'strict') {
+        throw new HistoryDeletionMutationBlockedError(
+          pendingIntent.operationId,
+          pendingIntent.kind,
+          'Strict run-event append'
+        )
       }
       return createRunEventRecord(input, 1, { storeRawPayload: false })
     }

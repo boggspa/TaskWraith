@@ -248,6 +248,73 @@ describe('AppStore strict history deletion transaction', () => {
     AppStore.commitPreparedHistoryDeletion(prepared.operationId)
   })
 
+  it('refuses a cancel racer resurrecting a queue job for erased history', () => {
+    saveChat('chat-a', 'workspace-a', [makeRun('run-a')])
+    AppStore.saveRunQueueJob({
+      id: 'run-a',
+      runId: 'run-a',
+      provider: 'codex',
+      workspaceId: 'workspace-a',
+      workspacePath: '/repo/workspace-a',
+      chatId: 'chat-a',
+      source: 'manual',
+      status: 'active',
+      priority: 0,
+      attempt: 1
+    })
+    AppStore.deleteChat('chat-a')
+    expect(readArray(runQueuePath).map((job) => job.runId)).not.toContain('run-a')
+
+    // RunRepository.transition routes terminal cancels through saveRunQueueJob
+    // as an insert; a user cancel settling after commit must not re-create the
+    // job record for the erased chat/run.
+    const synthetic = AppStore.saveRunQueueJob({
+      id: 'run-a',
+      runId: 'run-a',
+      provider: 'codex',
+      workspaceId: 'workspace-a',
+      workspacePath: '/repo/workspace-a',
+      chatId: 'chat-a',
+      source: 'system',
+      status: 'cancelled',
+      priority: 0,
+      attempt: 1
+    })
+    expect(synthetic.status).toBe('cancelled')
+    expect(readArray(runQueuePath).map((job) => job.runId)).not.toContain('run-a')
+
+    // A chat legitimately re-created on disk (import/restore path) queues
+    // again: the tombstone rule keys on file absence, exactly like saveChat.
+    writeJson(chatPath('chat-a'), {
+      appChatId: 'chat-a',
+      scope: 'workspace',
+      chatKind: 'single',
+      provider: 'codex',
+      title: 'chat-a',
+      workspaceId: 'workspace-a',
+      workspacePath: '/repo/workspace-a',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: []
+    })
+    const requeued = AppStore.saveRunQueueJob({
+      id: 'run-b',
+      runId: 'run-b',
+      provider: 'codex',
+      workspaceId: 'workspace-a',
+      workspacePath: '/repo/workspace-a',
+      chatId: 'chat-a',
+      source: 'manual',
+      status: 'queued',
+      priority: 0,
+      attempt: 1
+    })
+    expect(requeued.runId).toBe('run-b')
+    expect(readArray(runQueuePath).map((job) => job.runId)).toContain('run-b')
+  })
+
   it('blocks only the prepared workspace while allowing unrelated chat mutations', () => {
     saveChat('chat-a', 'workspace-a')
     saveChat('chat-b', 'workspace-b')

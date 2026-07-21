@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from './store'
+import { AppStore, HistoryDeletionMutationBlockedError } from './store'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-run-events-test-${process.pid}`)
 
@@ -219,5 +219,68 @@ describe('AppStore run events', () => {
     // limit:3 — the newest 3 are all rNewer's; an early-stop would wrongly return rOlder's.
     const runIds = AppStore.getRunEvents({ chatId: 'ens', limit: 3 }).map((e) => e.runId)
     expect(runIds).toEqual(['rNewer', 'rNewer', 'rNewer'])
+  })
+
+  it('refuses appends into a prepared (uncommitted) deletion scope with tombstone semantics', () => {
+    AppStore.saveChat({
+      appChatId: 'chat-frozen',
+      scope: 'workspace',
+      chatKind: 'single',
+      provider: 'codex',
+      title: 'Frozen',
+      workspaceId: 'ws-frozen',
+      workspacePath: '/repo/ws-frozen',
+      createdAt: 1,
+      updatedAt: 1,
+      archived: false,
+      messages: [],
+      runs: [{ runId: 'run-frozen', startedAt: '2026-07-21T00:00:00.000Z' }]
+    } as never)
+    const prepared = AppStore.prepareHistoryDeletion({ kind: 'chat', rootChatId: 'chat-frozen' })
+    expect(prepared.runIds).toContain('run-frozen')
+
+    // A cancel racer settling during quiescence must not write frozen-scope
+    // bytes the run-events step would then have to re-erase.
+    expect(() =>
+      AppStore.appendRunEvent(
+        {
+          runId: 'run-frozen',
+          kind: 'lifecycle',
+          phase: 'status',
+          source: 'main'
+        } as never,
+        { durability: 'strict' }
+      )
+    ).toThrow(HistoryDeletionMutationBlockedError)
+
+    const soft = AppStore.appendRunEvent({
+      runId: 'run-frozen',
+      kind: 'lifecycle',
+      phase: 'status',
+      source: 'main'
+    } as never)
+    expect(soft.sequence).toBe(1)
+    expect(fs.existsSync(join(userDataPath, 'run-events', 'run-frozen.jsonl'))).toBe(false)
+
+    // Chat-scope matching also covers a run id that was not frozen at prepare.
+    const softByChat = AppStore.appendRunEvent({
+      runId: 'run-late-unfrozen',
+      chatId: 'chat-frozen',
+      kind: 'lifecycle',
+      phase: 'status',
+      source: 'main'
+    } as never)
+    expect(softByChat.sequence).toBe(1)
+    expect(fs.existsSync(join(userDataPath, 'run-events', 'run-late-unfrozen.jsonl'))).toBe(false)
+
+    // An out-of-scope run keeps appending normally while the intent is pending.
+    const unrelated = AppStore.appendRunEvent({
+      runId: 'run-unrelated',
+      kind: 'lifecycle',
+      phase: 'status',
+      source: 'main'
+    } as never)
+    expect(unrelated.sequence).toBe(1)
+    expect(fs.existsSync(join(userDataPath, 'run-events', 'run-unrelated.jsonl'))).toBe(true)
   })
 })

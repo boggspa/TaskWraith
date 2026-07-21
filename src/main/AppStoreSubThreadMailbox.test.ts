@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import fs from 'fs'
 import { join } from 'path'
-import { AppStore } from './store'
+import { AppStore, HistoryDeletionMutationBlockedError } from './store'
 import type { ChatRecord } from './store/types'
 
 const userDataPath = vi.hoisted(() => `/tmp/taskwraith-subthread-mailbox-test-${process.pid}`)
@@ -137,6 +137,27 @@ describe('AppStore sub-thread mailbox ledger', () => {
     expect(AppStore.getPendingSubThreadMailboxes().map((mailbox) => mailbox.parentChatId)).toEqual([
       'parent-1'
     ])
+  })
+
+  it('fences delivery acknowledgement on a prepared (uncommitted) deletion of the parent', () => {
+    saveParent()
+    AppStore.enqueueSubThreadMailboxEvent(eventInput())
+    AppStore.claimSubThreadMailboxEvents('parent-1', {
+      deliveryRunId: 'delivery-frozen',
+      claimedAt: '2026-07-21T12:00:00.000Z'
+    })
+    AppStore.prepareHistoryDeletion({ kind: 'chat', rootChatId: 'parent-1' })
+
+    // The acknowledge writer must observe the durable fence exactly like
+    // enqueue/claim/release: no processedAt write into a frozen mailbox.
+    expect(() =>
+      AppStore.acknowledgeSubThreadMailboxDelivery('parent-1', 'delivery-frozen', {
+        processedAt: '2026-07-21T12:01:00.000Z'
+      })
+    ).toThrow(HistoryDeletionMutationBlockedError)
+    expect(
+      AppStore.getSubThreadMailbox('parent-1').events.some((event) => event.processedAt)
+    ).toBe(false)
   })
 
   it('deletes a parent mailbox with the parent chat and clears all ledgers with chat history', () => {
