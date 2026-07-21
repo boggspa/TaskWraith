@@ -109,6 +109,21 @@ describe('ComposerHighlightOverlay', () => {
     expect(html).toContain('@Reviewer')
   })
 
+  it('hides structured participant routing syntax behind the formatted tag', () => {
+    const html = renderToStaticMarkup(
+      <ComposerHighlightOverlay
+        value="Ask [@Reviewer](ensemble-dm://ensemble-reviewer) for a second pass."
+        participants={[participant()]}
+        textareaRef={textareaRef}
+        syncEpoch="test"
+      />
+    )
+
+    expect(html).toContain('@Reviewer')
+    expect(html).not.toContain('ensemble-dm://')
+    expect(html).not.toContain('[@Reviewer]')
+  })
+
   /*
    * 1.0.4-AR1 — pure-function coverage for the scroll-sync helper.
    *

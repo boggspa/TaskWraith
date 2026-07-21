@@ -1,7 +1,6 @@
 import type { EnsembleParticipant, ProviderId } from '../../../main/store/types'
 import {
   findAllMentions,
-  findFirstMention,
   resolvePhraseToParticipant
 } from '../../../main/services/EnsembleMentionAlias'
 import { resolveProviderHueClass } from './ollamaDisplayBrand'
@@ -50,6 +49,46 @@ export type MentionTokenSegment =
       text: string
     }
 
+interface StructuredParticipantMention {
+  sourceStart: number
+  sourceEnd: number
+  text: string
+  participant: EnsembleParticipant
+}
+
+// Picker-selected participants retain their exact id in the draft as a custom
+// markdown link. That identity is essential when roles or providers collide,
+// but it is transport syntax rather than user-facing composer text. Treat the
+// full link as one mention segment so the overlay renders only `@Role`.
+const STRUCTURED_PARTICIPANT_MENTION_REGEX =
+  /\[@((?:\\.|[^\]\\])+)\]\(ensemble-dm:\/\/([^\s)]+)\)/g
+
+function unescapeStructuredMentionLabel(label: string): string {
+  return label.replace(/\\([\\\]])/g, '$1').trim()
+}
+
+function findStructuredParticipantMentions(
+  value: string,
+  participants: EnsembleParticipant[]
+): StructuredParticipantMention[] {
+  if (!value.includes('ensemble-dm://')) return []
+  const matches: StructuredParticipantMention[] = []
+  STRUCTURED_PARTICIPANT_MENTION_REGEX.lastIndex = 0
+  let match: RegExpExecArray | null
+  while ((match = STRUCTURED_PARTICIPANT_MENTION_REGEX.exec(value)) !== null) {
+    const structuredMatch = match
+    const participant = participants.find((candidate) => candidate.id === structuredMatch[2])
+    if (!participant) continue
+    matches.push({
+      sourceStart: structuredMatch.index,
+      sourceEnd: structuredMatch.index + structuredMatch[0].length,
+      text: `@${unescapeStructuredMentionLabel(structuredMatch[1])}`,
+      participant
+    })
+  }
+  return matches
+}
+
 /**
  * Legacy single-token resolver. Kept for callers that already
  * extracted the bare token (no leading `@`, no multi-word phrase).
@@ -74,13 +113,46 @@ export function tokeniseMentions(
   if (!value.includes('@')) {
     return [{ kind: 'text', text: value }]
   }
-  const mentions = findAllMentions(value, participants)
-  if (mentions.length === 0) {
+  const structuredMentions = findStructuredParticipantMentions(value, participants)
+  const mentions = findAllMentions(value, participants).filter(
+    (mention) =>
+      !structuredMentions.some(
+        (structured) =>
+          mention.atIndex >= structured.sourceStart && mention.atIndex < structured.sourceEnd
+      )
+  )
+  if (structuredMentions.length === 0 && mentions.length === 0) {
     return [{ kind: 'text', text: value }]
   }
+  const resolvedMentions = [
+    ...structuredMentions.map((structured) => ({ kind: 'structured' as const, ...structured })),
+    ...mentions.map((mention) => ({ kind: 'plain' as const, mention }))
+  ].sort((left, right) => {
+    const leftStart = left.kind === 'structured' ? left.sourceStart : left.mention.atIndex
+    const rightStart = right.kind === 'structured' ? right.sourceStart : right.mention.atIndex
+    return leftStart - rightStart
+  })
   const segments: MentionTokenSegment[] = []
   let lastIndex = 0
-  for (const match of mentions) {
+  for (const resolved of resolvedMentions) {
+    if (resolved.kind === 'structured') {
+      if (resolved.sourceStart > lastIndex) {
+        segments.push({ kind: 'text', text: value.slice(lastIndex, resolved.sourceStart) })
+      }
+      segments.push({
+        kind: 'mention',
+        text: resolved.text,
+        participant: resolved.participant,
+        provider: resolved.participant.provider,
+        providerClass: resolveProviderHueClass(
+          resolved.participant.provider,
+          resolved.participant.model
+        )
+      })
+      lastIndex = resolved.sourceEnd
+      continue
+    }
+    const match = resolved.mention
     if (match.atIndex > lastIndex) {
       segments.push({ kind: 'text', text: value.slice(lastIndex, match.atIndex) })
     }
@@ -109,16 +181,16 @@ export function tokeniseMentions(
   return segments
 }
 
-/** Fast predicate — does this value contain at least one resolved
- * `@Token` mention? Used by the composer to decide whether to
- * activate the overlay (and zero-out the textarea's text colour).
- * Cheaper than calling `tokeniseMentions` when callers only need
- * the boolean.
+/** Does this value contain at least one resolved `@Token` mention?
+ * Used by the composer to decide whether to activate the overlay
+ * (and zero-out the textarea's text colour). This intentionally
+ * tokenises the value so structured picker mentions remain visible
+ * even when their display label would be ambiguous as plain text.
  *
  * 1.0.4 — user-mentions count too (`@user` / `@human` / `@you`),
  * so the overlay activates and renders the chip even in chats
  * with no ensemble participants. */
 export function hasResolvedMention(value: string, participants: EnsembleParticipant[]): boolean {
   if (!value || !value.includes('@')) return false
-  return findFirstMention(value, participants) !== null
+  return tokeniseMentions(value, participants).some((segment) => segment.kind !== 'text')
 }

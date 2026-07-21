@@ -2819,9 +2819,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         // Preserve the exact picker identity. A plain @Role
                         // loses which seat was picked when roles/providers
                         // collide and used to let roster order choose a
-                        // different permission posture. The textarea exposes
-                        // this markdown while editing; after send the existing
-                        // transcript renderer presents it as a tinted chip.
+                        // different permission posture. The textarea retains
+                        // this markdown for dispatch, while its overlay renders
+                        // the same compact tinted tag as a manual mention.
                         return formatEnsembleDmMention(mention.name, mention.participantId)
                       }
                       return formatComposerPathMention(mention.path || mention.name)

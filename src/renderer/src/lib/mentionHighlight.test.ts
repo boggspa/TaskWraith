@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { tokeniseMentions } from './mentionHighlight'
+import { hasResolvedMention, tokeniseMentions } from './mentionHighlight'
 import type { EnsembleParticipant } from '../../../main/store/types'
 
 const participant = (overrides: Partial<EnsembleParticipant>): EnsembleParticipant => ({
@@ -37,5 +37,19 @@ describe('tokeniseMentions provider hue class', () => {
     const segments = tokeniseMentions('@Helper please', participants)
     const mention = segments.find((s) => s.kind === 'mention')
     expect(mention).toMatchObject({ provider: 'ollama', providerClass: 'ollama' })
+  })
+
+  it('renders a picker-selected participant as a plain tag while preserving its exact identity', () => {
+    const participants = [
+      participant({ id: 'claude-reviewer', provider: 'claude', role: 'Reviewer' }),
+      participant({ id: 'codex-reviewer', provider: 'codex', role: 'Reviewer' })
+    ]
+    const value = 'Ask [@Reviewer](ensemble-dm://codex-reviewer) to take this.'
+    const segments = tokeniseMentions(value, participants)
+    const mention = segments.find((segment) => segment.kind === 'mention')
+
+    expect(segments.map((segment) => segment.text).join('')).toBe('Ask @Reviewer to take this.')
+    expect(mention).toMatchObject({ participant: { id: 'codex-reviewer' }, text: '@Reviewer' })
+    expect(hasResolvedMention(value, participants)).toBe(true)
   })
 })

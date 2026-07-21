@@ -85,9 +85,10 @@ export function formatComposerPathMention(path: string): string {
  * authorize routing. The transcript markdown renderer already understands this
  * scheme and displays it as a participant chip after send.
  *
- * The current composer is still a plain textarea, so the structured markdown is
- * visible while editing. That small UX limitation is preferable to silently
- * routing a duplicate alias to whichever permission seat happens to sort first.
+ * The plain textarea retains this structured token for dispatch, while the
+ * mention overlay compacts it to the same formatted `@tag` shown for manually
+ * typed mentions. That preserves exact routing without exposing transport
+ * syntax in the composer.
  */
 export function formatEnsembleDmMention(label: string, participantId: string): string {
   const trimmedParticipantId = participantId.trim()
