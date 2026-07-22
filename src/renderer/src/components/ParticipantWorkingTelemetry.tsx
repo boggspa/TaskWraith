@@ -65,8 +65,16 @@ function ParticipantWorkingTelemetry({
 
   const elapsed = formatParticipantWorkingElapsed(startedAt, nowMs)
   const compactTokens = compactWorkingTokenOdometer(displayedTokens)
-  const hasReportedUsage = Boolean(providerSnapshot && providerSnapshot.totalTokens > 0)
-  const isEstimated = !hasReportedUsage && estimatedCurrentTurnTokens > 0
+  // A snapshot marked `estimated` is a chars÷4 stream estimate riding the
+  // telemetry lane (Grok/Cursor/Kimi-ACP) — it keeps the ≈ marker so the
+  // figure never masquerades as provider-billed usage.
+  const hasReportedUsage = Boolean(
+    providerSnapshot && providerSnapshot.totalTokens > 0 && !providerSnapshot.estimated
+  )
+  const isEstimated =
+    !hasReportedUsage &&
+    (Boolean(providerSnapshot?.estimated && providerSnapshot.totalTokens > 0) ||
+      estimatedCurrentTurnTokens > 0)
   const source = hasReportedUsage
     ? 'live provider usage snapshot'
     : isEstimated

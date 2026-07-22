@@ -57,14 +57,15 @@ export function ingestParticipantWorkingTelemetry(event: unknown): void {
     inputTokens: positiveInteger(payload.inputTokens),
     outputTokens: positiveInteger(payload.outputTokens),
     totalTokens: positiveInteger(payload.totalTokens),
-    estimated: false
+    estimated: payload.estimated === true
   }
   const previous = snapshotsByRunId.get(runId)
   if (
     previous &&
     previous.inputTokens === next.inputTokens &&
     previous.outputTokens === next.outputTokens &&
-    previous.totalTokens === next.totalTokens
+    previous.totalTokens === next.totalTokens &&
+    previous.estimated === next.estimated
   ) {
     return
   }

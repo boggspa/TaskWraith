@@ -77,7 +77,8 @@ export const LiveThreadTokenTally = memo(function LiveThreadTokenTally({
     baseOutputTokens: baseTally.outputTokens,
     estimatedOutputTokens: running ? Math.max(0, Math.trunc(liveOutputTokens)) : 0,
     snapshotInputTokens: liveSnapshot?.inputTokens,
-    snapshotOutputTokens: liveSnapshot?.outputTokens
+    snapshotOutputTokens: liveSnapshot?.outputTokens,
+    snapshotEstimated: liveSnapshot?.estimated
   })
   const targetOutputTokens = resolved.outputTokensTarget
   const liveInputExtra = resolved.liveInputExtra

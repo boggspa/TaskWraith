@@ -28,6 +28,10 @@ export interface LiveTallyTokenInputs {
   /** Authoritative provider snapshot for the active run (0 / undefined = none). */
   snapshotInputTokens?: number
   snapshotOutputTokens?: number
+  /** True when the snapshot itself is a chars÷4 stream estimate riding the
+   * telemetry lane (Grok/Cursor/Kimi-ACP) — it can lead the number but must
+   * not flag the figure authoritative. */
+  snapshotEstimated?: boolean
 }
 
 export interface LiveTallyTokens {
@@ -73,7 +77,9 @@ export function resolveLiveTallyTokens(inputs: LiveTallyTokenInputs): LiveTallyT
   // across a multi-lane fan-out the single snapshot can't cover, the estimate
   // leads and the figure stays flagged as an estimate.
   const authoritative =
-    snapshotOutputTokens > 0 && snapshotOutputTokens >= estimatedOutputTokens
+    snapshotOutputTokens > 0 &&
+    snapshotOutputTokens >= estimatedOutputTokens &&
+    inputs.snapshotEstimated !== true
 
   return {
     inputTokens: baseInputTokens + liveInputExtra,

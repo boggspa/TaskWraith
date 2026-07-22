@@ -108,3 +108,19 @@ describe('resolveLiveTallyTokens', () => {
     expect(result.authoritative).toBe(false)
   })
 })
+
+describe('estimated snapshots', () => {
+  it('never flags an estimated snapshot as authoritative even when it leads', () => {
+    const resolved = resolveLiveTallyTokens({
+      running: true,
+      baseInputTokens: 100,
+      baseOutputTokens: 200,
+      estimatedOutputTokens: 10,
+      snapshotInputTokens: 50,
+      snapshotOutputTokens: 80,
+      snapshotEstimated: true
+    })
+    expect(resolved.liveOutputExtra).toBe(80)
+    expect(resolved.authoritative).toBe(false)
+  })
+})
