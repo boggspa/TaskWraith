@@ -122,6 +122,16 @@ export function summarizeCollapsedActivityStack(
   }
 }
 
+/** One-line label for a collapsed plain system notice: the first non-empty
+ * line of the message body (CSS ellipsizes overflow). */
+export function collapsedSystemNoticeLabel(content: string | undefined): string {
+  for (const line of (content || '').split('\n')) {
+    const trimmed = line.trim()
+    if (trimmed) return trimmed
+  }
+  return 'System notice'
+}
+
 /** A settled stack collapses once the conversation has moved past it: it is
  * not the live streaming row, nothing in it is still running, and at least
  * one later message exists (the freshly-settled tail stack stays open until

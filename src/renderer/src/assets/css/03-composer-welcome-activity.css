@@ -12103,6 +12103,12 @@ button.diff-file-row {
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-chevron {
   rotate: 90deg;
 }
+.collapsed-activity-stack-meta {
+  flex-shrink: 0;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-tertiary);
+}
 .collapsed-activity-stack-label {
   overflow: hidden;
   text-overflow: ellipsis;

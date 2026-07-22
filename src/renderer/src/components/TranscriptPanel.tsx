@@ -20,6 +20,7 @@ import type {
   ToolActivity
 } from '../../../main/store/types'
 import {
+  collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
   summarizeCollapsedActivityStack
 } from '../lib/collapsedActivityStack'
@@ -298,12 +299,61 @@ function ActivityStackSpeakerHeader({
 }
 
 /**
+ * Settled-row collapse chrome shared by activity stacks and plain system
+ * notices: a one-line summary with a chevron; clicking toggles back to the
+ * untouched full rendering, which renders as `children` below the
+ * (now-open) summary line so the collapse affordance stays visible.
+ */
+function CollapsedTranscriptRow({
+  header,
+  metaLabel,
+  label,
+  errored,
+  expanded,
+  onToggle,
+  ariaTargetLabel,
+  children
+}: {
+  header: ReactElement | null
+  /** Optional muted inline prefix (e.g. "System") when no block header. */
+  metaLabel?: string
+  label: string
+  errored?: boolean
+  expanded: boolean
+  onToggle: (expanded: boolean) => void
+  ariaTargetLabel: string
+  children?: ReactNode
+}): ReactElement {
+  return (
+    <div
+      className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
+        errored ? ' has-errors' : ''
+      }`}
+    >
+      {header}
+      <button
+        type="button"
+        className="collapsed-activity-stack-summary"
+        onClick={() => onToggle(!expanded)}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${ariaTargetLabel}: ${label}`}
+        title={expanded ? `Collapse ${ariaTargetLabel}` : `Expand ${ariaTargetLabel}`}
+      >
+        <span className="collapsed-activity-stack-chevron" aria-hidden="true">
+          ▸
+        </span>
+        {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
+        <span className="collapsed-activity-stack-label">{label}</span>
+      </button>
+      {expanded ? children : null}
+    </div>
+  )
+}
+
+/**
  * Settled-stack collapse row. Once the conversation has moved past an
- * activity stack, the whole run of thinking + tool viewports folds into this
+ * activity stack, the whole run of thinking + tool viewports folds into a
  * one-line summary ("Thought for 12s · Searched ×8 · Read 5 files …").
- * Clicking toggles back to the untouched sequential stack, which renders as
- * `children` below the (now-open) summary line so the collapse affordance
- * stays visible.
  */
 function CollapsedActivityStackRow({
   header,
@@ -320,29 +370,18 @@ function CollapsedActivityStackRow({
 }): ReactElement {
   const summary = useMemo(() => summarizeCollapsedActivityStack(activities), [activities])
   return (
-    <div
-      className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
-        summary.errorCount > 0 ? ' has-errors' : ''
+    <CollapsedTranscriptRow
+      header={header}
+      label={summary.label}
+      errored={summary.errorCount > 0}
+      expanded={expanded}
+      onToggle={onToggle}
+      ariaTargetLabel={`${summary.activityCount} activity ${
+        summary.activityCount === 1 ? 'step' : 'steps'
       }`}
     >
-      {header}
-      <button
-        type="button"
-        className="collapsed-activity-stack-summary"
-        onClick={() => onToggle(!expanded)}
-        aria-expanded={expanded}
-        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${summary.activityCount} activity ${
-          summary.activityCount === 1 ? 'step' : 'steps'
-        }: ${summary.label}`}
-        title={expanded ? 'Collapse activity' : 'Expand activity'}
-      >
-        <span className="collapsed-activity-stack-chevron" aria-hidden="true">
-          ▸
-        </span>
-        <span className="collapsed-activity-stack-label">{summary.label}</span>
-      </button>
-      {expanded ? children : null}
-    </div>
+      {children}
+    </CollapsedTranscriptRow>
   )
 }
 
@@ -3177,12 +3216,44 @@ export const TranscriptPanel = memo(
               stackAutoCollapsible && liveViewportStackKey
                 ? expandedCollapsedStacks.has(liveViewportStackKey)
                 : false
-            const collapsedStackKey = stackAutoCollapsible
-              ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
-              : ''
             const pendingQuestionsForRow = pendingAgentQuestions.filter(
               (question) => question.messageId === msg.id
             )
+            // Plain system notices fold the same way: one line ("System ·
+            // @-mention: extra turn appended…") once the conversation moved
+            // past them. Special system cards (round headers, health /
+            // compaction / failure / closeout, collaborator comments) and
+            // rows carrying interactive attachments keep their full
+            // rendering; pinned notices stay open (the user marked them).
+            const isPlainSystemNotice =
+              msg.role === 'system' &&
+              !isRoundHeader &&
+              !isCollaboratorComment &&
+              !isParticipantHealth &&
+              !isContextCompaction &&
+              !isProviderRunFailure &&
+              !isTaskWraithCloseout &&
+              !isDelegationCard &&
+              !isReturnCard &&
+              !isFanoutResultCard &&
+              !msg.metadata?.proposedPlan &&
+              msg.metadata?.kind !== 'ensembleBossmanPoll' &&
+              !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
+              pendingQuestionsForRow.length === 0 &&
+              !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id) &&
+              Boolean(msg.content && msg.content.trim())
+            const systemAutoCollapsible =
+              isPlainSystemNotice &&
+              msg.id !== lastDisplayMessageId &&
+              !isPinned &&
+              !isPinnedMessageTarget
+            const collapsedSystemExpanded =
+              systemAutoCollapsible && expandedCollapsedStacks.has(msg.id)
+            const collapsedStackKey = stackAutoCollapsible
+              ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
+              : systemAutoCollapsible
+                ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
+                : ''
             const pendingPlanChoiceKey =
               pendingPlanChoice && pendingPlanChoice.messageId === msg.id
                 ? [
@@ -3549,6 +3620,29 @@ export const TranscriptPanel = memo(
                     }
                     copied={copiedId === msg.id}
                   />
+                ) : systemAutoCollapsible ? (
+                  <CollapsedTranscriptRow
+                    key={msg.id}
+                    header={null}
+                    metaLabel="System"
+                    label={collapsedSystemNoticeLabel(msg.content)}
+                    expanded={collapsedSystemExpanded}
+                    onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
+                    ariaTargetLabel="system notice"
+                  >
+                    {collapsedSystemExpanded ? (
+                      <div className="message-group">
+                        <div
+                          className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
+                          onContextMenu={(event) =>
+                            openMessageContextMenu(event, msg, msg.content || '', 'system message')
+                          }
+                        >
+                          <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                        </div>
+                      </div>
+                    ) : null}
+                  </CollapsedTranscriptRow>
                 ) : (
                   <div
                     key={msg.id}

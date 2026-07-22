@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import type { ToolActivity } from '../../../main/store/types'
 import {
   activityStackHasLiveWork,
+  collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
   summarizeCollapsedActivityStack
 } from './collapsedActivityStack'
@@ -59,6 +60,16 @@ describe('summarizeCollapsedActivityStack', () => {
       ]).label
     ).toBe('Thought for 1m 35s')
     expect(summarizeCollapsedActivityStack([]).label).toBe('Activity')
+  })
+})
+
+describe('collapsedSystemNoticeLabel', () => {
+  it('returns the first non-empty line and a fallback for empty bodies', () => {
+    expect(
+      collapsedSystemNoticeLabel('\n\n@-mention: extra turn appended for kimi.\nSecond line')
+    ).toBe('@-mention: extra turn appended for kimi.')
+    expect(collapsedSystemNoticeLabel('')).toBe('System notice')
+    expect(collapsedSystemNoticeLabel(undefined)).toBe('System notice')
   })
 })
 
