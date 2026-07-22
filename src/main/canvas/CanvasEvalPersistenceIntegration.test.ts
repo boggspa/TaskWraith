@@ -154,6 +154,7 @@ describe('canvas_eval persisted approval and execution receipts', () => {
       notifyPairedDevicesOfApproval: vi.fn(),
       networkAccessBlockedToolName: () => null,
       networkAccessBlockedMessage: (toolName) => `${toolName} blocked`,
+      canAutoApproveTrustedSessionExternalWrite: () => false,
       ensembleApprovalContext: () => undefined,
       planArtifactWriteApprovalMetadata: () => null,
       stampPlanArtifactPathOnPendingPlan: vi.fn(),

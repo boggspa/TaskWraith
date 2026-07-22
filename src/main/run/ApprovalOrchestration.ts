@@ -136,6 +136,13 @@ export interface RequestAgenticServiceApprovalDeps {
     effectivePermissions?: EffectiveRunPermissions
   ) => string | null
   networkAccessBlockedMessage: (toolName: string) => string
+  canAutoApproveTrustedSessionExternalWrite: (input: {
+    provider: ProviderId
+    workspacePath: string | undefined
+    session: ReturnType<RunManager<any>['get']> | undefined
+    effectivePermissions: EffectiveRunPermissions | undefined
+    externalPathDetection: PendingExternalPathDetection | undefined
+  }) => boolean
   ensembleApprovalContext: (
     identity: EnsembleRunIdentity | undefined,
     service: AgenticServiceId,
@@ -439,6 +446,35 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       service === 'mediaRecording' ||
       isPostureApprovalOnlyService(effectivePermissions?.presetId, service) ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, service)
+    const trustedSessionExternalWrite =
+      !request.forcePrompt &&
+      !neverAutoAllow &&
+      decision === 'allow' &&
+      deps.canAutoApproveTrustedSessionExternalWrite({
+        provider,
+        workspacePath,
+        session,
+        effectivePermissions,
+        externalPathDetection: request.externalPathDetection
+      })
+    if (trustedSessionExternalWrite) {
+      deps.auditService.recordAutomaticApprovalDecision(
+        provider,
+        auditRoute,
+        service,
+        workspacePath,
+        request,
+        'autoAllow',
+        'trusted_session',
+        'session',
+        {
+          policy,
+          externalPathWrite: true,
+          ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+        }
+      )
+      return true
+    }
     if (
       deps.isSessionYoloEffective() &&
       !effectivePermissions?.readOnly &&

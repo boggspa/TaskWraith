@@ -659,6 +659,7 @@ import {
   type TrustedSessionScope,
   type TrustedSessionSetResult
 } from './TrustedSessionGrants'
+import { canAutoApproveTrustedSessionExternalWrite } from './TrustedSessionExternalWritePolicy'
 import { buildScheduledTaskPermissionPosture } from './services/ScheduledTaskPosture'
 import { isCanonicalWorkflowScheduledTask } from './ScheduledTaskRendererAuthority'
 import { SettingsService } from './services/SettingsService'
@@ -11407,6 +11408,29 @@ function networkAccessBlockedMessage(toolName: string): string {
   return `${toolName} was denied because network access is disabled for this run.`
 }
 
+function canAutoApproveTrustedSessionExternalWriteForRun(input: {
+  provider: ProviderId
+  workspacePath?: string
+  session: ReturnType<typeof runManager.get>
+  effectivePermissions?: EffectiveRunPermissions
+  externalPathDetection?: PendingExternalPathDetection
+}): boolean {
+  if (!input.session || input.session.provider !== input.provider) return false
+  const state = asRecord(input.session.state)
+  const ensembleRun = state?.ensembleRun as EnsembleRunIdentity | undefined
+  return canAutoApproveTrustedSessionExternalWrite({
+    provider: input.provider,
+    chatId: input.session.appChatId,
+    workspacePath: input.workspacePath,
+    runtimeProfileId:
+      typeof state?.runtimeProfileId === 'string' ? state.runtimeProfileId : undefined,
+    ensembleRun,
+    effectivePermissions: input.effectivePermissions,
+    externalPathAccess: input.externalPathDetection?.access,
+    isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
+  })
+}
+
 function resolveNativeApprovalPreflight(args: {
   provider: ProviderId
   service: AgenticServiceId | undefined
@@ -11435,6 +11459,13 @@ function resolveNativeApprovalPreflight(args: {
   return resolveNativeApprovalPreflightDecision({
     resolution,
     externalPathDetected: Boolean(args.externalPathDetection),
+    trustedSessionExternalWrite: canAutoApproveTrustedSessionExternalWriteForRun({
+      provider: args.provider,
+      workspacePath: args.workspacePath,
+      session,
+      effectivePermissions,
+      externalPathDetection: args.externalPathDetection
+    }),
     sessionYoloEnabled: isSessionYoloEffective(),
     readOnly: Boolean(effectivePermissions?.readOnly),
     // canvasEval (RCE) is signed-elevated: clamp to a prompt even under session
@@ -11727,6 +11758,20 @@ const requestAgenticServiceApprovalDeps: RequestAgenticServiceApprovalDeps = {
   notifyPairedDevicesOfApproval,
   networkAccessBlockedToolName,
   networkAccessBlockedMessage,
+  canAutoApproveTrustedSessionExternalWrite: ({
+    provider,
+    workspacePath,
+    session,
+    effectivePermissions,
+    externalPathDetection
+  }) =>
+    canAutoApproveTrustedSessionExternalWriteForRun({
+      provider,
+      workspacePath,
+      session,
+      effectivePermissions,
+      externalPathDetection
+    }),
   ensembleApprovalContext,
   planArtifactWriteApprovalMetadata,
   stampPlanArtifactPathOnPendingPlan,
@@ -11883,6 +11928,23 @@ function resolveGeminiMcpGrantAwarePathAuthority(
     return {
       rootPath: workspaceRoot,
       targetPath: resolveGeminiMcpPath(workspaceRoot, targetPath, options)
+    }
+  }
+  if (
+    canAutoApproveTrustedSessionExternalWrite({
+      provider,
+      chatId: context.appChatId,
+      workspacePath: context.workspacePath,
+      runtimeProfileId: context.runtimeProfileId,
+      ensembleRun: context.ensembleRun,
+      effectivePermissions: context.effectivePermissions,
+      externalPathAccess: access,
+      isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope)
+    })
+  ) {
+    return {
+      rootPath: dirname(targetPath),
+      targetPath
     }
   }
   if (isAbsolute(filePath)) {

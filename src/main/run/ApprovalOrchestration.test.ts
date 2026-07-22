@@ -114,6 +114,7 @@ function makeDeps(order: string[]): RequestAgenticServiceApprovalDeps {
     }),
     networkAccessBlockedToolName: vi.fn(() => null),
     networkAccessBlockedMessage: vi.fn((t: string) => `${t} blocked`),
+    canAutoApproveTrustedSessionExternalWrite: vi.fn(() => false),
     ensembleApprovalContext: vi.fn(() => undefined),
     planArtifactWriteApprovalMetadata: vi.fn(() => null),
     stampPlanArtifactPathOnPendingPlan: vi.fn(() => {
@@ -274,6 +275,32 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     expect(result).toBe(true)
     expect(order).toContain('audit:autoAllow:workspace_grant')
     expect(order).not.toContain('registerGeminiTool')
+  })
+
+  it('(e2) auto-allows an external write only when the active Trusted Session scope confirms it', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'allow', decision: 'allow' })
+    vi.mocked(deps.canAutoApproveTrustedSessionExternalWrite).mockReturnValue(true)
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'fileChanges',
+      '/repo',
+      request({ externalPathDetection: { provider: 'claude', path: '/tmp/output.txt', access: 'write' } })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:trusted_session')
+    expect(order).not.toContain('registerGeminiTool')
+    expect(deps.canAutoApproveTrustedSessionExternalWrite).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: 'claude',
+        workspacePath: '/repo',
+        externalPathDetection: expect.objectContaining({ access: 'write' })
+      })
+    )
   })
 
   // (f) BOSSMAN — the ensemble Boss auto-approval path allows when metadata is

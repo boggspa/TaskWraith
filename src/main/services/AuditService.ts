@@ -38,6 +38,7 @@ export type AutomaticApprovalDecisionSource =
   | 'workspace_grant'
   | 'session_grant'
   | 'session_yolo'
+  | 'trusted_session'
   | 'bossman_auto'
   | 'plan_artifact'
   | 'explicit_user_request'

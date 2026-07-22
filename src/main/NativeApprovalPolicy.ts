@@ -27,7 +27,7 @@ export type NativeApprovalPreflight =
   | {
       kind: 'allow'
       policy: AgenticServicePolicy
-      reason: 'workspace_grant' | 'session_grant' | 'policy' | 'session_yolo'
+      reason: 'workspace_grant' | 'session_grant' | 'policy' | 'session_yolo' | 'trusted_session'
       scope: 'workspace' | 'session' | 'request'
       effectivePermissions?: EffectiveRunPermissions
     }
@@ -116,6 +116,12 @@ export function resolveNativeApprovalPreflightDecision(args: {
    * it. The caller (resolveNativeApprovalPreflight) sets this for `canvasEval`.
    */
   neverAutoAllow?: boolean
+  /**
+   * A live Trusted Session matched the exact chat/provider/lane and the
+   * request is an external write from that active task. This narrowly lifts
+   * the ordinary external-path prompt for Full Access only.
+   */
+  trustedSessionExternalWrite?: boolean
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
@@ -123,6 +129,15 @@ export function resolveNativeApprovalPreflightDecision(args: {
     return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
   if (args.neverAutoAllow)
     return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
+  if (args.trustedSessionExternalWrite) {
+    return {
+      kind: 'allow',
+      policy,
+      reason: 'trusted_session',
+      scope: 'session',
+      effectivePermissions: args.effectivePermissions
+    }
+  }
   if (args.externalPathDetected)
     return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
   if (args.sessionYoloEnabled && !args.readOnly) {
