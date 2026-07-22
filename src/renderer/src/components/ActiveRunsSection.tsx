@@ -174,7 +174,11 @@ export function ActiveRunsSection({
                     if (chat) onSelectChat(chat)
                   }}
                   disabled={!chat}
-                  title={chat ? chat.title : job.promptPreview || job.runId}
+                  title={
+                    chat
+                      ? `${getActiveRunChatLabel(job, chat)} — ${getWorkspaceShortName(job, chat)}`
+                      : job.promptPreview || job.runId
+                  }
                 >
                   <span
                     className={`sidebar-active-run-provider provider-${providerDisplay.providerClass}`}
@@ -182,6 +186,9 @@ export function ActiveRunsSection({
                     {providerDisplay.label}
                   </span>
                   <span className="sidebar-active-run-copy">
+                    <span className="sidebar-active-run-title">
+                      {getActiveRunChatLabel(job, chat)}
+                    </span>
                     <span className="sidebar-active-run-workspace">
                       {getWorkspaceShortName(job, chat)}
                     </span>
@@ -221,6 +228,15 @@ function getWorkspaceShortName(job: RunQueueJob, chat: ChatRecord | null): strin
   const basename = workspacePath.split(/[\\/]/).filter(Boolean).pop()
   if (basename) return basename
   return job.workspaceId || chat?.workspaceId || 'Unknown workspace'
+}
+
+/** Primary Active Runs label: chat title (fallback: prompt preview / Untitled). */
+export function getActiveRunChatLabel(job: RunQueueJob, chat: ChatRecord | null): string {
+  const title = chat?.title?.trim()
+  if (title) return title
+  const preview = job.promptPreview?.trim()
+  if (preview) return preview
+  return 'Untitled chat'
 }
 
 function formatElapsed(job: RunQueueJob): string {

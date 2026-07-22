@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, ProviderId, RunQueueJob } from '../../../main/store/types'
-import { resolveActiveRunProviderDisplay } from './ActiveRunsSection'
+import {
+  getActiveRunChatLabel,
+  resolveActiveRunProviderDisplay
+} from './ActiveRunsSection'
 
 function job(overrides: Partial<RunQueueJob> = {}): RunQueueJob {
   return {
@@ -29,6 +32,33 @@ function chat(provider: ProviderId, overrides: Partial<ChatRecord> = {}): ChatRe
     ...overrides
   } as ChatRecord
 }
+
+describe('getActiveRunChatLabel', () => {
+  it('prefers the chat title over workspace-only labeling', () => {
+    expect(
+      getActiveRunChatLabel(
+        job({
+          workspacePath: '/Users/me/Documents/AGBench',
+          promptPreview: 'ignored when title exists'
+        }),
+        chat('codex', { title: 'Auth rewrite' })
+      )
+    ).toBe('Auth rewrite')
+  })
+
+  it('falls back to prompt preview when chat title is missing', () => {
+    expect(
+      getActiveRunChatLabel(
+        job({ promptPreview: 'Investigate launch stall' }),
+        chat('codex', { title: '   ' })
+      )
+    ).toBe('Investigate launch stall')
+  })
+
+  it('falls back to Untitled chat when no title or preview exists', () => {
+    expect(getActiveRunChatLabel(job(), null)).toBe('Untitled chat')
+  })
+})
 
 describe('resolveActiveRunProviderDisplay', () => {
   it('uses the chat provider and Ollama display brand when a stale job says Gemini', () => {

@@ -726,7 +726,7 @@
   gap: 5px;
 }
 
-.sidebar-active-run-workspace {
+.sidebar-active-run-title {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -734,6 +734,19 @@
   font-size: var(--sidebar-thread-title-font-size);
   font-weight: 610;
   line-height: 1.16;
+  min-width: 0;
+}
+
+.sidebar-active-run-workspace {
+  flex: 0 1 auto;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-muted);
+  font-size: 10px;
+  font-weight: 550;
+  line-height: 1.16;
+  max-width: 42%;
 }
 
 .sidebar-active-run-elapsed {
