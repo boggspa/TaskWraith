@@ -3099,7 +3099,13 @@ export function Sidebar({
           getChatSidebarTab(chat) === activeChatSurfaceTab
       )
     : []
-  const chatsByWorkspace = getChatsByWorkspace(regularChats)
+  // Workspaces dual-surface ensembles (ALWAYS ALSO): Recents/Pinned already
+  // include ensembles; feed workspace-scoped ensembles into the workspace
+  // buckets so they appear under their workspace group as well as Ensembles.
+  // getChatsByWorkspace still skips archived/global/missing workspaceId.
+  const chatsByWorkspace = getChatsByWorkspace(
+    ensembleModeEnabled ? [...regularChats, ...ensembleChats] : regularChats
+  )
   const globalChats = regularChats.filter((chat) => !chat.archived && chat.scope === 'global')
   const runningChatIdSet = new Set(runningChatIds)
   const sidebarSearchQuery = normalizeSearchText(sidebarSearch)
@@ -3178,8 +3184,9 @@ export function Sidebar({
   // was built from `regularChats` (which excludes chatKind === 'ensemble'), so
   // an active ensemble thread never surfaced under Recents even when it was the
   // most recently touched chat. Ensembles still render in their own ENSEMBLES
-  // section too — same dual-surfacing as a solo chat appearing in both Recents
-  // and its workspace group. `selectRecentChats` already drops archived + pinned.
+  // section too — same dual-surfacing as a solo chat appearing in Recents,
+  // its workspace group (chatsByWorkspace lift above), and Ensembles.
+  // `selectRecentChats` already drops archived + pinned.
   const recentSourceChats = ensembleModeEnabled
     ? topLevelChats.filter((chat) => chat.chatKind !== 'ensemble' || !chat.archived)
     : regularChats

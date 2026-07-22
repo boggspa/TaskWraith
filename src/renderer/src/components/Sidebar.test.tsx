@@ -1348,6 +1348,84 @@ describe('Sidebar ensembles section', () => {
     const recentsBlock = html.slice(html.indexOf('sidebar-recents-section'))
     expect(recentsBlock).toContain('Recent ensemble')
   })
+
+  it('dual-lists workspace-scoped ensembles under Workspaces and Ensembles', () => {
+    stubSidebarStorage({
+      [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'threads',
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept(
+        'workspaces',
+        'ensembles'
+      )
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'solo-ws',
+          title: 'Solo workspace chat',
+          updatedAt: 2
+        }),
+        makeChat({
+          appChatId: 'ensemble-ws',
+          chatKind: 'ensemble',
+          title: 'Workspace ensemble under group',
+          provider: 'codex',
+          updatedAt: 5
+        }),
+        makeChat({
+          appChatId: 'ensemble-global',
+          chatKind: 'ensemble',
+          scope: 'global',
+          // Even if a workspaceId were present, global scope must not bucket.
+          workspaceId: 'ws-1',
+          workspacePath: '/repo',
+          title: 'Global ensemble stays global',
+          provider: 'claude',
+          updatedAt: 4
+        })
+      ],
+      { ensembleModeEnabled: true }
+    )
+
+    expect(html).toContain('sidebar-workspace-group')
+    expect(html).toContain('sidebar-ensembles-section')
+
+    // Ensembles section renders above Workspaces in the hierarchy.
+    const ensemblesSection = html.slice(
+      html.indexOf('sidebar-ensembles-section'),
+      html.indexOf('sidebar-workspace-list')
+    )
+    const workspacesSection = html.slice(html.indexOf('sidebar-workspace-list'))
+
+    expect(workspacesSection).toContain('Workspace ensemble under group')
+    expect(workspacesSection).toContain('Solo workspace chat')
+    expect(workspacesSection).not.toContain('Global ensemble stays global')
+    expect(ensemblesSection).toContain('Workspace ensemble under group')
+    // Global ensembles belong on the Chat tab surface, not Code/Workspaces.
+    expect(ensemblesSection).not.toContain('Global ensemble stays global')
+
+    stubSidebarStorage({
+      [SIDEBAR_ACTIVE_TAB_STORAGE_KEY]: 'threads',
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('workspaces')
+    })
+    const disabledHtml = renderSidebar(
+      [
+        makeChat({
+          appChatId: 'ensemble-ws-disabled',
+          chatKind: 'ensemble',
+          title: 'Hidden when ensemble mode off',
+          provider: 'codex',
+          updatedAt: 5
+        })
+      ],
+      { ensembleModeEnabled: false }
+    )
+    const disabledWorkspaces = disabledHtml.includes('sidebar-workspace-list')
+      ? disabledHtml.slice(disabledHtml.indexOf('sidebar-workspace-list'))
+      : ''
+    expect(disabledWorkspaces).not.toContain('Hidden when ensemble mode off')
+    expect(disabledHtml).not.toContain('sidebar-ensembles-section')
+  })
 })
 
 describe('Sidebar Chats section', () => {
