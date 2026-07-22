@@ -477,7 +477,7 @@ import { HumanCollaborationRuntime } from './collaboration/HumanCollaborationRun
 import { HumanCollaborationHostTransport } from './collaboration/HumanCollaborationHostTransport'
 import { buildHumanShareProjection } from './collaboration/HumanShareProjection'
 import type { HumanShareProjection } from './collaboration/HumanShareProjection'
-import { detectConfiguredProviders } from './ProviderConfiguration'
+import { createConfiguredProviderDetector } from './ProviderConfiguration'
 import { createDefaultEnsembleConfig } from './EnsembleDefaults'
 import { isProviderPaused, resolveProviderDispatch } from './ProviderRunPause'
 import {
@@ -13827,11 +13827,9 @@ async function getKimiAdmittedStatusSnapshot(): Promise<any> {
   }
 }
 
-function detectManagedRunConfiguredProviders(settings: AppSettings): Promise<Set<ProviderId>> {
-  return detectConfiguredProviders(settings, {
-    getKimiManagedStatus: getKimiAdmittedStatusSnapshot
-  })
-}
+const detectManagedRunConfiguredProviders = createConfiguredProviderDetector({
+  getKimiManagedStatus: getKimiAdmittedStatusSnapshot
+})
 
 const cliProviderRuntimeDeps: CliProviderRuntimeDependencies = {
   getSettings: () => AppStore.getSettings(),

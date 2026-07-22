@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest'
 import type { AppSettings } from './store/types'
 import {
+  CONFIGURED_PROVIDER_PROBE_DEADLINE_MS,
+  createConfiguredProviderDetector,
   detectConfiguredProviders,
   type DetectConfiguredProvidersDependencies
 } from './ProviderConfiguration'
@@ -105,5 +107,44 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       expect(configured.has('grok')).toBe(false)
       expect(configured.has('cursor')).toBe(false)
     }
+  })
+
+  it('runs independent probes concurrently and bounds a hung roster discovery', async () => {
+    vi.useFakeTimers()
+    try {
+      const never = new Promise<never>(() => {})
+      const result = detectConfiguredProviders({} as AppSettings, {
+        getKimiManagedStatus: () => never,
+        getOllamaStatus: () => never,
+        resolveProviderBinary: () => never
+      })
+
+      await vi.advanceTimersByTimeAsync(CONFIGURED_PROVIDER_PROBE_DEADLINE_MS)
+
+      await expect(result).resolves.toEqual(new Set(['kimi', 'ollama', 'grok', 'cursor']))
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('shares one bounded discovery flight and returns defensive cached sets', async () => {
+    const getOllamaStatus = vi.fn(async () => ({ available: false, modelCount: 0 }))
+    const resolveProviderBinary = vi.fn(async () => ({ binaryPath: null }))
+    const detect = createConfiguredProviderDetector(
+      { getOllamaStatus, resolveProviderBinary },
+      { cacheTtlMs: 30_000, now: () => 1_000 }
+    )
+
+    const [first, second] = await Promise.all([
+      detect({} as AppSettings),
+      detect({} as AppSettings)
+    ])
+    first.add('kimi')
+    const cached = await detect({} as AppSettings)
+
+    expect(second.has('kimi')).toBe(false)
+    expect(cached.has('kimi')).toBe(false)
+    expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+    expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
   })
 })
