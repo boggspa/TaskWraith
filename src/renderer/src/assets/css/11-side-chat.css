@@ -1195,7 +1195,7 @@
 }
 
 /* Category accent — one hue drives the group heading dot/label and the
- * card's edge stripe. Fixed hues (not provider vars): a category must
+ * card rim. Fixed hues (not provider vars): a category must
  * read the same in every provider shell and theme. */
 .blackboard-cat-decision {
   --blackboard-cat-color: #3ecf8e;
@@ -1233,26 +1233,16 @@
 }
 
 .blackboard-card {
-  position: relative;
   display: flex;
   flex-direction: column;
   gap: 6px;
-  padding: 8px 10px 8px 13px;
-  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--blackboard-cat-color) 38%, var(--panel-border) 62%);
   border-radius: 9px;
   background: color-mix(in srgb, var(--text-primary) 4%, transparent);
-}
-
-/* Category edge stripe — inset pill, not a full-height border. */
-.blackboard-card::before {
-  content: '';
-  position: absolute;
-  top: 8px;
-  bottom: 8px;
-  left: 5px;
-  width: 2.5px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--blackboard-cat-color) 58%, transparent);
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--blackboard-cat-color) 14%, transparent),
+    0 0 12px color-mix(in srgb, var(--blackboard-cat-color) 6%, transparent);
 }
 
 .blackboard-card-head {
