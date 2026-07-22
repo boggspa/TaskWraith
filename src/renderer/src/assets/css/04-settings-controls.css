@@ -4445,6 +4445,8 @@ input:disabled, select:disabled, textarea:disabled {
 .file-change-summary-item-interactive {
   padding: 0;
   gap: 0;
+  /* Anchor for the hover diff bubble, which sits OUT OF FLOW (below). */
+  position: relative;
 }
 
 .file-change-summary-item:first-child {
@@ -4514,8 +4516,16 @@ input:disabled, select:disabled, textarea:disabled {
 .file-change-summary-diff-bubble {
   appearance: none;
   -webkit-appearance: none;
+  /* Out of flow: the hidden bubble used to occupy layout width on
+   * has-diff-preview rows only, so rows WITHOUT a diff (deleted files,
+   * fresh creates before a diff lands) laid their owner/stats columns
+   * further right — the staggered attribution the mixed
+   * created/edited/deleted lists showed. Overlaying the row's right edge
+   * on hover keeps every row's grid identical. */
+  position: absolute;
+  right: var(--space-md);
+  top: calc(50% - 10px);
   height: 20px;
-  margin-right: var(--space-md);
   padding: 0 7px;
   display: inline-flex;
   align-items: center;
