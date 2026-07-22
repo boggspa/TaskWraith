@@ -11,6 +11,8 @@ import {
   applyGrokReadOnlyPromptPreamble,
   applyGrokPromptPreamble,
   GROK_MCP_QUESTION_PROMPT_NOTE,
+  GROK_MCP_SHELL_PROMPT_NOTE,
+  GROK_MCP_SHELL_TOOL_NAME,
   GROK_READ_ONLY_PROMPT_PREAMBLE,
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
   GROK_ACP_READ_ONLY_DENY_RULES,
@@ -387,11 +389,12 @@ describe('applyGrokPromptPreamble', () => {
     expect(out.startsWith(GROK_WRITE_MODE_PROMPT_PREAMBLE)).toBe(true)
   })
 
-  it('write steer points at the file tools and tells Grok not to end on a refusal', () => {
-    // Guards intent, not exact wording: mentions Write/Edit + don't-end/adapt.
+  it('write steer points at Write/Edit and the MCP shell route', () => {
     const lower = GROK_WRITE_MODE_PROMPT_PREAMBLE.toLowerCase()
     expect(lower).toContain('write')
     expect(lower).toContain('edit')
+    expect(lower).toContain('run_shell_command')
+    expect(lower).toMatch(/native bash\/shell are unavailable/)
     expect(lower).toMatch(/do not end|don't end|adapt|switch/)
   })
 
@@ -418,6 +421,24 @@ describe('applyGrokPromptPreamble', () => {
     expect(out.startsWith(GROK_READ_ONLY_PROMPT_PREAMBLE)).toBe(true)
     expect(out.endsWith(discordPrompt)).toBe(true)
     expect(out).toContain('<discord_messages')
+  })
+
+  it('routes write-capable ACP shell work through the broker tool name', () => {
+    const out = buildGrokProviderPrompt('Run npm test.', 'default', undefined, {
+      taskWraithShellToolAvailable: true
+    })
+
+    expect(out).toContain(GROK_MCP_SHELL_PROMPT_NOTE)
+    expect(out).toContain(GROK_MCP_SHELL_TOOL_NAME)
+    expect(out).toContain(GROK_WRITE_MODE_PROMPT_PREAMBLE)
+  })
+
+  it('does not claim shell broker tooling on read-only seats', () => {
+    expect(
+      buildGrokProviderPrompt('Inspect only.', 'plan', undefined, {
+        taskWraithShellToolAvailable: true
+      })
+    ).not.toContain(GROK_MCP_SHELL_PROMPT_NOTE)
   })
 
   it('routes read-only ACP questions through the available broker tool', () => {

@@ -123,24 +123,28 @@ export const GROK_READ_ONLY_PROMPT_PREAMBLE =
   'unrelated workspace or goal tools for a failed coordination call.'
 
 const GROK_MCP_QUESTION_TOOL_NAME = `${GROK_BROKER_MCP_TOOL_NAMESPACE}__ask_user_question`
+export const GROK_MCP_SHELL_TOOL_NAME = `${GROK_BROKER_MCP_TOOL_NAMESPACE}__run_shell_command`
 
 export const GROK_MCP_QUESTION_PROMPT_NOTE =
   `To ask the user a question, call ${GROK_MCP_QUESTION_TOOL_NAME}. ` +
   'Do not use Grok native question or elicitation UI; ACP does not connect it to TaskWraith desktop or iOS.'
 
+export const GROK_MCP_SHELL_PROMPT_NOTE =
+  `For shell work (tests, builds, git, directory listings, npm), call ${GROK_MCP_SHELL_TOOL_NAME}. ` +
+  'That route is host-mediated and honors your shell permission grants and approval policy. ' +
+  'Native Bash/Shell tools are unavailable here — do not attempt them.'
+
 /**
  * WRITE-mode steer prepended to a write-capable Grok turn's prompt. In write
- * mode Grok's Edit/Write tools are auto-approved (diff-reviewed), but a raw
- * shell command (mkdir/touch/…) is NOT auto-approved on the headless path and is
- * refused by the host — and Grok was treating that refusal as a dead-end
- * (stopReason: Cancelled, 0 output) instead of just writing the file. Steer it
- * to use the file tools and to adapt rather than end the turn on a refusal. Very
- * small on purpose: a nudge, not a policy. The host gate stays the safety floor.
+ * mode Grok's Edit/Write tools are auto-approved (diff-reviewed). Native
+ * Bash/Shell are denied at argv — shell must go through the TaskWraith MCP
+ * broker when it is attached. Steer away from dead-ending on a refused tool.
+ * The host gate stays the safety floor.
  */
 export const GROK_WRITE_MODE_PROMPT_PREAMBLE =
-  'When the task actually requests file changes, create and edit files with the ' +
-  'Write and Edit tools (they are approved and diff-reviewed here), not shell ' +
-  'commands like mkdir or touch. An explicit no-tools instruction in the user ' +
+  'When the task requests file changes, use Write and Edit (approved and diff-reviewed). ' +
+  'When the task requests shell work, use the TaskWraith MCP run_shell_command tool — ' +
+  'native Bash/Shell are unavailable. An explicit no-tools instruction in the user ' +
   'request or role brief overrides that allowance: do not call shell, file, goal, ' +
   'or any other tool. If a tool call is refused or fails, do not end your turn; ' +
   'retry only the same requested operation with an equivalent allowed tool. Never ' +
@@ -194,12 +198,23 @@ export function buildGrokProviderPrompt(
   prompt: string,
   approvalMode: string | null | undefined,
   activeGoal?: ActiveGoal | null,
-  options?: { taskWraithQuestionToolAvailable?: boolean }
+  options?: {
+    taskWraithQuestionToolAvailable?: boolean
+    taskWraithShellToolAvailable?: boolean
+  }
 ): string {
+  let brokerAwarePrompt = prompt
+  if (
+    options?.taskWraithShellToolAvailable &&
+    grokWriteCapable(approvalMode) &&
+    !prompt.includes(GROK_MCP_SHELL_TOOL_NAME)
+  ) {
+    brokerAwarePrompt = `${GROK_MCP_SHELL_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
+  }
   const questionAwarePrompt =
-    options?.taskWraithQuestionToolAvailable && !prompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
-      ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${prompt}`
-      : prompt
+    options?.taskWraithQuestionToolAvailable && !brokerAwarePrompt.includes(GROK_MCP_QUESTION_TOOL_NAME)
+      ? `${GROK_MCP_QUESTION_PROMPT_NOTE}\n\n${brokerAwarePrompt}`
+      : brokerAwarePrompt
   return applyGrokNativeGoalPrompt(
     applyGrokPromptPreamble(questionAwarePrompt, grokWriteCapable(approvalMode)),
     activeGoal

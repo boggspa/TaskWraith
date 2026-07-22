@@ -9800,6 +9800,192 @@ Next action:
     })
   })
 
+  describe('yield-to-BG contract regressions', () => {
+    function backgroundParticipant(
+      overrides: Partial<EnsembleParticipant> = {}
+    ): EnsembleParticipant {
+      return {
+        id: 'background-shell',
+        provider: 'codex',
+        enabled: true,
+        role: 'Shell helper',
+        instructions: 'Run scoped background checks and report evidence.',
+        order: 3,
+        permissionPresetId: 'read_only',
+        stageRole: 'background',
+        ...overrides
+      }
+    }
+
+    it('launches a BG lane when an authority seat yields to a unique BG target', async () => {
+      const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+      process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+      try {
+        const harness = makeHarness()
+        harness.chat.ensemble!.bossmanParticipantId = 'claude'
+        harness.chat.ensemble!.participants = [
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'read_only'
+          },
+          {
+            id: 'codex',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Work.',
+            order: 2,
+            permissionPresetId: 'workspace_write'
+          },
+          backgroundParticipant()
+        ]
+        harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: 'Open the round.',
+          event: { sender: {} as Electron.WebContents }
+        })
+        await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+        expect(harness.dispatched[0].provider).toBe('claude')
+
+        const outcome = harness.orchestrator.markYielded(
+          harness.dispatched[0].appRunId!,
+          'Run the long gate sequence in background.',
+          'Shell helper'
+        )
+        expect(outcome).toMatchObject({
+          kind: 'yielded',
+          routing: {
+            ok: true,
+            action: 'background_reserved',
+            targetParticipantId: 'background-shell'
+          }
+        })
+
+        harness.orchestrator.handleProviderOutput(
+          'claude',
+          { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+          { type: 'result', status: 'success' }
+        )
+        await vi.waitFor(() => expect(harness.dispatched.length).toBeGreaterThanOrEqual(2))
+        const backgroundRun = harness.dispatched.find(
+          (payload) => payload.ensembleRun?.participantId === 'background-shell'
+        )
+        expect(backgroundRun).toBeTruthy()
+        expect(backgroundRun?.ensembleRun?.laneId).toBeTruthy()
+        expect(backgroundRun?.effectivePermissions?.readOnly).toBe(true)
+      } finally {
+        if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+        else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+      }
+    })
+
+    it('rejects yield-to-BG at plan time when parallel lanes are disabled', async () => {
+      const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+      process.env.TASKWRAITH_CONCURRENT_LANES = '0'
+      try {
+        const harness = makeHarness()
+        harness.chat.ensemble!.bossmanParticipantId = 'claude'
+        harness.chat.ensemble!.participants = [
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'read_only'
+          },
+          backgroundParticipant()
+        ]
+        harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: 'Open the round.',
+          event: { sender: {} as Electron.WebContents }
+        })
+        await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+        const outcome = harness.orchestrator.markYielded(
+          harness.dispatched[0].appRunId!,
+          'Background gates please.',
+          'Shell helper'
+        )
+        expect(outcome).toMatchObject({
+          kind: 'yielded',
+          routing: { ok: false, reason: 'concurrent_lanes_disabled', target: 'Shell helper' }
+        })
+        expect(
+          harness.chat.messages.some((message) =>
+            (message.content || '').includes('concurrent_lanes_disabled')
+          )
+        ).toBe(true)
+      } finally {
+        if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+        else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+      }
+    })
+
+    it('rejects non-authority yield-to-BG with authority_precedence', async () => {
+      const previous = process.env.TASKWRAITH_CONCURRENT_LANES
+      process.env.TASKWRAITH_CONCURRENT_LANES = '1'
+      try {
+        const harness = makeHarness()
+        harness.chat.ensemble!.bossmanParticipantId = 'claude'
+        harness.chat.ensemble!.participants = [
+          {
+            id: 'claude',
+            provider: 'claude',
+            enabled: true,
+            role: 'Boss',
+            instructions: 'Coordinate.',
+            order: 1,
+            permissionPresetId: 'read_only'
+          },
+          {
+            id: 'codex',
+            provider: 'codex',
+            enabled: true,
+            role: 'Worker',
+            instructions: 'Work.',
+            order: 2,
+            permissionPresetId: 'workspace_write'
+          },
+          backgroundParticipant()
+        ]
+        harness.orchestrator.startRound({
+          chatId: 'ensemble-chat',
+          prompt: 'Open the round.',
+          event: { sender: {} as Electron.WebContents }
+        })
+        await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+        harness.orchestrator.handleProviderOutput(
+          'claude',
+          { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+          { type: 'result', status: 'success' }
+        )
+        await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+        expect(harness.dispatched[1].provider).toBe('codex')
+
+        const outcome = harness.orchestrator.markYielded(
+          harness.dispatched[1].appRunId!,
+          'Please run gates.',
+          'Shell helper'
+        )
+        expect(outcome).toMatchObject({
+          kind: 'yielded',
+          routing: { ok: false, reason: 'authority_precedence', target: 'Shell helper' }
+        })
+      } finally {
+        if (previous === undefined) delete process.env.TASKWRAITH_CONCURRENT_LANES
+        else process.env.TASKWRAITH_CONCURRENT_LANES = previous
+      }
+    })
+  })
+
   it('lets the assigned Boss definitively close the round and drop queued prompts', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.bossmanParticipantId = 'claude'

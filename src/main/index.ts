@@ -17696,7 +17696,11 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     payload.prompt,
     payload.approvalMode,
     payload.activeGoal,
-    { taskWraithQuestionToolAvailable: grokMcpServers.length > 0 }
+    {
+      taskWraithQuestionToolAvailable: grokMcpServers.length > 0,
+      taskWraithShellToolAvailable:
+        grokMcpServers.length > 0 && grokWriteCapable(payload.approvalMode)
+    }
   )
   // Broker startup and prompt composition await after run registration. A
   // destructive-history fence can terminalize that run while those awaits are

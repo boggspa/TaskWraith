@@ -80,6 +80,12 @@ import {
   yieldRouteSuccessStatusLine
 } from '../EnsembleYieldRouting'
 import {
+  backgroundDispatchFailureStatusLine,
+  isBackgroundDispatchFailure,
+  preflightBackgroundDispatchTarget,
+  type BackgroundDispatchResult
+} from './EnsembleBackgroundDispatch'
+import {
   classifyDispatchError,
   formatAllUnreachableNote,
   formatDispatchFailureNote,
@@ -4203,7 +4209,7 @@ export class EnsembleOrchestrator {
     const displayTarget = target.trim()
     const reject = (
       reason: Exclude<EnsembleYieldRoutingResult, { ok: true }>['reason'],
-      extra?: { suggestedAliases?: string[] }
+      extra?: { suggestedAliases?: string[]; detail?: string }
     ): EnsembleYieldRoutingResult => {
       const result: EnsembleYieldRoutingResult = {
         ok: false,
@@ -4217,7 +4223,8 @@ export class EnsembleOrchestrator {
         yieldRejectStatusLine({
           target: displayTarget,
           reason,
-          suggestedAliases: extra?.suggestedAliases
+          suggestedAliases: extra?.suggestedAliases,
+          detail: extra?.detail
         })
       )
       return result
@@ -4267,6 +4274,16 @@ export class EnsembleOrchestrator {
 
     if (isBackgroundParticipant(participant)) {
       if (!hasAuthority) return reject('authority_precedence')
+      const preflight = preflightBackgroundDispatchTarget({
+        concurrentLanesEnabled: concurrentLanesEnabled(),
+        runtimeCancelled: Boolean(runtime.cancelled),
+        targetParticipant: participant,
+        fanoutDispatchState: this.participantFanoutDispatchState(runtime, participant.id),
+        budgetBlockReason: this.bossmanBudgetBlock(runtime, participant.id, 'fanout_call')
+      })
+      if (isBackgroundDispatchFailure(preflight)) {
+        return reject(preflight.reason, preflight.detail ? { detail: preflight.detail } : undefined)
+      }
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
@@ -11882,12 +11899,25 @@ export class EnsembleOrchestrator {
               (entry) =>
                 entry.id === pendingYieldRouting.targetParticipantId && entry.enabled
             )
-            if (backgroundTarget) {
-              await this.dispatchBackgroundParticipants(runtime, chat, [backgroundTarget], {
+            if (!backgroundTarget) {
+              this.appendRoundStatus(
+                runtime.chatId,
+                runtime.roundId,
+                backgroundDispatchFailureStatusLine({ ok: false, reason: 'target_missing' })
+              )
+              break
+            }
+            const dispatchResult = await this.dispatchBackgroundParticipants(
+              runtime,
+              chat,
+              [backgroundTarget],
+              {
                 prompt: pendingYieldRouting.prompt,
                 sourceRunId: pendingYieldRouting.sourceRunId,
                 reason: `Explicit yield from ${participantDisplayName(participant)}.`
-              })
+              }
+            )
+            if (dispatchResult.ok) {
               routedByYieldTarget = true
             }
             break
@@ -12703,26 +12733,32 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     requested: EnsembleParticipant[],
     options: { prompt?: string; sourceRunId?: string; reason?: string } = {}
-  ): Promise<string[]> {
+  ): Promise<BackgroundDispatchResult> {
     if (!concurrentLanesEnabled()) {
+      const result = { ok: false as const, reason: 'concurrent_lanes_disabled' as const }
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
         'Background dispatch not launched because parallel lanes are disabled (TASKWRAITH_CONCURRENT_LANES=0).'
       )
-      return []
+      return result
     }
     const requestedBackgrounds = dedupeParticipants(requested).filter(isBackgroundParticipant)
+    if (requestedBackgrounds.length === 0) {
+      return { ok: false, reason: 'target_missing' }
+    }
     const alreadyActive = requestedBackgrounds.filter(
       (participant) => this.participantFanoutDispatchState(runtime, participant.id) === 'active'
     )
     if (alreadyActive.length > 0) {
+      const displayNames = alreadyActive.map(participantDisplayName).join(', ')
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        `Background dispatch not launched for ${alreadyActive
-          .map(participantDisplayName)
-          .join(', ')}: that seat already has an active lane. Wait for its result, then delegate again.`
+        backgroundDispatchFailureStatusLine(
+          { ok: false, reason: 'already_active' },
+          displayNames
+        )
       )
     }
     const candidates = requestedBackgrounds.filter(
@@ -12748,7 +12784,18 @@ export class EnsembleOrchestrator {
     }
     const blockedIds = new Set(blocked.map((entry) => entry.participant.id))
     const participants = candidates.filter((participant) => !blockedIds.has(participant.id))
-    if (participants.length === 0 || runtime.cancelled) return []
+    if (participants.length === 0 || runtime.cancelled) {
+      if (runtime.cancelled) {
+        return { ok: false, reason: 'cancelled' }
+      }
+      if (alreadyActive.length > 0) {
+        return { ok: false, reason: 'already_active' }
+      }
+      if (blocked.length > 0) {
+        return { ok: false, reason: 'budget_blocked', detail: blocked[0]!.reason }
+      }
+      return { ok: false, reason: 'target_missing' }
+    }
 
     // Unmentioned BG seats are intentionally absent from activeRound. Add only
     // the explicitly delegated seats so chip/lane state can transition without
@@ -12797,18 +12844,29 @@ export class EnsembleOrchestrator {
         acceptedParticipants.map((participant) => participant.id),
         { fanoutCalls: 1 }
       )
-      return acceptedRuns
+      const laneIds = acceptedRuns
         .map((acceptedRun) => acceptedRun.laneId)
         .filter((laneId): laneId is string => Boolean(laneId))
+      if (laneIds.length === 0) {
+        const result = { ok: false as const, reason: 'launch_failed' as const }
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          backgroundDispatchFailureStatusLine(result)
+        )
+        return result
+      }
+      return { ok: true, laneIds }
     } catch (error) {
       const message =
         error instanceof Error ? error.message : 'background dispatch failed.'
+      const result = { ok: false as const, reason: 'launch_failed' as const, detail: message }
       this.appendRoundStatus(
         runtime.chatId,
         runtime.roundId,
-        `Background dispatch failed: ${message}`
+        backgroundDispatchFailureStatusLine(result)
       )
-      return []
+      return result
     } finally {
       for (const participant of participants) {
         runtime.fanoutReservedParticipantIds?.delete(participant.id)

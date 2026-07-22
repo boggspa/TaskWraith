@@ -1,4 +1,5 @@
 import type { EnsembleParticipant } from './store/types'
+import type { BackgroundDispatchRejectReason } from './services/EnsembleBackgroundDispatch'
 
 export type EnsembleYieldRejectReason =
   | 'unresolved'
@@ -8,6 +9,7 @@ export type EnsembleYieldRejectReason =
   | 'hop_limit'
   | 'authority_precedence'
   | 'outside_scope'
+  | BackgroundDispatchRejectReason
   | 'no_active_run'
 
 export type EnsembleYieldRouteAction =
@@ -88,8 +90,10 @@ export function yieldRejectStatusLine(input: {
   target: string
   reason: Exclude<EnsembleYieldRejectReason, 'no_active_run'>
   suggestedAliases?: string[]
+  detail?: string
 }): string {
-  const base = `Yield target "${input.target}" was not routed: ${input.reason}.`
+  const detail = input.detail ? ` (${input.detail})` : ''
+  const base = `Yield target "${input.target}" was not routed: ${input.reason}${detail}.`
   if (!input.suggestedAliases?.length) return base
   return `${base} Try a unique alias: ${input.suggestedAliases.join(', ')}.`
 }
