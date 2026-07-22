@@ -25,8 +25,19 @@ import {
   unsafeRepositoryPushConfigKeys
 } from './GitCommandSecurity'
 
+const WORKTREE_LIFECYCLE_TIMEOUT_MS = 20_000
+
 function runGit(cwd: string, args: string[]): string {
   return execFileSync('git', args, { cwd, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] })
+}
+
+function removeTempDirectory(path: string): void {
+  rmSync(path, {
+    recursive: true,
+    force: true,
+    maxRetries: process.platform === 'win32' ? 5 : 0,
+    retryDelay: 100
+  })
 }
 
 function comparablePath(filePath: string): string {
@@ -48,16 +59,26 @@ function createRepo(): string {
 describe('GitService', () => {
   let repo: string
   let extraTempPaths: string[]
+  let worktreeCleanupPaths: string[]
 
   beforeEach(() => {
     repo = createRepo()
     extraTempPaths = []
+    worktreeCleanupPaths = []
   })
 
   afterEach(() => {
-    rmSync(repo, { recursive: true, force: true })
+    for (const worktreePath of worktreeCleanupPaths) {
+      if (!existsSync(repo) || !existsSync(worktreePath)) continue
+      try {
+        runGit(repo, ['worktree', 'remove', '--force', worktreePath])
+      } catch {
+        // Preserve the test failure; retrying directory removal below is still worthwhile.
+      }
+    }
+    removeTempDirectory(repo)
     for (const tempPath of extraTempPaths) {
-      rmSync(tempPath, { recursive: true, force: true })
+      removeTempDirectory(tempPath)
     }
   })
 
@@ -331,6 +352,7 @@ describe('GitService', () => {
     const service = new GitService()
     const target = join(tmpdir(), `taskwraith-worktree-${Date.now()}-${Math.random().toString(36).slice(2)}`)
     extraTempPaths.push(target)
+    worktreeCleanupPaths.push(target)
 
     const created = await service.createWorktree({
       repoPath: repo,
@@ -368,7 +390,7 @@ describe('GitService', () => {
 
     const removed = await service.removeWorktree({ repoPath: repo, path: gitTargetRoot })
     expect(removed.ok).toBe(true)
-  })
+  }, WORKTREE_LIFECYCLE_TIMEOUT_MS)
 
   it('stages selected paths relative to the requested workspace subdirectory', async () => {
     const workspace = join(repo, 'packages', 'app')
