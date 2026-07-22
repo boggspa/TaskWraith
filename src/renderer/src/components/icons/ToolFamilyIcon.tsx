@@ -17,6 +17,7 @@
  * (typically the legacy `ToolCategoryIcon`).
  */
 import type { CSSProperties, ReactElement } from 'react'
+import { resolveCatalogToolName } from '../../../../shared/canonicalToolCoalesce'
 
 export type ToolFamily =
   | 'file'
@@ -124,6 +125,9 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     strippedMcp = true
     normalised = normalised.slice('taskwraith_'.length)
   }
+
+  const catalog = resolveCatalogToolName(name)
+  if (catalog) normalised = catalog
 
   // Exact-name buckets (most specific first).
   switch (normalised) {

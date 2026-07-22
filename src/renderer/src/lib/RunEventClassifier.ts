@@ -1,4 +1,5 @@
 import type { RunEventRecord, RunEventKind } from '../../../main/store/types'
+import { isCatalogFileEditTool } from '../../../shared/canonicalToolCoalesce'
 
 /**
  * RunEventClassifier — Phase K1 (Run Inspector / RunCard).
@@ -31,20 +32,6 @@ export type ClassifiedRunEvent =
   | { kind: 'tool' }
   | { kind: 'other' }
 
-const FILE_EDIT_TOOL_NAMES = new Set([
-  'edit_file',
-  'create_file',
-  'delete_file',
-  'create_directory',
-  'delete_path',
-  'move_path',
-  'rename_path',
-  'replace',
-  'write_file',
-  'apply_patch',
-  'patch'
-])
-
 export function classifyRunEvent(event: RunEventRecord): ClassifiedRunEvent {
   if (event.kind.startsWith('approval_')) {
     return { kind: 'approval' }
@@ -55,7 +42,7 @@ export function classifyRunEvent(event: RunEventRecord): ClassifiedRunEvent {
 
   const payload = isRecord(event.payload) ? event.payload : {}
   const toolName = readToolName(payload)
-  if (!toolName || !FILE_EDIT_TOOL_NAMES.has(toolName)) {
+  if (!toolName || !isCatalogFileEditTool(toolName)) {
     return { kind: 'tool' }
   }
 

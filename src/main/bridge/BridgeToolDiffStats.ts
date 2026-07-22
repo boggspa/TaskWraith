@@ -15,6 +15,7 @@
  */
 
 import type { ToolDiffFileSummary, ToolDiffSummary } from '../store/types'
+import { isWriteLikeCatalogTool } from '../../shared/canonicalToolCoalesce'
 
 /** Lenient non-negative integer reader for provider change entries. */
 export function bridgeNumberish(value: unknown): number | undefined {
@@ -226,7 +227,7 @@ export function bridgeToolDiffStats(
       }
     }
   }
-  if (/write|create/i.test(toolName)) {
+  if (isWriteLikeCatalogTool(toolName)) {
     const content =
       (typeof input.content === 'string' && input.content) ||
       (typeof input.file_text === 'string' && input.file_text) ||

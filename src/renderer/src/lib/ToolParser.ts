@@ -7,6 +7,10 @@ import type {
   ToolDiffSummary
 } from '../../../main/store/types'
 import { lookupToolDisplayName, titleCaseToolName } from './ToolDisplayNames'
+import {
+  catalogToolOperationCategory,
+  isCatalogFileEditTool
+} from '../../../shared/canonicalToolCoalesce'
 
 export function extractToolName(event: any): string {
   if (!event || typeof event !== 'object') return 'unknown'
@@ -346,56 +350,8 @@ export function isErroredToolStatus(status: ToolActivityStatus | null | undefine
 
 export type ToolCategory = 'task' | 'read' | 'write' | 'search' | 'shell' | 'unknown'
 
-const WRITE_LIKE_TOOL_NAMES = new Set([
-  'replace',
-  'write_file',
-  'writefile',
-  'create_file',
-  'createfile',
-  'edit_file',
-  'editfile',
-  'delete_file',
-  'deletefile',
-  'create_directory',
-  'createdirectory',
-  'delete_path',
-  'deletepath',
-  'move_path',
-  'movepath',
-  'rename_path',
-  'renamepath',
-  'edit',
-  'write',
-  'multiedit',
-  'notebookedit',
-  'apply_patch',
-  'applypatch',
-  'str_replace',
-  'strreplace',
-  'str_replace_editor',
-  'strreplaceeditor',
-  // Cursor / Grok-ACP edit tool surface.
-  'search_replace',
-  'searchreplace'
-])
-
 export function isWriteLikeToolName(toolName: string): boolean {
-  const name = (toolName || '').toLowerCase()
-  if (!name) return false
-  if (WRITE_LIKE_TOOL_NAMES.has(name)) return true
-  if (name.endsWith('__write_file')) return true
-  if (name.endsWith('__replace')) return true
-  if (name.endsWith('__create_file')) return true
-  if (name.endsWith('__edit_file')) return true
-  if (name.endsWith('__delete_file')) return true
-  if (name.endsWith('__create_directory')) return true
-  if (name.endsWith('__delete_path')) return true
-  if (name.endsWith('__move_path')) return true
-  if (name.endsWith('__rename_path')) return true
-  if (name.endsWith('__edit')) return true
-  if (name.endsWith('__write')) return true
-  if (name.endsWith('__apply_patch')) return true
-  return false
+  return isCatalogFileEditTool(toolName)
 }
 
 /**
@@ -503,6 +459,11 @@ export function getToolCategory(toolName: string): ToolCategory {
   const unqualifiedName = stripToolNamespace(name)
   if (TASK_LIKE_TOOL_NAMES.has(unqualifiedName)) return 'task'
   if (isReasoningToolName(unqualifiedName)) return 'task'
+  const operationCategory = catalogToolOperationCategory(toolName)
+  if (operationCategory === 'read_file') return 'read'
+  if (operationCategory === 'edit_file') return 'write'
+  if (operationCategory === 'search') return 'search'
+  if (operationCategory === 'shell') return 'shell'
   if (READ_LIKE_TOOL_NAMES.has(unqualifiedName)) return 'read'
   if (isWriteLikeToolName(unqualifiedName)) return 'write'
   if (SEARCH_LIKE_TOOL_NAMES.has(unqualifiedName) || SEARCH_LIKE_TOOL_NAMES.has(name))
