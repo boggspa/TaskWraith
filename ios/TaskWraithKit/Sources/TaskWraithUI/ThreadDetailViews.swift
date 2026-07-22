@@ -213,6 +213,10 @@ struct ThreadDetailView: View {
     /// One-scroll-per-turn coalescer for the follow-pin (kills stacked scrolls).
     @State private var followPin = TranscriptFollowPin()
     @State private var toolRowGroupingCache = TranscriptToolRowGroupingCache()
+    /// Settled stacks / system notices the user re-opened after they folded
+    /// into one-line summaries. Keyed by display-item id (anchored on the
+    /// first constituent row id, stable across snapshot growth).
+    @State private var expandedSettledStacks: Set<String> = []
     // Last user-touch wall-clock lives on `followPin` (a reference type) so the
     // per-touch-move tracker never re-renders the body. A forced follow-pin's
     // SETTLE pass reads it so it doesn't yank the scroll back to bottom while the
@@ -576,11 +580,19 @@ struct ThreadDetailView: View {
         case row(RemoteThreadSnapshot.Row)
         case toolBurst(
             id: String, rows: [RemoteThreadSnapshot.Row], lastRow: RemoteThreadSnapshot.Row)
+        /// Settled-stack collapse (desktop parity): a maximal run of
+        /// thinking + tool rows folded behind a one-line summary. `items`
+        /// preserves the ORIGINAL row/tool-burst rendering for the expanded
+        /// state, so opening a stack shows exactly what renders today.
+        case settledStack(
+            id: String, items: [TranscriptDisplayItem], rows: [RemoteThreadSnapshot.Row],
+            lastRow: RemoteThreadSnapshot.Row)
 
         var id: String {
             switch self {
             case .row(let row): return row.id
             case .toolBurst(let id, _, _): return id
+            case .settledStack(let id, _, _, _): return id
             }
         }
 
@@ -588,6 +600,7 @@ struct ThreadDetailView: View {
             switch self {
             case .row(let row): return row
             case .toolBurst(_, _, let lastRow): return lastRow
+            case .settledStack(_, _, _, let lastRow): return lastRow
             }
         }
     }
@@ -598,7 +611,7 @@ struct ThreadDetailView: View {
             rows: settledRowsBeforeLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            group: groupAdjacentToolRows)
+            group: buildSettledDisplayItems)
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
@@ -607,7 +620,148 @@ struct ThreadDetailView: View {
             rows: settledRowsAfterLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            group: groupAdjacentToolRows)
+            group: buildSettledDisplayItems)
+    }
+
+    /// Settled-stack fold: maximal runs of thinking + tool rows (same
+    /// run/speaker key as tool bursts) become one `.settledStack` item whose
+    /// nested `items` keep the original row/burst rendering for the expanded
+    /// state. Everything else passes through as `.row`.
+    private func buildSettledDisplayItems(_ rows: [RemoteThreadSnapshot.Row])
+        -> [TranscriptDisplayItem]
+    {
+        var out: [TranscriptDisplayItem] = []
+        var pending: [RemoteThreadSnapshot.Row] = []
+
+        func flush() {
+            guard !pending.isEmpty else { return }
+            out.append(
+                .settledStack(
+                    // Stable across growth for the same reason as toolBurstId:
+                    // anchor identity on the FIRST row only.
+                    id: "settled-stack-\(pending[0].id)",
+                    items: groupAdjacentToolRows(pending),
+                    rows: pending,
+                    lastRow: pending[pending.count - 1]))
+            pending.removeAll()
+        }
+
+        for row in rows {
+            guard twCanCollapseIntoStack(row) else {
+                flush()
+                out.append(.row(row))
+                continue
+            }
+            if let last = pending.last, toolBurstKey(last) != toolBurstKey(row) {
+                flush()
+            }
+            pending.append(row)
+        }
+        flush()
+        return out
+    }
+
+    /// The trailing display item never auto-collapses while nothing streams
+    /// below it — a freshly-settled stack stays open until the next
+    /// assistant/panel message actually arrives (desktop parity).
+    private var tailForceExpandedItemId: String? {
+        guard liveRunId == nil, !isRunning else { return nil }
+        return visibleDisplayItems.last?.id
+    }
+
+    /// One settled transcript item. Settled stacks and plain system notices
+    /// render as one-line summaries once the conversation has moved past
+    /// them; tapping toggles back to the untouched full rendering below the
+    /// (then-open) summary line.
+    @ViewBuilder
+    private func settledDisplayItemView(_ item: TranscriptDisplayItem) -> some View {
+        switch item {
+        case .row(let row):
+            if twIsPlainSystemNoticeRow(row), !isMessagePinned(row.id),
+                item.id != tailForceExpandedItemId
+            {
+                let expanded = expandedSettledStacks.contains(item.id)
+                VStack(alignment: .leading, spacing: 4) {
+                    CollapsedTranscriptSummaryRow(
+                        metaLabel: "System",
+                        label: twCollapsedSystemNoticeLabel(row.preview),
+                        errored: false,
+                        expanded: expanded,
+                        onToggle: { toggleSettledStackExpanded(item.id) })
+                    if expanded {
+                        stackConstituentView(.row(row))
+                    }
+                }
+            } else {
+                stackConstituentView(item)
+            }
+        case .toolBurst:
+            stackConstituentView(item)
+        case .settledStack(let id, let items, let rows, _):
+            let expanded = expandedSettledStacks.contains(id) || id == tailForceExpandedItemId
+            let summary = twCollapsedStackSummary(rows: rows)
+            VStack(alignment: .leading, spacing: 4) {
+                CollapsedTranscriptSummaryRow(
+                    metaLabel: nil,
+                    label: summary.label,
+                    errored: summary.errorCount > 0,
+                    expanded: expanded,
+                    onToggle: { toggleSettledStackExpanded(id) })
+                if expanded {
+                    ForEach(items) { nested in
+                        stackConstituentView(nested)
+                    }
+                }
+            }
+        }
+    }
+
+    private func toggleSettledStackExpanded(_ id: String) {
+        if expandedSettledStacks.contains(id) {
+            expandedSettledStacks.remove(id)
+        } else {
+            expandedSettledStacks.insert(id)
+        }
+    }
+
+    /// The pre-collapse row/burst rendering — exactly what the transcript
+    /// showed before the settled-stack fold existed.
+    @ViewBuilder
+    private func stackConstituentView(_ item: TranscriptDisplayItem) -> some View {
+        switch item {
+        case .row(let row):
+            ThreadRowView(
+                model: model, threadId: taskId,
+                row: model.resolvedRow(row, threadId: taskId),
+                threadProvider: card?.provider,
+                agentIdentity: threadAgentIdentity,
+                isExpanding: model.expandingRows.contains(row.id),
+                participants: transcriptParticipants,
+                isPinned: isMessagePinned(row.id)
+            )
+            .equatable()
+        case .toolBurst(_, let rows, _):
+            ToolBurstRowView(
+                rows: rows.map { model.resolvedRow($0, threadId: taskId) },
+                agentIdentity: threadAgentIdentity)
+            .equatable()
+        case .settledStack(_, _, let rows, _):
+            // Stacks never nest (buildSettledDisplayItems emits them only at
+            // the top level); render raw rows defensively rather than
+            // recursing — a recursive opaque-return builder cannot compile.
+            ForEach(rows) { row in
+                ThreadRowView(
+                    model: model, threadId: taskId,
+                    row: model.resolvedRow(row, threadId: taskId),
+                    threadProvider: card?.provider,
+                    agentIdentity: threadAgentIdentity,
+                    isExpanding: model.expandingRows.contains(row.id),
+                    participants: transcriptParticipants,
+                    isPinned: isMessagePinned(row.id)
+                )
+                .equatable()
+            }
+        }
     }
 
     private var snapshotRevisionToken: String {
@@ -1051,26 +1205,7 @@ struct ThreadDetailView: View {
                         .listRowSeparator(.hidden)
                 }
                 ForEach(settledDisplayItemsBeforeLive) { item in
-                    Group {
-                        switch item {
-                        case .row(let row):
-                            ThreadRowView(
-                                model: model, threadId: taskId,
-                                row: model.resolvedRow(row, threadId: taskId),
-                                threadProvider: card?.provider,
-                                agentIdentity: threadAgentIdentity,
-                                isExpanding: model.expandingRows.contains(row.id),
-                                participants: transcriptParticipants,
-                                isPinned: isMessagePinned(row.id)
-                            )
-                            .equatable()
-                        case .toolBurst(_, let rows, _):
-                            ToolBurstRowView(
-                                rows: rows.map { model.resolvedRow($0, threadId: taskId) },
-                                agentIdentity: threadAgentIdentity)
-                            .equatable()
-                        }
-                    }
+                    settledDisplayItemView(item)
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
@@ -1123,26 +1258,7 @@ struct ThreadDetailView: View {
                         .listRowSeparator(.hidden)
                     }
                     ForEach(settledDisplayItemsAfterLive) { item in
-                        Group {
-                            switch item {
-                            case .row(let row):
-                                ThreadRowView(
-                                    model: model, threadId: taskId,
-                                    row: model.resolvedRow(row, threadId: taskId),
-                                    threadProvider: card?.provider,
-                                    agentIdentity: threadAgentIdentity,
-                                    isExpanding: model.expandingRows.contains(row.id),
-                                    participants: transcriptParticipants,
-                                    isPinned: isMessagePinned(row.id)
-                                )
-                                .equatable()
-                            case .toolBurst(_, let rows, _):
-                                ToolBurstRowView(
-                                    rows: rows.map { model.resolvedRow($0, threadId: taskId) },
-                                    agentIdentity: threadAgentIdentity)
-                                .equatable()
-                            }
-                        }
+                        settledDisplayItemView(item)
                             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
@@ -3848,6 +3964,43 @@ struct ThreadRowView: View, Equatable {
         }
     }
 #endif
+
+/// One-line summary chrome for a collapsed settled stack or system notice
+/// (desktop `CollapsedTranscriptRow` parity): chevron + optional muted meta
+/// prefix + ellipsized label. Tapping toggles; the expanded content renders
+/// below this row, which stays visible as the re-collapse affordance.
+struct CollapsedTranscriptSummaryRow: View {
+    let metaLabel: String?
+    let label: String
+    let errored: Bool
+    let expanded: Bool
+    let onToggle: () -> Void
+
+    var body: some View {
+        Button(action: onToggle) {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 9, weight: .semibold))
+                    .rotationEffect(.degrees(expanded ? 90 : 0))
+                    .foregroundStyle(TWTheme.textTertiary)
+                if let metaLabel {
+                    Text(metaLabel)
+                        .font(.caption2.weight(.semibold))
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+                Text(label)
+                    .font(.caption)
+                    .foregroundStyle(errored ? TWTheme.statusColor("warning") : TWTheme.textSecondary)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(
+            "\(expanded ? "Collapse" : "Expand") \(metaLabel.map { "\($0) " } ?? "")\(label)")
+    }
+}
 
 struct ToolBurstRowView: View, Equatable {
     let rows: [RemoteThreadSnapshot.Row]
