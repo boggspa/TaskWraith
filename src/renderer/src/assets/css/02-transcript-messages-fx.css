@@ -2662,7 +2662,10 @@
   flex-direction: column;
   align-items: center;
   position: relative;
-  z-index: 1;
+  /* Sky/Weather is a fading backdrop at z-index: 2. Keep the reading surface
+   * above it so the atmospheric mask and opacity never wash out transcript
+   * text while the background continues to dissolve naturally. */
+  z-index: 3;
   overflow-anchor: none;
   /* Composer fade-under (scroll-aware). Content dissolves into the background as
    * it scrolls down toward / under the floating composer, and reveals again as it

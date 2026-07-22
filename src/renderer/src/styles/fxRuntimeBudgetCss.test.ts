@@ -31,6 +31,19 @@ describe('FX runtime compositor budget', () => {
     expect(polishCss).toContain('[data-fx-mode="epic"] .sky-visual-fx .sky-gradient')
   })
 
+  it('keeps the fading sky backdrop beneath readable transcript content', () => {
+    const transcriptCss = readCss('02-transcript-messages-fx.css')
+    const skyRoot = cssBlockAfter(transcriptCss, '.sky-visual-fx {', '/* Static film grain')
+    const transcriptScroll = cssBlockAfter(
+      transcriptCss,
+      '.transcript-scroll {',
+      '/* Gemini terminal docks below the composer'
+    )
+
+    expect(skyRoot).toContain('z-index: 2;')
+    expect(transcriptScroll).toContain('z-index: 3;')
+  })
+
   it('uses opacity-based telemetry signals and pauses inactive telemetry history', () => {
     const polishCss = readCss('05-polish-fx-layouts.css')
     const runDataViz = cssBlockAfter(
