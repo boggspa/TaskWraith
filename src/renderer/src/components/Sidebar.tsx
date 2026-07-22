@@ -61,6 +61,7 @@ import {
   primarySurfaceForSidebarTabChange,
   type SidebarPrimarySurface
 } from '../lib/primarySurfaceToggle'
+import { isHideableUnstartedDraft } from '../lib/unstartedDraftFilter'
 import { assignAgentIdentityFromSeed } from '../lib/agentIdentitySeed'
 import { AgentIdentityIcon } from './icons/AgentIdentityIcon'
 import type { AgentApprovalAction, AgentApprovalRequest } from '../lib/agentApprovalTypes'
@@ -3063,7 +3064,23 @@ export function Sidebar({
   // list's template.chatId. Excluding at `topLevelChats` covers every downstream
   // bucket (regular / ensemble / pinned / recents / workspaces all derive here).
   const workflowChatIds = new Set(workflows.map((workflow) => workflow.template.chatId))
-  const displayChats = chats.filter((chat) => !isContentlessRemoteDraftChat(chat))
+  // Unstarted "New Chat" / "New Ensemble" drafts must never stack in the
+  // sidebar until they are begun — they only litter it (esp. ensemble drafts,
+  // which the DELETE-ONLY reaper deliberately never collects). Hide every
+  // pristine draft EXCEPT the ones the user is actively on or that are live:
+  // the selected chat, any chat with a running/queued run, and shared chats.
+  // A hidden draft is not deleted (the reaper owns that) and stays reachable
+  // through create-path draft reuse. Intent-bearing drafts (pinned / goal /
+  // renamed / todo'd) are kept by the predicate itself.
+  const draftVisibilityProtectedIds = new Set<string>(runningChatIds)
+  if (activeChatId) draftVisibilityProtectedIds.add(activeChatId)
+  if (currentChat?.appChatId) draftVisibilityProtectedIds.add(currentChat.appChatId)
+  for (const id of collaboratingChatIds) draftVisibilityProtectedIds.add(id)
+  const displayChats = chats.filter(
+    (chat) =>
+      !isContentlessRemoteDraftChat(chat) &&
+      !isHideableUnstartedDraft(chat, { protectedChatIds: draftVisibilityProtectedIds })
+  )
   const topLevelChats = displayChats.filter(
     (chat) => !isLinkedChildChat(chat) && !workflowChatIds.has(chat.appChatId)
   )

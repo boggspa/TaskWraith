@@ -8826,7 +8826,23 @@ function App(): React.JSX.Element {
 
   const handleNewChat = async (wsId: string, wsPath: string): Promise<ChatRecord> => {
     setActiveWorkspaceBoardId(null)
-    const newChat = await window.api.createChat(wsId, wsPath)
+    // Reuse ≤1 pristine draft per workspace instead of minting a fresh record
+    // on every "New Chat" — the twin of the workspace-open reuse, applied on
+    // the create path (the reaper stays DELETE-ONLY). isReusableWelcomeChat
+    // mirrors shouldRenderWelcome so we land on the welcome screen, and the
+    // runtime gates skip a draft that is busy or has a live run.
+    const reusableDraft = chats.find(
+      (chat) =>
+        chat.chatKind !== 'ensemble' &&
+        chat.scope === 'workspace' &&
+        chat.workspaceId === wsId &&
+        !chat.archived &&
+        isTopLevelWorkspaceChat(chat) &&
+        isReusableWelcomeChat(chat) &&
+        !runningChatIds.has(chat.appChatId) &&
+        !isChatBusy(chat.appChatId)
+    )
+    const newChat = reusableDraft ?? (await window.api.createChat(wsId, wsPath))
     const provider = getChatProvider(newChat)
     setSideChatId(null)
     setSideChatMenuOpen(false)
@@ -9073,7 +9089,25 @@ function App(): React.JSX.Element {
       workspace?.id && workspace.path
         ? { workspaceId: workspace.id, workspacePath: workspace.path }
         : undefined
-    const newChat = await window.api.createEnsembleChat(args)
+    // Reuse ≤1 pristine ensemble draft per workspace instead of stacking a
+    // fresh record on every "New Ensemble". Ensemble drafts are deliberately
+    // never reaped (a curated-but-unsent roster must survive), so without reuse
+    // they are the dominant source of the sidebar-litter the user is hitting.
+    // Selecting an existing empty draft is non-destructive; a curated roster is
+    // preserved, and busy / running drafts are skipped.
+    const reusableEnsembleDraft = args
+      ? chats.find(
+          (chat) =>
+            chat.chatKind === 'ensemble' &&
+            chat.scope === 'workspace' &&
+            chat.workspaceId === args.workspaceId &&
+            !chat.archived &&
+            isReusableWelcomeChat(chat) &&
+            !runningChatIds.has(chat.appChatId) &&
+            !isChatBusy(chat.appChatId)
+        )
+      : undefined
+    const newChat = reusableEnsembleDraft ?? (await window.api.createEnsembleChat(args))
     setChats((prev) => mergeChatRecord(prev, newChat))
     chatByIdRef.current.set(newChat.appChatId, newChat)
     setCurrentChatIdForNavigation(newChat.appChatId)
