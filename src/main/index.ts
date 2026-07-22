@@ -19522,7 +19522,7 @@ function codexSandboxPolicyForMode(
   _externalPathGrants?: ExternalPathGrant[],
   settings: AppSettings = AppStore.getSettings(),
   scope: ChatScope = 'workspace',
-  fullAccessGranted = false
+  _fullAccessGranted = false
 ) {
   const workspaceRoot = resolve(workspace)
   const hostRoot = parse(workspaceRoot).root || sep
@@ -19534,12 +19534,6 @@ function codexSandboxPolicyForMode(
     scope === 'global' ? [hostRoot] : uniqueRoots([workspaceRoot, ...gitMetadataRoots])
   if (approvalMode === 'plan') {
     return { type: 'readOnly', readableRoots, networkAccess: false }
-  }
-  if (fullAccessGranted) {
-    return {
-      type: 'dangerFullAccess',
-      networkAccess: settings.agenticServices?.networkAccess !== 'deny'
-    }
   }
   return {
     type: 'workspaceWrite',

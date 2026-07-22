@@ -9,18 +9,12 @@ import { isAbsolute, resolve } from 'node:path'
 
 export function codexSandboxForMode(
   approvalMode?: string,
-  fullAccessGranted?: boolean
-): 'read-only' | 'workspace-write' | 'danger-full-access' {
-  // Plan is always the read-only floor, even if a full-access flag leaks in
-  // (the two are mutually exclusive — full_access resolves to auto_edit).
+  _fullAccessGranted?: boolean
+): 'read-only' | 'workspace-write' {
+  // Plan is always the read-only floor. A signed full-access grant changes
+  // which workspace tools may be called; it must not widen a workspace run's
+  // native filesystem sandbox beyond its declared workspace roots.
   if (approvalMode === 'plan') return 'read-only'
-  // A signed, post-clamp full_access grant (see `isFullShellAccessGranted`)
-  // drops Codex's workspace confinement so an approved agent can reach
-  // ~/Library (SwiftPM caches / DerivedData), the login keychain (codesign
-  // identities) and paths outside the repo — the capabilities an iOS
-  // archive / notarize / TestFlight upload needs. Gated strictly on the
-  // trusted grant; every other run stays workspace-confined.
-  if (fullAccessGranted) return 'danger-full-access'
   return 'workspace-write'
 }
 

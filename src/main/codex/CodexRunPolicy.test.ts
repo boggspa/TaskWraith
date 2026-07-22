@@ -27,10 +27,10 @@ describe('codexSandboxForMode', () => {
     expect(codexSandboxForMode(undefined)).toBe('workspace-write')
   })
 
-  it('drops to danger-full-access only under a full-access grant', () => {
-    expect(codexSandboxForMode('auto_edit', true)).toBe('danger-full-access')
-    expect(codexSandboxForMode('default', true)).toBe('danger-full-access')
-    // Without the grant flag every non-plan run stays workspace-confined.
+  it('keeps a workspace sandbox even under a full-access grant', () => {
+    expect(codexSandboxForMode('auto_edit', true)).toBe('workspace-write')
+    expect(codexSandboxForMode('default', true)).toBe('workspace-write')
+    // A full-access grant does not turn a workspace run into host access.
     expect(codexSandboxForMode('auto_edit', false)).toBe('workspace-write')
     expect(codexSandboxForMode('default')).toBe('workspace-write')
   })
