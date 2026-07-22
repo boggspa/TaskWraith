@@ -1,4 +1,9 @@
 import { GROK_PROJECTED_INPUT_USD_PER_MILLION, GROK_PROJECTED_OUTPUT_USD_PER_MILLION } from '../index.constants'
+import {
+  estimateTokensFromChars,
+  TOKEN_COUNT_CONFIDENCE_KEY,
+  TOKEN_COUNT_ESTIMATED
+} from '../../shared/tokenEstimate'
 // Grok SUBSCRIPTION-LIMIT usage — distinct from token/cost usage.
 //
 // SuperGrok/grok.com CLI auth bills against a subscription pool (a percent +
@@ -354,14 +359,30 @@ export function probeGrokUsage(deps: GrokUsageProbeDeps): Promise<GrokUsageSnaps
 
 export function estimateProjectedTokenUsage(
   promptText: string | undefined,
-  responseText: string | undefined
-): { input_tokens: number; output_tokens: number; total_tokens: number; total_cost_usd: number } {
-  const estimate = (text: string | undefined): number =>
-    Math.max(0, Math.ceil((text || '').length / 4))
-  const input_tokens = estimate(promptText)
-  const output_tokens = estimate(responseText)
+  responseText: string | undefined,
+  /** Chars streamed BEYOND the visible answer (thinking + tool payloads) —
+   * without them the sealed projection undercounted every lane the Working
+   * indicator's live estimate now includes. */
+  extraOutputChars = 0
+): {
+  input_tokens: number
+  output_tokens: number
+  total_tokens: number
+  total_cost_usd: number
+  [TOKEN_COUNT_CONFIDENCE_KEY]: typeof TOKEN_COUNT_ESTIMATED
+} {
+  const input_tokens = estimateTokensFromChars((promptText || '').length)
+  const output_tokens = estimateTokensFromChars(
+    (responseText || '').length + Math.max(0, extraOutputChars)
+  )
   const total_cost_usd =
     (input_tokens / 1_000_000) * GROK_PROJECTED_INPUT_USD_PER_MILLION +
     (output_tokens / 1_000_000) * GROK_PROJECTED_OUTPUT_USD_PER_MILLION
-  return { input_tokens, output_tokens, total_tokens: input_tokens + output_tokens, total_cost_usd }
+  return {
+    input_tokens,
+    output_tokens,
+    total_tokens: input_tokens + output_tokens,
+    total_cost_usd,
+    [TOKEN_COUNT_CONFIDENCE_KEY]: TOKEN_COUNT_ESTIMATED
+  }
 }

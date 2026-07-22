@@ -10,6 +10,8 @@
  * so every returned stats object carries explicit estimate provenance.
  */
 
+import { estimateTokensFromChars } from '../../shared/tokenEstimate'
+
 export const KIMI_ACP_TOKEN_ESTIMATE_SOURCE = 'kimi-acp-visible-text-estimate'
 
 export interface KimiAcpTokenEstimateInput {
@@ -35,7 +37,8 @@ export interface KimiAcpTokenEstimateStats extends Record<string, unknown> {
 const finiteChars = (value: number): number =>
   Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0
 
-const estimateTokens = (chars: number): number => Math.ceil(finiteChars(chars) / 4)
+// One shared chars→tokens authority (matches Kimi's documented 3-4 chars/token).
+const estimateTokens = (chars: number): number => estimateTokensFromChars(finiteChars(chars))
 
 /** Count only the serialized payload length; never retain tool content here. */
 export function kimiAcpVisiblePayloadChars(value: unknown): number {

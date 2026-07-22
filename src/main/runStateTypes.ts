@@ -171,6 +171,13 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   /** Visible ACP text used for the explicitly-estimated Kimi usage fallback. */
   kimiUsageInputChars?: number
   kimiUsageOutputChars?: number
+  /** Live chars÷4 estimate lanes for providers with no mid-stream usage
+   * envelope (Grok, Cursor). Output side accumulates thinking + tool-call
+   * payload chars BEYOND `assistantText` (which is counted separately to
+   * avoid double-counting cumulative content snapshots); input side
+   * accumulates tool-result payload chars the provider re-reads. */
+  estimateOutputExtraChars?: number
+  estimateInputChars?: number
   providerSessionId?: string | null
   approvalMode?: string
   workflowMode?: ChatWorkflowMode

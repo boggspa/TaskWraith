@@ -297,6 +297,7 @@ import {
 } from '../shared/contextCompaction'
 import { isEnsembleRoundDispatchLive } from '../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import { buildEstimatedStreamUsage, visiblePayloadChars } from '../shared/tokenEstimate'
 import {
   CHAT_UPDATE_ACK_CHANNEL,
   CHAT_UPDATE_CHANNEL,
@@ -15086,10 +15087,76 @@ function grokCanvasEvalDiagnosticSanitizer(state: CliProviderStreamState) {
   return sanitizer
 }
 
+/**
+ * Live estimated working telemetry for providers with no mid-stream usage
+ * envelope (Grok, Cursor, Kimi-ACP). Claude/Codex stream authoritative billed
+ * usage, so their Working indicator counted thinking + tool payloads live
+ * while these providers fell back to an assistant-text-only renderer estimate
+ * — the cross-provider imbalance this lane fixes. The stats are tagged
+ * estimated so the ≈ marker survives the authoritative telemetry channel;
+ * the registries throttle (450ms) and de-dupe, so per-event calls are cheap.
+ */
+function reportLiveEstimatedStreamUsage(
+  state: CliProviderStreamState,
+  counts: { outputChars: number; inputChars?: number }
+): void {
+  if (!state.appRunId) return
+  if (counts.outputChars <= 0 && (counts.inputChars || 0) <= 0) return
+  const stats = buildEstimatedStreamUsage(counts)
+  ensembleOrchestratorRef?.reportParticipantTokenUsage(state.appRunId, stats, {
+    provider: state.provider,
+    chatId: state.appChatId
+  })
+  if (!state.ensembleRun) {
+    const soloEvent = soloWorkingTokenTelemetry.report({
+      runId: state.appRunId,
+      chatId: state.appChatId,
+      provider: state.provider,
+      startedAtMs: state.startedAt,
+      stats,
+      nowMs: Date.now()
+    })
+    if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
+  }
+}
+
+/** Grok/Cursor variant: assistant text is tracked on `state.assistantText`;
+ * the extra-chars lanes carry thinking + tool payloads beyond it. */
+function reportGenericLiveEstimate(state: CliProviderStreamState): void {
+  reportLiveEstimatedStreamUsage(state, {
+    outputChars: (state.assistantText?.length || 0) + (state.estimateOutputExtraChars || 0),
+    inputChars: state.estimateInputChars || 0
+  })
+}
+
+function accumulateEstimatedStreamChars(
+  state: CliProviderStreamState,
+  lane: 'output' | 'input',
+  chars: number
+): void {
+  if (!Number.isFinite(chars) || chars <= 0) return
+  if (lane === 'output') {
+    state.estimateOutputExtraChars = (state.estimateOutputExtraChars || 0) + chars
+  } else {
+    state.estimateInputChars = (state.estimateInputChars || 0) + chars
+  }
+}
+
+/** Kimi-ACP variant: its dedicated char lanes already include content text +
+ * thinking + tool payloads (and seed input with the prompt), so report those
+ * directly rather than the assistantText+extra split. */
+function reportKimiAcpLiveEstimate(state: CliProviderStreamState): void {
+  reportLiveEstimatedStreamUsage(state, {
+    outputChars: state.kimiUsageOutputChars || 0,
+    inputChars: state.kimiUsageInputChars || 0
+  })
+}
+
 function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRunEvent) {
   if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
+    reportGenericLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'grok',
@@ -15097,6 +15164,8 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       state
     )
   } else if (evt.type === 'thinking' && evt.text) {
+    accumulateEstimatedStreamChars(state, 'output', evt.text.length)
+    reportGenericLiveEstimate(state)
     emitCliProviderThinkingEvent(state, evt.text)
   } else if (evt.type === 'tool_use') {
     const toolId = evt.toolId || `grok-tool-${++grokFallbackToolSeq}`
@@ -15118,6 +15187,12 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
       undefined,
       `grok:${state.appRunId || state.appChatId || 'unrouted'}:diagnostic`
     )
+    accumulateEstimatedStreamChars(
+      state,
+      'output',
+      toolName.length + visiblePayloadChars(evt.toolInput)
+    )
+    reportGenericLiveEstimate(state)
     // Render Grok's tool invocation as an activity card (same shape the other
     // CLI providers emit, so the renderer is provider-agnostic).
     sendAgentCompatLine(
@@ -15137,6 +15212,8 @@ function applyGrokRunEvent(state: CliProviderStreamState, evt: NormalizedGrokRun
     )
   } else if (evt.type === 'tool_result') {
     const toolId = evt.toolId || `grok-tool-${grokFallbackToolSeq || ++grokFallbackToolSeq}`
+    accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
+    reportGenericLiveEstimate(state)
     const diagnosticProjection = grokCanvasEvalDiagnosticSanitizer(state).sanitize(
       {
         type: 'tool_result',
@@ -15261,6 +15338,7 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
   if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
+    reportGenericLiveEstimate(state)
     const rawRecord =
       evt.raw && typeof evt.raw === 'object' && !Array.isArray(evt.raw)
         ? (evt.raw as Record<string, unknown>)
@@ -15278,8 +15356,16 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
       state
     )
   } else if (evt.type === 'thinking' && evt.text) {
+    accumulateEstimatedStreamChars(state, 'output', evt.text.length)
+    reportGenericLiveEstimate(state)
     emitCliProviderThinkingEvent(state, evt.text)
   } else if (evt.type === 'tool_use') {
+    accumulateEstimatedStreamChars(
+      state,
+      'output',
+      (evt.toolName || 'tool').length + visiblePayloadChars(evt.toolInput)
+    )
+    reportGenericLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'cursor',
@@ -15296,6 +15382,8 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
       state
     )
   } else if (evt.type === 'tool_result') {
+    accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
+    reportGenericLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'cursor',
@@ -15316,6 +15404,25 @@ function applyCursorRunEvent(state: CliProviderStreamState, evt: NormalizedCurso
       state.tokenUsage = {
         ...cursorUsageToStats(evt.usage),
         total_cost_usd: 0
+      }
+      // Flip the working-telemetry lane from the stream estimate to Cursor's
+      // real terminal usage (maxima keep the display monotonic; the estimated
+      // flag clears so the last frame drops the ≈).
+      ensembleOrchestratorRef?.reportParticipantTokenUsage(
+        state.appRunId,
+        state.tokenUsage as Record<string, unknown> | undefined,
+        { provider: state.provider, chatId: state.appChatId }
+      )
+      if (!state.ensembleRun) {
+        const soloEvent = soloWorkingTokenTelemetry.report({
+          runId: state.appRunId,
+          chatId: state.appChatId,
+          provider: state.provider,
+          startedAtMs: state.startedAt,
+          stats: state.tokenUsage as Record<string, unknown> | undefined,
+          nowMs: Date.now()
+        })
+        if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
       }
     }
     const outcome = cursorTerminalCompatOutcome(evt)
@@ -15945,7 +16052,11 @@ function runCliProviderProcess(
     // Grok reports no token usage; record a projected estimate so it appears in
     // the dashboard (see estimateProjectedTokenUsage — projection, not billing).
     if (provider === 'grok' && !state.tokenUsage) {
-      state.tokenUsage = estimateProjectedTokenUsage(payload.prompt, state.assistantText)
+      state.tokenUsage = estimateProjectedTokenUsage(
+        payload.prompt,
+        state.assistantText,
+        (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+      )
     }
     // 1.0.6-G5e — Honor Grok's terminal stopReason. Grok exits 0 even when it
     // self-cancels a turn mid-reasoning (stopReason 'Cancelled') before producing
@@ -17672,7 +17783,11 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
         // appears in the composer tally / dashboard, mirroring the headless
         // path's close handler.
         if (!state.tokenUsage) {
-          state.tokenUsage = estimateProjectedTokenUsage(payload.prompt, state.assistantText)
+          state.tokenUsage = estimateProjectedTokenUsage(
+        payload.prompt,
+        state.assistantText,
+        (state.estimateOutputExtraChars || 0) + (state.estimateInputChars || 0)
+      )
         }
         sendAgentCompatLine(
           event.sender,
@@ -17932,6 +18047,7 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
   if (evt.type === 'content' && evt.text) {
     state.assistantText = `${state.assistantText || ''}${evt.text}`
     state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
+    reportKimiAcpLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'kimi',
@@ -17940,12 +18056,14 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
     )
   } else if (evt.type === 'thinking' && evt.text) {
     state.kimiUsageOutputChars = (state.kimiUsageOutputChars || 0) + evt.text.length
+    reportKimiAcpLiveEstimate(state)
     queueKimiThinkingChunk(state, evt.text, (text) => emitCliProviderThinkingEvent(state, text))
   } else if (evt.type === 'tool_use') {
     state.kimiUsageOutputChars =
       (state.kimiUsageOutputChars || 0) +
       (evt.toolName || '').length +
       kimiAcpVisiblePayloadChars(evt.toolInput)
+    reportKimiAcpLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'kimi',
@@ -17962,6 +18080,7 @@ function applyKimiAcpRunEvent(state: CliProviderStreamState, evt: NormalizedGrok
   } else if (evt.type === 'tool_result') {
     state.kimiUsageInputChars =
       (state.kimiUsageInputChars || 0) + kimiAcpVisiblePayloadChars(evt.toolOutput)
+    reportKimiAcpLiveEstimate(state)
     sendAgentCompatLine(
       state.sender,
       'kimi',
