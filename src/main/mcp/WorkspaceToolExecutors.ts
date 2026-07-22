@@ -753,6 +753,90 @@ export async function executeFindFiles(
   }
 }
 
+export type WorkspaceSearchContextLine = {
+  line: number | undefined
+  text: string
+}
+
+export type WorkspaceSearchMatch = {
+  path: string
+  line: number | undefined
+  column: number | undefined
+  text: string
+  submatches: unknown[]
+  /** Present when contextLines > 0; adjacent non-matching lines before this hit. */
+  contextBefore?: WorkspaceSearchContextLine[]
+  /** Present when contextLines > 0; adjacent non-matching lines after this hit. */
+  contextAfter?: WorkspaceSearchContextLine[]
+}
+
+/**
+ * Parse rg --json stdout into structured matches, attaching --context lines when present.
+ * rg emits separate `match` and `context` events; only collecting `match` drops adjacency.
+ */
+export function parseWorkspaceSearchRgJson(
+  stdout: string,
+  context: WorkspaceToolContext,
+  options: { maxResults: number; contextLines: number }
+): WorkspaceSearchMatch[] {
+  const matches: WorkspaceSearchMatch[] = []
+  let pendingBefore: WorkspaceSearchContextLine[] = []
+  let openMatch: WorkspaceSearchMatch | null = null
+  const wantContext = options.contextLines > 0
+
+  const resetGroup = () => {
+    openMatch = null
+    pendingBefore = []
+  }
+
+  for (const line of stdout.split(/\r?\n/)) {
+    if (!line.trim()) continue
+    try {
+      const event = JSON.parse(line)
+      if (event.type === 'begin' || event.type === 'end') {
+        resetGroup()
+        continue
+      }
+      if (event.type === 'context') {
+        if (!wantContext) continue
+        const contextLine: WorkspaceSearchContextLine = {
+          line: event.data?.line_number,
+          text: String(event.data?.lines?.text || '').replace(/\r?\n$/, '')
+        }
+        if (openMatch) {
+          openMatch.contextAfter = openMatch.contextAfter || []
+          openMatch.contextAfter.push(contextLine)
+        } else {
+          pendingBefore.push(contextLine)
+        }
+        continue
+      }
+      if (event.type !== 'match') continue
+      if (matches.length >= options.maxResults) break
+      const match: WorkspaceSearchMatch = {
+        path: workspaceRelativeForContext(context, String(event.data?.path?.text || '')),
+        line: event.data?.line_number,
+        column:
+          typeof event.data?.submatches?.[0]?.start === 'number'
+            ? event.data.submatches[0].start + 1
+            : undefined,
+        text: String(event.data?.lines?.text || '').replace(/\r?\n$/, ''),
+        submatches: Array.isArray(event.data?.submatches) ? event.data.submatches : []
+      }
+      if (wantContext) {
+        match.contextBefore = pendingBefore
+        match.contextAfter = []
+      }
+      matches.push(match)
+      openMatch = match
+      pendingBefore = []
+    } catch {
+      // Ignore malformed rg JSON lines; stderr is returned separately.
+    }
+  }
+  return matches
+}
+
 export async function executeWorkspaceSearch(
   deps: WorkspaceToolExecutorDependencies,
   args: Record<string, any>,
@@ -780,28 +864,15 @@ export async function executeWorkspaceSearch(
     targetPath
   ]
   const result = await runCommandArgs(deps, ['rg', ...rgArgs], cwd, 60_000)
-  const matches: any[] = []
-  for (const line of result.stdout.split(/\r?\n/)) {
-    if (!line.trim()) continue
-    try {
-      const event = JSON.parse(line)
-      if (event.type !== 'match') continue
-      matches.push({
-        path: workspaceRelativeForContext(context, String(event.data?.path?.text || '')),
-        line: event.data?.line_number,
-        column: event.data?.submatches?.[0]?.start + 1,
-        text: String(event.data?.lines?.text || '').replace(/\r?\n$/, ''),
-        submatches: Array.isArray(event.data?.submatches) ? event.data.submatches : []
-      })
-      if (matches.length >= maxResults) break
-    } catch {
-      // Ignore malformed rg JSON lines; stderr is returned separately.
-    }
-  }
+  const matches = parseWorkspaceSearchRgJson(result.stdout, context, {
+    maxResults,
+    contextLines
+  })
   return {
     query,
     cwd,
     target: workspaceRelativeForContext(context, targetPath),
+    contextLines,
     ok: result.exitCode === 0 || result.exitCode === 1,
     exitCode: result.exitCode,
     timedOut: result.timedOut,
@@ -811,6 +882,40 @@ export async function executeWorkspaceSearch(
     stderr: truncateText(result.stderr, 20_000),
     error: result.error
   }
+}
+
+/**
+ * Prefer an actionable hint when agents send a Codex-style envelope
+ * (`*** Begin Patch`) instead of a real git unified diff. Fail-closed: no write.
+ */
+export function applyPatchFailureMessage(
+  patch: string,
+  check: Pick<HostCommandResult, 'stderr' | 'stdout' | 'error'>
+): string {
+  const detail = `${check.stderr || ''}\n${check.stdout || ''}\n${check.error || ''}`
+  const noValidPatches = /No valid patches/i.test(detail)
+  const looksLikeCodexEnvelope =
+    /^\*\*\*\s*(Begin Patch|Update File|Add File|Delete File|End Patch)/m.test(patch) ||
+    patch.includes('*** Begin Patch')
+  const looksLikeUnifiedDiff =
+    /^(diff --git |--- |\+\+\+ |@@ )/m.test(patch) || /^Index:\s/m.test(patch)
+
+  if (looksLikeCodexEnvelope && !looksLikeUnifiedDiff) {
+    return (
+      'Patch does not apply cleanly. apply_patch expects a real git unified diff ' +
+      '(diff --git / --- a/ +++ b/ with @@ -old,count +new,count @@ hunk headers). ' +
+      'Codex-style "*** Begin Patch" envelopes are not accepted — convert to unified diff first. ' +
+      'No partial write was performed.'
+    )
+  }
+  if (noValidPatches) {
+    return (
+      'Patch does not apply cleanly: no valid unified-diff hunks found. ' +
+      'Use git unified diff format with numbered hunk headers (@@ -a,b +c,d @@) and a/ b/ paths. ' +
+      'No partial write was performed.'
+    )
+  }
+  return 'Patch does not apply cleanly.'
 }
 
 export async function executeApplyPatch(
@@ -835,7 +940,7 @@ export async function executeApplyPatch(
         dryRun,
         paths: patchPaths,
         check,
-        message: 'Patch does not apply cleanly.'
+        message: applyPatchFailureMessage(patch, check)
       }
     }
     if (dryRun) {

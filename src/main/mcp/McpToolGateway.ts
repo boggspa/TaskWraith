@@ -276,6 +276,44 @@ function toSearchCandidate(definition: GatewayToolDefinition): SearchCandidate {
   }
 }
 
+/**
+ * Whole-token name boundary: "git" must not treat "github ci status" as a
+ * startsWith hit (that was ranking github_ci_status near local git_* tools).
+ */
+function nameStartsWithQueryTokens(
+  normalizedName: string,
+  normalizedQuery: string
+): boolean {
+  return (
+    normalizedName === normalizedQuery || normalizedName.startsWith(`${normalizedQuery} `)
+  )
+}
+
+/**
+ * Compact-name boost only for multi-token queries (e.g. "git show" → "gitshow").
+ * Single-token includes("git") inside "githubcistatus" is a false positive.
+ */
+function compactNameMatchesQuery(
+  compactName: string,
+  compactQuery: string,
+  queryTokenCount: number
+): boolean {
+  if (compactName === compactQuery) return true
+  if (queryTokenCount < 2) return false
+  return compactName.startsWith(compactQuery)
+}
+
+function bestNameTokenPrefixScore(nameTokens: readonly string[], term: string): number {
+  let best = 0
+  for (const token of nameTokens) {
+    if (!token.startsWith(term) || token === term) continue
+    // Scale by term/token length so "git"→"github" is weak (160) vs exact (500).
+    const scaled = Math.round(320 * (term.length / token.length))
+    if (scaled > best) best = scaled
+  }
+  return best
+}
+
 function scoreCandidate(
   candidate: SearchCandidate,
   queryTokens: readonly string[]
@@ -287,21 +325,41 @@ function scoreCandidate(
   let score = exactName ? 10_000 : 0
   const matchedTerms: string[] = []
 
-  if (!exactName && candidate.normalizedName.startsWith(normalizedQuery)) score += 2_000
-  if (!exactName && candidate.compactName.includes(compactQuery)) score += 1_000
+  if (!exactName && nameStartsWithQueryTokens(candidate.normalizedName, normalizedQuery)) {
+    score += 2_000
+  }
+  if (
+    !exactName &&
+    compactNameMatchesQuery(candidate.compactName, compactQuery, queryTokens.length)
+  ) {
+    score += 1_000
+  }
+
+  // Prefer workspace-local tools when the query says so (vs open-world remotes).
+  const wantsLocal =
+    queryTokens.includes('local') ||
+    queryTokens.includes('workspace') ||
+    queryTokens.includes('repo')
+  if (wantsLocal) {
+    const openWorld = candidate.definition.annotations?.openWorldHint === true
+    score += openWorld ? -120 : 180
+  }
 
   for (const term of queryTokens) {
     let termScore = 0
     if (candidate.nameTokens.includes(term)) {
       termScore = 500
-    } else if (candidate.nameTokens.some((token) => token.startsWith(term))) {
-      termScore = 320
-    } else if (candidate.nameTokens.some((token) => token.includes(term))) {
-      termScore = 180
-    } else if (candidate.descriptionTokens.includes(term)) {
-      termScore = 90
-    } else if (candidate.descriptionTokens.some((token) => token.startsWith(term))) {
-      termScore = 45
+    } else {
+      const prefixScore = bestNameTokenPrefixScore(candidate.nameTokens, term)
+      if (prefixScore > 0) {
+        termScore = prefixScore
+      } else if (candidate.nameTokens.some((token) => token.includes(term))) {
+        termScore = 180
+      } else if (candidate.descriptionTokens.includes(term)) {
+        termScore = 90
+      } else if (candidate.descriptionTokens.some((token) => token.startsWith(term))) {
+        termScore = 45
+      }
     }
     if (termScore > 0) {
       matchedTerms.push(term)

@@ -189,6 +189,59 @@ describe('searchGatewayCapabilities', () => {
     expect(reverse).toEqual(forward)
   })
 
+  it('does not rank github_ci_status above local git_* for a local-git query', () => {
+    const definitions = [
+      {
+        name: 'git_show',
+        description:
+          'Show bounded metadata, stats, and optionally patch output for a single git ref.',
+        annotations: { openWorldHint: false },
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'git_log',
+        description: 'Return bounded structured commit history for the active workspace.',
+        annotations: { openWorldHint: false },
+        inputSchema: { type: 'object', properties: {} }
+      },
+      {
+        name: 'github_ci_status',
+        description:
+          'Read GitHub Actions / pull request check state for the active workspace using gh.',
+        annotations: { openWorldHint: true },
+        inputSchema: { type: 'object', properties: {} }
+      }
+    ]
+    const result = searchGatewayCapabilities({
+      query: 'local git metadata',
+      limit: 3,
+      definitions,
+      eligibleToolNames: definitions.map((definition) => definition.name)
+    })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    expect(result.matches[0]?.name).toBe('git_show')
+    const localRank = result.matches.map((match) => match.name)
+    const githubIdx = localRank.indexOf('github_ci_status')
+    if (githubIdx !== -1) {
+      expect(githubIdx).toBeGreaterThan(localRank.indexOf('git_show'))
+    }
+    // Even a bare "git" query must not treat "github" as a name prefix win.
+    const bareGit = searchGatewayCapabilities({
+      query: 'git',
+      limit: 3,
+      definitions,
+      eligibleToolNames: definitions.map((definition) => definition.name)
+    })
+    expect(bareGit.ok).toBe(true)
+    if (!bareGit.ok) return
+    expect(bareGit.matches[0]?.name.startsWith('git_')).toBe(true)
+    const githubScore =
+      bareGit.matches.find((match) => match.name === 'github_ci_status')?.score ?? 0
+    const topLocalScore = bareGit.matches[0]?.score ?? 0
+    expect(githubScore).toBeLessThan(topLocalScore)
+  })
+
   it('never discloses ineligible, audit-only, or gateway definitions', () => {
     const suppliedAuditName = 'review_verdict'
     const definitions = [

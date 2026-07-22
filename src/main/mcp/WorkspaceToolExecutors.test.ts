@@ -3,6 +3,8 @@ import { mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile } from 'node:f
 import { tmpdir } from 'node:os'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  applyPatchFailureMessage,
+  executeApplyPatch,
   executeCreateDirectory,
   executeCancelSubthread,
   executeCancelActiveRun,
@@ -27,6 +29,8 @@ import {
   executeRenamePath,
   executeRunTask,
   executeStartBackgroundProcess,
+  executeWorkspaceSearch,
+  parseWorkspaceSearchRgJson,
   summarizeTestOutput,
   resolveMcpScopedPath,
   type HostCommandResult,
@@ -373,6 +377,152 @@ describe('executeFindFiles', () => {
         workspace
       )
     ).rejects.toThrow('Path is outside the workspace.')
+  })
+})
+
+describe('executeWorkspaceSearch contextLines', () => {
+  it('forwards --context to rg and attaches before/after context from context events', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    let commandSeen: string[] = []
+    const deps = makeDeps(async (command) => {
+      commandSeen = command as string[]
+      return commandResult(
+        [
+          JSON.stringify({ type: 'begin', data: { path: { text: resolve(workspace, 'src/a.ts') } } }),
+          JSON.stringify({
+            type: 'context',
+            data: {
+              path: { text: resolve(workspace, 'src/a.ts') },
+              lines: { text: 'const before = 1\n' },
+              line_number: 1
+            }
+          }),
+          JSON.stringify({
+            type: 'match',
+            data: {
+              path: { text: resolve(workspace, 'src/a.ts') },
+              lines: { text: 'const hit = 2\n' },
+              line_number: 2,
+              submatches: [{ start: 6, end: 9, match: { text: 'hit' } }]
+            }
+          }),
+          JSON.stringify({
+            type: 'context',
+            data: {
+              path: { text: resolve(workspace, 'src/a.ts') },
+              lines: { text: 'const after = 3\n' },
+              line_number: 3
+            }
+          }),
+          JSON.stringify({ type: 'end', data: { path: { text: resolve(workspace, 'src/a.ts') } } })
+        ].join('\n')
+      )
+    })
+
+    const result = await executeWorkspaceSearch(
+      deps,
+      { query: 'hit', contextLines: 1, maxResults: 10 },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      workspace
+    )
+
+    expect(commandSeen).toContain('--context')
+    expect(commandSeen[commandSeen.indexOf('--context') + 1]).toBe('1')
+    expect(result).toMatchObject({
+      ok: true,
+      contextLines: 1,
+      count: 1,
+      matches: [
+        {
+          path: 'src/a.ts',
+          line: 2,
+          text: 'const hit = 2',
+          contextBefore: [{ line: 1, text: 'const before = 1' }],
+          contextAfter: [{ line: 3, text: 'const after = 3' }]
+        }
+      ]
+    })
+  })
+
+  it('omits context fields when contextLines is 0', () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const matches = parseWorkspaceSearchRgJson(
+      JSON.stringify({
+        type: 'match',
+        data: {
+          path: { text: resolve(workspace, 'src/a.ts') },
+          lines: { text: 'only match\n' },
+          line_number: 4,
+          submatches: []
+        }
+      }),
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      { maxResults: 10, contextLines: 0 }
+    )
+    expect(matches).toEqual([
+      {
+        path: 'src/a.ts',
+        line: 4,
+        column: undefined,
+        text: 'only match',
+        submatches: []
+      }
+    ])
+    expect(matches[0]).not.toHaveProperty('contextBefore')
+    expect(matches[0]).not.toHaveProperty('contextAfter')
+  })
+})
+
+describe('applyPatchFailureMessage', () => {
+  it('hints when a Codex-style envelope is rejected with no valid patches', () => {
+    const message = applyPatchFailureMessage(
+      '*** Begin Patch\n*** Update File: foo.ts\n@@\n-old\n+new\n*** End Patch\n',
+      { stderr: 'error: No valid patches in input\n', stdout: '', error: undefined }
+    )
+    expect(message).toContain('git unified diff')
+    expect(message).toContain('*** Begin Patch')
+    expect(message).toContain('No partial write')
+  })
+
+  it('still fails closed with a generic message for ordinary apply errors', () => {
+    expect(
+      applyPatchFailureMessage(
+        'diff --git a/foo.ts b/foo.ts\n--- a/foo.ts\n+++ b/foo.ts\n@@ -1 +1 @@\n-old\n+new\n',
+        { stderr: 'error: patch failed: foo.ts:1\n', stdout: '', error: undefined }
+      )
+    ).toBe('Patch does not apply cleanly.')
+  })
+})
+
+describe('executeApplyPatch envelope failure', () => {
+  it('returns the format hint and does not attempt apply after a failed check', async () => {
+    const workspace = resolve('/tmp/taskwraith-workspace-tools')
+    const commands: string[][] = []
+    const deps = makeDeps(async (command) => {
+      commands.push(command as string[])
+      return {
+        stdout: '',
+        stderr: 'error: No valid patches in input\n',
+        exitCode: 128,
+        timedOut: false,
+        durationMs: 5
+      }
+    })
+    // Avoid assertPatchPathsInScope throwing on envelope with no unified paths:
+    // empty path list is in-scope; git apply still fails closed.
+    const result = await executeApplyPatch(
+      deps,
+      {
+        patch:
+          '*** Begin Patch\n*** Update File: notes.md\n@@\n-old\n+new\n*** End Patch\n'
+      },
+      { scope: 'workspace', cwd: workspace, workspacePath: workspace },
+      workspace
+    )
+    expect(result.ok).toBe(false)
+    expect(result.message).toContain('*** Begin Patch')
+    expect(commands).toHaveLength(1)
+    expect(commands[0].slice(0, 3)).toEqual(['git', 'apply', '--check'])
   })
 })
 
