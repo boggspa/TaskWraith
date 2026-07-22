@@ -1,30 +1,65 @@
+import type {
+  EnsembleYieldOutcome,
+  EnsembleYieldRejectReason,
+  EnsembleYieldRouteAction
+} from './EnsembleYieldRouting'
+
 export type EnsembleYieldToolResult = {
   ok: boolean
   tool: 'ensemble_yield'
   reason?: string
   target?: string
   message?: string
-  error?: 'no_active_run'
+  error?: EnsembleYieldRejectReason
+  action?: EnsembleYieldRouteAction
+  targetParticipantId?: string
+  suggestedAliases?: string[]
 }
 
 export const ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE =
   'No active Ensemble participant run matches this yield call.'
 
 export function buildEnsembleYieldToolResult(input: {
-  yielded: boolean
+  outcome: EnsembleYieldOutcome
   reason?: string
   target?: string
 }): EnsembleYieldToolResult {
   const base = {
-    ok: input.yielded,
     tool: 'ensemble_yield' as const,
     ...(input.reason ? { reason: input.reason } : {}),
     ...(input.target ? { target: input.target } : {})
   }
-  if (input.yielded) return base
+
+  if (input.outcome.kind === 'no_active_run') {
+    return {
+      ...base,
+      ok: false,
+      message: ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE,
+      error: 'no_active_run'
+    }
+  }
+
+  const routing = input.outcome.routing
+  if (!routing) {
+    return { ...base, ok: true }
+  }
+
+  if (!routing.ok) {
+    return {
+      ...base,
+      ok: false,
+      error: routing.reason,
+      message: `Yield target was not routed (${routing.reason}).`,
+      ...(routing.suggestedAliases?.length
+        ? { suggestedAliases: routing.suggestedAliases }
+        : {})
+    }
+  }
+
   return {
     ...base,
-    message: ENSEMBLE_YIELD_NO_ACTIVE_RUN_MESSAGE,
-    error: 'no_active_run'
+    ok: true,
+    action: routing.action,
+    ...(routing.targetParticipantId ? { targetParticipantId: routing.targetParticipantId } : {})
   }
 }

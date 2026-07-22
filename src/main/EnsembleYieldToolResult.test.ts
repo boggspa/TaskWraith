@@ -8,7 +8,7 @@ describe('buildEnsembleYieldToolResult', () => {
   it('surfaces a message and error when ensemble_yield cannot resolve an active run', () => {
     expect(
       buildEnsembleYieldToolResult({
-        yielded: false,
+        outcome: { kind: 'no_active_run' },
         reason: 'Needs repair.',
         target: 'Fixman'
       })
@@ -22,18 +22,93 @@ describe('buildEnsembleYieldToolResult', () => {
     })
   })
 
-  it('keeps successful ensemble_yield payloads concise', () => {
+  it('reports successful authority routing with action metadata', () => {
     expect(
       buildEnsembleYieldToolResult({
-        yielded: true,
+        outcome: {
+          kind: 'yielded',
+          routing: {
+            ok: true,
+            action: 'promoted',
+            targetParticipantId: 'ensemble-codex'
+          }
+        },
         reason: 'Gate complete.',
-        target: 'Bossman'
+        target: 'Worker'
       })
     ).toEqual({
       ok: true,
       tool: 'ensemble_yield',
       reason: 'Gate complete.',
-      target: 'Bossman'
+      target: 'Worker',
+      action: 'promoted',
+      targetParticipantId: 'ensemble-codex'
+    })
+  })
+
+  it('marks unresolved authority yields as tool errors', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'yielded',
+          routing: {
+            ok: false,
+            reason: 'unresolved',
+            target: 'NonExistentProvider'
+          }
+        },
+        target: 'NonExistentProvider'
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'unresolved',
+      target: 'NonExistentProvider'
+    })
+  })
+
+  it('keeps targetless yields concise', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: { kind: 'yielded' },
+        reason: 'Gate complete.'
+      })
+    ).toEqual({
+      ok: true,
+      tool: 'ensemble_yield',
+      reason: 'Gate complete.'
+    })
+  })
+
+  it('surfaces hop_limit rejections from planned re-summon yields', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'yielded',
+          routing: { ok: false, reason: 'hop_limit', target: 'Worker' }
+        },
+        target: 'Worker'
+      })
+    ).toMatchObject({
+      ok: false,
+      error: 'hop_limit',
+      target: 'Worker'
+    })
+  })
+
+  it('reports non-authority yield-to-user as success', () => {
+    expect(
+      buildEnsembleYieldToolResult({
+        outcome: {
+          kind: 'yielded',
+          routing: { ok: true, action: 'user' }
+        },
+        reason: 'Need the user.',
+        target: 'user'
+      })
+    ).toMatchObject({
+      ok: true,
+      action: 'user',
+      target: 'user'
     })
   })
 })

@@ -65,8 +65,20 @@ import type {
 import {
   findAllMentions,
   resolvePhraseToParticipant,
+  resolveYieldTargetDetail,
   type ParticipantMentionMatch
 } from './EnsembleMentionAlias'
+import type {
+  EnsembleYieldOutcome,
+  EnsembleYieldRoutingResult,
+  StoredYieldRouting
+} from '../EnsembleYieldRouting'
+import {
+  storedYieldRoutingFromResult,
+  suggestUniqueYieldAliases,
+  yieldRejectStatusLine,
+  yieldRouteSuccessStatusLine
+} from '../EnsembleYieldRouting'
 import {
   classifyDispatchError,
   formatAllUnreachableNote,
@@ -2803,15 +2815,11 @@ interface ActiveRoundRuntime {
   administrativeIdleEscalated?: boolean
   bossmanSummonCountsByParticipantId?: Map<string, number>
   /**
-   * Slice C extension (1.0.3) — when a participant calls
-   * `ensemble_yield` with an explicit `target` argument, the
-   * orchestrator stashes the raw target string here. `runRound`'s
-   * loop consults it after each turn to reorder the remaining
-   * participants so the named target speaks next. Cleared after
-   * resolution (or ignored if the string doesn't resolve to a
-   * remaining participant).
+   * Canonical yield-routing outcome planned during `markYielded` and
+   * consumed by `runRound` after the yielding turn finalises. Queue
+   * mutations happen at plan time so tool results can fail closed.
    */
-  yieldTarget?: string
+  yieldRouting?: StoredYieldRouting
   /**
    * B8 — explicit-yield repair stack. When A yields to B, A is
    * remembered here so a real answered turn from B can auto-return to A.
@@ -3058,7 +3066,7 @@ export class EnsembleOrchestrator {
     runtime.fanoutReservedParticipantIds = undefined
     runtime.pendingParticipantSeatChanges = undefined
     runtime.pendingRoundEndParticipantSeatChanges = undefined
-    runtime.yieldTarget = undefined
+    runtime.yieldRouting = undefined
     runtime.yieldReturnStack = []
     this.cancelHistoryTimerHandles(runtime.chatId, runtime, chat)
 
@@ -4153,53 +4161,234 @@ export class EnsembleOrchestrator {
     return true
   }
 
-  markYielded(runId: string, reason?: string, target?: string): boolean {
+  markYielded(runId: string, reason?: string, target?: string): EnsembleYieldOutcome {
     const run = this.actionableRunForTool(runId)
-    if (!run) return false
+    if (!run) return { kind: 'no_active_run' }
     run.status = 'yielded'
     const runtime = this.roundsByChatId.get(run.chatId)
+    const chat = this.deps.getChat(run.chatId)
     const isFanoutLane = Boolean(run.laneId) || Boolean(runtime?.activeScoutRunIds?.has(runId))
-    // Slice C extension (1.0.3) — if the participant named a target,
-    // remember it on the round runtime so `runRound` can reorder
-    // remaining participants before the next turn. We always set
-    // runtime.yieldTarget on the round that owns this run, regardless
-    // of how the orchestrator's loop resolves it (resolution + clear
-    // happens in runRound after the current turn finalises).
-    if (target && runtime && !isFanoutLane) {
-      runtime.yieldTarget = target
-      if (isUserYieldTarget(target)) runtime.returnedControlToUser = true
-      this.pushYieldReturnFrame(runtime, run, target)
+    let routing: EnsembleYieldRoutingResult | undefined
+
+    if (target && runtime && chat?.ensemble) {
+      if (isFanoutLane) {
+        routing = { ok: false, reason: 'fanout_lane_ignored', target }
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          yieldRejectStatusLine({ target, reason: 'fanout_lane_ignored' })
+        )
+      } else {
+        routing = this.applyYieldTargetRouting(chat, runtime, run, target)
+      }
+      const stored = routing
+        ? storedYieldRoutingFromResult(routing, run, {
+            continuationReserved: routing.ok && routing.action === 'resummoned'
+          })
+        : undefined
+      if (stored) runtime.yieldRouting = stored
     }
+
     this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
-    return true
+    return { kind: 'yielded', ...(routing ? { routing } : {}) }
   }
 
-  private pushYieldReturnFrame(
+  private applyYieldTargetRouting(
+    chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     run: ActiveParticipantRun,
     target: string
-  ): void {
-    if (isUserYieldTarget(target)) return
-    const chat = this.deps.getChat(run.chatId)
-    const targetParticipant = resolveYieldTargetParticipant(
-      chat?.ensemble?.participants || [],
-      target,
-      run.participant
-    )
-    if (!targetParticipant?.enabled) return
-    if (
-      runtime.dmTargetParticipantId &&
-      targetParticipant.id !== runtime.dmTargetParticipantId
-    ) {
-      return
+  ): EnsembleYieldRoutingResult {
+    const displayTarget = target.trim()
+    const reject = (
+      reason: Exclude<EnsembleYieldRoutingResult, { ok: true }>['reason'],
+      extra?: { suggestedAliases?: string[] }
+    ): EnsembleYieldRoutingResult => {
+      const result: EnsembleYieldRoutingResult = {
+        ok: false,
+        reason,
+        target: displayTarget,
+        ...(extra?.suggestedAliases?.length ? { suggestedAliases: extra.suggestedAliases } : {})
+      }
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        yieldRejectStatusLine({
+          target: displayTarget,
+          reason,
+          suggestedAliases: extra?.suggestedAliases
+        })
+      )
+      return result
     }
-    if (isBackgroundParticipant(targetParticipant)) return
-    runtime.yieldReturnStack ??= []
-    runtime.yieldReturnStack.push({
-      returnParticipantId: run.participant.id,
-      targetParticipantId: targetParticipant.id
-    })
+
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+    const hasAuthority = authority.ok
+
+    if (isUserYieldTarget(target)) {
+      runtime.returnedControlToUser = true
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `${run.participant.role || providerLabel(run.participant.provider)} yielded to the user. Round closed.`
+      )
+      return { ok: true, action: 'user' }
+    }
+
+    const participants = chat.ensemble?.participants || []
+    const detail = resolveYieldTargetDetail(
+      target,
+      participants,
+      new Set([run.participant.id])
+    )
+    if (detail.kind === 'self') return reject('unresolved')
+    if (detail.kind === 'ambiguous') {
+      return reject('ambiguous', {
+        suggestedAliases: suggestUniqueYieldAliases(detail.matches)
+      })
+    }
+    if (detail.kind === 'unresolved') return reject('unresolved')
+
+    const participant = detail.participant
+    const displayName = participantDisplayName(participant)
+
+    if (!participant.enabled) return reject('blocked_status')
+    if (runtime.unreachableParticipantIds?.has(participant.id)) return reject('blocked_status')
+    if (this.activeBossmanQuarantine(chat, runtime.roundId, participant.id)) {
+      return reject('blocked_status')
+    }
+    if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
+      return reject('outside_scope')
+    }
+    if (this.participantFanoutDispatchState(runtime, participant.id)) {
+      return reject('blocked_status')
+    }
+
+    if (isBackgroundParticipant(participant)) {
+      if (!hasAuthority) return reject('authority_precedence')
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        yieldRouteSuccessStatusLine('background_reserved', displayName)
+      )
+      return {
+        ok: true,
+        action: 'background_reserved',
+        targetParticipantId: participant.id
+      }
+    }
+
+    const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
+    const bossId = this.activeBossmanParticipantId(chat, runtime)
+    const captainId = this.activeSecondInCommandParticipantId(chat, runtime)
+    const primary = this.primaryBossUnavailable(chat, runtime, bossId)
+    const pendingAuthorityIds = new Set<string>()
+    if (bossId) pendingAuthorityIds.add(bossId)
+    if (captainId && primary.unavailable) pendingAuthorityIds.add(captainId)
+
+    const idx = remaining.findIndex((entry) => entry.id === participant.id)
+
+    if (hasAuthority) {
+      if (idx >= 0) {
+        return { ok: true, action: 'promoted', targetParticipantId: participant.id }
+      }
+      if (runtime.orchestrationMode === 'continuous') {
+        const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, {
+          allowAnsweredParticipant: true,
+          allowYieldedParticipant: true
+        })
+        if (!eligibility.appended) {
+          if (eligibility.reason === 'hop_limit') return reject('hop_limit')
+          if (eligibility.reason === 'outside_round_scope') return reject('outside_scope')
+          return reject('blocked_status')
+        }
+        this.commitContinuationTurn(
+          runtime,
+          remaining,
+          participant,
+          `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`
+        )
+        return { ok: true, action: 'resummoned', targetParticipantId: participant.id }
+      }
+      return reject('blocked_status')
+    }
+
+    if (idx < 0) return reject('authority_precedence')
+    if (
+      idx > 0 &&
+      remaining
+        .slice(0, idx)
+        .some((entry) => entry.enabled && pendingAuthorityIds.has(entry.id))
+    ) {
+      return reject('authority_precedence')
+    }
+    return { ok: true, action: 'hint_applied', targetParticipantId: participant.id }
+  }
+
+  private applyStoredYieldRouting(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun,
+    remaining: EnsembleParticipant[],
+    pending: StoredYieldRouting
+  ): boolean {
+    switch (pending.kind) {
+      case 'rejected':
+        return false
+      case 'user':
+        return true
+      case 'background':
+        return true
+      case 'queue': {
+        const participant = chat.ensemble?.participants.find(
+          (entry) => entry.id === pending.targetParticipantId && entry.enabled
+        )
+        if (!participant) return false
+        const displayName = participantDisplayName(participant)
+        if (pending.action === 'resummoned') {
+          if (pending.continuationReserved) {
+            return true
+          }
+          const continuation = this.tryAppendContinuationTurn(
+            runtime,
+            remaining,
+            participant,
+            `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`,
+            { allowAnsweredParticipant: true, allowYieldedParticipant: true }
+          )
+          if (!continuation.appended) {
+            this.appendRoundStatus(
+              runtime.chatId,
+              runtime.roundId,
+              `Yield to ${displayName} was not routed because ${this.describeContinuationDecline(continuation)}; foreground rotation continues.`
+            )
+            this.discardYieldReturnFrameForYielder(runtime, run.participant.id)
+            return false
+          }
+          return true
+        }
+        const idx = remaining.findIndex((entry) => entry.id === pending.targetParticipantId)
+        if (idx > 0) {
+          const [moved] = remaining.splice(idx, 1)
+          remaining.unshift(moved)
+        }
+        if (idx >= 0) {
+          this.appendRoundStatus(
+            runtime.chatId,
+            runtime.roundId,
+            yieldRouteSuccessStatusLine(pending.action, displayName)
+          )
+          runtime.yieldReturnStack ??= []
+          runtime.yieldReturnStack.push({
+            returnParticipantId: run.participant.id,
+            targetParticipantId: pending.targetParticipantId
+          })
+          return true
+        }
+        return false
+      }
+    }
   }
 
   private clearYieldReturnStack(runtime: ActiveRoundRuntime): void {
@@ -11659,8 +11848,7 @@ export class EnsembleOrchestrator {
         if (runtime.cancelled) break
       }
       const bossYieldedToUser =
-        Boolean(runtime.yieldTarget) &&
-        isUserYieldTarget(runtime.yieldTarget) &&
+        runtime.returnedControlToUser &&
         this.isBossParticipant(chat, runtime, participant.id)
       if (bossYieldedToUser) {
         this.prepareBossYieldToUserClose(runtime)
@@ -11671,105 +11859,52 @@ export class EnsembleOrchestrator {
       // of this round are dropped intentionally: queued sends imply
       // the user wants a new turn, not the leftover of this one.
       if (runtime.queuedPrompts.length > 0) break
-      // Slice C extension (1.0.3) — if the just-finished participant
-      // yielded with `target`, find that target in `remaining` and
-      // shuffle it to the front so it speaks next. Resolution rules
-      // (first match wins):
-      //   1. exact match on participant.id (e.g. 'ensemble-codex')
-      //   2. case-insensitive provider name ('Codex' / 'codex')
-      //   3. case-insensitive role match ('Worker' / 'worker')
-      // Unresolved targets fall through to default ordering so a
-      // typo doesn't strand the round. Cleared regardless so a
-      // future yield without `target` reverts to default order.
       let routedByYieldTarget = false
-      if (runtime.yieldTarget) {
-        if (isUserYieldTarget(runtime.yieldTarget)) {
-          routedByYieldTarget = true
-          this.clearYieldReturnStack(runtime)
-          remaining.length = 0
-          this.appendRoundStatus(
-            runtime.chatId,
-            runtime.roundId,
-            `${participant.role || providerLabel(participant.provider)} yielded to the user. Round closed.`
-          )
-          this.deps.notifyUserAttention?.({
-            reason: 'yieldToUser',
-            chatId: runtime.chatId,
-            workspaceId: chat.workspaceId ?? null,
-            runId: run.runId,
-            roundId: runtime.roundId,
-            participantId: participant.id
-          })
-        } else {
-          const resolvedTarget = resolveYieldTargetParticipant(
-            chat.ensemble.participants || [],
-            runtime.yieldTarget,
-            participant
-          )
-          if (
-            resolvedTarget?.enabled &&
-            runtime.dmTargetParticipantId &&
-            resolvedTarget.id !== runtime.dmTargetParticipantId
-          ) {
-            this.appendRoundStatus(
-              runtime.chatId,
-              runtime.roundId,
-              `Yield target ${participantDisplayName(resolvedTarget)} is outside this user-targeted round; no turn appended.`
-            )
-          } else if (resolvedTarget?.enabled && isBackgroundParticipant(resolvedTarget)) {
-            await this.dispatchBackgroundParticipants(runtime, chat, [resolvedTarget], {
-              prompt: run.content,
-              sourceRunId: run.runId,
-              reason: `Explicit yield from ${participantDisplayName(participant)}.`
-            })
+      const pendingYieldRouting = runtime.yieldRouting
+      if (pendingYieldRouting) {
+        runtime.yieldRouting = undefined
+        switch (pendingYieldRouting.kind) {
+          case 'user':
             routedByYieldTarget = true
-            this.appendRoundStatus(
-              runtime.chatId,
-              runtime.roundId,
-              `Yielded background work to ${participantDisplayName(resolvedTarget)}; foreground rotation continues.`
+            this.clearYieldReturnStack(runtime)
+            remaining.length = 0
+            this.deps.notifyUserAttention?.({
+              reason: 'yieldToUser',
+              chatId: runtime.chatId,
+              workspaceId: chat.workspaceId ?? null,
+              runId: run.runId,
+              roundId: runtime.roundId,
+              participantId: participant.id
+            })
+            break
+          case 'background': {
+            const backgroundTarget = chat.ensemble.participants.find(
+              (entry) =>
+                entry.id === pendingYieldRouting.targetParticipantId && entry.enabled
             )
-          } else {
-            const idx = resolveYieldTargetIndex(remaining, runtime.yieldTarget)
-            if (idx > 0) {
-              const [moved] = remaining.splice(idx, 1)
-              remaining.unshift(moved)
+            if (backgroundTarget) {
+              await this.dispatchBackgroundParticipants(runtime, chat, [backgroundTarget], {
+                prompt: pendingYieldRouting.prompt,
+                sourceRunId: pendingYieldRouting.sourceRunId,
+                reason: `Explicit yield from ${participantDisplayName(participant)}.`
+              })
               routedByYieldTarget = true
-              this.appendRoundStatus(
-                runtime.chatId,
-                runtime.roundId,
-                `Yielded to ${moved.role || moved.provider} (${moved.provider}).`
-              )
-            } else if (idx === 0) {
-              routedByYieldTarget = true
-            } else if (runtime.orchestrationMode === 'continuous' && resolvedTarget?.enabled) {
-              const continuation = this.tryAppendContinuationTurn(
-                runtime,
-                remaining,
-                resolvedTarget,
-                `Yielded back to ${resolvedTarget.role || resolvedTarget.provider} (${resolvedTarget.provider}).`,
-                {
-                  // An explicit yield target is a deliberate request to re-open
-                  // that participant even when they already answered or yielded
-                  // earlier in this pass. The hop budget still bounds the loop.
-                  allowAnsweredParticipant: true,
-                  allowYieldedParticipant: true
-                }
-              )
-              routedByYieldTarget = continuation.appended
-              if (!continuation.appended) {
-                this.appendRoundStatus(
-                  runtime.chatId,
-                  runtime.roundId,
-                  `Yield to ${participantDisplayName(resolvedTarget)} was not routed because ${this.describeContinuationDecline(continuation)}; foreground rotation continues.`
-                )
-              }
             }
+            break
           }
-          if (!routedByYieldTarget) {
+          case 'queue':
+            routedByYieldTarget = this.applyStoredYieldRouting(
+              chat,
+              runtime,
+              run,
+              remaining,
+              pendingYieldRouting
+            )
+            break
+          case 'rejected':
             this.discardYieldReturnFrameForYielder(runtime, participant.id)
-          }
+            break
         }
-        runtime.yieldTarget = undefined
       }
       const allParticipants = chat?.ensemble?.participants || []
       const pendingParticipantTagMatches = routedByYieldTarget
@@ -13379,29 +13514,18 @@ export class EnsembleOrchestrator {
     ).appended
   }
 
-  private tryAppendContinuationTurn(
+  private evaluateContinuationTurnEligibility(
     runtime: ActiveRoundRuntime,
-    remaining: EnsembleParticipant[],
     participant: EnsembleParticipant,
-    statusMessage: string,
-    // `allowYieldedParticipant` re-summons a participant who explicitly yielded
-    // (yield-return). `allowAnsweredParticipant` re-summons one who already
-    // answered normally — used only by explicit authority continuations:
-    // Boss/Captain priority @-mentions back to the authority, and
-    // ensemble_bossman_control({ action: 'summon_participant' }). Neither bypasses
-    // 'skipped'/'failed'/'cancelled'/'unreachable' (those mean the participant
-    // errored out or was removed — re-summoning is a different, riskier concern).
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
   ): ContinuationTurnResult {
     if (runtime.orchestrationMode !== 'continuous') return { appended: false, reason: 'not_continuous' }
-    if (
-      runtime.dmTargetParticipantId &&
-      participant.id !== runtime.dmTargetParticipantId
-    ) {
+    if (runtime.dmTargetParticipantId && participant.id !== runtime.dmTargetParticipantId) {
       return { appended: false, reason: 'outside_round_scope' }
     }
-    if (runtime.unreachableParticipantIds?.has(participant.id))
+    if (runtime.unreachableParticipantIds?.has(participant.id)) {
       return { appended: false, reason: 'unreachable' }
+    }
     if (this.participantFanoutDispatchState(runtime, participant.id)) {
       return { appended: false, reason: 'active_fanout' }
     }
@@ -13415,21 +13539,21 @@ export class EnsembleOrchestrator {
       return { appended: false, reason: 'blocked_status', blockedStatus: participantStatus }
     }
     if (runtime.continuationHops >= runtime.maxContinuationHops) {
-      // Reject the extra turn immediately, but defer the terminal status until
-      // the serial queue drains. A final partial auto-continuation pass can
-      // exhaust the budget while another admitted participant is still queued;
-      // publishing "returning control" here would get ahead of that work.
       return { appended: false, reason: 'hop_limit' }
     }
     const budgetBlock = this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
     if (budgetBlock) {
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `${participantDisplayName(participant)} was not given an extra turn: ${budgetBlock}.`
-      )
       return { appended: false, reason: 'budget_exhausted', budgetMessage: budgetBlock }
     }
+    return { appended: true }
+  }
+
+  private commitContinuationTurn(
+    runtime: ActiveRoundRuntime,
+    remaining: EnsembleParticipant[],
+    participant: EnsembleParticipant,
+    statusMessage: string
+  ): void {
     runtime.continuationHops += 1
     remaining.unshift(participant)
     this.incrementBossmanBudgetUsage(runtime, [participant.id], { extraTurns: 1 })
@@ -13448,6 +13572,34 @@ export class EnsembleOrchestrator {
       runtime.roundId,
       `${statusMessage} ${label} ${runtime.continuationHops}/${runtime.maxContinuationHops}.`
     )
+  }
+
+  private tryAppendContinuationTurn(
+    runtime: ActiveRoundRuntime,
+    remaining: EnsembleParticipant[],
+    participant: EnsembleParticipant,
+    statusMessage: string,
+    // `allowYieldedParticipant` re-summons a participant who explicitly yielded
+    // (yield-return). `allowAnsweredParticipant` re-summons one who already
+    // answered normally — used only by explicit authority continuations:
+    // Boss/Captain priority @-mentions back to the authority, and
+    // ensemble_bossman_control({ action: 'summon_participant' }). Neither bypasses
+    // 'skipped'/'failed'/'cancelled'/'unreachable' (those mean the participant
+    // errored out or was removed — re-summoning is a different, riskier concern).
+    options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
+  ): ContinuationTurnResult {
+    const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, options)
+    if (!eligibility.appended) {
+      if (eligibility.reason === 'budget_exhausted' && eligibility.budgetMessage) {
+        this.appendRoundStatus(
+          runtime.chatId,
+          runtime.roundId,
+          `${participantDisplayName(participant)} was not given an extra turn: ${eligibility.budgetMessage}.`
+        )
+      }
+      return eligibility
+    }
+    this.commitContinuationTurn(runtime, remaining, participant, statusMessage)
     return { appended: true }
   }
 
@@ -15789,25 +15941,6 @@ export function resolveYieldTargetIndex(remaining: EnsembleParticipant[], target
     return remaining.findIndex((p) => p.id === byAlias.id)
   }
   return -1
-}
-
-function resolveYieldTargetParticipant(
-  participants: EnsembleParticipant[],
-  target: string,
-  speaker?: EnsembleParticipant
-): EnsembleParticipant | null {
-  const trimmed = stripLeadingAt(target || '')
-  if (!trimmed) return null
-  const lc = trimmed.toLowerCase()
-  if (lc === 'me' || lc === 'self' || lc === 'user' || lc === 'human') return null
-  const byId = participants.find((p) => p.id === trimmed)
-  if (byId && byId.id !== speaker?.id) return byId
-  const resolved = resolvePhraseToParticipant(
-    trimmed,
-    participants,
-    speaker ? new Set([speaker.id]) : undefined
-  )
-  return resolved || null
 }
 
 /**

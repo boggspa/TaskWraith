@@ -28053,10 +28053,11 @@ async function executeGeminiMcpTool(
       // to default ordering — see EnsembleOrchestrator.runRound.
       const reason = optionalString(args.reason)
       const target = optionalString(args.target)
-      const yielded = Boolean(
-        ensembleOrchestratorRef?.markYielded(context.appRunId || '', reason, target)
-      )
-      const result = buildEnsembleYieldToolResult({ yielded, reason, target })
+      const outcome =
+        ensembleOrchestratorRef?.markYielded(context.appRunId || '', reason, target) ?? {
+          kind: 'no_active_run' as const
+        }
+      const result = buildEnsembleYieldToolResult({ outcome, reason, target })
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_send') {

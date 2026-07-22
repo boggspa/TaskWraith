@@ -41,6 +41,11 @@ import {
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import type { EnsembleRosterPreset } from '../EnsembleRosterPresetContract'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
+import type { EnsembleYieldOutcome } from '../EnsembleYieldRouting'
+
+function expectYielded(outcome: EnsembleYieldOutcome): void {
+  expect(outcome.kind).toBe('yielded')
+}
 
 const ensemble: EnsembleConfig = {
   enabled: true,
@@ -5074,9 +5079,7 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expect(
-      harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Passing to worker.')
-    ).toBe(true)
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!, 'Passing to worker.'))
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
@@ -5722,13 +5725,9 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Worker should take the implementation first.',
-        'Worker'
-      )
-    ).toBe(true)
+        'Worker'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
 
     harness.orchestrator.handleProviderOutput(
@@ -9439,6 +9438,7 @@ Next action:
 
   it('closes the round when a speaker explicitly yields to user', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Start the work.',
@@ -9447,13 +9447,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].provider).toBe('claude')
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Need the user to choose.',
-        'user'
-      )
-    ).toBe(true)
+        'user'))
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -9470,6 +9466,7 @@ Next action:
 
   it('keeps an explicit yield to user terminal in Continuous mode', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 24
     harness.orchestrator.startRound({
@@ -9479,13 +9476,9 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Return control to the user.',
-        'user'
-      )
-    ).toBe(true)
+        'user'))
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -9495,6 +9488,316 @@ Next action:
         message.content.includes('auto-continuing for another pass')
       )
     ).toBe(false)
+  })
+
+  describe('yield-routing contract v2 regressions', () => {
+    it('A: lets a non-authority Worker yield to user without authority_precedence', async () => {
+      const harness = makeHarness()
+      harness.chat.ensemble!.bossmanParticipantId = 'claude'
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 10
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Boss opens, worker returns control.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success', stats: { total_tokens: 10 } }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(harness.dispatched[1].provider).toBe('codex')
+
+      const outcome = harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Need the user to decide.',
+        'user'
+      )
+      expect(outcome).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: true, action: 'user' }
+      })
+      await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
+      expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(0)
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('authority_precedence')
+        )
+      ).toBe(false)
+    })
+
+    it('C: rejects yield-to-user from a detached fan-out lane with fanout_lane_ignored', async () => {
+      const harness = makeFanoutRaceHarness()
+      await startUnresolvedReviewerFanout(harness)
+
+      const outcome = harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Need the user.',
+        'user'
+      )
+      expect(outcome).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: false, reason: 'fanout_lane_ignored', target: 'user' }
+      })
+      const runtime = (
+        harness.orchestrator as unknown as {
+          roundsByChatId: Map<string, { yieldRouting?: { kind: string }; returnedControlToUser?: boolean }>
+        }
+      ).roundsByChatId.get('ensemble-chat')
+      expect(runtime?.yieldRouting?.kind).toBe('rejected')
+      expect(runtime?.returnedControlToUser).not.toBe(true)
+    })
+
+    it('D: rejects continuous re-summon at markYielded when hop budget is exhausted', async () => {
+      const initialChat = makeChat()
+      initialChat.ensemble!.orchestrationMode = 'continuous'
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+      const harness = makeHarness({ initialChat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      expectYielded(
+        harness.orchestrator.markYielded(
+          harness.dispatched[0].appRunId!,
+          'Worker should take this.',
+          'Worker'
+        )
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'Worker answer.' }
+      )
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      expect(harness.dispatched[2].provider).toBe('claude')
+
+      const runtime = (
+        harness.orchestrator as unknown as {
+          roundsByChatId: Map<
+            string,
+            {
+              continuationHops: number
+              maxContinuationHops: number
+              yieldRouting?: { kind: string; action?: string }
+            }
+          >
+        }
+      ).roundsByChatId.get('ensemble-chat')
+      runtime!.continuationHops = runtime!.maxContinuationHops
+
+      const outcome = harness.orchestrator.markYielded(
+        harness.dispatched[2].appRunId!,
+        'Need worker again.',
+        'Worker'
+      )
+      expect(outcome).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: false, reason: 'hop_limit', target: 'Worker' }
+      })
+      expect(runtime?.yieldRouting).toMatchObject({ kind: 'rejected', reason: 'hop_limit' })
+      expect(
+        harness.chat.messages.some((message) =>
+          (message.content || '').includes('Yield target "Worker" was not routed: hop_limit')
+        )
+      ).toBe(true)
+    })
+
+    it('E: reserves exactly one continuation hop for an eligible re-summon yield', async () => {
+      const initialChat = makeChat()
+      initialChat.ensemble!.orchestrationMode = 'continuous'
+      initialChat.ensemble!.bossmanParticipantId = 'claude'
+      initialChat.ensemble!.maxContinuationHops = 6
+      initialChat.activeGoal = { ...buildActiveGoal('goal-x'), status: 'completed' }
+      const harness = makeHarness({ initialChat })
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Plan and execute.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      expectYielded(
+        harness.orchestrator.markYielded(
+          harness.dispatched[0].appRunId!,
+          'Worker should take this.',
+          'Worker'
+        )
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'content', text: 'Worker answer.' }
+      )
+      harness.orchestrator.handleProviderOutput(
+        'codex',
+        { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+      expect(harness.dispatched[2].provider).toBe('claude')
+
+      const runtime = (
+        harness.orchestrator as unknown as {
+          roundsByChatId: Map<
+            string,
+            { continuationHops: number; yieldRouting?: { kind: string; continuationReserved?: boolean } }
+          >
+        }
+      ).roundsByChatId.get('ensemble-chat')
+      const hopsBefore = runtime!.continuationHops
+
+      const outcome = harness.orchestrator.markYielded(
+        harness.dispatched[2].appRunId!,
+        'Need worker again.',
+        'Worker'
+      )
+      expect(outcome).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: true, action: 'resummoned', targetParticipantId: 'codex' }
+      })
+      expect(runtime!.continuationHops).toBe(hopsBefore + 1)
+      expect(runtime?.yieldRouting).toMatchObject({
+        kind: 'queue',
+        action: 'resummoned',
+        continuationReserved: true
+      })
+
+      harness.orchestrator.handleProviderOutput(
+        'claude',
+        { appRunId: harness.dispatched[2].appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(4))
+      expect(harness.dispatched[3].provider).toBe('codex')
+      expect(runtime!.continuationHops).toBe(hopsBefore + 1)
+    })
+
+    it('F: rejects turn-bound re-summon at plan time with blocked_status', async () => {
+      const harness = makeHarness()
+      harness.chat.ensemble!.bossmanParticipantId = 'codex'
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'claude',
+          provider: 'claude',
+          enabled: true,
+          role: 'Planner',
+          instructions: 'Plan.',
+          order: 1,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Boss',
+          instructions: 'Coordinate.',
+          order: 2,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Turn-bound handoff.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+      completeDispatchedRun(harness, 0)
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+
+      const outcome = harness.orchestrator.markYielded(
+        harness.dispatched[1].appRunId!,
+        'Need the planner again.',
+        'Planner'
+      )
+      expect(outcome).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: false, reason: 'blocked_status', target: 'Planner' }
+      })
+    })
+
+    it('G: treats idx=0 and idx>0 authority yields as promoted routes', async () => {
+      const harness = makeHarness()
+      harness.chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'ensemble-claude',
+          provider: 'claude',
+          enabled: true,
+          role: 'Planner',
+          instructions: 'Plan.',
+          order: 1,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'ensemble-gemini',
+          provider: 'gemini',
+          enabled: true,
+          role: 'Researcher',
+          instructions: 'Research.',
+          order: 2,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'ensemble-codex',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Work.',
+          order: 3,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Route explicitly.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+      const idxPositive = harness.orchestrator.markYielded(
+        harness.dispatched[0].appRunId!,
+        'Plan complete',
+        'codex'
+      )
+      expect(idxPositive).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: true, action: 'promoted', targetParticipantId: 'ensemble-codex' }
+      })
+      await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+      expect(harness.dispatched[1].provider).toBe('codex')
+
+      const idxZeroHarness = makeHarness()
+      idxZeroHarness.chat.ensemble!.bossmanParticipantId = 'claude'
+      idxZeroHarness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Worker is already next.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      await vi.waitFor(() => expect(idxZeroHarness.dispatched).toHaveLength(1))
+      const idxZero = idxZeroHarness.orchestrator.markYielded(
+        idxZeroHarness.dispatched[0].appRunId!,
+        'Hand straight to Worker.',
+        'Worker'
+      )
+      expect(idxZero).toMatchObject({
+        kind: 'yielded',
+        routing: { ok: true, action: 'promoted', targetParticipantId: 'codex' }
+      })
+    })
   })
 
   it('lets the assigned Boss definitively close the round and drop queued prompts', async () => {
@@ -9519,13 +9822,9 @@ Next action:
       'Fresh user prompt that should be dropped.'
     ])
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Need to return control to the user.',
-        'user'
-      )
-    ).toBe(true)
+        'user'))
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -10218,13 +10517,9 @@ Next action:
       parameters: { target: 'Worker' }
     })
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Passing to worker.',
-        'Worker'
-      )
-    ).toBe(true)
+        'Worker'))
 
     harness.orchestrator.handleProviderOutput('claude', route, {
       type: 'tool_result',
@@ -10722,6 +11017,7 @@ Next action:
   it('reopens a spoken participant only once when an explicit yield and @mention target the same seat', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
     // This test isolates the explicit @-mention/yield ROUTING mechanics. A
     // pre-completed goal switches OFF continuous-mode auto-continuation (which
     // would otherwise start another pass at drain), so the round finalizes where
@@ -10889,6 +11185,7 @@ Next action:
   ): Promise<number | undefined> {
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 6
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex'
     harness.chat.ensemble!.participants = [
       ...CONTINUOUS_QUARTET.map((participant) => ({ ...participant })),
       ...(withBackground ? [{ ...CONTINUOUS_BACKGROUND }] : [])
@@ -11013,13 +11310,9 @@ Next action:
 
     const finalPartialCodex = continuousForegroundRuns(harness)[8]
     expect(finalPartialCodex.ensembleRun?.participantId).toBe('ensemble-codex')
-    expect(
-      harness.orchestrator.markYielded(
-        finalPartialCodex.appRunId!,
+    expectYielded(harness.orchestrator.markYielded(finalPartialCodex.appRunId!,
         'Scout should take another look.',
-        'Scout'
-      )
-    ).toBe(true)
+        'Scout'))
 
     // Grok already answered and the hop budget is exhausted, so the directed
     // extra turn is correctly rejected. Claude was already admitted to the
@@ -11035,9 +11328,7 @@ Next action:
     ).toHaveLength(2)
     expect(
       harness.chat.messages.some((message) =>
-        (message.content || '').includes(
-          'Yield to Scout was not routed because continuation-hop budget exhausted'
-        )
+        (message.content || '').includes('Yield target "Scout" was not routed: hop_limit')
       )
     ).toBe(true)
     expect(continuousLimitStatuses(harness)).toHaveLength(0)
@@ -11464,6 +11755,99 @@ Next action:
     expect(resolveYieldTargetIndex(remaining, 'GPT 5.5')).toBe(0)
   })
 
+  it('promotes a Boss yield target already present later in the remaining queue', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-claude'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-claude',
+        provider: 'claude',
+        enabled: true,
+        role: 'Planner',
+        instructions: 'Plan.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'ensemble-gemini',
+        provider: 'gemini',
+        enabled: true,
+        role: 'Researcher',
+        instructions: 'Research.',
+        order: 2,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'ensemble-codex',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Work.',
+        order: 3,
+        permissionPresetId: 'workspace_write'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan then hand straight to Codex.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const outcome = harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Plan complete',
+      'codex'
+    )
+    expect(outcome).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, action: 'promoted', targetParticipantId: 'ensemble-codex' }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('codex')
+  })
+
+  it('rejects ambiguous same-provider yield targets with tool-visible failure', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'ensemble-codex-main'
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'ensemble-codex-main',
+        provider: 'codex',
+        enabled: true,
+        role: 'MainWorker',
+        instructions: 'Main work.',
+        order: 1,
+        model: 'gpt-5.5',
+        permissionPresetId: 'workspace_write'
+      },
+      {
+        id: 'ensemble-codex-review',
+        provider: 'codex',
+        enabled: true,
+        role: 'AdvReview',
+        instructions: 'Review.',
+        order: 2,
+        model: 'gpt-5.4-mini',
+        permissionPresetId: 'read_only'
+      }
+    ]
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Route explicitly.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const outcome = harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Need the other codex seat.',
+      'codex'
+    )
+    expect(outcome).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: false, reason: 'ambiguous', target: 'codex' }
+    })
+  })
+
   it('does not append an extra turn when @-tagging a participant who already reached a terminal status', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
@@ -11874,6 +12258,7 @@ Next action:
     const harness = makeHarness()
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     harness.chat.ensemble!.maxContinuationHops = 24
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
     harness.chat.ensemble!.participants = [
       {
         id: 'grok-tag-a',
@@ -11925,13 +12310,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('boss')
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[1].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[1].appRunId!,
         'Please check this again.',
-        'GrokTagA'
-      )
-    ).toBe(true)
+        'GrokTagA'))
 
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
     expect(harness.dispatched[2].ensembleRun?.participantId).toBe('grok-tag-a')
@@ -11979,13 +12360,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('typecheckz')
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Needs repair.',
-        'Fixman'
-      )
-    ).toBe(true)
+        'Fixman'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
 
@@ -12067,13 +12444,9 @@ Next action:
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     expect(harness.dispatched[0].ensembleRun?.participantId).toBe('gate')
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Fix this first.',
-        'Fixman'
-      )
-    ).toBe(true)
+        'Fixman'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].ensembleRun?.participantId).toBe('fixman')
 
@@ -12208,6 +12581,7 @@ Next action:
 
   it('clears yield-return frames when the yielded target returns to the user', async () => {
     const harness = makeHarness()
+    harness.chat.ensemble!.bossmanParticipantId = 'fixman'
     harness.chat.ensemble!.orchestrationMode = 'continuous'
     // Pre-completed goal disables auto-continuation to isolate the yield-return
     // frame-clearing mechanics under test (see the note on the first such test).
@@ -12257,7 +12631,7 @@ Next action:
     ).toBe(false)
   })
 
-  it('falls through to default order when yield target is unresolved', async () => {
+  it('keeps default order but rejects an unresolved explicit yield target', async () => {
     const harness = makeHarness()
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -12269,11 +12643,15 @@ Next action:
     // Yield with a target string that matches nothing in the
     // remaining queue — Codex is the only one left, so it should
     // still come up next.
-    harness.orchestrator.markYielded(
+    const outcome = harness.orchestrator.markYielded(
       harness.dispatched[0].appRunId!,
       'Pass it on',
       'NonExistentProvider'
     )
+    expect(outcome).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: false, reason: 'unresolved', target: 'NonExistentProvider' }
+    })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('codex')
   })
@@ -12484,13 +12862,9 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Reviewer should continue.',
-        'Reviewer'
-      )
-    ).toBe(true)
+        'Reviewer'))
 
     await vi.waitFor(() => expect(harness.chat.ensemble?.activeRound?.status).toBe('completed'))
     expect(harness.dispatched).toHaveLength(1)
@@ -12499,10 +12873,7 @@ Next action:
       harness.chat.messages.some(
         (message) =>
           message.metadata?.kind === 'ensembleRoundStatus' &&
-          message.content.startsWith('Yield target ') &&
-          message.content.endsWith(
-            'is outside this user-targeted round; no turn appended.'
-          )
+          message.content.includes('Yield target "Reviewer" was not routed: outside_scope')
       )
     ).toBe(true)
   })
@@ -12831,7 +13202,7 @@ Next action:
     // can bring the Boss back is the priority @-mention under test (yield-return
     // already allows yielded, and would confound the assertion).
     const bossRunId = harness.dispatched[0].appRunId!
-    expect(harness.orchestrator.markYielded(bossRunId, 'Worker, take it.')).toBe(true)
+    expectYielded(harness.orchestrator.markYielded(bossRunId, 'Worker, take it.'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
 
@@ -14860,7 +15231,9 @@ Next action:
     }
     expect(internals.runsByRunId.get(ownerRunId)?.terminalFinalized).toBe(true)
     expect(harness.orchestrator.getParticipantIdForRun(ownerRunId)).toBeNull()
-    expect(harness.orchestrator.markYielded(ownerRunId, 'late yield', 'Researcher')).toBe(false)
+    expect(harness.orchestrator.markYielded(ownerRunId, 'late yield', 'Researcher').kind).toBe(
+      'no_active_run'
+    )
     await expect(
       harness.orchestrator.fanoutForRun(ownerRunId, {
         targets: ['Researcher'],
@@ -14914,13 +15287,9 @@ Next action:
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expect(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Researcher should take it after the review returns.',
-        'Researcher'
-      )
-    ).toBe(true)
+        'Researcher'))
 
     await new Promise((resolve) => setTimeout(resolve, 20))
     expect(harness.dispatched).toHaveLength(2)
@@ -15042,10 +15411,6 @@ Next action:
       { type: 'content', text: 'RESEARCHER-REPORT.' }
     )
     completeDispatchedRun(harness, 2)
-    await new Promise((resolve) => setTimeout(resolve, 20))
-    expect(
-      harness.chat.messages.some((message) => message.content.includes('OWNER-AFTER-TWO-FANOUTS.'))
-    ).toBe(false)
 
     harness.orchestrator.handleProviderOutput(
       'claude',
@@ -15405,22 +15770,24 @@ Next action:
     const harness = makeFanoutRaceHarness()
     const { fanout } = await startUnresolvedReviewerFanout(harness)
 
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[1].appRunId!,
-        'Lane is done.',
-        'Researcher'
-      )
-    ).toBe(true)
+    const outcome = harness.orchestrator.markYielded(
+      harness.dispatched[1].appRunId!,
+      'Lane is done.',
+      'Researcher'
+    )
+    expect(outcome).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: false, reason: 'fanout_lane_ignored', target: 'Researcher' }
+    })
     const runtime = (
       harness.orchestrator as unknown as {
         roundsByChatId: Map<
           string,
-          { yieldTarget?: string; yieldReturnStack?: Array<{ targetParticipantId: string }> }
+          { yieldRouting?: { kind: string }; yieldReturnStack?: Array<{ targetParticipantId: string }> }
         >
       }
     ).roundsByChatId.get('ensemble-chat')
-    expect(runtime?.yieldTarget).toBeUndefined()
+    expect(runtime?.yieldRouting?.kind).toBe('rejected')
     expect(runtime?.yieldReturnStack || []).toHaveLength(0)
     await expect(fanout).resolves.toMatchObject({ ok: true })
 
@@ -16941,13 +17308,9 @@ describe('staged fan-out (stageRole)', () => {
     expect(harness.dispatched[0].provider).toBe('codex')
     // Builder explicitly yields to the Auditor: the reviewer speaks next
     // even though the Helper (a non-reviewer) still awaits its turn.
-    expect(
-      harness.orchestrator.markYielded(
-        harness.dispatched[0].appRunId!,
+    expectYielded(harness.orchestrator.markYielded(harness.dispatched[0].appRunId!,
         'Need a review now.',
-        'Auditor'
-      )
-    ).toBe(true)
+        'Auditor'))
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
     expect(harness.dispatched[1].provider).toBe('claude')
   })

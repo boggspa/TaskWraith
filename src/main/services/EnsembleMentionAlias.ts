@@ -795,11 +795,48 @@ export function resolvePhraseToParticipant(
   participants: EnsembleParticipant[],
   excludeIds?: ReadonlySet<string>
 ): EnsembleParticipant | null {
-  if (!phrase || participants.length === 0) return null
+  const detail = resolveYieldTargetDetail(phrase, participants, excludeIds)
+  return detail.kind === 'resolved' ? detail.participant : null
+}
+
+export type YieldTargetResolutionDetail =
+  | { kind: 'resolved'; participant: EnsembleParticipant }
+  | { kind: 'ambiguous'; matches: EnsembleParticipant[] }
+  | { kind: 'unresolved' }
+  | { kind: 'self' }
+
+export function resolveYieldTargetDetail(
+  target: string,
+  participants: EnsembleParticipant[],
+  excludeIds?: ReadonlySet<string>
+): YieldTargetResolutionDetail {
+  const trimmed = target.trim().replace(/^@+/, '').trim()
+  if (!trimmed || participants.length === 0) return { kind: 'unresolved' }
+  const lc = trimmed.toLowerCase()
+  if (lc === 'me' || lc === 'self') return { kind: 'self' }
+  if (USER_ALIASES.has(lc)) return { kind: 'unresolved' }
+  const byId = participants.find((participant) => participant.id === trimmed)
+  if (byId) {
+    if (excludeIds?.has(byId.id)) return { kind: 'self' }
+    return { kind: 'resolved', participant: byId }
+  }
   const aliasMap = buildParticipantAliasMap(participants)
-  const resolved = resolveMentionPhrase(phrase, aliasMap, excludeIds)
-  if (resolved?.ambiguousAmong && resolved.ambiguousAmong.length > 0) return null
-  return resolved?.participant ?? null
+  const resolvedAll = resolveMentionPhrase(trimmed, aliasMap)
+  if (resolvedAll?.ambiguousAmong && resolvedAll.ambiguousAmong.length > 0) {
+    return {
+      kind: 'ambiguous',
+      matches: [resolvedAll.participant, ...resolvedAll.ambiguousAmong]
+    }
+  }
+  const resolved = resolveMentionPhrase(trimmed, aliasMap, excludeIds)
+  if (!resolved) return { kind: 'unresolved' }
+  if (resolved.ambiguousAmong && resolved.ambiguousAmong.length > 0) {
+    return {
+      kind: 'ambiguous',
+      matches: [resolved.participant, ...resolved.ambiguousAmong]
+    }
+  }
+  return { kind: 'resolved', participant: resolved.participant }
 }
 
 /** Mirror of the orchestrator's reserved-token gate so legacy
