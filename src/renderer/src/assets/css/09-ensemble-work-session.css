@@ -2320,7 +2320,7 @@
  * the same white pill family as its sibling chrome above, not a
  * darker contrasting surface). The purple accent moves to the
  * border only, kept subtle so it doesn't fight the bright base. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: #e3e3e9;
   border-color: color-mix(in srgb, #000000 12%, transparent);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
@@ -2388,10 +2388,10 @@
  * win the cascade, mirroring the same pattern. The chip-strip
  * also gets the same strip so the unified container is the only
  * visible chrome (matches the dark-mode unified treatment). */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .composer-above-bar,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .queued-messages-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-roster-preset-picker.is-compact {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-roster-preset-picker.is-compact {
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -2413,7 +2413,7 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > *:not(:first-child) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -3144,7 +3144,7 @@
   display: none;
 }
 
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > .ensemble-above-row::before {
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row::before {
   display: none;
 }
 

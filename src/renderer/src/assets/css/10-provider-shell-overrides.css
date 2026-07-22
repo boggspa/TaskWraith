@@ -806,7 +806,7 @@
  * Keep this after EW76: these are deliberately narrower overrides for
  * the last screenshots the maintainer flagged. */
 [data-theme="obsidian"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) {
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -821,12 +821,12 @@
 }
 
 [data-theme="obsidian"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > * {
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > * {
   margin-bottom: 0;
 }
 
 [data-theme="obsidian"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) > *:not(:first-child) {
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
   border-top-color: rgba(18, 21, 27, 0.12) !important;
 }
 
@@ -944,7 +944,7 @@
 /* 1.0.6-EW78 — final Alabaster/Codex seam, summary-card contrast,
  * and Kimi solid-shell enforcement. */
 [data-theme="alabaster"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) {
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: linear-gradient(180deg, #1b1b20 0%, #151519 100%) !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
   box-shadow: 0 8px 22px rgba(0, 0, 0, 0.22) !important;
@@ -955,7 +955,7 @@
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(
     .composer-above-bar,
     .composer-above-bar-secondary,
@@ -971,13 +971,13 @@
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > * {
   margin-bottom: 0;
 }
 
 [data-theme="alabaster"][data-composer-style="codex"]
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > *:not(:first-child) {
   border-top-color: rgba(255, 255, 255, 0.12) !important;
 }
@@ -4222,7 +4222,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
   .app-transcript
   .composer-area.interface-codex
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)),
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)),
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
   .app-transcript
   .composer-area.interface-codex
@@ -4243,7 +4243,7 @@
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
   .app-transcript
   .composer-area.interface-codex
-  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+  .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(
     .composer-above-bar,
     .ensemble-above-row,

@@ -11447,7 +11447,7 @@
  *
  * Falls back to per-row pills on other shells (where the parent
  * keeps its 4px gap + each row keeps its own chrome). */
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row)) {
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   /* Tuck-under geometry mirrored from the solo CX1/CX6 rule on
    * `.composer-above-bar`: 80px narrower than the composer-surface
    * below, centred, flat bottom edge, negative bottom margin to
@@ -11473,14 +11473,14 @@
 }
 /* Neutral above-rows: drop the per-provider purple ::before gradient so the rows
  * show the solid #212121 stack background instead of a purple wash. */
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .composer-above-bar::before {
   display: none;
 }
 /* One-line layout, matching the other shells. Keep the canonical left-to-right
  * sequence (workspace → branch → upstream → files → diff → access → action)
  * on a single line; let the branch summary ellipsize so nothing wraps. */
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(.composer-above-bar, .composer-above-bar-secondary) {
   /* The compact ensemble stack intentionally switches the shared three-zone
    * grid to one-line flex, with a tighter gap for the reduced-width tucked tab. */
@@ -11490,27 +11490,27 @@
   justify-content: flex-start;
   gap: 6px;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   > * {
   margin-left: 0;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .composer-above-bar
   > .composer-above-bar-files-cluster {
   margin-left: 6px;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .composer-above-bar
   > .composer-diff-action-menu-wrap {
   margin-left: auto;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   .composer-above-bar-branch {
   min-width: 0;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(.composer-above-bar, .composer-above-bar-secondary)
   .composer-above-bar-branch
   > span {
@@ -11524,15 +11524,15 @@
  * solo `width: calc(100% - 80px)` on `.composer-above-bar` doesn't
  * leak through and double-shrink the row inside the already-
  * shrunk parent. */
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .composer-above-bar,
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .composer-above-bar-secondary,
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .ensemble-above-row,
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .queued-messages-above-row,
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > .ensemble-roster-preset-picker.is-compact {
   border: 0;
   border-radius: 0;
@@ -11545,11 +11545,11 @@
   max-width: 100%;
   align-self: stretch;
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
-  > .ensemble-roster-preset-picker.is-compact {
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
+  > .ensemble-roster-preset-picker.is-compact:not(:first-child) {
   border-top: 1px solid color-mix(in srgb, var(--composer-border) 60%, transparent);
 }
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))
+[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > *:not(:first-child):not(.composer-above-bar-secondary):not(
     .ensemble-roster-preset-picker.is-compact
   ) {
@@ -11562,7 +11562,7 @@
  * This preserves the existing solo-Codex appearance.
  */
 [data-composer-style="codex"]
-  .composer-above-bar-stack:not(:has(:is(.ensemble-above-row, .queued-messages-above-row)))
+  .composer-above-bar-stack:not(:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)))
   > .composer-above-bar:not(:last-child) {
   border-bottom-left-radius: 14px;
   border-bottom-right-radius: 14px;
