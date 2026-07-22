@@ -61,6 +61,15 @@ describe('Multiview pane Composer context parity', () => {
     )
   })
 
+  it('keeps the focused goal-popover anchor out of resting panes (discard ref in both builders)', () => {
+    const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
+
+    // Every pane's <Composer> mounts the goal button; without this override the
+    // last-mounted pane clobbers the shared goalButtonRef and the focused goal
+    // popover portals over the wrong pane (position is measured off that ref).
+    expect(source.match(/goalButtonRef: paneGoalButtonDiscardRef/g)).toHaveLength(2)
+  })
+
   it('overrides every mutable Ensemble surface with pane-owned bindings', () => {
     const source = readFileSync(join(process.cwd(), 'src/renderer/src/App.tsx'), 'utf8')
     const contexts = paneComposerContextKeys(source)
