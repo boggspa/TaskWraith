@@ -311,6 +311,7 @@ function CollapsedTranscriptRow({
   label,
   icons,
   errored,
+  compact,
   expanded,
   onToggle,
   ariaTargetLabel,
@@ -323,6 +324,9 @@ function CollapsedTranscriptRow({
   /** Optional leading icon strip (tool-family monoline SVGs). */
   icons?: ReactNode
   errored?: boolean
+  /** Caption-sized summary line (system notices) instead of body text —
+   * these rows are noise being tidied away, not messages. */
+  compact?: boolean
   expanded: boolean
   onToggle: (expanded: boolean) => void
   ariaTargetLabel: string
@@ -332,7 +336,7 @@ function CollapsedTranscriptRow({
     <div
       className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
         errored ? ' has-errors' : ''
-      }`}
+      }${compact ? ' is-compact' : ''}`}
     >
       {header}
       <button
@@ -3655,6 +3659,7 @@ export const TranscriptPanel = memo(
                     header={null}
                     metaLabel="System"
                     label={collapsedSystemNoticeLabel(msg.content)}
+                    compact
                     expanded={collapsedSystemExpanded}
                     onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
                     ariaTargetLabel="system notice"

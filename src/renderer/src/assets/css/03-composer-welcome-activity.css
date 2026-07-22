@@ -12102,6 +12102,11 @@ button.diff-file-row {
 .collapsed-activity-stack-icon {
   opacity: 0.85;
 }
+/* System notices stay at the small caption size — they're noise being
+ * tidied away, not messages the eye should land on. */
+.collapsed-activity-stack.is-compact .collapsed-activity-stack-summary {
+  font-size: 12px;
+}
 .collapsed-activity-stack-summary:hover .collapsed-activity-stack-label {
   color: var(--text-primary);
 }
