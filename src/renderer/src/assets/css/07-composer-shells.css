@@ -396,6 +396,25 @@
   border-radius: 999px;
 }
 
+/* Real-Codex stop affordance: inverse-of-surface filled circle (white
+ * bubble, dark square glyph) matching the send button, instead of the
+ * shared red danger pill. Light-family themes flip it in the theme
+ * overrides (dark bubble, white glyph), mirroring the send button. */
+[data-composer-style="codex"] .composer-action-btn.stop-btn:not(:disabled) {
+  background: color-mix(in srgb, #ffffff 92%, transparent);
+  color: #0d0d0d;
+  border: 0;
+  box-shadow: none;
+}
+[data-composer-style="codex"] .composer-action-btn.stop-btn:hover:not(:disabled) {
+  background: #ffffff;
+}
+[data-composer-style="codex"]
+  .composer-action-btn.stop-btn
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit;
+}
+
 [data-composer-style="codex"] .composer-action-btn.voice-btn {
   background: transparent;
   color: color-mix(in srgb, #ffffff 48%, transparent);

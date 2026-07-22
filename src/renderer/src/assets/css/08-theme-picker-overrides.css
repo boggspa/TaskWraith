@@ -11057,6 +11057,25 @@
   :is(.sf-symbol-icon, .sf-symbol-icon svg) {
   color: inherit !important;
 }
+/* Stop button — same inverse flip as the send button: dark bubble +
+ * white square on light themes (dark themes use the white bubble in
+ * 07-composer-shells). */
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.stop-btn:not(:disabled) {
+  background: #1d1d1f !important;
+  color: #ffffff !important;
+  border-color: transparent !important;
+  box-shadow: none !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.stop-btn:hover:not(:disabled) {
+  background: #000000 !important;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-action-btn.stop-btn
+  :is(.sf-symbol-icon, .sf-symbol-icon svg) {
+  color: inherit !important;
+}
 
 [data-composer-style="claude"] .composer-combined-picker-trigger {
   background: transparent;
