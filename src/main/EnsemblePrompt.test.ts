@@ -840,6 +840,149 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Participant role/name changed.')
   })
 
+  it('1.0.5-EW18: roster hints exclude dash-normalized seed participant ids', () => {
+    const seedId = 'ensemble-seed-grok-d2339323-0103-47db-b2a0-cb0570f82e72'
+    const seedParticipant: EnsembleParticipant = {
+      id: seedId,
+      provider: 'grok',
+      enabled: true,
+      role: 'Scout',
+      instructions: 'Scout the codebase.',
+      order: 1,
+      permissionPresetId: 'read_only',
+      model: 'grok-4'
+    }
+    const config: EnsembleConfig = {
+      ...ensemble,
+      participants: [seedParticipant]
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config,
+      participant: seedParticipant,
+      currentPrompt: 'Scout this.',
+      roundId: 'round-1'
+    })
+    expect(prompt).toContain('address with @Scout')
+    expect(prompt).not.toMatch(/address with @Ensemble Seed Grok/i)
+    expect(prompt).not.toContain(`@${seedId}`)
+  })
+
+  it('coalesces consecutive identical session activity events with an explicit repeat count', () => {
+    const repeatedEvent = {
+      changedBy: 'user' as const,
+      scope: 'participant' as const,
+      target: 'cursor',
+      oldValue: 'custom instructions',
+      newValue: 'custom instructions',
+      reason: 'Participant role instructions changed.'
+    }
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: {
+        ...ensemble,
+        sessionActivityLedger: Array.from({ length: 8 }, (_, index) => ({
+          id: `event-${index}`,
+          timestamp: `2026-05-27T12:${String(index).padStart(2, '0')}:00.000Z`,
+          ...repeatedEvent
+        }))
+      },
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1'
+    })
+    expect(prompt).toContain('Session events:')
+    expect(prompt).toContain('custom instructions -> custom instructions')
+    expect(prompt).toContain('Participant role instructions changed.')
+    expect(prompt).toContain('(×8)')
+    expect(prompt.match(/custom instructions -> custom instructions/g)?.length).toBe(1)
+  })
+
+  it('preserves separated duplicate session activity events without coalescing', () => {
+    const makeEvent = (id: string, timestamp: string) => ({
+      id,
+      timestamp,
+      changedBy: 'user' as const,
+      scope: 'participant' as const,
+      target: 'cursor',
+      oldValue: 'custom instructions',
+      newValue: 'custom instructions',
+      reason: 'Participant role instructions changed.'
+    })
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: {
+        ...ensemble,
+        sessionActivityLedger: [
+          makeEvent('event-1', '2026-05-27T12:00:00.000Z'),
+          makeEvent('event-2', '2026-05-27T12:01:00.000Z'),
+          {
+            id: 'event-3',
+            timestamp: '2026-05-27T12:02:00.000Z',
+            changedBy: 'user',
+            scope: 'participant',
+            target: 'cursor',
+            oldValue: 'custom instructions',
+            newValue: 'updated instructions',
+            reason: 'Participant role instructions changed.'
+          },
+          makeEvent('event-4', '2026-05-27T12:03:00.000Z'),
+          makeEvent('event-5', '2026-05-27T12:04:00.000Z')
+        ]
+      },
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1'
+    })
+    expect(prompt).toContain('(×2)')
+    expect(prompt).toContain('custom instructions -> updated instructions')
+    expect(prompt.match(/custom instructions -> custom instructions/g)?.length).toBe(2)
+  })
+
+  it('applies the session-event display cap after coalescing consecutive repeats', () => {
+    const makeDistinct = (index: number) => ({
+      id: `event-${index}`,
+      timestamp: `2026-05-27T12:${String(index).padStart(2, '0')}:00.000Z`,
+      changedBy: 'user' as const,
+      scope: 'participant' as const,
+      target: `target-${index}`,
+      oldValue: `old-${index}`,
+      newValue: `new-${index}`,
+      reason: `reason-${index}`
+    })
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: {
+        ...ensemble,
+        sessionActivityLedger: [
+          ...Array.from({ length: 8 }, (_, offset) => makeDistinct(offset)),
+          ...Array.from({ length: 3 }, (_, index) => ({
+            id: `repeat-${index}`,
+            timestamp: `2026-05-27T13:${String(index).padStart(2, '0')}:00.000Z`,
+            changedBy: 'user' as const,
+            scope: 'participant' as const,
+            target: 'shared',
+            oldValue: 'same',
+            newValue: 'same',
+            reason: 'repeat block'
+          }))
+        ]
+      },
+      participant: ensemble.participants[0],
+      currentPrompt: 'Continue.',
+      roundId: 'round-1'
+    })
+    const sessionEventsBlock = prompt
+      .slice(prompt.indexOf('Session events:'))
+      .split('\n\n')[0]
+    const renderedRows = sessionEventsBlock.split('\n').slice(1)
+    expect(renderedRows).toHaveLength(8)
+    expect(sessionEventsBlock).toContain('(×3)')
+    expect(sessionEventsBlock).not.toContain('target-0:')
+    expect(sessionEventsBlock).toContain('target-6:')
+    expect(sessionEventsBlock).toContain('target-7:')
+  })
+
   it('emits a Round subject stanza naming the active workspace', () => {
     // 1.0.4 — Claude/Explorer's introspective feedback after picking
     // up TaskWraith-meta context instead of the bound workspace. The

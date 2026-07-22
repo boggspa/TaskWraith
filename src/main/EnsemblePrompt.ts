@@ -5,6 +5,7 @@ import type {
   EnsembleConfig,
   EnsembleParticipant,
   ProviderId,
+  SessionActivityLedgerEntry,
   ToolActivity
 } from './store/types'
 
@@ -38,7 +39,11 @@ export { OLLAMA_ENSEMBLE_MAX_CONTEXT_TURNS, OLLAMA_ENSEMBLE_MAX_TRANSCRIPT_CHARS
 // risked telling agents to write `@Sonnet 4.7` while the resolver
 // only knew `@Sonnet 4.6`, which Codex / Claude would dutifully
 // follow into a routing failure.
-import { findAllMentions, getParticipantAliases } from './services/EnsembleMentionAlias'
+import {
+  findAllMentions,
+  getParticipantAliases,
+  normalizeAlias
+} from './services/EnsembleMentionAlias'
 // M4 (1.0.7) — shared blackboard digest. Surfaced above the prior-round
 // summary so every participant opens its turn with the panel's agreed
 // decisions / risks / corrections as compact context.
@@ -936,11 +941,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       // readable hint. Both resolve fine, this is purely cosmetic.
       const hasSpacedSibling = (a: string): boolean =>
         !a.includes(' ') && aliases.some((b) => b !== a && b.replace(/\s+/g, '') === a)
+      const participantIdKey = normalizeAlias(participant.id)
       const modelAliases = aliases.filter(
         (a) =>
           a !== providerKey &&
           a !== roleKey &&
-          a !== participant.id.toLowerCase() &&
+          a !== participantIdKey &&
           !hasSpacedSibling(a)
       )
       // Pick at most one model alias to keep the line scannable —
@@ -1409,12 +1415,40 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
   ].join('\n')
 }
 
+function sessionEventFingerprint(event: SessionActivityLedgerEntry): string {
+  return [
+    event.changedBy,
+    event.scope,
+    event.target ?? '',
+    event.oldValue ?? '',
+    event.newValue ?? '',
+    event.reason ?? ''
+  ].join('\0')
+}
+
+function coalesceConsecutiveSessionEvents(
+  events: SessionActivityLedgerEntry[]
+): Array<{ event: SessionActivityLedgerEntry; count: number }> {
+  const coalesced: Array<{ event: SessionActivityLedgerEntry; count: number }> = []
+  for (const event of events) {
+    const fingerprint = sessionEventFingerprint(event)
+    const last = coalesced[coalesced.length - 1]
+    if (last && sessionEventFingerprint(last.event) === fingerprint) {
+      last.count += 1
+      last.event = event
+      continue
+    }
+    coalesced.push({ event, count: 1 })
+  }
+  return coalesced
+}
+
 function formatSessionEventsStanza(config: EnsembleConfig): string {
-  const events = (config.sessionActivityLedger || []).slice(-8)
-  if (events.length === 0) return ''
+  const coalesced = coalesceConsecutiveSessionEvents(config.sessionActivityLedger || []).slice(-8)
+  if (coalesced.length === 0) return ''
   return [
     'Session events:',
-    ...events.map((event) => {
+    ...coalesced.map(({ event, count }) => {
       const time = formatSessionEventTime(event.timestamp)
       const actor = titleCase(event.changedBy)
       const target = event.target ? `${sanitizeText(event.target)}: ` : ''
@@ -1423,7 +1457,8 @@ function formatSessionEventsStanza(config: EnsembleConfig): string {
           ? `${formatSessionValue(event.oldValue)} -> ${formatSessionValue(event.newValue)}`
           : ''
       const reason = event.reason ? ` (${sanitizeText(event.reason)})` : ''
-      return `  ${time} - ${actor} ${target}${transition}${reason}`.trimEnd()
+      const repeatSuffix = count > 1 ? ` (×${count})` : ''
+      return `  ${time} - ${actor} ${target}${transition}${reason}${repeatSuffix}`.trimEnd()
     })
   ].join('\n')
 }
