@@ -97,3 +97,28 @@ struct TranscriptStackCollapseTests {
         #expect(!twIsPlainSystemNoticeRow(assistant))
     }
 }
+
+extension TranscriptStackCollapseTests {
+    @Test func superStackSummaryMergesStacksAndAppendsNoticeCount() throws {
+        let rows = [
+            try row(#"{"id":"th1","role":"assistant","thinking":{"preview":"pondering"}}"#),
+            try row(
+                """
+                {"id":"t1","role":"tool","toolSummary":{"activityCount":2,"status":"success","tools":[
+                  {"name":"Shell","category":"shell","status":"success"},
+                  {"name":"Shell","category":"shell","status":"success"}
+                ]}}
+                """)
+        ]
+        let summary = twCollapsedSuperStackSummary(
+            stackRows: rows, systemCount: 2, firstSystemPreview: "Blackboard updated.")
+        #expect(summary.label == "Thought · Ran 2 commands · 2 system notices")
+    }
+
+    @Test func superStackSummaryLeadsWithNoticesWhenAllSystem() {
+        let summary = twCollapsedSuperStackSummary(
+            stackRows: [], systemCount: 3, firstSystemPreview: "Round closed.")
+        #expect(summary.label == "3 system notices · Round closed.")
+        #expect(summary.rowCount == 0)
+    }
+}

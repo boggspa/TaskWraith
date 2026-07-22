@@ -587,12 +587,21 @@ struct ThreadDetailView: View {
         case settledStack(
             id: String, items: [TranscriptDisplayItem], rows: [RemoteThreadSnapshot.Row],
             lastRow: RemoteThreadSnapshot.Row)
+        /// Second-level fold: adjacent one-liners (same-speaker settled stacks
+        /// + interleaved plain system notices) condensed behind ONE merged
+        /// summary line. `members` preserve the one-liner items for the
+        /// expanded state, each still expandable to its full stack.
+        case superStack(
+            id: String, members: [TranscriptDisplayItem],
+            stackRows: [RemoteThreadSnapshot.Row], systemCount: Int,
+            firstSystemPreview: String, lastRow: RemoteThreadSnapshot.Row)
 
         var id: String {
             switch self {
             case .row(let row): return row.id
             case .toolBurst(let id, _, _): return id
             case .settledStack(let id, _, _, _): return id
+            case .superStack(let id, _, _, _, _, _): return id
             }
         }
 
@@ -601,6 +610,7 @@ struct ThreadDetailView: View {
             case .row(let row): return row
             case .toolBurst(_, _, let lastRow): return lastRow
             case .settledStack(_, _, _, let lastRow): return lastRow
+            case .superStack(_, _, _, _, _, let lastRow): return lastRow
             }
         }
     }
@@ -611,7 +621,8 @@ struct ThreadDetailView: View {
             rows: settledRowsBeforeLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            group: buildSettledDisplayItems)
+            extraKey: pinnedRowsKey,
+            group: { self.foldSuperGroups(self.buildSettledDisplayItems($0)) })
     }
 
     private var settledDisplayItemsAfterLive: [TranscriptDisplayItem] {
@@ -620,7 +631,83 @@ struct ThreadDetailView: View {
             rows: settledRowsAfterLive,
             revision: snapshotRevisionToken,
             liveRunId: liveRunId,
-            group: buildSettledDisplayItems)
+            extraKey: pinnedRowsKey,
+            group: { self.foldSuperGroups(self.buildSettledDisplayItems($0)) })
+    }
+
+    /// Second-level fold: consecutive one-liner items — settled stacks that
+    /// share a speaker plus the plain system notices dispersed between them —
+    /// condense into ONE merged `.superStack`. Pinned system rows break a run
+    /// (they must stay visible), as does any non-foldable item.
+    private func foldSuperGroups(_ items: [TranscriptDisplayItem]) -> [TranscriptDisplayItem] {
+        enum MemberKind { case stack(speaker: String), system }
+        func memberKind(_ item: TranscriptDisplayItem) -> MemberKind? {
+            switch item {
+            case .settledStack(_, _, let rows, _):
+                return .stack(speaker: rows.first?.speaker ?? "")
+            case .row(let row):
+                guard twIsPlainSystemNoticeRow(row), !isMessagePinned(row.id) else { return nil }
+                return .system
+            default:
+                return nil
+            }
+        }
+
+        var out: [TranscriptDisplayItem] = []
+        var pending: [TranscriptDisplayItem] = []
+        var pendingSpeaker: String?
+
+        func flush() {
+            defer {
+                pending.removeAll()
+                pendingSpeaker = nil
+            }
+            guard pending.count >= 2 else {
+                out.append(contentsOf: pending)
+                return
+            }
+            var stackRows: [RemoteThreadSnapshot.Row] = []
+            var systemCount = 0
+            var firstSystemPreview = ""
+            for member in pending {
+                switch member {
+                case .settledStack(_, _, let rows, _):
+                    stackRows.append(contentsOf: rows)
+                case .row(let row):
+                    systemCount += 1
+                    if firstSystemPreview.isEmpty {
+                        firstSystemPreview = twCollapsedSystemNoticeLabel(row.preview)
+                    }
+                default:
+                    break
+                }
+            }
+            out.append(
+                .superStack(
+                    id: "super-stack-\(pending[0].id)",
+                    members: pending,
+                    stackRows: stackRows,
+                    systemCount: systemCount,
+                    firstSystemPreview: firstSystemPreview,
+                    lastRow: pending[pending.count - 1].lastRow))
+        }
+
+        for item in items {
+            guard let kind = memberKind(item) else {
+                flush()
+                out.append(item)
+                continue
+            }
+            if case .stack(let speaker) = kind {
+                if let current = pendingSpeaker, current != speaker {
+                    flush()
+                }
+                pendingSpeaker = speaker
+            }
+            pending.append(item)
+        }
+        flush()
+        return out
     }
 
     /// Settled-stack fold: maximal runs of thinking + tool rows (same
@@ -677,40 +764,91 @@ struct ThreadDetailView: View {
     private func settledDisplayItemView(_ item: TranscriptDisplayItem) -> some View {
         switch item {
         case .row(let row):
-            if twIsPlainSystemNoticeRow(row), !isMessagePinned(row.id),
-                item.id != tailForceExpandedItemId
-            {
-                let expanded = expandedSettledStacks.contains(item.id)
-                VStack(alignment: .leading, spacing: 4) {
-                    CollapsedTranscriptSummaryRow(
-                        metaLabel: "System",
-                        label: twCollapsedSystemNoticeLabel(row.preview),
-                        errored: false,
-                        expanded: expanded,
-                        onToggle: { toggleSettledStackExpanded(item.id) })
-                    if expanded {
-                        stackConstituentView(.row(row))
-                    }
-                }
-            } else {
-                stackConstituentView(item)
-            }
+            settledRowItemView(row, itemId: item.id)
         case .toolBurst:
             stackConstituentView(item)
         case .settledStack(let id, let items, let rows, _):
+            settledStackItemView(id: id, items: items, rows: rows)
+        case .superStack(
+            let id, let members, let stackRows, let systemCount, let firstSystemPreview, _):
             let expanded = expandedSettledStacks.contains(id) || id == tailForceExpandedItemId
-            let summary = twCollapsedStackSummary(rows: rows)
+            let summary = twCollapsedSuperStackSummary(
+                stackRows: stackRows, systemCount: systemCount,
+                firstSystemPreview: firstSystemPreview)
             VStack(alignment: .leading, spacing: 4) {
                 CollapsedTranscriptSummaryRow(
-                    metaLabel: nil,
+                    metaLabel: stackRows.isEmpty ? "System" : nil,
                     label: summary.label,
                     errored: summary.errorCount > 0,
                     expanded: expanded,
                     onToggle: { toggleSettledStackExpanded(id) })
                 if expanded {
-                    ForEach(items) { nested in
-                        stackConstituentView(nested)
+                    ForEach(members) { member in
+                        superConstituentView(member)
                     }
+                }
+            }
+        }
+    }
+
+    /// Constituent of an expanded super-group: the ordinary one-liner items,
+    /// each still expandable individually. Never recurses into `.superStack`
+    /// (the fold emits them only at the top level).
+    @ViewBuilder
+    private func superConstituentView(_ member: TranscriptDisplayItem) -> some View {
+        switch member {
+        case .row(let row):
+            settledRowItemView(row, itemId: member.id)
+        case .toolBurst:
+            stackConstituentView(member)
+        case .settledStack(let id, let items, let rows, _):
+            settledStackItemView(id: id, items: items, rows: rows)
+        case .superStack:
+            EmptyView()
+        }
+    }
+
+    /// A plain settled row: system notices fold to a one-liner, everything
+    /// else renders as the ordinary ThreadRowView.
+    @ViewBuilder
+    private func settledRowItemView(_ row: RemoteThreadSnapshot.Row, itemId: String) -> some View {
+        if twIsPlainSystemNoticeRow(row), !isMessagePinned(row.id),
+            itemId != tailForceExpandedItemId
+        {
+            let expanded = expandedSettledStacks.contains(itemId)
+            VStack(alignment: .leading, spacing: 4) {
+                CollapsedTranscriptSummaryRow(
+                    metaLabel: "System",
+                    label: twCollapsedSystemNoticeLabel(row.preview),
+                    errored: false,
+                    expanded: expanded,
+                    onToggle: { toggleSettledStackExpanded(itemId) })
+                if expanded {
+                    stackConstituentView(.row(row))
+                }
+            }
+        } else {
+            stackConstituentView(.row(row))
+        }
+    }
+
+    /// One settled stack's one-liner (expandable to its row/burst rendering).
+    @ViewBuilder
+    private func settledStackItemView(
+        id: String, items: [TranscriptDisplayItem], rows: [RemoteThreadSnapshot.Row]
+    ) -> some View {
+        let expanded = expandedSettledStacks.contains(id) || id == tailForceExpandedItemId
+        let summary = twCollapsedStackSummary(rows: rows)
+        VStack(alignment: .leading, spacing: 4) {
+            CollapsedTranscriptSummaryRow(
+                metaLabel: nil,
+                label: summary.label,
+                errored: summary.errorCount > 0,
+                expanded: expanded,
+                onToggle: { toggleSettledStackExpanded(id) })
+            if expanded {
+                ForEach(items) { nested in
+                    stackConstituentView(nested)
                 }
             }
         }
@@ -745,6 +883,8 @@ struct ThreadDetailView: View {
                 rows: rows.map { model.resolvedRow($0, threadId: taskId) },
                 agentIdentity: threadAgentIdentity)
             .equatable()
+        case .superStack:
+            EmptyView()
         case .settledStack(_, _, let rows, _):
             // Stacks never nest (buildSettledDisplayItems emits them only at
             // the top level); render raw rows defensively rather than
@@ -762,6 +902,12 @@ struct ThreadDetailView: View {
                 .equatable()
             }
         }
+    }
+
+    /// Pin/unpin changes super-group membership (pinned notices stay
+    /// visible), so the grouping cache must key on it.
+    private var pinnedRowsKey: String {
+        (snapshot?.pinnedRows ?? []).map(\.id).sorted().joined(separator: ",")
     }
 
     private var snapshotRevisionToken: String {
@@ -928,9 +1074,10 @@ struct ThreadDetailView: View {
             rows: [RemoteThreadSnapshot.Row],
             revision: String,
             liveRunId: String?,
+            extraKey: String = "",
             group: ([RemoteThreadSnapshot.Row]) -> [TranscriptDisplayItem]
         ) -> [TranscriptDisplayItem] {
-            let key = "\(revision)|\(liveRunId ?? "")|\(segment)"
+            let key = "\(revision)|\(liveRunId ?? "")|\(segment)|\(extraKey)"
             switch segment {
             case "before":
                 if key == beforeKey { return beforeItems }

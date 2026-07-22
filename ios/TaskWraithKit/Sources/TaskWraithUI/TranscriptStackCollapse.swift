@@ -65,6 +65,32 @@ public func twCollapsedSystemNoticeLabel(_ preview: String?) -> String {
     return "System notice"
 }
 
+/// Merged one-line label for a super-group of adjacent one-liners (desktop
+/// `summarizeCollapsedSuperGroup` parity): member stacks merge through the
+/// ordinary summarizer, then the interleaved system-notice count appends; an
+/// all-system group leads with the count and the first notice's text.
+public func twCollapsedSuperStackSummary(
+    stackRows: [RemoteThreadSnapshot.Row],
+    systemCount: Int,
+    firstSystemPreview: String
+) -> TWCollapsedStackSummary {
+    let noticeSuffix =
+        systemCount > 0 ? "\(systemCount) system \(systemCount == 1 ? "notice" : "notices")" : ""
+    if stackRows.isEmpty {
+        let parts = [
+            noticeSuffix.isEmpty ? "System notices" : noticeSuffix,
+            firstSystemPreview
+        ].filter { !$0.isEmpty }
+        return TWCollapsedStackSummary(
+            label: parts.joined(separator: " · "), errorCount: 0, rowCount: 0)
+    }
+    let merged = twCollapsedStackSummary(rows: stackRows)
+    return TWCollapsedStackSummary(
+        label: noticeSuffix.isEmpty ? merged.label : "\(merged.label) · \(noticeSuffix)",
+        errorCount: merged.errorCount,
+        rowCount: merged.rowCount)
+}
+
 /// Build the one-line collapsed summary for a settled stack. Thinking leads
 /// (it visually leads the expanded stack too); tool families follow in
 /// first-appearance order so the summary reads in the same sequence the work
