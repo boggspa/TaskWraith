@@ -48,4 +48,17 @@ describe('main capability gateway dispatch contract', () => {
       canonicalDispatchSource.indexOf('requestAgenticServiceApproval(')
     )
   })
+
+  it('resolves every brokered shell cwd through the workspace scope before execution', () => {
+    const scopeResolution = canonicalDispatchSource.indexOf('const cwd = resolveScopedDirectory(')
+    const shellExecution = canonicalDispatchSource.indexOf("if (toolName === 'run_shell_command')")
+    const hostCommand = canonicalDispatchSource.indexOf('runHostCommand(command, cwd)')
+
+    expect(scopeResolution).toBeGreaterThan(-1)
+    expect(canonicalDispatchSource.slice(scopeResolution, shellExecution)).toContain(
+      'String(args.cwd || args.working_directory || args.workdir || \'\')'
+    )
+    expect(scopeResolution).toBeLessThan(shellExecution)
+    expect(shellExecution).toBeLessThan(hostCommand)
+  })
 })
