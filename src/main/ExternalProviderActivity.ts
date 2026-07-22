@@ -30,7 +30,7 @@ type ExternalActivityProvider = Extract<
   'codex' | 'claude' | 'gemini' | 'kimi' | 'cursor' | 'grok'
 >
 
-interface ExternalProviderActivityOptions {
+export interface ExternalProviderActivityOptions {
   homeDir?: string
   now?: Date
   lookbackDays?: number
@@ -102,6 +102,16 @@ const EXTERNAL_FILE_CACHE_FILENAME = 'external-activity-file-cache.jsonl'
 // yields keep the window usable while the background hydrate finishes.
 const SCAN_SLICE_MS = 25
 const SCAN_YIELD_MS = 40
+
+/** 'duty-cycle' bounds the scan's share of the event loop (required when the
+ * scan runs on the Electron main process). 'immediate' only drains pending
+ * events between batches — full speed, for the utility-process worker where
+ * there is no UI to starve but parentPort messages must still be serviced. */
+let scanYieldMode: 'duty-cycle' | 'immediate' = 'duty-cycle'
+
+export function setExternalScanYieldMode(mode: 'duty-cycle' | 'immediate'): void {
+  scanYieldMode = mode
+}
 // Checking the clock per line would itself cost real time on a 400M-line
 // corpus, so amortize it over a batch.
 const SCAN_CLOCK_CHECK_LINES = 256
@@ -118,6 +128,12 @@ let scanSliceDeadlineMs = 0
  * every reader: the providers scan concurrently under one `Promise.all`, so
  * the budget has to be global or each reader would claim a full slice. */
 async function yieldScanSlice(): Promise<void> {
+  if (scanYieldMode === 'immediate') {
+    await new Promise<void>((resolve) => {
+      setImmediate(resolve)
+    })
+    return
+  }
   const now = Date.now()
   if (now < scanSliceDeadlineMs) return
   await new Promise<void>((resolve) => {
@@ -179,8 +195,71 @@ export function buildExternalUsageRollup(
 }
 
 let externalUsageCache: { records: UsageRecord[]; scannedAt: number } | null = null
-let externalUsageInFlight: Promise<UsageRecord[]> | null = null
 let cursorCacheListenerInstalled = false
+
+/** How a 90-day scan is executed. The default runs in-process (duty-cycled so
+ * it cannot starve the main thread); index.ts swaps in the utility-process
+ * driver at startup so the multi-GB walk leaves the main process entirely.
+ * `onPartial` delivers the short-window cold partial (and any other
+ * intermediate result) before the full window resolves. */
+export interface ExternalScanRequest {
+  options: ExternalProviderActivityOptions
+  /** When set, deliver a short-window partial via onPartial before resolving
+   * the full window. Null when a cached result is already on screen — a
+   * partial would transiently shrink it. */
+  partialLookbackDays: number | null
+}
+
+export type ExternalScanDriver = (
+  request: ExternalScanRequest,
+  onPartial: (records: UsageRecord[]) => void
+) => Promise<UsageRecord[]>
+
+let externalScanDriver: ExternalScanDriver | null = null
+
+export function setExternalScanDriver(driver: ExternalScanDriver | null): void {
+  externalScanDriver = driver
+}
+
+/** Fired every time the cached record set is replaced with fresher/fuller
+ * data (cold partial, full-window completion, Cursor chunk upgrades,
+ * background revalidation). index.ts uses it to ping renderers so the welcome
+ * heatmap upgrades from the 14-day partial to the full 90-day window without
+ * waiting for an unrelated re-render. */
+type ExternalUsageUpdateListener = (records: UsageRecord[]) => void
+
+let externalUsageUpdateListener: ExternalUsageUpdateListener | null = null
+
+export function setExternalUsageUpdateListener(listener: ExternalUsageUpdateListener | null): void {
+  externalUsageUpdateListener = listener
+}
+
+function commitExternalUsageRecords(records: UsageRecord[]): void {
+  externalUsageCache = { records, scannedAt: Date.now() }
+  try {
+    externalUsageUpdateListener?.(records)
+  } catch {
+    // Listener failures must never poison the scan pipeline.
+  }
+}
+
+/** In-process fallback driver: cold ordinary loads produce a short-window
+ * partial first so the welcome heatmap unblocks in seconds, then expand to
+ * the full 90-day window. */
+const inProcessScanDriver: ExternalScanDriver = async (
+  { options, partialLookbackDays },
+  onPartial
+) => {
+  if (partialLookbackDays) {
+    const partial = await loadExternalProviderUsageRecords({
+      ...options,
+      lookbackDays: partialLookbackDays,
+      force: false
+    })
+    onPartial(partial)
+  }
+  return loadExternalProviderUsageRecords(options)
+}
 
 function resolveCursorExternalCachePath(override?: string): string {
   if (override) return override
@@ -193,6 +272,28 @@ function ensureCursorCacheListener(): void {
   setCursorExternalActivityUpdateListener((events) => {
     replaceCachedCursorExternalRecords(events)
   })
+}
+
+/** Worker seam: inside the utility process there is no renderer to notify, so
+ * converted Cursor chunk records are forwarded to the parent, which merges
+ * them via {@link applyCursorUsageRecords}. */
+let cursorRecordsForwarder: ((records: UsageRecord[]) => void) | null = null
+
+export function setCursorRecordsForwarder(fn: ((records: UsageRecord[]) => void) | null): void {
+  cursorRecordsForwarder = fn
+}
+
+/** Merge freshly-converted Cursor records into the cached set (all other
+ * providers untouched) and notify listeners. Runs in main for both the local
+ * chunk listener and records forwarded from the worker process. */
+export function applyCursorUsageRecords(cursorRecords: UsageRecord[]): void {
+  if (cursorRecords.length === 0) return
+  if (!externalUsageCache) {
+    commitExternalUsageRecords(cursorRecords)
+    return
+  }
+  const other = externalUsageCache.records.filter((record) => record.provider !== 'cursor')
+  commitExternalUsageRecords([...other, ...cursorRecords].sort((a, b) => b.timestamp - a.timestamp))
 }
 
 function replaceCachedCursorExternalRecords(
@@ -210,16 +311,90 @@ function replaceCachedCursorExternalRecords(
     .map((event) => eventToUsageRecord(event))
     .filter((record): record is UsageRecord => Boolean(record))
   if (cursorRecords.length === 0) return
+  applyCursorUsageRecords(cursorRecords)
+  cursorRecordsForwarder?.(cursorRecords)
+}
 
-  if (!externalUsageCache) {
-    externalUsageCache = { records: cursorRecords, scannedAt: Date.now() }
-    return
+interface ExternalScanInFlight {
+  /** Resolves at the FIRST committed result (cold partial or full window) so
+   * cold IPC callers unblock in seconds without polling. */
+  firstData: Promise<UsageRecord[]>
+  /** Resolves with the full-window result. */
+  complete: Promise<UsageRecord[]>
+}
+
+let externalScanInFlight: ExternalScanInFlight | null = null
+
+function startExternalScan(
+  options: ExternalProviderActivityOptions,
+  force: boolean
+): ExternalScanInFlight {
+  if (externalScanInFlight) return externalScanInFlight
+
+  let resolveFirst!: (records: UsageRecord[]) => void
+  let firstSettled = false
+  const firstData = new Promise<UsageRecord[]>((resolve) => {
+    resolveFirst = resolve
+  })
+  const settleFirst = (records: UsageRecord[]): void => {
+    if (firstSettled) return
+    firstSettled = true
+    resolveFirst(records)
+  }
+  const commit = (records: UsageRecord[]): void => {
+    commitExternalUsageRecords(records)
+    settleFirst(records)
   }
 
-  const other = externalUsageCache.records.filter((record) => record.provider !== 'cursor')
-  externalUsageCache.records = [...other, ...cursorRecords].sort(
-    (a, b) => b.timestamp - a.timestamp
-  )
+  const request: ExternalScanRequest = {
+    options: { ...options, force },
+    partialLookbackDays:
+      !externalUsageCache && !force && !options.lookbackDays ? COLD_PARTIAL_LOOKBACK_DAYS : null
+  }
+
+  const runWith = async (driver: ExternalScanDriver): Promise<UsageRecord[]> => {
+    const full = await driver(request, commit)
+    commit(full)
+    return full
+  }
+
+  const complete = (async () => {
+    try {
+      if (externalScanDriver) {
+        try {
+          return await runWith(externalScanDriver)
+        } catch (error) {
+          // Worker died or misbehaved: the data still matters, so degrade to
+          // the duty-cycled in-process walk rather than serving nothing.
+          console.error('[external-usage] worker scan failed, falling back in-process:', error)
+        }
+      }
+      return await runWith(inProcessScanDriver)
+    } catch (error) {
+      // Both drivers failed. Unblock waiters with whatever we have.
+      settleFirst(externalUsageCache?.records ?? [])
+      throw error
+    } finally {
+      externalScanInFlight = null
+    }
+  })()
+  // The complete promise is intentionally awaited only by SWR background
+  // paths; keep an attached handler so a scan failure is not an unhandled
+  // rejection when every caller already settled on firstData.
+  complete.catch(() => {})
+
+  externalScanInFlight = { firstData, complete }
+  return externalScanInFlight
+}
+
+/** Test seam: clear the in-memory front-door state (result cache, in-flight
+ * scan, injected driver/listeners). Production never calls this. */
+export function resetExternalUsageFrontDoorForTests(): void {
+  externalUsageCache = null
+  externalScanInFlight = null
+  externalScanDriver = null
+  externalUsageUpdateListener = null
+  cursorRecordsForwarder = null
 }
 
 export async function getExternalUsageCached(
@@ -233,68 +408,14 @@ export async function getExternalUsageCached(
   }
 
   const force = options.force === true || options.maxAgeMs === 0
-  // Stale-while-revalidate: serve the last full result immediately and refresh
-  // in the background. Only a true cold miss (or forced refresh) waits.
+  // Stale-while-revalidate: serve the last result immediately and refresh in
+  // the background. Only a true cold miss (or forced refresh) waits, and even
+  // then only until the first committed result — never the full 90-day walk.
+  const scan = startExternalScan(options, force)
   if (cached && !force) {
-    if (!externalUsageInFlight) {
-      externalUsageInFlight = loadExternalProviderUsageRecords({ ...options, force: false })
-        .then((records) => {
-          externalUsageCache = { records, scannedAt: Date.now() }
-          return records
-        })
-        .finally(() => {
-          externalUsageInFlight = null
-        })
-    }
     return cached.records
   }
-
-  if (!externalUsageInFlight) {
-    externalUsageInFlight = (async () => {
-      try {
-        // Cold ordinary load: return a short-window partial first so the welcome
-        // heatmap IPC unblocks quickly, then expand to the full 90-day window.
-        if (!force && !options.lookbackDays) {
-          const partial = await loadExternalProviderUsageRecords({
-            ...options,
-            lookbackDays: COLD_PARTIAL_LOOKBACK_DAYS,
-            force: false
-          })
-          externalUsageCache = { records: partial, scannedAt: Date.now() }
-          // Continue to full window; callers that only waited for the first
-          // partial still see the complete set on the next cache-valid read.
-          const full = await loadExternalProviderUsageRecords({
-            ...options,
-            lookbackDays: DEFAULT_LOOKBACK_DAYS,
-            force: false
-          })
-          externalUsageCache = { records: full, scannedAt: Date.now() }
-          return full
-        }
-        const records = await loadExternalProviderUsageRecords({
-          ...options,
-          force
-        })
-        externalUsageCache = { records, scannedAt: Date.now() }
-        return records
-      } finally {
-        externalUsageInFlight = null
-      }
-    })()
-  }
-
-  // Cold force-or-miss: wait for the in-flight work. For progressive cold the
-  // promise only settles after the full window; poll for the first partial so
-  // the welcome surface paints in seconds rather than minutes.
-  if (!force && !options.lookbackDays) {
-    const started = Date.now()
-    while (!externalUsageCache && externalUsageInFlight) {
-      await new Promise<void>((resolve) => setTimeout(resolve, 50))
-      if (Date.now() - started > 120_000) break
-    }
-    if (externalUsageCache) return externalUsageCache.records
-  }
-  return externalUsageInFlight
+  return scan.firstData
 }
 
 /** Kick off a background external-usage hydrate at app launch. Cursor IDE
@@ -315,6 +436,19 @@ export function prewarmExternalUsageCache(): void {
 function resolveExternalFileCachePath(override?: string): string {
   if (override) return override
   return join(app.getPath('userData'), EXTERNAL_FILE_CACHE_FILENAME)
+}
+
+/** Default persisted-cache locations. Resolved in MAIN (the utility process
+ * has no `app`); the worker driver stamps these into every scan request so
+ * the worker never touches electron APIs. */
+export function defaultExternalActivityCachePaths(): {
+  externalFileCachePath: string
+  cursorCachePath: string
+} {
+  return {
+    externalFileCachePath: resolveExternalFileCachePath(),
+    cursorCachePath: resolveCursorExternalCachePath()
+  }
 }
 
 /** Serve a file's parsed events from the per-file cache when its mtime+size
@@ -828,8 +962,7 @@ async function parseKimiWireFile(filePath: string): Promise<ExternalUsageEvent[]
     const cacheReadInputTokens = numberValue(usage?.input_cache_read)
     const cacheCreationInputTokens = numberValue(usage?.input_cache_creation)
     const outputTokens = numberValue(usage?.output)
-    const totalTokens =
-      inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
+    const totalTokens = inputTokens + cacheReadInputTokens + cacheCreationInputTokens + outputTokens
     if (totalTokens <= 0) continue
     events.push({
       provider: 'kimi',

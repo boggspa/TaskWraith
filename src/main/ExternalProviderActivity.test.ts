@@ -10,8 +10,14 @@ vi.mock('electron', () => ({
 }))
 
 import {
+  applyCursorUsageRecords,
+  buildExternalUsageRollup,
+  getExternalUsageCached,
   loadExternalProviderUsageRecords,
-  buildExternalUsageRollup
+  resetExternalUsageFrontDoorForTests,
+  setExternalScanDriver,
+  setExternalUsageUpdateListener,
+  type ExternalScanRequest
 } from './ExternalProviderActivity'
 import { resetExternalActivityFileCacheForTests } from './ExternalActivityFileCache'
 import { buildHeatmapGrid } from '../renderer/src/lib/UsageHeatmap'
@@ -19,6 +25,7 @@ import type { UsageRecord } from './store/types'
 
 beforeEach(() => {
   resetExternalActivityFileCacheForTests()
+  resetExternalUsageFrontDoorForTests()
 })
 
 describe('buildExternalUsageRollup / buildHeatmapGrid parity', () => {
@@ -1026,5 +1033,107 @@ describe('external activity per-file incremental cache', () => {
     } finally {
       await rm(homeDir, { recursive: true, force: true })
     }
+  })
+})
+
+describe('getExternalUsageCached front door', () => {
+  const usageRecord = (id: string, provider: string, timestamp: number): UsageRecord =>
+    ({
+      id,
+      provider,
+      workspaceId: 'external',
+      chatId: `external-${provider}`,
+      runId: `external-${provider}`,
+      usageKind: 'run',
+      model: 'test',
+      inputTokens: 0,
+      outputTokens: 0,
+      totalTokens: 100,
+      durationMs: 0,
+      timestamp
+    }) as UsageRecord
+
+  it('resolves cold callers at the first partial and upgrades to the full window', async () => {
+    const partial = [usageRecord('p1', 'codex', Date.now())]
+    const full = [...partial, usageRecord('f1', 'claude', Date.now() - 1000)]
+    const updates: UsageRecord[][] = []
+    setExternalUsageUpdateListener((records) => updates.push(records))
+
+    const captured: ExternalScanRequest[] = []
+    setExternalScanDriver(async (request, onPartial) => {
+      captured.push(request)
+      onPartial(partial)
+      await new Promise((resolve) => setTimeout(resolve, 20))
+      return full
+    })
+
+    // Cold caller unblocks at the partial — it must NOT wait for the full walk.
+    const first = await getExternalUsageCached()
+    expect(first).toEqual(partial)
+    expect(captured[0]?.partialLookbackDays).toBe(14)
+
+    // Full window lands afterwards; both commits notified the listener.
+    await vi.waitFor(() => expect(updates.length).toBe(2))
+    expect(updates[0]).toEqual(partial)
+    expect(updates[1]).toEqual(full)
+
+    // Warm cache now serves the full set without a new scan.
+    const second = await getExternalUsageCached()
+    expect(second).toEqual(full)
+  })
+
+  it('never requests a partial when forced or when a cached result exists', async () => {
+    const full = [usageRecord('f1', 'codex', Date.now())]
+    const requests: ExternalScanRequest[] = []
+    setExternalScanDriver(async (request) => {
+      requests.push(request)
+      return full
+    })
+
+    await getExternalUsageCached({ maxAgeMs: 0 })
+    expect(requests[0]?.partialLookbackDays).toBeNull()
+    expect(requests[0]?.options.force).toBe(true)
+
+    // Cache is warm now; a forced refresh again requests no partial (a
+    // partial would transiently shrink what is already on screen).
+    await getExternalUsageCached({ force: true })
+    expect(requests[1]?.partialLookbackDays).toBeNull()
+  })
+
+  it('falls back to the in-process scan when the worker driver fails', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-frontdoor-'))
+    try {
+      setExternalScanDriver(async () => {
+        throw new Error('worker exploded')
+      })
+      // Empty homeDir → in-process scan yields no records, but it must
+      // RESOLVE (the worker failure is not surfaced to callers).
+      const records = await getExternalUsageCached({
+        homeDir,
+        externalFileCachePath: join(homeDir, 'file-cache.jsonl'),
+        cursorCachePath: join(homeDir, 'cursor-cache.json')
+      })
+      expect(records).toEqual([])
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
+  it('merges forwarded cursor records without clobbering other providers', async () => {
+    const codex = usageRecord('c1', 'codex', Date.now())
+    const cursorOld = usageRecord('cu-old', 'cursor', Date.now() - 5000)
+    const cursorNew = usageRecord('cu-new', 'cursor', Date.now())
+    setExternalScanDriver(async () => [codex, cursorOld])
+    await getExternalUsageCached()
+
+    const updates: UsageRecord[][] = []
+    setExternalUsageUpdateListener((records) => updates.push(records))
+    applyCursorUsageRecords([cursorNew])
+
+    expect(updates.length).toBe(1)
+    const merged = updates[0]
+    expect(merged).toContainEqual(codex)
+    expect(merged).toContainEqual(cursorNew)
+    expect(merged).not.toContainEqual(cursorOld)
   })
 })

@@ -17,7 +17,18 @@ export default defineConfig(({ mode }) => {
     // No build-time credential baking. Earlier Gemini login plumbing carried
     // public CLI OAuth client metadata via build-time defines; even non-secret
     // provider metadata does not belong in distributed bundles.
-    main: {},
+    main: {
+      build: {
+        rollupOptions: {
+          input: {
+            index: resolve('src/main/index.ts'),
+            // utilityProcess entry: the 90-day external-activity scan runs
+            // off the main event loop (see ExternalActivityWorkerScan.ts).
+            externalActivityWorker: resolve('src/main/workers/externalActivityWorker.ts')
+          }
+        }
+      }
+    },
     preload: {},
     renderer: {
       define: {
