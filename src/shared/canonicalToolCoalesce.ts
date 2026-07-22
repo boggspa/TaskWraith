@@ -3,7 +3,7 @@ import {
   MEDIA_EDITING_TOOLS,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
-} from '../main/TaskWraithMcpTools'
+} from './taskWraithMcpCatalog'
 import type { AgenticServiceId } from '../main/store/types'
 
 function isCatalogToolName(value: string): value is TaskWraithMcpToolName {
