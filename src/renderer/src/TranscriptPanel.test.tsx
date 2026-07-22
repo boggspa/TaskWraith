@@ -791,7 +791,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
               additions: 2,
               deletions: 0,
               previewKind: 'none',
-              owners: [{ provider: 'codex', participantId: 'codex-worker', role: 'Worker' }]
+              owners: [{ provider: 'cursor', participantId: 'cursor-worker', role: 'Worker' }]
             }
           ],
           fileChangeSummaryText: 'Created 0 · Edited 2 · Deleted 0',
@@ -818,6 +818,10 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('.../components/stats-only.ts')
     expect(html).toContain('file-change-summary-owner is-multiple')
     expect(html).toContain('file-change-summary-owner-chip')
+    expect(html).toContain('data-provider-logo="cursor"')
+    expect(html).toContain('provider-brand-logo-cursor has-theme-pair')
+    expect(html).toContain('<img class="provider-brand-logo-image')
+    expect(html).not.toContain('provider-glyph-cursor')
     expect(html).toContain('#2')
     expect(html).toContain('#5')
     expect(html).not.toContain('file-change-summary-owner-popover')

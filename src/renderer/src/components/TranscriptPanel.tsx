@@ -136,7 +136,7 @@ import { ChatMessageMediaStrip, collectMessageMediaRefs, type ChatMediaRef } fro
 import { collectInlineImageRefIds } from '../lib/resolveMarkdownImageRef'
 import { FileTypeIcon } from './FileTypeIcon'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
-import { ProviderGlyph } from './icons/ProviderGlyph'
+import { ProviderBrandLogo } from './icons/ProviderBrandLogo'
 import { ThinkingIndicator } from './AppChromeSymbols'
 import { MemoizedParticipantWorkingTelemetry } from './ParticipantWorkingTelemetry'
 import {
@@ -1033,7 +1033,7 @@ function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] })
       <span className="file-change-summary-owner" title={fileChangeOwnerTitle(owner)}>
         {owner.provider && (
           <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
-            <ProviderGlyph provider={owner.provider} />
+            <ProviderBrandLogo provider={owner.provider} />
           </span>
         )}
         <span className="file-change-summary-owner-label">{fileChangeOwnerLabel(owner)}</span>
@@ -1052,7 +1052,7 @@ function FileChangeOwnerCell({ owners }: { owners?: DiffFileSummary['owners'] })
           >
             {owner.provider && (
               <span className={`file-change-summary-owner-icon provider-${owner.provider}`} aria-hidden>
-                <ProviderGlyph provider={owner.provider} />
+                <ProviderBrandLogo provider={owner.provider} />
               </span>
             )}
             <span className="file-change-summary-owner-index">#{order}</span>
