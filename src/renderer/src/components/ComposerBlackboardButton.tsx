@@ -15,7 +15,12 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
-import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryCard'
+import {
+  BLACKBOARD_CATEGORY_LABELS,
+  BLACKBOARD_CATEGORY_ORDER,
+  BlackboardGroupedList,
+  buildBlackboardGroups
+} from './BlackboardEntryCard'
 
 /**
  * Quick-access Blackboard popover — a satellite icon button in the composer's
@@ -29,6 +34,11 @@ import { BlackboardGroupedList, buildBlackboardGroups } from './BlackboardEntryC
  */
 
 export { buildBlackboardGroups }
+
+export const BLACKBOARD_POST_SECTION_OPTIONS = BLACKBOARD_CATEGORY_ORDER.map((category) => ({
+  category,
+  label: BLACKBOARD_CATEGORY_LABELS[category]
+}))
 
 /** Standing chalkboard glyph (easel legs + two chalk lines) — matches the
  * 16×16 / stroke-1.3 family used by the sibling composer-control icons. */
@@ -115,6 +125,7 @@ export function ComposerBlackboardPostForm(
   props: ComposerBlackboardPostFormProps
 ): ReactElement | null {
   const [draft, setDraft] = useState('')
+  const [category, setCategory] = useState<BlackboardEntry['category']>('note')
   const [posting, setPosting] = useState(false)
   const [postError, setPostError] = useState<string | null>(null)
   const chatId = props.chat?.appChatId
@@ -130,7 +141,7 @@ export function ComposerBlackboardPostForm(
       await window.api.postBlackboardEntry({
         chatId,
         value: draftValue,
-        category: 'note',
+        category,
         scope: 'session'
       })
       setDraft('')
@@ -164,6 +175,20 @@ export function ComposerBlackboardPostForm(
         placeholder="Post a note to the Blackboard..."
         rows={2}
       />
+      <label className="composer-blackboard-post-section">
+        <span>Post to</span>
+        <select
+          value={category}
+          onChange={(event) => setCategory(event.target.value as BlackboardEntry['category'])}
+          aria-label="Blackboard section"
+        >
+          {BLACKBOARD_POST_SECTION_OPTIONS.map((option) => (
+            <option key={option.category} value={option.category}>
+              {option.label}
+            </option>
+          ))}
+        </select>
+      </label>
       <button type="submit" disabled={!draftValue || posting}>
         {posting ? 'Posting' : 'Post'}
       </button>

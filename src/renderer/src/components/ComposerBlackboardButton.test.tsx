@@ -5,6 +5,7 @@ import {
   ComposerBlackboardButton,
   ComposerBlackboardDeleteButton,
   ComposerBlackboardPostForm,
+  BLACKBOARD_POST_SECTION_OPTIONS,
   buildBlackboardGroups
 } from './ComposerBlackboardButton'
 
@@ -111,9 +112,22 @@ describe('ComposerBlackboardPostForm (static render)', () => {
     expect(html).toContain('aria-label="Post to Blackboard"')
     expect(html).toContain('aria-label="Blackboard entry"')
     expect(html).toContain('Post a note to the Blackboard...')
+    expect(html).toContain('aria-label="Blackboard section"')
+    expect(html).toContain('Post to')
+    expect(html).toContain('<option value="note" selected="">Notes</option>')
     expect(html).toContain('type="submit"')
     expect(html).toContain('disabled')
     expect(html).toContain('>Post</button>')
+  })
+
+  it('offers every canonical Blackboard section in its shared render order', () => {
+    expect(BLACKBOARD_POST_SECTION_OPTIONS).toEqual([
+      { category: 'decision', label: 'Decisions' },
+      { category: 'fact', label: 'Facts' },
+      { category: 'risk', label: 'Risks' },
+      { category: 'do-not-repeat', label: 'Do not repeat' },
+      { category: 'note', label: 'Notes' }
+    ])
   })
 
   it('stays hidden when no Ensemble chat can accept the post', () => {
