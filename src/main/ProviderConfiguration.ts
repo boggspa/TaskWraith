@@ -3,8 +3,11 @@ import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
 
 export interface DetectConfiguredProvidersDependencies {
-  /** Authoritative managed-run snapshot. Omit to exclude Kimi fail-closed. */
-  getKimiManagedStatus?: () => Promise<{ available: boolean; authState?: string }>
+  /**
+   * Lightweight roster-only status. Production checks binary + auth presence;
+   * full Kimi structural admission remains on the execution path.
+   */
+  getKimiConfiguredStatus?: () => Promise<{ available: boolean; authState?: string }>
   resolveProviderBinary?: (
     provider: ProviderId
   ) => Promise<{ binaryPath: string | null | undefined }>
@@ -19,14 +22,18 @@ export interface DetectConfiguredProvidersDependencies {
 }
 
 export interface ConfiguredProviderDetectorOptions {
-  cacheTtlMs?: number
-  now?: () => number
+  staggerMs?: number
 }
 
 export const CONFIGURED_PROVIDER_PROBE_DEADLINE_MS = 1_000
-export const CONFIGURED_PROVIDER_CACHE_TTL_MS = 30_000
+export const CONFIGURED_PROVIDER_PROBE_STAGGER_MS = 250
 
 type ProviderProbeOutcome = 'configured' | 'unconfigured' | 'unknown'
+
+interface ProviderProbe {
+  provider: ProviderId
+  run: () => Promise<boolean>
+}
 
 function boundedProviderProbe(
   probe: Promise<boolean>,
@@ -57,72 +64,84 @@ function boundedProviderProbe(
   })
 }
 
+function settingsConfiguredProviders(settings: AppSettings): Set<ProviderId> {
+  const configured = new Set<ProviderId>()
+  if (settings.claudeApiKey || settings.claudeBinaryPath) configured.add('claude')
+  if (settings.codexUsageCredential?.encryptedAccessToken) configured.add('codex')
+  if ((settings.geminiAuthProfiles?.length ?? 0) > 0 || settings.defaultGeminiAuthProfileId) {
+    configured.add('gemini')
+  }
+  return configured
+}
+
+function configuredProviderProbes(
+  settings: AppSettings,
+  dependencies: DetectConfiguredProvidersDependencies
+): ProviderProbe[] {
+  const resolveProviderBinary = dependencies.resolveProviderBinary ?? resolveCliProviderBinary
+  const getOllamaStatus = dependencies.getOllamaStatus ?? getOllamaStatusSnapshot
+  const probes: ProviderProbe[] = []
+  if (dependencies.getKimiConfiguredStatus) {
+    probes.push({
+      provider: 'kimi',
+      run: () =>
+        dependencies.getKimiConfiguredStatus!().then((status) => {
+          const authState = String(status.authState || '').trim().toLowerCase()
+          return (
+            status.available === true &&
+            ['oauth', 'api-key', 'authenticated'].includes(authState)
+          )
+        })
+    })
+  }
+  probes.push({
+    provider: 'ollama',
+    run: () =>
+      getOllamaStatus(settings).then((status) => status.available && status.modelCount > 0)
+  })
+  for (const provider of ['grok', 'cursor'] as const) {
+    probes.push({
+      provider,
+      run: () => resolveProviderBinary(provider).then((resolved) => Boolean(resolved.binaryPath))
+    })
+  }
+  return probes
+}
+
 /**
  * The set of providers the user has actually set up ("logged in + activated") —
  * used to seed a new ensemble's default roster with only usable providers
  * instead of all six.
  *
  *  - claude / codex / gemini: gated by their auth field in settings.
- *  - kimi: included only when the exact runtime is admitted AND its admitted
- *    snapshot reports OAuth or provider-key authentication. Raw key,
- *    credential, or binary presence is never managed-run readiness.
+ *  - kimi: roster discovery checks an installed binary plus OAuth/provider-key
+ *    authentication once after first paint. This is presentation only; the
+ *    exact runtime is still structurally admitted again before execution.
  *  - grok / cursor: no settings auth (CLI-based), so we probe the CLI the
  *    same way the runner resolves it — a non-null binary path means present
  *    and runnable. Cursor is live again (Path-B contained `--sandbox` runs,
  *    see retiredProviders.ts); seeding is presence-only, and the run path
  *    still enforces the containment qualification at dispatch.
  *
- * Async because the grok/cursor probes stat the filesystem; callers
- * pre-compute the set and pass it into the (synchronous) ensemble-creation
- * path.
+ * Async because the local-provider probes use filesystem/network I/O. The
+ * production caller prewarms a staggered session snapshot after first paint;
+ * chat creation only reads that snapshot and never awaits these probes.
  */
 export async function detectConfiguredProviders(
   settings: AppSettings,
   dependencies: DetectConfiguredProvidersDependencies = {}
 ): Promise<Set<ProviderId>> {
-  const configured = new Set<ProviderId>()
-  const resolveProviderBinary = dependencies.resolveProviderBinary ?? resolveCliProviderBinary
-  const getOllamaStatus = dependencies.getOllamaStatus ?? getOllamaStatusSnapshot
+  const configured = settingsConfiguredProviders(settings)
   const deadlineMs =
     Number.isFinite(dependencies.probeDeadlineMs) && (dependencies.probeDeadlineMs ?? 0) > 0
       ? Math.floor(dependencies.probeDeadlineMs!)
       : CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
-
-  if (settings.claudeApiKey || settings.claudeBinaryPath) configured.add('claude')
-  if (settings.codexUsageCredential?.encryptedAccessToken) configured.add('codex')
-  if ((settings.geminiAuthProfiles?.length ?? 0) > 0 || settings.defaultGeminiAuthProfileId) {
-    configured.add('gemini')
-  }
-  const probes: Array<{ provider: ProviderId; probe: Promise<boolean> }> = []
-  if (dependencies.getKimiManagedStatus) {
-    probes.push({
-      provider: 'kimi',
-      probe: dependencies.getKimiManagedStatus().then((status) => {
-        const authState = String(status.authState || '').trim().toLowerCase()
-        return (
-          status.available === true &&
-          ['oauth', 'api-key', 'authenticated'].includes(authState)
-        )
-      })
-    })
-  }
-  probes.push({
-    provider: 'ollama',
-    probe: getOllamaStatus(settings).then(
-      (status) => status.available && status.modelCount > 0
-    )
-  })
-  for (const provider of ['grok', 'cursor'] as const) {
-    probes.push({
-      provider,
-      probe: resolveProviderBinary(provider).then((resolved) => Boolean(resolved.binaryPath))
-    })
-  }
+  const probes = configuredProviderProbes(settings, dependencies)
 
   const outcomes = await Promise.all(
-    probes.map(async ({ provider, probe }) => ({
+    probes.map(async ({ provider, run }) => ({
       provider,
-      outcome: await boundedProviderProbe(probe, deadlineMs)
+      outcome: await boundedProviderProbe(Promise.resolve().then(run), deadlineMs)
     }))
   )
   for (const { provider, outcome } of outcomes) {
@@ -149,44 +168,63 @@ function configuredProviderCacheKey(settings: AppSettings): string {
 }
 
 /**
- * Share the bounded discovery flight across rapid create actions and retain a
- * short-lived immutable snapshot. Binary installs outside settings eventually
- * refresh at the TTL; settings/auth changes invalidate immediately via key.
+ * Run each advisory provider check once per settings generation, staggered on
+ * post-paint timers. Chat creation reads only the completed snapshot and never
+ * starts or awaits discovery; until the background pass completes it returns
+ * an empty set, which intentionally selects the full recommended default panel.
  */
 export function createConfiguredProviderDetector(
   dependencies: DetectConfiguredProvidersDependencies = {},
   options: ConfiguredProviderDetectorOptions = {}
-): (settings: AppSettings) => Promise<Set<ProviderId>> {
-  const cacheTtlMs =
-    Number.isFinite(options.cacheTtlMs) && (options.cacheTtlMs ?? -1) >= 0
-      ? Math.floor(options.cacheTtlMs!)
-      : CONFIGURED_PROVIDER_CACHE_TTL_MS
-  const now = options.now ?? Date.now
-  let cached: { key: string; expiresAt: number; providers: Set<ProviderId> } | null = null
-  let flight: { key: string; promise: Promise<Set<ProviderId>> } | null = null
+): {
+  start: (settings: AppSettings) => void
+  snapshot: (settings: AppSettings) => Promise<Set<ProviderId>>
+} {
+  const staggerMs =
+    Number.isFinite(options.staggerMs) && (options.staggerMs ?? -1) >= 0
+      ? Math.floor(options.staggerMs!)
+      : CONFIGURED_PROVIDER_PROBE_STAGGER_MS
+  const deadlineMs =
+    Number.isFinite(dependencies.probeDeadlineMs) && (dependencies.probeDeadlineMs ?? 0) > 0
+      ? Math.floor(dependencies.probeDeadlineMs!)
+      : CONFIGURED_PROVIDER_PROBE_DEADLINE_MS
+  let generation = 0
+  let startedKey: string | null = null
+  let completedKey: string | null = null
+  let configured = new Set<ProviderId>()
 
-  return (settings) => {
+  const start = (settings: AppSettings): void => {
     const key = configuredProviderCacheKey(settings)
-    if (cached?.key === key && now() < cached.expiresAt) {
-      return Promise.resolve(new Set(cached.providers))
-    }
-    if (flight?.key === key) {
-      return flight.promise.then((providers) => new Set(providers))
+    if (startedKey === key) return
+    startedKey = key
+    completedKey = null
+    configured = settingsConfiguredProviders(settings)
+    const currentGeneration = ++generation
+    const probes = configuredProviderProbes(settings, dependencies)
+    let remaining = probes.length
+    if (remaining === 0) {
+      completedKey = key
+      return
     }
 
-    const promise = detectConfiguredProviders(settings, dependencies)
-      .then((providers) => {
-        cached = {
-          key,
-          expiresAt: now() + cacheTtlMs,
-          providers: new Set(providers)
-        }
-        return new Set(providers)
-      })
-      .finally(() => {
-        if (flight?.promise === promise) flight = null
-      })
-    flight = { key, promise }
-    return promise.then((providers) => new Set(providers))
+    probes.forEach(({ provider, run }, index) => {
+      const timer = setTimeout(() => {
+        void boundedProviderProbe(Promise.resolve().then(run), deadlineMs).then((outcome) => {
+          if (currentGeneration !== generation) return
+          if (outcome === 'configured' || outcome === 'unknown') configured.add(provider)
+          remaining -= 1
+          if (remaining === 0) completedKey = key
+        })
+      }, index * staggerMs)
+      timer.unref?.()
+    })
+  }
+
+  return {
+    start,
+    snapshot: async (settings) => {
+      const key = configuredProviderCacheKey(settings)
+      return completedKey === key ? new Set(configured) : new Set()
+    }
   }
 }

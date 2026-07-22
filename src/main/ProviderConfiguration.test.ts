@@ -20,14 +20,14 @@ function dependencies(
   kimi: { available: boolean; authState?: string }
 ): DetectConfiguredProvidersDependencies {
   return {
-    getKimiManagedStatus: async () => kimi,
+    getKimiConfiguredStatus: async () => kimi,
     resolveProviderBinary: async () => ({ binaryPath: null }),
     getOllamaStatus: async () => ({ available: false, modelCount: 0 })
   }
 }
 
-describe('detectConfiguredProviders — Kimi managed-run readiness', () => {
-  it('excludes raw binary/key/OAuth presence when the exact runtime is unadmitted', async () => {
+describe('detectConfiguredProviders — Kimi roster configuration', () => {
+  it('excludes binary/key presence when the roster status is unavailable', async () => {
     const settings = {
       kimiApiKey: 'encrypted-key',
       kimiBinaryPath: '/Users/test/.kimi-code/bin/kimi'
@@ -40,7 +40,7 @@ describe('detectConfiguredProviders — Kimi managed-run readiness', () => {
     expect(configured.has('kimi')).toBe(false)
   })
 
-  it('includes a reviewed/admitted OAuth-only runtime without a stored key', async () => {
+  it('includes an authenticated OAuth-only runtime without a stored key', async () => {
     const configured = await detectConfiguredProviders(
       {} as AppSettings,
       dependencies({ available: true, authState: 'oauth' })
@@ -62,7 +62,7 @@ describe('detectConfiguredProviders — Kimi managed-run readiness', () => {
     expect(unknown.has('kimi')).toBe(false)
   })
 
-  it('excludes Kimi when no authoritative managed status dependency is wired', async () => {
+  it('excludes Kimi when no roster status dependency is wired', async () => {
     const configured = await detectConfiguredProviders(
       { kimiApiKey: 'encrypted-key', kimiBinaryPath: '/opt/kimi' } as AppSettings,
       {
@@ -114,7 +114,7 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
     try {
       const never = new Promise<never>(() => {})
       const result = detectConfiguredProviders({} as AppSettings, {
-        getKimiManagedStatus: () => never,
+        getKimiConfiguredStatus: () => never,
         getOllamaStatus: () => never,
         resolveProviderBinary: () => never
       })
@@ -127,24 +127,50 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
     }
   })
 
-  it('shares one bounded discovery flight and returns defensive cached sets', async () => {
-    const getOllamaStatus = vi.fn(async () => ({ available: false, modelCount: 0 }))
-    const resolveProviderBinary = vi.fn(async () => ({ binaryPath: null }))
-    const detect = createConfiguredProviderDetector(
-      { getOllamaStatus, resolveProviderBinary },
-      { cacheTtlMs: 30_000, now: () => 1_000 }
-    )
+  it('never probes from chat creation and staggers one background check per provider', async () => {
+    vi.useFakeTimers()
+    try {
+      const getKimiConfiguredStatus = vi.fn(async () => ({
+        available: true,
+        authState: 'oauth'
+      }))
+      const getOllamaStatus = vi.fn(async () => ({ available: true, modelCount: 1 }))
+      const resolveProviderBinary = vi.fn(async () => ({ binaryPath: '/provider' }))
+      const discovery = createConfiguredProviderDetector(
+        {
+          getKimiConfiguredStatus,
+          getOllamaStatus,
+          resolveProviderBinary,
+          probeDeadlineMs: 1_000
+        },
+        { staggerMs: 100 }
+      )
+      const settings = {} as AppSettings
 
-    const [first, second] = await Promise.all([
-      detect({} as AppSettings),
-      detect({} as AppSettings)
-    ])
-    first.add('kimi')
-    const cached = await detect({} as AppSettings)
+      await expect(discovery.snapshot(settings)).resolves.toEqual(new Set())
+      expect(getKimiConfiguredStatus).not.toHaveBeenCalled()
+      expect(getOllamaStatus).not.toHaveBeenCalled()
+      expect(resolveProviderBinary).not.toHaveBeenCalled()
 
-    expect(second.has('kimi')).toBe(false)
-    expect(cached.has('kimi')).toBe(false)
-    expect(getOllamaStatus).toHaveBeenCalledTimes(1)
-    expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+      discovery.start(settings)
+      await vi.advanceTimersByTimeAsync(0)
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
+      expect(getOllamaStatus).not.toHaveBeenCalled()
+
+      await vi.advanceTimersByTimeAsync(300)
+      await expect(discovery.snapshot(settings)).resolves.toEqual(
+        new Set(['kimi', 'ollama', 'grok', 'cursor'])
+      )
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+
+      discovery.start(settings)
+      await vi.runAllTimersAsync()
+      expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
+      expect(getOllamaStatus).toHaveBeenCalledTimes(1)
+      expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

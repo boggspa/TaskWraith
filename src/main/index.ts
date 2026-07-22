@@ -13827,9 +13827,30 @@ async function getKimiAdmittedStatusSnapshot(): Promise<any> {
   }
 }
 
-const detectManagedRunConfiguredProviders = createConfiguredProviderDetector({
-  getKimiManagedStatus: getKimiAdmittedStatusSnapshot
+async function getKimiRosterConfigurationStatus(): Promise<{
+  available: boolean
+  authState?: string
+}> {
+  const resolved = await resolveCliProviderBinary('kimi')
+  if (!resolved.binaryPath) return { available: false, authState: 'unknown' }
+  return {
+    available: true,
+    authState: await detectKimiManagedAuthState(
+      join(os.homedir(), '.kimi-code'),
+      kimiHomeFsAdapter
+    )
+  }
+}
+
+const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
+  getKimiConfiguredStatus: getKimiRosterConfigurationStatus,
+  getOllamaStatus: async (settings) => {
+    const models = await fetchOllamaModels(settings)
+    return { available: true, modelCount: models.length }
+  }
 })
+const detectManagedRunConfiguredProviders = (settings: AppSettings): Promise<Set<ProviderId>> =>
+  managedRunConfiguredProviderDiscovery.snapshot(settings)
 
 const cliProviderRuntimeDeps: CliProviderRuntimeDependencies = {
   getSettings: () => AppStore.getSettings(),
@@ -30435,6 +30456,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
     emitDueScheduledTasks()
     appShellStatsService.start(isMainWindowStatsActive())
     noteFirstPaintForExternalUsagePrewarm()
