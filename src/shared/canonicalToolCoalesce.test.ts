@@ -23,6 +23,8 @@ describe('canonicalToolCoalesce', () => {
     expect(resolveCatalogToolName('Glob')).toBe('find_files')
     expect(resolveCatalogToolName('Grep')).toBe('workspace_search')
     expect(resolveCatalogToolName('ReadLints')).toBe('get_diagnostics')
+    expect(resolveCatalogToolName('todoWrite')).toBe('todo_write')
+    expect(resolveCatalogToolName('WebSearch')).toBe('web_search')
   })
 
   it('maps legacy Codex / Claude native names to catalog names', () => {

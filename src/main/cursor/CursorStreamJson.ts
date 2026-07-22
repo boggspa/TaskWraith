@@ -3,6 +3,11 @@
 // child_process imports — unit-testable against fixtures captured from the real
 // 2026.05.28 agent.
 //
+// Tool *names* emitted on tool_use events are Settings-catalog names when the
+// shared coalescer can resolve them (WS-C). Provider-native Cursor bases
+// (Shell, edit, glob, …) adapt through `resolveCatalogToolName` rather than a
+// parallel alias table in this file.
+//
 // Confirmed wire shape (one JSON object per line, top-level `type`):
 //   {type:"system", subtype:"init", session_id, model, cwd, permissionMode}
 //   {type:"user", message:{role,content:[{type:"text",text}]}, session_id}
@@ -18,6 +23,8 @@
 // Tool name = the single nested key under `tool_call` ("globToolCall",
 // "readToolCall", "editToolCall", "shellToolCall", "grepToolCall",
 // "createPlanToolCall", …); args under `.args`, output under `.result`.
+
+import { resolveCatalogToolName } from '../../shared/canonicalToolCoalesce'
 
 export interface CursorUsage {
   inputTokens?: number
@@ -190,6 +197,8 @@ export function cursorToolKind(base: string): string | undefined {
     case 'codebasesearch':
     case 'semanticsearch':
     case 'web_search':
+    case 'websearch':
+    case 'googlewebsearch':
       return 'search'
     case 'edit':
     case 'write':
@@ -225,43 +234,38 @@ export function cursorToolKind(base: string): string | undefined {
   }
 }
 
-/** Map a Cursor tool base name to a machine name the renderer's name-based
- *  resolver / display layer recognises (so the card label + icon are clean even
- *  if `toolKind` is absent). Falls back to the base name. */
-function cursorToolName(base: string): string {
-  const map: Record<string, string> = {
-    glob: 'glob',
-    grep: 'grep',
-    search: 'grep',
-    codebasesearch: 'grep',
-    semanticsearch: 'grep',
-    read: 'read_file',
-    readfile: 'read_file',
-    ls: 'list_dir',
-    list: 'list_dir',
-    listdir: 'list_dir',
-    edit: 'edit',
-    multiedit: 'edit',
-    write: 'write_file',
-    create: 'create_file',
-    createfile: 'create_file',
-    searchreplace: 'search_replace',
-    applypatch: 'apply_patch',
-    delete: 'delete_file',
-    deletefile: 'delete_file',
-    shell: 'run_terminal_command',
-    run: 'run_terminal_command',
-    runterminal: 'run_terminal_command',
-    runterminalcommand: 'run_terminal_command',
-    terminal: 'run_terminal_command',
-    createplan: 'create_plan',
-    todo: 'todo_write',
-    todowrite: 'todo_write',
-    updatetodo: 'update_todo_list',
-    webfetch: 'web_fetch',
-    fetch: 'web_fetch'
-  }
-  return map[base.toLowerCase()] || base || 'tool'
+/**
+ * Cursor-only display names that are not Settings-catalog tools.
+ * Catalog-mapped aliases live in `NATIVE_ALIAS_TO_CATALOG_TOOL` — do not
+ * re-add shell/edit/search ladders here (WS-C single-map rule).
+ */
+const CURSOR_NON_CATALOG_DISPLAY: Readonly<Record<string, string>> = {
+  createplan: 'create_plan',
+  plan: 'create_plan',
+  updatetodo: 'update_todo_list',
+  updatetodolist: 'update_todo_list'
+}
+
+/**
+ * Map a Cursor tool base name to the Settings catalog machine name when
+ * possible (so policy chips, ToolFamilyIcon, and audit normalizers all see
+ * the same identifier). Non-catalog Cursor-only tools keep a stable local
+ * display name. Falls back to a light snake_case of the base.
+ */
+export function cursorToolName(base: string): string {
+  const raw = String(base || '').trim()
+  if (!raw) return 'tool'
+  const catalog = resolveCatalogToolName(raw)
+  if (catalog) return catalog
+  const compact = raw.toLowerCase().replace(/[^a-z0-9]+/g, '')
+  const nonCatalog = CURSOR_NON_CATALOG_DISPLAY[compact]
+  if (nonCatalog) return nonCatalog
+  // Light camelCase → snake for unknown Cursor bases (display only).
+  const snake = raw
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase()
+  return snake || raw || 'tool'
 }
 
 /**

@@ -148,7 +148,10 @@ export const NATIVE_ALIAS_TO_CATALOG_TOOL: Readonly<Record<string, TaskWraithMcp
   fetch: 'web_fetch',
   // Diagnostics / web
   readlints: 'get_diagnostics',
-  getdiagnostics: 'get_diagnostics'
+  getdiagnostics: 'get_diagnostics',
+  // Todos (Cursor createPlan stays non-catalog; todo_write is catalog)
+  todo: 'todo_write',
+  todowrite: 'todo_write'
 }
 
 /** Catalog tools whose mutations should count as file edits in run summaries. */

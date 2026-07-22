@@ -5,6 +5,7 @@ import {
   cursorTerminalCompatOutcome,
   cursorTerminalFailureText,
   cursorToolKind,
+  cursorToolName,
   parseCursorStreamChunk,
   type CursorStreamLine
 } from './CursorStreamJson'
@@ -74,7 +75,8 @@ describe('CursorStreamJson', () => {
       expect(cursorEventToRunEvents(ev({ type: 'thinking', subtype: 'completed' }))).toEqual([])
     })
 
-    it('maps tool_call started to a tool_use with kind + name + input', () => {
+    it('maps tool_call started to a tool_use with kind + catalog name + input', () => {
+      // WS-C: native Cursor "edit" coalesces to Settings catalog `replace`.
       expect(
         cursorEventToRunEvents(
           ev({
@@ -88,7 +90,7 @@ describe('CursorStreamJson', () => {
         {
           type: 'tool_use',
           toolId: 'tool_1',
-          toolName: 'edit',
+          toolName: 'replace',
           toolKind: 'edit',
           toolInput: { path: 'x.ts', contents: 'a' },
           raw: expect.anything()
@@ -295,7 +297,37 @@ describe('CursorStreamJson', () => {
       expect(cursorToolKind('shell')).toBe('execute')
       expect(cursorToolKind('createPlan')).toBe('think')
       expect(cursorToolKind('delete')).toBe('delete')
+      expect(cursorToolKind('webSearch')).toBe('search')
+      expect(cursorToolKind('readLints')).toBe('read')
       expect(cursorToolKind('mysteryTool')).toBeUndefined()
+    })
+  })
+
+  describe('cursorToolName (WS-C catalog emit)', () => {
+    it('emits Settings catalog names for native Cursor bases', () => {
+      expect(cursorToolName('shell')).toBe('run_shell_command')
+      expect(cursorToolName('runTerminalCommand')).toBe('run_shell_command')
+      expect(cursorToolName('ls')).toBe('list_directory')
+      expect(cursorToolName('listDir')).toBe('list_directory')
+      expect(cursorToolName('delete')).toBe('delete_path')
+      expect(cursorToolName('deleteFile')).toBe('delete_path')
+      expect(cursorToolName('glob')).toBe('find_files')
+      expect(cursorToolName('grep')).toBe('workspace_search')
+      expect(cursorToolName('codebaseSearch')).toBe('workspace_search')
+      expect(cursorToolName('edit')).toBe('replace')
+      expect(cursorToolName('searchReplace')).toBe('replace')
+      expect(cursorToolName('write')).toBe('write_file')
+      expect(cursorToolName('create')).toBe('write_file')
+      expect(cursorToolName('applyPatch')).toBe('apply_patch')
+      expect(cursorToolName('webSearch')).toBe('web_search')
+      expect(cursorToolName('readLints')).toBe('get_diagnostics')
+      expect(cursorToolName('todoWrite')).toBe('todo_write')
+      expect(cursorToolName('web_fetch')).toBe('web_fetch')
+    })
+
+    it('keeps Cursor-only non-catalog display names', () => {
+      expect(cursorToolName('createPlan')).toBe('create_plan')
+      expect(cursorToolName('updateTodo')).toBe('update_todo_list')
     })
   })
 })
