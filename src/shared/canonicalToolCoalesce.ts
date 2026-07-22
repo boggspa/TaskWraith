@@ -38,7 +38,9 @@ export function compactToolIdentifier(toolName: string): string {
 
 /** Strip TaskWraith / MCP broker namespace prefixes from a tool name. */
 export function stripToolNamespace(toolName: string): string {
-  let normalized = String(toolName || '').trim().toLowerCase()
+  const normalized = String(toolName || '')
+    .trim()
+    .toLowerCase()
   if (!normalized) return normalized
 
   if (normalized.startsWith('mcp__')) {
