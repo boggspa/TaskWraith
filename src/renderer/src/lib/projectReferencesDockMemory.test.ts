@@ -5,6 +5,7 @@ import {
   markProjectReferencesAutoOpened,
   rememberProjectReferencesDockOpened,
   resetProjectReferencesDockMemoryForTests,
+  resolveWorkRouteReferencesPin,
   shouldAutoOpenProjectReferences,
   shouldPinProjectReferencesOnWorkRoute
 } from './projectReferencesDockMemory'
@@ -92,5 +93,25 @@ describe('projectReferencesDockMemory', () => {
         viewportWidth: 1200
       })
     ).toBe(true)
+  })
+
+  it('forces References active on Work entry even when media or files was saved', () => {
+    for (const savedDockSurface of ['media', 'files', 'run', 'references'] as const) {
+      expect(
+        resolveWorkRouteReferencesPin({
+          activeSidebarTab: 'projects',
+          savedDockSurface
+        })
+      ).toEqual({ openPanel: true, activateTab: 'references' })
+    }
+  })
+
+  it('does not pin References off the Work route', () => {
+    expect(
+      resolveWorkRouteReferencesPin({
+        activeSidebarTab: 'chat',
+        savedDockSurface: 'media'
+      })
+    ).toEqual({ openPanel: false, activateTab: null })
   })
 })

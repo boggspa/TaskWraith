@@ -644,6 +644,7 @@ import {
 } from './lib/rightDockPersistence'
 import {
   rememberProjectReferencesDockOpened,
+  resolveWorkRouteReferencesPin,
   shouldPinProjectReferencesOnWorkRoute
 } from './lib/projectReferencesDockMemory'
 import {
@@ -23883,23 +23884,26 @@ function App(): React.JSX.Element {
     else setRightDockTab(restore.tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkProjectId, currentChat?.appChatId, sidebarActiveTab])
-  // Work route always exposes References in the right dock. Contextual persistence
-  // still restores a saved surface when one exists; otherwise default to References.
+  // Work route always exposes References in the right dock. Saved non-References
+  // surfaces must not suppress References as the active pane on Work entry.
   useEffect(() => {
-    if (!isWorkRouteReferencesPinned) {
-      return
-    }
-    setIsProjectReferencesPanelOpen(true)
     const context = resolveDockSurfaceContext({
       activeSidebarTab: sidebarActiveTab,
       activeProjectId: activeWorkProject?.id ?? null,
       chatId: currentChat?.appChatId,
       projects: listProjects()
     })
-    if (readDockSurface(context) !== null) {
+    const pin = resolveWorkRouteReferencesPin({
+      activeSidebarTab: sidebarActiveTab,
+      savedDockSurface: readDockSurface(context)
+    })
+    if (!pin.openPanel) {
       return
     }
-    activateRightDockTab('references')
+    setIsProjectReferencesPanelOpen(true)
+    if (pin.activateTab) {
+      activateRightDockTab(pin.activateTab)
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkProject?.id, currentChat?.appChatId, sidebarActiveTab])
   // Persist EVERY surface change — the switcher, ⌘K, and the imperative

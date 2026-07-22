@@ -83,3 +83,21 @@ export function shouldPinProjectReferencesOnWorkRoute(input: {
 }): boolean {
   return input.activeSidebarTab === 'projects'
 }
+
+export type WorkRouteReferencesPinAction = {
+  openPanel: boolean
+  activateTab: 'references' | null
+}
+
+/** Work-route pin opens References and selects it as the active dock pane. A saved
+ *  non-References surface (media, files, etc.) must not suppress that default. */
+export function resolveWorkRouteReferencesPin(input: {
+  activeSidebarTab: string | null | undefined
+  savedDockSurface?: string | null
+}): WorkRouteReferencesPinAction {
+  if (!shouldPinProjectReferencesOnWorkRoute(input)) {
+    return { openPanel: false, activateTab: null }
+  }
+  void input.savedDockSurface
+  return { openPanel: true, activateTab: 'references' }
+}
