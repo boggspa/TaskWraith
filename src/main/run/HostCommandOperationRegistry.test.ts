@@ -1,3 +1,4 @@
+import { resolve as resolvePath } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   HostCommandOperationRegistry,
@@ -73,7 +74,7 @@ describe('HostCommandOperationRegistry', () => {
       appRunId: 'run-a',
       appChatId: 'chat-a',
       workspaceId: 'workspace-a',
-      workspacePath: '/workspace/a'
+      workspacePath: resolvePath('/workspace/a')
     })
     expect(() => registry.register(identity('host-op-a'))).toThrow('already active')
 
