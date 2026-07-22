@@ -1,5 +1,6 @@
 import type { ProviderId } from './store/types'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
+import { statsAreEstimated } from '../shared/tokenEstimate'
 
 /** Match the EnsembleOrchestrator's working-telemetry cadence so solo and
  * ensemble seats tick the renderer at the same rate. */
@@ -10,6 +11,7 @@ type SoloWorkingTokenRecord = {
   inputTokens: number
   outputTokens: number
   totalTokens: number
+  estimated: boolean
 }
 
 function nonNegativeInteger(value: unknown): number {
@@ -86,17 +88,29 @@ export class SoloWorkingTokenTelemetry {
     )
     if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return null
 
+    // Estimated only while EVERY report so far was an estimate — the first
+    // authoritative provider snapshot flips the run to authoritative for good
+    // (a later estimate must never un-authorize it).
+    const estimated = statsAreEstimated(stats) && (previous ? previous.estimated : true)
+
     const changed =
       !previous ||
       inputTokens !== previous.inputTokens ||
       outputTokens !== previous.outputTokens ||
-      totalTokens !== previous.totalTokens
+      totalTokens !== previous.totalTokens ||
+      estimated !== previous.estimated
     if (!changed) return null
     // Throttle WITHOUT recording, so the accumulated maxima survive to the next
     // post-window call (mirrors reportParticipantTokenUsage).
     if (previous && nowMs - previous.sentAt < SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS) return null
 
-    this.recordsByRunId.set(runId, { sentAt: nowMs, inputTokens, outputTokens, totalTokens })
+    this.recordsByRunId.set(runId, {
+      sentAt: nowMs,
+      inputTokens,
+      outputTokens,
+      totalTokens,
+      estimated
+    })
     return {
       type: 'snapshot',
       chatId: params.chatId || '',
@@ -111,7 +125,7 @@ export class SoloWorkingTokenTelemetry {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated: false
+      estimated
     }
   }
 

@@ -23,8 +23,10 @@ export type ParticipantWorkingTelemetryEvent =
       inputTokens: number
       outputTokens: number
       totalTokens: number
-      /** `false` means the provider supplied a normalized usage snapshot. */
-      estimated: false
+      /** `false` means the provider supplied a normalized usage snapshot;
+       * `true` means a chars÷4 stream estimate is riding this lane (Grok /
+       * Cursor mid-stream, Kimi-ACP) — display surfaces keep the "≈". */
+      estimated: boolean
     }
   | {
       type: 'clear'

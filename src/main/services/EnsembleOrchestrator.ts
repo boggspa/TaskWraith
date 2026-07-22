@@ -1,4 +1,5 @@
 import { isAbsolute, relative, resolve, sep } from 'node:path'
+import { statsAreEstimated } from '../../shared/tokenEstimate'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
@@ -2885,7 +2886,13 @@ export class EnsembleOrchestrator {
    * animation smooth without putting a timer or write loop in main. */
   private participantWorkingTelemetryByRunId = new Map<
     string,
-    { sentAt: number; inputTokens: number; outputTokens: number; totalTokens: number }
+    {
+      sentAt: number
+      inputTokens: number
+      outputTokens: number
+      totalTokens: number
+      estimated: boolean
+    }
   >()
   /**
    * Serial drains deferred because a detached `ensemble_fanout` lane was
@@ -10446,6 +10453,10 @@ export class EnsembleOrchestrator {
     )
     if (inputTokens <= 0 && outputTokens <= 0 && totalTokens <= 0) return false
 
+    // Estimated only while EVERY report so far was an estimate — the first
+    // authoritative provider snapshot flips the seat to authoritative for good.
+    const estimated = statsAreEstimated(stats) && (previous ? previous.estimated : true)
+
     const telemetry = this.deps.onParticipantWorkingTelemetry
     if (!telemetry) return true
     const now = this.deps.now()
@@ -10453,7 +10464,8 @@ export class EnsembleOrchestrator {
       !previous ||
       inputTokens !== previous.inputTokens ||
       outputTokens !== previous.outputTokens ||
-      totalTokens !== previous.totalTokens
+      totalTokens !== previous.totalTokens ||
+      estimated !== previous.estimated
     if (!changed) return true
     if (previous && now - previous.sentAt < PARTICIPANT_WORKING_TELEMETRY_MIN_INTERVAL_MS) {
       return true
@@ -10463,7 +10475,8 @@ export class EnsembleOrchestrator {
       sentAt: now,
       inputTokens,
       outputTokens,
-      totalTokens
+      totalTokens,
+      estimated
     })
     telemetry({
       type: 'snapshot',
@@ -10476,7 +10489,7 @@ export class EnsembleOrchestrator {
       inputTokens,
       outputTokens,
       totalTokens,
-      estimated: false
+      estimated
     })
     return true
   }

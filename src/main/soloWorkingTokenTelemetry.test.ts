@@ -153,3 +153,48 @@ describe('SoloWorkingTokenTelemetry.clear', () => {
     expect(event?.type === 'snapshot' && event.outputTokens).toBe(9)
   })
 })
+
+describe('estimated stream snapshots (Grok/Cursor/Kimi-ACP live lane)', () => {
+  const estimatedStats = (outputTokens: number) => ({
+    input_tokens: 0,
+    output_tokens: outputTokens,
+    total_tokens: outputTokens,
+    _taskwraith_token_count_confidence: 'estimated'
+  })
+
+  it('carries the estimated flag so the ≈ marker survives the telemetry lane', () => {
+    const telemetry = new SoloWorkingTokenTelemetry()
+    const event = telemetry.report({ ...base, stats: estimatedStats(40), nowMs: 0 })
+    expect(event?.type === 'snapshot' && event.estimated).toBe(true)
+  })
+
+  it('flips to authoritative on the first real usage report and never reverts', () => {
+    const telemetry = new SoloWorkingTokenTelemetry()
+    telemetry.report({ ...base, stats: estimatedStats(40), nowMs: 0 })
+    // Real terminal usage (Cursor) — flag clears even inside the same maxima.
+    const real = telemetry.report({
+      ...base,
+      stats: { input_tokens: 10, output_tokens: 45, total_tokens: 55 },
+      nowMs: SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS + 1
+    })
+    expect(real?.type === 'snapshot' && real.estimated).toBe(false)
+    // A later estimate must not un-authorize the run.
+    const late = telemetry.report({
+      ...base,
+      stats: estimatedStats(60),
+      nowMs: 2 * SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS + 2
+    })
+    expect(late?.type === 'snapshot' && late.estimated).toBe(false)
+  })
+
+  it('treats an estimated→authoritative flip as a change even with equal counts', () => {
+    const telemetry = new SoloWorkingTokenTelemetry()
+    telemetry.report({ ...base, stats: estimatedStats(40), nowMs: 0 })
+    const flipped = telemetry.report({
+      ...base,
+      stats: { output_tokens: 40, total_tokens: 40 },
+      nowMs: SOLO_WORKING_TELEMETRY_MIN_INTERVAL_MS + 1
+    })
+    expect(flipped?.type === 'snapshot' && flipped.estimated).toBe(false)
+  })
+})
