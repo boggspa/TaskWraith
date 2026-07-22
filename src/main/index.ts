@@ -590,6 +590,7 @@ import {
   ProjectReferenceArtifactStore,
   type ProjectReferenceHistoryMutationHold
 } from './services/ProjectReferenceArtifactStore'
+import { DeferredProjectReferenceReconciler } from './services/DeferredProjectReferenceReconciler'
 import {
   ProjectReferenceContextAuditService,
   projectReferenceOwnedArtifactRefsFromRunEvents
@@ -1586,6 +1587,7 @@ import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 
 let mainWindow: BrowserWindow | null = null
+let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
 const chatUpdateDeliveryCoordinator = new ChatUpdateDeliveryCoordinator()
 const rendererResponsivenessTracker = new RendererResponsivenessTracker({
   createIncidentId: () => randomUUID()
@@ -30575,6 +30577,7 @@ function createWindow(): void {
 
   mainWindow.on('ready-to-show', () => {
     mainWindow?.show()
+    deferredProjectReferenceReconciler?.scheduleAfterFirstPaint()
     managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
     emitDueScheduledTasks()
     appShellStatsService.start(isMainWindowStatsActive())
@@ -37925,34 +37928,52 @@ if (isGeminiMcpBridgeProcess) {
     // A crash after durable history prepare must replay every unreceipted
     // external sink and commit before queue/graph/schedule recovery can revive
     // any prompt or provider transport from the deleted scope.
-    let projectReferenceOwnershipReconciled = false
+    let projectReferenceCaptureAdmissionProtected = false
     try {
-      // Durable run events are the reachability authority. Rebuild the
-      // Project-reference owner ledger and remove zero-reference snapshots on
-      // every startup before replaying an outer history-deletion transaction.
-      //
-      // Ask the ledger FIRST, because sourcing that authority is expensive:
-      // `{kinds:['reference_context']}` carries no runId/chatId, so it takes
-      // the whole-dir run-event sweep — measured 2026-07-19 at 5.9GB across
-      // 4,062 files, awaited right here, ~12k lines before `createWindow()`.
-      // It matched 0 of ~2.4M events on that machine, i.e. the window waited
-      // on a full-corpus read that produced an empty array.
-      //
-      // `needsLegacyReconciliation()` is false exactly when no ledger file and
-      // no snapshot bytes exist — nothing to own, nothing to orphan-prune — so
-      // the reconcile would be a no-op over an empty world. It stays true
-      // whenever a ledger OR any snapshot is present, which is what keeps
-      // drift repair (in both directions) running on every restart.
       const pendingDeletionForProjectReferenceReachability = AppStore.getPendingHistoryDeletion()
-      if (projectReferenceArtifactStore.needsLegacyReconciliation()) {
+      const projectReferenceOwnershipNeedsReconciliation =
+        projectReferenceArtifactStore.needsLegacyReconciliation()
+      if (
+        projectReferenceOwnershipNeedsReconciliation &&
+        pendingDeletionForProjectReferenceReachability
+      ) {
+        // A prepared deletion is the exceptional correctness-first path: stale
+        // events remain durable until replay commits, so rebuild ownership with
+        // the frozen deletion scope before any outer recovery sink can run.
         projectReferenceArtifactStore.reconcileLegacyOwnership(
           projectReferenceOwnedArtifactRefsFromRunEvents(
             await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] }),
             pendingDeletionForProjectReferenceReachability
           )
         )
+      } else if (projectReferenceOwnershipNeedsReconciliation) {
+        // Ordinary launches must not scan the whole run-event corpus before a
+        // window exists. Fence new captures now, then converge ownership after
+        // first paint and release the fence only on success.
+        deferredProjectReferenceReconciler = DeferredProjectReferenceReconciler.prepare({
+          needsLegacyReconciliation: () =>
+            projectReferenceArtifactStore.needsLegacyReconciliation(),
+          beginStartupReconciliation: () =>
+            projectReferenceArtifactStore.beginStartupReconciliation(),
+          loadOwnership: async () =>
+            projectReferenceOwnedArtifactRefsFromRunEvents(
+              await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] })
+            ),
+          reconcile: (references) =>
+            projectReferenceArtifactStore.reconcileLegacyOwnership(references),
+          endCaptureHold: (hold) => projectReferenceArtifactStore.endHistoryMutation(hold),
+          onFailure: (error) => {
+            console.error(
+              '[project-reference] deferred startup reconciliation failed; capture hold retained:',
+              error
+            )
+          }
+        })
+        if (!deferredProjectReferenceReconciler) {
+          throw new Error('Project-reference startup reconciliation could not be prepared.')
+        }
       }
-      projectReferenceOwnershipReconciled = true
+      projectReferenceCaptureAdmissionProtected = true
       recoverPendingUsageHistoryMutationBeforeOuterDeletion()
       await recoverPendingHistoryDeletionBeforeRunQueue()
       await drainOrphanSubThreadsBeforeRunQueue()
@@ -37960,7 +37981,7 @@ if (isGeminiMcpBridgeProcess) {
       // no longer exists were stranded by pre-join deletions. Delete-only.
       sessionCheckpointStoreRef?.purgeOrphanRecords((chatId) => Boolean(AppStore.getChat(chatId)))
     } catch (error) {
-      if (!projectReferenceOwnershipReconciled) {
+      if (!projectReferenceCaptureAdmissionProtected) {
         try {
           // Keep new captures fail-closed for this process. A clean restart
           // retries authoritative reconciliation before dispatch recovery.

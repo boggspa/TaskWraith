@@ -5,11 +5,17 @@ const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
 
 describe('history deletion startup integration', () => {
   it('recovers pending deletion and lifecycle-reaps orphans before run-queue revival', () => {
+    const projectReferenceNeedCheck = indexSource.indexOf(
+      'const projectReferenceOwnershipNeedsReconciliation ='
+    )
     const projectReferenceReconciliation = indexSource.indexOf(
       'projectReferenceArtifactStore.reconcileLegacyOwnership('
     )
     const pendingReachability = indexSource.indexOf(
       'const pendingDeletionForProjectReferenceReachability ='
+    )
+    const deferredReconciliation = indexSource.indexOf(
+      'DeferredProjectReferenceReconciler.prepare({'
     )
     const innerUsageRecovery = indexSource.indexOf(
       'recoverPendingUsageHistoryMutationBeforeOuterDeletion()'
@@ -21,14 +27,43 @@ describe('history deletion startup integration', () => {
     )
 
     expect(pendingReachability).toBeGreaterThanOrEqual(0)
+    expect(projectReferenceNeedCheck).toBeGreaterThan(pendingReachability)
     expect(projectReferenceReconciliation).toBeGreaterThan(pendingReachability)
+    expect(projectReferenceReconciliation).toBeLessThan(deferredReconciliation)
     expect(indexSource).toContain(
       "await getRunRepository().getRunEventsAsync({ kinds: ['reference_context'] })"
     )
+    expect(deferredReconciliation).toBeLessThan(innerUsageRecovery)
     expect(innerUsageRecovery).toBeGreaterThan(projectReferenceReconciliation)
     expect(recover).toBeGreaterThan(innerUsageRecovery)
     expect(orphanDrain).toBeGreaterThan(recover)
     expect(queueRecovery).toBeGreaterThan(orphanDrain)
+  })
+
+  it('defers ordinary ownership reconciliation until after first paint under a capture hold', () => {
+    const readyToShowStart = indexSource.indexOf("mainWindow.on('ready-to-show', () => {")
+    const readyToShowEnd = indexSource.indexOf("mainWindow.on('resize'", readyToShowStart)
+    const readyToShowSource = indexSource.slice(readyToShowStart, readyToShowEnd)
+    const startupStart = indexSource.indexOf(
+      '// A crash after durable history prepare must replay every unreceipted'
+    )
+    const startupEnd = indexSource.indexOf(
+      'recoverPendingUsageHistoryMutationBeforeOuterDeletion()',
+      startupStart
+    )
+    const startupSource = indexSource.slice(startupStart, startupEnd)
+
+    expect(readyToShowStart).toBeGreaterThanOrEqual(0)
+    expect(readyToShowSource).toContain(
+      'deferredProjectReferenceReconciler?.scheduleAfterFirstPaint()'
+    )
+    expect(startupSource).toContain('pendingDeletionForProjectReferenceReachability')
+    expect(startupSource).toContain('DeferredProjectReferenceReconciler.prepare({')
+    expect(startupSource).toContain(
+      'projectReferenceArtifactStore.beginStartupReconciliation()'
+    )
+    expect(startupSource).toContain('loadOwnership: async () =>')
+    expect(startupSource).toContain('endCaptureHold: (hold) =>')
   })
 
   it('keeps startup alive but skips resurrection recovery when strict deletion replay fails', () => {

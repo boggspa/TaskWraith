@@ -476,6 +476,7 @@ export class ProjectReferenceArtifactStore {
     ProjectReferenceHistoryMutationHold,
     HistoryMutationRecord
   >()
+  private startupReconciliationHold: ProjectReferenceHistoryMutationHold | null = null
 
   constructor(private readonly snapshotDirectory: string) {
     this.ledger = new ProjectReferenceArtifactLedger(snapshotDirectory)
@@ -484,6 +485,9 @@ export class ProjectReferenceArtifactStore {
   beginHistoryMutation(
     scope: ProjectReferenceHistoryMutationScope
   ): ProjectReferenceHistoryMutationHold {
+    if (this.startupReconciliationHold) {
+      throw new Error('Project-reference startup reconciliation is still in progress.')
+    }
     const kind = (scope as { kind?: unknown }).kind
     if (kind !== 'chat' && kind !== 'truncate' && kind !== 'workspace' && kind !== 'global') {
       throw new Error('Project-reference history mutation kind is invalid.')
@@ -516,8 +520,21 @@ export class ProjectReferenceArtifactStore {
     return hold
   }
 
+  beginStartupReconciliation(): ProjectReferenceHistoryMutationHold {
+    if (this.historyMutationHolds.size > 0) {
+      throw new Error('Project-reference history mutation is already in progress.')
+    }
+    const hold = this.beginHistoryMutation({ kind: 'global' })
+    this.startupReconciliationHold = hold
+    return hold
+  }
+
   endHistoryMutation(hold: ProjectReferenceHistoryMutationHold): boolean {
-    return this.historyMutationHolds.delete(hold)
+    const ended = this.historyMutationHolds.delete(hold)
+    if (ended && this.startupReconciliationHold === hold) {
+      this.startupReconciliationHold = null
+    }
+    return ended
   }
 
   needsLegacyReconciliation(): boolean {

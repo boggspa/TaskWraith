@@ -535,6 +535,25 @@ describe('ProjectReferenceArtifactStore', () => {
     expect(store.endHistoryMutation(hold)).toBe(true)
   })
 
+  it('serializes startup reconciliation against history deletion mutations', () => {
+    const root = makeRoot()
+    const store = new ProjectReferenceArtifactStore(
+      path.join(root, 'project-reference-snapshots')
+    )
+
+    const startupHold = store.beginStartupReconciliation()
+    expect(() =>
+      store.beginHistoryMutation({ kind: 'chat', appChatIds: ['chat-a'] })
+    ).toThrow('Project-reference startup reconciliation is still in progress.')
+
+    expect(store.endHistoryMutation(startupHold)).toBe(true)
+    const historyHold = store.beginHistoryMutation({
+      kind: 'chat',
+      appChatIds: ['chat-a']
+    })
+    expect(store.endHistoryMutation(historyHold)).toBe(true)
+  })
+
   it('globally clears owned snapshots, legacy bytes, ledger, temps, and journal state', async () => {
     const root = makeRoot()
     const workspace = makeWorkspace(root)
