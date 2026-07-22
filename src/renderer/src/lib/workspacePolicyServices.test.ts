@@ -9,6 +9,7 @@ describe('workspacePolicyServices', () => {
     expect(WORKSPACE_POLICY_SERVICES.map((service) => service.label)).toEqual([
       'Shell commands',
       'File changes',
+      'External publishing',
       'Tool calls',
       'Sub-thread delegation',
       'Canvas interaction',

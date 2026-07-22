@@ -16,7 +16,8 @@ const cssBlockStartingAt = (source: string, selector: string): string => {
   return source.slice(start, end + 1)
 }
 
-const LIGHT_NOT_CHAIN = ':not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"])'
+const LIGHT_NOT_CHAIN =
+  ':not([data-theme="light"]):not([data-theme="mist"]):not([data-theme="sage"])'
 
 /*
  * The codex/claude composer shells paint the approval + discovery cards
@@ -64,13 +65,15 @@ describe('composer approval/discovery card light-mode CSS', () => {
       css,
       ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card {'
     )
-    expect(lightBase).toContain('background: rgba(255, 213, 130, 0.22)')
+    expect(lightBase).toContain(
+      'linear-gradient(135deg, rgba(255, 213, 130, 0.34), transparent 52%)'
+    )
+    expect(lightBase).toContain('var(--tw-popover-glass-bg)')
     const lightCodex = cssBlockStartingAt(
       css,
       ':is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]) .composer-permission-card.provider-codex {'
     )
-    expect(lightCodex).toContain(
-      'background: color-mix(in srgb, var(--provider-codex-color) 18%, transparent)'
-    )
+    expect(lightCodex).toContain('color-mix(in srgb, var(--provider-codex-color) 24%, transparent)')
+    expect(lightCodex).toContain('var(--tw-popover-glass-bg)')
   })
 })

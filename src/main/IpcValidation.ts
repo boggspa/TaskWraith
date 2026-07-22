@@ -261,6 +261,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'update-snapshot': [],
   'check-for-updates': [],
   'download-update': [],
+  'download-update-and-restart': [],
   'install-update-on-quit': [],
   'install-update-now': [],
   // Local Servers — dev servers detected under the user's workspaces.
