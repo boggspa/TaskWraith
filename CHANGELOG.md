@@ -6,6 +6,31 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.8.7 - 2026-07-22
+
+### Added
+- **Blackboard posts can land in their intended section.** The Composer's
+  Blackboard popover now lets you choose Decisions, Facts, Risks, Do Not
+  Repeat, or Notes before posting; Notes remains the default.
+- **Settled transcript activity folds into readable one-line summaries.**
+  Consecutive work activity and plain system notices collapse after completion,
+  and expand on demand for the full detail. The iOS companion now carries the
+  same compact treatment.
+- **The welcome usage heatmap can build a full 90-day view without freezing the
+  app.** External history scans run in a utility process and promote completed
+  scans into the welcome experience.
+
+### Fixed
+- **Provider quota refreshes time out instead of blocking the desktop.** Every
+  supported external usage endpoint now has a bounded 15-second request window.
+- **Ensemble routing is more deterministic.** Seed-id aliases no longer leak
+  into roster hints, duplicate session events coalesce, and explicit yield
+  targets either resolve correctly or report a typed failure.
+- **File changes display official provider marks, and multi-pane Goal buttons
+  preserve the focused popover anchor.**
+- **Blackboard post handling fails closed with scope-aware eviction and clearer
+  missing-key diagnostics.**
+
 ## 1.8.6 - 2026-07-22
 
 ### Added

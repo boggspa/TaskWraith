@@ -232,16 +232,16 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('canvas_eval')
   })
 
-  it('bundles the current 1.8.6 release notes', () => {
-    const entry = resolveChangelogEntry({ currentVersion: '1.8.6' }, null)
+  it('bundles the current 1.8.7 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.7' }, null)
     expect(entry).toMatchObject({
-      version: '1.8.6',
+      version: '1.8.7',
       releaseDate: '2026-07-22'
     })
-    expect(entry.releaseNotes).toContain('Path-B Cursor is selectable again')
-    expect(entry.releaseNotes).toContain('Composer queue and Steer are classic again')
-    expect(entry.releaseNotes).toContain('iOS companion parity advances')
-    expect(entry.releaseNotes).toContain('Workspace Write no longer demands a second standing workspace grant')
+    expect(entry.releaseNotes).toContain('Blackboard posts can land in their intended section')
+    expect(entry.releaseNotes).toContain('Settled transcript activity folds into readable one-line summaries')
+    expect(entry.releaseNotes).toContain('welcome usage heatmap can build a full 90-day view')
+    expect(entry.releaseNotes).toContain('File changes display official provider marks')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
