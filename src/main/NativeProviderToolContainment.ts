@@ -1,3 +1,6 @@
+import type { AgenticServiceId } from './store/types'
+import type { NativeWorkspaceToolPreflight } from './native-tools/NativeWorkspaceToolGate'
+
 const EXPLICIT_TASKWRAITH_TOOL_PREFIXES = [
   'mcp__taskwraith__',
   'taskwraith__',
@@ -78,4 +81,43 @@ export function nativeProviderApprovalPriority(
 
 export function nativeProviderBrokerOnlyMessage(provider: string, toolName: string): string {
   return `${provider} native tool ${toolName || 'tool'} is disabled for workspace containment. Use the namespaced TaskWraith MCP workspace tool instead.`
+}
+
+export type NativeWorkspaceCanUseDecision =
+  | { action: 'deny'; message: string }
+  | { action: 'allow' }
+  | { action: 'gate'; service: AgenticServiceId }
+
+/**
+ * WS-B dual-stack: map a shared `NativeWorkspaceToolGate` preflight result onto
+ * a provider `canUseTool` / permission decision WITHOUT ever flipping a bare
+ * native tool straight to allow. This lets native FS calls run again (rather
+ * than being quarantined to the broker) while keeping every path workspace-
+ * bounded and every mutation on the normal approval ledger:
+ *
+ *   - `allow` + `read`        → allow directly. The path is already proven
+ *     inside the active workspace and reads are preset-safe, mirroring how the
+ *     namespaced MCP read tools auto-allow.
+ *   - `allow` + `write`/`shell` → route through the agentic-service ledger
+ *     (`gate`) so the read-only clamp, policy, grants, external-path detection,
+ *     and audit still apply to the native mutation.
+ *   - `deny`                  → deny with the gate's specific workspace-bound
+ *     reason (OOW path, missing authority, or unsandboxed shell).
+ *   - `not_applicable`        → keep the bare native tool broker-only (the prior
+ *     containment posture); never let an unclassifiable native FS/shell name
+ *     slip through.
+ */
+export function classifyNativeWorkspacePreflightDecision(
+  provider: string,
+  toolName: string,
+  preflight: NativeWorkspaceToolPreflight
+): NativeWorkspaceCanUseDecision {
+  if (preflight.kind === 'allow') {
+    if (preflight.access === 'read') return { action: 'allow' }
+    return { action: 'gate', service: preflight.service }
+  }
+  if (preflight.kind === 'deny') {
+    return { action: 'deny', message: preflight.reason }
+  }
+  return { action: 'deny', message: nativeProviderBrokerOnlyMessage(provider, toolName) }
 }

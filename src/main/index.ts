@@ -26,8 +26,8 @@ import type {
 } from 'electron'
 import { detectExternalPath } from './services/ExternalPathDetector'
 import {
-  nativeProviderApprovalPriority,
-  nativeProviderBrokerOnlyMessage
+  classifyNativeWorkspacePreflightDecision,
+  nativeProviderApprovalPriority
 } from './NativeProviderToolContainment'
 import { preflightNativeWorkspaceTool } from './native-tools/NativeWorkspaceToolGate'
 import { FaviconService } from './services/FaviconService'
@@ -16295,10 +16295,52 @@ async function canUseClaudeSdkTool(
     })
   )
   if (approvalPriority === 'deny-native') {
-    return {
-      behavior: 'deny',
-      message: nativeProviderBrokerOnlyMessage('Claude', toolName)
+    // WS-B dual-stack: rather than quarantining native FS/shell to the broker,
+    // run the shared canonical workspace preflight. Native FS calls whose paths
+    // resolve INSIDE the active workspace are allowed again (reads directly;
+    // writes routed through the agentic-service ledger below); out-of-workspace
+    // paths are denied. The Claude Agent SDK runs tools with cwd=workspace but
+    // provides no hard filesystem/egress sandbox, so native shell stays fail-
+    // closed here (runtimeSandboxed:false) — the namespaced broker
+    // run_shell_command, which IS workspace-bounded, remains available.
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      toolName,
+      rawToolCall: updatedInput,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      runtimeSandboxed: false
+    })
+    const nativeDecision = classifyNativeWorkspacePreflightDecision(
+      'Claude',
+      toolName,
+      nativeWorkspacePreflight
+    )
+    if (nativeDecision.action === 'deny') {
+      return { behavior: 'deny', message: nativeDecision.message }
     }
+    if (nativeDecision.action === 'allow') {
+      return { behavior: 'allow', updatedInput }
+    }
+    const nativeWorkspaceAllowed = await requestAgenticServiceApproval(
+      sender,
+      'claude',
+      nativeDecision.service,
+      payload.scope === 'global' ? undefined : payload.workspace,
+      {
+        method: 'claude/canUseTool',
+        title:
+          nativeDecision.service === 'shellCommands'
+            ? 'Approve Claude shell command'
+            : 'Approve Claude file change',
+        body: toolName,
+        runId: route.appRunId
+      }
+    )
+    if (!claudeRunAcceptsTools()) {
+      return denyInactiveRun()
+    }
+    return nativeWorkspaceAllowed
+      ? { behavior: 'allow', updatedInput }
+      : { behavior: 'deny', message: `TaskWraith denied Claude tool ${toolName}.` }
   }
   if (approvalPriority === 'allow-auto') {
     return { behavior: 'allow', updatedInput }
