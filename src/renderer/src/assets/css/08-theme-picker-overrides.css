@@ -10551,12 +10551,18 @@
 .composer-blackboard-compose {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
-  gap: 6px;
+  grid-template-areas:
+    'entry submit'
+    'section submit'
+    'error error';
+  column-gap: 6px;
+  row-gap: 6px;
   padding: 0 1px 8px;
   border-bottom: 1px solid color-mix(in srgb, var(--panel-border) 54%, transparent);
 }
 
 .composer-blackboard-compose textarea {
+  grid-area: entry;
   min-width: 0;
   min-height: 44px;
   max-height: 104px;
@@ -10582,9 +10588,46 @@
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
 }
 
+.composer-blackboard-post-section {
+  grid-area: section;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+  font-size: 10px;
+  font-weight: 700;
+}
+
+.composer-blackboard-post-section select {
+  min-width: 0;
+  height: 25px;
+  padding: 3px 7px;
+  border: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
+  border-radius: 6px;
+  outline: none;
+  background: color-mix(in srgb, var(--text-primary) 5%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 90%, transparent);
+  font: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.composer-blackboard-post-section select:hover {
+  border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
+}
+
+.composer-blackboard-post-section select:focus-visible {
+  border-color: color-mix(in srgb, var(--accent) 58%, var(--panel-border));
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 12%, transparent);
+}
+
 .composer-blackboard-compose button {
-  align-self: stretch;
+  grid-area: submit;
+  align-self: start;
   min-width: 56px;
+  min-height: 44px;
   padding: 0 10px;
   border: 1px solid color-mix(in srgb, var(--accent) 42%, var(--panel-border));
   border-radius: 7px;
@@ -10613,7 +10656,7 @@
 }
 
 .composer-blackboard-post-error {
-  grid-column: 1 / -1;
+  grid-area: error;
   color: var(--danger, #ff6b6b);
   font-size: 11px;
   font-weight: 700;
