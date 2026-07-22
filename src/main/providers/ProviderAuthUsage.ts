@@ -930,6 +930,19 @@ export async function resolveCodexUsageImportPath(
   return result.filePaths[0]
 }
 
+/* Every live usage endpoint is hit from the launch path (welcome quota
+ * meters fire right after first paint). fetch() has NO default timeout, so a
+ * blackholed network (captive portal, sleeping VPN, dead DNS) held these
+ * sockets open for the OS TCP timeout — minutes — and every consumer awaiting
+ * the snapshot IPC looked like an app hang. Bound the whole request; the
+ * failure paths below already serve persisted-stale snapshots, so a timeout
+ * degrades to stale data instead of a stall. */
+const USAGE_FETCH_TIMEOUT_MS = 15_000
+
+function fetchUsageEndpoint(url: string, init: RequestInit): Promise<Response> {
+  return fetch(url, { ...init, signal: AbortSignal.timeout(USAGE_FETCH_TIMEOUT_MS) })
+}
+
 /*
  * Mirrors fetchClaudeUsageSnapshot's fresh-TTL + failure backoff (added there
  * after the shared-account 429 incident — see the comment above
@@ -987,7 +1000,7 @@ async function loadCodexUsageSnapshotLive(): Promise<NormalizedProviderUsageSnap
     }
 
     try {
-      const response = await fetch('https://chatgpt.com/backend-api/wham/usage', {
+      const response = await fetchUsageEndpoint('https://chatgpt.com/backend-api/wham/usage', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${credential.accessToken}`,
@@ -1236,7 +1249,7 @@ export async function fetchGeminiUsageSnapshot(): Promise<NormalizedProviderUsag
   }
 
   try {
-    const response = await fetch(
+    const response = await fetchUsageEndpoint(
       'https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota',
       {
         method: 'POST',
@@ -1320,7 +1333,7 @@ async function loadKimiUsageSnapshotLive(): Promise<NormalizedProviderUsageSnaps
     }
 
     try {
-      const response = await fetch('https://api.kimi.com/coding/v1/usages', {
+      const response = await fetchUsageEndpoint('https://api.kimi.com/coding/v1/usages', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${accessToken}`,
@@ -1480,7 +1493,7 @@ export async function readCursorEditorPlanType(): Promise<string | null> {
 }
 
 export async function fetchCursorUsageRpc(token: string): Promise<unknown> {
-  const response = await fetch(CURSOR_USAGE_ENDPOINT, {
+  const response = await fetchUsageEndpoint(CURSOR_USAGE_ENDPOINT, {
     method: 'POST',
     headers: {
       Authorization: `Bearer ${token}`,
@@ -1729,7 +1742,7 @@ async function loadClaudeUsageSnapshotLive(): Promise<NormalizedProviderUsageSna
     }
 
     try {
-      const response = await fetch('https://api.anthropic.com/api/oauth/usage', {
+      const response = await fetchUsageEndpoint('https://api.anthropic.com/api/oauth/usage', {
         method: 'GET',
         headers: {
           Authorization: `Bearer ${credential.accessToken}`,
