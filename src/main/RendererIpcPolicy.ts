@@ -380,6 +380,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // Product update/install, diagnostics retention, and local process control.
   'check-for-updates',
   'download-update',
+  'download-update-and-restart',
   'install-update-on-quit',
   'install-update-now',
   'mark-changelog-seen',
