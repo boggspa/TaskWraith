@@ -12073,6 +12073,49 @@ button.diff-file-row {
   letter-spacing: 0.02em;
 }
 
+/* Settled-stack collapse: once the conversation moves past an activity
+ * stack, the whole run of thinking + tool viewports folds into a one-line
+ * summary row ("Thought for 12s · Searched ×8 · Read 5 files"), styled like
+ * a single tool-call row so it reads as part of the transcript idiom. */
+.collapsed-activity-stack-summary {
+  display: flex;
+  align-items: center;
+  gap: var(--space-sm);
+  width: 100%;
+  padding: 2px 0;
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: inherit;
+  font-size: 12px;
+  color: var(--text-secondary);
+  text-align: left;
+}
+.collapsed-activity-stack-summary:hover .collapsed-activity-stack-label {
+  color: var(--text-primary);
+}
+.collapsed-activity-stack-chevron {
+  flex-shrink: 0;
+  font-size: 10px;
+  color: var(--text-tertiary);
+  transition: rotate 120ms ease;
+}
+.collapsed-activity-stack.is-expanded .collapsed-activity-stack-chevron {
+  rotate: 90deg;
+}
+.collapsed-activity-stack-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-secondary);
+}
+.collapsed-activity-stack.has-errors .collapsed-activity-stack-label {
+  color: var(--tool-warning);
+}
+.collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
+  margin-bottom: 2px;
+}
+
 .activity-row {
   /* Phase K-followup — collapsed past the L4 slice-4 base.
    * Removed the 2px provider/category/status stripe along the left

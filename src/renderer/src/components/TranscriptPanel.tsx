@@ -9,15 +9,20 @@ import {
   useState,
   useSyncExternalStore
 } from 'react'
-import type { CSSProperties, ReactElement } from 'react'
+import type { CSSProperties, ReactElement, ReactNode } from 'react'
 import type {
   ChatMessage,
   ChatRecord,
   ChatRun,
   DiffFileSummary,
   DiffFileSummaryOwner,
-  ProviderId
+  ProviderId,
+  ToolActivity
 } from '../../../main/store/types'
+import {
+  shouldAutoCollapseActivityStack,
+  summarizeCollapsedActivityStack
+} from '../lib/collapsedActivityStack'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import {
   closeoutProviderFromMetadata,
@@ -288,6 +293,55 @@ function ActivityStackSpeakerHeader({
           </span>
         )}
       </div>
+    </div>
+  )
+}
+
+/**
+ * Settled-stack collapse row. Once the conversation has moved past an
+ * activity stack, the whole run of thinking + tool viewports folds into this
+ * one-line summary ("Thought for 12s · Searched ×8 · Read 5 files …").
+ * Clicking toggles back to the untouched sequential stack, which renders as
+ * `children` below the (now-open) summary line so the collapse affordance
+ * stays visible.
+ */
+function CollapsedActivityStackRow({
+  header,
+  activities,
+  expanded,
+  onToggle,
+  children
+}: {
+  header: ReactElement | null
+  activities: ToolActivity[]
+  expanded: boolean
+  onToggle: (expanded: boolean) => void
+  children?: ReactNode
+}): ReactElement {
+  const summary = useMemo(() => summarizeCollapsedActivityStack(activities), [activities])
+  return (
+    <div
+      className={`collapsed-activity-stack ${expanded ? 'is-expanded' : 'is-collapsed'}${
+        summary.errorCount > 0 ? ' has-errors' : ''
+      }`}
+    >
+      {header}
+      <button
+        type="button"
+        className="collapsed-activity-stack-summary"
+        onClick={() => onToggle(!expanded)}
+        aria-expanded={expanded}
+        aria-label={`${expanded ? 'Collapse' : 'Expand'} ${summary.activityCount} activity ${
+          summary.activityCount === 1 ? 'step' : 'steps'
+        }: ${summary.label}`}
+        title={expanded ? 'Collapse activity' : 'Expand activity'}
+      >
+        <span className="collapsed-activity-stack-chevron" aria-hidden="true">
+          ▸
+        </span>
+        <span className="collapsed-activity-stack-label">{summary.label}</span>
+      </button>
+      {expanded ? children : null}
     </div>
   )
 }
@@ -2204,6 +2258,18 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Settled-stack auto-collapse override: stacks the user re-opened after
+    // they folded into a one-line summary. Keyed by `toolStackStateKey` for
+    // the same churn-survival reason as `expandedLiveViewportStacks`.
+    const [expandedCollapsedStacks, setExpandedCollapsedStacks] = useState<Set<string>>(new Set())
+    const setCollapsedStackExpanded = useCallback((stackKey: string, expanded: boolean) => {
+      setExpandedCollapsedStacks((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(stackKey)
+        else next.delete(stackKey)
+        return next
+      })
+    }, [])
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -2541,7 +2607,9 @@ export const TranscriptPanel = memo(
     // expanded live viewport must resolve their CURRENT rowKey each render
     // (stack keys are position-independent; rowKeys are not).
     const expandedRowIdsWithLiveViewports = useMemo(() => {
-      if (expandedLiveViewportStacks.size === 0) return expandedRowIds
+      if (expandedLiveViewportStacks.size === 0 && expandedCollapsedStacks.size === 0) {
+        return expandedRowIds
+      }
       const ids = new Set(expandedRowIds)
       for (const stackKey of expandedLiveViewportStacks) {
         const row =
@@ -2549,8 +2617,16 @@ export const TranscriptPanel = memo(
           projectedRowLookup.byConstituentId.get(stackKey)
         if (row) ids.add(row.rowKey)
       }
+      // Re-opened collapsed stacks occupy the tall geometry bucket so the
+      // virtualizer caches distinct heights for the two visual states.
+      for (const stackKey of expandedCollapsedStacks) {
+        const row =
+          projectedRowLookup.byMessageId.get(stackKey) ||
+          projectedRowLookup.byConstituentId.get(stackKey)
+        if (row) ids.add(row.rowKey)
+      }
       return ids
-    }, [expandedLiveViewportStacks, expandedRowIds, projectedRowLookup])
+    }, [expandedLiveViewportStacks, expandedCollapsedStacks, expandedRowIds, projectedRowLookup])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -2891,6 +2967,12 @@ export const TranscriptPanel = memo(
           .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
 
+    // Settled-stack collapse boundary: the trailing message never collapses
+    // (a freshly-settled stack stays open until the next assistant/panel
+    // message actually arrives below it).
+    const lastDisplayMessageId =
+      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
+
     useEffect(() => {
       const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
       for (const rowKey of rowElementCacheRef.current.keys()) {
@@ -3082,6 +3164,22 @@ export const TranscriptPanel = memo(
               ? expandedLiveViewportStacks.has(liveViewportStackKey)
               : false
             const liveViewportActive = isToolActivityStack && rowKey === liveMeasurementRowKey
+            // Settled-stack auto-collapse: fold the whole stack into a
+            // one-line summary once the conversation has moved past it.
+            const stackAutoCollapsible =
+              isToolActivityStack &&
+              shouldAutoCollapseActivityStack({
+                activities: msg.toolActivities || [],
+                isLiveRow: liveViewportActive,
+                isLastRow: msg.id === lastDisplayMessageId
+              })
+            const collapsedStackExpanded =
+              stackAutoCollapsible && liveViewportStackKey
+                ? expandedCollapsedStacks.has(liveViewportStackKey)
+                : false
+            const collapsedStackKey = stackAutoCollapsible
+              ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
+              : ''
             const pendingQuestionsForRow = pendingAgentQuestions.filter(
               (question) => question.messageId === msg.id
             )
@@ -3205,6 +3303,7 @@ export const TranscriptPanel = memo(
               subThreadExpanded: expandedSubThreadResults.has(rowKey),
               fanoutExpanded: expandedFanoutResults.has(rowKey),
               liveViewportExpanded,
+              collapsedStackKey,
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
               assistantRunModelKey,
@@ -3237,6 +3336,7 @@ export const TranscriptPanel = memo(
                 setSubThreadResultExpanded,
                 setFanoutResultExpanded,
                 setLiveViewportExpandedForStack,
+                setCollapsedStackExpanded,
                 toggleUserMessageExpanded,
                 setRoundExpanded
               ]
@@ -3345,6 +3445,39 @@ export const TranscriptPanel = memo(
                       thinkingTraceActions={thinkingTraceActions}
                     />
                   </div>
+                ) : isToolActivityStack && stackAutoCollapsible ? (
+                  <CollapsedActivityStackRow
+                    key={msg.id}
+                    header={activityStackHeader}
+                    activities={msg.toolActivities || []}
+                    expanded={collapsedStackExpanded}
+                    onToggle={(expanded) =>
+                      setCollapsedStackExpanded(liveViewportStackKey, expanded)
+                    }
+                  >
+                    <ActivityStack
+                      activities={msg.toolActivities || []}
+                      header={null}
+                      workspacePath={currentWorkspacePath}
+                      provider={getChatProvider(currentChat)}
+                      chatId={currentChat?.appChatId}
+                      runId={msg.runId || boundaryRun?.runId}
+                      chat={currentChat || undefined}
+                      compactDensity={compactDensity}
+                      liveActivityViewport={liveActivityViewport}
+                      liveActivityViewportActive={false}
+                      liveActivityViewportExpanded={liveViewportExpanded}
+                      onLiveActivityViewportExpandedChange={(expanded) =>
+                        setLiveViewportExpandedForStack(liveViewportStackKey, expanded)
+                      }
+                      expandedActivityIds={activityExpansionIds ?? EMPTY_ACTIVITY_EXPANSION}
+                      onExpandedActivityIdsChange={(next) =>
+                        setActivityExpansionForRow(rowKey, next)
+                      }
+                      onOpenFileChangeInWorkbench={onOpenFileChangeInWorkbench}
+                      thinkingTraceActions={thinkingTraceActions}
+                    />
+                  </CollapsedActivityStackRow>
                 ) : isToolActivityStack ? (
                   <ActivityStack
                     key={msg.id}

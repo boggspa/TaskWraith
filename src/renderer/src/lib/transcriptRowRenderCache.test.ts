@@ -48,6 +48,7 @@ const signature = (
   subThreadExpanded: false,
   fanoutExpanded: false,
   liveViewportExpanded: false,
+  collapsedStackKey: '',
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   assistantRunModelKey: '',
