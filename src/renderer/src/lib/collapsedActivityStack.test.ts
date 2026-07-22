@@ -31,6 +31,7 @@ describe('summarizeCollapsedActivityStack', () => {
     expect(summary.label).toBe(
       'Thought for 12s · Searched ×2 · Read 2 files · Edited 1 file · Ran 1 command'
     )
+    expect(summary.families).toEqual(['thinking', 'search', 'read', 'write', 'shell'])
     expect(summary.activityCount).toBe(8)
     expect(summary.errorCount).toBe(0)
   })

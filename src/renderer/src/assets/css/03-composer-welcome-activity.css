@@ -12087,9 +12087,20 @@ button.diff-file-row {
   background: none;
   cursor: pointer;
   font: inherit;
-  font-size: 12px;
+  /* Body-text size (assistant-message parity) — the summary IS the message
+   * for a folded stack, not a caption under one. */
+  font-size: var(--font-size-md);
   color: var(--text-secondary);
   text-align: left;
+}
+.collapsed-activity-stack-icons {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  flex-shrink: 0;
+}
+.collapsed-activity-stack-icon {
+  opacity: 0.85;
 }
 .collapsed-activity-stack-summary:hover .collapsed-activity-stack-label {
   color: var(--text-primary);

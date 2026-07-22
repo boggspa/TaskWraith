@@ -34,9 +34,13 @@ export function activityStackHasLiveWork(activities: readonly ToolActivity[]): b
   )
 }
 
+export type CollapsedStackFamily = 'thinking' | 'read' | 'write' | 'search' | 'shell' | 'task'
+
 export interface CollapsedStackSummary {
   /** "Thought for 12s · Searched ×8 · Read 5 files · Edited 2 files" */
   label: string
+  /** Activity families present, in label order — drives the icon strip. */
+  families: CollapsedStackFamily[]
   /** Count of error-status activities, surfaced on the summary row. */
   errorCount: number
   /** Total activities folded away (for the a11y label / tooltip). */
@@ -90,25 +94,34 @@ export function summarizeCollapsedActivityStack(
   }
 
   const parts: string[] = []
-  if (thinkingCount > 0) parts.push(thinkingDurationLabel(thinkingMs))
+  const families: CollapsedStackFamily[] = []
+  if (thinkingCount > 0) {
+    parts.push(thinkingDurationLabel(thinkingMs))
+    families.push('thinking')
+  }
   for (const family of familyOrder) {
     const count = familyCounts.get(family) || 0
     const files = familyFiles.get(family)?.size || 0
     switch (family) {
       case 'read':
         parts.push(files > 0 ? `Read ${pluralize(files, 'file')}` : `Read ×${count}`)
+        families.push('read')
         break
       case 'write':
         parts.push(files > 0 ? `Edited ${pluralize(files, 'file')}` : `Edited ×${count}`)
+        families.push('write')
         break
       case 'search':
         parts.push(count === 1 ? 'Searched once' : `Searched ×${count}`)
+        families.push('search')
         break
       case 'shell':
         parts.push(`Ran ${pluralize(count, 'command')}`)
+        families.push('shell')
         break
       default:
         parts.push(count === 1 ? 'Used 1 tool' : `Used ${count} tools`)
+        families.push('task')
         break
     }
   }
@@ -117,6 +130,7 @@ export function summarizeCollapsedActivityStack(
 
   return {
     label: parts.join(' · '),
+    families,
     errorCount,
     activityCount: activities.length
   }

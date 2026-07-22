@@ -24,6 +24,7 @@ import {
   shouldAutoCollapseActivityStack,
   summarizeCollapsedActivityStack
 } from '../lib/collapsedActivityStack'
+import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
 import {
   closeoutProviderFromMetadata,
@@ -308,6 +309,7 @@ function CollapsedTranscriptRow({
   header,
   metaLabel,
   label,
+  icons,
   errored,
   expanded,
   onToggle,
@@ -318,6 +320,8 @@ function CollapsedTranscriptRow({
   /** Optional muted inline prefix (e.g. "System") when no block header. */
   metaLabel?: string
   label: string
+  /** Optional leading icon strip (tool-family monoline SVGs). */
+  icons?: ReactNode
   errored?: boolean
   expanded: boolean
   onToggle: (expanded: boolean) => void
@@ -342,12 +346,23 @@ function CollapsedTranscriptRow({
         <span className="collapsed-activity-stack-chevron" aria-hidden="true">
           ▸
         </span>
+        {icons}
         {metaLabel ? <span className="collapsed-activity-stack-meta">{metaLabel}</span> : null}
         <span className="collapsed-activity-stack-label">{label}</span>
       </button>
       {expanded ? children : null}
     </div>
   )
+}
+
+/** Map summary families onto the tool monoline icon set. */
+const COLLAPSED_STACK_FAMILY_ICON: Record<string, ToolFamily> = {
+  thinking: 'reasoning',
+  read: 'file',
+  write: 'edit',
+  search: 'search',
+  shell: 'shell',
+  task: 'task'
 }
 
 /**
@@ -373,6 +388,20 @@ function CollapsedActivityStackRow({
     <CollapsedTranscriptRow
       header={header}
       label={summary.label}
+      icons={
+        summary.families.length > 0 ? (
+          <span className="collapsed-activity-stack-icons" aria-hidden>
+            {summary.families.map((family) => (
+              <ToolFamilyIcon
+                key={family}
+                family={COLLAPSED_STACK_FAMILY_ICON[family] ?? 'task'}
+                size={22}
+                className="collapsed-activity-stack-icon"
+              />
+            ))}
+          </span>
+        ) : null
+      }
       errored={summary.errorCount > 0}
       expanded={expanded}
       onToggle={onToggle}
