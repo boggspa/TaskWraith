@@ -195,8 +195,21 @@ export interface BuildContainedCursorReadOnlyArgvInput {
   workspace: string
   prompt: string
   model?: string | null
-  /** Both `ask` and `plan` are read-only (non-mutating) Cursor modes. */
-  mode?: 'ask' | 'plan'
+  /** Both `ask` and `plan` are read-only (non-mutating) Cursor modes. Pass
+   * `null` ONLY for a read-only seat whose safe-subset TaskWraith MCP bridge
+   * was set up for this run: `--mode ask/plan` executes NO tools headlessly —
+   * including the broker's read tools — so a bridged read-only seat must run
+   * DEFAULT mode, contained by the transient `.cursor/cli.json` native-mutator
+   * deny-list, the fail-closed `--safe-subset` broker, and the same
+   * `--sandbox enabled`. */
+  mode?: 'ask' | 'plan' | null
+  /** Emit `--force` so the run's MCP tool CALLS execute headlessly. Set this
+   * ONLY after the caller registered the TaskWraith broker globally, approved
+   * it via `cursor-agent mcp enable`, and wrote the transient allow rules —
+   * without that bridge, headless cursor-agent rejects every MCP call ("User
+   * rejected MCP") and `--force` would only widen native execution. Never
+   * emits `--yolo`/`--approve-mcps` either way. */
+  forceAllowMcpTools?: boolean
 }
 
 /**
@@ -212,8 +225,11 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  *     sandbox's suspenders.
  *   * `--skip-worktree-setup` blocks the `.cursor/worktrees.json` setup scripts.
  *   * `--trust` avoids the interactive "trust this workspace" prompt (headless).
- * It NEVER emits `--force`, `--yolo`, `--approve-mcps`, `--api-key`, or
- * `--sandbox disabled`. No CURSOR_CONFIG_DIR/DATA override is applied — the
+ * It NEVER emits `--yolo`, `--approve-mcps`, `--api-key`, or
+ * `--sandbox disabled`; `--force` appears only via the bridge-gated
+ * `forceAllowMcpTools` input (a read-only seat bridged this way runs DEFAULT
+ * mode via `mode: null`, contained by the transient deny-list + safe-subset
+ * broker). No CURSOR_CONFIG_DIR/DATA override is applied — the
  * caller inherits the user's real config via the process env (Path B), bounded
  * by the sandbox. The prompt is passed after a `--` end-of-options guard (see
  * below). Only canonical TaskWraith-exposed Cursor model ids survive
@@ -226,11 +242,13 @@ export interface BuildContainedCursorReadOnlyArgvInput {
  * exposes write+shell tools — no `--mode`). Containment is identical either way:
  * `--sandbox enabled` (native OS sandbox — blocks writes to $HOME, allows the
  * workspace), `--skip-worktree-setup`, and the end-of-options `--` prompt guard.
- * NEVER `--force`/`--yolo`/`--approve-mcps`/`--api-key`/`--sandbox disabled`.
+ * NEVER `--yolo`/`--approve-mcps`/`--api-key`/`--sandbox disabled`; `--force`
+ * only via the bridge-gated `forceAllowMcpTools` parameter.
  */
 function buildContainedCursorArgv(
   input: { workspace: string; prompt: string; model?: string | null },
-  readOnlyMode: 'ask' | 'plan' | null
+  readOnlyMode: 'ask' | 'plan' | null,
+  forceAllowMcpTools?: boolean
 ): string[] {
   return [
     '-p',
@@ -241,6 +259,10 @@ function buildContainedCursorArgv(
     'enabled',
     ...(readOnlyMode ? ['--mode', readOnlyMode] : []),
     '--skip-worktree-setup',
+    // `--force` executes MCP tool CALLS headlessly; emitted ONLY when the
+    // caller set up the TaskWraith broker bridge for this run (see
+    // forceAllowMcpTools). Never `--yolo`/`--approve-mcps`.
+    ...(forceAllowMcpTools === true ? ['--force'] : []),
     ...(input.model ? ['--model', normalizeCliProviderModel('cursor', input.model)] : []),
     '--workspace',
     input.workspace,
@@ -258,24 +280,32 @@ function buildContainedCursorArgv(
 export function buildContainedCursorReadOnlyArgv(
   input: BuildContainedCursorReadOnlyArgvInput
 ): string[] {
-  return buildContainedCursorArgv(input, input.mode ?? 'ask')
+  return buildContainedCursorArgv(
+    input,
+    input.mode === undefined ? 'ask' : input.mode,
+    input.forceAllowMcpTools
+  )
 }
 
 export interface BuildContainedCursorWriteArgvInput {
   workspace: string
   prompt: string
   model?: string | null
+  /** See BuildContainedCursorReadOnlyArgvInput.forceAllowMcpTools — the same
+   * bridge-only `--force` gate applies to the write seat's full broker. */
+  forceAllowMcpTools?: boolean
 }
 
 /**
  * Write-capable contained Cursor launch surface. Cursor's DEFAULT mode (no
  * `--mode`) exposes its write + shell tools; the ONLY containment is the native
  * `--sandbox enabled` (validated to block writes to $HOME while allowing the
- * workspace) plus the `--` prompt guard. It NEVER emits `--force`/`--yolo`/
- * `--approve-mcps`/`--api-key`/`--sandbox disabled`.
+ * workspace) plus the `--` prompt guard. It NEVER emits `--yolo`/
+ * `--approve-mcps`/`--api-key`/`--sandbox disabled`; `--force` appears only via
+ * the bridge-gated `forceAllowMcpTools` input.
  */
 export function buildContainedCursorWriteArgv(
   input: BuildContainedCursorWriteArgvInput
 ): string[] {
-  return buildContainedCursorArgv(input, null)
+  return buildContainedCursorArgv(input, null, input.forceAllowMcpTools)
 }

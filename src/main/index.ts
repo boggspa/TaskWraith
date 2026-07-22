@@ -1225,6 +1225,19 @@ import {
   cursorWriteCapable
 } from './cursor/CursorCliArgs'
 import {
+  CURSOR_BROKER_MCP_ALLOW_RULES,
+  CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
+  CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
+  CURSOR_MCP_SERVER_NAME,
+  CURSOR_SCOPED_MCP_SERVER_NAME,
+  buildCursorBrokerMcpServerEntry
+} from './cursor/CursorMcpBridge'
+import {
+  applyCursorWriteModeConfig,
+  ensureGlobalCursorBrokerRegistered
+} from './cursor/CursorWorkspaceConfig'
+import { cursorMcpToolsDenied } from './cursor/CursorMcpPolicy'
+import {
   createGrokTurnAbortController,
   runGrokAcpTurn,
   type AcpChildProcess
@@ -17002,24 +17015,69 @@ async function runGrokProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 }
 
 // Cursor launch history lives in git and SECURITY_ENGINEERING_LEDGER.md.
-// Cursor Path-B runtime: ALWAYS enabled, no per-build fingerprint gate (that was
-// brittle — provider auto-updates broke the exact-SHA match and silently disabled
-// Cursor). Containment is the native `--sandbox` (an honest PARTIAL backstop —
-// blocks $HOME-root sensitive dirs for a normal project workspace, but a
-// workspace directly under $HOME leaves $HOME writable) plus a read-only `--mode`
-// for read seats; write seats run Cursor's default (write+shell) mode, still
-// sandboxed. The contained argv never emits write-widening or sandbox-disabling
-// flags and guards the trailing prompt against flag injection. Path B inherits the user's
-// REAL ~/.cursor login via the process env (headless-verified). The
-// CursorStartupContainment canary is a DEV-only containment check, not a runtime
-// gate. See buildContainedCursor{ReadOnly,Write}Argv + the in-body comment.
+// ── Cursor TaskWraith MCP bridge ("B" mode) ─────────────────────────────────
+// cursor-agent headless (`-p`) rejects every MCP tools/call as "User rejected
+// MCP" unless ALL THREE hold (live qualification, commit 80b2017d4):
+//   1. the broker is registered in the GLOBAL ~/.cursor/mcp.json — a per-run
+//      WORKSPACE server never reaches the durable "ready" approval;
+//   2. it was approved by NAME via `cursor-agent mcp enable` (the approval
+//      survives the per-launch broker socket-token refresh below);
+//   3. the run's argv carries `--force` so tool CALLS execute headlessly.
+// This wiring was deleted by the known-broken WIP checkpoint 901b8cd5c, which
+// is why Cursor seats reported "user rejected" on every broker call while
+// TaskWraith policy said mcpTools:allow. Restored here with the contained
+// argv (`--sandbox enabled`, prompt `--` guard) kept intact.
+
+// `mcp enable` is spawned at most once per workspace+server per session, and
+// only cached on ACTUAL success (a failed enable must not poison the cache —
+// the next launch would then skip the one reliable approval recipe and reject
+// every MCP call).
+const cursorMcpApprovedWorkspaceServers = new Set<string>()
+async function ensureCursorMcpApproved(
+  binaryPath: string,
+  workspace: string,
+  serverName: string = CURSOR_MCP_SERVER_NAME
+): Promise<void> {
+  const key = `${workspace}\0${serverName}`
+  if (cursorMcpApprovedWorkspaceServers.has(key)) return
+  await new Promise<void>((resolve, reject) => {
+    execFile(
+      binaryPath,
+      ['mcp', 'enable', serverName],
+      { cwd: workspace, timeout: 10000 },
+      (error, _stdout, stderr) => {
+        if (error) {
+          const detail = (String(stderr || '').trim() || error.message || '').slice(0, 300)
+          reject(
+            new Error(`cursor-agent mcp enable ${serverName} failed${detail ? `: ${detail}` : ''}`)
+          )
+          return
+        }
+        resolve()
+      }
+    )
+  })
+  cursorMcpApprovedWorkspaceServers.add(key)
+}
+
+// "B" mode paths: the user's GLOBAL Cursor MCP registry. This is the ONE place
+// TaskWraith writes global ~/.cursor for a Cursor run (additive, only its own
+// broker entries; user-owned servers are preserved by the merge).
+function globalCursorMcpDir(): string {
+  return join(app.getPath('home'), '.cursor')
+}
+function globalCursorMcpPath(): string {
+  return join(globalCursorMcpDir(), 'mcp.json')
+}
+
+function cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath: string): boolean {
+  return canonicalPath(mcpPath) === canonicalPath(globalCursorMcpPath())
+}
+
 async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
   const route = routeWithRunId('cursor', payload)
-  // No TaskWraith MCP bridge is written for a contained read-only run, and the
-  // contained argv never resumes a prior chat, so keep the run state honest
-  // rather than letting a stale caller claim MCP is advertised or a session is
-  // being resumed.
-  payload.taskWraithMcpAdvertised = false
+  // The contained argv never resumes a prior chat, so keep the run state
+  // honest rather than letting a stale caller claim a session is resumed.
   payload.providerSessionId = null
 
   const resolved = await resolveCliProviderBinary('cursor', payload.runtimeProfile)
@@ -17042,6 +17100,121 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     return
   }
 
+  // ── TaskWraith MCP bridge setup ("B" mode; un-walls Cursor seats) ──
+  // Without this, every broker call fails headlessly as "User rejected MCP"
+  // even though TaskWraith policy allows it (pass-1 finding). Brokered tools
+  // still route through TaskWraith's gateway (workspace guards + approval
+  // ledger); NATIVE tools stay callable too, bounded by the argv's
+  // `--sandbox enabled` — both stacks stay available, each with its own bound.
+  const writeCapable = cursorWriteCapable(payload.approvalMode)
+  const mcpToolsDenied = cursorMcpToolsDenied(payload.effectivePermissions)
+  const cursorAdvertiseTaskWraithMcp =
+    payload.taskWraithMcpAdvertised === true && !mcpToolsDenied && Boolean(payload.workspace)
+  let restoreCursorConfig: (() => void) | undefined
+  let cursorMcpBridgeActive = false
+  if (cursorAdvertiseTaskWraithMcp) {
+    try {
+      const bridgeCommandStatus = taskwraithMcpBridgeCommandStatus()
+      if (!bridgeCommandStatus.available) {
+        throw new Error(taskwraithMcpBridgeUnavailableMessage(bridgeCommandStatus))
+      }
+      await mcpBridgeRuntime.startGeminiMcpBroker()
+      const coreSubset = isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      const gatewaySubset = isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId)
+      // Read-only seat: the safe-subset broker (read tools only; the bridge
+      // itself fails non-safe tools/call closed). A plan-preset seat widens to
+      // the host-gated plan instruments. Write seat: the full broker.
+      const cursorPlanSeat = !writeCapable && payload.effectivePermissions?.presetId === 'plan'
+      const brokerInvocation = {
+        command: bridgeCommandStatus.command,
+        args: taskwraithMcpBridgeArgs(geminiMcpSocketPath(), {
+          safeSubset: !writeCapable,
+          planSubset: cursorPlanSeat,
+          coreSubset,
+          gatewaySubset
+        }),
+        env: {
+          [GEMINI_MCP_BRIDGE_ENV]: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'cursor',
+          TASKWRAITH_RUN_ID: route.appRunId || '',
+          TASKWRAITH_CHAT_ID: route.appChatId || '',
+          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+        }
+      }
+      // Global registration is the only one cursor-agent durably approves;
+      // refreshed each launch (repair-on-stale — the socket token rotates).
+      // The legacy scoped read-only name is removed so Cursor never aggregates
+      // two TaskWraith tool catalogues.
+      // NOTE: the registration env carries THIS run's routing identity; two
+      // Cursor seats launching in the same second can overwrite each other's
+      // entry before their agent processes read it. Ensemble writer seats are
+      // serial today; parallel read-only Cursor lanes are a known residual
+      // race (pre-existing in the 80b2017d4 design).
+      ensureGlobalCursorBrokerRegistered(
+        fsSync,
+        globalCursorMcpPath(),
+        globalCursorMcpDir(),
+        buildCursorBrokerMcpServerEntry(brokerInvocation),
+        [CURSOR_SCOPED_MCP_SERVER_NAME]
+      )
+      // Transient workspace config (restored after the run): allow THIS
+      // broker's tools, and strip workspace-registered MCP servers — under
+      // `--force` those would execute ungoverned. The native-tool deny-list is
+      // seat-scoped: write seats keep native shell/write (sandbox-bounded —
+      // the both-stacks directive); read-only seats keep the native mutators
+      // denied so read-only holds on the native stack as well as the broker.
+      const cursorDir = join(payload.workspace!, '.cursor')
+      const mcpPath = join(cursorDir, 'mcp.json')
+      restoreCursorConfig = applyCursorWriteModeConfig(
+        fsSync,
+        join(cursorDir, 'cli.json'),
+        cursorDir,
+        {
+          allowRules: writeCapable
+            ? CURSOR_BROKER_MCP_ALLOW_RULES
+            : cursorPlanSeat
+              ? CURSOR_BROKER_PLAN_MCP_ALLOW_RULES
+              : CURSOR_BROKER_READONLY_MCP_ALLOW_RULES,
+          mcpConfigPath: mcpPath,
+          serverEntry: {},
+          ...(cursorWorkspaceMcpAliasesGlobalRegistry(mcpPath)
+            ? { preserveExistingMcpServers: true }
+            : {})
+        },
+        { denyRules: writeCapable ? [] : ['Shell(**)', 'Write(**)'] }
+      )
+      await ensureCursorMcpApproved(resolved.binaryPath, payload.workspace!)
+      cursorMcpBridgeActive = true
+    } catch (error) {
+      // Degrade WITH A VISIBLE WARNING (Grok parity): the seat runs native-only
+      // rather than dying — or worse, trying tools that would all reject.
+      restoreCursorConfig?.()
+      restoreCursorConfig = undefined
+      cursorMcpBridgeActive = false
+      sendAgentCompatLine(
+        event.sender,
+        'cursor',
+        {
+          type: 'provider_warning',
+          provider: 'cursor',
+          severity: 'warning',
+          title: 'Cursor MCP bridge unavailable',
+          message: `TaskWraith could not set up the MCP broker; Cursor is running with native tools only. ${
+            error instanceof Error ? error.message : String(error)
+          }`
+        },
+        route
+      )
+    }
+  }
+  payload.taskWraithMcpAdvertised = cursorMcpBridgeActive
+  if (!cursorMcpBridgeActive) {
+    payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+      advertised: false,
+      coreProfile: false
+    })
+  }
+
   // Cursor is ALWAYS enabled and contained by argv — there is no per-build
   // fingerprint gate (that was brittle: provider auto-updates broke the exact-SHA
   // match and silently disabled Cursor). Containment is the native
@@ -17049,24 +17222,28 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // $HOME-root sensitive dirs (~/.ssh, ~/.aws) for a normal project workspace,
   // but the sandbox grants the workspace's PARENT area, so a workspace placed
   // directly under $HOME leaves $HOME writable. Read-only seats add a read-only
-  // `--mode`; write-capable seats run in Cursor's default (write+shell) mode,
-  // still sandboxed. The contained argv never emits write-widening or
-  // sandbox-disabling flags and guards the trailing prompt against flag
-  // injection. Path B inherits the user's REAL ~/.cursor login via the
-  // process env (headless-verified: apiKeySource "login", no key). The
-  // CursorStartupContainment canary is retained as a DEV-only containment check,
-  // not a runtime gate.
-  const args = cursorWriteCapable(payload.approvalMode)
+  // `--mode` (a BRIDGED read-only seat instead runs default mode — ask/plan
+  // execute no tools headlessly — contained by the transient native-mutator
+  // deny-list + safe-subset broker); write-capable seats run in Cursor's
+  // default (write+shell) mode, still sandboxed. The contained argv never emits
+  // write-widening or sandbox-disabling flags (`--force` only with the bridge)
+  // and guards the trailing prompt against flag injection. Path B inherits the
+  // user's REAL ~/.cursor login via the process env (headless-verified:
+  // apiKeySource "login", no key). The CursorStartupContainment canary is
+  // retained as a DEV-only containment check, not a runtime gate.
+  const args = writeCapable
     ? buildContainedCursorWriteArgv({
         workspace: payload.workspace!,
         prompt: payload.prompt,
-        model: payload.model
+        model: payload.model,
+        forceAllowMcpTools: cursorMcpBridgeActive
       })
     : buildContainedCursorReadOnlyArgv({
         workspace: payload.workspace!,
         prompt: payload.prompt,
         model: payload.model,
-        mode: 'ask'
+        mode: cursorMcpBridgeActive ? null : 'ask',
+        forceAllowMcpTools: cursorMcpBridgeActive
       })
 
   // extraEnv (NOT resolvedEnv): createCliEnv inherits the REAL process.env (real
@@ -17075,7 +17252,8 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
   // CURSOR_CONFIG_DIR/CURSOR_DATA_DIR override (Path B = real config).
   await runCliProviderProcess(event, 'cursor', resolved.binaryPath, args, payload, {
     fallback: false,
-    extraEnv: {}
+    extraEnv: {},
+    onComplete: () => restoreCursorConfig?.()
   })
 }
 

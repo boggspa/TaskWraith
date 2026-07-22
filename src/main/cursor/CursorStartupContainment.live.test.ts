@@ -65,7 +65,7 @@ import { existsSync, promises as fsp, rmSync } from 'node:fs'
 import { homedir, tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { beforeAll, describe, expect, it, vi } from 'vitest'
-import { buildContainedCursorReadOnlyArgv } from './CursorCliArgs'
+import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import { CursorRuntimeAdmissionGate } from './CursorRuntimeAdmission'
 
 const BIN = resolve(
@@ -509,6 +509,56 @@ describe('Cursor startup containment — managed argv safety', () => {
     expect(productionArgv[productionArgv.length - 1]).toBe(hostilePrompt)
     for (const token of DANGEROUS_ARGV_TOKENS) expect(productionArgv).not.toContain(token)
     expect(productionArgv).not.toContain('--api-key')
+  })
+
+  it('emits --force ONLY via the bridge-gated forceAllowMcpTools input, never the other dangerous tokens', () => {
+    // WS-A un-wall: when the TaskWraith MCP broker bridge is set up for the run
+    // (global register + `cursor-agent mcp enable` BOTH succeeded), the runtime
+    // passes forceAllowMcpTools:true so headless cursor-agent EXECUTES broker
+    // tool calls (`--force`). That makes `--force` a legitimate, BRIDGE-GATED
+    // production token — distinct from `--yolo` / `--approve-mcps` /
+    // `--auto-review`, which are NEVER emitted. RESIDUAL RISK (disclosed): the
+    // Cursor CLI's `--force` also headless-approves NATIVE tools, so it must only
+    // ever ride an active bridge whose transient deny-list write succeeded (RO
+    // seats fail closed to no-force otherwise). The native OS `--sandbox enabled`
+    // stays hard-pinned and the end-of-options prompt guard stays intact in every
+    // case below.
+    const NEVER_TOKENS = ['--yolo', '--approve-mcps', '--auto-review'] as const
+
+    // Default (no bridge) read-only + write seats: never force anything.
+    expect(
+      buildContainedCursorReadOnlyArgv({ workspace: '/synthetic/workspace', prompt: 'hi' })
+    ).not.toContain('--force')
+    expect(
+      buildContainedCursorWriteArgv({ workspace: '/synthetic/workspace', prompt: 'hi' })
+    ).not.toContain('--force')
+
+    // Bridged read-only seat: default mode (mode:null) + `--force` emitted.
+    const roBridged = buildContainedCursorReadOnlyArgv({
+      workspace: '/synthetic/workspace',
+      prompt: 'hi',
+      mode: null,
+      forceAllowMcpTools: true
+    })
+    expect(roBridged).toContain('--force')
+    expect(roBridged).toEqual(expect.arrayContaining(['--sandbox', 'enabled']))
+    expect(
+      roBridged.some((token, index) => token === '--sandbox' && roBridged[index + 1] === 'disabled')
+    ).toBe(false)
+    for (const token of NEVER_TOKENS) expect(roBridged).not.toContain(token)
+    expect(roBridged).not.toContain('--api-key')
+    expect(roBridged[roBridged.length - 2]).toBe('--')
+
+    // Bridged write seat (full broker): `--force` emitted; sandbox still enabled.
+    const writeBridged = buildContainedCursorWriteArgv({
+      workspace: '/synthetic/workspace',
+      prompt: 'hi',
+      forceAllowMcpTools: true
+    })
+    expect(writeBridged).toContain('--force')
+    expect(writeBridged).toEqual(expect.arrayContaining(['--sandbox', 'enabled']))
+    for (const token of NEVER_TOKENS) expect(writeBridged).not.toContain(token)
+    expect(writeBridged).not.toContain('--api-key')
   })
 })
 

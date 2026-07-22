@@ -1,7 +1,11 @@
-// HISTORICAL/QUALIFICATION-ONLY: production Cursor admission is disabled before
-// process launch. These config helpers remain for regression evidence and
-// possible future qualification; production must not mutate a workspace with
-// them or treat them as a sandbox.
+// Cursor workspace config helpers. The transient workspace `.cursor/cli.json`
+// (native-tool allow/deny rules) + `.cursor/mcp.json` (server isolation) writes
+// are production-wired by runCursorProvider in index.ts, and
+// ensureGlobalCursorBrokerRegistered is the GLOBAL "B"-mode broker registry the
+// launch refreshes each run. These helpers are still not a sandbox by
+// themselves: native-tool impact is bounded by the contained argv's
+// `--sandbox enabled`, and brokered MCP tools are guarded by TaskWraith's
+// gateway policy — this module only installs the files.
 //
 // CR6 — workspace-local Cursor permission config for TaskWraith-owned WRITE mode.
 //
@@ -245,7 +249,7 @@ export function applyCursorWriteModeConfig(
   configPath: string,
   dirPath: string,
   bridge?: CursorMcpBridgeOptions,
-  options?: { fullAccess?: boolean }
+  options?: { fullAccess?: boolean; denyRules?: readonly string[] }
 ): () => void {
   const mcpConfigPath = bridge?.mcpConfigPath
   const serverEntry = bridge?.serverEntry
@@ -254,13 +258,20 @@ export function applyCursorWriteModeConfig(
 
   const dirExisted = fs.existsSync(dirPath)
 
-  // cli.json: deny the native shell (write containment) + optionally allow the
-  // bridge's MCP tools — merged into a single write so there's one file state.
+  // cli.json: deny native tools per the caller's seat posture + optionally
+  // allow the bridge's MCP tools — merged into a single write so there's one
+  // file state. The deny-list defaults to the containment-era full set (every
+  // opaque native tool routed through the broker). Production Cursor seats now
+  // keep native tools callable (bounded by the argv's `--sandbox enabled`), so
+  // `runCursorProvider` passes a narrower list: write seats pass [] (native
+  // shell/write stay available, sandbox-bounded — the both-stacks directive);
+  // read-only seats deny only the native mutators (Shell/Write) so the
+  // read-only posture holds on the native stack as well as the broker.
   // Full Workspace Access expands what the signed TaskWraith broker may do in
   // the canonical workspace. It never authorizes Cursor's opaque native tools
   // to open arbitrary host paths under `--force`.
-  void options
-  const denyRules = CURSOR_WRITE_MODE_DENY_RULES
+  void options?.fullAccess
+  const denyRules = options?.denyRules ?? CURSOR_WRITE_MODE_DENY_RULES
   const cli = captureFile(fs, configPath)
   let cliMerged = mergeCursorDenyRules(cli.parsed, denyRules)
   if (bridge) cliMerged = mergeCursorAllowRules(cliMerged, bridge.allowRules)

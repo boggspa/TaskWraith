@@ -213,6 +213,29 @@ weaponized payloads to this file or its verification artifacts.
   Do not reintroduce bare uncontained `cursor-agent` argv or claim TaskWraith
   per-tool mediation for Path-B Cursor. Prefer project workspaces outside
   `$HOME` when untrusted repos matter.
+- **2026-07-22 residual-risk update (WS-A MCP un-wall).** `runCursorProvider`
+  now wires the "B"-mode TaskWraith broker bridge so Cursor seats can actually
+  execute governed MCP tools headlessly (pass-1 finding: policy was
+  `mcpTools: allow` but every broker call was client-rejected). The bridge is a
+  gated triple — additive-merge register into GLOBAL `~/.cursor/mcp.json`
+  (user servers preserved, restored on exit) → `cursor-agent mcp enable` (cached
+  only on real success) → argv `--force` via `forceAllowMcpTools:
+  cursorMcpBridgeActive`. **`--force` is now a legitimate BRIDGE-GATED production
+  token** (previously never emitted): it is emitted ONLY after register + enable
+  both succeed. Residual risks, disclosed: (a) the Cursor CLI's `--force` also
+  headless-approves NATIVE tools, so RO seats fail closed to no-force if the
+  transient `.cursor/cli.json` deny-list write fails, and `cli.json` is restored
+  on every exit path via `runCliProviderProcess` `onComplete`; (b) Cursor native
+  FS/shell remains OS-`--sandbox`-bounded and POST-EXEC-observed only — it is not
+  path-preflightable at a TaskWraith seam (Cursor's stream is observational; see
+  the WS-B runtime matrix), so the governed MCP broker path is the honest
+  workspace-locked path for Cursor while native stays sandbox-bounded; (c) the
+  global-registry write is additive and idempotent (socket token rotates each
+  launch). Regression: `CursorStartupContainment.live.test.ts` now asserts
+  `--force` is emitted ONLY via `forceAllowMcpTools` and never alongside
+  `--yolo`/`--approve-mcps`/`--auto-review`, with `--sandbox enabled` retained.
+  Live Cursor seats cannot re-validate the un-wall until an external Dev App
+  rebuild; landed evidence is suites + review estimation.
 
 ## TW-SEC-2026-004 — Signed-elevated acceptance could race lifecycle revocation
 

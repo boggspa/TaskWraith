@@ -1,7 +1,9 @@
-// HISTORICAL/QUALIFICATION-ONLY: production Cursor admission is disabled before
-// process launch. These pure bridge builders remain for regression evidence and
-// possible future exact-build qualification; they are not a current runtime
-// surface or containment boundary.
+// Cursor MCP bridge builders. The per-run WORKSPACE registration ("A" mode)
+// below is historical/qualification-only — qualification proved it never
+// reaches cursor-agent's durable approval. The GLOBAL registration ("B" mode:
+// buildCursorBrokerMcpServerEntry + mergeGlobalCursorMcpServers, installed by
+// ensureGlobalCursorBrokerRegistered in CursorWorkspaceConfig) IS the
+// production path, wired by runCursorProvider in index.ts.
 //
 // 1.0.6-CRUX34 — TaskWraith Cursor MCP bridge (OQ#2).
 //
