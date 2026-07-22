@@ -63,3 +63,88 @@ describe('canonicalToolCoalesce', () => {
     expect(compactToolIdentifier('WebSearch')).toBe('websearch')
   })
 })
+
+// WS-C: catalogToolAgenticService is now the ONE source of truth for the runtime
+// approval gate (NativeApprovalPolicy.taskWraithToolAgenticService) and the
+// Settings policy chip (SettingsPanel.inferMcpPolicyKey). These assertions pin
+// parity with the buckets those consumers' own suites assert so the three
+// collapsed ladders can never silently drift apart again.
+describe('catalogToolAgenticService — security-gate parity', () => {
+  it('routes shell-class tools to shellCommands', () => {
+    for (const tool of [
+      'run_shell_command',
+      'run_task',
+      'start_background_process',
+      'kill_background_process',
+      'get_diagnostics',
+      'launch_start',
+      'launch_stop'
+    ]) {
+      expect(catalogToolAgenticService(tool)).toBe('shellCommands')
+    }
+    // launch reads stay on the softer bucket
+    expect(catalogToolAgenticService('launch_list_targets')).toBe('mcpTools')
+    expect(catalogToolAgenticService('launch_status')).toBe('mcpTools')
+  })
+
+  it('routes external publication to the non-grantable externalPublish bucket', () => {
+    expect(catalogToolAgenticService('git_push')).toBe('externalPublish')
+    expect(catalogToolAgenticService('git_create_pr')).toBe('externalPublish')
+  })
+
+  it('routes file mutations + staged git to fileChanges', () => {
+    for (const tool of [
+      'write_file',
+      'replace',
+      'create_directory',
+      'delete_path',
+      'move_path',
+      'rename_path',
+      'apply_patch',
+      'git_stage',
+      'git_commit'
+    ]) {
+      expect(catalogToolAgenticService(tool)).toBe('fileChanges')
+    }
+  })
+
+  it('routes audio/video media tools to the dedicated mediaEditing bucket', () => {
+    expect(catalogToolAgenticService('transcode_audio')).toBe('mediaEditing')
+    expect(catalogToolAgenticService('audio_mix')).toBe('mediaEditing')
+    expect(catalogToolAgenticService('video_decode_frame')).toBe('mediaEditing')
+  })
+
+  it('keeps canvas mutation / eval / recall in their dedicated buckets', () => {
+    expect(catalogToolAgenticService('canvas_click')).toBe('canvasInteraction')
+    expect(catalogToolAgenticService('canvas_fill')).toBe('canvasInteraction')
+    expect(catalogToolAgenticService('canvas_sketch_update')).toBe('canvasInteraction')
+    // reads stay on mcpTools
+    expect(catalogToolAgenticService('canvas_sketch_get')).toBe('mcpTools')
+    expect(catalogToolAgenticService('canvas_snapshot')).toBe('mcpTools')
+    expect(catalogToolAgenticService('canvas_open_launch')).toBe('mcpTools')
+    // eval is its own stricter bucket, never canvasInteraction
+    expect(catalogToolAgenticService('canvas_eval')).toBe('canvasEval')
+    expect(catalogToolAgenticService('canvas_eval')).not.toBe('canvasInteraction')
+    // sub-thread + cross-thread recall
+    expect(catalogToolAgenticService('delegate_to_subthread')).toBe('subThreadDelegation')
+    expect(catalogToolAgenticService('cancel_subthread')).toBe('subThreadDelegation')
+    for (const tool of ['tw_recall_find', 'tw_recall_read', 'tw_recall_read_events']) {
+      expect(catalogToolAgenticService(tool)).toBe('crossThreadRead')
+    }
+  })
+
+  it('does NOT reclassify creative_* import/dispatch tools as fileChanges', () => {
+    // The only catalog tools containing "import"/"dispatch" are creative_*; the
+    // canonical ladder is exact-name based, so they correctly stay on mcpTools
+    // (audited via their own creative-app approvals) — never fileChanges.
+    expect(catalogToolAgenticService('creative_timeline_import')).toBe('mcpTools')
+    expect(catalogToolAgenticService('creative_applescript_dispatch')).toBe('mcpTools')
+    expect(catalogToolAgenticService('creative_midi_dispatch')).toBe('mcpTools')
+  })
+
+  it('defaults unknown / orchestration tools to mcpTools', () => {
+    expect(catalogToolAgenticService('ensemble_yield')).toBe('mcpTools')
+    expect(catalogToolAgenticService('list_active_runs')).toBe('mcpTools')
+    expect(catalogToolAgenticService('some_other_tool')).toBe('mcpTools')
+  })
+})

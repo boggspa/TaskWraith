@@ -133,10 +133,10 @@ import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import {
-  MEDIA_EDITING_TOOLS,
   TASKWRAITH_MCP_TOOLS,
   type TaskWraithMcpToolName
 } from '../../../main/TaskWraithMcpTools'
+import { catalogToolAgenticService } from '../../../shared/canonicalToolCoalesce'
 
 type ProviderCliUpgradeState = 'idle' | 'opening' | 'opened' | 'error'
 type ManagedPolicyStatus = Record<string, unknown>
@@ -2558,49 +2558,11 @@ function inferMcpToolGroup(tool: TaskWraithMcpToolName): McpToolGroup {
 }
 
 function inferMcpPolicyKey(tool: TaskWraithMcpToolName): McpToolPolicyKey {
-  if (
-    tool === 'run_shell_command' ||
-    tool === 'run_task' ||
-    tool === 'start_background_process' ||
-    tool === 'kill_background_process' ||
-    tool === 'get_diagnostics' ||
-    tool === 'launch_start' ||
-    tool === 'launch_stop'
-  ) {
-    return 'shellCommands'
-  }
-  if (tool === 'git_push' || tool === 'git_create_pr') return 'externalPublish'
-  // Audio/video media tools share the dedicated mediaEditing policy bucket
-  // (parity with the runtime classifier). Checked before the creative_/fileChanges
-  // branches so the per-tool Settings policy chip reflects the real gate.
-  if (MEDIA_EDITING_TOOLS.has(tool)) return 'mediaEditing'
-  if (tool.startsWith('creative_')) return 'mcpTools'
-  if (
-    tool === 'write_file' ||
-    tool === 'replace' ||
-    tool === 'create_directory' ||
-    tool === 'delete_path' ||
-    tool === 'move_path' ||
-    tool === 'rename_path' ||
-    tool === 'apply_patch' ||
-    tool === 'git_stage' ||
-    tool === 'git_commit' ||
-    tool.includes('import') ||
-    tool.includes('dispatch')
-  ) {
-    return 'fileChanges'
-  }
-  if (tool === 'delegate_to_subthread' || tool === 'cancel_subthread') {
-    return 'subThreadDelegation'
-  }
-  if (tool === 'canvas_click' || tool === 'canvas_fill' || tool === 'canvas_sketch_update') {
-    return 'canvasInteraction'
-  }
-  if (tool === 'canvas_eval') return 'canvasEval'
-  if (tool === 'tw_recall_find' || tool === 'tw_recall_read' || tool === 'tw_recall_read_events') {
-    return 'crossThreadRead'
-  }
-  return 'mcpTools'
+  // WS-C: the per-tool Settings policy chip reads from the SAME shared canonical
+  // ladder as the runtime approval gate (catalogToolAgenticService), so the
+  // bucket shown here can never drift from the one actually enforced. Agentic
+  // ServiceId is a subset of keyof AgenticServicesSettings (McpToolPolicyKey).
+  return catalogToolAgenticService(tool)
 }
 
 function getMcpToolMeta(tool: TaskWraithMcpToolName): {

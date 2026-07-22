@@ -1,5 +1,6 @@
 import { isTaskWraithMcpToolName } from './mcp/McpResultHelpers'
-import { canonicalTaskWraithToolName, MEDIA_EDITING_TOOLS } from './TaskWraithMcpTools'
+import { canonicalTaskWraithToolName } from './TaskWraithMcpTools'
+import { catalogToolAgenticService } from '../shared/canonicalToolCoalesce'
 import type {
   AgenticServiceId,
   AgenticServicePolicy,
@@ -146,62 +147,18 @@ export function resolveNativeApprovalPreflightDecision(args: {
   return { kind: 'ask', policy, effectivePermissions: args.effectivePermissions }
 }
 
+/**
+ * Agentic-service bucket for the Codex/Gemini/Kimi/Cursor native-tool gate.
+ *
+ * WS-C: the classification ladder now lives in ONE shared source of truth,
+ * `catalogToolAgenticService` (`src/shared/canonicalToolCoalesce.ts`). This gate,
+ * the Settings policy chip, and the display/audit normalizers all delegate to it
+ * so the service a tool is ENFORCED under can never drift from the one it is
+ * SHOWN under. The security-load-bearing routing (shell/externalPublish/media/
+ * fileChanges/canvasInteraction/canvasEval/crossThreadRead) is documented there.
+ */
 export function taskWraithToolAgenticService(toolName: string): AgenticServiceId {
-  if (
-    toolName === 'run_shell_command' ||
-    toolName === 'run_task' ||
-    toolName === 'start_background_process' ||
-    toolName === 'kill_background_process' ||
-    toolName === 'get_diagnostics' ||
-    // Run-Button launches spawn / terminate processes — gate them at shell
-    // strictness in every seam so they're denied under read-only and can never
-    // downgrade to the softer, grantable mcpTools service.
-    toolName === 'launch_start' ||
-    toolName === 'launch_stop'
-  )
-    return 'shellCommands'
-  if (
-    toolName === 'git_push' ||
-    toolName === 'git_create_pr'
-  )
-    return 'externalPublish'
-  if (
-    toolName === 'write_file' ||
-    toolName === 'replace' ||
-    toolName === 'create_directory' ||
-    toolName === 'delete_path' ||
-    toolName === 'move_path' ||
-    toolName === 'rename_path' ||
-    toolName === 'apply_patch' ||
-    toolName === 'git_stage' ||
-    toolName === 'git_commit'
-  )
-    return 'fileChanges'
-  if (toolName === 'delegate_to_subthread' || toolName === 'cancel_subthread')
-    return 'subThreadDelegation'
-  // Dedicated grant bucket (Codex path): keep app-mutating canvas interactions
-  // out of the generic mcpTools session/workspace grant.
-  if (
-    toolName === 'canvas_click' ||
-    toolName === 'canvas_fill' ||
-    toolName === 'canvas_sketch_update'
-  )
-    return 'canvasInteraction'
-  // Arbitrary eval gets its OWN, stricter bucket (non-grantable / never-YOLO).
-  if (toolName === 'canvas_eval') return 'canvasEval'
-  // Cross-thread retrospection reads route to crossThreadRead (grantable) so a
-  // generic mcpTools grant can't auto-allow reading another thread/workspace.
-  if (
-    toolName === 'tw_recall_find' ||
-    toolName === 'tw_recall_read' ||
-    toolName === 'tw_recall_read_events'
-  )
-    return 'crossThreadRead'
-  // Audio/video media tools route to the dedicated mediaEditing service (grant
-  // bucket + audit) so they're gated/audited at shell/file strictness instead of
-  // the generic mcpTools service. Set is sourced from the canonical tool list.
-  if (MEDIA_EDITING_TOOLS.has(toolName)) return 'mediaEditing'
-  return 'mcpTools'
+  return catalogToolAgenticService(toolName)
 }
 
 export function taskWraithToolServiceIfKnown(toolName: string): AgenticServiceId | null {

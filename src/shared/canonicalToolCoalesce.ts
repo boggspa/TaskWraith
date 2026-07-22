@@ -220,10 +220,31 @@ export function resolveCatalogToolName(rawToolName: string): TaskWraithMcpToolNa
 }
 
 /**
- * Agentic-service bucket for a catalog tool — unified policy gate used by
- * Settings and runtime approval (replaces duplicated infer/classifier tables).
+ * Agentic-service bucket for a tool name — the SINGLE canonical policy ladder
+ * (WS-C). This is the one source of truth consumed by the runtime security gate
+ * (`NativeApprovalPolicy.taskWraithToolAgenticService`), the Settings policy chip
+ * (`SettingsPanel.inferMcpPolicyKey`), and display/audit normalizers, so the
+ * bucket a tool lands in can never drift between where it is *shown* and where it
+ * is *enforced*.
+ *
+ * Accepts any string so both catalog names and already-canonicalized native
+ * names resolve identically. The ladder is exact-name based; there is no
+ * substring/`startsWith` matching because the only catalog tools containing
+ * `import`/`dispatch` are `creative_*` (audited via their own approvals), and a
+ * loose substring branch would risk silently reclassifying future tools.
+ *
+ * Security-load-bearing ordering (mirrors the historical gate):
+ *  - shell-class (run/task/background/diagnostics/launch) → `shellCommands`
+ *  - git push / PR → `externalPublish` (non-grantable)
+ *  - audio/video media → `mediaEditing` (dedicated grant bucket + audit)
+ *  - file mutations / staged git → `fileChanges`
+ *  - sub-thread delegation → `subThreadDelegation`
+ *  - canvas click/fill/sketch mutate → `canvasInteraction`
+ *  - canvas eval (RCE) → `canvasEval` (signed-elevated, never auto-allowed)
+ *  - cross-thread recall reads → `crossThreadRead`
+ *  - everything else → `mcpTools`
  */
-export function catalogToolAgenticService(toolName: TaskWraithMcpToolName): AgenticServiceId {
+export function catalogToolAgenticService(toolName: string): AgenticServiceId {
   if (
     toolName === 'run_shell_command' ||
     toolName === 'run_task' ||
@@ -237,7 +258,6 @@ export function catalogToolAgenticService(toolName: TaskWraithMcpToolName): Agen
   }
   if (toolName === 'git_push' || toolName === 'git_create_pr') return 'externalPublish'
   if (MEDIA_EDITING_TOOLS.has(toolName)) return 'mediaEditing'
-  if (toolName.startsWith('creative_')) return 'mcpTools'
   if (
     toolName === 'write_file' ||
     toolName === 'replace' ||
@@ -247,9 +267,7 @@ export function catalogToolAgenticService(toolName: TaskWraithMcpToolName): Agen
     toolName === 'rename_path' ||
     toolName === 'apply_patch' ||
     toolName === 'git_stage' ||
-    toolName === 'git_commit' ||
-    toolName.includes('import') ||
-    toolName.includes('dispatch')
+    toolName === 'git_commit'
   ) {
     return 'fileChanges'
   }
@@ -286,7 +304,9 @@ export function catalogToolOperationCategory(rawToolName: string): ToolOperation
   if (CATALOG_FILE_EDIT_TOOL_NAMES.has(catalog)) return 'edit_file'
   if (SEARCH_OPERATION_TOOLS.has(catalog)) return 'search'
   if (SHELL_OPERATION_TOOLS.has(catalog)) return 'shell'
-  if (catalog === 'update_topic') return 'update_topic'
+  // No catalog tool resolves to 'update_topic' (that operation category is
+  // produced by non-tool run events, e.g. topic/title changes), so there is no
+  // reachable branch for it here — the union member is retained for consumers.
   return 'unknown'
 }
 
