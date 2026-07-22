@@ -22,6 +22,8 @@ files:
   # Local agent/session state from the development loop.
   - '!.claude/**'
   - '!.cursor/**'
+  - '!.fixpass*'
+  - '!.wsa-*'
   # Native/mobile source trees are development inputs only. The mac app
   # receives the release TaskWraithBridgeDaemon via `mac.extraResources`
   # below; packaging the full Swift/iOS `.build` trees into app.asar

@@ -97,13 +97,29 @@ function validateAppAsarSize(resourcesDir) {
 async function hardenElectronFuses(context, resourcesDir) {
   const executablePath = resolveElectronExecutable(context, resourcesDir)
   const { flipFuses, FuseVersion, FuseV1Options } = require('@electron/fuses')
+  const resetAdHocDarwinSignature = shouldResetAdHocDarwinSignature(context)
   await flipFuses(executablePath, {
     version: FuseVersion.V1,
     [FuseV1Options.RunAsNode]: false,
     [FuseV1Options.EnableNodeOptionsEnvironmentVariable]: false,
-    [FuseV1Options.EnableNodeCliInspectArguments]: false
+    [FuseV1Options.EnableNodeCliInspectArguments]: false,
+    // Flipping a fuse changes a byte in Electron Framework. On Apple Silicon,
+    // macOS validates the affected code page lazily, so an unsigned package
+    // otherwise launches only to be killed with `CODESIGNING, Invalid Page`
+    // when Electron first reads that fuse. Release signing replaces this
+    // signature later; the ad-hoc signature keeps --dir/debug packages valid.
+    // The universal builder merges x64/arm64 temporary bundles before its
+    // final afterPack hook; signing either temporary bundle would make their
+    // CodeResources differ and prevent that merge.
+    resetAdHocDarwinSignature
   })
   console.log(`Hardened Electron fuses: ${executablePath}`)
+}
+
+function shouldResetAdHocDarwinSignature(context) {
+  if ((context.electronPlatformName || process.platform) !== 'darwin') return false
+  const appOutDir = String(context.appOutDir || '')
+  return !/-((?:x64)|arm64)-temp$/.test(appOutDir)
 }
 
 function resolveElectronExecutable(context, resourcesDir) {

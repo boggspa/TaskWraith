@@ -43,3 +43,5 @@ ios/TaskWraithApp/build/
 
 # Local agent / session state
 .claude/
+/.fixpass*
+/.wsa-*

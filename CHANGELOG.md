@@ -6,23 +6,7 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
-## Unreleased — source-ahead
-
-This entry tracks the checkout currently ahead of the latest tagged release. It
-describes the source tree only; it does not assign a release version or imply
-that artifacts have been built or published.
-
-### Changed
-- **Docs realign to always-enabled Kimi admission and live Path-B Cursor.**
-  The 1.8.5 note claiming packaged builds still reject Kimi is corrected in
-  place (admission is structural and always-enabled; unreviewed runs are
-  labelled `unattested-development`), the security ledger gains dated
-  superseding updates, and product/QA/how-to notes stop describing Cursor
-  seats or the sub-thread status ticker as unavailable. Sealed scheduled
-  Kimi/Cursor execution remains genuinely unavailable and stays documented as
-  such.
-
-## 1.8.6 - 2026-07-21
+## 1.8.6 - 2026-07-22
 
 ### Added
 - **Path-B Cursor is selectable again after the 1.8.5 product path.** Managed
@@ -40,6 +24,10 @@ that artifacts have been built or published.
   clients.
 
 ### Fixed
+- **Packaged macOS builds no longer crash when Electron reads hardened fuses.**
+  The final app bundle restores a valid ad-hoc signature after fuse hardening,
+  and package smoke tests now verify the Electron framework signature before
+  launch.
 - **Composer queue and Steer are classic again.** Follow-up messages while a
   chat is busy go back through the durable RunQueue and `QueuedMessagesAboveRow`
   (Edit / Delete / Steer), instead of being redirected onto the Execution Stack
@@ -81,10 +69,13 @@ that artifacts have been built or published.
   composer chrome stays compact.
 
 ### Changed
-- **Docs realign to Path-B Cursor as a live, non-MCP managed seat.** README,
-  architecture, safety, permission conformance, how-tos, and design-asset notes
-  describe contained `--sandbox enabled` argv and the honest partial-backstop
-  residual risks instead of the retired fail-closed no-spawn story.
+- **Docs realign to always-enabled Kimi admission and live Path-B Cursor.**
+  The 1.8.5 note claiming packaged builds still reject Kimi is corrected in
+  place (admission is structural and always-enabled; unreviewed runs are
+  labelled `unattested-development`), and product, QA, safety, and how-to notes
+  describe Cursor as a contained `--sandbox enabled`, non-MCP managed seat with
+  honest partial-backstop residuals. Sealed scheduled Kimi/Cursor execution
+  remains genuinely unavailable and stays documented as such.
 
 ## 1.8.5 - 2026-07-20
 

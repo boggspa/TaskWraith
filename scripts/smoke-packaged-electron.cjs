@@ -57,6 +57,7 @@ async function main() {
 
   if (packageTarget.platform === 'darwin') {
     validateMacPackageBinaries(packageRoot, resourcesDir, expectedMacArchs)
+    validateMacElectronFrameworkSignature(packageRoot, resourcesDir)
     validateMacNodePtyBindings(unpackedDir, expectedMacArchs)
     validateMacClaudeAgentSdkBinaries(unpackedDir, expectedMacArchs)
   }
@@ -432,6 +433,32 @@ function validateMacPackageBinaries(packageRoot, resourcesDir, expectedArchs) {
   const bridgeDaemon = path.join(resourcesDir, 'bridge', 'TaskWraithBridgeDaemon')
   assertFile(bridgeDaemon, 'TaskWraithBridgeDaemon')
   verifyMachOArchitectures(bridgeDaemon, expectedArchs, 'TaskWraithBridgeDaemon')
+}
+
+function validateMacElectronFrameworkSignature(packageRoot, resourcesDir) {
+  if (process.platform !== 'darwin') return
+  const electronFramework = path.join(
+    path.dirname(resourcesDir),
+    'Frameworks',
+    'Electron Framework.framework',
+    'Electron Framework'
+  )
+  if (!fs.existsSync(electronFramework)) {
+    fail(`Electron Framework was not packaged at ${electronFramework}.`)
+  }
+
+  const result = spawnSync('/usr/bin/codesign', ['--verify', '--strict', electronFramework], {
+    encoding: 'utf8'
+  })
+  if (result.status !== 0) {
+    const detail = [result.stdout, result.stderr].filter(Boolean).join('\n').trim()
+    fail(
+      `Electron Framework code signature is invalid in ${path.relative(repoRoot, packageRoot)}.${
+        detail ? `\n${detail}` : ''
+      }`
+    )
+  }
+  console.log('validated Electron Framework code signature')
 }
 
 function validateMacNodePtyBindings(unpackedDir, expectedArchs) {

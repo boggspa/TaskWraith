@@ -236,7 +236,7 @@ describe('ChangelogSheet', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.6' }, null)
     expect(entry).toMatchObject({
       version: '1.8.6',
-      releaseDate: '2026-07-21'
+      releaseDate: '2026-07-22'
     })
     expect(entry.releaseNotes).toContain('Path-B Cursor is selectable again')
     expect(entry.releaseNotes).toContain('Composer queue and Steer are classic again')
