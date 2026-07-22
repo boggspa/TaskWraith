@@ -13,6 +13,8 @@ import {
   GROK_MCP_QUESTION_PROMPT_NOTE,
   GROK_READ_ONLY_PROMPT_PREAMBLE,
   GROK_WRITE_MODE_PROMPT_PREAMBLE,
+  GROK_ACP_READ_ONLY_DENY_RULES,
+  GROK_ACP_WRITE_MODE_DENY_RULES,
   GROK_READ_ONLY_DENY_RULES,
   GROK_WRITE_MODE_DENY_RULES
 } from './GrokCliArgs'
@@ -177,7 +179,33 @@ describe('buildGrokCliArgs', () => {
       args
         .map((value, index) => (value === '--deny' ? args[index + 1] : null))
         .filter(Boolean)
-    ).toEqual([...GROK_READ_ONLY_DENY_RULES])
+    ).toEqual([...GROK_ACP_READ_ONLY_DENY_RULES])
+  })
+
+  it('lets ACP native file reads reach the workspace preflight on read-only seats', () => {
+    const args = buildGrokAcpCliArgs({ readOnlySeat: true })
+    const denied = args
+      .map((value, index) => (value === '--deny' ? args[index + 1] : null))
+      .filter((value): value is string => value !== null)
+
+    expect(denied).toEqual([...GROK_ACP_READ_ONLY_DENY_RULES])
+    expect(denied).not.toContain('Read(*)')
+    expect(denied).not.toContain('ReadFile(*)')
+    expect(denied).not.toContain('Glob(*)')
+    expect(denied).not.toContain('Grep(*)')
+  })
+
+  it('lets ACP native file edits reach the workspace preflight on write-capable seats', () => {
+    const args = buildGrokAcpCliArgs({ readOnlySeat: false })
+    const denied = args
+      .map((value, index) => (value === '--deny' ? args[index + 1] : null))
+      .filter((value): value is string => value !== null)
+
+    expect(denied).toEqual([...GROK_ACP_WRITE_MODE_DENY_RULES])
+    expect(denied).not.toContain('Edit(*)')
+    expect(denied).not.toContain('Write(*)')
+    expect(denied).toContain('Bash(*)')
+    expect(denied).toContain('Shell(*)')
   })
 
   it('does not pass effort for Grok Composer 2.5 Fast', () => {

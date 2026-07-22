@@ -70,6 +70,25 @@ export const GROK_READ_ONLY_DENY_RULES = [
 // workspace; it never gives Grok's opaque native tools host filesystem access.
 export const GROK_WRITE_MODE_DENY_RULES = GROK_READ_ONLY_DENY_RULES
 
+/**
+ * ACP sessions have a client-mediated `session/request_permission` hook, so
+ * native file tools can reach TaskWraith's canonical workspace preflight
+ * instead of being blanket-disabled at argv construction. Read-only seats
+ * still deny the native mutation primitives as a prevention backstop.
+ *
+ * Native shell remains denied in both modes: the permission hook can validate
+ * cwd, but Grok does not yet provide a hard workspace-rooted shell sandbox to
+ * contain absolute paths or network egress.
+ */
+export const GROK_ACP_READ_ONLY_DENY_RULES = [
+  'Bash(*)',
+  'Shell(*)',
+  'Edit(*)',
+  'Write(*)'
+] as const
+
+export const GROK_ACP_WRITE_MODE_DENY_RULES = ['Bash(*)', 'Shell(*)'] as const
+
 /** True when the approval mode permits writes (anything other than read-only plan). */
 export function grokWriteCapable(approvalMode: string | null | undefined): boolean {
   // Trim before the 'plan' compare: a stray-whitespace value like 'plan ' must
@@ -271,7 +290,9 @@ export function buildGrokCliArgs(input: BuildGrokCliArgsInput): string[] {
 
 export function buildGrokAcpCliArgs(input: BuildGrokAcpCliArgsInput): string[] {
   const args = ['--no-auto-update', '--tools', '']
-  const denyRules = input.readOnlySeat ? GROK_READ_ONLY_DENY_RULES : GROK_WRITE_MODE_DENY_RULES
+  const denyRules = input.readOnlySeat
+    ? GROK_ACP_READ_ONLY_DENY_RULES
+    : GROK_ACP_WRITE_MODE_DENY_RULES
   for (const rule of denyRules) args.push('--deny', rule)
   appendGrokModelAndEffortArgs(args, input)
   args.push('agent', 'stdio')

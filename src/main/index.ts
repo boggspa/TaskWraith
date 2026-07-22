@@ -27,9 +27,9 @@ import type {
 import { detectExternalPath } from './services/ExternalPathDetector'
 import {
   nativeProviderApprovalPriority,
-  nativeProviderBrokerOnlyMessage,
-  nativeProviderToolRequiresBroker
+  nativeProviderBrokerOnlyMessage
 } from './NativeProviderToolContainment'
+import { preflightNativeWorkspaceTool } from './native-tools/NativeWorkspaceToolGate'
 import { FaviconService } from './services/FaviconService'
 import {
   BackgroundProcessRegistry,
@@ -17351,20 +17351,34 @@ async function runGrokAcpProvider(event: Electron.IpcMainInvokeEvent, payload: A
     if (grokTaskWraithSafeToolRequested(request)) return 'allow'
     const networkRead = grokAcpNetworkReadRequested(request)
     if (networkRead && !grokNetworkAccessAllowed(state)) return 'deny'
-    if (nativeProviderToolRequiresBroker(request.toolName)) return 'deny'
+    const nativeWorkspacePreflight = preflightNativeWorkspaceTool({
+      toolName: request.toolName,
+      toolKind: request.toolKind,
+      rawToolCall: request.rawToolCall,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      // Grok ACP exposes a permission hook but no hard native-shell workspace
+      // sandbox. File tools can be path-preflighted; shell stays fail-closed
+      // until the runtime can attest a workspace-rooted sandbox.
+      runtimeSandboxed: false
+    })
+    if (nativeWorkspacePreflight.kind === 'deny') return 'deny'
     if (!grokWriteCapable(payload.approvalMode)) {
       if (networkRead) return 'allow'
-      // Read-only / recon: allow a shell tool call ONLY when it is a provably
-      // read-only command (ls, cat, find, rg, …). Native-shell Git is denied
-      // because inherited/repository config can execute external programs.
-      // This is what lets
-      // "investigate this repo" actually run under read-only posture instead of
-      // Grok hard-cancelling the turn on the denied tool. Mutating shell stays
-      // denied (fail-closed classifier). See GrokReadOnlyShell.
-      if (grokReadOnlyShellRequestAllowed(request)) return 'allow'
+      if (
+        nativeWorkspacePreflight.kind === 'allow' &&
+        nativeWorkspacePreflight.access === 'read'
+      ) {
+        return 'allow'
+      }
+      // Native shell has already failed closed above because this runtime has
+      // no workspace-rooted shell sandbox. Unknown/non-workspace calls stay
+      // denied under read-only posture.
       return 'deny'
     }
-    const service = grokToolKindToService(request.toolKind)
+    const service =
+      nativeWorkspacePreflight.kind === 'allow'
+        ? nativeWorkspacePreflight.service
+        : grokToolKindToService(request.toolKind)
     const allowed = await requestAgenticServiceApproval(
       event.sender,
       'grok',
