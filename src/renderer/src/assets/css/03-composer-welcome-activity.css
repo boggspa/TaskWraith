@@ -12538,9 +12538,15 @@ button.diff-file-row {
   gap: 6px;
   padding: 6px 14px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, var(--jump-pill-accent) 36%, transparent);
-  background: color-mix(in srgb, var(--composer-bg, #1c1c20) 84%, var(--jump-pill-accent) 16%);
-  color: color-mix(in srgb, #ffffff 94%, transparent);
+  /* Composer-popover glass material (goal/plan/blackboard parity) — the
+   * pill keeps its shape and per-provider accent (arrow tint + hover ring)
+   * but sits on the same themed glass the popovers use. */
+  border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent);
+  background: var(--tw-popover-glass-bg);
+  backdrop-filter: blur(18px) saturate(150%);
+  -webkit-backdrop-filter: blur(18px) saturate(150%);
+  color: var(--text-primary);
+  isolation: isolate;
   font-size: 10px;
   font-weight: 600;
   letter-spacing: 0.01em;
@@ -12548,9 +12554,8 @@ button.diff-file-row {
   cursor: pointer;
   pointer-events: auto;
   box-shadow:
-    0 6px 18px rgba(0, 0, 0, 0.36),
-    0 0 0 1px color-mix(in srgb, var(--jump-pill-accent) 14%, transparent),
-    inset 0 1px 0 color-mix(in srgb, #ffffff 14%, transparent);
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
   transition:
     transform 120ms ease,
     background 120ms ease,
@@ -12573,8 +12578,11 @@ button.diff-file-row {
 
 .transcript-jump-to-latest-pill:hover {
   transform: translateY(-1px);
-  background: color-mix(in srgb, var(--composer-bg, #1c1c20) 76%, var(--jump-pill-accent) 24%);
-  border-color: color-mix(in srgb, var(--jump-pill-accent) 56%, transparent);
+  border-color: color-mix(in srgb, var(--jump-pill-accent) 56%, var(--panel-border));
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--jump-pill-accent) 20%, transparent),
+    0 18px 44px rgba(0, 0, 0, 0.34);
 }
 
 .transcript-jump-to-latest-pill:active {
@@ -12584,6 +12592,15 @@ button.diff-file-row {
 .transcript-jump-to-latest-pill:focus-visible {
   outline: 2px solid color-mix(in srgb, var(--jump-pill-accent) 64%, transparent);
   outline-offset: 2px;
+}
+
+/* Light-family themes: same softened treatment the composer popovers get. */
+:is([data-theme='light'], [data-theme='mist'], [data-theme='sage']) .transcript-jump-to-latest-pill {
+  border-color: var(--surface-border);
+  box-shadow:
+    0 1px 0 inset rgba(255, 255, 255, 0.72),
+    0 18px 44px rgba(0, 0, 0, 0.14);
+  color: var(--surface-text);
 }
 
 /*
