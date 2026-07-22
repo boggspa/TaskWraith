@@ -303,7 +303,7 @@ import { estimateLineChanges } from './lib/ToolParser'
 import { reduceSoloToolEventMessages } from './lib/soloToolEventReducer'
 import { resolveChatApprovalMode } from './lib/chatComposerSelection'
 import { getLiveToolFileDiffSummaries } from './lib/LiveFileDiffSummary'
-import { parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
+import { attachmentPathsOutsideWorkspace, parseGeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type { GeminiPermissionRequest } from './lib/GeminiPermissionParser'
 import type {
   CommandPaletteItem,
@@ -13496,12 +13496,27 @@ function App(): React.JSX.Element {
           // panel keeps head+tail with an elision marker, and the per-line
           // cost stops growing with accumulated trace length.
           const redacted = redactLog(JSON.stringify(rawLogPayloadForStringify(event.data), null, 2))
-          const permissionRequest = parseGeminiPermissionRequest(event.data)
+          // This lane is heuristic text sniffing over EVERY raw event: any
+          // tool output that merely contained "access denied" / "needs
+          // access to" popped the attachment modal — Trusted Session runs
+          // saw it constantly. The modal's contract: only a READ-ONLY
+          // posture blocked from an attachment OUTSIDE the workspace needs
+          // the prompt; write postures already hold the access, and real
+          // provider refusals surface through the classified error lane.
+          const permissionRequest =
+            modeToPass === 'plan' ? parseGeminiPermissionRequest(event.data) : null
           if (permissionRequest && isVisibleRunChat()) {
-            showAttachmentPermissionRequest({
-              ...permissionRequest,
-              message: redactLog(permissionRequest.message)
-            })
+            const outsidePaths = attachmentPathsOutsideWorkspace(
+              permissionRequest.paths,
+              runContext.workspacePath
+            )
+            if (outsidePaths.length > 0) {
+              showAttachmentPermissionRequest({
+                ...permissionRequest,
+                paths: outsidePaths,
+                message: redactLog(permissionRequest.message)
+              })
+            }
           }
           const rawEventRecord =
             event.data && typeof event.data === 'object' && !Array.isArray(event.data)

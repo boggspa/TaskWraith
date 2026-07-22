@@ -231,6 +231,27 @@ const messageFromStructured = (messages: string[], fallback: string): string => 
   return message.trim() || 'Gemini requested file access.'
 }
 
+/**
+ * Attachment-modal path gate: keep only paths OUTSIDE the run's workspace.
+ * Workspace-relative paths (./x, ../x is ambiguous but resolves inside far
+ * more often than not) and absolute paths under the workspace root never
+ * need an attachment grant — the run already has the workspace. `~/` paths
+ * are treated as outside (the renderer cannot resolve the home dir; provider
+ * messages about workspace files use absolute or relative forms).
+ */
+export function attachmentPathsOutsideWorkspace(
+  paths: string[],
+  workspacePath: string | null | undefined
+): string[] {
+  if (!workspacePath || !workspacePath.trim()) return paths
+  const root = workspacePath.replace(/[\\/]+$/, '')
+  return paths.filter((path) => {
+    if (/^\.{1,2}[\\/]/.test(path)) return false
+    if (path.startsWith('~')) return true
+    return !(path === root || path.startsWith(`${root}/`) || path.startsWith(`${root}\\`))
+  })
+}
+
 export function parseGeminiPermissionRequest(input: unknown): GeminiPermissionRequest | null {
   if (isRecord(input)) {
     const structured = collectStructuredStrings(input, { includeAllStrings: false })
