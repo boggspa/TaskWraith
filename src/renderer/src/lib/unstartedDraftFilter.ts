@@ -72,3 +72,58 @@ export function isHideableUnstartedDraft(
     return false
   return true
 }
+
+/**
+ * The create target a "+ New" action is about to mint a record for. Reuse must
+ * match BOTH scope and chatKind so a global create never adopts a workspace
+ * draft (or vice-versa) and a single create never adopts an ensemble draft —
+ * the reaper-taught rule: never repurpose records across chat types.
+ */
+export interface ReusableDraftCreateTarget {
+  scope: 'global' | 'workspace'
+  chatKind: 'single' | 'ensemble'
+  /** Required — and matched — only when scope === 'workspace'. */
+  workspaceId?: string
+}
+
+/** The record slice the create-path reuse matcher inspects. */
+export interface ReusableDraftChatLike extends ReusableChatLike {
+  appChatId: string
+  scope?: 'global' | 'workspace'
+  chatKind?: 'single' | 'ensemble'
+  workspaceId?: string
+  archived?: boolean
+}
+
+export interface ReusableDraftContext {
+  /**
+   * True for a chat that must never be adopted — one with a live/queued run or
+   * otherwise busy. The caller owns these runtime signals; the matcher is
+   * otherwise record-only.
+   */
+  isExcluded?: (chatId: string) => boolean
+}
+
+/**
+ * Find the ≤1 pristine, never-started draft a "+ New" create for `target` can
+ * REUSE instead of minting a fresh record — the create-path half of the
+ * draft-litter fix (its twin is `isHideableUnstartedDraft`, which hides the
+ * residue). Same reuse gate as the proven workspace-open path
+ * (`isReusableWelcomeChat`: summary-safe + top-level) plus an exact scope /
+ * chatKind / workspace match. Returns the FIRST match in list order, or
+ * undefined when a fresh record must be created.
+ */
+export function findReusablePristineDraft<T extends ReusableDraftChatLike>(
+  chats: ReadonlyArray<T>,
+  target: ReusableDraftCreateTarget,
+  ctx: ReusableDraftContext = {}
+): T | undefined {
+  return chats.find((chat) => {
+    if (chat.archived) return false
+    if (chat.chatKind !== target.chatKind) return false
+    if (chat.scope !== target.scope) return false
+    if (target.scope === 'workspace' && chat.workspaceId !== target.workspaceId) return false
+    if (ctx.isExcluded?.(chat.appChatId)) return false
+    return isReusableWelcomeChat(chat)
+  })
+}

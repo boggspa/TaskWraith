@@ -608,6 +608,7 @@ import {
   shouldRenderWelcome,
   isReusableWelcomeChat
 } from './lib/welcomeState'
+import { findReusablePristineDraft } from './lib/unstartedDraftFilter'
 import {
   WELCOME_FIT_FULL,
   resolveWelcomeFullFitHeight,
@@ -9058,7 +9059,18 @@ function App(): React.JSX.Element {
   const handleNewGlobalEnsembleChat = async (): Promise<ChatRecord | null> => {
     setActiveWorkspaceBoardId(null)
     if (settings?.ensembleModeEnabled === false) return null
-    const newChat = await window.api.createEnsembleChat()
+    // Reuse ≤1 pristine GLOBAL ensemble draft instead of stacking a fresh record
+    // on every global "+ New" ensemble — the last create path that still always
+    // minted (workspace handleNewEnsemble / handleNewChat already reuse). Ensemble
+    // drafts are never reaped, so these kept accumulating on disk behind the
+    // sidebar hide. Selecting an existing empty draft is non-destructive; busy /
+    // running drafts are skipped.
+    const reusableGlobalEnsembleDraft = findReusablePristineDraft(
+      chats,
+      { scope: 'global', chatKind: 'ensemble' },
+      { isExcluded: (id) => runningChatIds.has(id) || isChatBusy(id) }
+    )
+    const newChat = reusableGlobalEnsembleDraft ?? (await window.api.createEnsembleChat())
     setChats((prev) => mergeChatRecord(prev, newChat))
     await selectGlobalChat(newChat)
     reapAbandonedChatsAfterCreate(newChat.appChatId)
