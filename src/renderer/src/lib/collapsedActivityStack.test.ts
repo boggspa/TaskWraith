@@ -4,7 +4,8 @@ import {
   activityStackHasLiveWork,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
-  summarizeCollapsedActivityStack
+  summarizeCollapsedActivityStack,
+  summarizeCollapsedSuperGroup
 } from './collapsedActivityStack'
 
 const activity = (overrides: Partial<ToolActivity>): ToolActivity => ({
@@ -95,5 +96,35 @@ describe('shouldAutoCollapseActivityStack', () => {
       shouldAutoCollapseActivityStack({ activities: streaming, isLiveRow: false, isLastRow: false })
     ).toBe(false)
     expect(activityStackHasLiveWork(streaming)).toBe(true)
+  })
+})
+
+describe('summarizeCollapsedSuperGroup', () => {
+  it('merges member stacks and appends the system-notice count', () => {
+    const summary = summarizeCollapsedSuperGroup({
+      activities: [
+        activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 7_000 }),
+        activity({ category: 'shell' }),
+        activity({ category: 'shell' }),
+        activity({ toolName: 'reasoning', displayName: 'Reasoning', durationMs: 5_000 }),
+        activity({ category: 'read', filePath: '/a/x.ts' })
+      ],
+      systemCount: 2,
+      firstSystemPreview: 'Blackboard updated: fact.'
+    })
+    expect(summary.label).toBe(
+      'Thought for 12s · Ran 2 commands · Read 1 file · 2 system notices'
+    )
+    expect(summary.families).toEqual(['thinking', 'shell', 'read'])
+  })
+
+  it('leads with the notice count and first preview for all-system groups', () => {
+    const summary = summarizeCollapsedSuperGroup({
+      activities: [],
+      systemCount: 2,
+      firstSystemPreview: 'Blackboard updated: fact.'
+    })
+    expect(summary.label).toBe('2 system notices · Blackboard updated: fact.')
+    expect(summary.families).toEqual([])
   })
 })

@@ -1536,3 +1536,71 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(restored).toContain('ROUND_ONE_BODY_MARKER')
   })
 })
+
+describe('collapsed one-liner super-groups', () => {
+  const shellActivity = (id: string): ToolActivity => ({
+    id,
+    toolName: 'bash',
+    displayName: 'Ran command',
+    category: 'shell',
+    status: 'success'
+  })
+
+  const superGroupMessages: ChatMessage[] = [
+    { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+    {
+      id: 'stack-1',
+      role: 'tool',
+      content: '',
+      timestamp: '2026-01-01T00:00:01.000Z',
+      toolActivities: [shellActivity('a1')]
+    },
+    {
+      id: 'sys-1',
+      role: 'system',
+      content: 'SUPERGROUP_SYS_MARKER blackboard updated.',
+      timestamp: '2026-01-01T00:00:02.000Z'
+    },
+    {
+      id: 'stack-2',
+      role: 'tool',
+      content: '',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      toolActivities: [shellActivity('a2'), shellActivity('a3')]
+    },
+    {
+      id: 'final',
+      role: 'assistant',
+      content: 'FINAL_ANSWER_MARKER done.',
+      timestamp: '2026-01-01T00:00:04.000Z'
+    }
+  ]
+
+  it('condenses adjacent one-liners into one merged summary line', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages: superGroupMessages, virtualize: false })} />
+    )
+    // One merged line: all three members fold behind the lead.
+    expect(html).toContain('Ran 3 commands')
+    expect(html).toContain('1 system notice')
+    // Hidden members render nothing: the notice body text must not appear.
+    expect(html).not.toContain('SUPERGROUP_SYS_MARKER')
+    // The trailing assistant answer stays untouched.
+    expect(html).toContain('FINAL_ANSWER_MARKER')
+    // Exactly one collapsed summary row for the group.
+    expect(html.match(/collapsed-activity-stack-summary/g)?.length).toBe(1)
+  })
+
+  it('leaves a lone settled stack as an ordinary one-liner', () => {
+    const loneStack = [
+      superGroupMessages[0],
+      superGroupMessages[1],
+      superGroupMessages[4]
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages: loneStack, virtualize: false })} />
+    )
+    expect(html).toContain('Ran 1 command')
+    expect(html).not.toContain('system notice')
+  })
+})

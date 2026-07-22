@@ -26,6 +26,9 @@ export interface TranscriptRowRenderSignature {
   liveViewportExpanded: boolean
   /** "<autoCollapsible>:<userExpanded>" for the settled-stack collapse row. */
   collapsedStackKey: string
+  /** "<leadId>:<size>:<open|closed>:<lead|member>" when this row belongs to a
+   * super-group of condensed one-liners; '' otherwise. */
+  superGroupKey: string
   pendingPlanChoiceKey: string
   pendingAgentQuestionsKey: string
   assistantRunModelKey: string
@@ -237,6 +240,7 @@ export function transcriptRowRenderSignatureEqual(
   if (prev.fanoutExpanded !== next.fanoutExpanded) return false
   if (prev.liveViewportExpanded !== next.liveViewportExpanded) return false
   if (prev.collapsedStackKey !== next.collapsedStackKey) return false
+  if (prev.superGroupKey !== next.superGroupKey) return false
   if (prev.pendingPlanChoiceKey !== next.pendingPlanChoiceKey) return false
   if (prev.pendingAgentQuestionsKey !== next.pendingAgentQuestionsKey) return false
   if (prev.assistantRunModelKey !== next.assistantRunModelKey) return false

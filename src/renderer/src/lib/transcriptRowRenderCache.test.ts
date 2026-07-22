@@ -49,6 +49,7 @@ const signature = (
   fanoutExpanded: false,
   liveViewportExpanded: false,
   collapsedStackKey: '',
+  superGroupKey: '',
   pendingPlanChoiceKey: '',
   pendingAgentQuestionsKey: '',
   assistantRunModelKey: '',

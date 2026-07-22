@@ -20,9 +20,11 @@ import type {
   ToolActivity
 } from '../../../main/store/types'
 import {
+  activityStackHasLiveWork,
   collapsedSystemNoticeLabel,
   shouldAutoCollapseActivityStack,
-  summarizeCollapsedActivityStack
+  summarizeCollapsedActivityStack,
+  summarizeCollapsedSuperGroup
 } from '../lib/collapsedActivityStack'
 import { ToolFamilyIcon, type ToolFamily } from './icons/ToolFamilyIcon'
 import { isEnsembleRoundDispatchLive } from '../../../shared/ensembleRoundLifecycle'
@@ -369,6 +371,22 @@ const COLLAPSED_STACK_FAMILY_ICON: Record<string, ToolFamily> = {
   task: 'task'
 }
 
+function CollapsedStackIconStrip({ families }: { families: readonly string[] }): ReactElement | null {
+  if (families.length === 0) return null
+  return (
+    <span className="collapsed-activity-stack-icons" aria-hidden>
+      {families.map((family) => (
+        <ToolFamilyIcon
+          key={family}
+          family={COLLAPSED_STACK_FAMILY_ICON[family] ?? 'task'}
+          size={22}
+          className="collapsed-activity-stack-icon"
+        />
+      ))}
+    </span>
+  )
+}
+
 /**
  * Settled-stack collapse row. Once the conversation has moved past an
  * activity stack, the whole run of thinking + tool viewports folds into a
@@ -392,20 +410,7 @@ function CollapsedActivityStackRow({
     <CollapsedTranscriptRow
       header={header}
       label={summary.label}
-      icons={
-        summary.families.length > 0 ? (
-          <span className="collapsed-activity-stack-icons" aria-hidden>
-            {summary.families.map((family) => (
-              <ToolFamilyIcon
-                key={family}
-                family={COLLAPSED_STACK_FAMILY_ICON[family] ?? 'task'}
-                size={22}
-                className="collapsed-activity-stack-icon"
-              />
-            ))}
-          </span>
-        ) : null
-      }
+      icons={<CollapsedStackIconStrip families={summary.families} />}
       errored={summary.errorCount > 0}
       expanded={expanded}
       onToggle={onToggle}
@@ -787,6 +792,55 @@ function escapeDomSelectorValue(value: string): string {
  */
 export function toolStackStateKey(message: ChatMessage): string {
   return groupedTranscriptMessageIds(message)[0] || message.id
+}
+
+/**
+ * Message-shape half of the plain-system-notice predicate — the checks that
+ * need only the record itself. The render loop AND the super-group fold both
+ * use this so a row can never be hidden as a group member while rendering as
+ * a special card. Per-row state (pending questions/plan choice, pinned,
+ * highlight target) is applied by each caller.
+ */
+function plainSystemNoticeMessage(msg: ChatMessage): boolean {
+  return (
+    msg.role === 'system' &&
+    !isEnsembleRoundHeaderMessage(msg) &&
+    !isHumanCollaboratorComment(msg) &&
+    !isSubThreadDelegationMessage(msg) &&
+    !isSubThreadReturnMessage(msg) &&
+    !isEnsembleFanoutResultMessage(msg) &&
+    msg.metadata?.kind !== 'ensembleParticipantHealth' &&
+    msg.metadata?.kind !== 'contextCompaction' &&
+    msg.metadata?.kind !== 'providerRunFailure' &&
+    msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
+    msg.metadata?.kind !== 'ensembleBossmanPoll' &&
+    !msg.metadata?.proposedPlan &&
+    !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
+    Boolean(msg.content && msg.content.trim())
+  )
+}
+
+/** Participant identity for merging adjacent stack summaries: ensemble seats
+ * key on their participant id (then provider), guests on their chat; solo
+ * chats collapse to one shared key, which is correct — one speaker. */
+function superGroupParticipantKey(msg: ChatMessage): string {
+  const metadata = msg.metadata || {}
+  return String(
+    metadata.ensembleParticipantId || metadata.ensembleProvider || metadata.guestChatId || ''
+  )
+}
+
+/** One merged fold of adjacent collapsed one-liners (see the super-group memo
+ * in TranscriptPanel). Every member id maps to the same info object. */
+interface CollapsedSuperGroupInfo {
+  leadId: string
+  memberIds: string[]
+  size: number
+  activities: ToolActivity[]
+  systemCount: number
+  firstSystemPreview: string
+  /** First stack member — supplies the speaker header; null = all-system. */
+  headerMessage: ChatMessage | null
 }
 
 function useProjectedTranscriptRows(
@@ -2342,6 +2396,17 @@ export const TranscriptPanel = memo(
         return next
       })
     }, [])
+    // Second-level fold: super-groups of adjacent collapsed one-liners the
+    // user re-opened. Keyed by the group's lead (first member) message id.
+    const [expandedSuperGroups, setExpandedSuperGroups] = useState<Set<string>>(new Set())
+    const setSuperGroupExpanded = useCallback((leadId: string, expanded: boolean) => {
+      setExpandedSuperGroups((prev) => {
+        const next = new Set(prev)
+        if (expanded) next.add(leadId)
+        else next.delete(leadId)
+        return next
+      })
+    }, [])
     // Row ids whose tool stack has something open — the measurementKey
     // geometry bit, so collapsed vs expanded rows cache distinct heights.
     const expandedRowIds = useMemo(() => {
@@ -2678,8 +2743,112 @@ export const TranscriptPanel = memo(
     // measurement cache keys on rowKey + an expanded bit, so rows with an
     // expanded live viewport must resolve their CURRENT rowKey each render
     // (stack keys are position-independent; rowKeys are not).
+    // Settled-stack collapse boundary: the trailing message never collapses
+    // (a freshly-settled stack stays open until the next assistant/panel
+    // message actually arrives below it).
+    const lastDisplayMessageId =
+      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
+
+    // Super-group fold: maximal runs (≥2) of adjacent would-be one-liners —
+    // same-participant settled stacks plus interleaved plain system notices —
+    // condense into ONE merged summary line. The lead (first member) renders
+    // the merged line; other members render empty (their ROWS stay in place,
+    // so gutter/scroll-spy ordinals and virtualization are untouched).
+    // Membership must mirror the per-row collapse conditions exactly, or a
+    // row could be hidden as a member while rendering as a special card.
+    const superGroupByMessageId = useMemo(() => {
+      const map = new Map<string, CollapsedSuperGroupInfo>()
+      const pendingQuestionIds = new Set(
+        pendingAgentQuestions.map((question) => question.messageId)
+      )
+      const membershipOf = (msg: ChatMessage): 'stack' | 'system' | null => {
+        if (msg.id === lastDisplayMessageId) return null
+        if (typeof msg.metadata?.pinnedAt === 'number') return null
+        if (msg.role === 'tool' && (msg.toolActivities?.length || 0) > 0) {
+          return activityStackHasLiveWork(msg.toolActivities || []) ? null : 'stack'
+        }
+        if (
+          plainSystemNoticeMessage(msg) &&
+          !pendingQuestionIds.has(msg.id) &&
+          pendingPlanChoice?.messageId !== msg.id
+        ) {
+          return 'system'
+        }
+        return null
+      }
+      let run: {
+        msgs: ChatMessage[]
+        kinds: ('stack' | 'system')[]
+        key: string | null
+      } | null = null
+      const flush = (): void => {
+        if (!run || run.msgs.length < 2) {
+          run = null
+          return
+        }
+        const activities: ToolActivity[] = []
+        let systemCount = 0
+        let firstSystemPreview = ''
+        let headerMessage: ChatMessage | null = null
+        run.msgs.forEach((member, index) => {
+          if (run!.kinds[index] === 'stack') {
+            activities.push(...(member.toolActivities || []))
+            if (!headerMessage) headerMessage = member
+          } else {
+            systemCount += 1
+            if (!firstSystemPreview) firstSystemPreview = collapsedSystemNoticeLabel(member.content)
+          }
+        })
+        const info: CollapsedSuperGroupInfo = {
+          leadId: run.msgs[0].id,
+          memberIds: run.msgs.map((member) => member.id),
+          size: run.msgs.length,
+          activities,
+          systemCount,
+          firstSystemPreview,
+          headerMessage
+        }
+        for (const member of run.msgs) map.set(member.id, info)
+        run = null
+      }
+      for (const msg of displayMessages) {
+        const kind = membershipOf(msg)
+        if (!kind) {
+          flush()
+          continue
+        }
+        const key = kind === 'stack' ? superGroupParticipantKey(msg) : null
+        if (!run) {
+          run = { msgs: [msg], kinds: [kind], key }
+          continue
+        }
+        if (kind === 'stack') {
+          if (run.key !== null && key !== run.key) {
+            flush()
+            run = { msgs: [msg], kinds: [kind], key }
+            continue
+          }
+          // A system-led run adopts the first stack's participant identity.
+          if (run.key === null) run.key = key
+        }
+        run.msgs.push(msg)
+        run.kinds.push(kind)
+      }
+      flush()
+      return map
+    }, [
+      displayMessages,
+      lastDisplayMessageId,
+      pendingAgentQuestions,
+      pendingPlanChoice
+    ])
+
     const expandedRowIdsWithLiveViewports = useMemo(() => {
-      if (expandedLiveViewportStacks.size === 0 && expandedCollapsedStacks.size === 0) {
+      if (
+        expandedLiveViewportStacks.size === 0 &&
+        expandedCollapsedStacks.size === 0 &&
+        expandedSuperGroups.size === 0
+      ) {
         return expandedRowIds
       }
       const ids = new Set(expandedRowIds)
@@ -2697,8 +2866,27 @@ export const TranscriptPanel = memo(
           projectedRowLookup.byConstituentId.get(stackKey)
         if (row) ids.add(row.rowKey)
       }
+      // A re-opened super group changes EVERY member row's height (hidden ↔
+      // one-liner), so all members join the tall bucket together.
+      for (const leadId of expandedSuperGroups) {
+        const group = superGroupByMessageId.get(leadId)
+        if (!group) continue
+        for (const memberId of group.memberIds) {
+          const row =
+            projectedRowLookup.byMessageId.get(memberId) ||
+            projectedRowLookup.byConstituentId.get(memberId)
+          if (row) ids.add(row.rowKey)
+        }
+      }
       return ids
-    }, [expandedLiveViewportStacks, expandedCollapsedStacks, expandedRowIds, projectedRowLookup])
+    }, [
+      expandedLiveViewportStacks,
+      expandedCollapsedStacks,
+      expandedSuperGroups,
+      superGroupByMessageId,
+      expandedRowIds,
+      projectedRowLookup
+    ])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -3039,11 +3227,6 @@ export const TranscriptPanel = memo(
           .filter((r): r is { msg: ChatMessage; rowKey: string } => Boolean(r))
       : displayMessages.map((msg, index) => ({ msg, rowKey: `${msg.id}#${index}` }))
 
-    // Settled-stack collapse boundary: the trailing message never collapses
-    // (a freshly-settled stack stays open until the next assistant/panel
-    // message actually arrives below it).
-    const lastDisplayMessageId =
-      displayMessages.length > 0 ? displayMessages[displayMessages.length - 1].id : null
 
     useEffect(() => {
       const mountedRowKeys = new Set(renderedRows.map((row) => row.rowKey))
@@ -3259,22 +3442,9 @@ export const TranscriptPanel = memo(
             // rows carrying interactive attachments keep their full
             // rendering; pinned notices stay open (the user marked them).
             const isPlainSystemNotice =
-              msg.role === 'system' &&
-              !isRoundHeader &&
-              !isCollaboratorComment &&
-              !isParticipantHealth &&
-              !isContextCompaction &&
-              !isProviderRunFailure &&
-              !isTaskWraithCloseout &&
-              !isDelegationCard &&
-              !isReturnCard &&
-              !isFanoutResultCard &&
-              !msg.metadata?.proposedPlan &&
-              msg.metadata?.kind !== 'ensembleBossmanPoll' &&
-              !(Array.isArray(msg.metadata?.mediaRefs) && msg.metadata.mediaRefs.length > 0) &&
+              plainSystemNoticeMessage(msg) &&
               pendingQuestionsForRow.length === 0 &&
-              !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id) &&
-              Boolean(msg.content && msg.content.trim())
+              !(pendingPlanChoice && pendingPlanChoice.messageId === msg.id)
             const systemAutoCollapsible =
               isPlainSystemNotice &&
               msg.id !== lastDisplayMessageId &&
@@ -3287,6 +3457,26 @@ export const TranscriptPanel = memo(
               : systemAutoCollapsible
                 ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
                 : ''
+            // Second-level fold: adjacent one-liners condensed into one line.
+            const superGroup = superGroupByMessageId.get(msg.id) || null
+            const isSuperLead = Boolean(superGroup && superGroup.leadId === msg.id)
+            const superGroupExpanded = Boolean(
+              superGroup && expandedSuperGroups.has(superGroup.leadId)
+            )
+            const superGroupHidden = Boolean(superGroup && !superGroupExpanded && !isSuperLead)
+            const superGroupKey = superGroup
+              ? `${superGroup.leadId}:${superGroup.size}:${
+                  superGroupExpanded ? 'open' : 'closed'
+                }:${isSuperLead ? 'lead' : 'member'}`
+              : ''
+            const superSummary =
+              isSuperLead && superGroup
+                ? summarizeCollapsedSuperGroup({
+                    activities: superGroup.activities,
+                    systemCount: superGroup.systemCount,
+                    firstSystemPreview: superGroup.firstSystemPreview
+                  })
+                : null
             const pendingPlanChoiceKey =
               pendingPlanChoice && pendingPlanChoice.messageId === msg.id
                 ? [
@@ -3408,6 +3598,7 @@ export const TranscriptPanel = memo(
               fanoutExpanded: expandedFanoutResults.has(rowKey),
               liveViewportExpanded,
               collapsedStackKey,
+              superGroupKey,
               pendingPlanChoiceKey,
               pendingAgentQuestionsKey,
               assistantRunModelKey,
@@ -3441,6 +3632,7 @@ export const TranscriptPanel = memo(
                 setFanoutResultExpanded,
                 setLiveViewportExpandedForStack,
                 setCollapsedStackExpanded,
+                setSuperGroupExpanded,
                 toggleUserMessageExpanded,
                 setRoundExpanded
               ]
@@ -3461,7 +3653,31 @@ export const TranscriptPanel = memo(
                 onFocus={() => onMessageSelectionCandidate?.(msg)}
                 ref={virtualizeEnabled ? virtualBlockRef : undefined}
               >
-                {isRoundHeader ? (
+                {superGroupHidden ? null : (
+                  <>
+                    {isSuperLead && superGroup && superSummary ? (
+                      <CollapsedTranscriptRow
+                        header={
+                          superGroup.headerMessage ? (
+                            <ActivityStackSpeakerHeader
+                              message={superGroup.headerMessage}
+                              chat={currentChat}
+                              fallbackProvider={currentProvider}
+                              fallbackProviderLabel={currentProviderLabel}
+                            />
+                          ) : null
+                        }
+                        metaLabel={superGroup.headerMessage ? undefined : 'System'}
+                        label={superSummary.label}
+                        icons={<CollapsedStackIconStrip families={superSummary.families} />}
+                        compact={!superGroup.headerMessage}
+                        errored={superSummary.errorCount > 0}
+                        expanded={superGroupExpanded}
+                        onToggle={(expanded) => setSuperGroupExpanded(superGroup.leadId, expanded)}
+                        ariaTargetLabel={`${superGroup.size} collapsed transcript steps`}
+                      />
+                    ) : null}
+                    {isSuperLead && !superGroupExpanded ? null : isRoundHeader ? (
                   <EnsembleRoundCardHeader
                     key={msg.id}
                     message={msg}
@@ -4127,6 +4343,9 @@ export const TranscriptPanel = memo(
                       )}
                   </div>
                 )}
+                  </>
+                )}
+                {superGroupHidden ? null : (
                 <TranscriptMessageFooter
                   message={msg}
                   label={footerLabel}
@@ -4141,6 +4360,7 @@ export const TranscriptPanel = memo(
                   pinned={isPinned}
                   copied={copiedId === msg.id}
                 />
+                )}
               </div>
             )
             rowElementCacheRef.current.set(rowKey, { signature: rowSignature, element })

@@ -146,6 +146,40 @@ export function collapsedSystemNoticeLabel(content: string | undefined): string 
   return 'System notice'
 }
 
+/**
+ * Second-level fold: a run of adjacent collapsed one-liners (same-participant
+ * stack summaries + interleaved system notices) condenses into ONE merged
+ * line — "Thought for 19s · Used 9 tools · Ran 4 commands · 2 system
+ * notices". Activities from every member stack merge through the ordinary
+ * summarizer (thinking durations sum; files dedupe per family); an all-system
+ * group leads with the notice count and the first notice's text.
+ */
+export function summarizeCollapsedSuperGroup(input: {
+  activities: readonly ToolActivity[]
+  systemCount: number
+  firstSystemPreview: string
+}): CollapsedStackSummary {
+  const noticeSuffix =
+    input.systemCount > 0
+      ? `${input.systemCount} system ${input.systemCount === 1 ? 'notice' : 'notices'}`
+      : ''
+  if (input.activities.length === 0) {
+    return {
+      label: [noticeSuffix || 'System notices', input.firstSystemPreview]
+        .filter(Boolean)
+        .join(' · '),
+      families: [],
+      errorCount: 0,
+      activityCount: 0
+    }
+  }
+  const merged = summarizeCollapsedActivityStack(input.activities)
+  return {
+    ...merged,
+    label: noticeSuffix ? `${merged.label} · ${noticeSuffix}` : merged.label
+  }
+}
+
 /** A settled stack collapses once the conversation has moved past it: it is
  * not the live streaming row, nothing in it is still running, and at least
  * one later message exists (the freshly-settled tail stack stays open until
