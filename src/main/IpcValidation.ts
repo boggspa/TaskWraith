@@ -418,6 +418,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-agent-mcp-status': ['provider'],
   'get-provider-capabilities': ['provider', 'optionalString', 'optionalString'],
   'get-provider-adapters': [],
+  'get-configured-provider-snapshot': [],
   'prompt-cache:get-policy': [],
   'prompt-cache:save-policy': ['object'],
   'prompt-cache:get-capabilities': [],

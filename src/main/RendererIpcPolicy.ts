@@ -86,6 +86,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'get-kimi-auth-status',
   'get-pinned-messages',
   'get-provider-adapters',
+  'get-configured-provider-snapshot',
   'get-provider-capabilities',
   'get-repo-convention-indexes',
   'get-run-event-replay',

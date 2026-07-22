@@ -127,6 +127,32 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
     expect(codex?.pauseLabel).toBe('Paused')
     expect(codex?.rerouteLabel).toBe('reroutes to Ollama')
   })
+
+  it('shows only confirmed connected providers once discovery is ready', () => {
+    expect(
+      resolveProviderRows(true, true, undefined, {
+        snapshot: { ready: true, providerIds: ['claude', 'cursor'] },
+        pendingFallbackProvider: 'codex'
+      }).map((row) => row.id)
+    ).toEqual(['claude', 'cursor'])
+  })
+
+  it('keeps only the active provider as a cold-start fallback while discovery is pending', () => {
+    expect(
+      resolveProviderRows(true, true, undefined, {
+        snapshot: { ready: false, providerIds: [] },
+        pendingFallbackProvider: 'kimi'
+      }).map((row) => row.id)
+    ).toEqual(['kimi'])
+  })
+
+  it('does not leak unavailable or retired providers through the configured snapshot', () => {
+    expect(
+      resolveProviderRows(false, false, undefined, {
+        snapshot: { ready: true, providerIds: ['gemini', 'grok', 'codex'] }
+      }).map((row) => row.id)
+    ).toEqual(['codex'])
+  })
 })
 
 describe('ComposerProviderPickerRows (popover body)', () => {

@@ -614,6 +614,10 @@ declare global {
         approvalMode?: string
       ) => Promise<ProviderCapabilityContract>
       getProviderAdapters: () => Promise<ProviderAdapterDescriptor[]>
+      getConfiguredProviderSnapshot: () => Promise<{
+        ready: boolean
+        providerIds: ProviderId[]
+      }>
       // 1.0.5-EW35 — Currency sub-slice (c): live FX rate snapshot.
       getFxRates: () => Promise<{
         rates: { USD: 1; GBP: number; EUR: number }

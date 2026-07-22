@@ -148,6 +148,10 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       const settings = {} as AppSettings
 
       await expect(discovery.snapshot(settings)).resolves.toEqual(new Set())
+      expect(discovery.statusSnapshot(settings)).toEqual({
+        ready: false,
+        configuredProviders: new Set()
+      })
       expect(getKimiConfiguredStatus).not.toHaveBeenCalled()
       expect(getOllamaStatus).not.toHaveBeenCalled()
       expect(resolveProviderBinary).not.toHaveBeenCalled()
@@ -161,6 +165,10 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       await expect(discovery.snapshot(settings)).resolves.toEqual(
         new Set(['kimi', 'ollama', 'grok', 'cursor'])
       )
+      expect(discovery.statusSnapshot(settings)).toEqual({
+        ready: true,
+        configuredProviders: new Set(['kimi', 'ollama', 'grok', 'cursor'])
+      })
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
       expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
 
@@ -169,6 +177,74 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
       expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('keeps timeout fail-open behavior out of the strict picker snapshot', async () => {
+    vi.useFakeTimers()
+    try {
+      const never = new Promise<never>(() => {})
+      const discovery = createConfiguredProviderDetector(
+        {
+          getCodexConfiguredStatus: () => never,
+          getClaudeConfiguredStatus: () => never,
+          getKimiConfiguredStatus: () => never,
+          getOllamaStatus: () => never,
+          resolveProviderBinary: () => never,
+          probeDeadlineMs: 1_000
+        },
+        { staggerMs: 0 }
+      )
+      const settings = {} as AppSettings
+
+      discovery.start(settings)
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      await expect(discovery.snapshot(settings)).resolves.toEqual(
+        new Set(['codex', 'claude', 'kimi', 'ollama', 'grok', 'cursor'])
+      )
+      expect(discovery.statusSnapshot(settings)).toEqual({
+        ready: true,
+        configuredProviders: new Set()
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('confirms Codex and Claude only from authenticated lightweight checks', async () => {
+    vi.useFakeTimers()
+    try {
+      const discovery = createConfiguredProviderDetector(
+        {
+          getCodexConfiguredStatus: async () => ({
+            available: true,
+            authState: 'chatgpt'
+          }),
+          getClaudeConfiguredStatus: async () => ({
+            available: true,
+            authState: 'missing'
+          }),
+          getKimiConfiguredStatus: async () => ({
+            available: false,
+            authState: 'missing'
+          }),
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
+          resolveProviderBinary: async () => ({ binaryPath: null })
+        },
+        { staggerMs: 0 }
+      )
+      const settings = {} as AppSettings
+
+      discovery.start(settings)
+      await vi.runAllTimersAsync()
+
+      expect(discovery.statusSnapshot(settings)).toEqual({
+        ready: true,
+        configuredProviders: new Set(['codex'])
+      })
     } finally {
       vi.useRealTimers()
     }

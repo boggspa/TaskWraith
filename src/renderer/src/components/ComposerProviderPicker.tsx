@@ -54,6 +54,8 @@ interface ComposerProviderPickerProps {
   grokAvailable: boolean
   /** Show the Cursor row only when the runtime advertises Path-B Cursor. */
   cursorAvailable: boolean
+  /** Cached main-process discovery result; reading it never starts provider probes. */
+  configuredProviderSnapshot?: ConfiguredProviderPickerSnapshot
   /** Same handler the old <select>'s onChange called. */
   onSelect: (provider: ProviderId) => void
   providerRunPauses?: AppSettings['providerRunPauses']
@@ -83,6 +85,17 @@ interface ProviderRow {
   description: string
   pauseLabel?: string
   rerouteLabel?: string
+}
+
+export interface ConfiguredProviderPickerSnapshot {
+  ready: boolean
+  providerIds: readonly ProviderId[]
+}
+
+export interface ProviderPickerAvailability {
+  snapshot: ConfiguredProviderPickerSnapshot
+  /** Keep the current live provider selectable only while background discovery is pending. */
+  pendingFallbackProvider?: ProviderId
 }
 
 /**
@@ -117,8 +130,17 @@ export function providerRunUnavailableReason(provider: ProviderId): string | nul
 export function resolveProviderRows(
   grokAvailable: boolean,
   cursorAvailable: boolean,
-  providerRunPauses?: AppSettings['providerRunPauses']
+  providerRunPauses?: AppSettings['providerRunPauses'],
+  availability?: ProviderPickerAvailability
 ): ProviderRow[] {
+  const allowedProviders = availability
+    ? new Set<ProviderId>([
+        ...availability.snapshot.providerIds,
+        ...(!availability.snapshot.ready && availability.pendingFallbackProvider
+          ? [availability.pendingFallbackProvider]
+          : [])
+      ])
+    : null
   const ids: ProviderId[] = ([
     'gemini',
     'codex',
@@ -127,7 +149,9 @@ export function resolveProviderRows(
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
     'ollama'
-  ] as ProviderId[]).filter((id) => isLiveSelectableProvider(id))
+  ] as ProviderId[]).filter(
+    (id) => isLiveSelectableProvider(id) && (!allowedProviders || allowedProviders.has(id))
+  )
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)
     return {
@@ -202,6 +226,7 @@ export function ComposerProviderPicker({
   composerStyle,
   grokAvailable,
   cursorAvailable,
+  configuredProviderSnapshot,
   onSelect,
   providerRunPauses,
   disabled,
@@ -218,7 +243,17 @@ export function ComposerProviderPicker({
     if (disabled && open) setOpen(false)
   }, [disabled, open])
 
-  const rows = resolveProviderRows(grokAvailable, cursorAvailable, providerRunPauses)
+  const rows = resolveProviderRows(
+    grokAvailable,
+    cursorAvailable,
+    providerRunPauses,
+    configuredProviderSnapshot
+      ? {
+          snapshot: configuredProviderSnapshot,
+          pendingFallbackProvider: provider
+        }
+      : undefined
+  )
   const activePauseInfo = getProviderPauseInfo(providerRunPauses, provider)
   const providerHueClass = resolveProviderHueClass(provider, activeModelId)
   const displayLabel = resolveProviderBrandLabel(provider, activeModelId) ?? getProviderName(provider)

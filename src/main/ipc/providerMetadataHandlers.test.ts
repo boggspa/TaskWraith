@@ -55,6 +55,10 @@ function createDeps(overrides: Partial<ProviderMetadataHandlersDeps> = {}) {
         }) as unknown as ProviderCapabilityContract
     ),
     getProviderAdapterDescriptors: vi.fn(() => adapters),
+    getConfiguredProviderSnapshot: vi.fn(() => ({
+      ready: true,
+      providerIds: ['codex'] as ProviderId[]
+    })),
     isMainRendererSender: vi.fn(() => true),
     ...overrides
   }
@@ -71,6 +75,7 @@ describe('registerProviderMetadataHandlers', () => {
     expect(handlerFor('get-agent-mcp-status')).toBeTypeOf('function')
     expect(handlerFor('get-provider-capabilities')).toBeTypeOf('function')
     expect(handlerFor('get-provider-adapters')).toBeTypeOf('function')
+    expect(handlerFor('get-configured-provider-snapshot')).toBeTypeOf('function')
   })
 
   it('validates provider before reading MCP status', async () => {
@@ -140,6 +145,17 @@ describe('registerProviderMetadataHandlers', () => {
 
     expect(handlerFor('get-provider-adapters')({})).toBe(adapters)
     expect(deps.getProviderAdapterDescriptors).toHaveBeenCalledOnce()
+  })
+
+  it('returns the cached configured-provider snapshot without probing', () => {
+    const { deps } = createDeps()
+    registerProviderMetadataHandlers(deps)
+
+    expect(handlerFor('get-configured-provider-snapshot')({})).toEqual({
+      ready: true,
+      providerIds: ['codex']
+    })
+    expect(deps.getConfiguredProviderSnapshot).toHaveBeenCalledOnce()
   })
 
   it('projects secondary provider status without host paths, account data, or raw diagnostics', async () => {

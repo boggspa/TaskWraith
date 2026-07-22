@@ -267,7 +267,7 @@ export function resolveEnsembleAddProviderGroups(
   grokAvailable: boolean,
   cursorAvailable: boolean
 ): CombinedModelPickerProviderGroup[] {
-  const source = providerGroups?.length
+  const source = providerGroups
     ? providerGroups
     : buildEnsembleAddProviderGroups(grokAvailable, cursorAvailable)
   return source.map((group) => ({

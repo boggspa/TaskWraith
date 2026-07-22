@@ -256,6 +256,10 @@ export interface ComposerProps {
   humanCollaborationInviteBusy?: boolean
   humanCollaborationInviteLive?: boolean
   currentProvider: any
+  configuredProviderSnapshot: {
+    ready: boolean
+    providerIds: readonly ProviderId[]
+  }
   currentProviderCapabilityWarning: any
   currentProviderLabel: any
   currentProviderModelOptions: any
@@ -597,6 +601,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     humanCollaborationInviteBusy,
     humanCollaborationInviteLive,
     currentProvider,
+    configuredProviderSnapshot,
     currentProviderCapabilityWarning,
     currentProviderLabel,
     currentProviderModelOptions,
@@ -906,7 +911,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     resolveProviderRows(
       grokProviderAvailable,
       cursorProviderAvailable,
-      settings?.providerRunPauses
+      settings?.providerRunPauses,
+      {
+        snapshot: configuredProviderSnapshot,
+        pendingFallbackProvider: currentProvider
+      }
     ).map((row) => {
       const models: CodexModelOption[] = getProviderModelOptions(row.id)
       return {

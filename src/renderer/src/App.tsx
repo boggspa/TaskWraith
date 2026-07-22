@@ -25,6 +25,7 @@ import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFo
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
+import { useConfiguredProviderSnapshot } from './hooks/useConfiguredProviderSnapshot'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
   classifyHumanCollaborationRelayUrls,
@@ -1874,6 +1875,7 @@ function App(): React.JSX.Element {
   // registers the Grok adapter, so this resolves true once that list arrives.
   const [grokProviderAvailable, setGrokProviderAvailable] = useState(false)
   const [cursorProviderAvailable, setCursorProviderAvailable] = useState(false)
+  const configuredProviderSnapshot = useConfiguredProviderSnapshot()
   const [selectedModelType, setSelectedModelType] = useState<string>('flash-lite')
   const [lastNonCustomModelType, setLastNonCustomModelType] = useState<string>('flash-lite')
   const [customModel, setCustomModel] = useState('')
@@ -27529,6 +27531,7 @@ function App(): React.JSX.Element {
       currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
+      configuredProviderSnapshot,
       cursorProviderAvailable,
       diffActionMenuOpen,
       displayCurrency,
@@ -27663,6 +27666,7 @@ function App(): React.JSX.Element {
       currentEnsembleOrchestrationMode,
       currentGoalModeLabel,
       currentProviderCapabilityWarning,
+      configuredProviderSnapshot,
       cursorProviderAvailable,
       diffActionMenuOpen,
       displayCurrency,

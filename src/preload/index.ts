@@ -292,6 +292,11 @@ const api = {
   getProviderCapabilities: (provider: ProviderId, workspace?: string, approvalMode?: string) =>
     ipcRenderer.invoke('get-provider-capabilities', provider, workspace, approvalMode),
   getProviderAdapters: () => ipcRenderer.invoke('get-provider-adapters'),
+  getConfiguredProviderSnapshot: () =>
+    ipcRenderer.invoke('get-configured-provider-snapshot') as Promise<{
+      ready: boolean
+      providerIds: ProviderId[]
+    }>,
   // 1.0.5-EW35 — Currency sub-slice (c): live FX rate snapshot.
   // Renderer hydrates `formatCost`'s in-memory rate table from this
   // on app boot. `refreshFxRates` is reserved for a future explicit

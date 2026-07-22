@@ -19,6 +19,10 @@ export interface ProviderMetadataHandlersDeps {
     approvalMode?: string
   ) => Promise<ProviderCapabilityContract>
   getProviderAdapterDescriptors: () => ProviderAdapterDescriptor[]
+  getConfiguredProviderSnapshot: () => {
+    ready: boolean
+    providerIds: ProviderId[]
+  }
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }
 
@@ -44,4 +48,5 @@ export function registerProviderMetadataHandlers(deps: ProviderMetadataHandlersD
   )
 
   ipcMain.handle('get-provider-adapters', () => deps.getProviderAdapterDescriptors())
+  ipcMain.handle('get-configured-provider-snapshot', () => deps.getConfiguredProviderSnapshot())
 }

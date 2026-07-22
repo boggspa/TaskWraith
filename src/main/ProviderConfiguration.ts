@@ -3,6 +3,13 @@ import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
 
 export interface DetectConfiguredProvidersDependencies {
+  /** Lightweight binary + credential presence checks used only for picker/roster presentation. */
+  getCodexConfiguredStatus?: (
+    settings: AppSettings
+  ) => Promise<{ available: boolean; authState?: string }>
+  getClaudeConfiguredStatus?: (
+    settings: AppSettings
+  ) => Promise<{ available: boolean; authState?: string }>
   /**
    * Lightweight roster-only status. Production checks binary + auth presence;
    * full Kimi structural admission remains on the execution path.
@@ -25,6 +32,11 @@ export interface ConfiguredProviderDetectorOptions {
   staggerMs?: number
 }
 
+export interface ConfiguredProviderDiscoveryStatus {
+  ready: boolean
+  configuredProviders: Set<ProviderId>
+}
+
 export const CONFIGURED_PROVIDER_PROBE_DEADLINE_MS = 1_000
 export const CONFIGURED_PROVIDER_PROBE_STAGGER_MS = 250
 
@@ -33,6 +45,17 @@ type ProviderProbeOutcome = 'configured' | 'unconfigured' | 'unknown'
 interface ProviderProbe {
   provider: ProviderId
   run: () => Promise<boolean>
+}
+
+function configuredStatusIsAuthenticated(status: {
+  available: boolean
+  authState?: string
+}): boolean {
+  if (!status.available) return false
+  const authState = String(status.authState || '')
+    .trim()
+    .toLowerCase()
+  return ['oauth', 'api-key', 'authenticated', 'chatgpt', 'not-required'].includes(authState)
 }
 
 function boundedProviderProbe(
@@ -81,17 +104,28 @@ function configuredProviderProbes(
   const resolveProviderBinary = dependencies.resolveProviderBinary ?? resolveCliProviderBinary
   const getOllamaStatus = dependencies.getOllamaStatus ?? getOllamaStatusSnapshot
   const probes: ProviderProbe[] = []
+  if (dependencies.getCodexConfiguredStatus) {
+    probes.push({
+      provider: 'codex',
+      run: () =>
+        dependencies
+          .getCodexConfiguredStatus!(settings)
+          .then(configuredStatusIsAuthenticated)
+    })
+  }
+  if (dependencies.getClaudeConfiguredStatus) {
+    probes.push({
+      provider: 'claude',
+      run: () =>
+        dependencies
+          .getClaudeConfiguredStatus!(settings)
+          .then(configuredStatusIsAuthenticated)
+    })
+  }
   if (dependencies.getKimiConfiguredStatus) {
     probes.push({
       provider: 'kimi',
-      run: () =>
-        dependencies.getKimiConfiguredStatus!().then((status) => {
-          const authState = String(status.authState || '').trim().toLowerCase()
-          return (
-            status.available === true &&
-            ['oauth', 'api-key', 'authenticated'].includes(authState)
-          )
-        })
+      run: () => dependencies.getKimiConfiguredStatus!().then(configuredStatusIsAuthenticated)
     })
   }
   probes.push({
@@ -179,6 +213,7 @@ export function createConfiguredProviderDetector(
 ): {
   start: (settings: AppSettings) => void
   snapshot: (settings: AppSettings) => Promise<Set<ProviderId>>
+  statusSnapshot: (settings: AppSettings) => ConfiguredProviderDiscoveryStatus
 } {
   const staggerMs =
     Number.isFinite(options.staggerMs) && (options.staggerMs ?? -1) >= 0
@@ -191,14 +226,16 @@ export function createConfiguredProviderDetector(
   let generation = 0
   let startedKey: string | null = null
   let completedKey: string | null = null
-  let configured = new Set<ProviderId>()
+  let rosterConfigured = new Set<ProviderId>()
+  let confirmedConfigured = new Set<ProviderId>()
 
   const start = (settings: AppSettings): void => {
     const key = configuredProviderCacheKey(settings)
     if (startedKey === key) return
     startedKey = key
     completedKey = null
-    configured = settingsConfiguredProviders(settings)
+    rosterConfigured = settingsConfiguredProviders(settings)
+    confirmedConfigured = new Set()
     const currentGeneration = ++generation
     const probes = configuredProviderProbes(settings, dependencies)
     let remaining = probes.length
@@ -211,7 +248,14 @@ export function createConfiguredProviderDetector(
       const timer = setTimeout(() => {
         void boundedProviderProbe(Promise.resolve().then(run), deadlineMs).then((outcome) => {
           if (currentGeneration !== generation) return
-          if (outcome === 'configured' || outcome === 'unknown') configured.add(provider)
+          if (outcome === 'configured') {
+            rosterConfigured.add(provider)
+            confirmedConfigured.add(provider)
+          } else if (outcome === 'unknown') {
+            rosterConfigured.add(provider)
+          } else {
+            confirmedConfigured.delete(provider)
+          }
           remaining -= 1
           if (remaining === 0) completedKey = key
         })
@@ -224,7 +268,17 @@ export function createConfiguredProviderDetector(
     start,
     snapshot: async (settings) => {
       const key = configuredProviderCacheKey(settings)
-      return completedKey === key ? new Set(configured) : new Set()
+      return completedKey === key ? new Set(rosterConfigured) : new Set()
+    },
+    statusSnapshot: (settings) => {
+      const key = configuredProviderCacheKey(settings)
+      if (startedKey !== key) {
+        return { ready: false, configuredProviders: new Set() }
+      }
+      return {
+        ready: completedKey === key,
+        configuredProviders: new Set(confirmedConfigured)
+      }
     }
   }
 }

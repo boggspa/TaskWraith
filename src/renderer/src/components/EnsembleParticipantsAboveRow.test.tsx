@@ -510,6 +510,10 @@ describe('EnsembleParticipantsAboveRow', () => {
       expect(groups[0].fastModeCapableModelIds).toBe(fastModels)
     })
 
+    it('preserves an explicitly empty connected-provider catalog without falling back', () => {
+      expect(resolveEnsembleAddProviderGroups([], true, true)).toEqual([])
+    })
+
     it('materializes the chosen execution settings without inheriting seat identity or grants', () => {
       const participants = [
         makeParticipant({

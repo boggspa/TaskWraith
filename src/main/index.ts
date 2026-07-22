@@ -998,6 +998,7 @@ import {
   importCodexUsageCredential,
   loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
+  readCodexUsageCredentialLive,
   resolveGeminiAuthProfileEnv,
   saveGeminiAuthProfile,
   setDefaultGeminiAuthProfile,
@@ -13908,6 +13909,26 @@ async function getKimiRosterConfigurationStatus(): Promise<{
 }
 
 const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
+  getCodexConfiguredStatus: async (settings) => {
+    const [resolved, liveCredential] = await Promise.all([
+      resolveCliProviderBinary('codex'),
+      readCodexUsageCredentialLive()
+    ])
+    return {
+      available: Boolean(resolved.binaryPath),
+      authState:
+        liveCredential || settings.codexUsageCredential?.encryptedAccessToken
+          ? 'authenticated'
+          : 'missing'
+    }
+  },
+  getClaudeConfiguredStatus: async (settings) => {
+    const resolved = await resolveCliProviderBinary('claude')
+    return {
+      available: Boolean(resolved.binaryPath),
+      authState: settings.claudeApiKey ? 'api-key' : await readClaudeAuthState(resolved)
+    }
+  },
   getKimiConfiguredStatus: getKimiRosterConfigurationStatus,
   getOllamaStatus: async (settings) => {
     const models = await fetchOllamaModels(settings)
@@ -41166,6 +41187,17 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       getProviderAdapterDescriptors,
+      getConfiguredProviderSnapshot: () => {
+        const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(
+          AppStore.getSettings()
+        )
+        return {
+          ready: snapshot.ready,
+          providerIds: LIVE_SELECTABLE_PROVIDER_IDS.filter((provider) =>
+            snapshot.configuredProviders.has(provider)
+          )
+        }
+      },
       isMainRendererSender
     })
 
