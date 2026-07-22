@@ -1850,6 +1850,11 @@ const api = {
     ipcRenderer.on('usage-changed', wrapped)
     return () => ipcRenderer.removeListener('usage-changed', wrapped)
   },
+  onExternalUsageUpdated: (callback: () => void) => {
+    const wrapped = (): void => callback()
+    ipcRenderer.on('external-usage-updated', wrapped)
+    return () => ipcRenderer.removeListener('external-usage-updated', wrapped)
+  },
   onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => {
     const wrapped = (_event: unknown, delivery: ChatUpdateDelivery): void => callback(delivery)
     ipcRenderer.on('chat-updated', wrapped)

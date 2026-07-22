@@ -2,7 +2,7 @@ import { startTransition, useState, useEffect, useLayoutEffect, useMemo, useRef,
 import type { CSSProperties, ReactNode } from 'react'
 import { GeminiStreamAdapter, NormalizedEvent } from './lib/GeminiAdapter'
 import { applyAssistantDelta } from './lib/applyAssistantDelta'
-import { loadRendererUsageRecords } from './lib/usageRecordsCache'
+import { invalidateRendererUsageRecords, loadRendererUsageRecords } from './lib/usageRecordsCache'
 import {
   legacyToolEventProjectionKey,
   legacyToolEventProjectionNameKey,
@@ -2234,6 +2234,11 @@ function App(): React.JSX.Element {
   // `usage-changed` broadcast). Forwarded to the sidebar Model Usage card's
   // API-spend view so it re-queries `getUsage` without a manual refresh.
   const [usageRefreshTick, setUsageRefreshTick] = useState(0)
+  // Bumped by the 'external-usage-updated' push when main's external-activity
+  // cache upgrades (14-day cold partial → full 90-day window, Cursor chunk
+  // merges). Feeds welcomeHeatmapRefreshKey so the external heatmap/token
+  // chart re-pull instead of serving the short partial for the 30-min TTL.
+  const [externalUsageVersion, setExternalUsageVersion] = useState(0)
   const [manualUsageRefreshInFlight, setManualUsageRefreshInFlight] = useState(false)
   // True once the first usage fetch has resolved. Until then we can't know
   // whether the welcome dashboard will render, so the welcome screen reserves
@@ -11165,6 +11170,20 @@ function App(): React.JSX.Element {
           }
           // Nudge the sidebar API-spend view to re-query the priced records.
           setUsageRefreshTick((tick) => tick + 1)
+        })
+      )
+    }
+
+    if (typeof window.api.onExternalUsageUpdated === 'function') {
+      // Main's external-activity cache upgraded (cold 14-day partial → full
+      // 90-day window, or Cursor chunks merged). Drop the renderer's 30-min
+      // external cache so the next pull re-fetches, then bump the welcome
+      // heatmap refresh key to trigger that pull. Cheap: the main-side cache
+      // is warm, so the re-pull is an in-memory IPC round trip.
+      addIpcSubscription(
+        window.api.onExternalUsageUpdated(() => {
+          invalidateRendererUsageRecords('external')
+          setExternalUsageVersion((version) => version + 1)
         })
       )
     }
@@ -22905,7 +22924,9 @@ function App(): React.JSX.Element {
   // (the sidebar's copy looked fresher only because that card remounts often).
   // `usageRecords` is re-fetched on the 90s usage poll AND on ensemble-run
   // completion, so its length is a cheap, monotonic-enough refresh trigger.
-  const welcomeHeatmapRefreshKey = usageRecords.length
+  // + externalUsageVersion: the external heatmap upgrades (partial → full
+  // window) arrive via 'external-usage-updated', not through usageRecords.
+  const welcomeHeatmapRefreshKey = usageRecords.length + externalUsageVersion
   const shouldBuildWelcomeUsageDashboardDataNow = shouldBuildWelcomeUsageDashboardData({
     isWelcomeChat,
     isCurrentGlobalChat,

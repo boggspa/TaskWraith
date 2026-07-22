@@ -686,7 +686,13 @@ import {
   extractProviderUsage,
   mergeProviderUsage
 } from './ProviderRunStats'
-import { getExternalUsageCached, prewarmExternalUsageCache } from './ExternalProviderActivity'
+import {
+  getExternalUsageCached,
+  prewarmExternalUsageCache,
+  setExternalScanDriver,
+  setExternalUsageUpdateListener
+} from './ExternalProviderActivity'
+import { createExternalActivityWorkerDriver } from './ExternalActivityWorkerScan'
 import {
   canonicalizeExternalPathGrantMetadata,
   coalesceExternalPathGrants,
@@ -30280,10 +30286,11 @@ function attachSpellcheckContextTracking(targetWindow: BrowserWindow): void {
   })
 }
 
-/** Grace period after first paint before the external-usage scan may start, so
- * the renderer's own first-frame work (chat list hydration, theme, dock
- * restore) isn't sharing the main process with a multi-GB log walk. */
-const EXTERNAL_USAGE_PREWARM_SETTLE_MS = 20_000
+/** Grace period after first paint before the external-usage scan may start.
+ * The scan now runs in a utilityProcess, so this is no longer protecting the
+ * main event loop — just keeping disk I/O out of the renderer's first-frame
+ * window (chat list hydration, theme, dock restore). */
+const EXTERNAL_USAGE_PREWARM_SETTLE_MS = 3_000
 
 /** Backstop for when no window ever paints (headless/CI, or a window that
  * fails to show): paired remote devices still expect a usage rollup, so the
@@ -30292,6 +30299,27 @@ const EXTERNAL_USAGE_PREWARM_BACKSTOP_MS = 90_000
 
 let externalUsagePrewarmStarted = false
 let externalUsagePrewarmSettleTimer: ReturnType<typeof setTimeout> | null = null
+let externalUsageUpdatePingTimer: ReturnType<typeof setTimeout> | null = null
+
+/** Route 90-day scans through the utilityProcess worker and fan out cache
+ * upgrades (14-day partial → full window, Cursor chunks) so the welcome
+ * heatmap and paired devices track the complete window without the renderer
+ * having to guess when to re-pull. Pings are trailing-debounced: Cursor
+ * chunking can commit many times in a burst. */
+function installExternalUsageScanPipeline(): void {
+  setExternalScanDriver(
+    createExternalActivityWorkerDriver(join(__dirname, 'externalActivityWorker.js'))
+  )
+  setExternalUsageUpdateListener(() => {
+    if (externalUsageUpdatePingTimer) return
+    externalUsageUpdatePingTimer = setTimeout(() => {
+      externalUsageUpdatePingTimer = null
+      mainWindow?.webContents.send('external-usage-updated')
+      remoteUsageRollupTrigger?.()
+    }, 1_000)
+    externalUsageUpdatePingTimer.unref?.()
+  })
+}
 
 function startExternalUsagePrewarmOnce(): void {
   if (externalUsagePrewarmStarted) return
@@ -30892,15 +30920,15 @@ if (isGeminiMcpBridgeProcess) {
 
     // Hydrate provider-wide external usage AFTER the window is up.
     //
-    // "Background" here only ever meant "not awaited" — it still runs on the
-    // main process, and a cold per-file cache makes it re-parse every
-    // in-window session file (measured 2026-07-19: 74.9GB across 3.8k Codex
-    // rollouts, ~216s). Started inside whenReady it competed with window
-    // creation for the whole of launch. The scan now yields on a duty cycle
-    // (see ExternalProviderActivity), but it still has no business running
-    // before there is a window to hydrate, so hold it until first paint plus
-    // a settle gap. Nothing depends on it being warm: every consumer goes
-    // through the stale-while-revalidate front door.
+    // The 90-day walk (measured 2026-07-19: 74.9GB across 3.8k Codex
+    // rollouts, ~216s cold) runs in a utilityProcess so the main event loop
+    // never carries it; the duty-cycled in-process path survives only as a
+    // fallback when the worker dies. First paint still gates the start so
+    // disk I/O stays out of the renderer's first-frame window. Nothing
+    // depends on it being warm: every consumer goes through the
+    // stale-while-revalidate front door, and cache upgrades ping the
+    // renderer via 'external-usage-updated'.
+    installExternalUsageScanPipeline()
     scheduleExternalUsagePrewarmAfterFirstPaint()
 
     /*

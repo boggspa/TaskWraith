@@ -2141,6 +2141,7 @@ declare global {
       ) => () => void
       onAuditRunChanged: (callback: (run: AuditRunRecord) => void) => () => void
       onUsageChanged: (callback: () => void) => () => void
+      onExternalUsageUpdated: (callback: () => void) => () => void
       onChatUpdated: (callback: (delivery: ChatUpdateDelivery) => void) => () => void
       ackChatUpdated: (ack: ChatUpdateAck) => void
       onProjectsChanged: (callback: (state: ProjectRegistryState) => void) => () => void

@@ -50,6 +50,15 @@ export function clearRendererUsageRecordsCache(): void {
   usageRecordsInFlight.clear()
 }
 
+/** Drop one source's cached payload so the next load re-pulls from main.
+ * Used by the 'external-usage-updated' push: main's cache just upgraded
+ * (14d partial → full 90d, or Cursor chunks landed), so the long external
+ * TTL must not keep serving the stale short window. */
+export function invalidateRendererUsageRecords(source: RendererUsageSource): void {
+  usageRecordsCache.delete(source)
+  usageRecordsInFlight.delete(source)
+}
+
 export function loadRendererUsageRecords(
   source: RendererUsageSource,
   options: { maxAgeMs?: number; force?: boolean } = {}
