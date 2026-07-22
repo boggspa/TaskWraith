@@ -643,7 +643,7 @@ import {
 } from './lib/rightDockPersistence'
 import {
   rememberProjectReferencesDockOpened,
-  shouldAutoOpenProjectReferences
+  shouldPinProjectReferencesOnWorkRoute
 } from './lib/projectReferencesDockMemory'
 import {
   claimProjectReferenceContextSelection,
@@ -23575,6 +23575,9 @@ function App(): React.JSX.Element {
     sidebarActiveTab === 'projects' && activeWorkProjectId
       ? listProjects().find((project) => project.id === activeWorkProjectId) ?? null
       : null
+  const isWorkRouteReferencesPinned = shouldPinProjectReferencesOnWorkRoute({
+    activeSidebarTab: sidebarActiveTab
+  })
   const isTerminalDockAvailable = showGeminiTerminal && currentProvider === 'gemini' && hasWorkspaceContext
   const rightDockTabs = buildRightDockTabs({
     showHome: showRightDockHome,
@@ -23585,7 +23588,7 @@ function App(): React.JSX.Element {
     showFileEditor,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
-    isProjectReferencesPanelOpen: isProjectReferencesPanelOpen && Boolean(activeWorkProject),
+    isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
     isPinnedMessagesPanelOpen,
     isTerminalDockAvailable
   })
@@ -23666,7 +23669,7 @@ function App(): React.JSX.Element {
           ? `Refs · ${currentProjectReferenceContextSelection?.referenceIds.length ?? 0}`
           : 'Refs',
       icon: <LinkCircleSymbolIcon />,
-      enabled: Boolean(activeWorkProject),
+      enabled: isWorkRouteReferencesPinned,
       group: 'work',
       hint: 'Reusable Project reference library'
     },
@@ -23718,7 +23721,9 @@ function App(): React.JSX.Element {
         setChatMediaPanelOpenPreservingTranscript(false)
         break
       case 'references':
-        setIsProjectReferencesPanelOpen(false)
+        if (sidebarActiveTabRef.current !== 'projects') {
+          setIsProjectReferencesPanelOpen(false)
+        }
         break
       case 'pins':
         setIsPinnedMessagesPanelOpen(false)
@@ -23749,8 +23754,8 @@ function App(): React.JSX.Element {
         setChatMediaPanelOpenPreservingTranscript(true)
         break
       case 'references':
+        setIsProjectReferencesPanelOpen(true)
         if (activeWorkProject) {
-          setIsProjectReferencesPanelOpen(true)
           rememberProjectReferencesDockOpened(activeWorkProject.id)
         }
         break
@@ -23861,33 +23866,25 @@ function App(): React.JSX.Element {
     else setRightDockTab(restore.tab)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeWorkProjectId, currentChat?.appChatId, sidebarActiveTab])
-  // One gentle reveal per Project on this device. It only fires once the Work
-  // surface is wide enough to support a useful dock, and a manual open counts
-  // as having seen it too. Normal contextual dock persistence owns every
-  // subsequent visit.
+  // Work route always exposes References in the right dock. Contextual persistence
+  // still restores a saved surface when one exists; otherwise default to References.
   useEffect(() => {
+    if (!isWorkRouteReferencesPinned) {
+      return
+    }
+    setIsProjectReferencesPanelOpen(true)
     const context = resolveDockSurfaceContext({
       activeSidebarTab: sidebarActiveTab,
       activeProjectId: activeWorkProject?.id ?? null,
       chatId: currentChat?.appChatId,
       projects: listProjects()
     })
-    if (
-      !shouldAutoOpenProjectReferences({
-        activeSidebarTab: sidebarActiveTab,
-        projectId: activeWorkProject?.id ?? null,
-        viewportWidth,
-        hasSavedDockSurface: readDockSurface(context) !== null
-      })
-    ) {
+    if (readDockSurface(context) !== null) {
       return
     }
     activateRightDockTab('references')
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [activeWorkProject?.id, currentChat?.appChatId, sidebarActiveTab, viewportWidth])
-  useEffect(() => {
-    if (!activeWorkProject?.id) setIsProjectReferencesPanelOpen(false)
-  }, [activeWorkProject?.id])
+  }, [activeWorkProject?.id, currentChat?.appChatId, sidebarActiveTab])
   // Persist EVERY surface change — the switcher, ⌘K, and the imperative
   // feature-jumps that call setRightDockTab directly (openInspectorTab, run
   // finish, etc.) — so switching away and back restores the TRUE last surface
@@ -26437,8 +26434,8 @@ function App(): React.JSX.Element {
           setChatMediaPanelOpenPreservingTranscript(true)
           break
         case 'references':
+          setIsProjectReferencesPanelOpen(true)
           if (activeWorkProject) {
-            setIsProjectReferencesPanelOpen(true)
             rememberProjectReferencesDockOpened(activeWorkProject.id)
           }
           break
@@ -28984,6 +28981,7 @@ function App(): React.JSX.Element {
     isOldVersion,
     isPinnedMessagesPanelOpen,
     isProjectReferencesPanelOpen,
+    isWorkRouteReferencesPinned,
     isSideChatProviderLocked,
     isSideChatRunning,
     isSideComposerLocked,

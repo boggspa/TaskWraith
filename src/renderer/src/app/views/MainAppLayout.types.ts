@@ -420,6 +420,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   isOldVersion: any
   isPinnedMessagesPanelOpen: any
   isProjectReferencesPanelOpen: any
+  isWorkRouteReferencesPinned: boolean
   activeWorkProjectId: string | null
   isSideChatProviderLocked: any
   isSideChatRunning: any

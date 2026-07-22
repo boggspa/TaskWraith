@@ -67,17 +67,19 @@ export function resetProjectReferencesDockMemoryForTests(): void {
   }
 }
 
+/** @deprecated Prefer {@link shouldPinProjectReferencesOnWorkRoute}. */
 export function shouldAutoOpenProjectReferences(input: {
   activeSidebarTab: string | null | undefined
   projectId: string | null | undefined
   viewportWidth: number
   hasSavedDockSurface?: boolean
 }): boolean {
-  return (
-    input.activeSidebarTab === 'projects' &&
-    Boolean(input.projectId?.trim()) &&
-    input.viewportWidth >= PROJECT_REFERENCES_AUTO_OPEN_MIN_WIDTH &&
-    !input.hasSavedDockSurface &&
-    !hasAutoOpenedProjectReferences(input.projectId)
-  )
+  return shouldPinProjectReferencesOnWorkRoute(input)
+}
+
+/** Work tab always exposes the References dock — no width, once-per-project, or saved-surface gate. */
+export function shouldPinProjectReferencesOnWorkRoute(input: {
+  activeSidebarTab: string | null | undefined
+}): boolean {
+  return input.activeSidebarTab === 'projects'
 }

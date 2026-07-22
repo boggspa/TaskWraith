@@ -61,6 +61,7 @@ import {
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { ProjectReferencesDockPanel } from '../../components/ProjectReferencesDockPanel'
+import { WorkProjectReferencesEmptyShell } from '../../components/WorkProjectReferencesEmptyShell'
 import { AgentIdentityIcon } from '../../components/icons/AgentIdentityIcon'
 import type { RawLogEntry } from '../../lib/rawLogEntry'
 import { launchPreviewActionTitle } from '../../lib/launchPreviewTargets'
@@ -348,6 +349,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   isOldVersion,
   isPinnedMessagesPanelOpen,
   isProjectReferencesPanelOpen,
+  isWorkRouteReferencesPinned,
   isSideChatProviderLocked,
   isSideChatRunning,
   isSideComposerLocked,
@@ -2511,17 +2513,20 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   />
                 )}
 
-                {activeRightDockTab === 'references' &&
-                  isProjectReferencesPanelOpen &&
-                  activeWorkProjectId && (
+                {activeRightDockTab === 'references' && isProjectReferencesPanelOpen && (
+                  activeWorkProjectId ? (
                     <ProjectReferencesDockPanel
                       key={activeWorkProjectId}
                       projectId={activeWorkProjectId}
                       chatId={currentChat?.appChatId}
                       contextSelectionEnabled={currentChat?.chatKind !== 'ensemble'}
+                      showCloseButton={!isWorkRouteReferencesPinned}
                       onClose={() => closeRightDockPanel('references')}
                     />
-                  )}
+                  ) : (
+                    <WorkProjectReferencesEmptyShell />
+                  )
+                )}
 
                 {activeRightDockTab === 'pins' && isPinnedMessagesPanelOpen && (
                   <PinnedMessagesPanel

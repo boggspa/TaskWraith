@@ -45,6 +45,14 @@
   font-size: 10px;
 }
 
+.project-references-dock-empty-copy {
+  margin: 0;
+  padding: 24px 16px;
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
 .project-references-dock-boundary {
   margin: 0;
   padding: 10px 16px;

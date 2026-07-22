@@ -39,6 +39,7 @@ interface ProjectReferencesDockPanelProps {
   chatId?: string | null
   contextSelectionEnabled?: boolean
   onClose: () => void
+  showCloseButton?: boolean
 }
 
 /**
@@ -247,7 +248,8 @@ export function ProjectReferencesDockPanel({
   projectId,
   chatId,
   contextSelectionEnabled = true,
-  onClose
+  onClose,
+  showCloseButton = true
 }: ProjectReferencesDockPanelProps): JSX.Element {
   const projectIdRef = useRef(projectId)
   projectIdRef.current = projectId
@@ -553,9 +555,11 @@ export function ProjectReferencesDockPanel({
           <span className="project-references-dock-eyebrow">Project library</span>
           <h3>{project?.name || 'References'}</h3>
         </div>
-        <button type="button" className="project-references-dock-close" onClick={onClose}>
-          Close
-        </button>
+        {showCloseButton ? (
+          <button type="button" className="project-references-dock-close" onClick={onClose}>
+            Close
+          </button>
+        ) : null}
       </header>
 
       <p className="project-references-dock-boundary">

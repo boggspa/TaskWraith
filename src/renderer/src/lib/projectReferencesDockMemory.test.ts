@@ -5,7 +5,8 @@ import {
   markProjectReferencesAutoOpened,
   rememberProjectReferencesDockOpened,
   resetProjectReferencesDockMemoryForTests,
-  shouldAutoOpenProjectReferences
+  shouldAutoOpenProjectReferences,
+  shouldPinProjectReferencesOnWorkRoute
 } from './projectReferencesDockMemory'
 
 function createStorage() {
@@ -69,36 +70,19 @@ describe('projectReferencesDockMemory', () => {
     expect(hasAutoOpenedProjectReferences('project-a')).toBe(true)
   })
 
-  it('only auto-opens once, on a wide Work surface', () => {
+  it('pins References on the Work route regardless of width, project, or saved surface', () => {
+    expect(shouldPinProjectReferencesOnWorkRoute({ activeSidebarTab: 'projects' })).toBe(true)
+    expect(shouldPinProjectReferencesOnWorkRoute({ activeSidebarTab: 'chat' })).toBe(false)
+    expect(shouldPinProjectReferencesOnWorkRoute({ activeSidebarTab: 'threads' })).toBe(false)
+
     expect(
       shouldAutoOpenProjectReferences({
         activeSidebarTab: 'projects',
         projectId: 'project-a',
-        viewportWidth: 1200
-      })
-    ).toBe(true)
-    expect(
-      shouldAutoOpenProjectReferences({
-        activeSidebarTab: 'chat',
-        projectId: 'project-a',
-        viewportWidth: 1200
-      })
-    ).toBe(false)
-    expect(
-      shouldAutoOpenProjectReferences({
-        activeSidebarTab: 'projects',
-        projectId: 'project-a',
-        viewportWidth: 700
-      })
-    ).toBe(false)
-    expect(
-      shouldAutoOpenProjectReferences({
-        activeSidebarTab: 'projects',
-        projectId: 'project-a',
-        viewportWidth: 1200,
+        viewportWidth: 700,
         hasSavedDockSurface: true
       })
-    ).toBe(false)
+    ).toBe(true)
 
     markProjectReferencesAutoOpened('project-a')
     expect(
@@ -107,6 +91,6 @@ describe('projectReferencesDockMemory', () => {
         projectId: 'project-a',
         viewportWidth: 1200
       })
-    ).toBe(false)
+    ).toBe(true)
   })
 })
