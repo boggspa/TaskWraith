@@ -3323,6 +3323,12 @@ function App(): React.JSX.Element {
   // retain this safe throwaway default; ChatViewPane overrides it at the actual
   // mount with a local ref measured against that pane's own transcript root.
   const paneComposerAreaDiscardRef = useRef<HTMLDivElement | null>(null)
+  // Same hazard for the goal button: every pane's <Composer> mounts the goal
+  // control, and the LAST mounted wins a shared ref — so the focused popover's
+  // portal anchor (updateGoalPopoverPosition) could measure a resting pane's
+  // button. Panes take this throwaway; only the focused composer binds the real
+  // goalButtonRef (mirrors sideChatComposer's DETACHED_SIDE_CHAT_GOAL_BUTTON_REF).
+  const paneGoalButtonDiscardRef = useRef<HTMLButtonElement | null>(null)
   const welcomeDashboardRegionRef = useRef<HTMLDivElement>(null)
   const [welcomeFitState, setWelcomeFitState] = useState<{
     chatId: string | null
@@ -27123,6 +27129,7 @@ function App(): React.JSX.Element {
       // ── focused-only singleton refs / state: avoid clobbering the focused
       //    composer or stacking portals. ──
       composerAreaRef: paneComposerAreaDiscardRef,
+      goalButtonRef: paneGoalButtonDiscardRef,
       // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
       // state; force it closed and disable the pane goal control so a resting pane
       // never appears to accept a goal action that only focused the pane.
@@ -28314,6 +28321,7 @@ function App(): React.JSX.Element {
         // ── focused-only singleton refs / state: avoid clobbering the focused
         //    composer or stacking portals. ──
         composerAreaRef: paneComposerAreaDiscardRef,
+        goalButtonRef: paneGoalButtonDiscardRef,
         // TODO(per-pane): goal popover is portal'd off the focused `goalPopoverOpen`
         // state; force it closed and disable the pane goal control so a resting pane
         // never appears to accept a goal action that only focused the pane.
