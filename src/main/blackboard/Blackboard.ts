@@ -14,14 +14,49 @@
 import type {
   BlackboardCategory,
   BlackboardEntry,
+  BlackboardEvictionTombstone,
   BlackboardScope
 } from '../store/types'
 
 /** Hard caps so the digest can never balloon a prompt. */
 export const BLACKBOARD_MAX_ENTRIES = 60
+export const BLACKBOARD_MAX_TOMBSTONES = 60
 export const BLACKBOARD_MAX_VALUE_LEN = 1000
 export const BLACKBOARD_MAX_STORE_LEN = 4000
 export const BLACKBOARD_MAX_KEY_LEN = 80
+
+export type BlackboardPostFieldErrorCode = 'blackboard_key_too_long' | 'blackboard_value_too_long'
+
+export interface BlackboardPostFieldError {
+  code: BlackboardPostFieldErrorCode
+  maxLength: number
+  originalLength: number
+}
+
+export type BlackboardMissingKeyReason = 'not_found' | 'filtered_by_round_scope' | 'pruned'
+
+export interface BlackboardMissingKey {
+  key: string
+  reason: BlackboardMissingKeyReason
+}
+
+export interface BlackboardCapacityCounts {
+  session: number
+  chat: number
+  round: number
+}
+
+export type UpsertBlackboardResult =
+  | {
+      ok: true
+      entries: BlackboardEntry[]
+      tombstones: BlackboardEvictionTombstone[]
+    }
+  | {
+      ok: false
+      code: 'blackboard_capacity_exhausted'
+      counts: BlackboardCapacityCounts
+    }
 
 /** Stable render/derive order — decisions first, throwaway notes last. */
 export const BLACKBOARD_CATEGORY_ORDER: BlackboardCategory[] = [
@@ -43,9 +78,91 @@ const CATEGORY_LABEL: Record<BlackboardCategory, string> = {
 const VALID_CATEGORIES = new Set<BlackboardCategory>(BLACKBOARD_CATEGORY_ORDER)
 const VALID_SCOPES = new Set<BlackboardScope>(['round', 'session', 'chat'])
 
-function clamp(text: string, max: number): string {
-  const trimmed = text.trim()
-  return trimmed.length > max ? `${trimmed.slice(0, max - 1).trimEnd()}…` : trimmed
+function trimField(text: string): string {
+  return text.trim()
+}
+
+/** Fail closed before persisting — never silently clamp stored key/value. */
+export function validateBlackboardPostFields(
+  key: string,
+  value: string
+): BlackboardPostFieldError | null {
+  const trimmedKey = trimField(key ?? '')
+  const trimmedValue = trimField(value ?? '')
+  if (trimmedKey.length > BLACKBOARD_MAX_KEY_LEN) {
+    return {
+      code: 'blackboard_key_too_long',
+      maxLength: BLACKBOARD_MAX_KEY_LEN,
+      originalLength: trimmedKey.length
+    }
+  }
+  if (trimmedValue.length > BLACKBOARD_MAX_STORE_LEN) {
+    return {
+      code: 'blackboard_value_too_long',
+      maxLength: BLACKBOARD_MAX_STORE_LEN,
+      originalLength: trimmedValue.length
+    }
+  }
+  return null
+}
+
+/**
+ * Shorten a value for prompt digest injection with an explicit truncation marker
+ * that includes the original length and a read hint for the key.
+ */
+export function formatPromptBlackboardValue(value: string, key: string): string {
+  const trimmed = trimField(value)
+  if (trimmed.length <= BLACKBOARD_MAX_VALUE_LEN) return trimmed
+  const readHint = `read keys:[${key}]`
+  const marker = `[truncated origLen=${trimmed.length} ${readHint}]`
+  if (marker.length >= BLACKBOARD_MAX_VALUE_LEN) {
+    return `${trimmed.slice(0, BLACKBOARD_MAX_VALUE_LEN - 1).trimEnd()}…`
+  }
+  const prefixMax = BLACKBOARD_MAX_VALUE_LEN - marker.length - 2
+  const prefix = trimmed.slice(0, Math.max(0, prefixMax)).trimEnd()
+  return `${prefix}… ${marker}`
+}
+
+function sortEntriesOldestFirst(entries: BlackboardEntry[]): BlackboardEntry[] {
+  return [...entries]
+    .map((e, i) => ({ e, i }))
+    .sort((a, b) =>
+      a.e.createdAt === b.e.createdAt ? a.i - b.i : a.e.createdAt < b.e.createdAt ? -1 : 1
+    )
+    .map((x) => x.e)
+}
+
+function countBlackboardScopes(entries: BlackboardEntry[]): BlackboardCapacityCounts {
+  const counts: BlackboardCapacityCounts = { session: 0, chat: 0, round: 0 }
+  for (const entry of entries) {
+    if (entry.scope === 'session') counts.session += 1
+    else if (entry.scope === 'chat') counts.chat += 1
+    else counts.round += 1
+  }
+  return counts
+}
+
+function boundEvictionTombstones(
+  tombstones: BlackboardEvictionTombstone[]
+): BlackboardEvictionTombstone[] {
+  if (tombstones.length <= BLACKBOARD_MAX_TOMBSTONES) return tombstones
+  return [...tombstones]
+    .sort((a, b) => a.prunedAt.localeCompare(b.prunedAt))
+    .slice(tombstones.length - BLACKBOARD_MAX_TOMBSTONES)
+}
+
+function makeEvictionTombstone(
+  entry: BlackboardEntry,
+  prunedAt: string
+): BlackboardEvictionTombstone {
+  return {
+    key: entry.key,
+    scope: entry.scope,
+    roundId: entry.roundId,
+    participantId: entry.participantId,
+    prunedAt,
+    reason: 'capacity'
+  }
 }
 
 export function normalizeBlackboardCategory(value: unknown): BlackboardCategory {
@@ -124,9 +241,10 @@ export interface MakeBlackboardEntryInput {
  * than persisting junk.
  */
 export function makeBlackboardEntry(input: MakeBlackboardEntryInput): BlackboardEntry | null {
-  const key = clamp(input.key ?? '', BLACKBOARD_MAX_KEY_LEN)
-  const value = clamp(input.value ?? '', BLACKBOARD_MAX_STORE_LEN)
+  const key = trimField(input.key ?? '')
+  const value = trimField(input.value ?? '')
   if (!key || !value) return null
+  if (validateBlackboardPostFields(key, value)) return null
   const participantId = input.participantId || 'system'
   return {
     id: input.id,
@@ -146,16 +264,28 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
   }
 }
 
+export interface UpsertBlackboardOptions {
+  currentRoundId?: string
+  tombstones?: BlackboardEvictionTombstone[]
+  /** ISO timestamp stamped on eviction tombstones (tests pass a fixed value). */
+  prunedAt?: string
+}
+
 /**
- * Insert an entry, upserting on (participantId, key, scope): a participant
- * rewriting the same key under the same scope replaces its prior note instead
- * of stacking duplicates. The list is then capped to BLACKBOARD_MAX_ENTRIES,
- * dropping the OLDEST entries first (by createdAt, then array order).
+ * Insert an entry, upserting on (participantId, key, scope). When over the
+ * entry cap, evict foreign then oldest round-scoped entries first; session and
+ * chat entries are never silently discarded. Returns a capacity error when all
+ * 60 slots are protected durable scopes.
  */
 export function upsertBlackboardEntry(
   entries: BlackboardEntry[],
-  entry: BlackboardEntry
-): BlackboardEntry[] {
+  entry: BlackboardEntry,
+  options: UpsertBlackboardOptions = {}
+): UpsertBlackboardResult {
+  const currentRoundId = (options.currentRoundId || '').trim()
+  const prunedAt = options.prunedAt || entry.createdAt
+  let tombstones = (options.tombstones || []).filter((t) => t.key !== entry.key)
+
   const without = entries.filter(
     (e) =>
       !(
@@ -164,16 +294,46 @@ export function upsertBlackboardEntry(
         e.scope === entry.scope
       )
   )
-  const next = [...without, entry]
-  if (next.length <= BLACKBOARD_MAX_ENTRIES) return next
-  // Stable oldest-first sort, then keep the newest N.
-  const sorted = [...next]
-    .map((e, i) => ({ e, i }))
-    .sort((a, b) =>
-      a.e.createdAt === b.e.createdAt ? a.i - b.i : a.e.createdAt < b.e.createdAt ? -1 : 1
+  let working = [...without, entry]
+  if (working.length <= BLACKBOARD_MAX_ENTRIES) {
+    return { ok: true, entries: working, tombstones }
+  }
+
+  const needToEvict = working.length - BLACKBOARD_MAX_ENTRIES
+  const pool = working.filter((e) => e.id !== entry.id)
+  const foreignRound = sortEntriesOldestFirst(
+    pool.filter((e) => e.scope === 'round' && e.roundId !== currentRoundId)
+  )
+  const currentRoundScoped = sortEntriesOldestFirst(
+    pool.filter((e) => e.scope === 'round' && e.roundId === currentRoundId)
+  )
+  const evictQueue = [...foreignRound, ...currentRoundScoped]
+  if (evictQueue.length < needToEvict) {
+    return {
+      ok: false,
+      code: 'blackboard_capacity_exhausted',
+      counts: countBlackboardScopes(working)
+    }
+  }
+
+  const toRemove = new Set(evictQueue.slice(0, needToEvict).map((e) => e.id))
+  for (const evicted of evictQueue.slice(0, needToEvict)) {
+    tombstones = tombstones.filter(
+      (t) =>
+        !(
+          t.key === evicted.key &&
+          t.scope === evicted.scope &&
+          t.participantId === evicted.participantId
+        )
     )
-    .map((x) => x.e)
-  return sorted.slice(sorted.length - BLACKBOARD_MAX_ENTRIES)
+    tombstones.push(makeEvictionTombstone(evicted, prunedAt))
+  }
+  working = working.filter((e) => !toRemove.has(e.id))
+  return {
+    ok: true,
+    entries: working,
+    tombstones: boundEvictionTombstones(tombstones)
+  }
 }
 
 /**
@@ -291,6 +451,48 @@ export interface BlackboardReadSelector {
 
 export const BLACKBOARD_READ_DEFAULT_LAST = 10
 
+export interface BlackboardReadContext {
+  allEntries: BlackboardEntry[]
+  currentRoundId?: string
+  tombstones?: BlackboardEvictionTombstone[]
+}
+
+export function resolveBlackboardMissingKeys(
+  requestedKeys: string[],
+  selected: BlackboardEntry[],
+  context: BlackboardReadContext
+): BlackboardMissingKey[] {
+  const currentRoundId = (context.currentRoundId || '').trim()
+  const tombstones = context.tombstones || []
+  const hitKeys = new Set(selected.map((entry) => entry.key))
+  const seen = new Set<string>()
+  const missing: BlackboardMissingKey[] = []
+
+  for (const raw of requestedKeys) {
+    const key = trimField(raw)
+    if (!key || seen.has(key) || hitKeys.has(key)) continue
+    seen.add(key)
+
+    const foreignRound = context.allEntries.find(
+      (entry) =>
+        entry.key === key && entry.scope === 'round' && entry.roundId !== currentRoundId
+    )
+    if (foreignRound) {
+      missing.push({ key, reason: 'filtered_by_round_scope' })
+      continue
+    }
+
+    const pruned = tombstones.find((t) => t.key === key)
+    if (pruned) {
+      missing.push({ key, reason: 'pruned' })
+      continue
+    }
+
+    missing.push({ key, reason: 'not_found' })
+  }
+  return missing
+}
+
 /**
  * Deterministic, bounded read for the `blackboard_read` tool. Explicit
  * ids/keys return exactly those entries; otherwise category / unseen filters
@@ -302,8 +504,9 @@ export const BLACKBOARD_READ_DEFAULT_LAST = 10
 export function selectBlackboardReadWindow(
   entries: BlackboardEntry[],
   selector: BlackboardReadSelector,
-  participantId?: string
-): { selected: BlackboardEntry[]; omitted: number } {
+  participantId?: string,
+  context?: BlackboardReadContext
+): { selected: BlackboardEntry[]; omitted: number; missingKeys: BlackboardMissingKey[] } {
   const ids = new Set((selector.ids || []).filter(Boolean))
   const keys = new Set((selector.keys || []).map((key) => String(key).trim()).filter(Boolean))
   const chronological = [...entries]
@@ -314,7 +517,11 @@ export function selectBlackboardReadWindow(
     .map((x) => x.e)
   if (ids.size > 0 || keys.size > 0) {
     const selected = chronological.filter((entry) => ids.has(entry.id) || keys.has(entry.key))
-    return { selected, omitted: 0 }
+    const missingKeys =
+      keys.size > 0 && context
+        ? resolveBlackboardMissingKeys([...(selector.keys || [])], selected, context)
+        : []
+    return { selected, omitted: 0, missingKeys }
   }
   const category =
     typeof selector.category === 'string' && VALID_CATEGORIES.has(selector.category as BlackboardCategory)
@@ -328,12 +535,17 @@ export function selectBlackboardReadWindow(
   const first = Number.isFinite(selector.first) ? Math.max(0, Math.floor(selector.first!)) : 0
   const last = Number.isFinite(selector.last) ? Math.max(0, Math.floor(selector.last!)) : 0
   if (first > 0) {
-    return { selected: filtered.slice(0, first), omitted: Math.max(0, filtered.length - first) }
+    return {
+      selected: filtered.slice(0, first),
+      omitted: Math.max(0, filtered.length - first),
+      missingKeys: []
+    }
   }
   const window = last > 0 ? last : BLACKBOARD_READ_DEFAULT_LAST
   return {
     selected: filtered.slice(Math.max(0, filtered.length - window)),
-    omitted: Math.max(0, filtered.length - window)
+    omitted: Math.max(0, filtered.length - window),
+    missingKeys: []
   }
 }
 
@@ -355,7 +567,7 @@ export function formatBlackboardForPrompt(entries: BlackboardEntry[]): string {
     if (!bucket || bucket.length === 0) continue
     lines.push(`  ${CATEGORY_LABEL[category]}:`)
     for (const entry of bucket) {
-      const value = clamp(entry.value, BLACKBOARD_MAX_VALUE_LEN)
+      const value = formatPromptBlackboardValue(entry.value, entry.key)
       lines.push(`    - ${entry.key}: ${value} (—${entry.participantId})`)
     }
   }

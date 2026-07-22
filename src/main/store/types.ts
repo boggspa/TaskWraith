@@ -1248,6 +1248,16 @@ export interface BlackboardEntry {
   seenBy?: string[]
 }
 
+/** Wave 2 — tombstone left when a blackboard entry is evicted under the 60-entry cap. */
+export interface BlackboardEvictionTombstone {
+  key: string
+  scope: BlackboardScope
+  roundId: string
+  participantId: string
+  prunedAt: string
+  reason: 'capacity'
+}
+
 /** M5 — what a complexity-escalation signal is flagging.
  * - `stuck`                    : round completed but no participant produced an answer
  * - `looping`                  : round exhausted its handoff budget without returning to the user
@@ -1580,6 +1590,8 @@ export interface EnsembleConfig {
    * pruned per round/session/chat. See src/main/blackboard/Blackboard.ts.
    */
   blackboard?: BlackboardEntry[]
+  /** Bounded ledger of keys evicted under the entry cap — drives `pruned` read diagnostics. */
+  blackboardTombstones?: BlackboardEvictionTombstone[]
   /**
    * M5 (1.0.7) — complexity-escalation signals emitted by the orchestrator
    * heuristic at round end (stuck / looping / disagreement-unresolved /

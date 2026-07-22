@@ -1574,7 +1574,8 @@ import {
   resolveBlackboardPostRound,
   selectBlackboardForRound,
   selectBlackboardReadWindow,
-  upsertBlackboardEntry
+  upsertBlackboardEntry,
+  validateBlackboardPostFields
 } from './blackboard/Blackboard'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
@@ -28581,46 +28582,76 @@ async function executeGeminiMcpTool(
         })
       } else {
         const createdAt = new Date().toISOString()
-        const entry = makeBlackboardEntry({
-          id: `blackboard-${context.appRunId || 'run'}-${Date.now()}-${Math.random()
-            .toString(36)
-            .slice(2, 8)}`,
-          chatId: chat.appChatId,
-          roundId: roundResolution.roundId,
-          participantId,
-          key: optionalString(args.key) || '',
-          value: optionalString(args.value) || '',
-          category: args.category,
-          scope: args.scope,
-          createdAt
-        })
-        if (!entry) {
+        const postKey = optionalString(args.key) || ''
+        const postValue = optionalString(args.value) || ''
+        const fieldError = validateBlackboardPostFields(postKey, postValue)
+        if (fieldError) {
           toolIsError = true
           text = mcpJson({
             ok: false,
             tool: 'blackboard_post',
-            error: 'blackboard_post requires non-empty key and value.'
+            code: fieldError.code,
+            maxLength: fieldError.maxLength,
+            originalLength: fieldError.originalLength
           })
         } else {
-          const updated: ChatRecord = {
-            ...chat,
-            ensemble: {
-              ...chat.ensemble,
-              blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
-              updatedAt: createdAt
-            },
-            updatedAt: Date.now()
-          }
-          saveAndBroadcastChat(updated)
-          ensembleOrchestratorRef?.appendStatusForRun(
-            context.appRunId || '',
-            `Blackboard updated: ${entry.category} / ${entry.key}.`
-          )
-          text = mcpJson({
-            ok: true,
-            tool: 'blackboard_post',
-            entry
+          const entry = makeBlackboardEntry({
+            id: `blackboard-${context.appRunId || 'run'}-${Date.now()}-${Math.random()
+              .toString(36)
+              .slice(2, 8)}`,
+            chatId: chat.appChatId,
+            roundId: roundResolution.roundId,
+            participantId,
+            key: postKey,
+            value: postValue,
+            category: args.category,
+            scope: args.scope,
+            createdAt
           })
+          if (!entry) {
+            toolIsError = true
+            text = mcpJson({
+              ok: false,
+              tool: 'blackboard_post',
+              error: 'blackboard_post requires non-empty key and value.'
+            })
+          } else {
+            const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+              currentRoundId: activeRound?.roundId || roundResolution.roundId,
+              tombstones: chat.ensemble.blackboardTombstones,
+              prunedAt: createdAt
+            })
+            if (!upsert.ok) {
+              toolIsError = true
+              text = mcpJson({
+                ok: false,
+                tool: 'blackboard_post',
+                code: upsert.code,
+                counts: upsert.counts
+              })
+            } else {
+              const updated: ChatRecord = {
+                ...chat,
+                ensemble: {
+                  ...chat.ensemble,
+                  blackboard: upsert.entries,
+                  blackboardTombstones: upsert.tombstones,
+                  updatedAt: createdAt
+                },
+                updatedAt: Date.now()
+              }
+              saveAndBroadcastChat(updated)
+              ensembleOrchestratorRef?.appendStatusForRun(
+                context.appRunId || '',
+                `Blackboard updated: ${entry.category} / ${entry.key}.`
+              )
+              text = mcpJson({
+                ok: true,
+                tool: 'blackboard_post',
+                entry
+              })
+            }
+          }
         }
       }
     } else if (toolName === 'blackboard_read') {
@@ -28650,7 +28681,12 @@ async function executeGeminiMcpTool(
             first: optionalNumber(args.first),
             last: optionalNumber(args.last)
           },
-          participantId
+          participantId,
+          {
+            allEntries: currentBlackboard,
+            currentRoundId: activeRound?.roundId,
+            tombstones: chat.ensemble.blackboardTombstones
+          }
         )
         const selectedIds = result.selected.map((entry) => entry.id)
         const marked = markBlackboardEntriesSeen(currentBlackboard, selectedIds, participantId)
@@ -28673,7 +28709,8 @@ async function executeGeminiMcpTool(
           count: result.selected.length,
           omitted: result.omitted,
           visibleCount: visible.length,
-          markedSeen: participantId ? selectedIds : []
+          markedSeen: participantId ? selectedIds : [],
+          missingKeys: result.missingKeys
         })
       }
     } else if (toolName === 'blackboard_delete') {
@@ -33144,15 +33181,21 @@ if (isGeminiMcpBridgeProcess) {
           if (!value) return { ok: false, reason: 'Blackboard entry value is required' }
           const createdAt = new Date().toISOString()
           const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
+          const postKey =
+            typeof action.key === 'string' && action.key.trim() ? action.key.trim() : fallbackKey
+          const fieldError = validateBlackboardPostFields(postKey, value)
+          if (fieldError) {
+            return {
+              ok: false,
+              reason: `${fieldError.code}: max ${fieldError.maxLength}, got ${fieldError.originalLength}`
+            }
+          }
           const entry = makeBlackboardEntry({
             id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
             chatId: chat.appChatId,
             roundId: roundResolution.roundId,
             participantId: 'user',
-            key:
-              typeof action.key === 'string' && action.key.trim()
-                ? action.key.trim()
-                : fallbackKey,
+            key: postKey,
             value,
             category: action.category,
             scope: roundResolution.scope,
@@ -33161,11 +33204,20 @@ if (isGeminiMcpBridgeProcess) {
           if (!entry) {
             return { ok: false, reason: 'Blackboard entry requires non-empty key and value.' }
           }
+          const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+            currentRoundId: chat.ensemble.activeRound?.roundId || roundResolution.roundId,
+            tombstones: chat.ensemble.blackboardTombstones,
+            prunedAt: createdAt
+          })
+          if (!upsert.ok) {
+            return { ok: false, reason: upsert.code }
+          }
           const updated = {
             ...chat,
             ensemble: {
               ...chat.ensemble,
-              blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+              blackboard: upsert.entries,
+              blackboardTombstones: upsert.tombstones,
               updatedAt: createdAt
             },
             updatedAt: Date.now()
@@ -42443,23 +42495,37 @@ if (isGeminiMcpBridgeProcess) {
         const value = requireNonEmptyString(payload?.value, 'Blackboard entry value')
         const createdAt = new Date().toISOString()
         const fallbackKey = `user-note-${createdAt.replace(/[^0-9]/g, '').slice(0, 14)}`
+        const postKey = optionalString(payload?.key) || fallbackKey
+        const fieldError = validateBlackboardPostFields(postKey, value)
+        if (fieldError) {
+          throw new Error(
+            `${fieldError.code}: max ${fieldError.maxLength}, got ${fieldError.originalLength}`
+          )
+        }
         const entry = makeBlackboardEntry({
           id: `blackboard-user-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
           chatId: chat.appChatId,
           roundId: roundResolution.roundId,
           participantId: 'user',
-          key: optionalString(payload?.key) || fallbackKey,
+          key: postKey,
           value,
           category: payload?.category,
           scope: roundResolution.scope,
           createdAt
         })
         if (!entry) throw new Error('Blackboard entry requires non-empty key and value.')
+        const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+          currentRoundId: chat.ensemble.activeRound?.roundId || roundResolution.roundId,
+          tombstones: chat.ensemble.blackboardTombstones,
+          prunedAt: createdAt
+        })
+        if (!upsert.ok) throw new Error(upsert.code)
         const updated: ChatRecord = {
           ...chat,
           ensemble: {
             ...chat.ensemble,
-            blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+            blackboard: upsert.entries,
+            blackboardTombstones: upsert.tombstones,
             updatedAt: createdAt
           },
           updatedAt: Date.now()
@@ -42557,11 +42623,20 @@ if (isGeminiMcpBridgeProcess) {
       if (!entry) {
         return { ok: false, error: 'Blackboard entry requires non-empty key and value.' }
       }
+      const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+        currentRoundId: chat.ensemble.activeRound?.roundId || 'manual',
+        tombstones: chat.ensemble.blackboardTombstones,
+        prunedAt: createdAt
+      })
+      if (!upsert.ok) {
+        return { ok: false, error: upsert.code }
+      }
       const updated: ChatRecord = {
         ...chat,
         ensemble: {
           ...chat.ensemble,
-          blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+          blackboard: upsert.entries,
+          blackboardTombstones: upsert.tombstones,
           updatedAt: createdAt
         },
         updatedAt: Date.now()

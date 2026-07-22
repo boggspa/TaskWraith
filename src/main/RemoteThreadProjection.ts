@@ -684,6 +684,8 @@ export interface RemoteBlackboardEntry {
   participantId?: string
   roundId?: string
   createdAt?: string
+  valueTruncated?: boolean
+  originalLength?: number
 }
 
 export interface RemoteThreadSnapshot {
@@ -952,18 +954,25 @@ function projectBlackboardEntries(entries: BlackboardEntry[] | undefined): Remot
   if (!Array.isArray(entries) || entries.length === 0) return []
   return entries
     .filter((entry) => typeof entry?.key === 'string' && typeof entry.value === 'string')
-    .map((entry) => ({
-      id: entry.id,
-      key: sanitizePreview(entry.key, 120).preview,
-      value: sanitizePreview(entry.value, 900).preview,
-      category: entry.category,
-      scope: entry.scope,
-      ...(entry.participantId
-        ? { participantId: sanitizePreview(entry.participantId, 80).preview }
-        : {}),
-      ...(entry.roundId ? { roundId: entry.roundId } : {}),
-      ...(entry.createdAt ? { createdAt: entry.createdAt } : {})
-    }))
+    .map((entry) => {
+      const keySanitized = sanitizePreview(entry.key, 120)
+      const valueSanitized = sanitizePreview(entry.value, 900)
+      return {
+        id: entry.id,
+        key: keySanitized.preview,
+        value: valueSanitized.preview,
+        category: entry.category,
+        scope: entry.scope,
+        ...(entry.participantId
+          ? { participantId: sanitizePreview(entry.participantId, 80).preview }
+          : {}),
+        ...(entry.roundId ? { roundId: entry.roundId } : {}),
+        ...(entry.createdAt ? { createdAt: entry.createdAt } : {}),
+        ...(valueSanitized.truncated
+          ? { valueTruncated: true, originalLength: entry.value.length }
+          : {})
+      }
+    })
     .filter((entry) => entry.key && entry.value)
     .sort((a, b) => {
       const rank = BLACKBOARD_CATEGORY_RANK[a.category] - BLACKBOARD_CATEGORY_RANK[b.category]

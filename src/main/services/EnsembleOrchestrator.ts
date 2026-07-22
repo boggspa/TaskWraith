@@ -9559,12 +9559,19 @@ export class EnsembleOrchestrator {
       createdAt: brief.emittedAt
     })
     if (!entry) return
+    const upsert = upsertBlackboardEntry(chat.ensemble.blackboard || [], entry, {
+      currentRoundId: runtime.roundId,
+      tombstones: chat.ensemble.blackboardTombstones,
+      prunedAt: brief.emittedAt
+    })
+    if (!upsert.ok) return
     this.saveChatWithCheckpoint(
       {
         ...chat,
         ensemble: {
           ...chat.ensemble,
-          blackboard: upsertBlackboardEntry(chat.ensemble.blackboard || [], entry),
+          blackboard: upsert.entries,
+          blackboardTombstones: upsert.tombstones,
           updatedAt: this.deps.nowIso()
         },
         updatedAt: this.deps.now()
@@ -14467,6 +14474,7 @@ export class EnsembleOrchestrator {
     // history stays in `roundSummaries`). Deterministic ids (roundId + seq) so
     // there's no clock/random dependence here. Skipped when no summary.
     let nextBlackboard = chat.ensemble.blackboard
+    let nextBlackboardTombstones = chat.ensemble.blackboardTombstones
     if (summaryRecord) {
       const derived = deriveBlackboardFromRoundSummary({
         summary: summaryRecord.summary,
@@ -14477,10 +14485,17 @@ export class EnsembleOrchestrator {
         makeId: (seq) => `${roundId}-bb-${seq}`
       })
       if (derived.length > 0) {
-        nextBlackboard = derived.reduce(
-          (acc, entry) => upsertBlackboardEntry(acc, entry),
-          chat.ensemble.blackboard || []
-        )
+        nextBlackboard = chat.ensemble.blackboard || []
+        for (const derivedEntry of derived) {
+          const upsert = upsertBlackboardEntry(nextBlackboard, derivedEntry, {
+            currentRoundId: roundId,
+            tombstones: nextBlackboardTombstones,
+            prunedAt: endedAt
+          })
+          if (!upsert.ok) break
+          nextBlackboard = upsert.entries
+          nextBlackboardTombstones = upsert.tombstones
+        }
       }
     }
     // M5 — run the complexity-escalation heuristic over the finished round's
@@ -14525,6 +14540,7 @@ export class EnsembleOrchestrator {
             : chat.ensemble.roundSummaries,
           ...(nextBossmanControlState ? { bossmanControlState: nextBossmanControlState } : {}),
           ...(nextBlackboard ? { blackboard: nextBlackboard } : {}),
+          ...(nextBlackboardTombstones ? { blackboardTombstones: nextBlackboardTombstones } : {}),
           ...(nextEscalationSignals ? { escalationSignals: nextEscalationSignals } : {}),
           updatedAt: endedAt
         },

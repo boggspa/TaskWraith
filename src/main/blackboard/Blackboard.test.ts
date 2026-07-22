@@ -3,21 +3,25 @@ import type { BlackboardEntry } from '../store/types'
 import {
   BLACKBOARD_MANUAL_ROUND_ID,
   BLACKBOARD_MAX_ENTRIES,
+  BLACKBOARD_MAX_KEY_LEN,
   BLACKBOARD_MAX_STORE_LEN,
   BLACKBOARD_MAX_VALUE_LEN,
   deriveBlackboardFromRoundSummary,
   formatBlackboardForPrompt,
+  formatPromptBlackboardValue,
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
   normalizeBlackboardCategory,
   normalizeBlackboardScope,
   pruneBlackboard,
   removeBlackboardEntries,
+  resolveBlackboardMissingKeys,
   resolveBlackboardPostRound,
   selectBlackboardForRound,
   selectBlackboardReadWindow,
   selectUnseenBlackboard,
-  upsertBlackboardEntry
+  upsertBlackboardEntry,
+  validateBlackboardPostFields
 } from './Blackboard'
 
 function entry(overrides: Partial<BlackboardEntry> = {}): BlackboardEntry {
@@ -143,12 +147,23 @@ describe('makeBlackboardEntry', () => {
     expect(e!.value.endsWith('…')).toBe(false)
   })
 
-  it('caps stored values at the store limit instead of the prompt render cap', () => {
+  it('rejects stored values over the store limit instead of silently clamping', () => {
     const long = 'x'.repeat(BLACKBOARD_MAX_STORE_LEN + 50)
-    const e = makeBlackboardEntry({ ...base, key: 'k', value: long })
-    expect(e!.value.length).toBeLessThanOrEqual(BLACKBOARD_MAX_STORE_LEN)
-    expect(e!.value.length).toBeGreaterThan(BLACKBOARD_MAX_VALUE_LEN)
-    expect(e!.value.endsWith('…')).toBe(true)
+    expect(makeBlackboardEntry({ ...base, key: 'k', value: long })).toBeNull()
+    expect(validateBlackboardPostFields('k', long)).toMatchObject({
+      code: 'blackboard_value_too_long',
+      maxLength: BLACKBOARD_MAX_STORE_LEN,
+      originalLength: long.length
+    })
+  })
+
+  it('rejects keys over the key limit instead of silently clamping', () => {
+    const longKey = 'k'.repeat(BLACKBOARD_MAX_KEY_LEN + 10)
+    expect(makeBlackboardEntry({ ...base, key: longKey, value: 'v' })).toBeNull()
+    expect(validateBlackboardPostFields(longKey, 'v')).toMatchObject({
+      code: 'blackboard_key_too_long',
+      maxLength: BLACKBOARD_MAX_KEY_LEN
+    })
   })
 
   it('keeps derivedFrom only when provided', () => {
@@ -162,41 +177,116 @@ describe('makeBlackboardEntry', () => {
 describe('upsertBlackboardEntry', () => {
   it('appends a fresh entry', () => {
     const out = upsertBlackboardEntry([], entry({ id: 'a' }))
-    expect(out).toHaveLength(1)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.entries).toHaveLength(1)
   })
 
   it('replaces an entry with the same (participant,key,scope)', () => {
     const first = entry({ id: 'a', participantId: 'p1', key: 'plan', scope: 'session', value: 'old' })
     const second = entry({ id: 'b', participantId: 'p1', key: 'plan', scope: 'session', value: 'new' })
     const out = upsertBlackboardEntry([first], second)
-    expect(out).toHaveLength(1)
-    expect(out[0]).toMatchObject({ id: 'b', value: 'new' })
+    expect(out.ok).toBe(true)
+    if (out.ok) {
+      expect(out.entries).toHaveLength(1)
+      expect(out.entries[0]).toMatchObject({ id: 'b', value: 'new' })
+    }
   })
 
   it('does NOT merge when scope differs', () => {
     const a = entry({ id: 'a', participantId: 'p1', key: 'plan', scope: 'session' })
     const b = entry({ id: 'b', participantId: 'p1', key: 'plan', scope: 'chat' })
-    expect(upsertBlackboardEntry([a], b)).toHaveLength(2)
+    const out = upsertBlackboardEntry([a], b)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.entries).toHaveLength(2)
   })
 
   it('does NOT merge across participants', () => {
     const a = entry({ id: 'a', participantId: 'p1', key: 'plan' })
     const b = entry({ id: 'b', participantId: 'p2', key: 'plan' })
-    expect(upsertBlackboardEntry([a], b)).toHaveLength(2)
+    const out = upsertBlackboardEntry([a], b)
+    expect(out.ok).toBe(true)
+    if (out.ok) expect(out.entries).toHaveLength(2)
   })
 
-  it('caps at MAX_ENTRIES, dropping the oldest by createdAt', () => {
+  it('evicts oldest foreign round entries before current-round entries', () => {
+    let list: BlackboardEntry[] = []
+    for (let i = 0; i < BLACKBOARD_MAX_ENTRIES - 1; i++) {
+      const n = String(i).padStart(3, '0')
+      const result = upsertBlackboardEntry(
+        list,
+        entry({
+          id: `s${n}`,
+          key: `session-${n}`,
+          scope: 'session',
+          createdAt: `2026-05-31T00:00:00.${n}Z`
+        }),
+        { currentRoundId: 'round-2', prunedAt: `2026-05-31T00:00:00.${n}Z` }
+      )
+      expect(result.ok).toBe(true)
+      if (result.ok) list = result.entries
+    }
+    const foreign = upsertBlackboardEntry(
+      list,
+      entry({
+        id: 'foreign',
+        key: 'foreign-round',
+        scope: 'round',
+        roundId: 'round-1',
+        createdAt: '2026-05-31T00:30:00.000Z'
+      }),
+      { currentRoundId: 'round-2', prunedAt: '2026-05-31T00:30:00.000Z' }
+    )
+    expect(foreign.ok).toBe(true)
+    if (foreign.ok) list = foreign.entries
+    expect(list).toHaveLength(BLACKBOARD_MAX_ENTRIES)
+
+    const newest = upsertBlackboardEntry(
+      list,
+      entry({
+        id: 'newest',
+        key: 'knew',
+        scope: 'round',
+        roundId: 'round-2',
+        createdAt: '2026-05-31T01:00:00.000Z'
+      }),
+      { currentRoundId: 'round-2', prunedAt: '2026-05-31T01:00:00.000Z' }
+    )
+    expect(newest.ok).toBe(true)
+    if (newest.ok) {
+      expect(newest.entries).toHaveLength(BLACKBOARD_MAX_ENTRIES)
+      expect(newest.entries.some((e) => e.key === 'foreign-round')).toBe(false)
+      expect(newest.entries.some((e) => e.key === 'knew')).toBe(true)
+      expect(newest.entries.filter((e) => e.scope === 'session')).toHaveLength(BLACKBOARD_MAX_ENTRIES - 1)
+    }
+  })
+
+  it('fails loudly when all 60 entries are protected session/chat scopes', () => {
     let list: BlackboardEntry[] = []
     for (let i = 0; i < BLACKBOARD_MAX_ENTRIES; i++) {
       const n = String(i).padStart(3, '0')
-      list = upsertBlackboardEntry(list, entry({ id: `e${n}`, key: `k${n}`, createdAt: `2026-05-31T00:00:00.${n}Z` }))
+      const result = upsertBlackboardEntry(
+        list,
+        entry({
+          id: `e${n}`,
+          key: `k${n}`,
+          scope: 'session',
+          createdAt: `2026-05-31T00:00:00.${n}Z`
+        }),
+        { currentRoundId: 'round-2', prunedAt: `2026-05-31T00:00:00.${n}Z` }
+      )
+      expect(result.ok).toBe(true)
+      if (result.ok) list = result.entries
     }
-    expect(list).toHaveLength(BLACKBOARD_MAX_ENTRIES)
-    // One more, newest — should evict the oldest (k000).
-    list = upsertBlackboardEntry(list, entry({ id: 'newest', key: 'knew', createdAt: '2026-05-31T01:00:00.000Z' }))
-    expect(list).toHaveLength(BLACKBOARD_MAX_ENTRIES)
-    expect(list.some((e) => e.key === 'k000')).toBe(false)
-    expect(list.some((e) => e.key === 'knew')).toBe(true)
+    const blocked = upsertBlackboardEntry(
+      list,
+      entry({ id: 'newest', key: 'knew', scope: 'session', createdAt: '2026-05-31T01:00:00.000Z' }),
+      { currentRoundId: 'round-2', prunedAt: '2026-05-31T01:00:00.000Z' }
+    )
+    expect(blocked.ok).toBe(false)
+    if (!blocked.ok) {
+      expect(blocked.code).toBe('blackboard_capacity_exhausted')
+      expect(blocked.counts.session).toBe(BLACKBOARD_MAX_ENTRIES + 1)
+    }
   })
 })
 
@@ -257,18 +347,53 @@ describe('selectBlackboardReadWindow', () => {
     const out = selectBlackboardReadWindow(list, { ids: ['old'], keys: ['new'], last: 1 }, 'p1')
     expect(out.selected.map((e) => e.id)).toEqual(['old', 'new'])
     expect(out.omitted).toBe(0)
+    expect(out.missingKeys).toEqual([])
   })
 
   it('filters by category, unseenOnly, and newest window', () => {
     const out = selectBlackboardReadWindow(list, { category: 'risk', unseenOnly: true, last: 1 }, 'p1')
     expect(out.selected.map((e) => e.id)).toEqual(['new'])
     expect(out.omitted).toBe(0)
+    expect(out.missingKeys).toEqual([])
   })
 
   it('reports omitted entries outside the first window', () => {
     const out = selectBlackboardReadWindow(list, { first: 2 }, 'p1')
     expect(out.selected.map((e) => e.id)).toEqual(['old', 'mid'])
     expect(out.omitted).toBe(1)
+    expect(out.missingKeys).toEqual([])
+  })
+
+  it('classifies explicit-key misses with stable ordering and dedupe', () => {
+    const board = [
+      entry({ id: 'foreign', key: 'foreign-key', scope: 'round', roundId: 'round-1' }),
+      entry({ id: 'hit', key: 'present', scope: 'session' })
+    ]
+    const visible = selectBlackboardForRound(board, 'round-2')
+    const out = selectBlackboardReadWindow(
+      visible,
+      { keys: ['present', 'missing', 'foreign-key', 'present'] },
+      'p1',
+      {
+        allEntries: board,
+        currentRoundId: 'round-2',
+        tombstones: [
+          {
+            key: 'missing',
+            scope: 'session',
+            roundId: 'round-1',
+            participantId: 'p1',
+            prunedAt: '2026-05-31T00:00:00.000Z',
+            reason: 'capacity'
+          }
+        ]
+      }
+    )
+    expect(out.selected.map((e) => e.key)).toEqual(['present'])
+    expect(out.missingKeys).toEqual([
+      { key: 'missing', reason: 'pruned' },
+      { key: 'foreign-key', reason: 'filtered_by_round_scope' }
+    ])
   })
 })
 
@@ -323,7 +448,7 @@ describe('formatBlackboardForPrompt', () => {
     expect(out).not.toContain('Open risks:')
   })
 
-  it('truncates long values only when rendering the prompt digest', () => {
+  it('marks truncated prompt digest values explicitly within the budget', () => {
     const long = `${'x'.repeat(BLACKBOARD_MAX_VALUE_LEN + 200)}tail`
     const e = makeBlackboardEntry({
       id: 'id-1',
@@ -331,17 +456,23 @@ describe('formatBlackboardForPrompt', () => {
       roundId: 'round-1',
       participantId: 'Codex',
       key: 'long-note',
-      value: long,
+      value: long.slice(0, BLACKBOARD_MAX_STORE_LEN),
       category: 'decision',
       scope: 'session',
       createdAt: '2026-05-31T00:00:00.000Z'
     })
-    expect(e!.value).toBe(long)
+    expect(e!.value.endsWith('…')).toBe(false)
+
+    const formatted = formatPromptBlackboardValue(e!.value, e!.key)
+    expect(formatted.length).toBeLessThanOrEqual(BLACKBOARD_MAX_VALUE_LEN)
+    expect(formatted).toContain('[truncated origLen=')
+    expect(formatted).toContain('read keys:[long-note]')
+    expect(formatted).not.toContain('tail')
 
     const out = formatBlackboardForPrompt([e!])
     expect(out).toContain('long-note:')
-    expect(out).toContain('… (—Codex)')
-    expect(out).not.toContain('tail')
+    expect(out).toContain('[truncated origLen=')
+    expect(out).toContain('(—Codex)')
   })
 })
 
@@ -406,7 +537,12 @@ describe('deriveBlackboardFromRoundSummary', () => {
 
   it('round-trips through upsert so a later round replaces the prior derived entries', () => {
     const first = deriveBlackboardFromRoundSummary({ ...base, summary })
-    let board = first.reduce((acc, e) => upsertBlackboardEntry(acc, e), [] as ReturnType<typeof entry>[])
+    let board: BlackboardEntry[] = []
+    for (const derivedEntry of first) {
+      const result = upsertBlackboardEntry(board, derivedEntry, { currentRoundId: 'round-7' })
+      expect(result.ok).toBe(true)
+      if (result.ok) board = result.entries
+    }
     expect(board).toHaveLength(4)
     const round8 = deriveBlackboardFromRoundSummary({
       ...base,
@@ -416,9 +552,54 @@ describe('deriveBlackboardFromRoundSummary', () => {
         '\n'
       )
     })
-    board = round8.reduce((acc, e) => upsertBlackboardEntry(acc, e), board)
+    for (const derivedEntry of round8) {
+      const result = upsertBlackboardEntry(board, derivedEntry, { currentRoundId: 'round-8' })
+      expect(result.ok).toBe(true)
+      if (result.ok) board = result.entries
+    }
     // Same keys + same author → upsert, not growth.
     expect(board).toHaveLength(4)
     expect(board.find((e) => e.key === 'round-decisions')?.value).toBe('new decision')
+  })
+})
+
+describe('Wave 2 acceptance', () => {
+  it('rejects >4000 posts without mutating the board', () => {
+    const existing = entry({ key: 'keep-me' })
+    const oversize = 'y'.repeat(BLACKBOARD_MAX_STORE_LEN + 1)
+    expect(validateBlackboardPostFields('big', oversize)?.code).toBe('blackboard_value_too_long')
+    expect(makeBlackboardEntry({
+      id: 'x',
+      chatId: 'chat-1',
+      roundId: 'round-1',
+      participantId: 'p1',
+      key: 'big',
+      value: oversize,
+      createdAt: '2026-05-31T00:00:00.000Z'
+    })).toBeNull()
+    const upsert = upsertBlackboardEntry([existing], entry({ id: 'never', key: 'never' }))
+    expect(upsert.ok).toBe(true)
+    if (upsert.ok) expect(upsert.entries.some((e) => e.key === 'keep-me')).toBe(true)
+  })
+
+  it('reads session-scoped keys under a different round id', () => {
+    const board = [entry({ id: 's1', key: 'durable', scope: 'session', roundId: 'round-1' })]
+    const visibleRound2 = selectBlackboardForRound(board, 'round-2')
+    const out = selectBlackboardReadWindow(visibleRound2, { keys: ['durable'] }, 'p1', {
+      allEntries: board,
+      currentRoundId: 'round-2'
+    })
+    expect(out.selected.map((e) => e.key)).toEqual(['durable'])
+    expect(out.missingKeys).toEqual([])
+  })
+
+  it('resolveBlackboardMissingKeys reports not_found last', () => {
+    expect(
+      resolveBlackboardMissingKeys(['ghost'], [], {
+        allEntries: [],
+        currentRoundId: 'round-2',
+        tombstones: []
+      })
+    ).toEqual([{ key: 'ghost', reason: 'not_found' }])
   })
 })

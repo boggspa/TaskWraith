@@ -143,6 +143,31 @@ describe('RemoteThreadProjection', () => {
         participantId: 'Codex'
       })
     })
+
+    it('marks truncated blackboard previews with original length metadata', () => {
+      const longValue = 'z'.repeat(1200)
+      const snap = project({ kind: 'latestN', n: 1 }, MESSAGES.slice(0, 1), [], {
+        blackboardEntries: [
+          {
+            id: 'b-long',
+            chatId: THREAD,
+            roundId: 'round-1',
+            participantId: 'Codex',
+            key: 'long',
+            value: longValue,
+            category: 'fact',
+            scope: 'session',
+            createdAt: '2026-01-01T00:00:00.000Z'
+          }
+        ]
+      })
+      expect(snap.blackboardEntries?.[0]).toMatchObject({
+        key: 'long',
+        valueTruncated: true,
+        originalLength: longValue.length
+      })
+      expect(snap.blackboardEntries?.[0]?.value.length).toBeLessThan(longValue.length)
+    })
   })
 
   describe('latestN', () => {
