@@ -68,6 +68,7 @@ function scheduledTask(): ScheduledTask {
     prompt: 'Inspect the current working tree.',
     selectedModelType: 'composer-1',
     customModel: 'composer-1',
+    runtimeProfileId: 'cursor-profile',
     approvalMode: 'plan',
     sessionTrust: false,
     imageAttachments: [],
@@ -88,9 +89,14 @@ function profile(): RuntimeProfile {
     name: 'Cursor test',
     provider: 'cursor',
     scope: 'workspace',
-    workspaceMode: 'direct',
-    binaryPath: BINARY
-  } as unknown as RuntimeProfile
+    workspaceMode: 'local',
+    binaryPath: BINARY,
+    env: {},
+    networkPolicy: 'inherit',
+    persistence: 'ephemeral',
+    createdAt: '2026-07-21T12:00:00.000Z',
+    updatedAt: '2026-07-21T12:00:00.000Z'
+  }
 }
 
 function composed(task: ScheduledTask, permissions: EffectiveRunPermissions): ScheduledSealComposedFacts {
