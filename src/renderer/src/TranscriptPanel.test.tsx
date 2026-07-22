@@ -1057,8 +1057,9 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('<li>first item</li>')
     expect(html).toContain('message-code-shell')
     expect(html).toContain('message-code-language">ts')
-    expect(html).toContain('<strong>System note</strong>')
-    expect(html).toContain('<table>')
+    expect(html).toContain('collapsed-activity-stack is-collapsed')
+    expect(html).toContain('aria-label="Expand system notice: **System note**"')
+    expect(html).not.toContain('<table>')
     expect(html).toContain('<h3>Assistant parity</h3>')
     expect(html).toContain('<blockquote>')
     expect(html).toContain('<strong>assistant</strong>')
@@ -1229,7 +1230,7 @@ describe('TranscriptPanel virtualisation wiring (TV1)', () => {
     expect(html).toContain('<h2>After tools</h2>')
     expect(html).toContain('<li>grouped trace preserved</li>')
     expect(html).toContain('tool-group-tool-one')
-    expect(html).toContain('Read 2 files')
+    expect(html).toContain('aria-label="Expand 2 activity steps: Read ×2"')
   })
 
   it('renders content-only tool messages as markdown fallback bubbles', () => {
