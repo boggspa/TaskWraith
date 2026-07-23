@@ -31,6 +31,7 @@ import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPerm
 import { resolveProviderRows } from './ComposerProviderPicker'
 import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
+import { supportsTaskWraithToolGrants } from '../../../shared/providerToolGrantSupport'
 
 // Lossless permission options: the values ARE the PermissionPresetId, so
 // full_access + custom survive a round-trip (unlike the composer's 3-mode
@@ -304,7 +305,9 @@ export function ParticipantPickerCluster({
             ? undefined
             : onPatch({ permissionPresetId: value as PermissionPresetId })
         }
-        grantServices={WORKSPACE_POLICY_SERVICES}
+        grantServices={
+          supportsTaskWraithToolGrants(participant.provider) ? WORKSPACE_POLICY_SERVICES : []
+        }
         enabledGrantIds={enabledGrantIds}
         agenticServices={services}
         onToggleGrant={(service, enabled) =>

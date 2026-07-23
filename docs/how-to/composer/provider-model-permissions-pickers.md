@@ -32,6 +32,12 @@ Path-B Cursor is selectable and launches under contained sandbox argv. Higher
 permission presets still only shape the seat argv (read-only vs write under
 `--sandbox enabled`); they do not add TaskWraith per-tool grant UX for Cursor.
 
+Tool Grants pre-authorise only their named service; they cannot override a
+service that is globally blocked in Settings. A grant updated for an active
+ensemble participant is applied when that participant next dispatches, not by
+rewriting its already-running signed turn. Solo workspace grants are consulted
+by the TaskWraith approval gate as each eligible tool action is requested.
+
 ## Tips & related
 - [Model Catalogue](../../../MODEL_CATALOGUE.md) — the curated model rows, available reasoning levels, and Fast-tier semantics by provider.
 - [Plus Tools Menu](plus-tools-menu.md) — sits at the start of the same action row as these pickers.

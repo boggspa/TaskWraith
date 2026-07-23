@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { AgenticServiceId, AgenticServicesSettings } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
+import { countEffectiveToolGrants, toolGrantCanBeApplied } from '../lib/toolGrantApplicability'
 import { WORKSPACE_POLICY_SERVICES } from '../lib/workspacePolicyServices'
 import { CombinedPermissionsPicker } from './CombinedPermissionsPicker'
 
@@ -58,6 +59,15 @@ describe('CombinedPermissionsPicker', () => {
 
     expect(html).toContain('Default Approval')
     expect(html).not.toContain('composer-combined-picker-trigger-suffix')
+  })
+
+  it('does not count a grant that global policy blocks', () => {
+    const blockedServices = { ...agenticServices, fileChanges: 'deny' as const }
+
+    expect(toolGrantCanBeApplied('fileChanges', blockedServices)).toBe(false)
+    expect(
+      countEffectiveToolGrants(WORKSPACE_POLICY_SERVICES, new Set(['fileChanges']), blockedServices)
+    ).toBe(0)
   })
 
   it('does not render Apply to all unless the ensemble callback is provided', () => {

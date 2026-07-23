@@ -30,6 +30,7 @@ import type {
   ProviderId
 } from '../../../main/store/types'
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
+import { countEffectiveToolGrants, toolGrantCanBeApplied } from '../lib/toolGrantApplicability'
 import type { WorkspacePolicyService } from '../lib/workspacePolicyServices'
 
 export interface PermissionOption {
@@ -64,6 +65,8 @@ interface CombinedPermissionsPickerProps {
   agenticServices: AgenticServicesSettings
   onToggleGrant: (service: AgenticServiceId, enabled: boolean) => void
   grantScopeLabel?: 'workspace' | 'participant'
+  /** Explains when a participant-scoped grant change will take effect. */
+  grantTimingNote?: string
   disabled?: boolean
   /** Explain why the whole permission surface is unavailable. */
   disabledReason?: string
@@ -96,6 +99,7 @@ export function CombinedPermissionsPicker({
   agenticServices,
   onToggleGrant,
   grantScopeLabel = 'workspace',
+  grantTimingNote,
   disabled,
   disabledReason,
   onApplyToAllParticipants,
@@ -115,8 +119,8 @@ export function CombinedPermissionsPicker({
     permissionOptions[0] || { value: selectedPermission, label: selectedPermission }
 
   const grantsCount = useMemo(
-    () => grantServices.filter((service) => enabledGrantIds.has(service.id)).length,
-    [grantServices, enabledGrantIds]
+    () => countEffectiveToolGrants(grantServices, enabledGrantIds, agenticServices),
+    [grantServices, enabledGrantIds, agenticServices]
   )
 
   // Split chip text into "primary" (permission) and muted "suffix"
@@ -250,7 +254,7 @@ export function CombinedPermissionsPicker({
           choosePermissionOption(permissionOptions[permissionHighlight])
         } else {
           const service = grantServices[grantHighlight]
-          if (service) {
+          if (service && toolGrantCanBeApplied(service.id, agenticServices)) {
             const isOn = enabledGrantIds.has(service.id)
             onToggleGrant(service.id, !isOn)
           }
@@ -269,6 +273,7 @@ export function CombinedPermissionsPicker({
     permissionHighlight,
     grantHighlight,
     enabledGrantIds,
+    agenticServices,
     choosePermissionOption,
     onToggleGrant
   ])
@@ -349,29 +354,36 @@ export function CombinedPermissionsPicker({
           className={`composer-combined-picker-column composer-combined-picker-grants ${focusedColumn === 'grants' ? 'is-focused' : ''}`}
         >
           <div className="composer-combined-picker-column-header">Tool Grants</div>
+          {grantTimingNote ? (
+            <div className="composer-combined-picker-column-note">{grantTimingNote}</div>
+          ) : null}
           {grantServices.map((service, idx) => {
             const checked = enabledGrantIds.has(service.id)
-            const policy = agenticServices[service.id]
-            const subLabel =
-              policy === 'deny'
-                ? 'Blocked globally'
-                : checked
-                  ? `Allowed for this ${grantScopeLabel}`
-                  : `Global policy: ${policy}`
+            const grantCanBeApplied = toolGrantCanBeApplied(service.id, agenticServices)
+            const effectiveChecked = checked && grantCanBeApplied
+            const policy = agenticServices[service.id] || 'ask'
+            let subLabel = `Global policy: ${policy}`
+            if (!grantCanBeApplied) subLabel = 'Blocked globally'
+            else if (effectiveChecked) subLabel = `Allowed for this ${grantScopeLabel}`
             return (
               <button
                 key={service.id}
                 type="button"
-                className={`composer-combined-picker-row composer-combined-picker-row-grant ${checked ? 'is-selected' : ''} ${idx === grantHighlight && focusedColumn === 'grants' ? 'is-highlighted' : ''}`}
+                className={`composer-combined-picker-row composer-combined-picker-row-grant ${effectiveChecked ? 'is-selected' : ''} ${idx === grantHighlight && focusedColumn === 'grants' ? 'is-highlighted' : ''}`}
                 onMouseEnter={() => {
                   setFocusedColumn('grants')
                   setGrantHighlight(idx)
                 }}
-                onClick={() => onToggleGrant(service.id, !checked)}
-                title={service.help}
+                onClick={() => onToggleGrant(service.id, !effectiveChecked)}
+                disabled={!grantCanBeApplied}
+                title={
+                  grantCanBeApplied
+                    ? service.help
+                    : 'Blocked by global policy. Change this in Settings before granting it.'
+                }
               >
                 <span className="composer-combined-picker-row-grant-checkbox" aria-hidden>
-                  {checked ? '☑' : '☐'}
+                  {effectiveChecked ? '☑' : '☐'}
                 </span>
                 <span className="composer-combined-picker-row-grant-body">
                   <span className="composer-combined-picker-row-label">{service.label}</span>

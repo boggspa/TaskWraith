@@ -14,6 +14,7 @@ import {
 } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
+import { supportsTaskWraithToolGrants } from '../../../shared/providerToolGrantSupport'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type {
   HumanCollaborationInviteCopyResult,
@@ -1983,7 +1984,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                    its first segments. Codex joins Cursor here so the ensemble
                    merged-frame never flattens these two rows. */
                 const aboveRowsFloatAboveStack =
-                  appearance.composerStyle === 'cursor' || appearance.composerStyle === 'codex'
+                  appearance.composerStyle === 'cursor' ||
+                  appearance.composerStyle === 'codex' ||
+                  appearance.composerStyle === 'chatgpt'
                 const primaryGitActionPath = resolveComposerEffectiveWorkspacePath(
                   currentWorkspace?.path,
                   composerWorktreeSelection
@@ -4224,13 +4227,20 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   })
                                   .map((grant) => grant.service)
                               )
-                          // Hide the Tool-Grants column when there's no
-                          // workspace path to scope grants to (global
-                          // chats or pre-workspace state).
+                          // Hide Tool Grants without a scoped workspace and for providers
+                          // whose native tools do not pass through TaskWraith's grant gate.
                           const grantServicesForPicker =
-                            currentWorkspace && !isCurrentGlobalChat
+                            currentWorkspace &&
+                            !isCurrentGlobalChat &&
+                            supportsTaskWraithToolGrants(effectiveProvider)
                               ? WORKSPACE_POLICY_SERVICES
                               : []
+                          const grantTimingNote =
+                            ensembleBinding &&
+                            currentChat?.ensemble?.activeRound?.activeParticipantId ===
+                              ensembleBinding.id
+                              ? 'This participant is running. Changes apply on its next turn.'
+                              : undefined
                           const handlePermissionSelection = (nextPermissionMode: string): void => {
                             const nextPermissionPreset = selectionToPreset(nextPermissionMode)
                             if (nextPermissionPreset === 'full_access') {
@@ -4385,6 +4395,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               agenticServices={agenticServices}
                               onToggleGrant={handleToggleGrantForPicker}
                               grantScopeLabel={ensembleBinding ? 'participant' : 'workspace'}
+                              grantTimingNote={grantTimingNote}
                               onApplyToAllParticipants={applyAllParticipants}
                               onStartTrustedSession={() => {
                                 if (trustedSessionMutationDisabledReason) return
@@ -4620,6 +4631,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               {appearance.composerStyle === 'claude' ? (
                                 <ClaudeReturnSymbolIcon />
                               ) : appearance.composerStyle === 'codex' ||
+                                appearance.composerStyle === 'chatgpt' ||
                                 appearance.composerStyle === 'gemini' ||
                                 appearance.composerStyle === 'cursor' ||
                                 appearance.composerStyle === 'grok' ||
