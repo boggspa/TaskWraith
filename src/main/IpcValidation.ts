@@ -99,6 +99,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'create-ensemble-chat': ['optionalObject'],
   'post-blackboard-entry': ['object'],
   'delete-blackboard-entry': ['object'],
+  'clear-blackboard-entries': ['object'],
   'run-ensemble-round': ['object'],
   'steer-queued-ensemble-prompt': ['object'],
   'remove-queued-ensemble-prompt': ['object'],

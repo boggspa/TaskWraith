@@ -7,6 +7,7 @@ import {
   BLACKBOARD_MAX_STORE_LEN,
   BLACKBOARD_MAX_VALUE_LEN,
   deriveBlackboardFromRoundSummary,
+  formatBlackboardCapacityNotice,
   formatBlackboardForPrompt,
   formatPromptBlackboardValue,
   makeBlackboardEntry,
@@ -446,6 +447,33 @@ describe('formatBlackboardForPrompt', () => {
     expect(out).toContain('Verified facts:')
     expect(out).not.toContain('Decisions:')
     expect(out).not.toContain('Open risks:')
+  })
+
+  it('warns participants when a full board can only make room by evicting round notes', () => {
+    const fullBoard = Array.from({ length: BLACKBOARD_MAX_ENTRIES }, (_, index) =>
+      entry({
+        id: `entry-${index}`,
+        key: `key-${index}`,
+        scope: index === 0 ? 'round' : 'session'
+      })
+    )
+
+    expect(formatBlackboardCapacityNotice(fullBoard)).toContain('60/60 entries')
+    expect(formatBlackboardForPrompt([fullBoard[0]], { allEntries: fullBoard })).toContain(
+      'Capacity notice: 60/60 entries'
+    )
+  })
+
+  it('warns participants when a full protected board will reject unique posts', () => {
+    const fullProtectedBoard = Array.from({ length: BLACKBOARD_MAX_ENTRIES }, (_, index) =>
+      entry({ id: `entry-${index}`, key: `key-${index}`, scope: 'session' })
+    )
+
+    const notice = formatBlackboardCapacityNotice(fullProtectedBoard)
+    expect(notice).toContain('protected session/chat entries')
+    expect(formatBlackboardForPrompt([], { allEntries: fullProtectedBoard })).toContain(
+      'New unique posts will be rejected'
+    )
   })
 
   it('marks truncated prompt digest values explicitly within the budget', () => {

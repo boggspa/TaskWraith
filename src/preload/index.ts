@@ -1219,6 +1219,11 @@ const api = {
       removed: BlackboardEntry
       remainingCount: number
     }>,
+  clearBlackboardEntries: (payload: { chatId: string }) =>
+    ipcRenderer.invoke('clear-blackboard-entries', payload) as Promise<{
+      ok: true
+      removedCount: number
+    }>,
   runEnsembleRound: (payload: {
     chatId: string
     prompt: string

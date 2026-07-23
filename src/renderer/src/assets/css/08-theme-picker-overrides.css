@@ -10545,6 +10545,34 @@
   text-transform: uppercase;
 }
 
+.composer-blackboard-clear-all {
+  margin-left: auto;
+  padding: 2px 6px;
+  border: 1px solid color-mix(in srgb, var(--danger, #ff6b6b) 38%, transparent);
+  border-radius: 5px;
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 7%, transparent);
+  color: color-mix(in srgb, var(--danger, #ff6b6b) 86%, var(--text-secondary));
+  font: inherit;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.composer-blackboard-clear-all:hover:not(:disabled),
+.composer-blackboard-clear-all:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--danger, #ff6b6b) 64%, transparent);
+  background: color-mix(in srgb, var(--danger, #ff6b6b) 14%, transparent);
+  color: var(--danger, #ff6b6b);
+}
+
+.composer-blackboard-clear-all:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
 .composer-blackboard-popover-count {
   display: inline-flex;
   align-items: center;

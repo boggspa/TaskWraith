@@ -28,6 +28,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'changelog-snapshot',
   'check-trust',
   'clear-chats',
+  'clear-blackboard-entries',
   'clear-workspaces',
   'closeout:summarize',
   'compact-provider-context',

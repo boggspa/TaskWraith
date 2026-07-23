@@ -142,6 +142,20 @@ function countBlackboardScopes(entries: BlackboardEntry[]): BlackboardCapacityCo
   return counts
 }
 
+/**
+ * Explain the hard board limit in language that is useful both in participant
+ * prompts and in a failed post response. Session/chat entries are deliberately
+ * protected, whereas round entries can be evicted to make room for a new key.
+ */
+export function formatBlackboardCapacityNotice(entries: BlackboardEntry[]): string | null {
+  if (entries.length < BLACKBOARD_MAX_ENTRIES) return null
+  const counts = countBlackboardScopes(entries)
+  if (counts.round > 0) {
+    return `${entries.length}/${BLACKBOARD_MAX_ENTRIES} entries. Before posting a new key, reuse an existing key or delete/retire stale notes; otherwise the oldest round-scoped entry may be evicted.`
+  }
+  return `${entries.length}/${BLACKBOARD_MAX_ENTRIES} protected session/chat entries. New unique posts will be rejected; reuse an existing key or call blackboard_delete to retire stale notes first.`
+}
+
 function boundEvictionTombstones(
   tombstones: BlackboardEvictionTombstone[]
 ): BlackboardEvictionTombstone[] {
@@ -553,8 +567,12 @@ export function selectBlackboardReadWindow(
  * Render a compact, category-grouped digest for prompt injection. Returns ''
  * when there are no entries so the caller can omit the section entirely.
  */
-export function formatBlackboardForPrompt(entries: BlackboardEntry[]): string {
-  if (entries.length === 0) return ''
+export function formatBlackboardForPrompt(
+  entries: BlackboardEntry[],
+  options?: { allEntries?: BlackboardEntry[] }
+): string {
+  const capacityNotice = formatBlackboardCapacityNotice(options?.allEntries || entries)
+  if (entries.length === 0 && !capacityNotice) return ''
   const byCategory = new Map<BlackboardCategory, BlackboardEntry[]>()
   for (const entry of entries) {
     const bucket = byCategory.get(entry.category)
@@ -562,6 +580,7 @@ export function formatBlackboardForPrompt(entries: BlackboardEntry[]): string {
     else byCategory.set(entry.category, [entry])
   }
   const lines: string[] = ['Ensemble blackboard (shared scratchpad — treat as agreed context):']
+  if (capacityNotice) lines.push(`  Capacity notice: ${capacityNotice}`)
   for (const category of BLACKBOARD_CATEGORY_ORDER) {
     const bucket = byCategory.get(category)
     if (!bucket || bucket.length === 0) continue

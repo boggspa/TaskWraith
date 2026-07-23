@@ -1564,6 +1564,10 @@ declare global {
         chatId: string
         entryId: string
       }) => Promise<{ ok: true; removed: BlackboardEntry; remainingCount: number }>
+      clearBlackboardEntries: (payload: { chatId: string }) => Promise<{
+        ok: true
+        removedCount: number
+      }>
       runEnsembleRound: (payload: {
         chatId: string
         prompt: string

@@ -168,4 +168,18 @@ describe('ComposerBlackboardDeleteButton (static render)', () => {
     expect(html).toContain('disabled')
     expect(html).toContain('title="Deleting..."')
   })
+
+  it('disables individual deletes while a board-wide delete is running', () => {
+    const target = entry({ key: 'stale-note', value: 'Remove me' })
+    const html = renderToStaticMarkup(
+      <ComposerBlackboardDeleteButton
+        entry={target}
+        deletingEntryId={null}
+        clearingAll
+        onDelete={() => undefined}
+      />
+    )
+
+    expect(html).toContain('disabled')
+  })
 })

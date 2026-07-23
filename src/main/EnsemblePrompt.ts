@@ -1101,10 +1101,11 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       // UNSEEN entries are new information. A one-line note points at
       // blackboard_read for a deterministic on-demand re-read of the rest.
       ...(() => {
-        const visible = selectBlackboardForRound(input.config.blackboard || [], input.roundId)
+        const allEntries = input.config.blackboard || []
+        const visible = selectBlackboardForRound(allEntries, input.roundId)
         const unseen = selectUnseenBlackboard(visible, input.participant.id)
         const seenCount = visible.length - unseen.length
-        const digest = formatBlackboardForPrompt(unseen)
+        const digest = formatBlackboardForPrompt(unseen, { allEntries })
         const lines: string[] = []
         if (digest) {
           lines.push('', digest.replace(
@@ -1382,8 +1383,9 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // without re-dumping the transcript. Empty digest (no entries, or only
     // foreign round-scoped ones) skips the section entirely.
     ...(() => {
-      const visible = selectBlackboardForRound(input.config.blackboard || [], input.roundId)
-      const digest = formatBlackboardForPrompt(visible)
+      const allEntries = input.config.blackboard || []
+      const visible = selectBlackboardForRound(allEntries, input.roundId)
+      const digest = formatBlackboardForPrompt(visible, { allEntries })
       if (!digest) return []
       // Write-only-participant nudge: seats reliably POST to the board but
       // rarely go back and READ it. When this seat has in-scope entries it

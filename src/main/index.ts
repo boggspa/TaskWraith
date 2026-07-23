@@ -1586,6 +1586,7 @@ import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
 import { handleScoutBrief, type ScoutBriefConfidence } from './ScoutBrief'
 import {
+  formatBlackboardCapacityNotice,
   makeBlackboardEntry,
   markBlackboardEntriesSeen,
   removeBlackboardEntries,
@@ -28973,7 +28974,8 @@ async function executeGeminiMcpTool(
                 ok: false,
                 tool: 'blackboard_post',
                 code: upsert.code,
-                counts: upsert.counts
+                counts: upsert.counts,
+                error: formatBlackboardCapacityNotice(chat.ensemble.blackboard || [])
               })
             } else {
               const updated: ChatRecord = {
@@ -33572,7 +33574,10 @@ if (isGeminiMcpBridgeProcess) {
             prunedAt: createdAt
           })
           if (!upsert.ok) {
-            return { ok: false, reason: upsert.code }
+            return {
+              ok: false,
+              reason: `${upsert.code}: ${formatBlackboardCapacityNotice(chat.ensemble.blackboard || []) || 'Retire stale notes before posting again.'}`
+            }
           }
           const updated = {
             ...chat,
@@ -43029,7 +43034,11 @@ if (isGeminiMcpBridgeProcess) {
           tombstones: chat.ensemble.blackboardTombstones,
           prunedAt: createdAt
         })
-        if (!upsert.ok) throw new Error(upsert.code)
+        if (!upsert.ok) {
+          throw new Error(
+            `${upsert.code}: ${formatBlackboardCapacityNotice(chat.ensemble.blackboard || []) || 'Retire stale notes before posting again.'}`
+          )
+        }
         const updated: ChatRecord = {
           ...chat,
           ensemble: {
@@ -43086,6 +43095,43 @@ if (isGeminiMcpBridgeProcess) {
       }
     )
 
+    ipcMain.handle(
+      'clear-blackboard-entries',
+      async (
+        event,
+        payload?: {
+          chatId?: string
+        }
+      ) => {
+        if (AppStore.getSettings().ensembleModeEnabled === false) {
+          throw new Error('Ensemble Mode is disabled.')
+        }
+        const chatId = requireNonEmptyString(payload?.chatId, 'Ensemble chat id')
+        assertRendererChatScope(event, chatId)
+        const chat = AppStore.getChat(chatId)
+        if (!chat?.ensemble) throw new Error('Blackboard entries require an Ensemble chat.')
+        const removedCount = (chat.ensemble.blackboard || []).length
+        const updatedAt = new Date().toISOString()
+        const updated: ChatRecord = {
+          ...chat,
+          ensemble: {
+            ...chat.ensemble,
+            blackboard: [],
+            blackboardTombstones: [],
+            updatedAt
+          },
+          updatedAt: Date.now()
+        }
+        saveAndBroadcastChat(updated)
+        broadcastThreadUpdate(updated.appChatId, { remoteProjectionSnapshot: false })
+        const workspaceId =
+          canonicalRemoteWorkspaceId(updated.workspaceId) ??
+          (!updated.workspaceId || updated.scope === 'global' ? GLOBAL_REMOTE_SCOPE : null)
+        if (workspaceId) pushRemoteThreadSnapshot(updated, workspaceId)
+        return { ok: true, removedCount }
+      }
+    )
+
     // Shared by the renderer IPC below and the iOS bridge 'blackboard' op:
     // consume a queued ensemble prompt into a user-authored blackboard note.
     // The queue mutation is EXACTLY the Delete path (removeQueuedPrompt keeps
@@ -43139,7 +43185,10 @@ if (isGeminiMcpBridgeProcess) {
         prunedAt: createdAt
       })
       if (!upsert.ok) {
-        return { ok: false, error: upsert.code }
+        return {
+          ok: false,
+          error: `${upsert.code}: ${formatBlackboardCapacityNotice(chat.ensemble.blackboard || []) || 'Retire stale notes before posting again.'}`
+        }
       }
       const updated: ChatRecord = {
         ...chat,

@@ -100,6 +100,7 @@ interface ComposerBlackboardPostFormProps {
 interface ComposerBlackboardDeleteButtonProps {
   entry: BlackboardEntry
   deletingEntryId: string | null
+  clearingAll?: boolean
   onDelete: (entry: BlackboardEntry) => void
 }
 
@@ -112,7 +113,7 @@ export function ComposerBlackboardDeleteButton(
       type="button"
       className="pinned-blackboard-entry-delete"
       onClick={() => props.onDelete(props.entry)}
-      disabled={props.deletingEntryId !== null}
+      disabled={props.deletingEntryId !== null || props.clearingAll}
       title={deleting ? 'Deleting...' : 'Delete blackboard entry'}
       aria-label={`Delete blackboard entry ${props.entry.key}`}
     >
@@ -206,6 +207,7 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const [open, setOpen] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [clearingAll, setClearingAll] = useState(false)
   const [deleteError, setDeleteError] = useState<string | null>(null)
   const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(
     null
@@ -224,7 +226,7 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
 
   const deleteEntry = async (entry: BlackboardEntry): Promise<void> => {
     const chatId = props.chat?.appChatId
-    if (!chatId || !canDelete || deletingEntryId) return
+    if (!chatId || !canDelete || deletingEntryId || clearingAll) return
     const confirmed = window.confirm(`Delete "${entry.key}" from the Blackboard?`)
     if (!confirmed) return
     setDeletingEntryId(entry.id)
@@ -235,6 +237,24 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
       setDeleteError(error instanceof Error ? error.message : String(error))
     } finally {
       setDeletingEntryId(null)
+    }
+  }
+
+  const clearAllEntries = async (): Promise<void> => {
+    const chatId = props.chat?.appChatId
+    if (!chatId || !canDelete || entryCount === 0 || deletingEntryId || clearingAll) return
+    const confirmed = window.confirm(
+      `Delete all ${entryCount} Blackboard ${entryCount === 1 ? 'entry' : 'entries'}? This cannot be undone.`
+    )
+    if (!confirmed) return
+    setClearingAll(true)
+    setDeleteError(null)
+    try {
+      await window.api.clearBlackboardEntries({ chatId })
+    } catch (error) {
+      setDeleteError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClearingAll(false)
     }
   }
 
@@ -317,6 +337,17 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
               {entryCount > 0 && (
                 <span className="composer-blackboard-popover-count">{entryCount}</span>
               )}
+              {canDelete && entryCount > 0 && (
+                <button
+                  type="button"
+                  className="composer-blackboard-clear-all"
+                  onClick={clearAllEntries}
+                  disabled={deletingEntryId !== null || clearingAll}
+                  title={clearingAll ? 'Deleting all entries...' : 'Delete all Blackboard entries'}
+                >
+                  {clearingAll ? 'Deleting...' : 'Delete all'}
+                </button>
+              )}
             </div>
             <ComposerBlackboardPostForm chat={props.chat} disabled={props.disabled} />
             {deleteError && (
@@ -337,6 +368,7 @@ export function ComposerBlackboardButton(props: ComposerBlackboardButtonProps): 
                       <ComposerBlackboardDeleteButton
                         entry={entry}
                         deletingEntryId={deletingEntryId}
+                        clearingAll={clearingAll}
                         onDelete={deleteEntry}
                       />
                     ) : null

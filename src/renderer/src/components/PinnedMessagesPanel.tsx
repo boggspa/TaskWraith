@@ -130,6 +130,7 @@ function BlackboardSection({
   const [draft, setDraft] = useState('')
   const [posting, setPosting] = useState(false)
   const [deletingEntryId, setDeletingEntryId] = useState<string | null>(null)
+  const [clearingAll, setClearingAll] = useState(false)
   const [actionError, setActionError] = useState<string | null>(null)
   const canPost = Boolean(chat?.appChatId && chat?.ensemble)
   const grouped = buildBlackboardGroups(entries)
@@ -155,7 +156,7 @@ function BlackboardSection({
     }
   }
   const deleteEntry = async (entry: BlackboardEntry) => {
-    if (!chat?.appChatId || deletingEntryId) return
+    if (!chat?.appChatId || deletingEntryId || clearingAll) return
     const confirmed = window.confirm(`Delete "${entry.key}" from the Blackboard?`)
     if (!confirmed) return
     setDeletingEntryId(entry.id)
@@ -171,12 +172,39 @@ function BlackboardSection({
       setDeletingEntryId(null)
     }
   }
+  const clearAllEntries = async () => {
+    if (!chat?.appChatId || visibleCount === 0 || deletingEntryId || clearingAll) return
+    const confirmed = window.confirm(
+      `Delete all ${visibleCount} Blackboard ${visibleCount === 1 ? 'entry' : 'entries'}? This cannot be undone.`
+    )
+    if (!confirmed) return
+    setClearingAll(true)
+    setActionError(null)
+    try {
+      await window.api.clearBlackboardEntries({ chatId: chat.appChatId })
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : String(error))
+    } finally {
+      setClearingAll(false)
+    }
+  }
 
   return (
     <section className="pinned-blackboard-block" aria-label="Blackboard">
       <div className="pinned-section-heading">
         <span>Blackboard</span>
         {visibleCount > 0 && <small>{visibleCount}</small>}
+        {canPost && visibleCount > 0 && (
+          <button
+            type="button"
+            className="pinned-blackboard-clear-all"
+            onClick={clearAllEntries}
+            disabled={deletingEntryId !== null || clearingAll}
+            title={clearingAll ? 'Deleting all entries...' : 'Delete all Blackboard entries'}
+          >
+            {clearingAll ? 'Deleting...' : 'Delete all'}
+          </button>
+        )}
       </div>
       {canPost && (
         <form className="pinned-blackboard-compose" onSubmit={submitPost}>
@@ -210,7 +238,7 @@ function BlackboardSection({
                   type="button"
                   className="pinned-blackboard-entry-delete"
                   onClick={() => deleteEntry(entry)}
-                  disabled={deletingEntryId !== null}
+                  disabled={deletingEntryId !== null || clearingAll}
                   title={deletingEntryId === entry.id ? 'Deleting...' : 'Delete blackboard entry'}
                   aria-label={`Delete blackboard entry ${entry.key}`}
                 >
