@@ -115,6 +115,12 @@ export type PromptSurfaceStyle = 'theme' | 'solid' | 'liquid_glass' | 'classic'
 export type ComposerStyle =
   | 'default'
   | 'codex'
+  /** ChatGPT: VISUAL-ONLY shell, a cross of the Codex + Cursor shells.
+   * Inherits the Codex "above-row" tucked-tab chrome and the Cursor
+   * capsule body + bottom-control rows (model / context / workspace),
+   * with the Cursor body's inset rim removed so the input pill reads
+   * flat like the official ChatGPT composer. NOT a provider/runtime. */
+  | 'chatgpt'
   | 'claude'
   /** Cursor: VISUAL-ONLY shell. Copies the Gemini composer layout but
    * strips all chroma + glass — flat neutral GRAY, theme-immune.

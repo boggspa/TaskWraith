@@ -77,6 +77,16 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
         permissionLabel: 'Full Workspace Access',
         placeholder: 'Ask Codex anything. @ to use plugins or mention files'
       }
+    case 'chatgpt':
+      // Preview-only. The ChatGPT shell is a Codex/Cursor cross — Codex
+      // above-row chrome, flat Cursor capsule body — typically driven by the
+      // Codex provider (hence the GPT model chip).
+      return {
+        providerLabel: 'ChatGPT',
+        modelLabel: 'GPT-5.6-Sol',
+        permissionLabel: 'Default Approval',
+        placeholder: 'Message ChatGPT'
+      }
     case 'claude':
       return {
         providerLabel: 'Claude',
@@ -166,6 +176,8 @@ function previewProviderIdForStyle(style: ComposerStyle): ProviderId {
       return 'grok'
     case 'cursor':
       return 'cursor'
+    case 'chatgpt':
+      return 'codex'
     default:
       return 'codex'
   }
@@ -174,6 +186,8 @@ function previewProviderIdForStyle(style: ComposerStyle): ProviderId {
 function previewModelIdForStyle(style: ComposerStyle): string {
   switch (style) {
     case 'codex':
+      return 'gpt-5.5'
+    case 'chatgpt':
       return 'gpt-5.5'
     case 'claude':
       return 'claude-opus-4-8'
@@ -255,6 +269,7 @@ function PreviewSendGlyph({ composerStyle }: { composerStyle: ComposerStyle }): 
   if (composerStyle === 'claude') return <ClaudeReturnSymbolIcon />
   if (
     composerStyle === 'codex' ||
+    composerStyle === 'chatgpt' ||
     composerStyle === 'gemini' ||
     composerStyle === 'cursor' ||
     composerStyle === 'grok' ||

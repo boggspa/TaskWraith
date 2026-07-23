@@ -232,6 +232,7 @@ const ONBOARDING_THEME_OPTIONS: Array<{ value: ThemeAppearance; label: string }>
 const ONBOARDING_COMPOSER_OPTIONS: Array<{ value: ComposerStyle; label: string }> = [
   { value: 'default', label: 'TaskWraith native' },
   { value: 'codex', label: 'Codex shell' },
+  { value: 'chatgpt', label: 'ChatGPT shell' },
   { value: 'claude', label: 'Claude shell' },
   { value: 'cursor', label: 'Cursor shell' },
   { value: 'grok', label: 'Grok shell' },

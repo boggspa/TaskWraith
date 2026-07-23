@@ -276,7 +276,9 @@ export function ContextMeterPopover({
       : null
   const rows: RowView[] = participantRows ?? (meter ? [toRowView(meter.solo, false)] : [])
   const roundedPercent = Math.round(percent)
-  const isCursorShell = composerStyle === 'cursor'
+  // The ChatGPT shell borrows Cursor's bottom-row controls, incl. the context
+  // donut + inline percent, so it shares Cursor's context-trigger treatment.
+  const isCursorShell = composerStyle === 'cursor' || composerStyle === 'chatgpt'
   const triggerSeverity = contextPressureSeverity(percent)
   const showCompactAction = Boolean(onCompactContext) && triggerSeverity !== 'ok'
 

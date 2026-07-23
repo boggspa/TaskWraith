@@ -23,6 +23,7 @@ import type { ComposerStyle } from '../../../main/store/types'
 const ALL_SHELLS: ComposerStyle[] = [
   'default',
   'codex',
+  'chatgpt',
   'claude',
   'cursor',
   'grok',
@@ -44,6 +45,7 @@ function render(style: ComposerStyle, extra: Record<string, unknown> = {}): stri
 
 function previewProvider(style: ComposerStyle): string {
   if (['codex', 'claude', 'cursor', 'grok', 'gemini', 'kimi'].includes(style)) return style
+  // ChatGPT shell previews under the Codex provider (see previewProviderIdForStyle).
   return 'codex'
 }
 
@@ -91,8 +93,8 @@ describe('ComposerShellPreview — shell parity', () => {
   })
 
   it('keeps the ComposerStyle list in lockstep (catch a new shell)', () => {
-    // 13 known shells today. If the union grows, ALL_SHELLS must grow with it.
-    expect(ALL_SHELLS.length).toBe(13)
+    // 14 known shells today. If the union grows, ALL_SHELLS must grow with it.
+    expect(ALL_SHELLS.length).toBe(14)
     expect(new Set(ALL_SHELLS).size).toBe(ALL_SHELLS.length)
   })
 })

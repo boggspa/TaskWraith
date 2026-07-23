@@ -604,6 +604,11 @@ const COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string; helpe
     helper: 'Codex-like sidebar, transcript, status bar, and composer hierarchy.'
   },
   {
+    value: 'chatgpt',
+    label: 'ChatGPT shell',
+    helper: 'Codex tucked-tab above-row with a flat Cursor-style capsule body and bottom rows.'
+  },
+  {
     value: 'claude',
     label: 'Claude shell',
     helper: 'Claude-like sidebar, transcript, status bar, and composer hierarchy.'
