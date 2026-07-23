@@ -70,6 +70,26 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('>Pro<')
   })
 
+  it('shows a connected AntiGravity quota probe failure as unavailable without inventing a meter', () => {
+    const html = renderToStaticMarkup(
+      <ModelUsageCard
+        usageSummary={[
+          quotaEntry({
+            provider: 'antigravity',
+            windows: [],
+            quotaConfigured: true,
+            quotaError: 'Quota unavailable: official agy /usage timed out.'
+          })
+        ]}
+      />
+    )
+
+    expect(html).toContain('Antigravity')
+    expect(html).toContain('model-usage-quota-unavailable')
+    expect(html).toContain('official agy /usage timed out')
+    expect(html).not.toContain('200 / 200 remaining')
+  })
+
   it('renders the existing four providers and does NOT add a Grok meter when Grok is unavailable', () => {
     // Regression for 1.0.6-GU: the gated Grok subscription-credit meter
     // must not leak into the card. Under SSR the availability effect never

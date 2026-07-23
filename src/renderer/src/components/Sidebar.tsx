@@ -1379,6 +1379,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'grok') return 'Grok'
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
+  if (provider === 'antigravity') return 'Antigravity'
   return 'Gemini'
 }
 

@@ -459,6 +459,7 @@ function UsageWindowRow({
 }
 
 function ProviderUsageBlock({ entry }: { entry: ModelUsageAggregate }) {
+  const hasWindows = Boolean(entry.windows?.length)
   return (
     <div
       key={`${entry.provider}-${entry.model}`}
@@ -468,13 +469,19 @@ function ProviderUsageBlock({ entry }: { entry: ModelUsageAggregate }) {
         <ProviderLabel provider={entry.provider} planName={entry.planName} />
       </div>
       <div className="model-usage-window-list">
-        {entry.windows!.map((windowEntry) => (
-          <UsageWindowRow
-            key={`${entry.provider}-${windowEntry.id}`}
-            provider={entry.provider}
-            windowEntry={windowEntry}
-          />
-        ))}
+        {hasWindows ? (
+          entry.windows!.map((windowEntry) => (
+            <UsageWindowRow
+              key={`${entry.provider}-${windowEntry.id}`}
+              provider={entry.provider}
+              windowEntry={windowEntry}
+            />
+          ))
+        ) : (
+          <div className="model-usage-quota-unavailable" role="status">
+            {entry.quotaError || 'Quota unavailable.'}
+          </div>
+        )}
       </div>
     </div>
   )
@@ -878,7 +885,9 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
   }, [])
   const grokUsage = useGrokCreditsMeterState(apiSpend?.refreshKey, grokAvailable)
   const quotaEntries = sortByProvider(usageSummary).filter(
-    (entry) => entry.model === 'usage limits' && (entry.windows?.length || 0) > 0
+    (entry) =>
+      entry.model === 'usage limits' &&
+      ((entry.windows?.length || 0) > 0 || (entry.quotaConfigured === true && Boolean(entry.quotaError)))
   )
   // The API-spend view is offered whenever the caller wired it (sidebar).
   const apiSpendEnabled = Boolean(apiSpend)

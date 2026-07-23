@@ -7971,7 +7971,7 @@ function App(): React.JSX.Element {
     // Usage records route through the shared renderer cache (30s TTL,
     // in-flight dedup) so the settings table / API-spend view join this
     // fetch instead of issuing their own identical IPC calls.
-    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, allUsageRecords] =
+    const [codexSnap, claudeSnap, kimiSnap, cursorSnap, antigravitySnap, allUsageRecords] =
       await Promise.all([
         typeof window.api.getCodexUsageSnapshot === 'function'
           ? window.api.getCodexUsageSnapshot(quotaRefreshOptions).catch(() => null)
@@ -7979,6 +7979,7 @@ function App(): React.JSX.Element {
         window.api.getAgentRateLimits('claude', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('kimi', quotaRefreshOptions).catch(() => null),
         window.api.getAgentRateLimits('cursor', quotaRefreshOptions).catch(() => null),
+        window.api.getAgentRateLimits('antigravity', quotaRefreshOptions).catch(() => null),
         loadUsageRecords
           ? loadRendererUsageRecords('taskwraith', {
               force: options.force === true || options.forceUsageRecords === true
@@ -8190,6 +8191,26 @@ function App(): React.JSX.Element {
     const cursorWindows = resolveWithCache('cursor', cursorFresh)
     if (cursorWindows.length > 0 || hasUsageBalances(cursorSnap?.balances)) {
       ordered.push(buildQuotaAggregate('cursor', cursorWindows, cursorSnap))
+    }
+
+    // AntiGravity — only the authenticated configured-provider snapshot can
+    // reach this transport. Do not reuse an old quota window after a failed
+    // official `/usage` probe: every timeout, unsupported panel, or error is
+    // shown as quota unavailable rather than stale or inferred usage.
+    const antigravityFresh = (Array.isArray(antigravitySnap?.windows)
+      ? antigravitySnap.windows
+      : []
+    )
+      .map((windowEntry: any, index: number) =>
+        normalizeQuotaWindow('antigravity', windowEntry, `antigravity-quota-${index}`)
+      )
+      .filter((windowEntry): windowEntry is UsageWindowAggregate => Boolean(windowEntry))
+    if (
+      antigravityFresh.length > 0 ||
+      hasUsageBalances(antigravitySnap?.balances) ||
+      (antigravitySnap?.configured === true && Boolean(antigravitySnap?.error))
+    ) {
+      ordered.push(buildQuotaAggregate('antigravity', antigravityFresh, antigravitySnap))
     }
 
     const inferUsageProvider = (model: string): ProviderId => {

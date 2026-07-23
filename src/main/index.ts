@@ -276,6 +276,7 @@ import {
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../shared/retiredProviders'
+import type { NormalizedProviderUsageSnapshot } from './ProviderQuotaSnapshots'
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
 import {
   isClaudeWorkflowSystemEvent,
@@ -1273,6 +1274,11 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
+import {
+  AGY_USAGE_FRESH_TTL_MS,
+  fetchAuthenticatedAgyQuotaSnapshot,
+  type AgyPtyLike
+} from './antigravity/AntigravityUsage'
 import {
   createProviderCapabilityProbe,
   parseCapabilityJsonItems,
@@ -14703,6 +14709,15 @@ function rebuildBridgeApnsPusherFromSettings(): void {
 // single real probe instead of each spawning the TUI. Only `observed`
 // snapshots are cached; non-observed results fall through to a fresh probe.
 let grokUsageProbeCache: { snapshot: GrokUsageSnapshot; fetchedAt: number } | null = null
+
+// The official `agy /usage` panel is interactive. Cache only complete,
+// observed snapshots so normal quota refreshes do not repeatedly open it.
+// The authenticated configured-provider snapshot is still checked before this
+// cache is read, so consent withdrawal or a disconnected S4 state fails closed.
+let antigravityUsageProbeCache: {
+  snapshot: NormalizedProviderUsageSnapshot
+  fetchedAt: number
+} | null = null
 
 function updateCliProviderSession(
   state: CliProviderStreamState,
@@ -41074,6 +41089,75 @@ if (isGeminiMcpBridgeProcess) {
         // and hit Cursor's period-usage RPC (same path as Limit Counter).
         if (provider === 'cursor') {
           return fetchCursorUsageSnapshot({ force })
+        }
+        if (provider === 'antigravity') {
+          const settings = AppStore.getSettings()
+          const configuredSnapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
+          const configuredModels = managedRunConfiguredProviderDiscovery
+            .modelsSnapshot(settings)
+            .get('antigravity')
+          const authenticatedConnection =
+            configuredSnapshot.ready &&
+            configuredSnapshot.configuredProviders.has('antigravity') &&
+            Boolean(configuredModels?.length)
+
+          // Keep all no-consent/no-connection paths side-effect free: the S5
+          // helper returns quota-unavailable without resolving or spawning agy.
+          if (!authenticatedConnection) {
+            return fetchAuthenticatedAgyQuotaSnapshot(settings, false, {})
+          }
+          if (
+            !force &&
+            antigravityUsageProbeCache &&
+            Date.now() - antigravityUsageProbeCache.fetchedAt < AGY_USAGE_FRESH_TTL_MS
+          ) {
+            return antigravityUsageProbeCache.snapshot
+          }
+
+          // A private temporary cwd keeps the documented interactive panel out
+          // of a real workspace. It is removed only when this exact probe made
+          // it successfully, never by a broad cleanup operation.
+          let probeCwd = os.tmpdir()
+          try {
+            probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'agy-usage-'))
+          } catch {
+            probeCwd = os.tmpdir()
+          }
+          const isTempDir = probeCwd !== os.tmpdir()
+          try {
+            const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(settings, true, {
+              cwd: probeCwd,
+              spawnPty: (command, args, options): AgyPtyLike => {
+                const term = pty.spawn(command, [...args], {
+                  name: 'xterm-256color',
+                  cols: 100,
+                  rows: 30,
+                  cwd: options.cwd,
+                  env: options.env
+                })
+                return {
+                  onData: (listener) => term.onData(listener),
+                  onExit: (listener) => term.onExit((event) => listener({ exitCode: event.exitCode })),
+                  write: (data) => term.write(data),
+                  kill: () => {
+                    try {
+                      term.kill()
+                    } catch {
+                      // The terminal already exited.
+                    }
+                  }
+                }
+              }
+            })
+            if (snapshot.windows?.length) {
+              antigravityUsageProbeCache = { snapshot, fetchedAt: Date.now() }
+            }
+            return snapshot
+          } finally {
+            if (isTempDir) {
+              await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})
+            }
+          }
         }
         if (provider !== 'codex') {
           return null
