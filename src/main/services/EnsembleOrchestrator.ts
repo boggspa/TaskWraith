@@ -723,6 +723,34 @@ export interface EnsembleFanoutInput {
   writeScopes?: unknown
 }
 
+/** `ensemble_fanout_all` — the Boss/Captain "everyone, now" sibling of
+ * `ensemble_fanout`. No mode/stage/writeScopes surface: stage filters and
+ * per-seat permission ELIGIBILITY filters do not apply, and every lane runs
+ * under its own normal-turn posture (see fanoutAllForRun). */
+export interface EnsembleFanoutAllInput {
+  targets?: unknown
+  prompt?: string
+  reason?: string
+}
+
+export interface EnsembleFanoutAllResult {
+  ok: boolean
+  tool: 'ensemble_fanout_all'
+  status?: 'dispatched'
+  message: string
+  laneIds?: string[]
+  participantIds?: string[]
+  error?:
+    | 'no_active_run'
+    | 'not_ensemble'
+    | 'missing_prompt'
+    | 'invalid_target'
+    | 'no_eligible_targets'
+    | 'not_authorized'
+    | 'budget_exhausted'
+    | 'dispatch_failed'
+}
+
 export interface EnsembleFanoutResult {
   ok: boolean
   tool: 'ensemble_fanout'
@@ -9045,6 +9073,341 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * `ensemble_fanout_all` — Boss/Captain-only "everyone, now" fan-out.
+   *
+   * Differences from `ensemble_fanout`: the round's fan-out policy, stage
+   * filters (`targetStage`), and per-seat permission ELIGIBILITY filtering
+   * are all ignored — every tagged (default: every enabled, idle) seat
+   * dispatches concurrently, and each lane runs under the participant's OWN
+   * normal-turn posture instead of a read-only clamp or locked-writer
+   * scopes. What it deliberately does NOT bypass: caller authority (must be
+   * the configured Boss, or Captain in standby), the composer-directed
+   * one-seat round boundary (user intent), the Boss budget, the roster cap,
+   * and every posture clamp inside resolveParticipantPermissions (the
+   * unattended-round HMAC clamp in particular) — this tool mints no
+   * permission any seat would not have on its own serial turn.
+   */
+  async fanoutAllForRun(
+    runId: string | undefined,
+    input: EnsembleFanoutAllInput
+  ): Promise<EnsembleFanoutAllResult> {
+    const owner = this.actionableRunForTool(runId)
+    if (!owner) return this.fanoutAllForRunExclusive(runId, input)
+
+    const previous = owner.fanoutDispatchQueue || Promise.resolve()
+    let releaseCurrent!: () => void
+    const current = new Promise<void>((resolve) => {
+      releaseCurrent = resolve
+    })
+    const tail = previous.catch(() => undefined).then(() => current)
+    owner.fanoutDispatchQueue = tail
+    owner.pendingFanoutDispatches ??= new Set()
+    owner.pendingFanoutDispatches.add(current)
+    await previous.catch(() => undefined)
+    try {
+      return await this.fanoutAllForRunExclusive(runId, input)
+    } finally {
+      releaseCurrent()
+      owner.pendingFanoutDispatches?.delete(current)
+      if (owner.pendingFanoutDispatches?.size === 0) {
+        owner.pendingFanoutDispatches = undefined
+      }
+      if (owner.fanoutDispatchQueue === tail) owner.fanoutDispatchQueue = undefined
+      this.releaseOwnedFanoutHold(owner)
+    }
+  }
+
+  private async fanoutAllForRunExclusive(
+    runId: string | undefined,
+    input: EnsembleFanoutAllInput
+  ): Promise<EnsembleFanoutAllResult> {
+    const prompt = (input.prompt || '').trim()
+    if (!prompt) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: 'ensemble_fanout_all: prompt is required.',
+        error: 'missing_prompt'
+      }
+    }
+    if (!runId) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: 'ensemble_fanout_all requires an active Ensemble participant run.',
+        error: 'no_active_run'
+      }
+    }
+    const run = this.actionableRunForTool(runId)
+    if (!run) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: 'ensemble_fanout_all: no active Ensemble participant run matches this tool call.',
+        error: 'no_active_run'
+      }
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    const chat = this.deps.getChat(run.chatId)
+    if (!runtime || runtime.cancelled || !chat?.ensemble) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: 'ensemble_fanout_all: the active chat is not an Ensemble round.',
+        error: 'not_ensemble'
+      }
+    }
+    // The composer-directed one-seat boundary is USER intent — no tool
+    // widens it (same rule as ensemble_fanout).
+    if (runtime.dmTargetParticipantId) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message:
+          'ensemble_fanout_all: fan-out is unavailable in a user-targeted round. Start a non-directed round to delegate to other participants.',
+        error: 'not_authorized'
+      }
+    }
+    const authority = this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id)
+    if (!authority.ok) {
+      const message =
+        authority.error === 'second_in_command_standby'
+          ? 'ensemble_fanout_all: the Captain may call this only while the Boss is unavailable.'
+          : 'ensemble_fanout_all: only the configured Boss (or Captain in standby) may fan out the full roster.'
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message,
+        error: 'not_authorized'
+      }
+    }
+
+    const resolvedTargets = this.resolveFanoutAllTargets(chat, runtime, run, input.targets)
+    if (!resolvedTargets.ok) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: resolvedTargets.message,
+        error: resolvedTargets.error
+      }
+    }
+
+    const blockedByBudget = resolvedTargets.targets
+      .map((participant) => ({
+        participant,
+        reason: this.bossmanBudgetBlock(runtime, participant.id, 'fanout_call')
+      }))
+      .filter((entry): entry is { participant: EnsembleParticipant; reason: string } =>
+        Boolean(entry.reason)
+      )
+    if (blockedByBudget.length > 0) {
+      const message = `ensemble_fanout_all: Boss/Captain budget blocks ${blockedByBudget
+        .map((entry) => `${participantDisplayName(entry.participant)} (${entry.reason})`)
+        .join(', ')}.`
+      this.appendRoundStatus(run.chatId, run.roundId, message)
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message,
+        error: 'budget_exhausted'
+      }
+    }
+
+    const label = 'Full fan-out'
+    const previousTranscriptBoundary = run.ownedFanoutTranscriptBoundary
+    const previousForceNextTimelineContentEntry = run.forceNextTimelineContentEntry
+    let acceptedOwnedFanout = false
+    try {
+      if (previousTranscriptBoundary === undefined) {
+        run.ownedFanoutTranscriptBoundary = run.timeline?.length || 0
+        run.forceNextTimelineContentEntry = true
+        this.flushRun(run)
+      }
+      this.appendRoundStatus(
+        run.chatId,
+        run.roundId,
+        `${label}: ${run.participant.role || run.participant.provider} requested ${resolvedTargets.targets.length} lane(s) under their own permissions.${input.reason ? ` ${input.reason}` : ''}`
+      )
+      if (!runtime.fanoutReservedParticipantIds) runtime.fanoutReservedParticipantIds = new Set()
+      for (const participant of resolvedTargets.targets) {
+        runtime.fanoutReservedParticipantIds.add(participant.id)
+      }
+      const acceptedRuns: ActiveParticipantRun[] = []
+      await this.runParallelFanoutPass(runtime, chat, resolvedTargets.targets, {
+        prompt,
+        reason: input.reason,
+        sourceRunId: runId,
+        label,
+        dispatchOwnPermissions: true,
+        acceptedRuns,
+        waitForCompletion: false,
+        completionDisposition: resolvedTargets.targets.every(isBackgroundParticipant)
+          ? 'background'
+          : 'caller'
+      })
+      const acceptedParticipantIds = new Set(
+        acceptedRuns.map((acceptedRun) => acceptedRun.participant.id)
+      )
+      const acceptedTargets = resolvedTargets.targets.filter((participant) =>
+        acceptedParticipantIds.has(participant.id)
+      )
+      const laneIds = acceptedRuns
+        .map((acceptedRun) => acceptedRun.laneId)
+        .filter((laneId): laneId is string => Boolean(laneId))
+      if (acceptedTargets.length === 0) {
+        const message = `${label} was not dispatched: no target provider accepted a lane. The targets remain eligible for serial rotation.`
+        if (!runtime.cancelled) this.appendRoundStatus(run.chatId, run.roundId, message)
+        return {
+          ok: false,
+          tool: 'ensemble_fanout_all',
+          message,
+          laneIds: [],
+          participantIds: [],
+          error: 'dispatch_failed'
+        }
+      }
+      acceptedOwnedFanout = true
+      this.incrementBossmanBudgetUsage(
+        runtime,
+        acceptedTargets.map((participant) => participant.id),
+        { fanoutCalls: 1 }
+      )
+      if (!runtime.fannedOutParticipantIds) runtime.fannedOutParticipantIds = new Set()
+      for (const participant of acceptedTargets) {
+        runtime.fannedOutParticipantIds.add(participant.id)
+      }
+      const rejectedCount = resolvedTargets.targets.length - acceptedTargets.length
+      return {
+        ok: true,
+        tool: 'ensemble_fanout_all',
+        status: 'dispatched',
+        laneIds,
+        participantIds: acceptedTargets.map((participant) => participant.id),
+        message: `${label} dispatched: ${laneIds.length} lane(s) started under each participant's own permissions.${rejectedCount > 0 ? ` ${rejectedCount} target(s) did not accept dispatch and remain eligible for serial rotation.` : ''} Results will appear in the transcript; this tool returns after dispatch so the caller does not time out while lanes are working.`
+      }
+    } catch (error) {
+      const message =
+        error instanceof Error ? error.message : 'ensemble_fanout_all: dispatch failed.'
+      if (!runtime.cancelled) {
+        try {
+          this.appendRoundStatus(run.chatId, run.roundId, `${label} failed: ${message}`)
+        } catch {
+          // Structured failure + finally cleanup remain authoritative.
+        }
+      }
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message,
+        error: 'dispatch_failed'
+      }
+    } finally {
+      if (!acceptedOwnedFanout && !run.ownedFanoutSettlements?.size) {
+        run.ownedFanoutTranscriptBoundary = previousTranscriptBoundary
+        run.forceNextTimelineContentEntry = previousForceNextTimelineContentEntry
+      }
+      for (const participant of resolvedTargets.targets) {
+        runtime.fanoutReservedParticipantIds?.delete(participant.id)
+      }
+      if (runtime.fanoutReservedParticipantIds?.size === 0) {
+        runtime.fanoutReservedParticipantIds = undefined
+      }
+      this.maybeResumeDeferredDrain(runtime.chatId)
+    }
+  }
+
+  /** Target resolution for ensemble_fanout_all: STRUCTURAL checks only —
+   * enabled, live provider, not the caller, not already active or reserved.
+   * No stage filter, no fan-out policy, no permission eligibility. */
+  private resolveFanoutAllTargets(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    run: ActiveParticipantRun,
+    rawTargets: unknown
+  ):
+    | { ok: true; targets: EnsembleParticipant[] }
+    | {
+        ok: false
+        message: string
+        error: Exclude<EnsembleFanoutAllResult['error'], undefined>
+      } {
+    const explicitTargets = normalizeTargetList(rawTargets)
+    const participants = this.scopedFanoutParticipants(chat)
+    const activeParticipantIds = new Set<string>()
+    for (const active of this.runsByRunId.values()) {
+      if (active.chatId === runtime.chatId && active.roundId === runtime.roundId) {
+        activeParticipantIds.add(active.participant.id)
+      }
+    }
+    const isDispatchable = (participant: EnsembleParticipant): boolean => {
+      if (!participant.enabled) return false
+      if (!isLiveSelectableProvider(participant.provider)) return false
+      if (participant.id === run.participant.id) return false
+      if (activeParticipantIds.has(participant.id)) return false
+      if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') return false
+      return true
+    }
+    if (explicitTargets.length === 0 || explicitTargets.some((target) => /^@?all$/i.test(target))) {
+      const targets = participants.filter(isDispatchable)
+      if (targets.length === 0) {
+        return {
+          ok: false,
+          message: 'ensemble_fanout_all: no enabled, idle peer participants are available.',
+          error: 'no_eligible_targets'
+        }
+      }
+      return { ok: true, targets }
+    }
+    const targets: EnsembleParticipant[] = []
+    for (const rawTarget of explicitTargets) {
+      const target = stripLeadingAt(rawTarget)
+      const participant = resolvePhraseToParticipant(
+        target,
+        participants,
+        new Set([run.participant.id])
+      )
+      if (!participant || !participant.enabled) {
+        return {
+          ok: false,
+          message: `ensemble_fanout_all: target "${rawTarget}" did not resolve to an enabled participant.`,
+          error: 'invalid_target'
+        }
+      }
+      if (!isLiveSelectableProvider(participant.provider)) {
+        return {
+          ok: false,
+          message: `ensemble_fanout_all: target "${rawTarget}" uses a provider that is unavailable for new runs.`,
+          error: 'invalid_target'
+        }
+      }
+      if (activeParticipantIds.has(participant.id)) {
+        return {
+          ok: false,
+          message: `ensemble_fanout_all: target "${rawTarget}" is already active in this round.`,
+          error: 'invalid_target'
+        }
+      }
+      if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') {
+        return {
+          ok: false,
+          message: `ensemble_fanout_all: target "${rawTarget}" is already reserved for or running in a fan-out lane.`,
+          error: 'invalid_target'
+        }
+      }
+      targets.push(participant)
+    }
+    const deduped = dedupeParticipants(targets)
+    if (deduped.length === 0) {
+      return {
+        ok: false,
+        message: 'ensemble_fanout_all: no eligible targets resolved.',
+        error: 'no_eligible_targets'
+      }
+    }
+    return { ok: true, targets: deduped }
+  }
+
   sendSideMessageForRun(
     runId: string | undefined,
     input: EnsembleSideMessageInput
@@ -12933,6 +13296,12 @@ export class EnsembleOrchestrator {
       sourceRunId?: string
       label?: string
       forceReadOnlyDispatch?: boolean
+      /** ensemble_fanout_all: each lane runs under the participant's OWN
+       * normal-turn posture (unattended/work-session clamps included via
+       * resolveParticipantPermissions) — no read-only clamp, no
+       * locked-writer scope requirement. Mutually exclusive with mode
+       * validation below. */
+      dispatchOwnPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
       acceptedRuns?: ActiveParticipantRun[]
@@ -12952,29 +13321,34 @@ export class EnsembleOrchestrator {
     if (mode === 'locked_writers' && !concurrentWriteLanesEnabled()) {
       throw new Error('Locked writer fan-out requires TASKWRAITH_CONCURRENT_WRITE_LANES.')
     }
-    for (const participant of participants) {
-      const permissions = options.forceReadOnlyDispatch
-        ? this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'read_only')
-        : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
-      if (mode === 'read_only' && !permissions.readOnly) {
-        throw new Error(
-          `runParallelFanoutPass: non-read-only participant ${participant.id} cannot run in read_only fan-out.`
-        )
-      }
-      if (
-        mode === 'locked_writers' &&
-        !permissions.readOnly &&
-        (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
-      ) {
-        throw new Error(
-          `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
-        )
+    if (!options.dispatchOwnPermissions) {
+      for (const participant of participants) {
+        const permissions = options.forceReadOnlyDispatch
+          ? this.resolveFanoutDispatchPermissions(chat, runtime, participant, 'read_only')
+          : this.resolveFanoutEligibilityPermissions(chat, runtime, participant, mode)
+        if (mode === 'read_only' && !permissions.readOnly) {
+          throw new Error(
+            `runParallelFanoutPass: non-read-only participant ${participant.id} cannot run in read_only fan-out.`
+          )
+        }
+        if (
+          mode === 'locked_writers' &&
+          !permissions.readOnly &&
+          (options.writeScopesByParticipantId?.get(participant.id)?.length || 0) === 0
+        ) {
+          throw new Error(
+            `runParallelFanoutPass: writer participant ${participant.id} has no approved write scope.`
+          )
+        }
       }
     }
 
     if (!runtime.activeScoutRunIds) runtime.activeScoutRunIds = new Set<string>()
 
     const readOnlyCount = participants.filter((participant) => {
+      if (options.dispatchOwnPermissions) {
+        return this.resolveFanoutOwnDispatchPermissions(chat, runtime, participant).readOnly
+      }
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
       return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode).readOnly
     }).length
@@ -13028,12 +13402,14 @@ export class EnsembleOrchestrator {
         freshChat.ensemble?.participants?.find((candidate) => candidate.id === participant.id) ||
         participant
       const dispatchMode = options.forceReadOnlyDispatch ? 'read_only' : mode
-      const permissions = this.resolveFanoutDispatchPermissions(
-        freshChat,
-        runtime,
-        freshParticipant,
-        dispatchMode
-      )
+      const permissions = options.dispatchOwnPermissions
+        ? this.resolveFanoutOwnDispatchPermissions(freshChat, runtime, freshParticipant)
+        : this.resolveFanoutDispatchPermissions(
+            freshChat,
+            runtime,
+            freshParticipant,
+            dispatchMode
+          )
       return this.seedParticipantRun(freshChat, runtime, freshParticipant, {
         laneId: this.nextLaneId(runtime, freshParticipant),
         laneIntent: permissions.readOnly ? 'read' : 'write',
@@ -13082,13 +13458,20 @@ export class EnsembleOrchestrator {
         ...runScopedExternalPathGrants,
         ...(runtime.externalPathGrants || [])
       ]
-      const permissions = this.resolveFanoutDispatchPermissions(
-        dispatchChat,
-        runtime,
-        participant,
-        dispatchMode,
-        participantExternalPathGrants
-      )
+      const permissions = options.dispatchOwnPermissions
+        ? this.resolveParticipantPermissions(
+            dispatchChat,
+            participant,
+            participantExternalPathGrants,
+            isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
+          )
+        : this.resolveFanoutDispatchPermissions(
+            dispatchChat,
+            runtime,
+            participant,
+            dispatchMode,
+            participantExternalPathGrants
+          )
       const lanePromptAuthor = options.sourceRunId ? 'peer-authored' : 'orchestrator-authored'
       const promptForLane = options.prompt?.trim()
         ? `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${options.prompt.trim()}${
@@ -15324,6 +15707,25 @@ export class EnsembleOrchestrator {
         : isBackgroundParticipant(participant)
           ? { disallowTrustedSession: true }
           : {}
+    )
+  }
+
+  /** ensemble_fanout_all dispatch posture: the participant's OWN normal-turn
+   * permissions, exactly as a serial rotation turn would resolve them — no
+   * read-only clamp, no eligibility filtering. All safety clamps inside
+   * resolveParticipantPermissions (unattended-round HMAC clamp, Work-Session
+   * preset clamp) still apply; background seats still never inherit a
+   * Trusted Session. */
+  private resolveFanoutOwnDispatchPermissions(
+    chat: ChatRecord,
+    runtime: ActiveRoundRuntime,
+    participant: EnsembleParticipant
+  ): EffectiveRunPermissions {
+    return this.resolveParticipantPermissions(
+      chat,
+      participant,
+      runtime.externalPathGrants,
+      isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
     )
   }
 

@@ -19396,3 +19396,125 @@ describe('I-drop regression — leading assistant content delta preservation', (
     })
   }
 })
+
+describe('ensemble_fanout_all (Boss full-roster fan-out)', () => {
+  const rosterParticipants = (): EnsembleParticipant[] => [
+    {
+      id: 'codex',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'LeadBoss',
+      instructions: 'Coordinate.',
+      order: 1,
+      permissionPresetId: 'workspace_write'
+    },
+    {
+      id: 'claude',
+      provider: 'claude' as const,
+      enabled: true,
+      role: 'Reviewer',
+      instructions: 'Review.',
+      order: 2,
+      permissionPresetId: 'read_only'
+    },
+    {
+      id: 'kimi',
+      provider: 'kimi' as const,
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Build.',
+      order: 3,
+      permissionPresetId: 'workspace_write'
+    }
+  ]
+
+  it('rejects a non-Boss caller even with explicit targets', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
+    harness.chat.ensemble!.bossmanParticipantId = 'claude'
+    harness.chat.ensemble!.participants = rosterParticipants()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const result = await harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      targets: ['@Builder'],
+      prompt: 'Everyone build.'
+    })
+    expect(result).toMatchObject({ ok: false, error: 'not_authorized' })
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('dispatches every idle seat under its OWN posture, ignoring fan-out policy off', async () => {
+    const harness = makeHarness()
+    // ensemble_fanout would reject outright with policy off; fanout_all must not.
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = rosterParticipants()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands: take your assigned system.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.participantIds).toEqual(expect.arrayContaining(['claude', 'kimi']))
+    expect(result.laneIds).toHaveLength(2)
+
+    // Own-posture dispatch: the read_only seat stays clamped to plan while the
+    // write-capable seat keeps its writer posture (the old tool's read-only
+    // fan-out clamp must NOT apply here).
+    const claudeLane = harness.dispatched.find(
+      (payload, index) => index > 0 && payload.provider === 'claude'
+    )
+    const kimiLane = harness.dispatched.find(
+      (payload, index) => index > 0 && payload.provider === 'kimi'
+    )
+    expect(claudeLane?.approvalMode).toBe('plan')
+    expect(kimiLane?.approvalMode).not.toBe('plan')
+  })
+
+  it('resolves explicit @mention targets without stage or permission filtering', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = rosterParticipants()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      targets: ['@Builder'],
+      prompt: 'Builder: implement the ballistics system.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    harness.orchestrator.handleProviderOutput(
+      'kimi',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    await expect(fanout).resolves.toMatchObject({
+      ok: true,
+      participantIds: ['kimi']
+    })
+  })
+})
