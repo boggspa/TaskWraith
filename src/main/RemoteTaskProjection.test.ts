@@ -1309,7 +1309,7 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
       ]
     } as unknown as Partial<ChatRecord>)
 
-  it('projects each roster entry latest-run input+output (honest, NOT a sum)', () => {
+  it('projects each roster entry latest-run total (honest, NOT a sum)', () => {
     const state = buildRemoteEnsembleState(ensembleChat())
     expect(state?.roster?.map((r) => [r.id, r.contextTokens])).toEqual([
       ['p1', 123_000], // latest p1 run (120k+3k), not 40k+1k+120k+3k
@@ -1328,6 +1328,29 @@ describe('buildRemoteEnsembleState — per-participant context (roster.contextTo
       } as unknown as Partial<ChatRecord>)
     )
     expect(state?.roster?.[0].contextTokens).toBeUndefined()
+  })
+
+  it('preserves a total-only context snapshot for an ensemble participant', () => {
+    const state = buildRemoteEnsembleState(
+      chat({
+        appChatId: 'ensemble-total-only',
+        chatKind: 'ensemble',
+        ensemble: {
+          participants: [
+            { id: 'p1', provider: 'codex', enabled: true, role: 'Builder', order: 0 }
+          ]
+        },
+        runs: [
+          run({
+            runId: 'p1-total-only',
+            ensembleParticipantId: 'p1',
+            stats: { totalTokens: 99_000 }
+          })
+        ]
+      } as unknown as Partial<ChatRecord>)
+    )
+
+    expect(state?.roster?.[0].contextTokens).toBe(99_000)
   })
 
   it('projects Boss identity at top level and on the roster entry', () => {
