@@ -98,6 +98,7 @@ export function providerLabel(provider: ProviderId): string {
   if (provider === 'grok') return 'Grok'
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
+  if (provider === 'antigravity') return 'AntiGravity'
   return 'Gemini'
 }
 
@@ -312,6 +313,46 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       }
+    }
+  }
+  if (provider === 'antigravity') {
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'antigravity-cli',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: false,
+        appManagedApprovals: false,
+        workspaceGrants: false,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['plan', 'default'],
+        reasoningEffort: true,
+        speedTiers: [],
+        imageAttachments: false,
+        contextInjection: false,
+        // `agy --print` has no supported structured conversation receipt in
+        // this transport. S3 deliberately does not infer one from hooks/logs.
+        sessionResumption: false,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      },
+      capabilityCaveats: [
+        {
+          id: 'antigravity-official-cli-risk-boundary',
+          severity: 'warning',
+          capability: 'approvalModes',
+          title: 'Official CLI only; account risk remains',
+          message:
+            'AntiGravity launches only the user-installed official agy CLI after recorded informed consent. TaskWraith does not access OAuth credentials or bypass permissions; this does not imply Google ToS approval or account safety.'
+        }
+      ]
     }
   }
   return {

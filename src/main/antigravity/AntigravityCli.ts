@@ -60,6 +60,8 @@ export interface BuildAgyReadOnlyPrintArgsInput {
   conversationId?: string | null
 }
 
+export interface BuildAgyWriteCapablePrintArgsInput extends BuildAgyReadOnlyPrintArgsInput {}
+
 export interface AgyModel {
   /** Exact CLI-selectable value. Never synthesize or rewrite this string. */
   id: string
@@ -194,6 +196,25 @@ export function normalizeAgyReasoningEffort(value: string | null | undefined): s
  * read-only planning. S3 owns any separately reviewed execution integration.
  */
 export function buildAgyReadOnlyPrintArgs(input: BuildAgyReadOnlyPrintArgsInput): string[] {
+  return buildAgyPrintArgs(input, 'plan')
+}
+
+/**
+ * Construct the separately reviewed write-capable turn argv. This is never a
+ * permission bypass: the official CLI remains sandboxed and receives its
+ * normal `accept-edits` mode, while TaskWraith retains run admission,
+ * cancellation, and audit ownership around the child process.
+ */
+export function buildAgyWriteCapablePrintArgs(
+  input: BuildAgyWriteCapablePrintArgsInput
+): string[] {
+  return buildAgyPrintArgs(input, 'accept-edits')
+}
+
+function buildAgyPrintArgs(
+  input: BuildAgyReadOnlyPrintArgsInput,
+  mode: 'plan' | 'accept-edits'
+): string[] {
   if (typeof input.prompt !== 'string' || !input.prompt.trim()) {
     throw new Error('An Antigravity print-mode prompt is required.')
   }
@@ -201,7 +222,7 @@ export function buildAgyReadOnlyPrintArgs(input: BuildAgyReadOnlyPrintArgsInput)
   const args = [
     '--sandbox',
     '--mode',
-    'plan',
+    mode,
     '--print-timeout',
     AGY_READ_ONLY_PRINT_TIMEOUT
   ]

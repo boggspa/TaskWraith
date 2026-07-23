@@ -29,6 +29,22 @@ function settings(
 }
 
 describe('ProviderCapabilities', () => {
+  it('describes AntiGravity as the sandboxed official CLI without claiming a tool bridge', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'antigravity',
+      settings: settings(),
+      approvalMode: 'default',
+      status: { provider: 'antigravity', available: true, binaryPath: '/usr/local/bin/agy' }
+    })
+
+    expect(contract.approvals.providerMode).toContain('--sandbox --mode accept-edits')
+    expect(contract.approvals.inAppApprovals).toBe(false)
+    expect(contract.approvals.notes.join(' ')).toContain('no credential access')
+    expect(contract.mcp.state).toBe('unavailable')
+    expect(contract.tools.mcpTools.state).toBe('unavailable')
+    expect(contract.tools.delegate.state).toBe('unavailable')
+  })
+
   it('does not advertise TaskWraith MCP tools when the bridge is disabled', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'gemini',

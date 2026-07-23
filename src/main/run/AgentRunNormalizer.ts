@@ -37,6 +37,7 @@ import {
   requireRecord,
   stringArray
 } from '../settings/MainSanitizers'
+import { ANTIGRAVITY_PROVIDER_ID } from '../../shared/retiredProviders'
 
 /**
  * AgentRunNormalizer — M3 orchestration-facade extraction (M3-1b, per
@@ -95,7 +96,15 @@ export function normalizeAgentRunPayload(
   const payload = requireRecord(rawPayload, 'Run payload')
   // Universal run-dispatch chokepoint (renderer + main-built ensemble / sub-thread
   // / solo all flow through here): a retired provider can never start a new run.
-  const provider = assertLiveProviderId(payload.provider)
+  // Keep normal providers and retired-provider rejection settings-free, while
+  // passing persisted settings only for the one explicitly opt-in provider.
+  // This preserves the normalizer's fail-closed default and avoids making a
+  // renderer-supplied run eligible merely because it names a known ProviderId.
+  const structuralProvider = assertProviderId(payload.provider)
+  const provider =
+    structuralProvider === ANTIGRAVITY_PROVIDER_ID
+      ? assertLiveProviderId(structuralProvider, deps.getSettings())
+      : assertLiveProviderId(structuralProvider)
   const scope: ChatScope = payload.scope === 'global' ? 'global' : 'workspace'
   const appChatId = optionalString(payload.appChatId) || optionalString(payload.chatId)
   const appRunId = optionalString(payload.appRunId)

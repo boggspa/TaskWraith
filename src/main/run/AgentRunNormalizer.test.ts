@@ -505,6 +505,37 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(vi.mocked(deps.canonicalWorkspacePath)).toHaveBeenCalled()
   })
 
+  it('fails closed for AntiGravity before workspace admission until recorded consent is present', () => {
+    const deps = makeDeps()
+    expect(() =>
+      normalizeAgentRunPayload(
+        { provider: 'antigravity', scope: 'workspace', workspace: '/repo', prompt: 'x' },
+        deps
+      )
+    ).toThrow(/unavailable for new runs/i)
+    expect(vi.mocked(deps.canonicalWorkspacePath)).not.toHaveBeenCalled()
+  })
+
+  it('admits AntiGravity at the run chokepoint only with enabled recorded consent', () => {
+    const deps = makeDeps({
+      getSettings: vi.fn(
+        () =>
+          ({
+            ...FAKE_SETTINGS,
+            antigravityEnabled: true,
+            antigravityOptInAcceptedAt: 1_700_000_000_000
+          }) as AppSettings
+      )
+    })
+    const result = normalizeAgentRunPayload(
+      { provider: 'antigravity', scope: 'workspace', workspace: '/repo', prompt: 'x' },
+      deps
+    )
+
+    expect(result.provider).toBe('antigravity')
+    expect(vi.mocked(deps.canonicalWorkspacePath)).toHaveBeenCalled()
+  })
+
   it('drops stale Claude Fast mode for Fable while preserving it for supported Opus models', () => {
     const deps = makeDeps()
     const normalizeClaude = (model: string) =>

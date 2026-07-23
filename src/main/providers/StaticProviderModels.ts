@@ -735,7 +735,11 @@ export function getStaticProviderModels(
                 ? GROK_STATIC_MODELS
                 : provider === 'cursor'
                   ? CURSOR_STATIC_MODELS
-                  : GEMINI_STATIC_MODELS
+                  : provider === 'antigravity'
+                    // S3 deliberately has no static AntiGravity rows. S4 owns
+                    // authenticated official-CLI model discovery and exposure.
+                    ? []
+                    : GEMINI_STATIC_MODELS
   if (!options.includePreviewModels) return models
   const previews = previewModelsForProvider(provider)
   if (previews.length === 0) return models
@@ -781,6 +785,15 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   }
   if (provider === 'gemini') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GEMINI_DEFAULT_MODEL
+    return trimmed
+  }
+  if (provider === 'antigravity') {
+    // S3 intentionally has no static AntiGravity model catalogue. Preserve a
+    // provider-reported/model-payload value for the official CLI and use the
+    // honest CLI-default sentinel until S4 owns authenticated discovery.
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default' || lowered === 'auto') {
+      return 'cli-default'
+    }
     return trimmed
   }
   if (provider === 'claude') {

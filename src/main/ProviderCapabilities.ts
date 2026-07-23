@@ -573,6 +573,21 @@ function approvalContract(
       ]
     }
   }
+  if (provider === 'antigravity') {
+    return {
+      requestedMode,
+      effectiveMode,
+      providerMode:
+        requestedMode === 'plan'
+          ? 'official agy print mode with --sandbox --mode plan'
+          : 'official agy print mode with --sandbox --mode accept-edits',
+      inAppApprovals: false,
+      supportsWorkspaceGrants: false,
+      notes: [
+        'TaskWraith gates AntiGravity run admission and owns cancellation/audit lifecycle. The official agy CLI has no supported per-tool approval bridge in this transport; no credential access or permission-bypass flag is used.'
+      ]
+    }
+  }
   return {
     requestedMode,
     effectiveMode,
@@ -886,6 +901,50 @@ export function buildProviderCapabilityContract({
       'delegate',
       'taskwraith',
       'Ollama local mode cannot spawn sub-threads.'
+    )
+  } else if (provider === 'antigravity') {
+    mcp = {
+      state: 'unavailable',
+      source: 'unsupported',
+      available: false,
+      enabled: false,
+      installed: false,
+      tools: [],
+      message:
+        'AntiGravity S3 uses only the official agy print-mode transport; TaskWraith does not attach MCP servers, plugins, or hooks.'
+    }
+    shellCommands = delegatedCapability(
+      'shellCommands',
+      services.shellCommands,
+      ['official_agy_sandbox'],
+      'AntiGravity sandboxed native command behavior is provider-managed; TaskWraith does not claim per-tool interception for this CLI transport.'
+    )
+    fileChanges = delegatedCapability(
+      'fileChanges',
+      services.fileChanges,
+      ['official_agy_accept_edits'],
+      'AntiGravity file changes are available only in the explicitly write-capable, sandboxed official agy mode; TaskWraith does not claim per-tool interception.'
+    )
+    externalPublish = delegatedCapability(
+      'externalPublish',
+      services.externalPublish,
+      ['official_agy_sandbox'],
+      'AntiGravity publishing behavior remains provider-managed inside the official sandboxed CLI transport.'
+    )
+    mcpTools = unavailableCapability(
+      'mcpTools',
+      'provider',
+      'No TaskWraith MCP bridge, plugin, or hook is attached to the AntiGravity print-mode transport.'
+    )
+    elicit = unavailableCapability(
+      'elicit',
+      'provider',
+      'The AntiGravity print-mode transport does not expose a supported TaskWraith user-question bridge.'
+    )
+    delegate = unavailableCapability(
+      'delegate',
+      'provider',
+      'The AntiGravity print-mode transport does not expose TaskWraith sub-thread delegation.'
     )
   } else {
     const bridgeRequired = bridgeRequiredForWriteMode(effectiveMode)

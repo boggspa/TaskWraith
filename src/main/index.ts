@@ -1267,6 +1267,12 @@ import {
   providerLabel,
   type ProviderAdapter
 } from './ProviderAdapters'
+import { buildProviderCapabilityContract } from './ProviderCapabilities'
+import {
+  getAntigravityProviderMcpStatus,
+  getAntigravityProviderStatus,
+  prepareAntigravityProviderLaunch
+} from './antigravity/AntigravityProviderRuntime'
 import {
   createProviderCapabilityProbe,
   parseCapabilityJsonItems,
@@ -15878,7 +15884,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
 
 function runCliProviderProcess(
   event: Electron.IpcMainInvokeEvent,
-  provider: 'claude' | 'kimi' | 'grok' | 'cursor',
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'antigravity',
   command: string,
   args: string[],
   payload: AgentRunPayload,
@@ -15989,22 +15995,30 @@ function runCliProviderProcess(
   )
   let child: ChildProcess
   try {
+    const childEnv: Readonly<Record<string, string>> =
+      provider === 'antigravity'
+        ? (() => {
+            if (!options.resolvedEnv) {
+              throw new Error('AntiGravity launches require the sanitized official agy environment.')
+            }
+            return options.resolvedEnv
+          })()
+        : options.resolvedEnv ??
+          createCliProviderRunEnv({
+            provider,
+            command,
+            appRunId: route.appRunId,
+            appChatId: route.appChatId,
+            scope: payload.scope,
+            workspace: payload.workspace,
+            runtimeProfileId: payload.runtimeProfileId,
+            auditRun: Boolean(payload.auditRun),
+            extraEnv: options.extraEnv
+          })
     child = spawn(command, args, {
       cwd,
       shell: false,
-      env:
-        options.resolvedEnv ??
-        createCliProviderRunEnv({
-          provider,
-          command,
-          appRunId: route.appRunId,
-          appChatId: route.appChatId,
-          scope: payload.scope,
-          workspace: payload.workspace,
-          runtimeProfileId: payload.runtimeProfileId,
-          auditRun: Boolean(payload.auditRun),
-          extraEnv: options.extraEnv
-        })
+      env: childEnv
     })
   } catch (error) {
     sendAgentCompatError(
@@ -25858,6 +25872,50 @@ async function runGeminiProvider(
   })
 }
 
+/**
+ * S3's only production AntiGravity launch path. Preparation is extracted so
+ * this composition root merely delegates into the existing governed CLI
+ * stream/cancellation lifecycle with an official-agy, sandboxed launch plan.
+ */
+async function runAntigravityProvider(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload
+) {
+  const route = routeWithRunId('antigravity', payload)
+  let launch: Awaited<ReturnType<typeof prepareAntigravityProviderLaunch>>
+  try {
+    launch = await prepareAntigravityProviderLaunch({
+      settings: AppStore.getSettings(),
+      prompt: payload.prompt,
+      model: payload.model,
+      reasoningEffort: payload.reasoningEffort,
+      approvalMode: payload.approvalMode,
+      effectivePermissions: payload.effectivePermissions
+    })
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(event.sender, 'antigravity', message, route)
+    sendAgentCompatLine(
+      event.sender,
+      'antigravity',
+      { type: 'result', status: 'failed', stats: {}, provider: 'antigravity', setupRequired: true },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'antigravity', 1, route)
+    return
+  }
+
+  // S3 has no supported structured receipt for an `agy --conversation` id.
+  // Do not reuse an unverified historical string or infer one from logs/hooks.
+  payload.providerSessionId = null
+  await runCliProviderProcess(event, 'antigravity', launch.binary.binaryPath!, launch.args, payload, {
+    fallback: false,
+    requireExistingRun: true,
+    resolvedEnv: launch.env
+  })
+}
+
 // Grok is a first-class provider — its adapter is always registered.
 const grokAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
@@ -25881,6 +25939,31 @@ const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEve
     getMcpStatus: () => getAgentMcpStatusSnapshotDirect('cursor'),
     getCapabilityContract: (request = {}) =>
       getProviderCapabilityContractDirect('cursor', request.workspacePath, request.approvalMode)
+  }
+]
+
+const antigravityAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('antigravity'),
+    run: ({ event, payload }) => runAntigravityProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('antigravity', runId),
+    getStatus: () => getAntigravityProviderStatus({ settings: AppStore.getSettings() }),
+    getMcpStatus: async () => getAntigravityProviderMcpStatus(),
+    getCapabilityContract: async (request = {}) => {
+      const settings = AppStore.getSettings()
+      const [status, mcpStatus] = await Promise.all([
+        getAntigravityProviderStatus({ settings }),
+        Promise.resolve(getAntigravityProviderMcpStatus())
+      ])
+      return buildProviderCapabilityContract({
+        provider: 'antigravity',
+        settings,
+        workspacePath: request.workspacePath,
+        approvalMode: request.approvalMode,
+        status,
+        mcpStatus
+      })
+    }
   }
 ]
 
@@ -25952,6 +26035,7 @@ const providerAdapters = createProviderAdapterRegistry<
     getCapabilityContract: (request = {}) =>
       getOllamaCapabilityContract({ getSettings: () => AppStore.getSettings() }, request)
   },
+  ...antigravityAdapters,
   ...grokAdapters,
   ...cursorAdapters
 ])

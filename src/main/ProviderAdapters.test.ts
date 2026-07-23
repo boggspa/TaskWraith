@@ -51,6 +51,12 @@ describe('ProviderAdapters', () => {
     expect(providerLabel('grok')).toBe('Grok')
     expect(providerLabel('cursor')).toBe('Cursor')
     expect(providerLabel('ollama')).toBe('Ollama')
+    expect(providerLabel('antigravity')).toBe('AntiGravity')
+    expect(defaultProviderDescriptor('antigravity')).toMatchObject({
+      provider: 'antigravity',
+      transport: 'antigravity-cli',
+      capabilities: { sessionResumption: false }
+    })
     expect(defaultProviderDescriptor('codex')).toMatchObject({
       provider: 'codex',
       transport: 'codex-app-server',

@@ -130,6 +130,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     for (const provider of [
       'codex',
       'claude',
+      'antigravity',
       'gemini',
       'kimi',
       'grok',
@@ -146,10 +147,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     }
   })
 
-  it('returns distinct model lists for gemini, grok, and cursor', () => {
+  it('returns distinct model lists without borrowing Gemini rows for AntiGravity', () => {
+    const antigravity = getStaticProviderModels('antigravity').map((m) => m.id)
     const gemini = getStaticProviderModels('gemini').map((m) => m.id)
     const grok = getStaticProviderModels('grok').map((m) => m.id)
     const cursor = getStaticProviderModels('cursor').map((m) => m.id)
+    expect(antigravity).toEqual([])
     expect(gemini).toContain('flash')
     expect(grok).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
