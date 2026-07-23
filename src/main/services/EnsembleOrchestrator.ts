@@ -4401,50 +4401,35 @@ export class EnsembleOrchestrator {
     }
 
     const remaining = runtime.remainingParticipants ?? (runtime.remainingParticipants = [])
-    const bossId = this.activeBossmanParticipantId(chat, runtime)
-    const captainId = this.activeSecondInCommandParticipantId(chat, runtime)
-    const primary = this.primaryBossUnavailable(chat, runtime, bossId)
-    const pendingAuthorityIds = new Set<string>()
-    if (bossId) pendingAuthorityIds.add(bossId)
-    if (captainId && primary.unavailable) pendingAuthorityIds.add(captainId)
-
     const idx = remaining.findIndex((entry) => entry.id === participant.id)
-
-    if (hasAuthority) {
-      if (idx >= 0) {
-        return { ok: true, action: 'promoted', targetParticipantId: participant.id }
-      }
-      if (runtime.orchestrationMode === 'continuous') {
-        const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, {
-          allowAnsweredParticipant: true,
-          allowYieldedParticipant: true
-        })
-        if (!eligibility.appended) {
-          if (eligibility.reason === 'hop_limit') return reject('hop_limit')
-          if (eligibility.reason === 'outside_round_scope') return reject('outside_scope')
-          return reject('blocked_status')
-        }
-        this.commitContinuationTurn(
-          runtime,
-          remaining,
-          participant,
-          `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`
-        )
-        return { ok: true, action: 'resummoned', targetParticipantId: participant.id }
-      }
-      return reject('blocked_status')
+    // A foreground `ensemble_yield(target)` is an explicit handoff, not an
+    // authority-only scheduling hint. It deliberately outranks roster order —
+    // including a still-pending Boss/Captain — so participants can skip seats
+    // that have no work this pass. Background dispatch remains authority-gated
+    // above because it starts a detached lane rather than handing off the
+    // current serial turn.
+    if (idx >= 0) {
+      return { ok: true, action: 'promoted', targetParticipantId: participant.id }
     }
-
-    if (idx < 0) return reject('authority_precedence')
-    if (
-      idx > 0 &&
-      remaining
-        .slice(0, idx)
-        .some((entry) => entry.enabled && pendingAuthorityIds.has(entry.id))
-    ) {
-      return reject('authority_precedence')
+    if (runtime.orchestrationMode === 'continuous') {
+      const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, {
+        allowAnsweredParticipant: true,
+        allowYieldedParticipant: true
+      })
+      if (!eligibility.appended) {
+        if (eligibility.reason === 'hop_limit') return reject('hop_limit')
+        if (eligibility.reason === 'outside_round_scope') return reject('outside_scope')
+        return reject('blocked_status')
+      }
+      this.commitContinuationTurn(
+        runtime,
+        remaining,
+        participant,
+        `Yielded back to ${participant.role || participant.provider} (${participant.provider}).`
+      )
+      return { ok: true, action: 'resummoned', targetParticipantId: participant.id }
     }
-    return { ok: true, action: 'hint_applied', targetParticipantId: participant.id }
+    return reject('blocked_status')
   }
 
   private applyStoredYieldRouting(
@@ -14131,11 +14116,11 @@ export class EnsembleOrchestrator {
     statusMessage: string,
     // `allowYieldedParticipant` re-summons a participant who explicitly yielded
     // (yield-return). `allowAnsweredParticipant` re-summons one who already
-    // answered normally — used only by explicit authority continuations:
-    // Boss/Captain priority @-mentions back to the authority, and
-    // ensemble_bossman_control({ action: 'summon_participant' }). Neither bypasses
-    // 'skipped'/'failed'/'cancelled'/'unreachable' (those mean the participant
-    // errored out or was removed — re-summoning is a different, riskier concern).
+    // answered normally. Both are used by explicit foreground handoffs and
+    // authority continuations; generic @-mentions remain more conservative.
+    // Neither bypasses 'skipped'/'failed'/'cancelled'/'unreachable' (those mean
+    // the participant errored out or was removed — re-summoning is a different,
+    // riskier concern).
     options: { allowYieldedParticipant?: boolean; allowAnsweredParticipant?: boolean } = {}
   ): ContinuationTurnResult {
     const eligibility = this.evaluateContinuationTurnEligibility(runtime, participant, options)

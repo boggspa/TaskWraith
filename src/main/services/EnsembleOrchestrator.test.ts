@@ -638,7 +638,7 @@ describe('EnsembleOrchestrator', () => {
     }
   })
 
-  it('finalizes a streamed Cursor yield and cancels its exact child after routing rejection', async () => {
+  it('finalizes a streamed Cursor yield and cancels its exact child after an explicit handoff', async () => {
     vi.useFakeTimers()
     try {
       const harness = makeHarness({
@@ -698,16 +698,16 @@ describe('EnsembleOrchestrator', () => {
       harness.orchestrator.handleProviderOutput('cursor', route, {
         type: 'tool_result',
         tool_id: 'yield-stream-1',
-        output: '{"ok":false,"error":"authority_precedence"}'
+        output: '{"ok":true,"target":"later"}'
       })
 
-      // The rejected routing result is still a terminal yield for the current
-      // seat. It must release the serial completion without waiting for the
-      // watchdog, and cancellation must target the exact Cursor run.
+      // The targeted handoff is terminal for the current seat. It must release
+      // serial completion without waiting for the watchdog, cancel the exact
+      // Cursor run, and put the named participant ahead of the pending Boss.
       for (let i = 0; i < 30; i += 1) await Promise.resolve()
       expect(harness.cancelRun).toHaveBeenCalledWith('cursor', harness.dispatched[0].appRunId)
       expect(harness.dispatched).toHaveLength(2)
-      expect(harness.dispatched[1].provider).toBe('claude')
+      expect(harness.dispatched[1].provider).toBe('codex')
       expect(
         (harness.orchestrator as unknown as {
           cursorCompletionWatchdog: { has(runId: string): boolean }
@@ -717,7 +717,7 @@ describe('EnsembleOrchestrator', () => {
       completeDispatchedRun(harness, 1)
       for (let i = 0; i < 30; i += 1) await Promise.resolve()
       expect(harness.dispatched).toHaveLength(3)
-      expect(harness.dispatched[2].provider).toBe('codex')
+      expect(harness.dispatched[2].provider).toBe('claude')
       completeDispatchedRun(harness, 2)
     } finally {
       vi.useRealTimers()
@@ -12719,6 +12719,76 @@ Next action:
           message.content.includes('Yielded back to GrokTagA (grok). Continuous handoff 1/24.')
       )
     ).toBe(true)
+  })
+
+  it('lets any foreground participant skip pending authority and re-summon a yielded peer', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 6
+    harness.chat.ensemble!.bossmanParticipantId = 'boss'
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-explicit-yield'), status: 'completed' }
+    harness.chat.ensemble!.participants = [
+      {
+        id: 'worker',
+        provider: 'codex',
+        enabled: true,
+        role: 'Worker',
+        instructions: 'Do the focused work.',
+        order: 1,
+        permissionPresetId: 'read_only'
+      },
+      {
+        id: 'boss',
+        provider: 'claude',
+        enabled: true,
+        role: 'Boss',
+        instructions: 'Coordinate the panel.',
+        order: 2,
+        permissionPresetId: 'default'
+      },
+      {
+        id: 'reviewer',
+        provider: 'grok',
+        enabled: true,
+        role: 'Reviewer',
+        instructions: 'Review the focused work.',
+        order: 3,
+        permissionPresetId: 'read_only'
+      }
+    ]
+
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Run only the seats the handoffs select.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    expect(harness.dispatched[0].ensembleRun?.participantId).toBe('worker')
+
+    const skipBoss = harness.orchestrator.markYielded(
+      harness.dispatched[0].appRunId!,
+      'Reviewer should inspect this before the Boss needs a turn.',
+      'Reviewer'
+    )
+    expect(skipBoss).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, action: 'promoted', targetParticipantId: 'reviewer' }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].ensembleRun?.participantId).toBe('reviewer')
+
+    const returnToYieldedWorker = harness.orchestrator.markYielded(
+      harness.dispatched[1].appRunId!,
+      'Worker needs to action this review.',
+      'Worker'
+    )
+    expect(returnToYieldedWorker).toMatchObject({
+      kind: 'yielded',
+      routing: { ok: true, action: 'resummoned', targetParticipantId: 'worker' }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    expect(harness.dispatched[2].ensembleRun?.participantId).toBe('worker')
+    expect(harness.chat.ensemble?.activeRound?.continuationHops).toBe(1)
   })
 
   it('auto-returns to the yielding participant after a yielded target answers', async () => {
