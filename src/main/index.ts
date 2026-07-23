@@ -28323,6 +28323,20 @@ async function executeGeminiMcpTool(
         }))
       toolIsError = result.ok === false
       text = mcpJson(result)
+    } else if (toolName === 'ensemble_fanout_all') {
+      const result = await (ensembleOrchestratorRef?.fanoutAllForRun(context.appRunId, {
+        targets: args.targets,
+        prompt: optionalString(args.prompt),
+        reason: optionalString(args.reason)
+      }) ??
+        Promise.resolve({
+          ok: false,
+          tool: 'ensemble_fanout_all' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_run' as const
+        }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
     } else if (toolName === 'ensemble_bossman_control') {
       const result = await (ensembleOrchestratorRef?.bossmanControlForRun(context.appRunId, {
         action:

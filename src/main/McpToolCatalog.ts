@@ -2261,6 +2261,38 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       }
     },
     {
+      name: 'ensemble_fanout_all',
+      description:
+        'In Ensemble Mode, the configured Boss (or Captain while the Boss is unavailable) fans out EVERY tagged participant concurrently — omit targets to dispatch all enabled, idle peers. Unlike ensemble_fanout, this ignores the round fan-out policy, stage filters, and per-seat permission eligibility: each lane runs under that participant’s OWN normal-turn permissions (writer seats stay writers, read-only seats stay read-only), exactly as their serial rotation turn would. It never elevates any seat beyond its configured posture, never widens a user-targeted (composer-directed) round, and still counts against the Boss fan-out budget. Concurrent write-capable lanes share the workspace — prefer disjoint work items per lane. Returns a dispatch receipt immediately; lane results appear later in the transcript.',
+      annotations: {
+        readOnlyHint: false,
+        destructiveHint: false,
+        idempotentHint: false,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targets: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional participant aliases or @mentions. Omit (or pass "all") to fan out every enabled, idle participant except the caller.'
+          },
+          prompt: {
+            type: 'string',
+            description:
+              'Focused prompt for the fan-out lanes. Include exactly what each target should investigate or do; assign disjoint work items when write-capable seats are included.'
+          },
+          reason: {
+            type: 'string',
+            description: 'Optional reason shown in the transcript.'
+          }
+        },
+        required: ['prompt']
+      }
+    },
+    {
       name: 'ensemble_bossman_control',
       description:
         'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',

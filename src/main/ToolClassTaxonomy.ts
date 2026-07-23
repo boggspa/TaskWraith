@@ -148,6 +148,7 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   'ensemble_yield',
   'ensemble_send',
   'ensemble_fanout',
+  'ensemble_fanout_all',
   'list_ensemble_participants',
   'schedule_wakeup',
   'cancel_wakeup',

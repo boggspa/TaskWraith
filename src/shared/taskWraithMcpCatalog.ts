@@ -122,6 +122,7 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_yield',
   'ensemble_send',
   'ensemble_fanout',
+  'ensemble_fanout_all',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   // 1.0.4-AN — peer-openable BINDING goal-complete poll. Any eligible-at-open

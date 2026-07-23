@@ -139,6 +139,7 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
 export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_send',
   'ensemble_fanout',
+  'ensemble_fanout_all',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   'ensemble_propose_goal_complete',

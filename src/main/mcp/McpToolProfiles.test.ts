@@ -13,6 +13,7 @@ import {
   GATEWAY_MCP_DIRECT_TOOLS,
   GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
   GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+  ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
   isGatewayMcpAdvertisedTool,
@@ -92,11 +93,20 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     )
     expect(GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES).toEqual([
       ...GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
-      PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+      PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
+      ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
     ])
+    expect(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES).not.toContain(
+      ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
+    )
     expect(
       createTaskWraithMcpToolDefinitions().filter(
         (definition) => definition.name === PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+      )
+    ).toHaveLength(1)
+    expect(
+      createTaskWraithMcpToolDefinitions().filter(
+        (definition) => definition.name === ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
       )
     ).toHaveLength(1)
   })

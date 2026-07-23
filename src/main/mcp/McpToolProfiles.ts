@@ -358,9 +358,17 @@ export const PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME =
  * Gateway-v2 keeps the v1 direct surface but receives its own hidden universe.
  * Its one addition is also pinned against the canonical tool-name union.
  */
+/** Second gateway-v2 addition: Boss/Captain full-roster concurrent fan-out
+ * (each lane under its own normal-turn posture). Pinned against the
+ * canonical union like the first addition; the frozen v1 literals above
+ * stay untouched (receipted sessions must never see surface drift). */
+export const ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME =
+  'ensemble_fanout_all' as const satisfies TaskWraithMcpToolName
+
 export const GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
-  PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME
+  PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
+  ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
 ] as const satisfies readonly string[])
 
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
