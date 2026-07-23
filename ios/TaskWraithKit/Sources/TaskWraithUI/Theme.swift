@@ -146,6 +146,7 @@ public enum TWTheme {
         case "kimi": return Color(hex: 0x0073E6)
         case "cursor": return Color(hex: 0x8D7312)
         case "ollama": return Color(hex: 0x1A8562)
+        case "antigravity": return Color(hex: 0x308713)
         case "ensemble": return Color(hex: 0x986781)
         case "grok": return Color(hex: 0x757575)
         // ── Ollama-backed display brands (--provider-*-color) ──────────────

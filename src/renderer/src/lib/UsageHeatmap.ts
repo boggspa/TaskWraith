@@ -34,7 +34,7 @@ export const HEATMAP_PROVIDER_COLOR_HEX: Record<ProviderId, string> = {
   grok: '#757575',
   cursor: '#8D7312',
   ollama: '#1A8562',
-  antigravity: '#A8E6CF'
+  antigravity: '#308713'
 }
 
 export interface HeatmapCell {

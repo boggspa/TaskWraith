@@ -27,6 +27,7 @@ const STATIC_PROVIDER_COLORS = {
   grok: '#757575',
   cursor: '#8D7312',
   ollama: '#1A8562',
+  antigravity: '#308713',
   ensemble: '#986781',
   alibaba: '#8C52EF',
   'deep-reinforce': '#BE5809',
@@ -52,6 +53,7 @@ const IOS_PROVIDER_CASES = [
   ['case "grok"', '#757575'],
   ['case "cursor"', '#8D7312'],
   ['case "ollama"', '#1A8562'],
+  ['case "antigravity"', '#308713'],
   ['case "ensemble"', '#986781'],
   ['case "alibaba", "qwen"', '#8C52EF'],
   ['case "deep-reinforce", "ornith"', '#BE5809'],
@@ -134,4 +136,5 @@ describe('provider palette contrast', () => {
       expect(contrastAgainstBlack(hex), `${provider} on black`).toBeGreaterThanOrEqual(4.5)
     }
   })
+
 })
