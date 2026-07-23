@@ -579,13 +579,38 @@ export interface CanvasEvalJsonLineSanitizer {
 }
 
 /**
+ * Provider transports do not consistently represent failures as strings. In
+ * particular, JSON-RPC notifications may put a structured error object in
+ * `params.error`. Preserve serializable diagnostics so the normal sanitizer
+ * can inspect them, but fail closed when an opaque value cannot be rendered.
+ */
+function canvasEvalProviderText(value: unknown): string {
+  if (typeof value === 'string') return value
+  if (value === null || value === undefined) return ''
+  if (typeof value === 'number' || typeof value === 'boolean' || typeof value === 'bigint') {
+    return String(value)
+  }
+  if (value instanceof Error) {
+    return value.stack || `${value.name}: ${value.message}`
+  }
+  try {
+    const serialized = JSON.stringify(value)
+    if (typeof serialized === 'string') return serialized
+  } catch {
+    // An opaque provider payload cannot be inspected for canvas_eval content.
+  }
+  return CANVAS_EVAL_PROVIDER_TEXT_REDACTED
+}
+
+/**
  * Fail closed for provider text that could not be trusted as a structured
  * event. A direct canvas_eval spelling is sufficient to redact the text. For
  * result frames that identify the tool only by call id, redact JSON-looking
  * tool frames with result-bearing fields too: once parsing has failed, the raw
  * fallback cannot safely prove that the frame belongs to a different tool.
  */
-export function sanitizeCanvasEvalProviderText(text: string): string {
+export function sanitizeCanvasEvalProviderText(value: unknown): string {
+  const text = canvasEvalProviderText(value)
   if (!text) return text
   const canvasEvalMention = /(?:^|[^a-z0-9])canvas[\s_-]*eval(?:$|[^a-z0-9])/i.test(text)
   const jsonLikeToolFrame =

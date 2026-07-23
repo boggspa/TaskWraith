@@ -19572,7 +19572,7 @@ function sendAgentCompatLine(
 function sendAgentCompatError(
   sender: Electron.WebContents,
   provider: ProviderId,
-  error: string,
+  error: unknown,
   route?: AgentRunRoute | null
 ) {
   const safeError = sanitizeCanvasEvalProviderText(error)
@@ -19603,7 +19603,7 @@ function sendAgentCompatError(
   // Auto-failover: classify the provider's error channel for a quota wall (429)
   // and stash the signal keyed by run; the terminal exit decides whether to act.
   if (routed.appRunId && AppStore.getSettings().autoFailoverEnabled) {
-    const verdict = classifyProviderQuotaWall(provider, error)
+    const verdict = classifyProviderQuotaWall(provider, safeError)
     if (verdict.hit) {
       quotaWallSignalByRun.set(routed.appRunId, { provider, resetHintAt: verdict.resetHintAt })
     }

@@ -616,6 +616,25 @@ describe('CanvasEvalAudit', () => {
     expect(sanitizeCanvasEvalProviderText(benign)).toBe(benign)
   })
 
+  it('normalizes structured provider errors before inspecting them', () => {
+    const ordinaryError = { code: -32603, message: 'Codex app-server connection closed.' }
+    expect(sanitizeCanvasEvalProviderText(ordinaryError)).toBe(JSON.stringify(ordinaryError))
+
+    const secret = '__STRUCTURED_PROVIDER_ERROR_CANVAS_SECRET__'
+    const unsafeError = {
+      code: -32603,
+      message: 'tool execution failed',
+      detail: { tool_name: 'canvas_eval', parameters: { script: secret } }
+    }
+    const safe = sanitizeCanvasEvalProviderText(unsafeError)
+    expect(safe).toBe(CANVAS_EVAL_PROVIDER_TEXT_REDACTED)
+    expect(safe).not.toContain(secret)
+
+    const circular: { self?: unknown } = {}
+    circular.self = circular
+    expect(sanitizeCanvasEvalProviderText(circular)).toBe(CANVAS_EVAL_PROVIDER_TEXT_REDACTED)
+  })
+
   it('redacts a split malformed result-only JSONL frame before raw forwarding', () => {
     const sanitizer = createCanvasEvalJsonLineSanitizer('grok:malformed-result')
     const sentinel = '__SPLIT_MALFORMED_RESULT_SECRET__'
