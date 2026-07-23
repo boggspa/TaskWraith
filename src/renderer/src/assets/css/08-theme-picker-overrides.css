@@ -9106,6 +9106,26 @@
   isolation: isolate;
 }
 
+/* Permission pickers use the same popover shell as model pickers, but each
+ * grant row needs room for a checkbox and its two-line state. Give the grants
+ * column the extra width instead of truncating the service names that govern
+ * what an agent may do. */
+.composer-combined-picker-popover.has-tool-grants {
+  width: min(448px, calc(100vw - 16px));
+  min-width: min(448px, calc(100vw - 16px));
+  max-width: min(448px, calc(100vw - 16px));
+}
+
+.composer-combined-picker-popover.has-tool-grants .composer-combined-picker-permissions {
+  flex: 0 1 176px;
+  min-width: 0;
+}
+
+.composer-combined-picker-popover.has-tool-grants .composer-combined-picker-grants {
+  flex: 1 1 248px;
+  min-width: 0;
+}
+
 .composer-combined-picker-popover.is-ollama-model-picker {
   width: min(500px, calc(100vw - 16px));
   min-width: min(500px, calc(100vw - 16px));

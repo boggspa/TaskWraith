@@ -281,7 +281,7 @@ export function CombinedPermissionsPicker({
   const popoverContent = open && position && (
     <div
       ref={popoverRef}
-      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}`}
+      className={`composer-combined-picker-popover provider-${provider} shell-${composerStyle}${grantServices.length > 0 ? ' has-tool-grants' : ''}`}
       style={{
         position: 'fixed',
         left: `${position.left}px`,
