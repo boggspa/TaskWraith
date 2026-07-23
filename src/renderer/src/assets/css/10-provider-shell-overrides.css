@@ -4282,7 +4282,11 @@ oser-orchestration-cell-label {
  * ============================================================ */
 [data-composer-style="chatgpt"] .composer-textarea-wrap,
 [data-composer-style="chatgpt"] .composer-textarea-wrap:focus-within {
+  /* Flat body, no rim: kill both Cursor's inset top-lip AND its border
+   * outline so the capsule reads as a plain fill (official ChatGPT
+   * composer). The Codex above-row tabs keep their own rim/border. */
   box-shadow: none;
+  border-color: transparent;
 }
 
 /* (1) The [+] attach button reads as a bare satellite glyph, not a bubble —
