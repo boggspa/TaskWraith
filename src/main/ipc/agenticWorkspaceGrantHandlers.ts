@@ -2,6 +2,10 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AppSettings, AgenticServiceId, ProviderId } from '../store/types'
 import type { PermissionService } from '../PermissionService'
 import { rendererSafeSettings } from './settingsHandlers'
+import {
+  supportsTaskWraithToolGrants,
+  taskWraithToolGrantUnsupportedReason
+} from '../../shared/providerToolGrantSupport'
 
 export interface AgenticWorkspaceGrantHandlerDeps {
   permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
@@ -23,6 +27,11 @@ export function registerAgenticWorkspaceGrantHandlers(
     'upsert-agentic-workspace-grant',
     (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
       const validatedProvider = deps.assertLiveProviderId(provider)
+      if (!supportsTaskWraithToolGrants(validatedProvider)) {
+        throw new Error(
+          taskWraithToolGrantUnsupportedReason(validatedProvider) || 'Tool Grants unavailable.'
+        )
+      }
       const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
       const validatedService = deps.assertAgenticServiceId(service)
       const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(

@@ -44,10 +44,7 @@ function createDeps() {
     },
     getSettings: vi.fn(() => settings),
     assertProviderId: vi.fn((provider: ProviderId) => provider),
-    assertLiveProviderId: vi.fn((provider: ProviderId) => {
-      if (provider === 'cursor') throw new Error('Provider is unavailable')
-      return provider
-    }),
+    assertLiveProviderId: vi.fn((provider: ProviderId) => provider),
     requireNonEmptyString: vi.fn((value: string) => value),
     assertAgenticServiceId: vi.fn((service: AgenticServiceId) => service),
     assertSenderCanManageAgenticWorkspaceGrants: vi.fn(
@@ -133,22 +130,13 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
     registerAgenticWorkspaceGrantHandlers(deps)
 
     expect(() =>
-      handlerFor('upsert-agentic-workspace-grant')(
-        event,
-        'cursor',
-        '/tmp/workspace',
-        'fileChanges'
-      )
-    ).toThrow('Provider is unavailable')
+      handlerFor('upsert-agentic-workspace-grant')(event, 'cursor', '/tmp/workspace', 'fileChanges')
+    ).toThrow('TaskWraith Tool Grants do not apply')
+    expect(deps.assertLiveProviderId).toHaveBeenCalledWith('cursor')
     expect(deps.permissionService.upsertWorkspaceGrant).not.toHaveBeenCalled()
 
     expect(() =>
-      handlerFor('remove-agentic-workspace-grant')(
-        event,
-        'cursor',
-        '/tmp/workspace',
-        'fileChanges'
-      )
+      handlerFor('remove-agentic-workspace-grant')(event, 'cursor', '/tmp/workspace', 'fileChanges')
     ).not.toThrow()
     expect(deps.assertProviderId).toHaveBeenCalledWith('cursor')
     expect(deps.permissionService.removeWorkspaceGrant).toHaveBeenCalledWith(

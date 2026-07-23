@@ -3,6 +3,7 @@ import type {
   ProviderCapabilityContract,
   ProviderId
 } from './store/types'
+import { supportsTaskWraithToolGrants } from '../shared/providerToolGrantSupport'
 
 export interface ProviderRunContext<TPayload = unknown, TEvent = unknown> {
   event: TEvent
@@ -101,6 +102,7 @@ export function providerLabel(provider: ProviderId): string {
 }
 
 export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapterDescriptor {
+  const workspaceGrants = supportsTaskWraithToolGrants(provider)
   if (provider === 'codex') {
     return {
       provider,
@@ -111,7 +113,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants: true,
+        workspaceGrants,
         agentBenchMcpBridge: false,
         providerManagedMcp: true,
         nativeThreadTools: true,
@@ -139,7 +141,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants: true,
+        workspaceGrants,
         agentBenchMcpBridge: true,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -167,7 +169,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants: true,
+        workspaceGrants,
         agentBenchMcpBridge: true,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -215,7 +217,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         appManagedApprovals: false,
         // Grok native tools + TaskWraith MCP both route through PermissionService
         // / requestAgenticServiceApproval, so per-provider workspace grants apply.
-        workspaceGrants: true,
+        workspaceGrants,
         agentBenchMcpBridge: false,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -255,7 +257,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: false,
         appManagedApprovals: false,
-        workspaceGrants: false,
+        workspaceGrants,
         agentBenchMcpBridge: false,
         providerManagedMcp: true,
         nativeThreadTools: true,
@@ -294,7 +296,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         persistentSessions: false,
         appManagedApprovals: true,
         // Local tool loop uses the same PermissionService workspace-grant path.
-        workspaceGrants: true,
+        workspaceGrants,
         agentBenchMcpBridge: false,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -322,7 +324,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       persistentSessions: true,
       appManagedApprovals: false,
       // Claude TaskWraith MCP + brokered tools honor per-provider workspace grants.
-      workspaceGrants: true,
+      workspaceGrants,
       agentBenchMcpBridge: false,
       providerManagedMcp: true,
       nativeThreadTools: false,
