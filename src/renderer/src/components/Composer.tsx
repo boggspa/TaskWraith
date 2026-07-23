@@ -4422,14 +4422,14 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           const handleToggleGrantForPicker = (
                             service: AgenticServiceId,
                             enabled: boolean
-                          ): void => {
+                          ): boolean | Promise<boolean> => {
                             if (ensembleBinding) {
                               updateSelectedParticipantWithNotice(
                                 buildParticipantToolGrantPatch(ensembleBinding, service, enabled)
                               )
-                              return
+                              return true
                             }
-                            void handleSetAgenticWorkspaceGrant(service, enabled, effectiveProvider)
+                            return handleSetAgenticWorkspaceGrant(service, enabled, effectiveProvider)
                           }
                           const applyAllParticipants =
                             ensembleBinding &&

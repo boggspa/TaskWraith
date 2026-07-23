@@ -32,6 +32,10 @@ import type {
 import { permissionOptionCanBeSelected } from '../lib/chatPopoutAuthority'
 import { countEffectiveToolGrants, toolGrantCanBeApplied } from '../lib/toolGrantApplicability'
 import type { WorkspacePolicyService } from '../lib/workspacePolicyServices'
+import {
+  type ToolGrantToggleHandler,
+  useOptimisticToolGrants
+} from '../hooks/useOptimisticToolGrants'
 
 export interface PermissionOption {
   /** Internal token, usually a PermissionPresetId. */
@@ -63,7 +67,7 @@ interface CombinedPermissionsPickerProps {
   enabledGrantIds: Set<AgenticServiceId>
   /** Global agentic-service policy — used to render row sub-labels. */
   agenticServices: AgenticServicesSettings
-  onToggleGrant: (service: AgenticServiceId, enabled: boolean) => void
+  onToggleGrant: ToolGrantToggleHandler
   grantScopeLabel?: 'workspace' | 'participant'
   /** Explains when a participant-scoped grant change will take effect. */
   grantTimingNote?: string
@@ -114,13 +118,17 @@ export function CombinedPermissionsPicker({
   const [focusedColumn, setFocusedColumn] = useState<'permission' | 'grants'>('permission')
   const [permissionHighlight, setPermissionHighlight] = useState(0)
   const [grantHighlight, setGrantHighlight] = useState(0)
+  const { effectiveEnabledGrantIds, isGrantPending, toggleGrant } = useOptimisticToolGrants({
+    enabledGrantIds,
+    onToggleGrant
+  })
 
   const selectedOption = permissionOptions.find((option) => option.value === selectedPermission) ||
     permissionOptions[0] || { value: selectedPermission, label: selectedPermission }
 
   const grantsCount = useMemo(
-    () => countEffectiveToolGrants(grantServices, enabledGrantIds, agenticServices),
-    [grantServices, enabledGrantIds, agenticServices]
+    () => countEffectiveToolGrants(grantServices, effectiveEnabledGrantIds, agenticServices),
+    [grantServices, effectiveEnabledGrantIds, agenticServices]
   )
 
   // Split chip text into "primary" (permission) and muted "suffix"
@@ -255,8 +263,7 @@ export function CombinedPermissionsPicker({
         } else {
           const service = grantServices[grantHighlight]
           if (service && toolGrantCanBeApplied(service.id, agenticServices)) {
-            const isOn = enabledGrantIds.has(service.id)
-            onToggleGrant(service.id, !isOn)
+            toggleGrant(service.id)
           }
         }
       }
@@ -272,10 +279,9 @@ export function CombinedPermissionsPicker({
     grantServices,
     permissionHighlight,
     grantHighlight,
-    enabledGrantIds,
     agenticServices,
     choosePermissionOption,
-    onToggleGrant
+    toggleGrant
   ])
 
   const popoverContent = open && position && (
@@ -358,7 +364,7 @@ export function CombinedPermissionsPicker({
             <div className="composer-combined-picker-column-note">{grantTimingNote}</div>
           ) : null}
           {grantServices.map((service, idx) => {
-            const checked = enabledGrantIds.has(service.id)
+            const checked = effectiveEnabledGrantIds.has(service.id)
             const grantCanBeApplied = toolGrantCanBeApplied(service.id, agenticServices)
             const effectiveChecked = checked && grantCanBeApplied
             const policy = agenticServices[service.id] || 'ask'
@@ -374,8 +380,9 @@ export function CombinedPermissionsPicker({
                   setFocusedColumn('grants')
                   setGrantHighlight(idx)
                 }}
-                onClick={() => onToggleGrant(service.id, !effectiveChecked)}
+                onClick={() => toggleGrant(service.id)}
                 disabled={!grantCanBeApplied}
+                aria-busy={isGrantPending(service.id) || undefined}
                 title={
                   grantCanBeApplied
                     ? service.help

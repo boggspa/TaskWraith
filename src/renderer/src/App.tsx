@@ -6983,8 +6983,8 @@ function App(): React.JSX.Element {
     service: AgenticServiceId,
     enabled: boolean,
     providerOverride?: ProviderId
-  ) => {
-    if (!currentWorkspace?.path || isCurrentGlobalChat) return
+  ): Promise<boolean> => {
+    if (!currentWorkspace?.path || isCurrentGlobalChat) return false
     // Slice F v2 (1.0.3) — when toggling grants from the composer
     // pickers on an ensemble chat with a participant selected, the
     // grant should target THAT participant's provider, not the chat's
@@ -7001,7 +7001,7 @@ function App(): React.JSX.Element {
           content: `Cannot enable workspace grants for ${getProviderLabel(targetProvider)} — managed runs are unavailable. Switch to a live provider.`
         }
       ])
-      return
+      return false
     }
     try {
       const nextSettings = enabled
@@ -7016,6 +7016,7 @@ function App(): React.JSX.Element {
             service
           )
       applyAgenticWorkspaceGrantSettings(nextSettings)
+      return true
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
@@ -7024,6 +7025,7 @@ function App(): React.JSX.Element {
           content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(targetProvider)}: ${redactLog(String(error))}`
         }
       ])
+      return false
     }
   }
 
@@ -20624,11 +20626,11 @@ function App(): React.JSX.Element {
   const handleSetSideAgenticWorkspaceGrant = async (
     service: AgenticServiceId,
     enabled: boolean
-  ) => {
+  ): Promise<boolean> => {
     // Ensemble side composers use participant-scoped grants; solo side chats keep
     // workspace grants even while the linked run is live (picker no longer locks).
     if (!sideChat || isSideEnsembleComposerLocked || sideIsGlobalChat || !sideWorkspace?.path) {
-      return
+      return false
     }
     if (enabled && !isLiveSelectableProvider(sideComposerProvider)) {
       setRawLogs((prev) => [
@@ -20638,7 +20640,7 @@ function App(): React.JSX.Element {
           content: `Cannot enable workspace grants for ${getProviderLabel(sideComposerProvider)} — managed runs are unavailable.`
         }
       ])
-      return
+      return false
     }
     try {
       const nextSettings = enabled
@@ -20653,6 +20655,7 @@ function App(): React.JSX.Element {
             service
           )
       applyAgenticWorkspaceGrantSettings(nextSettings)
+      return true
     } catch (error) {
       setRawLogs((prev) => [
         ...prev,
@@ -20661,6 +20664,7 @@ function App(): React.JSX.Element {
           content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(sideComposerProvider)}: ${redactLog(String(error))}`
         }
       ])
+      return false
     }
   }
   const sideComposerRunTimecodeStartedAt = isSideChatRunning
@@ -25925,9 +25929,9 @@ function App(): React.JSX.Element {
   const handleMultiviewPaneToggleGrant = useCallback(
     async (_paneIndex: number, chatId: string, service: AgenticServiceId, enabled: boolean) => {
       const paneChat = chatByIdRef.current.get(chatId)
-      if (!paneChat || isGlobalChat(paneChat)) return
+      if (!paneChat || isGlobalChat(paneChat)) return false
       const paneWorkspace = getWorkspaceForChat(paneChat)
-      if (!paneWorkspace?.path) return
+      if (!paneWorkspace?.path) return false
       const paneProvider = getChatProvider(paneChat)
       if (enabled && !isLiveSelectableProvider(paneProvider)) {
         setRawLogs((prev) => [
@@ -25937,13 +25941,14 @@ function App(): React.JSX.Element {
             content: `Cannot enable workspace grants for ${getProviderLabel(paneProvider)} — managed runs are unavailable.`
           }
         ])
-        return
+        return false
       }
       try {
         const nextSettings = enabled
           ? await window.api.upsertAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
           : await window.api.removeAgenticWorkspaceGrant(paneProvider, paneWorkspace.path, service)
         applyAgenticWorkspaceGrantSettings(nextSettings)
+        return true
       } catch (error) {
         setRawLogs((prev) => [
           ...prev,
@@ -25952,6 +25957,7 @@ function App(): React.JSX.Element {
             content: `Failed to ${enabled ? 'enable' : 'revoke'} ${service} grant for ${getProviderLabel(paneProvider)}: ${redactLog(String(error))}`
           }
         ])
+        return false
       }
     },
     []
