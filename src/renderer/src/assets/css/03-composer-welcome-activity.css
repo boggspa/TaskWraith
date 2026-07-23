@@ -5596,7 +5596,6 @@
 }
 
 .composer-copy-transcript-primary {
-  grid-area: action;
   align-self: center;
   min-height: 34px;
   border: 1px solid color-mix(in srgb, var(--accent) 38%, transparent);
@@ -5611,7 +5610,41 @@
   white-space: nowrap;
 }
 
+.composer-copy-transcript-actions {
+  grid-area: action;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.composer-copy-transcript-secondary {
+  min-height: 34px;
+  border: 1px solid color-mix(in srgb, var(--panel-border, var(--border)) 88%, transparent);
+  border-radius: 8px;
+  padding: 7px 10px;
+  color: var(--text-secondary);
+  background: color-mix(in srgb, var(--text-primary) 4%, transparent);
+  cursor: pointer;
+  font: inherit;
+  font-size: var(--font-size-xs);
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.composer-copy-transcript-secondary:hover:not(:disabled),
+.composer-copy-transcript-secondary:focus-visible {
+  color: var(--text-primary);
+  border-color: color-mix(in srgb, var(--accent) 34%, transparent);
+  background: color-mix(in srgb, var(--accent) 9%, transparent);
+}
+
 .composer-copy-transcript-primary:disabled {
+  cursor: default;
+  opacity: 0.62;
+}
+
+.composer-copy-transcript-secondary:disabled {
   cursor: default;
   opacity: 0.62;
 }
@@ -5646,8 +5679,13 @@
       "feedback";
   }
 
-  .composer-copy-transcript-primary {
+  .composer-copy-transcript-actions {
     width: 100%;
+  }
+
+  .composer-copy-transcript-primary,
+  .composer-copy-transcript-secondary {
+    flex: 1 1 0;
   }
 }
 

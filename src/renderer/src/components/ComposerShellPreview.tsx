@@ -259,6 +259,7 @@ const PREVIEW_COPY_RESULT: CopyTranscriptResult = {
   omissions: []
 }
 const copyPreviewTranscript = async (): Promise<CopyTranscriptResult> => PREVIEW_COPY_RESULT
+const copyPreviewMessages = async (): Promise<CopyTranscriptResult> => PREVIEW_COPY_RESULT
 
 /**
  * The send-button glyph mirrors the live composer's switch
@@ -574,6 +575,7 @@ export function ComposerShellPreview({
                   resetKey="composer-shell-preview"
                   composerStyle={composerStyle}
                   onCopy={copyPreviewTranscript}
+                  onCopyMessages={copyPreviewMessages}
                 />
               </div>
               <div className="composer-telemetry-side composer-telemetry-side--left">

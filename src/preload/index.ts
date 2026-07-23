@@ -208,6 +208,7 @@ const api = {
     ipcRenderer.invoke('sidebar:copy-chat-transcript-path', chatId),
   copyChatMarkdownTranscript: (chatId: string) =>
     ipcRenderer.invoke('copy-chat-markdown-transcript', chatId),
+  copyChatMessages: (chatId: string) => ipcRenderer.invoke('copy-chat-messages', chatId),
   // Phase J1 (composer unification): the picker is now cross-provider —
   // optional `provider` argument so the main process can stamp the
   // grant with the requesting provider (defaults to 'codex' for

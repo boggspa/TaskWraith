@@ -393,6 +393,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'sidebar:copy-chat-working-directory': ['chatId'],
   'sidebar:copy-chat-transcript-path': ['chatId'],
   'copy-chat-markdown-transcript': ['chatId'],
+  'copy-chat-messages': ['chatId'],
   'select-external-path-grant': ['externalPathGrantAccess'],
   // 1.0.6-EW69 — the composer workspace manager's add flows (proactive
   // read/write folder grant + attach-known-workspace-as-secondary) all

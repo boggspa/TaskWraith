@@ -11,7 +11,7 @@ const ok = async () => ({
 
 describe('CopyTranscriptButton', () => {
   it('renders a stable accessible icon button', () => {
-    const html = renderToStaticMarkup(<CopyTranscriptButton onCopy={ok} />)
+    const html = renderToStaticMarkup(<CopyTranscriptButton onCopy={ok} onCopyMessages={ok} />)
 
     expect(html).toContain('composer-copy-transcript-button')
     expect(html).toContain('aria-label="Copy transcript as Markdown"')
@@ -21,18 +21,27 @@ describe('CopyTranscriptButton', () => {
   })
 
   it('renders the popover with the primary handoff action when open', () => {
-    const html = renderToStaticMarkup(<CopyTranscriptButton defaultOpen onCopy={ok} />)
+    const html = renderToStaticMarkup(
+      <CopyTranscriptButton defaultOpen onCopy={ok} onCopyMessages={ok} />
+    )
 
     expect(html).toContain('role="dialog"')
     expect(html).toContain('Copy handoff Markdown')
-    expect(html).toContain('Creates safe handoff Markdown')
+    expect(html).toContain('Copy Messages')
+    expect(html).toContain('raw conversation messages only')
     expect(html).toContain('aria-expanded="true"')
   })
 
   it('can render disabled and copied states without changing button text width', () => {
-    const disabled = renderToStaticMarkup(<CopyTranscriptButton disabled onCopy={ok} />)
+    const disabled = renderToStaticMarkup(
+      <CopyTranscriptButton disabled onCopy={ok} onCopyMessages={ok} />
+    )
     const copied = renderToStaticMarkup(
-      <CopyTranscriptButton initialCopied onCopy={vi.fn(async () => ok())} />
+      <CopyTranscriptButton
+        initialCopied
+        onCopy={vi.fn(async () => ok())}
+        onCopyMessages={vi.fn(async () => ok())}
+      />
     )
 
     expect(disabled).toContain('disabled=""')

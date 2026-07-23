@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage, ChatRecord, ToolActivity } from './store/types'
 import {
+  buildChatMessageTranscript,
   buildChatMarkdownTranscript,
+  estimateChatMessageTranscriptChars,
   estimateChatMarkdownTranscriptChars
 } from './TranscriptMarkdownExport'
 
@@ -239,5 +241,51 @@ describe('buildChatMarkdownTranscript', () => {
     expect(result.omissions).toContain('absolute paths scrubbed')
     expect(result.omissions).toContain('attachment paths and bytes omitted')
     expect(result.omissions).toContain('common secrets scrubbed')
+  })
+})
+
+describe('buildChatMessageTranscript', () => {
+  it('copies raw user and assistant message bodies without transcript metadata or tool activity', () => {
+    const result = buildChatMessageTranscript(
+      chat([
+        message({ id: 'u1', role: 'user', content: 'Please review this.' }),
+        message({
+          id: 'a1',
+          role: 'assistant',
+          content: 'The implementation looks good.',
+          metadata: { ensembleProvider: 'claude', ensembleRole: 'Reviewer' },
+          toolActivities: [activity()]
+        }),
+        message({
+          id: 'tool-1',
+          role: 'tool',
+          content: 'raw tool output',
+          toolActivities: [activity()]
+        }),
+        message({ id: 'system-1', role: 'system', content: 'system metadata' }),
+        message({ id: 'error-1', role: 'error', content: 'provider failure metadata' }),
+        message({
+          id: 'subthread-1',
+          role: 'assistant',
+          content: '<subthread_result>internal worker output</subthread_result>',
+          metadata: { kind: 'subThreadReturn' }
+        })
+      ])
+    )
+
+    expect(result).toEqual({
+      text: 'Please review this.\n\nThe implementation looks good.',
+      messageCount: 2,
+      charCount: 51
+    })
+    expect(result.text).not.toContain('##')
+    expect(result.text).not.toContain('Reviewer')
+    expect(result.text).not.toContain('raw tool output')
+    expect(result.text).not.toContain('system metadata')
+    expect(result.text).not.toContain('provider failure metadata')
+    expect(result.text).not.toContain('internal worker output')
+    expect(estimateChatMessageTranscriptChars(chat([message({ content: result.text })]))).toBe(
+      result.charCount
+    )
   })
 })

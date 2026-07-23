@@ -25,6 +25,7 @@ interface CopyTranscriptButtonProps {
   resetKey?: string | null
   composerStyle?: string
   onCopy: () => Promise<CopyTranscriptResult>
+  onCopyMessages: () => Promise<CopyTranscriptResult>
 }
 
 function failureMessage(result: Extract<CopyTranscriptResult, { ok: false }>): string {
@@ -41,14 +42,21 @@ export function CopyTranscriptButton({
   initialCopied = false,
   resetKey = null,
   composerStyle = 'default',
-  onCopy
+  onCopy,
+  onCopyMessages
 }: CopyTranscriptButtonProps) {
   const [open, setOpen] = useState(defaultOpen)
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(initialCopied)
+  const [copiedFormat, setCopiedFormat] = useState<'handoff' | 'messages' | null>(
+    initialCopied ? 'handoff' : null
+  )
   const [error, setError] = useState<string | null>(null)
   const [summary, setSummary] = useState<Extract<CopyTranscriptResult, { ok: true }> | null>(null)
-  const [position, setPosition] = useState<{ left: number; top: number; width: number } | null>(null)
+  const [position, setPosition] = useState<{
+    left: number
+    top: number
+    width: number
+  } | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const primaryRef = useRef<HTMLButtonElement | null>(null)
@@ -97,7 +105,7 @@ export function CopyTranscriptButton({
   useEffect(() => {
     setOpen(false)
     setBusy(false)
-    setCopied(false)
+    setCopiedFormat(null)
     clearFeedback()
   }, [clearFeedback, resetKey])
 
@@ -134,20 +142,20 @@ export function CopyTranscriptButton({
   }, [closePopover, open, updatePosition])
 
   useEffect(() => {
-    if (!copied) return
-    const timer = window.setTimeout(() => setCopied(false), 1600)
+    if (!copiedFormat) return
+    const timer = window.setTimeout(() => setCopiedFormat(null), 1600)
     return () => window.clearTimeout(timer)
-  }, [copied])
+  }, [copiedFormat])
 
-  const copy = async (): Promise<void> => {
+  const copy = async (format: 'handoff' | 'messages'): Promise<void> => {
     if (disabled || busy) return
     setBusy(true)
     setError(null)
     try {
-      const result = await onCopy()
+      const result = await (format === 'messages' ? onCopyMessages() : onCopy())
       if (result.ok) {
         setSummary(result)
-        setCopied(true)
+        setCopiedFormat(format)
         return
       }
       setSummary(null)
@@ -188,16 +196,26 @@ export function CopyTranscriptButton({
           Close
         </button>
       </div>
-      <p>Creates safe handoff Markdown from visible transcript content.</p>
-      <button
-        ref={primaryRef}
-        type="button"
-        className="composer-copy-transcript-primary"
-        onClick={() => void copy()}
-        disabled={busy || disabled}
-      >
-        {busy ? 'Copying...' : 'Copy handoff Markdown'}
-      </button>
+      <p>Creates safe handoff Markdown, or copies raw conversation messages only.</p>
+      <div className="composer-copy-transcript-actions">
+        <button
+          type="button"
+          className="composer-copy-transcript-secondary"
+          onClick={() => void copy('messages')}
+          disabled={busy || disabled}
+        >
+          {busy ? 'Copying...' : 'Copy Messages'}
+        </button>
+        <button
+          ref={primaryRef}
+          type="button"
+          className="composer-copy-transcript-primary"
+          onClick={() => void copy('handoff')}
+          disabled={busy || disabled}
+        >
+          {busy ? 'Copying...' : 'Copy handoff Markdown'}
+        </button>
+      </div>
       {summary && (
         <div className="composer-copy-transcript-status" role="status">
           Copied {summary.messageCount} message{summary.messageCount === 1 ? '' : 's'}.
@@ -217,20 +235,26 @@ export function CopyTranscriptButton({
       <button
         ref={triggerRef}
         type="button"
-        className={`composer-copy-transcript-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}${copied ? ' is-copied' : ''}`}
+        className={`composer-copy-transcript-button composer-hint-pill composer-hint-pill--left${open ? ' is-open' : ''}${copiedFormat ? ' is-copied' : ''}`}
         data-hint-label="Copy transcript"
         onClick={() => {
           if (disabled) return
           if (open) closePopover(false)
           else openPopover()
         }}
-        aria-label={copied ? 'Copied transcript as Markdown' : 'Copy transcript as Markdown'}
+        aria-label={
+          copiedFormat === 'messages'
+            ? 'Copied messages'
+            : copiedFormat === 'handoff'
+              ? 'Copied transcript as Markdown'
+              : 'Copy transcript as Markdown'
+        }
         aria-haspopup="dialog"
         aria-expanded={open}
         disabled={disabled}
       >
         <CopyResponseIcon />
-        {copied && (
+        {copiedFormat && (
           <span className="composer-copy-transcript-check" aria-hidden="true">
             ✓
           </span>

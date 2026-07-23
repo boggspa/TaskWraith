@@ -14,6 +14,13 @@ export interface TranscriptMarkdownExportResult {
   omissions: string[]
 }
 
+/** A raw conversation export with no generated Markdown or transcript metadata. */
+export interface TranscriptMessageTextExportResult {
+  text: string
+  messageCount: number
+  charCount: number
+}
+
 export interface TranscriptMarkdownExportOptions {
   copiedAt?: string
   workspace?: WorkspaceRecord | null
@@ -22,6 +29,21 @@ export interface TranscriptMarkdownExportOptions {
 
 function exportableTranscriptMessages(chat: ChatRecord): ChatMessage[] {
   return (chat.messages || []).filter((message) => !isRetiredExternalChannelInboundMessage(message))
+}
+
+/**
+ * The message-only clipboard action is deliberately narrower than the handoff
+ * export: it copies visible conversation prose, not system/tool rows or the
+ * synthetic rows that carry orchestration metadata.
+ */
+function messageOnlyTranscriptMessages(chat: ChatRecord): ChatMessage[] {
+  return exportableTranscriptMessages(chat).filter(
+    (message) =>
+      (message.role === 'user' || message.role === 'assistant') &&
+      message.metadata?.kind !== 'subThreadReturn' &&
+      message.metadata?.kind !== 'subThreadDelegation' &&
+      message.metadata?.kind !== 'taskWraithCloseout'
+  )
 }
 
 export function estimateChatMarkdownTranscriptChars(chat: ChatRecord): number {
@@ -34,6 +56,13 @@ export function estimateChatMarkdownTranscriptChars(chat: ChatRecord): number {
     }, 0)
     return total + (message.content?.length || 0) + activityCost + attachmentCost + 260
   }, 700)
+}
+
+export function estimateChatMessageTranscriptChars(chat: ChatRecord): number {
+  const contents = messageOnlyTranscriptMessages(chat)
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+  return contents.join('\n\n').length
 }
 
 const SECRET_PATTERNS: Array<[RegExp, string]> = [
@@ -353,5 +382,22 @@ export function buildChatMarkdownTranscript(
     messageCount: messages.length,
     charCount: markdown.length,
     omissions: [...omissions].sort()
+  }
+}
+
+/**
+ * Copy the raw text of conversation messages only. Unlike the handoff export,
+ * this deliberately adds no speaker labels, timestamps, Markdown fences,
+ * attachment names, tool summaries, or metadata-derived annotations.
+ */
+export function buildChatMessageTranscript(chat: ChatRecord): TranscriptMessageTextExportResult {
+  const contents = messageOnlyTranscriptMessages(chat)
+    .map((message) => message.content.trim())
+    .filter(Boolean)
+  const text = contents.join('\n\n')
+  return {
+    text,
+    messageCount: contents.length,
+    charCount: text.length
   }
 }

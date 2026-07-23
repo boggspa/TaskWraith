@@ -1,6 +1,7 @@
 import { type IpcMainInvokeEvent, type WebContents, ipcMain } from 'electron'
 import type { ChatRecord, WorkspaceRecord } from '../store/types'
 import type {
+  TranscriptMessageTextExportResult,
   TranscriptMarkdownExportOptions,
   TranscriptMarkdownExportResult
 } from '../TranscriptMarkdownExport'
@@ -30,6 +31,8 @@ type CopyChatMarkdownTranscriptResult =
   | CopyChatMarkdownTranscriptTooLarge
   | CopyChatMarkdownTranscriptSuccess
 
+type CopyChatMessageTranscriptResult = CopyChatMarkdownTranscriptResult
+
 export interface SidebarHandlersDeps {
   fromWebContents: (webContents: WebContents) => { isDestroyed: () => boolean } | null
   getWorkspaces: () => WorkspaceRecord[]
@@ -44,6 +47,8 @@ export interface SidebarHandlersDeps {
     options: TranscriptMarkdownExportOptions
   ) => TranscriptMarkdownExportResult
   estimateChatMarkdownTranscriptChars: (chat: ChatRecord) => number
+  buildChatMessageTranscript: (chat: ChatRecord) => TranscriptMessageTextExportResult
+  estimateChatMessageTranscriptChars: (chat: ChatRecord) => number
   assertSafeChatId: (chatIdRaw: unknown, label: string) => string
   assertSenderWorkspaceScope: (event: IpcMainInvokeEvent, workspacePath: string) => void
   assertSenderChatScope: (event: IpcMainInvokeEvent, chatId: string) => void
@@ -229,6 +234,49 @@ export function registerSidebarHandlers(deps: SidebarHandlersDeps): void {
         messageCount: result.messageCount,
         charCount: result.charCount,
         omissions: result.omissions
+      }
+    }
+  )
+
+  ipcMain.handle(
+    'copy-chat-messages',
+    async (event, chatId: string): Promise<CopyChatMessageTranscriptResult> => {
+      if (!isAuthorizedSender(deps, event.sender)) {
+        return { ok: false, reason: 'unauthorized' }
+      }
+      deps.assertSafeChatId(chatId, 'copy-chat-messages chatId')
+      deps.assertSenderChatScope(event, chatId)
+      const chat = deps.getChat(chatId)
+      if (!chat) return { ok: false, reason: 'not-found' }
+      if (chat.archived) return { ok: false, reason: 'archived' }
+      if (!chat.messages?.length) return { ok: false, reason: 'empty' }
+      const estimatedCharCount = deps.estimateChatMessageTranscriptChars(chat)
+      if (estimatedCharCount > 2_000_000) {
+        return {
+          ok: false,
+          reason: 'too-large',
+          messageCount: chat.messages.length,
+          charCount: estimatedCharCount,
+          omissions: ['messages too large for clipboard copy']
+        }
+      }
+      const result = deps.buildChatMessageTranscript(chat)
+      if (!result.text.trim()) return { ok: false, reason: 'empty' }
+      if (result.charCount > 2_000_000) {
+        return {
+          ok: false,
+          reason: 'too-large',
+          messageCount: result.messageCount,
+          charCount: result.charCount,
+          omissions: ['messages too large for clipboard copy']
+        }
+      }
+      deps.writeClipboardText(result.text, 'clipboard')
+      return {
+        ok: true,
+        messageCount: result.messageCount,
+        charCount: result.charCount,
+        omissions: []
       }
     }
   )

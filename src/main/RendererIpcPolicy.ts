@@ -34,6 +34,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'compact-provider-context',
   'compose-run',
   'composer-audio:transcribe',
+  'copy-chat-messages',
   'compute-run-diff',
   'copy-chat-markdown-transcript',
   'create-chat',

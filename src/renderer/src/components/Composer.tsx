@@ -5104,6 +5104,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 	                  resetKey={currentChat?.appChatId || null}
 	                  composerStyle={appearance.composerStyle}
 	                  onCopy={handleCopyCurrentTranscript}
+	                  onCopyMessages={() =>
+	                    currentChat?.appChatId
+	                      ? window.api.copyChatMessages(currentChat.appChatId)
+	                      : Promise.resolve({ ok: false as const, reason: 'empty' as const })
+	                  }
 	                />
 	                <MultiviewLayoutPicker
 	                  layout={multiview.layout}

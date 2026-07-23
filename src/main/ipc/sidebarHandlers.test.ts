@@ -62,6 +62,13 @@ function createDeps() {
       omissions: []
     })
   )
+  const buildChatMessageTranscript = vi.fn<SidebarHandlersDeps['buildChatMessageTranscript']>(
+    () => ({
+      text: 'hello',
+      messageCount: 1,
+      charCount: 5
+    })
+  )
   return {
     fromWebContents,
     getWorkspaces: vi.fn<SidebarHandlersDeps['getWorkspaces']>(() => [workspace]),
@@ -80,6 +87,9 @@ function createDeps() {
     buildChatMarkdownTranscript,
     estimateChatMarkdownTranscriptChars:
       vi.fn<SidebarHandlersDeps['estimateChatMarkdownTranscriptChars']>(() => 100),
+    buildChatMessageTranscript,
+    estimateChatMessageTranscriptChars:
+      vi.fn<SidebarHandlersDeps['estimateChatMessageTranscriptChars']>(() => 5),
     assertSafeChatId: vi.fn<SidebarHandlersDeps['assertSafeChatId']>((chatId) => String(chatId)),
     assertSenderWorkspaceScope: vi.fn<SidebarHandlersDeps['assertSenderWorkspaceScope']>(),
     assertSenderChatScope: vi.fn<SidebarHandlersDeps['assertSenderChatScope']>(),
@@ -97,6 +107,7 @@ describe('registerSidebarHandlers', () => {
     expect(handlerFor('sidebar:copy-chat-working-directory')).toBeTypeOf('function')
     expect(handlerFor('sidebar:copy-chat-transcript-path')).toBeTypeOf('function')
     expect(handlerFor('copy-chat-markdown-transcript')).toBeTypeOf('function')
+    expect(handlerFor('copy-chat-messages')).toBeTypeOf('function')
   })
 
   it('rejects unauthorized sidebar actions', () => {
@@ -228,6 +239,31 @@ describe('registerSidebarHandlers', () => {
       }
     )
     expect(deps.writeClipboardText).toHaveBeenCalledWith('# Chat', 'clipboard')
+  })
+
+  it('copies only raw message text through the dedicated export helper', async () => {
+    const deps = createDeps()
+    deps.buildChatMessageTranscript.mockReturnValue({
+      text: 'User request\n\nAssistant response',
+      messageCount: 2,
+      charCount: 32
+    })
+    registerSidebarHandlers(deps)
+
+    await expect(handlerFor('copy-chat-messages')({ sender: {} }, 'chat-1')).resolves.toEqual({
+      ok: true,
+      messageCount: 2,
+      charCount: 32,
+      omissions: []
+    })
+    expect(deps.buildChatMessageTranscript).toHaveBeenCalledWith(
+      expect.objectContaining({ id: 'chat-1' })
+    )
+    expect(deps.buildChatMarkdownTranscript).not.toHaveBeenCalled()
+    expect(deps.writeClipboardText).toHaveBeenCalledWith(
+      'User request\n\nAssistant response',
+      'clipboard'
+    )
   })
 
   it('returns too-large after export when markdown output crosses the clipboard limit', async () => {

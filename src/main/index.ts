@@ -718,7 +718,9 @@ import { reapAbandonedChats } from './AbandonedChatReaper'
 import { DEFAULT_STALL_BACKSTOP_MS } from './WorkflowStallReconciler'
 import { assertSafeChatId } from './ChatPath'
 import {
+  buildChatMessageTranscript,
   buildChatMarkdownTranscript,
+  estimateChatMessageTranscriptChars,
   estimateChatMarkdownTranscriptChars
 } from './TranscriptMarkdownExport'
 import {
@@ -41121,6 +41123,8 @@ if (isGeminiMcpBridgeProcess) {
       writeClipboardText: (text, type) => clipboard.writeText(text, type),
       buildChatMarkdownTranscript,
       estimateChatMarkdownTranscriptChars,
+      buildChatMessageTranscript,
+      estimateChatMessageTranscriptChars,
       assertSafeChatId,
       assertSenderWorkspaceScope: (event, workspacePath) =>
         assertRendererFilesystemScope(event, {
