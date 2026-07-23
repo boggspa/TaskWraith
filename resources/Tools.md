@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 159 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 160 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -785,6 +785,15 @@ In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool v
 - Required args: prompt
 - Optional args: targets, reason, mode, targetStage, writeScopes
 - Example: `{"taskwraith_tool":{"name":"ensemble_fanout","arguments":{"prompt":"text"}}}`
+
+## ensemble_fanout_all
+
+In Ensemble Mode, the configured Boss (or Captain while the Boss is unavailable) fans out EVERY tagged participant concurrently — omit targets to dispatch all enabled, idle peers. Unlike ensemble_fanout, this ignores the round fan-out policy, stage filters, and per-seat permission eligibility: each lane runs under that participant’s OWN normal-turn permissions (writer seats stay writers, read-only seats stay read-only), exactly as their serial rotation turn would. It never elevates any seat beyond its configured posture, never widens a user-targeted (composer-directed) round, and still counts against the Boss fan-out budget. Concurrent write-capable lanes share the workspace — prefer disjoint work items per lane. Returns a dispatch receipt immediately; lane results appear later in the transcript.
+
+- Access: governed by your run permission role
+- Required args: prompt
+- Optional args: targets, reason
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"ensemble_fanout_all","arguments":{"prompt":"text"}}}}`
 
 ## ensemble_bossman_control
 

@@ -33,7 +33,7 @@ describe('Codex composer light chrome', () => {
     const section = readCodexLightSection()
 
     expect(section).toContain(
-      '.composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row))'
+      '.composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))'
     )
     expect(section).toContain('.composer-workspace-above-row,')
     expect(section).toContain('.ensemble-above-row,')
