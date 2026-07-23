@@ -2222,8 +2222,16 @@ function ParticipantChip({
       // popover root is `.ensemble-above-overflow` regardless of
       // which chip anchored it, and that selector is collision-free
       // with everything else in the strip.
+      //
+      // The brief's textarea context menu (`.composer-textarea-context-menu`)
+      // is portaled to <body> the same way and is likewise a React
+      // descendant of this chip, so its pointerdowns bubble here too.
+      // Without covering it, clicking any menu row (spelling fix, Cut/
+      // Copy/Paste, Select All) reads as that second-tap and toggles
+      // the popover shut before the menu action runs — leaving every
+      // context-menu option inert.
       const target = event.target as HTMLElement | null
-      if (target?.closest('.ensemble-above-overflow')) return
+      if (target?.closest('.ensemble-above-overflow, .composer-textarea-context-menu')) return
       // A press means the user is selecting/dragging — the hover
       // tooltip (pending or shown) would just get in the way.
       dismissTooltip()
