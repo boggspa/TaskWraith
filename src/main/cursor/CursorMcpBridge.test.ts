@@ -191,6 +191,30 @@ describe('B-mode global broker helpers', () => {
     expect(entry[CURSOR_LEGACY_WEB_MCP_SERVER_NAME]).toBeUndefined()
   })
 
+  it('does not persist per-run route fields in the shared global broker entry', () => {
+    const entry = buildCursorBrokerMcpServerEntry({
+      ...invocation,
+      env: {
+        TASKWRAITH_GEMINI_MCP_BRIDGE: '1',
+        TASKWRAITH_PARENT_PROVIDER: 'cursor',
+        TASKWRAITH_RUN_ID: 'cursor-run-a',
+        TASKWRAITH_CHAT_ID: 'chat-a',
+        TASKWRAITH_WORKSPACE_PATH: '/workspace-a',
+        TASKWRAITH_RUNTIME_PROFILE_ID: 'profile-a',
+        TASKWRAITH_MCP_AUDIT: '1'
+      }
+    })
+    const server = entry[CURSOR_MCP_SERVER_NAME] as { env?: Record<string, string> }
+
+    // These values are inherited from each cursor-agent process when it
+    // launches its own stdio broker child. Storing them globally would make a
+    // concurrent seat's route replace this one before its tool call.
+    expect(server.env).toEqual({
+      TASKWRAITH_GEMINI_MCP_BRIDGE: '1',
+      TASKWRAITH_PARENT_PROVIDER: 'cursor'
+    })
+  })
+
   it('mergeGlobalCursorMcpServers PRESERVES the user\'s own servers and only adds broker keys', () => {
     const existing = {
       mcpServers: {

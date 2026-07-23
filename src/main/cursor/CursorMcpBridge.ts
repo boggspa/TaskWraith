@@ -43,6 +43,20 @@ export const CURSOR_MCP_SERVER_NAME = 'taskwraith-broker'
  *  read-only and write brokers from colliding in the workspace config. */
 export const CURSOR_SCOPED_MCP_SERVER_NAME = 'taskwraith-cursor'
 
+/**
+ * Route fields belong to the launched `cursor-agent` process, not its shared
+ * global MCP registration. Cursor inherits those fields when it spawns the
+ * broker stdio child. Persisting any of them in `~/.cursor/mcp.json` would let
+ * a later Cursor launch overwrite the identity used by an already-live seat.
+ */
+const CURSOR_GLOBAL_BROKER_INHERITED_ROUTE_ENV = new Set([
+  'TASKWRAITH_RUN_ID',
+  'TASKWRAITH_CHAT_ID',
+  'TASKWRAITH_WORKSPACE_PATH',
+  'TASKWRAITH_RUNTIME_PROFILE_ID',
+  'TASKWRAITH_MCP_AUDIT'
+])
+
 export const CURSOR_GATEWAY_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS
 
 export const CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES = GATEWAY_MCP_ADVERTISE_TOOLS.filter(
@@ -347,11 +361,23 @@ export function buildCursorReadOnlyMcpServerEntry(
 export function buildCursorBrokerMcpServerEntry(
   invocation: CursorMcpServerInvocation
 ): Record<string, unknown> {
+  // The global registration is shared by every Cursor process. Keep bridge
+  // activation and other static settings, but deliberately omit per-run route
+  // fields so each stdio child inherits its own cursor-agent parent's route.
+  const inheritedRouteFilteredEnv = invocation.env
+    ? Object.fromEntries(
+        Object.entries(invocation.env).filter(
+          ([name]) => !CURSOR_GLOBAL_BROKER_INHERITED_ROUTE_ENV.has(name)
+        )
+      )
+    : undefined
   return {
     [CURSOR_MCP_SERVER_NAME]: {
       command: invocation.command,
       args: [...invocation.args],
-      ...(invocation.env ? { env: invocation.env } : {})
+      ...(inheritedRouteFilteredEnv && Object.keys(inheritedRouteFilteredEnv).length > 0
+        ? { env: inheritedRouteFilteredEnv }
+        : {})
     }
   }
 }

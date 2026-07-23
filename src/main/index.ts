@@ -17418,21 +17418,22 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
         }),
         env: {
           [GEMINI_MCP_BRIDGE_ENV]: '1',
-          TASKWRAITH_PARENT_PROVIDER: 'cursor',
-          TASKWRAITH_RUN_ID: route.appRunId || '',
-          TASKWRAITH_CHAT_ID: route.appChatId || '',
-          TASKWRAITH_WORKSPACE_PATH: payload.scope === 'global' ? '' : payload.workspace || ''
+          // The global server entry must never own a specific run's route.
+          // Cursor passes its per-run launch environment through to the stdio
+          // MCP child, so that child inherits the exact run/chat/workspace
+          // identity from runCliProviderProcess. Only static bridge activation
+          // belongs in the shared registry.
+          TASKWRAITH_PARENT_PROVIDER: 'cursor'
         }
       }
       // Global registration is the only one cursor-agent durably approves;
-      // refreshed each launch (repair-on-stale — the socket token rotates).
+      // refreshed when the app's broker endpoint/token changes.
       // The legacy scoped read-only name is removed so Cursor never aggregates
       // two TaskWraith tool catalogues.
-      // NOTE: the registration env carries THIS run's routing identity; two
-      // Cursor seats launching in the same second can overwrite each other's
-      // entry before their agent processes read it. Ensemble writer seats are
-      // serial today; parallel read-only Cursor lanes are a known residual
-      // race (pre-existing in the 80b2017d4 design).
+      // Route identity is intentionally absent from this global entry. Each
+      // Cursor child inherits its own TASKWRAITH_RUN_ID/CHAT_ID/WORKSPACE_PATH
+      // from the provider launch environment, so concurrent Cursor seats
+      // cannot overwrite one another's broker route in ~/.cursor/mcp.json.
       ensureGlobalCursorBrokerRegistered(
         fsSync,
         globalCursorMcpPath(),
