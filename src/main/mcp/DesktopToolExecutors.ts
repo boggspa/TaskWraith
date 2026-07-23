@@ -78,7 +78,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity'
 ])
 export type McpToolContentBlock =
   | { type: 'text'; text: string }

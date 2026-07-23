@@ -287,6 +287,14 @@ describe('IpcValidation', () => {
     ).not.toThrow()
   })
 
+  it('accepts antigravity structurally at IPC before downstream live admission', () => {
+    expect(() =>
+      validateIpcArgs('run-agent', [
+        { provider: 'antigravity', workspace: '/tmp/workspace', prompt: 'hello' }
+      ])
+    ).not.toThrow()
+  })
+
   it('accepts provider CLI upgrade terminal requests for CLI-backed providers', () => {
     for (const provider of ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor']) {
       expect(() => validateIpcArgs('provider:open-upgrade-terminal', [provider])).not.toThrow()

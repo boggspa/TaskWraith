@@ -34,7 +34,16 @@ type ArgSpec =
 
 // Structural IPC/decode allowlist only. Live run/authority admission is enforced
 // downstream by the canonical selectable-provider contract.
-const PROVIDERS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDERS = new Set([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+])
 const APPROVAL_ACTIONS = new Set([
   'accept',
   'acceptForSession',

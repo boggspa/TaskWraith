@@ -578,7 +578,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the

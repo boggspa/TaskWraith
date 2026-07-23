@@ -48,7 +48,16 @@ import {
 
 // Known ids for historical decode. New chat lifecycles use the shared live
 // admission predicate through `assertLiveProviderId` below.
-const PROVIDER_IDS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+])
 
 export interface CreateSubThreadInput {
   parentChatId: string

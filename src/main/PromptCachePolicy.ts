@@ -10,7 +10,16 @@ import type {
 } from './store/types'
 import { isRetiredProvider } from '../shared/retiredProviders'
 
-const PROVIDERS: ProviderId[] = ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'gemini']
+const PROVIDERS: ProviderId[] = [
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'gemini',
+  'antigravity'
+]
 const PROMPT_CACHE_MODES = new Set<PromptCacheMode>(['off', 'auto', 'explicit'])
 export const DEFAULT_PROMPT_CACHE_SETTINGS: Required<Pick<PromptCacheSettings, 'enabled'>> &
   PromptCacheSettings = {
@@ -22,7 +31,8 @@ export const DEFAULT_PROMPT_CACHE_SETTINGS: Required<Pick<PromptCacheSettings, '
     grok: { mode: 'off' },
     cursor: { mode: 'off' },
     ollama: { mode: 'off' },
-    gemini: { mode: 'off' }
+    gemini: { mode: 'off' },
+    antigravity: { mode: 'off' }
   }
 }
 

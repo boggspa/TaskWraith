@@ -140,7 +140,16 @@ const WORKFLOW_EXECUTION_STATUSES = new Set([
   'cancelled',
   'skipped'
 ])
-const PROVIDER_IDS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+])
 const PERMISSION_PRESET_IDS = new Set([
   'read_only',
   'plan',

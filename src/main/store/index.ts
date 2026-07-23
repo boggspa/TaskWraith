@@ -658,7 +658,16 @@ const MEMORY_PROPOSAL_PACK_HISTORY_LIMIT = 200
 // Structural provider ids seed default-profile records for persistence and
 // historical configuration compatibility. A stored Cursor profile is not run
 // admission; the no-spawn gate remains unconditional.
-const providerIds: ProviderId[] = ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
+const providerIds: ProviderId[] = [
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+]
 const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
 const TASKWRAITH_DEFAULT_FONT_STACK =

@@ -72,7 +72,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity'
 ])
 
 export interface ComposerImageAttachment {

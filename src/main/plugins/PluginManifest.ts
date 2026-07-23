@@ -86,7 +86,16 @@ export const TASKWRAITH_PLUGIN_FORBIDDEN_MANIFEST_KEYS = new Set([
 const MAX_PLUGIN_STRING_LENGTH = 4096
 const MAX_PLUGIN_ARRAY_LENGTH = 64
 const MAX_PLUGIN_OBJECT_KEYS = 64
-const PROVIDER_IDS = new Set(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDER_IDS = new Set([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+])
 const AGENTIC_SERVICE_IDS = new Set([
   'shellCommands',
   'fileChanges',

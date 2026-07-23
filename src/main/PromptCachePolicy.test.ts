@@ -33,7 +33,8 @@ describe('PromptCachePolicy', () => {
         grok: { mode: 'off' },
         cursor: { mode: 'off' },
         ollama: { mode: 'off' },
-        gemini: { mode: 'off' }
+        gemini: { mode: 'off' },
+        antigravity: { mode: 'off' }
       }
     })
   })

@@ -39,7 +39,16 @@ const MAP_PROVENANCE_SOURCES = new Set<CapabilityMapProvenance['source']>([
   'system'
 ])
 
-const PROVIDERS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDERS = new Set<ProviderId>([
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity'
+])
 
 const CONVENTION_ENTRY_KINDS = new Set<RepoConventionIndexEntryKind>([
   'component_family',
