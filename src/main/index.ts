@@ -566,6 +566,7 @@ import {
 } from './channels/DiscordContextService'
 import { resolveDiscordContextConfig } from './channels/DiscordContextConfig'
 import { EnsembleOrchestrator, type ParticipantProbeResult } from './services/EnsembleOrchestrator'
+import { cursorTransportLivenessFromRunSession } from './services/EnsembleCursorCompletionWatchdog'
 import {
   ensembleDmTargetResolutionError,
   resolveEnsembleDmTargetForDispatch
@@ -42421,6 +42422,12 @@ if (isGeminiMcpBridgeProcess) {
       shouldPersistProviderSessionForRun,
       releaseProviderSessionPersistenceDecision,
       cancelRun: (provider, runId) => providerAdapters.require(provider).cancel(runId),
+      getProviderRunTransportLiveness: (runId) =>
+        cursorTransportLivenessFromRunSession(runManager.get(runId)),
+      hasPendingProviderRunApprovals: (runId) => {
+        const session = runManager.get(runId)
+        return Boolean(session && session.approvalIds.size > 0)
+      },
       terminateRunForHistory: (provider, runId) =>
         terminateProviderRunForHistory(provider, runId),
       createRunId: createFallbackRunId,

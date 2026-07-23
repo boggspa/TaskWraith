@@ -179,6 +179,10 @@ import { isPreviewRiskModel } from '../../shared/previewModelCatalog'
 import type { NormalizedProviderUsageSnapshot } from '../ProviderQuotaSnapshots'
 import { summarizeProviderUsage, type ProviderUsageSummary } from '../ProviderUsageStatus'
 import {
+  EnsembleCursorCompletionWatchdog,
+  type CursorTransportLiveness
+} from './EnsembleCursorCompletionWatchdog'
+import {
   ASSIGNABLE_PERMISSION_PRESETS,
   claudeRosterSessionRelinkError,
   evaluateRosterEdit,
@@ -368,6 +372,14 @@ export interface EnsembleOrchestratorDeps {
   shouldPersistProviderSessionForRun?: (runId: string) => boolean
   releaseProviderSessionPersistenceDecision?: (runId: string) => void
   cancelRun: (provider: ProviderId, runId?: string) => Promise<boolean>
+  /**
+   * Cursor Path-B can terminate its child without delivering the canonical
+   * provider `result` event. The orchestrator uses this exact transport
+   * liveness probe to bound that missing-terminal gap without timing out a
+   * known-live model or approval wait.
+   */
+  getProviderRunTransportLiveness?: (runId: string) => CursorTransportLiveness
+  hasPendingProviderRunApprovals?: (runId: string) => boolean
   /**
    * Destructive-history stop receipt. Unlike ordinary UI cancellation, this
    * must join the exact adapter/transport cleanup before resolving true.
@@ -2914,6 +2926,7 @@ interface ActiveRoundRuntime {
 export class EnsembleOrchestrator {
   private roundsByChatId = new Map<string, ActiveRoundRuntime>()
   private runsByRunId = new Map<string, ActiveParticipantRun>()
+  private readonly cursorCompletionWatchdog = new EnsembleCursorCompletionWatchdog()
   /** Last emitted monotonic usage value per active seat. Keeps the renderer
    * animation smooth without putting a timer or write loop in main. */
   private participantWorkingTelemetryByRunId = new Map<
@@ -2950,6 +2963,50 @@ export class EnsembleOrchestrator {
   private pendingSeatOverflowEvidence = new Map<string, PendingSeatOverflowEvidence>()
 
   constructor(private deps: EnsembleOrchestratorDeps) {}
+
+  private startCursorCompletionWatchdog(run: ActiveParticipantRun): void {
+    // The live main wiring supplies an exact RunManager child-liveness probe.
+    // Keep test/legacy embedders that do not own provider transports on the
+    // pre-watchdog path rather than guessing that an unobservable run died.
+    if (run.participant.provider !== 'cursor' || !this.deps.getProviderRunTransportLiveness) {
+      return
+    }
+    this.cursorCompletionWatchdog.start({
+      runId: run.runId,
+      now: this.deps.now,
+      hasActiveToolOrApproval: () =>
+        Boolean(
+          this.deps.hasPendingProviderRunApprovals?.(run.runId) ||
+            run.toolActivities?.some(
+              (activity) => activity.status === 'pending' || activity.status === 'running'
+            )
+        ),
+      transportLiveness: () =>
+        this.deps.getProviderRunTransportLiveness?.(run.runId) || 'unknown',
+      isActive: () => {
+        const current = this.runsByRunId.get(run.runId)
+        return current === run && !run.terminalFinalized
+      },
+      onMissingTerminal: (reason) => {
+        // Release the serial completion promise first. The exact provider
+        // cancellation is best-effort cleanup and must never strand rotation
+        // behind a provider that already stopped publishing lifecycle events.
+        if (this.runsByRunId.get(run.runId) !== run || run.terminalFinalized) return
+        const message = `Cursor turn recovered after missing terminal result: ${reason}`
+        this.appendRoundStatus(run.chatId, run.roundId, message)
+        this.finalizeRun(run, 'failed', message)
+        void this.requestExactRunCancellation(run).catch(() => undefined)
+      }
+    })
+  }
+
+  private touchCursorCompletionWatchdog(run: ActiveParticipantRun): void {
+    if (run.participant.provider === 'cursor') this.cursorCompletionWatchdog.touch(run.runId)
+  }
+
+  private stopCursorCompletionWatchdog(run: ActiveParticipantRun): void {
+    if (run.participant.provider === 'cursor') this.cursorCompletionWatchdog.stop(run.runId)
+  }
 
   private trackRoundActivity(runtime: ActiveRoundRuntime, activity: Promise<void>): Promise<void> {
     const activities = runtime.roundActivities ?? new Set<Promise<void>>()
@@ -3014,6 +3071,7 @@ export class EnsembleOrchestrator {
    * reusable here.
    */
   private terminallyReleaseRunForHistory(run: ActiveParticipantRun, reason: string): void {
+    this.stopCursorCompletionWatchdog(run)
     if (run.flushTimer) {
       clearTimeout(run.flushTimer)
       run.flushTimer = undefined
@@ -10803,6 +10861,7 @@ export class EnsembleOrchestrator {
     if (!run) return false
     if (source?.provider && run.participant.provider !== source.provider) return false
     if (source?.chatId && run.chatId !== source.chatId) return false
+    this.touchCursorCompletionWatchdog(run)
 
     const previous = this.participantWorkingTelemetryByRunId.get(runId)
     const inputTokens = Math.max(
@@ -10912,6 +10971,7 @@ export class EnsembleOrchestrator {
     const run = this.actionableRunForTool(runId)
     if (!run || run.participant.provider !== provider) return false
     if (routed.appChatId && routed.appChatId !== run.chatId) return false
+    this.touchCursorCompletionWatchdog(run)
 
     const sessionId = extractProviderSessionId(payload)
     if (sessionId) run.providerSessionId = sessionId
@@ -12213,6 +12273,7 @@ export class EnsembleOrchestrator {
         this.finalizeRun(run, 'failed', note)
       } else {
         dispatchAttempts += 1
+        this.startCursorCompletionWatchdog(run)
         // Review F2c — record the shell stamp only once the provider
         // actually RECEIVED this prompt. Stamping before dispatch let a
         // spawn/preflight failure persist a stamp for a shell the session
@@ -13673,6 +13734,7 @@ export class EnsembleOrchestrator {
 
           acceptedLaneRuns.push(run)
           options.acceptedRuns?.push(run)
+          this.startCursorCompletionWatchdog(run)
           // Candidate only after the adapter confirms it accepted the
           // prompt. flushRun persists it only after an eligible terminal
           // response, matching the serial dispatch contract.
@@ -14422,6 +14484,7 @@ export class EnsembleOrchestrator {
     status: EnsembleParticipantStatus,
     reason?: string
   ): void {
+    this.stopCursorCompletionWatchdog(run)
     const suppressOwnedFanout =
       (status === 'cancelled' || status === 'skipped') && this.hasOwnedFanoutWork(run)
     if (suppressOwnedFanout) {
