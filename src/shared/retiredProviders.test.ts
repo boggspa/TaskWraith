@@ -5,7 +5,9 @@ import {
   coerceLiveProvider,
   isLiveSelectableProvider,
   LIVE_SELECTABLE_PROVIDER_IDS,
-  isRetiredProvider
+  isRetiredProvider,
+  ANTIGRAVITY_PROVIDER_ID,
+  isAntigravityOptInEnabled
 } from './retiredProviders'
 
 describe('retiredProviders', () => {
@@ -48,5 +50,46 @@ describe('retiredProviders', () => {
     expect(coerceLiveProvider(null)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider(undefined)).toBe(DEFAULT_PROVIDER)
     expect(coerceLiveProvider('')).toBe(DEFAULT_PROVIDER)
+  })
+})
+
+describe('AntiGravity opt-in gate (isAntigravityOptInEnabled)', () => {
+  it('uses a distinct id that is neither retired nor a static live-selectable', () => {
+    expect(ANTIGRAVITY_PROVIDER_ID).toBe('antigravity')
+    // Not a Gemini revival, and not silently offered before opt-in.
+    expect(isRetiredProvider(ANTIGRAVITY_PROVIDER_ID)).toBe(false)
+    expect(isLiveSelectableProvider(ANTIGRAVITY_PROVIDER_ID)).toBe(false)
+    expect([...LIVE_SELECTABLE_PROVIDER_IDS]).not.toContain('antigravity')
+  })
+
+  it('is CLOSED by default (no settings / empty settings)', () => {
+    expect(isAntigravityOptInEnabled(undefined)).toBe(false)
+    expect(isAntigravityOptInEnabled(null)).toBe(false)
+    expect(isAntigravityOptInEnabled({})).toBe(false)
+  })
+
+  it('stays CLOSED when enabled but consent is not recorded', () => {
+    expect(isAntigravityOptInEnabled({ antigravityEnabled: true })).toBe(false)
+    expect(
+      isAntigravityOptInEnabled({ antigravityEnabled: true, antigravityOptInAcceptedAt: null })
+    ).toBe(false)
+    expect(
+      isAntigravityOptInEnabled({ antigravityEnabled: true, antigravityOptInAcceptedAt: 0 })
+    ).toBe(false)
+  })
+
+  it('stays CLOSED when consent is recorded but the provider is disabled', () => {
+    expect(
+      isAntigravityOptInEnabled({ antigravityEnabled: false, antigravityOptInAcceptedAt: 1_700_000_000_000 })
+    ).toBe(false)
+    expect(
+      isAntigravityOptInEnabled({ antigravityOptInAcceptedAt: 1_700_000_000_000 })
+    ).toBe(false)
+  })
+
+  it('OPENS only when enabled AND consent timestamp is set', () => {
+    expect(
+      isAntigravityOptInEnabled({ antigravityEnabled: true, antigravityOptInAcceptedAt: 1_700_000_000_000 })
+    ).toBe(true)
   })
 })

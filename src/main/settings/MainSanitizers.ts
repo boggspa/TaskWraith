@@ -102,6 +102,8 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'kimiBinaryPath',
   'ollamaBaseUrl',
   'ollamaDefaultModel',
+  'antigravityEnabled',
+  'antigravityOptInAcceptedAt',
   'codexUsageCredential',
   'storeLocalChatHistory',
   'storeRawEvents',
@@ -1799,6 +1801,15 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const cleaned = sanitizeAuditOrchestration(sanitized.auditOrchestration)
       if (cleaned) sanitized.auditOrchestration = cleaned
       else delete sanitized.auditOrchestration
+    }
+    if ('antigravityEnabled' in sanitized) {
+      const value = sanitized.antigravityEnabled
+      sanitized.antigravityEnabled = typeof value === 'boolean' ? value : Boolean(value)
+    }
+    if ('antigravityOptInAcceptedAt' in sanitized) {
+      const value = sanitized.antigravityOptInAcceptedAt
+      sanitized.antigravityOptInAcceptedAt =
+        typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
     }
     return sanitized as Partial<AppSettings>
   }

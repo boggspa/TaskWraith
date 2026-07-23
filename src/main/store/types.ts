@@ -2160,6 +2160,14 @@ export interface AppSettings {
   ollamaDefaultModel?: string
   /** Per-model timestamps (ms) for the one-shot honest capability preflight. */
   ollamaModelPreflightAt?: Record<string, number>
+  /** Opt-in AntiGravity provider (distinct from RETIRED Gemini; never a revival).
+   * DISABLED by default. Becomes offer/run eligible only when this is true AND
+   * `antigravityOptInAcceptedAt` is set — see `isAntigravityOptInEnabled`. */
+  antigravityEnabled?: boolean
+  /** Epoch-ms timestamp the user explicitly accepted the AntiGravity
+   * account/ToS/ban-risk warning. null/absent = no consent recorded. This is a
+   * record of informed opt-in only, NOT a claim of ToS approval or ban-safety. */
+  antigravityOptInAcceptedAt?: number | null
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}

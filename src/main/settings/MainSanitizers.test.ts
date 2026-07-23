@@ -958,6 +958,27 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitizeSettingsPatch({ userBubbleColor: 'green' }).userBubbleColor).toBe('green')
   })
 
+  it('persists+coerces the AntiGravity opt-in fields (SETTINGS_PATCH_KEYS guard)', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    // Boolean coercion, and the consent timestamp survives round-trip.
+    expect(sanitizeSettingsPatch({ antigravityEnabled: true }).antigravityEnabled).toBe(true)
+    expect(sanitizeSettingsPatch({ antigravityEnabled: false }).antigravityEnabled).toBe(false)
+    expect(
+      sanitizeSettingsPatch({ antigravityOptInAcceptedAt: 1_700_000_000_000 })
+        .antigravityOptInAcceptedAt
+    ).toBe(1_700_000_000_000)
+    // A non-positive / non-numeric consent timestamp normalizes to null (no consent).
+    expect(sanitizeSettingsPatch({ antigravityOptInAcceptedAt: 0 }).antigravityOptInAcceptedAt).toBe(
+      null
+    )
+    expect(
+      sanitizeSettingsPatch({
+        antigravityOptInAcceptedAt: 'yes' as unknown as number
+      }).antigravityOptInAcceptedAt
+    ).toBe(null)
+  })
+
   it('accepts a boolean modelUsageExternalUsage and drops non-boolean values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

@@ -73,3 +73,39 @@ export function coerceLiveProvider<T extends string>(
   }
   return DEFAULT_PROVIDER
 }
+
+/** Canonical id for the opt-in AntiGravity provider. Distinct from the RETIRED
+ *  `gemini` id — adding AntiGravity is NOT a Gemini revival. */
+export const ANTIGRAVITY_PROVIDER_ID = 'antigravity' as const
+
+/**
+ * Minimal settings shape the AntiGravity opt-in gate reads. Kept structural so
+ * this node-free module (imported by BOTH main and renderer) never has to pull
+ * in the full `AppSettings` type — same discipline as `coerceLiveProvider`.
+ */
+export interface AntigravityOptInSettingsLike {
+  antigravityEnabled?: boolean | null
+  antigravityOptInAcceptedAt?: number | string | null
+}
+
+/**
+ * True only when the user has BOTH enabled AntiGravity AND recorded explicit
+ * consent to the account/ToS/ban-risk warning (`antigravityOptInAcceptedAt`).
+ * Missing either signal — the default for every existing install — keeps the
+ * provider disabled, hidden, and non-runnable.
+ *
+ * This is a record of the user's informed opt-in ONLY. It asserts nothing about
+ * Google ToS approval or ban-safety; AntiGravity third-party access is expressly
+ * prohibited by the Antigravity Additional Terms and the consent copy (later
+ * slice) must state that. Downstream offer/run gating consumes this predicate;
+ * it never bypasses the retired-provider or configured-provider-snapshot gates.
+ */
+export function isAntigravityOptInEnabled(
+  settings: AntigravityOptInSettingsLike | null | undefined
+): boolean {
+  return (
+    settings != null &&
+    settings.antigravityEnabled === true &&
+    Boolean(settings.antigravityOptInAcceptedAt)
+  )
+}
