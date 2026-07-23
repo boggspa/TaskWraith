@@ -8,7 +8,7 @@ const models = new Map<ProviderId, readonly { id: string; label: string }[]>([
 ])
 
 describe('isAuthenticatedAntigravityConfiguredProvider', () => {
-  it('requires consent, a completed configured snapshot, and a nonempty catalog', () => {
+  it('requires a completed configured snapshot and a nonempty catalog', () => {
     expect(
       isAuthenticatedAntigravityConfiguredProvider(optedIn, {
         ready: true,
@@ -21,7 +21,7 @@ describe('isAuthenticatedAntigravityConfiguredProvider', () => {
         ready: true,
         configuredProviders: new Set(['antigravity'])
       }, models)
-    ).toBe(false)
+    ).toBe(true)
     expect(
       isAuthenticatedAntigravityConfiguredProvider(optedIn, {
         ready: false,

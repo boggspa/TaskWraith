@@ -29,9 +29,9 @@ export interface DetectConfiguredProvidersDependencies {
   getOllamaStatus?: (
     settings: AppSettings
   ) => Promise<{ available: boolean; modelCount: number }>
-  /** Official `agy models` probe; only called after explicit AntiGravity opt-in. */
+  /** Official `agy models` probe; only called after opt-in or API-key admission. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
-  /** Combined authenticated agy + Gemini API catalog; called only after opt-in. */
+  /** Combined authenticated agy + Gemini API catalog; called only after lane admission. */
   getAntigravityCombinedModels?: (settings: AppSettings) => Promise<AntigravityCombinedCatalogModel[]>
   /** Nonsecret key-generation identity used to invalidate a completed catalog. */
   getAntigravityGeminiApiKeyGeneration?: (settings: AppSettings) => string | null
@@ -79,6 +79,16 @@ function configuredStatusIsAuthenticated(status: {
     .trim()
     .toLowerCase()
   return ['oauth', 'api-key', 'authenticated', 'chatgpt', 'not-required'].includes(authState)
+}
+
+function hasConfiguredGeminiApiKey(generation: string | null | undefined): boolean {
+  const normalized = generation?.trim()
+  return Boolean(
+    normalized &&
+      normalized !== 'missing' &&
+      normalized !== 'unconfigured' &&
+      normalized !== 'unavailable'
+  )
 }
 
 function boundedProviderProbe(
@@ -168,7 +178,15 @@ function configuredProviderProbes(
         resolveProviderBinary(provider).then((resolved) => ({ configured: Boolean(resolved.binaryPath) }))
     })
   }
-  if (isAntigravityOptInEnabled(settings)) {
+  let apiKeyConfigured = false
+  try {
+    apiKeyConfigured = hasConfiguredGeminiApiKey(
+      dependencies.getAntigravityGeminiApiKeyGeneration?.(settings)
+    )
+  } catch {
+    apiKeyConfigured = false
+  }
+  if (isAntigravityOptInEnabled(settings) || apiKeyConfigured) {
     const getAntigravityConfiguredModels =
       dependencies.getAntigravityCombinedModels ??
       dependencies.getAntigravityConfiguredModels ??

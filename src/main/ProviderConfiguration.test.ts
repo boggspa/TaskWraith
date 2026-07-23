@@ -263,16 +263,18 @@ describe('configured AntiGravity discovery', () => {
   } as AppSettings
 
   function antigravityDependencies(
-    getAntigravityConfiguredModels: DetectConfiguredProvidersDependencies['getAntigravityConfiguredModels']
+    getAntigravityConfiguredModels: DetectConfiguredProvidersDependencies['getAntigravityConfiguredModels'],
+    getAntigravityGeminiApiKeyGeneration?: DetectConfiguredProvidersDependencies['getAntigravityGeminiApiKeyGeneration']
   ): DetectConfiguredProvidersDependencies {
     return {
       getAntigravityConfiguredModels,
+      getAntigravityGeminiApiKeyGeneration,
       getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
       resolveProviderBinary: async () => ({ binaryPath: null })
     }
   }
 
-  it('never starts the official model probe before explicit consent', async () => {
+  it('never starts the official model probe without opt-in or a configured API key', async () => {
     const getAntigravityConfiguredModels = vi.fn(async () => [
       { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
     ])
@@ -284,6 +286,20 @@ describe('configured AntiGravity discovery', () => {
 
     expect(configured.has('antigravity')).toBe(false)
     expect(getAntigravityConfiguredModels).not.toHaveBeenCalled()
+  })
+
+  it('starts the model probe for a configured API key without opt-in', async () => {
+    const getAntigravityConfiguredModels = vi.fn(async () => [
+      { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
+    ])
+
+    const configured = await detectConfiguredProviders(
+      {} as AppSettings,
+      antigravityDependencies(getAntigravityConfiguredModels, () => 'configured-at-1')
+    )
+
+    expect(configured.has('antigravity')).toBe(true)
+    expect(getAntigravityConfiguredModels).toHaveBeenCalledOnce()
   })
 
   it('requires a nonempty authenticated model result and caches only that result', async () => {

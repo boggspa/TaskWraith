@@ -22,7 +22,9 @@ export interface AntigravityCombinedModelCatalogDependencies {
   readonly discoverGeminiApi?: typeof discoverAuthenticatedAntigravityGeminiApiModels
   readonly getSecretStore: () => Pick<AntigravityGeminiApiSecretStore, 'loadApiKey'> | null
   readonly agyDependencies?: AuthenticatedAgyModelDiscoveryDependencies
-  readonly geminiApiLoadSdk?: Parameters<typeof discoverAuthenticatedAntigravityGeminiApiModels>[1]['loadSdk']
+  readonly geminiApiLoadSdk?: Parameters<
+    typeof discoverAuthenticatedAntigravityGeminiApiModels
+  >[1]['loadSdk']
   readonly timeoutMs?: number
 }
 
@@ -55,42 +57,58 @@ export function isAuthenticatedAgyRateLimitConnection(
  * Independently probes the two authenticated AntiGravity lanes and projects
  * only bounded, nonsecret picker rows. A failed lane never suppresses the
  * other lane and this function never invokes either transport runtime.
+ *
+ * Lane admission is intentionally independent, not a single blanket gate:
+ * the agy lane is admitted only by the ban-risk opt-in (unchanged); the
+ * Gemini API-key lane is admitted by a configured dedicated secret store
+ * alone and does not require opt-in — its own internal Gemini-API data-use
+ * disclosure check still applies inside `discoverGeminiApi`.
  */
 export async function discoverAuthenticatedAntigravityCombinedModels(
   settings:
     | Pick<
         AppSettings,
-        'antigravityEnabled' | 'antigravityOptInAcceptedAt' | 'antigravityGeminiApiDisclosureAcceptedAt'
+        | 'antigravityEnabled'
+        | 'antigravityOptInAcceptedAt'
+        | 'antigravityGeminiApiDisclosureAcceptedAt'
       >
     | null
     | undefined,
   deps: AntigravityCombinedModelCatalogDependencies
 ): Promise<AntigravityCombinedCatalogModel[]> {
-  if (!isAntigravityOptInEnabled(settings)) return []
+  if (!settings) return []
+
+  const agyAdmitted = isAntigravityOptInEnabled(settings)
+  const secretStore = deps.getSecretStore()
+  const apiAdmitted = Boolean(secretStore)
+  if (!agyAdmitted && !apiAdmitted) return []
 
   const timeoutMs =
     Number.isFinite(deps.timeoutMs) && (deps.timeoutMs ?? 0) > 0
       ? Math.floor(deps.timeoutMs!)
       : DEFAULT_LANE_TIMEOUT_MS
-  const discoverAgy = deps.discoverAgy ?? ((value) => discoverAuthenticatedAgyModels(value, deps.agyDependencies))
-  const discoverGeminiApi = deps.discoverGeminiApi ?? discoverAuthenticatedAntigravityGeminiApiModels
+  const discoverAgy =
+    deps.discoverAgy ?? ((value) => discoverAuthenticatedAgyModels(value, deps.agyDependencies))
+  const discoverGeminiApi =
+    deps.discoverGeminiApi ?? discoverAuthenticatedAntigravityGeminiApiModels
 
-  const admittedSettings = settings!
   const [agy, api] = await Promise.all([
-    boundedLane(() => discoverAgy(admittedSettings), timeoutMs),
-    boundedLane(
-      () => {
-        const secretStore = deps.getSecretStore()
-        if (!secretStore) {
-          return Promise.resolve({ status: 'keyUnavailable' as const, models: [] as const })
-        }
-        return discoverGeminiApi(admittedSettings, {
-          secretStore,
-          loadSdk: deps.geminiApiLoadSdk
+    agyAdmitted
+      ? boundedLane(() => discoverAgy(settings), timeoutMs)
+      : Promise.resolve({ status: 'ok' as const, value: [] as AntigravityCombinedCatalogModel[] }),
+    apiAdmitted
+      ? boundedLane(
+          () =>
+            discoverGeminiApi(settings, {
+              secretStore: secretStore!,
+              loadSdk: deps.geminiApiLoadSdk
+            }),
+          timeoutMs
+        )
+      : Promise.resolve({
+          status: 'ok' as const,
+          value: { status: 'keyUnavailable' as const, models: [] as const }
         })
-      },
-      timeoutMs
-    )
   ])
 
   const rows: AntigravityCombinedCatalogModel[] = []
