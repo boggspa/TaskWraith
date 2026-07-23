@@ -4294,6 +4294,13 @@ export class EnsembleOrchestrator {
 
     this.completePendingYieldActivity(run, reason, target)
     this.finalizeRun(run, 'yielded', reason || 'Participant yielded.')
+    // Path-B Cursor has no TaskWraith MCP completion owner. Once its streamed
+    // yield has been accepted (including a routing rejection), release the
+    // round first and then terminate this exact child. Otherwise the logical
+    // run is gone while a silent Cursor process can remain alive as a zombie.
+    if (run.participant.provider === 'cursor') {
+      void this.requestExactRunCancellation(run).catch(() => undefined)
+    }
     return { kind: 'yielded', ...(routing ? { routing } : {}) }
   }
 
@@ -11178,11 +11185,34 @@ export class EnsembleOrchestrator {
       const id = extractToolId(payload)
       const idx = run.toolActivities.findIndex((a) => a.id === id)
       if (idx >= 0) {
+        const activity = run.toolActivities[idx]
         run.toolActivities[idx] = pairEnsembleToolResult(
-          run.toolActivities[idx],
+          activity,
           payload,
           this.deps.nowIso()
         )
+        // Managed Cursor Path-B streams the visible MCP-shaped yield call and
+        // its tool result through provider output, rather than invoking the
+        // TaskWraith MCP dispatcher. Pairing the result alone leaves the
+        // orchestrator waiting forever for a canonical provider `result`.
+        // Treat every completed streamed yield as an explicit terminal turn;
+        // markYielded performs routing and records rejected/ambiguous targets
+        // while still releasing rotation.
+        if (
+          provider === 'cursor' &&
+          !run.terminalFinalized &&
+          stripToolNamespace(activity.toolName) === 'ensemble_yield'
+        ) {
+          const reason = getStringParameter(activity.parameters || {}, ['reason', 'message'])
+          const target = getStringParameter(activity.parameters || {}, [
+            'target',
+            'participant',
+            'to',
+            'next'
+          ])
+          this.markYielded(run.runId, reason || undefined, target || undefined)
+          return true
+        }
       } else {
         // Orphan result — pair with a synthetic activity so the
         // outcome still surfaces. Same pattern as the renderer's

@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from 'vitest'
 import {
+  CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS,
   CURSOR_COMPLETION_WATCHDOG_POLL_MS,
   EnsembleCursorCompletionWatchdog,
   cursorTransportLivenessFromRunSession,
@@ -76,7 +77,7 @@ describe('decideCursorCompletionWatchdog', () => {
     ).toMatchObject({ kind: 'fail', reason: expect.stringContaining('exited') })
   })
 
-  it('never times out a known-live process or a pending tool/approval', () => {
+  it('keeps a known-live process within bounded quiescence and never times out active work', () => {
     expect(decideCursorCompletionWatchdog({ ...base, transportLiveness: 'alive' })).toEqual({
       kind: 'wait',
       delayMs: CURSOR_COMPLETION_WATCHDOG_POLL_MS
@@ -85,6 +86,30 @@ describe('decideCursorCompletionWatchdog', () => {
       decideCursorCompletionWatchdog({
         ...base,
         transportLiveness: 'unknown',
+        hasActiveToolOrApproval: true
+      })
+    ).toEqual({ kind: 'wait', delayMs: CURSOR_COMPLETION_WATCHDOG_POLL_MS })
+  })
+
+  it('fails a known-live but quiescent transport at the explicit safety deadline', () => {
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS,
+        transportLiveness: 'alive'
+      })
+    ).toMatchObject({
+      kind: 'fail',
+      reason: expect.stringContaining('quiescent')
+    })
+  })
+
+  it('keeps an active approval alive beyond the quiescence deadline', () => {
+    expect(
+      decideCursorCompletionWatchdog({
+        ...base,
+        nowMs: CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS + 60_000,
+        transportLiveness: 'alive',
         hasActiveToolOrApproval: true
       })
     ).toEqual({ kind: 'wait', delayMs: CURSOR_COMPLETION_WATCHDOG_POLL_MS })
@@ -103,6 +128,38 @@ describe('decideCursorCompletionWatchdog', () => {
 })
 
 describe('EnsembleCursorCompletionWatchdog', () => {
+  it('bounds an OS-alive silent child after the quiescence window', () => {
+    vi.useFakeTimers()
+    try {
+      let now = 0
+      const onMissingTerminal = vi.fn()
+      const watchdog = new EnsembleCursorCompletionWatchdog()
+      watchdog.start({
+        runId: 'cursor-run',
+        now: () => now,
+        timeoutMs: 30_000,
+        aliveQuiescenceMs: 60_000,
+        pollMs: 1_000,
+        hasActiveToolOrApproval: () => false,
+        transportLiveness: () => 'alive',
+        isActive: () => true,
+        onMissingTerminal
+      })
+
+      now = 30_000
+      vi.advanceTimersByTime(30_000)
+      expect(onMissingTerminal).not.toHaveBeenCalled()
+
+      now = 60_000
+      vi.advanceTimersByTime(1_000)
+      expect(onMissingTerminal).toHaveBeenCalledTimes(1)
+      expect(onMissingTerminal).toHaveBeenCalledWith(expect.stringContaining('quiescent'))
+      expect(watchdog.has('cursor-run')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('resets on activity and invokes terminal recovery exactly once', () => {
     vi.useFakeTimers()
     try {

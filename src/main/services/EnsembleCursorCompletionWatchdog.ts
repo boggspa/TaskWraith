@@ -6,15 +6,17 @@ import { isActiveRunSessionStatus, type RunSession } from '../RunManager'
  * unobservable) without that line, EnsembleOrchestrator's completion promise
  * otherwise has no terminal path and the whole round can wait forever.
  *
- * This module deliberately does not time out a live Cursor process.  A model
- * may legitimately spend a long time reasoning or waiting for a user/tool
- * approval.  The bounded clock applies only while transport liveness is
- * unknown; an exited child is terminal evidence immediately after the grace
- * window.  Active tool/approval work also keeps the watchdog alive.
+ * A known-live Cursor process gets a longer quiescence window than an
+ * unobservable transport. A model may legitimately spend a long time
+ * reasoning, and active tool/approval work keeps the watchdog alive without a
+ * deadline. Once the exact child has been silent beyond the bounded
+ * quiescence window and has no active tool/approval, the run fails closed so
+ * an OS-alive hung process cannot strand the round forever.
  */
 
 export const CURSOR_COMPLETION_WATCHDOG_TIMEOUT_MS = 30_000
 export const CURSOR_COMPLETION_WATCHDOG_POLL_MS = 1_000
+export const CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS = 180_000
 
 export type CursorTransportLiveness = 'alive' | 'exited' | 'unknown'
 
@@ -46,6 +48,7 @@ export function decideCursorCompletionWatchdog(input: {
   readonly transportLiveness: CursorTransportLiveness
   readonly timeoutMs?: number
   readonly pollMs?: number
+  readonly aliveQuiescenceMs?: number
 }): CursorCompletionWatchdogDecision {
   if (!input.active) return { kind: 'stop' }
 
@@ -56,6 +59,11 @@ export function decideCursorCompletionWatchdog(input: {
   }
   if (!Number.isFinite(pollMs) || pollMs <= 0) {
     throw new Error('Cursor completion watchdog poll interval must be positive.')
+  }
+  const aliveQuiescenceMs =
+    input.aliveQuiescenceMs ?? CURSOR_COMPLETION_WATCHDOG_ALIVE_QUIESCENCE_MS
+  if (!Number.isFinite(aliveQuiescenceMs) || aliveQuiescenceMs <= 0) {
+    throw new Error('Cursor completion watchdog alive quiescence must be positive.')
   }
 
   if (input.transportLiveness === 'exited') {
@@ -75,9 +83,23 @@ export function decideCursorCompletionWatchdog(input: {
     return { kind: 'wait', delayMs: Math.min(pollMs, remainingMs) }
   }
 
-  // A known-live child may simply be doing model work. Do not manufacture a
-  // timeout from stream silence while the exact process is still alive.
-  if (input.transportLiveness === 'alive') return { kind: 'wait', delayMs: pollMs }
+  // A known-live child may simply be doing model work. Give it a longer,
+  // explicit quiescence window than an unobservable transport, but do not let
+  // a hung child hold the round forever. Provider output calls `touch`, so
+  // genuine streamed model work continually extends this deadline.
+  if (input.transportLiveness === 'alive') {
+    const aliveRemainingMs = Math.max(
+      0,
+      input.lastActivityAt + aliveQuiescenceMs - input.nowMs
+    )
+    if (aliveRemainingMs > 0) {
+      return { kind: 'wait', delayMs: Math.min(pollMs, aliveRemainingMs) }
+    }
+    return {
+      kind: 'fail',
+      reason: 'Cursor transport remained alive but quiescent without publishing a terminal result.'
+    }
+  }
 
   return {
     kind: 'fail',
@@ -90,6 +112,7 @@ export interface CursorCompletionWatchdogOptions {
   now?: () => number
   timeoutMs?: number
   pollMs?: number
+  aliveQuiescenceMs?: number
   hasActiveToolOrApproval: () => boolean
   transportLiveness: () => CursorTransportLiveness
   isActive: () => boolean
@@ -159,7 +182,8 @@ export class EnsembleCursorCompletionWatchdog {
       hasActiveToolOrApproval: entry.hasActiveToolOrApproval(),
       transportLiveness: entry.transportLiveness(),
       timeoutMs: entry.timeoutMs,
-      pollMs: entry.pollMs
+      pollMs: entry.pollMs,
+      aliveQuiescenceMs: entry.aliveQuiescenceMs
     })
     if (decision.kind === 'stop') {
       this.stop(entry.runId)

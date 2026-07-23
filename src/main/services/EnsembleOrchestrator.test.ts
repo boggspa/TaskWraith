@@ -584,7 +584,7 @@ describe('EnsembleOrchestrator', () => {
         harness.orchestrator.markYielded('stale-cursor-run', 'Please continue later.', 'later')
       ).toEqual({ kind: 'no_active_run' })
 
-      // Model output and a rejected target yield are both non-terminal. The
+      // Model output and a non-yield tool result are both non-terminal. The
       // missing provider `result` must still be bounded independently.
       harness.orchestrator.handleProviderOutput(
         'cursor',
@@ -597,8 +597,8 @@ describe('EnsembleOrchestrator', () => {
         {
           type: 'tool_use',
           tool_id: 'yield-1',
-          tool_name: 'ensemble_yield',
-          parameters: { target: 'later', reason: 'Please continue later.' }
+          tool_name: 'cursor_thinking',
+          parameters: { summary: 'The work is complete.' }
         }
       )
       harness.orchestrator.handleProviderOutput(
@@ -607,7 +607,7 @@ describe('EnsembleOrchestrator', () => {
         {
           type: 'tool_result',
           tool_id: 'yield-1',
-          output: '{"ok":false,"error":"authority_precedence"}'
+          output: 'The work is complete.'
         }
       )
 
@@ -633,6 +633,92 @@ describe('EnsembleOrchestrator', () => {
       expect(harness.chat.messages.some((message) =>
         (message.content || '').includes('missing terminal result')
       )).toBe(true)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('finalizes a streamed Cursor yield and cancels its exact child after routing rejection', async () => {
+    vi.useFakeTimers()
+    try {
+      const harness = makeHarness({
+        now: () => Date.now(),
+        getProviderRunTransportLiveness: () => 'alive'
+      })
+      harness.chat.ensemble!.bossmanParticipantId = 'boss'
+      harness.chat.ensemble!.orchestrationMode = 'continuous'
+      harness.chat.ensemble!.maxContinuationHops = 0
+      harness.chat.ensemble!.participants = [
+        {
+          id: 'cursor',
+          provider: 'cursor',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Work.',
+          order: 1,
+          permissionPresetId: 'workspace_write'
+        },
+        {
+          id: 'boss',
+          provider: 'claude',
+          enabled: true,
+          role: 'Boss',
+          instructions: 'Coordinate.',
+          order: 2,
+          permissionPresetId: 'read_only'
+        },
+        {
+          id: 'later',
+          provider: 'codex',
+          enabled: true,
+          role: 'Worker',
+          instructions: 'Continue.',
+          order: 3,
+          permissionPresetId: 'workspace_write'
+        }
+      ]
+      harness.orchestrator.startRound({
+        chatId: 'ensemble-chat',
+        prompt: 'Reproduce a streamed Cursor yield.',
+        event: { sender: {} as Electron.WebContents }
+      })
+      for (let i = 0; i < 20; i += 1) await Promise.resolve()
+      expect(harness.dispatched).toHaveLength(1)
+
+      const route = {
+        appRunId: harness.dispatched[0].appRunId,
+        appChatId: 'ensemble-chat'
+      }
+      harness.orchestrator.handleProviderOutput('cursor', route, {
+        type: 'tool_use',
+        tool_id: 'yield-stream-1',
+        tool_name: 'mcp_TaskWraith_ensemble_yield',
+        parameters: { target: 'later', reason: 'Please continue later.' }
+      })
+      harness.orchestrator.handleProviderOutput('cursor', route, {
+        type: 'tool_result',
+        tool_id: 'yield-stream-1',
+        output: '{"ok":false,"error":"authority_precedence"}'
+      })
+
+      // The rejected routing result is still a terminal yield for the current
+      // seat. It must release the serial completion without waiting for the
+      // watchdog, and cancellation must target the exact Cursor run.
+      for (let i = 0; i < 30; i += 1) await Promise.resolve()
+      expect(harness.cancelRun).toHaveBeenCalledWith('cursor', harness.dispatched[0].appRunId)
+      expect(harness.dispatched).toHaveLength(2)
+      expect(harness.dispatched[1].provider).toBe('claude')
+      expect(
+        (harness.orchestrator as unknown as {
+          cursorCompletionWatchdog: { has(runId: string): boolean }
+        }).cursorCompletionWatchdog.has(harness.dispatched[0].appRunId || '')
+      ).toBe(false)
+
+      completeDispatchedRun(harness, 1)
+      for (let i = 0; i < 30; i += 1) await Promise.resolve()
+      expect(harness.dispatched).toHaveLength(3)
+      expect(harness.dispatched[2].provider).toBe('codex')
+      completeDispatchedRun(harness, 2)
     } finally {
       vi.useRealTimers()
     }
