@@ -22,6 +22,7 @@ export interface ProviderMetadataHandlersDeps {
   getConfiguredProviderSnapshot: () => {
     ready: boolean
     providerIds: ProviderId[]
+    modelsByProvider?: Partial<Record<ProviderId, Array<{ id: string; label: string }>>>
   }
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
 }

@@ -116,7 +116,11 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
 }
 
 /** User-facing reason used to make historical provider chats read-only. */
-export function providerRunUnavailableReason(provider: ProviderId): string | null {
+export function providerRunUnavailableReason(
+  provider: ProviderId,
+  configuredProviderIds: readonly ProviderId[] = []
+): string | null {
+  if (provider === 'antigravity' && configuredProviderIds.includes('antigravity')) return null
   if (isLiveSelectableProvider(provider)) return null
   return `${getProviderName(provider)} managed runs are unavailable. Switch this chat to a live provider to continue.`
 }
@@ -149,9 +153,14 @@ export function resolveProviderRows(
     'kimi',
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
-    'ollama'
+    'ollama',
+    // This is not a static offer: the id survives only when the strict,
+    // post-connection main-process snapshot contains it.
+    ...(allowedProviders?.has('antigravity') ? (['antigravity'] as ProviderId[]) : [])
   ] as ProviderId[]).filter(
-    (id) => isLiveSelectableProvider(id) && (!allowedProviders || allowedProviders.has(id))
+    (id) =>
+      (isLiveSelectableProvider(id) || id === 'antigravity') &&
+      (!allowedProviders || allowedProviders.has(id))
   )
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)

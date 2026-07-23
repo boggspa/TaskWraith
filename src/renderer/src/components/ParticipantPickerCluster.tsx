@@ -137,10 +137,17 @@ export function buildParticipantPickerProviderGroups(
     pendingFallbackProvider: currentProvider
   }).map((row) => {
     const providerDefaults = getEnsembleModelDefaults(row.id)
+    const modelOptions: CombinedModelPickerModelOption[] =
+      row.id === 'antigravity'
+        ? (configuredProviderSnapshot.modelsByProvider?.antigravity || []).map((model) => ({
+            id: model.id,
+            label: model.label
+          }))
+        : providerDefaults.modelOptions
     return {
       provider: row.id,
       label: row.label,
-      modelOptions: providerDefaults.modelOptions,
+      modelOptions,
       fastModeCapableModelIds: providerDefaults.fastModeCapableModelIds,
       ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
       ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
@@ -174,7 +181,13 @@ export function ParticipantPickerCluster({
   // sub-labels). Avoids a runtime crash without coupling a literal default to
   // the churning AgenticServicesSettings shape.
   const services = agenticServices ?? ({} as AgenticServicesSettings)
-  const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
+  const modelOptions: CombinedModelPickerModelOption[] =
+    participant.provider === 'antigravity'
+      ? (configuredProviderSnapshot.modelsByProvider?.antigravity || []).map((model) => ({
+          id: model.id,
+          label: model.label
+        }))
+      : defaults.modelOptions
   const providerGroups = buildParticipantPickerProviderGroups(
     grokAvailable,
     cursorAvailable,
@@ -187,7 +200,7 @@ export function ParticipantPickerCluster({
   const selectedModelId =
     participant.model && participant.model !== 'cli-default'
       ? participant.model
-      : defaults.defaultModelId
+      : modelOptions[0]?.id || defaults.defaultModelId
 
   const onSelectProviderModel = (provider: ProviderId, model: string): void => {
     onPatch(buildParticipantProviderModelPatch(participant, provider, model))

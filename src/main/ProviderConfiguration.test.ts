@@ -250,3 +250,89 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
     }
   })
 })
+
+describe('configured AntiGravity discovery', () => {
+  const optedInSettings = {
+    antigravityEnabled: true,
+    antigravityOptInAcceptedAt: 1
+  } as AppSettings
+
+  function antigravityDependencies(
+    getAntigravityConfiguredModels: DetectConfiguredProvidersDependencies['getAntigravityConfiguredModels']
+  ): DetectConfiguredProvidersDependencies {
+    return {
+      getAntigravityConfiguredModels,
+      getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
+      resolveProviderBinary: async () => ({ binaryPath: null })
+    }
+  }
+
+  it('never starts the official model probe before explicit consent', async () => {
+    const getAntigravityConfiguredModels = vi.fn(async () => [
+      { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
+    ])
+
+    const configured = await detectConfiguredProviders(
+      {} as AppSettings,
+      antigravityDependencies(getAntigravityConfiguredModels)
+    )
+
+    expect(configured.has('antigravity')).toBe(false)
+    expect(getAntigravityConfiguredModels).not.toHaveBeenCalled()
+  })
+
+  it('requires a nonempty authenticated model result and caches only that result', async () => {
+    vi.useFakeTimers()
+    try {
+      const getAntigravityConfiguredModels = vi.fn(async () => [
+        { id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }
+      ])
+      const detector = createConfiguredProviderDetector(
+        antigravityDependencies(getAntigravityConfiguredModels),
+        { staggerMs: 0 }
+      )
+
+      detector.start(optedInSettings)
+      await vi.runAllTimersAsync()
+
+      expect(detector.statusSnapshot(optedInSettings)).toEqual({
+        ready: true,
+        configuredProviders: new Set(['antigravity'])
+      })
+      expect(detector.modelsSnapshot(optedInSettings)).toEqual(
+        new Map([['antigravity', [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]]])
+      )
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('fails closed for an empty, rejected, or timed-out AntiGravity model probe', async () => {
+    vi.useFakeTimers()
+    try {
+      const never = new Promise<never>(() => {})
+      const empty = await detectConfiguredProviders(
+        optedInSettings,
+        antigravityDependencies(async () => [])
+      )
+      const rejected = await detectConfiguredProviders(
+        optedInSettings,
+        antigravityDependencies(async () => Promise.reject(new Error('logged out')))
+      )
+      const timedOut = detectConfiguredProviders(
+        optedInSettings,
+        {
+          ...antigravityDependencies(() => never),
+          probeDeadlineMs: 1_000
+        }
+      )
+      await vi.advanceTimersByTimeAsync(1_000)
+
+      expect(empty.has('antigravity')).toBe(false)
+      expect(rejected.has('antigravity')).toBe(false)
+      await expect(timedOut).resolves.not.toContain('antigravity')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+})

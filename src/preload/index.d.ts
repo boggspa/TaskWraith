@@ -617,6 +617,7 @@ declare global {
       getConfiguredProviderSnapshot: () => Promise<{
         ready: boolean
         providerIds: ProviderId[]
+        modelsByProvider?: Partial<Record<ProviderId, Array<{ id: string; label: string }>>>
       }>
       // 1.0.5-EW35 — Currency sub-slice (c): live FX rate snapshot.
       getFxRates: () => Promise<{

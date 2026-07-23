@@ -820,7 +820,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
       ? readPendingProviderChange(currentChat)?.provider
       : undefined
   const currentProviderRunUnavailableReason = !isCurrentEnsembleChat
-    ? providerRunUnavailableReason(pendingSoloProvider ?? currentProvider)
+    ? providerRunUnavailableReason(
+        pendingSoloProvider ?? currentProvider,
+        configuredProviderSnapshot.providerIds
+      )
     : null
   const hasSendablePromptContent =
     hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext
@@ -4380,7 +4383,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                           // without cancelling a blocked turn. Model/provider/prompt locks still
                           // use isCurrentComposerLocked elsewhere.
                           const pickerDisabled =
-                            Boolean(providerRunUnavailableReason(effectiveProvider)) ||
+                            Boolean(
+                              providerRunUnavailableReason(
+                                effectiveProvider,
+                                configuredProviderSnapshot.providerIds
+                              )
+                            ) ||
                             (effectiveProvider === 'gemini' && !geminiWorkspaceTrustReady)
                           // Tier retirement (2026-07): Ollama uses the SAME standard
                           // permission-role picker as every provider — no more
@@ -4407,7 +4415,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               onStopTrustedSession={stopTrustedSessionForPicker}
                               disabled={pickerDisabled}
                               disabledReason={
-                                providerRunUnavailableReason(effectiveProvider) || undefined
+                                providerRunUnavailableReason(
+                                  effectiveProvider,
+                                  configuredProviderSnapshot.providerIds
+                                ) || undefined
                               }
                             />
                           )

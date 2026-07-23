@@ -1,6 +1,13 @@
 import type { AppSettings, ProviderId } from './store/types'
 import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
+import { discoverAuthenticatedAgyModels } from './antigravity/AntigravityModelDiscovery'
+import { isAntigravityOptInEnabled } from '../shared/retiredProviders'
+
+export interface ConfiguredProviderModel {
+  id: string
+  label: string
+}
 
 export interface DetectConfiguredProvidersDependencies {
   /** Lightweight binary + credential presence checks used only for picker/roster presentation. */
@@ -21,6 +28,8 @@ export interface DetectConfiguredProvidersDependencies {
   getOllamaStatus?: (
     settings: AppSettings
   ) => Promise<{ available: boolean; modelCount: number }>
+  /** Official `agy models` probe; only called after explicit AntiGravity opt-in. */
+  getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
   /**
    * Roster discovery is advisory, never provider execution authority. Keep its
    * latency bounded so an unavailable CLI/local service cannot pin New Chat.
@@ -44,7 +53,14 @@ type ProviderProbeOutcome = 'configured' | 'unconfigured' | 'unknown'
 
 interface ProviderProbe {
   provider: ProviderId
-  run: () => Promise<boolean>
+  /** A timeout must never make AntiGravity visible or eligible for a roster. */
+  includeWhenUnknown?: boolean
+  run: () => Promise<ProviderProbeResult>
+}
+
+interface ProviderProbeResult {
+  configured: boolean
+  models?: ConfiguredProviderModel[]
 }
 
 function configuredStatusIsAuthenticated(status: {
@@ -59,29 +75,29 @@ function configuredStatusIsAuthenticated(status: {
 }
 
 function boundedProviderProbe(
-  probe: Promise<boolean>,
+  probe: Promise<ProviderProbeResult>,
   deadlineMs: number
-): Promise<ProviderProbeOutcome> {
+): Promise<{ outcome: ProviderProbeOutcome; result?: ProviderProbeResult }> {
   return new Promise((resolve) => {
     let settled = false
     const timer = setTimeout(() => {
       settled = true
-      resolve('unknown')
+      resolve({ outcome: 'unknown' })
     }, deadlineMs)
     timer.unref?.()
 
     void probe.then(
-      (configured) => {
+      (result) => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        resolve(configured ? 'configured' : 'unconfigured')
+        resolve({ outcome: result.configured ? 'configured' : 'unconfigured', result })
       },
       () => {
         if (settled) return
         settled = true
         clearTimeout(timer)
-        resolve('unconfigured')
+        resolve({ outcome: 'unconfigured' })
       }
     )
   })
@@ -110,7 +126,7 @@ function configuredProviderProbes(
       run: () =>
         dependencies
           .getCodexConfiguredStatus!(settings)
-          .then(configuredStatusIsAuthenticated)
+          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
     })
   }
   if (dependencies.getClaudeConfiguredStatus) {
@@ -119,24 +135,42 @@ function configuredProviderProbes(
       run: () =>
         dependencies
           .getClaudeConfiguredStatus!(settings)
-          .then(configuredStatusIsAuthenticated)
+          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
     })
   }
   if (dependencies.getKimiConfiguredStatus) {
     probes.push({
       provider: 'kimi',
-      run: () => dependencies.getKimiConfiguredStatus!().then(configuredStatusIsAuthenticated)
+      run: () =>
+        dependencies
+          .getKimiConfiguredStatus!()
+          .then((status) => ({ configured: configuredStatusIsAuthenticated(status) }))
     })
   }
   probes.push({
     provider: 'ollama',
     run: () =>
-      getOllamaStatus(settings).then((status) => status.available && status.modelCount > 0)
+      getOllamaStatus(settings).then((status) => ({
+        configured: status.available && status.modelCount > 0
+      }))
   })
   for (const provider of ['grok', 'cursor'] as const) {
     probes.push({
       provider,
-      run: () => resolveProviderBinary(provider).then((resolved) => Boolean(resolved.binaryPath))
+      run: () =>
+        resolveProviderBinary(provider).then((resolved) => ({ configured: Boolean(resolved.binaryPath) }))
+    })
+  }
+  if (isAntigravityOptInEnabled(settings)) {
+    const getAntigravityConfiguredModels =
+      dependencies.getAntigravityConfiguredModels ?? discoverAuthenticatedAgyModels
+    probes.push({
+      provider: 'antigravity',
+      includeWhenUnknown: false,
+      run: async () => {
+        const models = await getAntigravityConfiguredModels(settings)
+        return { configured: models.length > 0, models }
+      }
     })
   }
   return probes
@@ -173,16 +207,19 @@ export async function detectConfiguredProviders(
   const probes = configuredProviderProbes(settings, dependencies)
 
   const outcomes = await Promise.all(
-    probes.map(async ({ provider, run }) => ({
+    probes.map(async ({ provider, run, includeWhenUnknown = true }) => ({
       provider,
-      outcome: await boundedProviderProbe(Promise.resolve().then(run), deadlineMs)
+      includeWhenUnknown,
+      ...(await boundedProviderProbe(Promise.resolve().then(run), deadlineMs))
     }))
   )
-  for (const { provider, outcome } of outcomes) {
+  for (const { provider, outcome, includeWhenUnknown } of outcomes) {
     // A timeout is uncertainty, not proof that the user lacks the provider.
     // Fail open ONLY for default-roster composition: actual provider dispatch
     // still passes the normal runtime admission/authentication gates.
-    if (outcome === 'configured' || outcome === 'unknown') configured.add(provider)
+    if (outcome === 'configured' || (outcome === 'unknown' && includeWhenUnknown)) {
+      configured.add(provider)
+    }
   }
 
   return configured
@@ -197,7 +234,9 @@ function configuredProviderCacheKey(settings: AppSettings): string {
     defaultGeminiAuthProfileId: settings.defaultGeminiAuthProfileId || '',
     kimiBinaryPath: settings.kimiBinaryPath || '',
     ollamaBaseUrl: settings.ollamaBaseUrl || '',
-    ollamaDefaultModel: settings.ollamaDefaultModel || ''
+    ollamaDefaultModel: settings.ollamaDefaultModel || '',
+    antigravityEnabled: settings.antigravityEnabled === true,
+    antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt || null
   })
 }
 
@@ -214,6 +253,7 @@ export function createConfiguredProviderDetector(
   start: (settings: AppSettings) => void
   snapshot: (settings: AppSettings) => Promise<Set<ProviderId>>
   statusSnapshot: (settings: AppSettings) => ConfiguredProviderDiscoveryStatus
+  modelsSnapshot: (settings: AppSettings) => ReadonlyMap<ProviderId, ConfiguredProviderModel[]>
 } {
   const staggerMs =
     Number.isFinite(options.staggerMs) && (options.staggerMs ?? -1) >= 0
@@ -228,6 +268,7 @@ export function createConfiguredProviderDetector(
   let completedKey: string | null = null
   let rosterConfigured = new Set<ProviderId>()
   let confirmedConfigured = new Set<ProviderId>()
+  let configuredModels = new Map<ProviderId, ConfiguredProviderModel[]>()
 
   const start = (settings: AppSettings): void => {
     const key = configuredProviderCacheKey(settings)
@@ -236,6 +277,7 @@ export function createConfiguredProviderDetector(
     completedKey = null
     rosterConfigured = settingsConfiguredProviders(settings)
     confirmedConfigured = new Set()
+    configuredModels = new Map()
     const currentGeneration = ++generation
     const probes = configuredProviderProbes(settings, dependencies)
     let remaining = probes.length
@@ -244,17 +286,19 @@ export function createConfiguredProviderDetector(
       return
     }
 
-    probes.forEach(({ provider, run }, index) => {
+    probes.forEach(({ provider, run, includeWhenUnknown = true }, index) => {
       const timer = setTimeout(() => {
-        void boundedProviderProbe(Promise.resolve().then(run), deadlineMs).then((outcome) => {
+        void boundedProviderProbe(Promise.resolve().then(run), deadlineMs).then(({ outcome, result }) => {
           if (currentGeneration !== generation) return
           if (outcome === 'configured') {
             rosterConfigured.add(provider)
             confirmedConfigured.add(provider)
-          } else if (outcome === 'unknown') {
+            if (result?.models?.length) configuredModels.set(provider, [...result.models])
+          } else if (outcome === 'unknown' && includeWhenUnknown) {
             rosterConfigured.add(provider)
           } else {
             confirmedConfigured.delete(provider)
+            configuredModels.delete(provider)
           }
           remaining -= 1
           if (remaining === 0) completedKey = key
@@ -279,6 +323,12 @@ export function createConfiguredProviderDetector(
         ready: completedKey === key,
         configuredProviders: new Set(confirmedConfigured)
       }
+    },
+    modelsSnapshot: (settings) => {
+      const key = configuredProviderCacheKey(settings)
+      return completedKey === key
+        ? new Map([...configuredModels].map(([provider, models]) => [provider, [...models]]))
+        : new Map()
     }
   }
 }

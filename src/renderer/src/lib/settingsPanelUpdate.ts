@@ -63,6 +63,9 @@ export type SettingsPanelUpdate = {
   /** 1.0.5-EW26 — Kimi compatibility filter. */
   kimiSanitiserEnabled?: AppSettings['kimiSanitiserEnabled']
   kimiSanitiserCustomKeywords?: AppSettings['kimiSanitiserCustomKeywords']
+  /** Explicit, informed-risk opt-in for the buried AntiGravity setup card. */
+  antigravityEnabled?: AppSettings['antigravityEnabled']
+  antigravityOptInAcceptedAt?: AppSettings['antigravityOptInAcceptedAt']
   claudeBinaryPath?: string
   kimiBinaryPath?: string
   ollamaBaseUrl?: string

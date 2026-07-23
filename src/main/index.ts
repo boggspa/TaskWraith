@@ -39509,7 +39509,15 @@ if (isGeminiMcpBridgeProcess) {
 
     // Settings
     registerSettingsHandlers({
-      settingsService,
+      settingsService: {
+        getSettings: () => settingsService.getSettings(),
+        updateSettings: (partial) => {
+          settingsService.updateSettings(partial)
+          // Discovery stays post-settings-change and cached. Picker opening
+          // only observes the completed snapshot; it never starts this probe.
+          managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        }
+      },
       getPromptCacheCapabilities: () =>
         buildPromptCacheCapabilitySummary(AppStore.getSettings()).capabilities,
       getPromptCacheDiagnostics: () =>
@@ -41286,14 +41294,26 @@ if (isGeminiMcpBridgeProcess) {
       },
       getProviderAdapterDescriptors,
       getConfiguredProviderSnapshot: () => {
-        const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(
-          AppStore.getSettings()
-        )
+        const settings = AppStore.getSettings()
+        const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
+        const antigravityModels = managedRunConfiguredProviderDiscovery
+          .modelsSnapshot(settings)
+          .get('antigravity')
+        const antigravityConfigured =
+          snapshot.ready &&
+          snapshot.configuredProviders.has('antigravity') &&
+          Boolean(antigravityModels?.length)
         return {
           ready: snapshot.ready,
-          providerIds: LIVE_SELECTABLE_PROVIDER_IDS.filter((provider) =>
-            snapshot.configuredProviders.has(provider)
-          )
+          providerIds: [
+            ...LIVE_SELECTABLE_PROVIDER_IDS.filter((provider) =>
+              snapshot.configuredProviders.has(provider)
+            ),
+            ...(antigravityConfigured ? (['antigravity'] as ProviderId[]) : [])
+          ],
+          ...(antigravityConfigured
+            ? { modelsByProvider: { antigravity: antigravityModels } }
+            : {})
         }
       },
       isMainRendererSender

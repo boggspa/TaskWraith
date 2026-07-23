@@ -128,6 +128,28 @@ describe('ParticipantPickerCluster', () => {
     ).toEqual(['claude', 'cursor'])
   })
 
+  it('uses authenticated AntiGravity models only from the configured snapshot', () => {
+    const groups = buildParticipantPickerProviderGroups(
+      false,
+      false,
+      {
+        ready: true,
+        providerIds: ['antigravity'],
+        modelsByProvider: {
+          antigravity: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
+        }
+      },
+      'claude'
+    )
+
+    expect(groups).toMatchObject([
+      {
+        provider: 'antigravity',
+        modelOptions: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
+      }
+    ])
+  })
+
   it('keeps only the current provider while discovery is pending', () => {
     expect(
       buildParticipantPickerProviderGroups(

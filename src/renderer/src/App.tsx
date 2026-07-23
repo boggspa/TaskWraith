@@ -25,7 +25,10 @@ import { fetchForkCapability, forkAgentThreadUniversal } from './lib/universalFo
 import { resolveRuntimePickerScope } from './lib/participantRuntimeProfile'
 import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
-import { useConfiguredProviderSnapshot } from './hooks/useConfiguredProviderSnapshot'
+import {
+  useConfiguredProviderSnapshot,
+  type ConfiguredProviderSnapshot
+} from './hooks/useConfiguredProviderSnapshot'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
 import {
   classifyHumanCollaborationRelayUrls,
@@ -1880,7 +1883,28 @@ function App(): React.JSX.Element {
   // registers the Grok adapter, so this resolves true once that list arrives.
   const [grokProviderAvailable, setGrokProviderAvailable] = useState(false)
   const [cursorProviderAvailable, setCursorProviderAvailable] = useState(false)
-  const configuredProviderSnapshot = useConfiguredProviderSnapshot()
+  const antigravityOptInActive =
+    settings?.antigravityEnabled === true && Boolean(settings?.antigravityOptInAcceptedAt)
+  const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
+    `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}`
+  )
+  // The main process starts a fresh cache generation after a settings change,
+  // but do not render a prior successful AntiGravity snapshot for even one
+  // renderer frame after consent is withdrawn.
+  const configuredProviderSnapshot = useMemo<ConfiguredProviderSnapshot>(
+    () =>
+      antigravityOptInActive
+        ? rawConfiguredProviderSnapshot
+        : {
+            ready: rawConfiguredProviderSnapshot.ready,
+            providerIds: rawConfiguredProviderSnapshot.providerIds.filter(
+              (provider) => provider !== 'antigravity'
+            )
+          },
+    [antigravityOptInActive, rawConfiguredProviderSnapshot]
+  )
+  const configuredAntigravityModels =
+    configuredProviderSnapshot.modelsByProvider?.antigravity || []
   const [selectedModelType, setSelectedModelType] = useState<string>('flash-lite')
   const [lastNonCustomModelType, setLastNonCustomModelType] = useState<string>('flash-lite')
   const [customModel, setCustomModel] = useState('')
@@ -3961,6 +3985,7 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return GROK_DEFAULT_MODELS
     if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
+    if (provider === 'antigravity') return configuredAntigravityModels
     return []
   }
 
@@ -3981,6 +4006,7 @@ function App(): React.JSX.Element {
         OLLAMA_DEFAULT_MODEL
       )
     }
+    if (provider === 'antigravity') return configuredAntigravityModels[0]?.id || 'cli-default'
     return GEMINI_DEFAULT_MODEL
   }
 
@@ -5469,6 +5495,9 @@ function App(): React.JSX.Element {
     if (provider === 'grok') return modelId.startsWith('grok')
     if (provider === 'cursor') return modelId.startsWith('composer-') || isCursorGrok45ModelId(modelId)
     if (provider === 'ollama') return isOllamaModelId(modelId)
+    if (provider === 'antigravity') {
+      return configuredAntigravityModels.some((model) => model.id === modelId)
+    }
     return isGeminiModelId(modelId)
   }
 
@@ -6683,6 +6712,12 @@ function App(): React.JSX.Element {
     }
     if (next.kimiSanitiserCustomKeywords !== undefined) {
       settingsPatch.kimiSanitiserCustomKeywords = next.kimiSanitiserCustomKeywords
+    }
+    if (next.antigravityEnabled !== undefined) {
+      settingsPatch.antigravityEnabled = next.antigravityEnabled
+    }
+    if (next.antigravityOptInAcceptedAt !== undefined) {
+      settingsPatch.antigravityOptInAcceptedAt = next.antigravityOptInAcceptedAt
     }
 
     if (next.mode !== undefined) {

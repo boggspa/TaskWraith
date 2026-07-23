@@ -71,6 +71,8 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
     )
     expect(providerRunUnavailableReason('claude')).toBeNull()
     expect(providerRunUnavailableReason('cursor')).toBeNull()
+    expect(providerRunUnavailableReason('antigravity')).toContain('unavailable')
+    expect(providerRunUnavailableReason('antigravity', ['antigravity'])).toBeNull()
   })
 
   it('hides optional providers unless their availability flags are set', () => {
@@ -135,6 +137,20 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
         pendingFallbackProvider: 'codex'
       }).map((row) => row.id)
     ).toEqual(['claude', 'cursor'])
+  })
+
+  it('offers AntiGravity only when the configured snapshot has admitted it', () => {
+    expect(
+      resolveProviderRows(false, false, undefined, {
+        snapshot: { ready: true, providerIds: ['codex', 'antigravity'] }
+      }).map((row) => row.id)
+    ).toEqual(['codex', 'antigravity'])
+
+    expect(
+      resolveProviderRows(false, false, undefined, {
+        snapshot: { ready: true, providerIds: ['codex'] }
+      }).map((row) => row.id)
+    ).not.toContain('antigravity')
   })
 
   it('keeps only the active provider as a cold-start fallback while discovery is pending', () => {
