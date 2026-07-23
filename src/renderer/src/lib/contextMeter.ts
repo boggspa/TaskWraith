@@ -6,18 +6,19 @@
 // pegs the donut near 100% long before the window is actually full (a chat that
 // compacts at 850k/1.05M would already read ~100%).
 //
-// This module computes the HONEST proxy instead: the LATEST run's input+output
-// tokens. Each turn's `input_tokens` already includes the full re-sent
-// conversation, so the most recent run ≈ what was actually in the window that
-// turn. It's an estimate (slightly under-counts by whatever was added since that
-// run ended, usually small), so callers should label it as such — but it's far
-// truer than the cumulative sum. Computed per chat, and per participant for
-// ensembles (each participant runs its own model, so its own window).
+// This module computes the HONEST proxy instead: the LATEST run's provider
+// total (falling back to input+output). Each turn's `input_tokens` already
+// includes the full re-sent conversation, so the most recent run ≈ what was
+// actually in the window that turn. It's an estimate (slightly under-counts by
+// whatever was added since that run ended, usually small), so callers should
+// label it as such — but it's far truer than the cumulative sum. Computed per
+// chat, and per participant for ensembles (each participant runs its own
+// window).
 //
 // Label formatting (provider name + model) is deliberately left to the UI so this
 // stays a pure, dependency-light, testable module.
 import type { ChatRun, EnsembleParticipant, ProviderId } from '../../../main/store/types'
-import { resolveContextWindow } from './contextWindows'
+import { isContextWindowProviderId, resolveContextWindow } from './contextWindows'
 import { extractUsageCountsFromCandidate, extractUsageLimits } from './usageStats'
 
 export interface ContextMeterRow {
@@ -28,7 +29,7 @@ export interface ContextMeterRow {
   modelId?: string
   /** Ensemble participant role, when this row is a participant. */
   role?: string
-  /** Honest current-context proxy: the latest run's input+output tokens. */
+  /** Honest current-context proxy: the latest run's provider total. */
   usedTokens: number
   windowTokens: number
   /** 0..100, clamped. 0 when the window is unknown. */
@@ -44,51 +45,113 @@ export interface ContextMeterModel {
   focusedId?: string
 }
 
+/** Provider usage for the currently-streaming run. `totalTokens` is used when
+ * a provider omits the individual input/output fields (which is valid for
+ * several native transports). */
+export interface LiveContextTokenUsage {
+  inputTokens?: number
+  outputTokens?: number
+  totalTokens?: number
+}
+
 export function contextPercent(used: number, window: number): number {
   if (!(window > 0)) return 0
   return Math.min(100, Math.max(0, (used / window) * 100))
 }
 
+function nonNegativeInteger(value: number | undefined): number {
+  return Number.isFinite(value) && (value as number) > 0 ? Math.trunc(value as number) : 0
+}
+
+/**
+ * Context occupancy is normally input + output for the latest request. Prefer
+ * a provider's explicit total when it includes tokens not broken out into
+ * those fields (for example, thinking tokens), and do not discard a valid
+ * total-only snapshot.
+ */
+export function contextTokensFromUsage(usage: LiveContextTokenUsage): number {
+  const input = nonNegativeInteger(usage.inputTokens)
+  const output = nonNegativeInteger(usage.outputTokens)
+  const total = nonNegativeInteger(usage.totalTokens)
+  return Math.max(total, input + output)
+}
+
 /**
  * The latest run (by startedAt) that carries real usage stats, optionally scoped
- * to one ensemble participant. Returns its input+output token counts, or zeros.
+ * to one ensemble participant. Returns its context token total, or zero.
  */
 function latestRunContext(
   runs: ReadonlyArray<ChatRun>,
   participantId?: string
-): { input: number; output: number; totalTokenLimit?: number } {
+): { tokens: number; totalTokenLimit?: number } {
   let bestTime = Number.NEGATIVE_INFINITY
-  let best: { input: number; output: number; totalTokenLimit?: number } | null = null
+  let best: { tokens: number; totalTokenLimit?: number } | null = null
   for (const run of runs) {
     if (participantId && run.ensembleParticipantId !== participantId) continue
     const counts = extractUsageCountsFromCandidate(run?.stats)
-    if (counts.totalTokens <= 0 && counts.inputTokens <= 0) continue
+    const tokens = contextTokensFromUsage(counts)
+    if (tokens <= 0) continue
     const parsed = Date.parse(run.startedAt || '')
     const time = Number.isFinite(parsed) ? parsed : 0
     if (time >= bestTime) {
       bestTime = time
       best = {
-        input: counts.inputTokens,
-        output: counts.outputTokens,
+        tokens,
         ...extractUsageLimits(run?.stats)
       }
     }
   }
-  return best ?? { input: 0, output: 0 }
+  return best ?? { tokens: 0 }
 }
 
 /**
  * Honest current-context proxy for the active model: the latest run's
- * input+output, plus the in-flight output estimate while a run is streaming.
+ * provider total, plus the in-flight output estimate while a run is streaming.
  */
 export function currentContextTokens(
   runs: ReadonlyArray<ChatRun>,
   opts: { liveOutputTokens?: number; isRunning?: boolean } = {}
 ): number {
   const latest = latestRunContext(runs)
-  const base = latest.input + latest.output
+  const base = latest.tokens
   const live = opts.isRunning ? Math.max(0, opts.liveOutputTokens ?? 0) : 0
   return base + live
+}
+
+/**
+ * Overlay an authoritative live provider snapshot onto the meter. The
+ * snapshot replaces the active run's context rather than adding to the last
+ * turn: the provider input already includes the current prompt and transcript.
+ * Ensemble snapshots are scoped to their active participant; solo snapshots
+ * update the solo row.
+ */
+export function applyLiveContextTokenUsage(
+  meter: ContextMeterModel | null | undefined,
+  usage: LiveContextTokenUsage | null | undefined,
+  participantId?: string
+): ContextMeterModel | null | undefined {
+  if (!meter || !usage) return meter
+  const usedTokens = contextTokensFromUsage(usage)
+  if (usedTokens <= 0) return meter
+
+  const withUsage = (row: ContextMeterRow): ContextMeterRow => ({
+    ...row,
+    usedTokens,
+    percent: contextPercent(usedTokens, row.windowTokens)
+  })
+
+  if (meter.participants?.length) {
+    if (!participantId) return meter
+    let matched = false
+    const participants = meter.participants.map((row) => {
+      if (row.id !== participantId) return row
+      matched = true
+      return withUsage(row)
+    })
+    return matched ? { ...meter, participants } : meter
+  }
+
+  return { ...meter, solo: withUsage(meter.solo) }
 }
 
 /**
@@ -147,13 +210,13 @@ export function buildParticipantContextRows(
 ): ContextMeterRow[] {
   return participants.map((participant) => {
     const latest = latestRunContext(runs, participant.id)
-    let usedTokens = latest.input + latest.output
+    let usedTokens = latest.tokens
     if (live?.participantId && participant.id === live.participantId) {
       usedTokens += Math.max(0, live.outputTokens ?? 0)
     }
     const liveWindowTokens = live?.resolveWindowTokens?.(participant)
     const windowTokens = resolveContextWindow(
-      participant.provider,
+      isContextWindowProviderId(participant.provider) ? participant.provider : undefined,
       participant.model,
       latest.totalTokenLimit,
       liveWindowTokens

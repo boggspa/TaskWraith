@@ -4014,6 +4014,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   onCompactParticipant={onCompactParticipant}
                                   compactableParticipantIds={compactableParticipantIds}
                                   speakingParticipantId={speakingParticipantId}
+                                  activeRunId={activeRunId}
+                                  running={isCurrentChatRunning}
                                 />
                               )}
                               <CombinedModelPicker
@@ -4496,6 +4498,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             onCompactParticipant={onCompactParticipant}
                             compactableParticipantIds={compactableParticipantIds}
                             speakingParticipantId={speakingParticipantId}
+                            activeRunId={activeRunId}
+                            running={isCurrentChatRunning}
                           />
                         )}
                         {steerIndicatorMessage && (

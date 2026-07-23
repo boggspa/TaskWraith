@@ -3,13 +3,18 @@
 // context meter + model/amount labels. Solo chats show one row for the active
 // model; ensemble chats stack one row per participant (each with its own model
 // + window). The numbers are the HONEST current-context proxy (latest turn's
-// input+output ÷ window — see lib/contextMeter.ts), so the popover labels them
-// as estimated.
+// provider total ÷ window — see lib/contextMeter.ts); while a turn is live, a
+// provider snapshot takes precedence over the fallback estimate.
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle, ProviderId } from '../../../main/store/types'
-import type { ContextMeterModel, ContextMeterRow } from '../lib/contextMeter'
+import {
+  applyLiveContextTokenUsage,
+  type ContextMeterModel,
+  type ContextMeterRow
+} from '../lib/contextMeter'
 import { formatContextTokens } from '../lib/contextWindows'
+import { useParticipantWorkingTokenSnapshot } from '../lib/participantWorkingTelemetryStore'
 import { contextPressureSeverity } from '../../../shared/contextCompaction'
 import { humaniseModelIdCompact } from '../lib/modelDisplayName'
 import { getProviderName } from './Sidebar'
@@ -62,6 +67,9 @@ interface ContextMeterPopoverProps {
    * compaction covers the active seat instead).
    */
   speakingParticipantId?: string
+  /** Active run whose provider usage snapshot keeps the meter live. */
+  activeRunId?: string | null
+  running?: boolean
 }
 
 interface RowView {
@@ -208,7 +216,9 @@ export function ContextMeterPopover({
   onCompactContext,
   onCompactParticipant,
   compactableParticipantIds,
-  speakingParticipantId
+  speakingParticipantId,
+  activeRunId,
+  running = false
 }: ContextMeterPopoverProps): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
@@ -216,6 +226,8 @@ export function ContextMeterPopover({
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
   // Which participant row's inline "Compact X?" confirm is open (one at a time).
   const [confirmingId, setConfirmingId] = useState<string | null>(null)
+  const liveUsage = useParticipantWorkingTokenSnapshot(running ? activeRunId : null)
+  const trackedMeter = applyLiveContextTokenUsage(meter, liveUsage, speakingParticipantId)
 
   // Anchor above-right of the donut (mirrors CombinedModelPicker).
   useEffect(() => {
@@ -271,15 +283,23 @@ export function ContextMeterPopover({
   }, [open])
 
   const participantRows =
-    meter?.participants && meter.participants.length > 0
-      ? meter.participants.map((row) => toRowView(row, true))
+    trackedMeter?.participants && trackedMeter.participants.length > 0
+      ? trackedMeter.participants.map((row) => toRowView(row, true))
       : null
-  const rows: RowView[] = participantRows ?? (meter ? [toRowView(meter.solo, false)] : [])
-  const roundedPercent = Math.round(percent)
+  const rows: RowView[] =
+    participantRows ?? (trackedMeter ? [toRowView(trackedMeter.solo, false)] : [])
+  const focusedRow = trackedMeter?.focusedId
+    ? trackedMeter.participants?.find((row) => row.id === trackedMeter.focusedId)
+    : trackedMeter?.solo
+  const trackedPercent = focusedRow?.percent ?? percent
+  const trackedLabel = focusedRow
+    ? `${formatContextTokens(focusedRow.usedTokens)} / ${formatContextTokens(focusedRow.windowTokens)} context`
+    : label
+  const roundedPercent = Math.round(trackedPercent)
   // The ChatGPT shell borrows Cursor's bottom-row controls, incl. the context
   // donut + inline percent, so it shares Cursor's context-trigger treatment.
   const isCursorShell = composerStyle === 'cursor' || composerStyle === 'chatgpt'
-  const triggerSeverity = contextPressureSeverity(percent)
+  const triggerSeverity = contextPressureSeverity(trackedPercent)
   const showCompactAction = Boolean(onCompactContext) && triggerSeverity !== 'ok'
 
   const popoverContent = open && position && rows.length > 0 && (
@@ -307,7 +327,7 @@ export function ContextMeterPopover({
             <MeterRow
               key={row.id}
               row={row}
-              focused={!!meter?.focusedId && row.id === meter.focusedId}
+              focused={!!trackedMeter?.focusedId && row.id === trackedMeter.focusedId}
               compactable={compactable}
               speaking={!!speakingParticipantId && row.id === speakingParticipantId}
               confirming={compactable && confirmingId === row.id}
@@ -322,7 +342,13 @@ export function ContextMeterPopover({
         })}
       </div>
       <div className="context-meter-foot">
-        <span>Estimated from the latest turn</span>
+        <span>
+          {liveUsage
+            ? liveUsage.estimated
+              ? 'Live provider estimate'
+              : 'Live provider usage'
+            : 'Estimated from the latest turn'}
+        </span>
         {showCompactAction && (
           <button
             type="button"
@@ -350,12 +376,12 @@ export function ContextMeterPopover({
         disabled={disabled || rows.length === 0}
         aria-haspopup="dialog"
         aria-expanded={open}
-        title={label}
-        aria-label={`Context ${roundedPercent}% used (${label})`}
+        title={trackedLabel}
+        aria-label={`Context ${roundedPercent}% used (${trackedLabel})`}
       >
         <ContextWheel
-          percent={percent}
-          label={label}
+          percent={trackedPercent}
+          label={trackedLabel}
           codexShell={composerStyle === 'codex'}
           claudeShell={composerStyle === 'claude'}
           cursorShell={isCursorShell}

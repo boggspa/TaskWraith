@@ -3,7 +3,9 @@ import {
   contextPercent,
   currentContextTokens,
   buildParticipantContextRows,
-  liveOutputTokensForParticipant
+  liveOutputTokensForParticipant,
+  applyLiveContextTokenUsage,
+  contextTokensFromUsage
 } from './contextMeter'
 import type { ChatRun, EnsembleParticipant } from '../../../main/store/types'
 
@@ -59,6 +61,19 @@ describe('currentContextTokens — honest proxy, NOT a cumulative sum', () => {
     expect(currentContextTokens([])).toBe(0)
     expect(currentContextTokens([run({ stats: undefined })])).toBe(0)
   })
+
+  it('uses a valid total-only provider snapshot instead of discarding the run', () => {
+    expect(currentContextTokens([run({ stats: { total_tokens: 91_000 } })])).toBe(91_000)
+  })
+})
+
+describe('contextTokensFromUsage', () => {
+  it('keeps an explicit total when provider usage omits a field or includes thinking tokens', () => {
+    expect(contextTokensFromUsage({ totalTokens: 91_000 })).toBe(91_000)
+    expect(
+      contextTokensFromUsage({ inputTokens: 80_000, outputTokens: 2_000, totalTokens: 84_000 })
+    ).toBe(84_000)
+  })
 })
 
 describe('buildParticipantContextRows — per-participant honest context', () => {
@@ -87,6 +102,15 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
   it('reads 0% for a participant that has not run yet', () => {
     const rows = buildParticipantContextRows([], participants)
     expect(rows.every((r) => r.usedTokens === 0 && r.percent === 0)).toBe(true)
+  })
+
+  it('uses a total-only snapshot for an individual participant', () => {
+    const rows = buildParticipantContextRows(
+      [run({ ensembleParticipantId: 'p1', stats: { totalTokens: 101_000 } })],
+      participants
+    )
+    expect(rows.find((row) => row.id === 'p1')?.usedTokens).toBe(101_000)
+    expect(rows.find((row) => row.id === 'p2')?.usedTokens).toBe(0)
   })
 
   it('uses the latest run-reported context limit for a plan-entitled Kimi seat', () => {
@@ -162,6 +186,57 @@ describe('buildParticipantContextRows — per-participant honest context', () =>
 
     expect(rows.find((r) => r.id === 'ollama-custom')?.windowTokens).toBe(65_536)
     expect(rows.find((r) => r.id === 'claude')?.windowTokens).toBe(200_000)
+  })
+})
+
+describe('applyLiveContextTokenUsage', () => {
+  it('replaces the active solo run with its live provider context snapshot', () => {
+    const meter = {
+      solo: {
+        id: 'solo',
+        provider: 'codex' as const,
+        usedTokens: 20_000,
+        windowTokens: 200_000,
+        percent: 10
+      }
+    }
+    const updated = applyLiveContextTokenUsage(meter, {
+      inputTokens: 86_000,
+      outputTokens: 4_000,
+      totalTokens: 90_000
+    })
+    expect(updated?.solo.usedTokens).toBe(90_000)
+    expect(updated?.solo.percent).toBe(45)
+  })
+
+  it('updates only the active ensemble participant row', () => {
+    const meter = {
+      solo: {
+        id: 'solo',
+        provider: 'claude' as const,
+        usedTokens: 0,
+        windowTokens: 200_000,
+        percent: 0
+      },
+      participants: [
+        {
+          id: 'p1',
+          provider: 'claude' as const,
+          usedTokens: 20_000,
+          windowTokens: 200_000,
+          percent: 10
+        },
+        {
+          id: 'p2',
+          provider: 'codex' as const,
+          usedTokens: 30_000,
+          windowTokens: 1_050_000,
+          percent: 2.86
+        }
+      ]
+    }
+    const updated = applyLiveContextTokenUsage(meter, { totalTokens: 90_000 }, 'p2')
+    expect(updated?.participants?.map((row) => row.usedTokens)).toEqual([20_000, 90_000])
   })
 })
 

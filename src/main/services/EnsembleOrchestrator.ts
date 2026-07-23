@@ -16340,7 +16340,8 @@ function latestRunContextUsage(
     const stats = (run.stats ?? {}) as Record<string, unknown>
     const input = numericRunStat(stats, 'input_tokens', 'inputTokens')
     const output = numericRunStat(stats, 'output_tokens', 'outputTokens')
-    const tokens = input + output
+    const total = numericRunStat(stats, 'total_tokens', 'totalTokens')
+    const tokens = Math.max(total, input + output)
     if (tokens <= 0) continue
     const totalTokenLimit = numericRunStat(
       stats,

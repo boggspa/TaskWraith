@@ -1,1 +1,6 @@
-export { contextPercent, formatContextTokens, resolveContextWindow } from '../../../shared/contextWindows'
+export {
+  contextPercent,
+  formatContextTokens,
+  isContextWindowProviderId,
+  resolveContextWindow
+} from '../../../shared/contextWindows'

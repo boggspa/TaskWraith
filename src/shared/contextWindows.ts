@@ -110,6 +110,19 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   ollama: 262_144
 }
 
+const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(
+  Object.keys(PROVIDER_FALLBACK_WINDOW)
+)
+
+/** True for providers that have a static context-window fallback. Providers
+ *  without a model catalog yet (e.g. opt-in antigravity pre-connect) are
+ *  excluded; callers should pass `undefined` for them. */
+export function isContextWindowProviderId(
+  provider: string | null | undefined
+): provider is ContextWindowProviderId {
+  return provider != null && CONTEXT_WINDOW_PROVIDER_IDS.has(provider)
+}
+
 export function resolveContextWindow(
   provider: ContextWindowProviderId | undefined,
   modelId: string | undefined,

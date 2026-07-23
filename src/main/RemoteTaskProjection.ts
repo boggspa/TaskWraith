@@ -1455,7 +1455,7 @@ function latestRunContextTokens(
     const time = Number.isFinite(parsed) ? parsed : 0
     if (time >= bestTime) {
       bestTime = time
-      best = input + output
+      best = Math.max(total, input + output)
     }
   }
   return best

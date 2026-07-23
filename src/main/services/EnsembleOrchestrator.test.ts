@@ -2240,10 +2240,10 @@ describe('EnsembleOrchestrator', () => {
     })
     expect(byId.get('claude')?.contextPercent).toBeCloseTo(12.3, 5)
     expect(byId.get('codex')).toMatchObject({
-      contextTokens: 31_000,
-      contextWindow: 900_000
+      contextTokens: 99_000,
+      contextWindow: 700_000
     })
-    expect(byId.get('codex')?.contextPercent).toBeCloseTo(3.44444, 5)
+    expect(byId.get('codex')?.contextPercent).toBeCloseTo(14.142857, 5)
   })
 
   it('lists provider model catalog and quota bands for Boss roster edits', async () => {
