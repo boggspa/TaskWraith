@@ -12,12 +12,13 @@ import type {
   RemoteEnsembleRosterEntry
 } from '../RemoteTaskProjection'
 import type { ProviderId } from '../store/types'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { isRetiredProvider } from '../../shared/retiredProviders'
+import { assertProviderId } from '../settings/MainSanitizers'
 
-// Preset participants whose provider isn't live-selectable are dropped from the projection
-// so the phone never shows an unrunnable member AND a single unavailable,
-// retired, or garbage entry can't fail an otherwise-valid apply (ensembleRosterUpdateFn's
-// assertProviderId would throw on a malformed string and reject the whole roster).
+// Presets retain structurally known but temporarily disconnected providers so
+// imported selections stay visible/editable. New choices still come only from
+// the paired device's authenticated model catalog. Retired and malformed ids
+// remain excluded from this projection.
 function safeRosterPermissionPresetId(value: unknown): string | undefined {
   if (
     value === 'read_only' ||
@@ -82,7 +83,13 @@ function mapSnapshot(
   if (!snapshot || typeof snapshot !== 'object') return null
   const entry = snapshot as Record<string, unknown>
   if (typeof entry.provider !== 'string') return null
-  if (!isLiveSelectableProvider(entry.provider)) return null
+  let provider: ProviderId
+  try {
+    provider = assertProviderId(entry.provider)
+  } catch {
+    return null
+  }
+  if (isRetiredProvider(provider)) return null
   const brief =
     typeof entry.instructions === 'string' && entry.instructions
       ? entry.instructions.slice(0, 500)
@@ -93,8 +100,8 @@ function mapSnapshot(
     // iOS list has identity. Apply (slice B2) replays these as a fresh roster,
     // so the id is display-only.
     id: `${presetId}-p${index + 1}`,
-    provider: entry.provider as ProviderId,
-    role: typeof entry.role === 'string' && entry.role ? entry.role : (entry.provider as string),
+    provider,
+    role: typeof entry.role === 'string' && entry.role ? entry.role : provider,
     enabled: typeof entry.enabled === 'boolean' ? entry.enabled : true,
     order: typeof entry.order === 'number' ? entry.order : index + 1,
     ...(entry.isBossman === true ? { isBossman: true } : {}),

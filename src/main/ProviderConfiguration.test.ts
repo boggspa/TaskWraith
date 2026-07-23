@@ -136,11 +136,13 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       }))
       const getOllamaStatus = vi.fn(async () => ({ available: true, modelCount: 1 }))
       const resolveProviderBinary = vi.fn(async () => ({ binaryPath: '/provider' }))
+      const onDiscoveryComplete = vi.fn()
       const discovery = createConfiguredProviderDetector(
         {
           getKimiConfiguredStatus,
           getOllamaStatus,
           resolveProviderBinary,
+          onDiscoveryComplete,
           probeDeadlineMs: 1_000
         },
         { staggerMs: 100 }
@@ -160,6 +162,7 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).not.toHaveBeenCalled()
+      expect(onDiscoveryComplete).not.toHaveBeenCalled()
 
       await vi.advanceTimersByTimeAsync(300)
       await expect(discovery.snapshot(settings)).resolves.toEqual(
@@ -171,12 +174,14 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
       })
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
       expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+      expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
 
       discovery.start(settings)
       await vi.runAllTimersAsync()
       expect(getKimiConfiguredStatus).toHaveBeenCalledTimes(1)
       expect(getOllamaStatus).toHaveBeenCalledTimes(1)
       expect(resolveProviderBinary).toHaveBeenCalledTimes(2)
+      expect(onDiscoveryComplete).toHaveBeenCalledTimes(1)
     } finally {
       vi.useRealTimers()
     }

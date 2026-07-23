@@ -171,7 +171,8 @@ struct Composer: View {
             selectedProvider: selectedProvider,
             cardProvider: card.provider,
             canChangeProvider: canChangeProvider,
-            isNewTask: newTaskWorkspaceId != nil)
+            isNewTask: newTaskWorkspaceId != nil,
+            dynamicallySelectableProviderIds: dynamicallySelectableProviderIds)
     }
     private var providerUnavailableReason: String? {
         providerAdmission.unavailableReason
@@ -304,9 +305,22 @@ struct Composer: View {
                     .compactMap { $0?.lowercased() }
                     .filter { !$0.isEmpty })
         return keys
-            .filter { TWTheme.isLiveSelectableProvider($0) }
+            .filter {
+                TWTheme.isLiveSelectableProvider($0)
+                    || TWTheme.isProviderOfferedByModelCatalog(
+                        $0, models: liveByProvider[$0]?.models ?? [])
+            }
             .map { liveByProvider[$0] ?? ProviderModelCatalog(provider: $0, models: []) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+    }
+
+    private var dynamicallySelectableProviderIds: Set<String> {
+        Set(
+            model.providerModels.compactMap { provider, models in
+                TWTheme.isProviderOfferedByModelCatalog(provider, models: models)
+                    && !TWTheme.isLiveSelectableProvider(provider)
+                    ? provider.lowercased() : nil
+            })
     }
 
     // Pre-catalog picker fallback: the canonical live set from Theme.swift,

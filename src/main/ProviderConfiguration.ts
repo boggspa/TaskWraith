@@ -30,6 +30,8 @@ export interface DetectConfiguredProvidersDependencies {
   ) => Promise<{ available: boolean; modelCount: number }>
   /** Official `agy models` probe; only called after explicit AntiGravity opt-in. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
+  /** Called after a complete cached generation; never authorizes a provider. */
+  onDiscoveryComplete?: (settings: AppSettings) => void
   /**
    * Roster discovery is advisory, never provider execution authority. Keep its
    * latency bounded so an unavailable CLI/local service cannot pin New Chat.
@@ -283,6 +285,7 @@ export function createConfiguredProviderDetector(
     let remaining = probes.length
     if (remaining === 0) {
       completedKey = key
+      dependencies.onDiscoveryComplete?.(settings)
       return
     }
 
@@ -301,7 +304,10 @@ export function createConfiguredProviderDetector(
             configuredModels.delete(provider)
           }
           remaining -= 1
-          if (remaining === 0) completedKey = key
+          if (remaining === 0) {
+            completedKey = key
+            dependencies.onDiscoveryComplete?.(settings)
+          }
         })
       }, index * staggerMs)
       timer.unref?.()

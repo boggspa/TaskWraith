@@ -14,7 +14,8 @@ func resolveComposerProviderAdmission(
     selectedProvider: String,
     cardProvider: String?,
     canChangeProvider: Bool,
-    isNewTask: Bool
+    isNewTask: Bool,
+    dynamicallySelectableProviderIds: Set<String> = []
 ) -> ComposerProviderAdmission {
     let selected = selectedProvider.trimmingCharacters(in: .whitespacesAndNewlines)
     let stored = cardProvider?.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -22,15 +23,17 @@ func resolveComposerProviderAdmission(
         ? selected
         : ((stored?.isEmpty == false ? stored : nil) ?? selected)
     let provider = resolved.lowercased()
-    guard !TWTheme.isLiveSelectableProvider(provider) else {
-        return ComposerProviderAdmission(provider: provider, isLive: true, unavailableReason: nil)
+    guard TWTheme.isLiveSelectableProvider(provider)
+        || dynamicallySelectableProviderIds.contains(provider)
+    else {
+        let nextStep = (canChangeProvider || isNewTask)
+            ? "Choose a live provider to continue."
+            : "Open a new chat with a live provider to continue."
+        return ComposerProviderAdmission(
+            provider: provider,
+            isLive: false,
+            unavailableReason: "\(TWTheme.providerLabel(provider)) managed runs are unavailable. \(nextStep)")
     }
 
-    let nextStep = (canChangeProvider || isNewTask)
-        ? "Choose a live provider to continue."
-        : "Open a new chat with a live provider to continue."
-    return ComposerProviderAdmission(
-        provider: provider,
-        isLive: false,
-        unavailableReason: "\(TWTheme.providerLabel(provider)) managed runs are unavailable. \(nextStep)")
+    return ComposerProviderAdmission(provider: provider, isLive: true, unavailableReason: nil)
 }

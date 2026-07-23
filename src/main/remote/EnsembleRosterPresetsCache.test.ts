@@ -83,20 +83,25 @@ describe('EnsembleRosterPresetsCache.mapRawPresetsToRemote', () => {
     expect(out[0].participants[0].brief?.length).toBe(500)
   })
 
-  it('drops retired (gemini) + garbage-provider participants from the projection', () => {
+  it('retains disconnected AntiGravity selections but drops retired and garbage ids', () => {
     const out = mapRawPresetsToRemote([
       {
         id: 'p',
         name: 'Legacy',
         participants: [
           { provider: 'codex', role: 'Builder' },
+          { provider: 'antigravity', role: 'Configured later' },
           { provider: 'gemini', role: 'Old' },
           { provider: 'gemni', role: 'Typo' },
           { provider: 'claude', role: 'Reviewer' }
         ]
       }
     ])
-    expect(out[0].participants.map((entry) => entry.provider)).toEqual(['codex', 'claude'])
+    expect(out[0].participants.map((entry) => entry.provider)).toEqual([
+      'codex',
+      'antigravity',
+      'claude'
+    ])
   })
 
   it('returns [] for non-array input', () => {

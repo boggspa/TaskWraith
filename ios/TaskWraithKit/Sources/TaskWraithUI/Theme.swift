@@ -190,6 +190,7 @@ public enum TWTheme {
         case "grok": return "Grok"
         case "cursor": return "Cursor"
         case "ollama": return "Ollama"
+        case "antigravity": return "AntiGravity"
         case "ensemble": return "Ensemble"
         case "alibaba": return "Alibaba"
         case "deep-reinforce": return "Deep Reinforce"
@@ -247,6 +248,17 @@ public enum TWTheme {
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {
         guard let provider else { return false }
         return liveSelectableProviderIds.contains(provider.lowercased())
+    }
+
+    /// The paired Mac owns the authenticated configured-provider snapshot.
+    /// Keep the canonical static live set unchanged; only a nonempty catalog
+    /// already projected by that snapshot may dynamically offer AntiGravity.
+    public static func isProviderOfferedByModelCatalog(
+        _ provider: String?, models: [ModelOption]
+    ) -> Bool {
+        guard let provider else { return false }
+        if isLiveSelectableProvider(provider) { return true }
+        return provider.lowercased() == "antigravity" && !models.isEmpty
     }
 }
 

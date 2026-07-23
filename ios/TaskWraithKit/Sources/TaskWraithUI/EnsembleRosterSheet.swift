@@ -53,8 +53,14 @@ public struct EnsembleRosterSheet: View {
     private var catalogs: [ProviderModelCatalog] {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { TWTheme.isLiveSelectableProvider($0.provider) }
+            .filter { TWTheme.isProviderOfferedByModelCatalog($0.provider, models: $0.models) }
             .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+    }
+
+    private func isProviderAvailable(_ provider: String) -> Bool {
+        TWTheme.isProviderOfferedByModelCatalog(
+            provider,
+            models: model.providerModels[provider.lowercased()] ?? model.providerModels[provider] ?? [])
     }
 
     private var remoteRoster: [RemoteSessionModel.RosterDraftEntry] {
@@ -456,7 +462,7 @@ public struct EnsembleRosterSheet: View {
     }
 
     private func participantRow(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
-        let unavailable = !TWTheme.isLiveSelectableProvider(entry.provider)
+        let unavailable = !isProviderAvailable(entry.provider)
         let accent = unavailable ? TWTheme.textMuted : TWTheme.providerAccent(entry.provider)
         let status = roundStatus(for: entry.id)
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
@@ -526,7 +532,7 @@ public struct EnsembleRosterSheet: View {
         _ entry: RemoteSessionModel.RosterDraftEntry
     ) -> String {
         var parts: [String] = []
-        if !entry.enabled || !TWTheme.isLiveSelectableProvider(entry.provider) {
+        if !entry.enabled || !isProviderAvailable(entry.provider) {
             parts.append("disabled")
         } else {
             parts.append("enabled")

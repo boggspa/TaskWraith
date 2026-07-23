@@ -276,6 +276,7 @@ import {
   isRetiredProvider,
   LIVE_SELECTABLE_PROVIDER_IDS
 } from '../shared/retiredProviders'
+import { isAuthenticatedAntigravityConfiguredProvider } from './antigravity/AntigravityConfiguredProvider'
 import type { NormalizedProviderUsageSnapshot } from './ProviderQuotaSnapshots'
 import { sanitizeRawProviderMediaRefs } from '../shared/transcriptMediaRefSanitize'
 import {
@@ -5083,13 +5084,14 @@ function prepareIosComposerPromptChat(args: {
     approvalMode?: string
     model?: string
   }
+  provider: ProviderId
   /** null = a scope-global chat (T72) — no workspace binding. */
   workspace: WorkspaceRecord | null
   imagePaths?: string[]
   imageThumbnails?: Array<{ dataBase64: string; mimeType: string; width?: number; height?: number }>
 }): ChatRecord {
   const { action, workspace } = args
-  const provider = assertLiveProviderId(action.provider)
+  const { provider } = args
   const now = Date.now()
   const timestamp = new Date(now).toISOString()
   const prompt = action.text.trim()
@@ -13945,7 +13947,8 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
   getOllamaStatus: async (settings) => {
     const models = await fetchOllamaModels(settings)
     return { available: true, modelCount: models.length }
-  }
+  },
+  onDiscoveryComplete: () => remoteProviderModelsTrigger?.()
 })
 const detectManagedRunConfiguredProviders = (settings: AppSettings): Promise<Set<ProviderId>> =>
   managedRunConfiguredProviderDiscovery.snapshot(settings)
@@ -32431,6 +32434,20 @@ if (isGeminiMcpBridgeProcess) {
       // Mac is the single git authority — the phone only ever sees typed
       // results). Snapshots are compacted before they ride the ack so a
       // huge worktree can't blow the relay frame budget.
+      const assertPairedDeviceProviderId = (value: unknown): ProviderId => {
+        const provider = assertProviderId(value)
+        if (provider !== 'antigravity') return assertLiveProviderId(provider)
+
+        const settings = AppStore.getSettings()
+        const configured = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
+        const models = managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
+        if (isAuthenticatedAntigravityConfiguredProvider(settings, configured, models)) {
+          return provider
+        }
+        throw new Error(
+          'AntiGravity is unavailable until its opted-in, authenticated model catalog is ready.'
+        )
+      }
       const bridgeGitService = new GitService()
       const MAX_BRIDGE_GIT_FILES = 200
       const MAX_BRIDGE_PR_CHECKS = 20
@@ -33750,8 +33767,14 @@ if (isGeminiMcpBridgeProcess) {
           let next: EnsembleParticipant[]
           try {
             next = action.participants.map((entry, index) => {
-              const provider = assertLiveProviderId(entry.provider)
               const existing = entry.id ? existingById.get(entry.id) : undefined
+              const structuralProvider = assertProviderId(entry.provider)
+              // Existing/imported disconnected entries remain editable. Only
+              // a provider change or a new row is an offer admission.
+              const provider =
+                existing?.provider === structuralProvider
+                  ? structuralProvider
+                  : assertPairedDeviceProviderId(structuralProvider)
               const seed = existing ?? seedByProvider.get(provider)
               const base: EnsembleParticipant = existing
                 ? { ...existing }
@@ -34067,7 +34090,7 @@ if (isGeminiMcpBridgeProcess) {
             return AppStore.getChat(chat.appChatId) ?? chat
           }
           if (action.variant === 'global') {
-            const provider = assertLiveProviderId(
+            const provider = assertPairedDeviceProviderId(
               action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
             )
             const chat = createOrReuseRemoteDraft({
@@ -34089,7 +34112,7 @@ if (isGeminiMcpBridgeProcess) {
             const configuredProviders = await detectManagedRunConfiguredProviders(
               AppStore.getSettings()
             )
-            const provider = assertLiveProviderId(
+            const provider = assertPairedDeviceProviderId(
               action.provider ?? AppStore.getSettings().activeProvider ?? DEFAULT_PROVIDER
             )
             const reusableEnsemble =
@@ -34133,7 +34156,7 @@ if (isGeminiMcpBridgeProcess) {
                   ])
                 )
                 const custom = action.participants.map((entry, index) => {
-                  const provider = assertLiveProviderId(entry.provider)
+                  const provider = assertPairedDeviceProviderId(entry.provider)
                   const seed = seedByProvider.get(provider)
                   return {
                     id: `ios-p${index + 1}-${provider}`,
@@ -34165,7 +34188,7 @@ if (isGeminiMcpBridgeProcess) {
             await finishRemoteDraft(saved, action.workspaceId)
             return { ok: true, threadId: chat.appChatId, chatKind: chat.chatKind }
           }
-          const provider = assertLiveProviderId(
+          const provider = assertPairedDeviceProviderId(
             action.provider ?? AppStore.getSettings().activeProvider ?? 'claude'
           )
           const chat = createOrReuseRemoteDraft({
@@ -34725,7 +34748,7 @@ if (isGeminiMcpBridgeProcess) {
           // `event.sender` for streaming; other fields are unused in the
           // run path, so a duck-typed shim is sufficient.
           const fakeEvent = { sender } as unknown as Electron.IpcMainInvokeEvent
-          const provider = assertLiveProviderId(action.provider)
+          const provider = assertPairedDeviceProviderId(action.provider)
           // Secondary-workspace grants become write-capable external path
           // grants, so each extra id must pass the same fine-grained write
           // policy the router applies to primary workspace mutations.
@@ -34977,6 +35000,7 @@ if (isGeminiMcpBridgeProcess) {
           }
           let chat = prepareIosComposerPromptChat({
             action,
+            provider,
             workspace: workspaceRecord,
             imagePaths: iosImagePaths,
             imageThumbnails: iosImageThumbnails
@@ -39531,6 +39555,9 @@ if (isGeminiMcpBridgeProcess) {
           // Discovery stays post-settings-change and cached. Picker opening
           // only observes the completed snapshot; it never starts this probe.
           managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+          // A consent withdrawal invalidates the paired-device catalog before
+          // the replacement discovery generation completes.
+          remoteProviderModelsTrigger?.()
         }
       },
       getPromptCacheCapabilities: () =>
@@ -41361,6 +41388,30 @@ if (isGeminiMcpBridgeProcess) {
       isMainRendererSender
     })
 
+    const getConfiguredProviderSnapshot = () => {
+      const settings = AppStore.getSettings()
+      const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
+      const configuredModels = managedRunConfiguredProviderDiscovery.modelsSnapshot(settings)
+      const antigravityModels = configuredModels.get('antigravity')
+      const antigravityConfigured = isAuthenticatedAntigravityConfiguredProvider(
+        settings,
+        snapshot,
+        configuredModels
+      )
+      return {
+        ready: snapshot.ready,
+        providerIds: [
+          ...LIVE_SELECTABLE_PROVIDER_IDS.filter((provider) =>
+            snapshot.configuredProviders.has(provider)
+          ),
+          ...(antigravityConfigured ? (['antigravity'] as ProviderId[]) : [])
+        ],
+        ...(antigravityConfigured && antigravityModels
+          ? { modelsByProvider: { antigravity: antigravityModels } }
+          : {})
+      }
+    }
+
     registerProviderMetadataHandlers({
       assertProviderId,
       getAgentMcpStatusSnapshot,
@@ -41377,29 +41428,7 @@ if (isGeminiMcpBridgeProcess) {
         })
       },
       getProviderAdapterDescriptors,
-      getConfiguredProviderSnapshot: () => {
-        const settings = AppStore.getSettings()
-        const snapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
-        const antigravityModels = managedRunConfiguredProviderDiscovery
-          .modelsSnapshot(settings)
-          .get('antigravity')
-        const antigravityConfigured =
-          snapshot.ready &&
-          snapshot.configuredProviders.has('antigravity') &&
-          Boolean(antigravityModels?.length)
-        return {
-          ready: snapshot.ready,
-          providerIds: [
-            ...LIVE_SELECTABLE_PROVIDER_IDS.filter((provider) =>
-              snapshot.configuredProviders.has(provider)
-            ),
-            ...(antigravityConfigured ? (['antigravity'] as ProviderId[]) : [])
-          ],
-          ...(antigravityConfigured
-            ? { modelsByProvider: { antigravity: antigravityModels } }
-            : {})
-        }
-      },
+      getConfiguredProviderSnapshot,
       isMainRendererSender
     })
 
@@ -41818,17 +41847,26 @@ if (isGeminiMcpBridgeProcess) {
     // hierarchical provider→model picker. Async (the Codex live list +
     // Ollama tags can take seconds); fires on establish and pushes through
     // the broadcaster whenever it lands.
-    // gemini retired — excluded so it never appears in any iOS picker. Historical
-    // iOS cards still render via RemoteThreadProjection PROVIDER_LABELS + the
-    // Swift Theme gemini accent/label fallback.
-    const REMOTE_MODEL_PROVIDERS: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
+    // Gemini remains retired and static iOS offers remain unchanged. The sole
+    // dynamic addition is S4's already-admitted AntiGravity catalog; it is
+    // absent whenever the snapshot is pending, disconnected, or withdrawn.
     const broadcastProviderModelsToRemote = (): void => {
       void (async () => {
         const broadcaster = bridgeBroadcasterRef
         if (!broadcaster) return
+        const configuredSnapshot = getConfiguredProviderSnapshot()
+        const antigravityModels = configuredSnapshot.modelsByProvider?.antigravity ?? []
+        const remoteProviders: ProviderId[] = [
+          ...LIVE_SELECTABLE_PROVIDER_IDS,
+          ...(configuredSnapshot.providerIds.includes('antigravity')
+            ? (['antigravity'] as ProviderId[])
+            : [])
+        ]
         const providers = await Promise.all(
-          REMOTE_MODEL_PROVIDERS.map(async (provider) => {
-            const models = (await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
+          remoteProviders.map(async (provider) => {
+            const models = (provider === 'antigravity'
+              ? antigravityModels
+              : await listAgentModelsForProvider(provider).catch(() => [])) as Array<{
               id?: unknown
               label?: unknown
               isDefault?: unknown

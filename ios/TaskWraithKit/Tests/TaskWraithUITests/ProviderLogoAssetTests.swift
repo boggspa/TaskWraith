@@ -6,7 +6,7 @@ import Testing
 @Suite("Provider logo assets")
 struct ProviderLogoAssetTests {
     @Test func fullColourProvidersUseOneAssetAcrossAppearances() {
-        for provider in ["gemini", "codex", "claude", "kimi"] {
+        for provider in ["gemini", "codex", "claude", "kimi", "antigravity"] {
             let expected = "provider-logo-\(provider)"
             #expect(
                 ProviderLogoAssetResolver.assetName(
@@ -51,6 +51,7 @@ struct ProviderLogoAssetTests {
             "provider-logo-codex",
             "provider-logo-claude",
             "provider-logo-kimi",
+            "provider-logo-antigravity",
             "provider-logo-cursor-on-light",
             "provider-logo-cursor-on-dark",
             "provider-logo-grok-on-light",

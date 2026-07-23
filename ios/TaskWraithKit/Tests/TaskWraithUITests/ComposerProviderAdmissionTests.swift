@@ -74,4 +74,22 @@ struct ComposerProviderAdmissionTests {
         #expect(admission.provider == "kimi")
         #expect(admission.isLive)
     }
+
+    @Test func authenticatedCatalogAdmitsAntiGravityWithoutWideningTheStaticSet() {
+        let admitted = resolveComposerProviderAdmission(
+            selectedProvider: "antigravity",
+            cardProvider: nil,
+            canChangeProvider: true,
+            isNewTask: true,
+            dynamicallySelectableProviderIds: ["antigravity"])
+        #expect(admitted.isLive)
+
+        let unavailable = resolveComposerProviderAdmission(
+            selectedProvider: "antigravity",
+            cardProvider: nil,
+            canChangeProvider: true,
+            isNewTask: true)
+        #expect(!unavailable.isLive)
+        #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
+    }
 }
