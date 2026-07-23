@@ -58,7 +58,7 @@ function makeCheckpointChat(): ChatRecord {
         maxRoundsPerProvider: 4,
         maxDurationMs: 60 * 60 * 1000,
         enableScoutPass: false,
-        roundsUsed: { gemini: 0, codex: 1, claude: 1, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+        roundsUsed: { gemini: 0, codex: 1, claude: 1, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
         totalRoundsUsed: 2
       },
       lastRoundSummary:

@@ -395,6 +395,8 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
       }
     case 'gemini':
       return { ...providerLaunchPlan('codex'), provider: 'gemini' } as never
+    case 'antigravity':
+      return { ...providerLaunchPlan('codex'), provider: 'antigravity' } as never
   }
 }
 
@@ -403,7 +405,7 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
  * posture is structural (digest invariants + the pinned posture version).
  */
 function contradictoryPosturePlan(
-  provider: Exclude<ProviderId, 'gemini' | 'kimi'>
+  provider: Exclude<ProviderId, 'gemini' | 'kimi' | 'antigravity'>
 ): ProviderLaunchAuthorityInput {
   const plan = providerLaunchPlan(provider)
   switch (provider) {

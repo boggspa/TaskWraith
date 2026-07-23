@@ -19,7 +19,11 @@
 import type { ProviderId } from '../../../main/store/types'
 import { MODEL_USAGE_PROVIDER_ORDER } from './modelUsageTable'
 import { getEnsembleModelDefaults } from './ensembleProviderDefaults'
-import { resolveContextWindow, formatContextTokens } from './contextWindows'
+import {
+  isContextWindowProviderId,
+  resolveContextWindow,
+  formatContextTokens
+} from './contextWindows'
 
 // Catalog entries that are router/selection ALIASES, not concrete models, so
 // they have no single official context window of their own (their effective
@@ -54,7 +58,10 @@ export function buildModelContextLengthGroups(
     const models = getEnsembleModelDefaults(provider)
       .modelOptions.filter((opt) => !NON_MODEL_ALIAS_IDS.has(opt.id))
       .map((opt) => {
-        const contextWindow = resolveContextWindow(provider, opt.id)
+        const contextWindow = resolveContextWindow(
+          isContextWindowProviderId(provider) ? provider : undefined,
+          opt.id
+        )
         const maxContextWindow =
           provider === 'kimi' && opt.id === 'kimi-k3' ? 1_048_576 : undefined
         return {

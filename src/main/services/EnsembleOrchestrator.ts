@@ -166,7 +166,11 @@ import {
   type DiscordContextReadMetadata,
   type DiscordContextSnapshot
 } from '../channels/DiscordContextService'
-import { contextPercent, resolveContextWindow } from '../../shared/contextWindows'
+import {
+  contextPercent,
+  isContextWindowProviderId,
+  resolveContextWindow
+} from '../../shared/contextWindows'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import type { ParticipantWorkingTelemetryEvent } from '../../shared/participantWorkingTelemetry'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
@@ -10233,7 +10237,7 @@ export class EnsembleOrchestrator {
       participants: (chat.ensemble.participants || []).map((participant) => {
         const participantContext = latestRunContextUsage(chat.runs ?? [], participant.id)
         const participantContextWindow = resolveContextWindow(
-          participant.provider,
+          isContextWindowProviderId(participant.provider) ? participant.provider : undefined,
           participant.model,
           participantContext.totalTokenLimit
         )

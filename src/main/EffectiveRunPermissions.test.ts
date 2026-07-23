@@ -70,7 +70,8 @@ function settings(overrides: Partial<AppSettings> = {}): AppSettings {
         kimi: 60000,
         grok: 120000,
         cursor: 120000,
-        ollama: 120000
+        ollama: 120000,
+        antigravity: 120000
       },
       mainAuthorityMs: 120000
     },

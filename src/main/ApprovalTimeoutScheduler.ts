@@ -67,7 +67,9 @@ export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
     // Cursor compatibility slot only; source-ahead managed runs are disabled.
     cursor: 120_000,
     // Ollama Phase 1 is read-only/no-approval, but keep the record complete.
-    ollama: 120_000
+    ollama: 120_000,
+    // Opt-in antigravity has no approval flow yet; keep the record complete.
+    antigravity: 120_000
   },
   mainTimeoutMs: 60_000,
   perKindOverridesMs: {

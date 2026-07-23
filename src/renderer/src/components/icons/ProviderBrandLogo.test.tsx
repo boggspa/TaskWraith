@@ -6,12 +6,12 @@ import {
   resolveProviderBrandLogoSource
 } from './providerBrandLogoAssets'
 
-const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi'] as const
+const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity'] as const
 const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama'] as const
 const KNOWN_PROVIDERS = [...STATIC_PROVIDERS, ...THEMED_PROVIDERS] as const
 
 describe('ProviderBrandLogo', () => {
-  it('renders official raster artwork for all seven known providers', () => {
+  it('renders official raster artwork for all eight known providers', () => {
     for (const provider of KNOWN_PROVIDERS) {
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 

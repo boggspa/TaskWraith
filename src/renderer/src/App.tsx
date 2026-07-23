@@ -502,7 +502,11 @@ import {
   type RunLane
 } from './lib/RunLanes'
 import { formatOpaqueMarkdownPromptSection } from './lib/HandoffPrompt'
-import { resolveContextWindow, formatContextTokens } from './lib/contextWindows'
+import {
+  isContextWindowProviderId,
+  resolveContextWindow,
+  formatContextTokens
+} from './lib/contextWindows'
 import {
   currentContextTokens,
   contextPercent,
@@ -1985,7 +1989,8 @@ function App(): React.JSX.Element {
       kimi: 60_000,
       grok: 120_000,
       cursor: 120_000,
-      ollama: 120_000
+      ollama: 120_000,
+      antigravity: 120_000
     },
     mainAuthorityMs: 60_000
   })
@@ -2261,7 +2266,8 @@ function App(): React.JSX.Element {
     kimi: [],
     grok: [],
     cursor: [],
-    ollama: []
+    ollama: [],
+    antigravity: []
   })
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')
@@ -20698,7 +20704,7 @@ function App(): React.JSX.Element {
       ? resolveLiveOllamaContextLength(contextModelId)
       : undefined
   const contextWindowSize = resolveContextWindow(
-    currentProvider,
+    isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
     contextModelId,
     latestRunLimits.totalTokenLimit,
     ollamaLiveContextLength

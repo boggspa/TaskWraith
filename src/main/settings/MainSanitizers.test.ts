@@ -3,7 +3,11 @@ import {
   createMainSanitizers,
   normalizeEnsembleRunIdentity,
   normalizeAuditRunIdentity,
-  sanitizeAuditOrchestration
+  sanitizeAuditOrchestration,
+  assertProviderId,
+  assertLiveProviderId,
+  availableProviderIds,
+  selectableProviderIds
 } from './MainSanitizers'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../store/types'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
@@ -1361,4 +1365,36 @@ describe('MainSanitizers settings patches', () => {
     )
   })
 
+})
+
+describe('AntiGravity opt-in admission (S0b settings-aware gate)', () => {
+  const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1_700_000_000_000 }
+  const enabledNoConsent = { antigravityEnabled: true, antigravityOptInAcceptedAt: null }
+
+  it('accepts antigravity as a KNOWN/decode provider id', () => {
+    expect(assertProviderId('antigravity')).toBe('antigravity')
+    expect(availableProviderIds()).toContain('antigravity')
+  })
+
+  it('excludes antigravity from the offer set when settings are absent (fail closed)', () => {
+    expect(selectableProviderIds()).not.toContain('antigravity')
+    expect(selectableProviderIds(enabledNoConsent)).not.toContain('antigravity')
+  })
+
+  it('includes antigravity in the offer set only when enabled AND consent recorded', () => {
+    expect(selectableProviderIds(optedIn)).toContain('antigravity')
+  })
+
+  it('assertLiveProviderId rejects antigravity without opt-in settings (fail closed)', () => {
+    expect(() => assertLiveProviderId('antigravity')).toThrow()
+    expect(() => assertLiveProviderId('antigravity', enabledNoConsent)).toThrow()
+  })
+
+  it('assertLiveProviderId admits antigravity only with a full opt-in', () => {
+    expect(assertLiveProviderId('antigravity', optedIn)).toBe('antigravity')
+  })
+
+  it('keeps gemini retired even under a valid antigravity opt-in', () => {
+    expect(() => assertLiveProviderId('gemini', optedIn)).toThrow()
+  })
 })

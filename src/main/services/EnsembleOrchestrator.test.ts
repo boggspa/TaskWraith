@@ -109,7 +109,7 @@ function buildWorkSession(over: Partial<WorkSessionConfig> = {}): WorkSessionCon
     maxRoundsPerProvider: 38,
     maxDurationMs: 6 * 60 * 60 * 1000,
     enableScoutPass: false,
-    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
     totalRoundsUsed: 0,
     ...over
   }
@@ -209,7 +209,8 @@ function makeSettings(): AppSettings {
         kimi: 60000,
         grok: 120000,
         cursor: 120000,
-        ollama: 120000
+        ollama: 120000,
+        antigravity: 120000
       },
       mainAuthorityMs: 120000
     }
@@ -13686,7 +13687,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -13712,7 +13713,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -13747,7 +13748,7 @@ Next action:
       maxRoundsPerProvider: 38,
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -13806,7 +13807,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
 
@@ -13846,7 +13847,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -13923,7 +13924,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -13980,7 +13981,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -14059,7 +14060,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: true,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -14254,7 +14255,7 @@ Next action:
       // Fan-out OFF — serial dispatch should run.
       enableScoutPass: false,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -16929,7 +16930,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: true,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({
@@ -17048,7 +17049,7 @@ Next action:
       maxDurationMs: 6 * 60 * 60 * 1000,
       enableScoutPass: true,
       startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     harness.orchestrator.startRound({

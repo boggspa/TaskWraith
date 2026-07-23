@@ -698,6 +698,13 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       }
     ]
+  },
+  // Opt-in provider. No baked-in rate table yet (a later slice sources rates
+  // from an official surface); empty keeps the exhaustive Record complete.
+  antigravity: {
+    provider: 'antigravity',
+    pricingUrl: '',
+    models: []
   }
 }
 

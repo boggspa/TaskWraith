@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../../../main/store/types'
+import antigravityLogo from '../../assets/provider-logos/provider-logo-antigravity.png'
 import claudeLogo from '../../assets/provider-logos/provider-logo-claude.png'
 import codexLogo from '../../assets/provider-logos/provider-logo-codex-cloud.png'
 import cursorLogoOnDark from '../../assets/provider-logos/provider-logo-cursor-on-dark.png'
@@ -24,7 +25,10 @@ export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<Record<ProviderId, ProviderBr
   kimi: { light: kimiLogo },
   grok: { light: grokLogoOnLight, dark: grokLogoOnDark },
   cursor: { light: cursorLogoOnLight, dark: cursorLogoOnDark },
-  ollama: { light: ollamaLogoOnLight, dark: ollamaLogoOnDark }
+  ollama: { light: ollamaLogoOnLight, dark: ollamaLogoOnDark },
+  // An official runtime copy; this remains unreachable until the user's opt-in
+  // and successful connection expose the provider.
+  antigravity: { light: antigravityLogo }
 }
 
 export function providerBrandLogoKey(provider?: ProviderBrandLogoId): string {

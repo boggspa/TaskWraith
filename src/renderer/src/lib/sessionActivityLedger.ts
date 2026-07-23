@@ -17,7 +17,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   kimi: 'Kimi',
   grok: 'Grok',
   cursor: 'Cursor',
-  ollama: 'Ollama'
+  ollama: 'Ollama',
+  antigravity: 'Antigravity'
 }
 
 export function withSessionActivityLedger(

@@ -6,7 +6,11 @@ import { deriveChatRunCompleteNotice } from './chatRunDisplay'
 import { isEnsembleActiveRoundDispatchLive } from './chatBusyState'
 import { estimateLiveOutputTokensFromChars } from './liveOutputTokens'
 import { createChatWalkCache, noWalkDepsEqual } from './chatWalkCache'
-import { resolveContextWindow, formatContextTokens } from './contextWindows'
+import {
+  isContextWindowProviderId,
+  resolveContextWindow,
+  formatContextTokens
+} from './contextWindows'
 import {
   buildParticipantContextRows,
   contextPercent,
@@ -82,7 +86,7 @@ export function derivePaneContextTelemetry(
   const liveOllamaContextLength =
     deps.provider === 'ollama' ? deps.resolveOllamaContextLength(deps.modelId) : undefined
   const windowTokens = resolveContextWindow(
-    deps.provider,
+    isContextWindowProviderId(deps.provider) ? deps.provider : undefined,
     deps.modelId,
     undefined,
     liveOllamaContextLength

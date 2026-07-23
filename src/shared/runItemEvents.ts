@@ -15,6 +15,7 @@ export type RunItemEventProvider =
   | 'grok'
   | 'cursor'
   | 'ollama'
+  | 'antigravity'
 
 export type RunItemEventKind =
   | 'run/started'

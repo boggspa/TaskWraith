@@ -174,7 +174,19 @@ export type ComposerStyle =
 // id; `shared/retiredProviders.ts` owns the canonical offer/run set. Source-ahead
 // Cursor is deliberately excluded there and fails before process launch pending
 // exact-build startup-containment qualification.
-export type ProviderId = 'gemini' | 'codex' | 'claude' | 'kimi' | 'grok' | 'cursor' | 'ollama'
+// `antigravity` is a DISTINCT opt-in provider id (never a Gemini revival). It is
+// always a known/decode id, but offer/run eligibility is gated by
+// isAntigravityOptInEnabled(settings) — it is deliberately NOT in
+// LIVE_SELECTABLE_PROVIDER_IDS, any provider ORDER, FirstLaunch, or offer list.
+export type ProviderId =
+  | 'gemini'
+  | 'codex'
+  | 'claude'
+  | 'kimi'
+  | 'grok'
+  | 'cursor'
+  | 'ollama'
+  | 'antigravity'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -1877,6 +1889,7 @@ export type ProviderAdapterTransport =
   | 'grok-cli'
   | 'cursor-cli'
   | 'ollama-http'
+  | 'antigravity-cli'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 

@@ -99,7 +99,8 @@ const PROVIDER_TRANSPORT: Record<ProviderId, ProviderAdapterTransport> = {
   kimi: 'kimi-acp-authenticated-http-mcp',
   grok: 'grok-cli',
   cursor: 'cursor-cli',
-  ollama: 'ollama-http'
+  ollama: 'ollama-http',
+  antigravity: 'antigravity-cli'
 }
 
 interface InspectorProps {

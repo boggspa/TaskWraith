@@ -13,7 +13,7 @@ function workSession(overrides: Partial<WorkSessionConfig> = {}): WorkSessionCon
     maxRoundsPerProvider: 3,
     maxDurationMs: 60 * 60 * 1000,
     enableScoutPass: false,
-    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
     totalRoundsUsed: 0,
     ...overrides
   }

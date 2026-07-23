@@ -45,7 +45,10 @@ import { normalizePromptCacheSettings } from '../PromptCachePolicy'
 import {
   coerceLiveProvider,
   isLiveSelectableProvider,
-  LIVE_SELECTABLE_PROVIDER_IDS
+  LIVE_SELECTABLE_PROVIDER_IDS,
+  ANTIGRAVITY_PROVIDER_ID,
+  isAntigravityOptInEnabled,
+  type AntigravityOptInSettingsLike
 } from '../../shared/retiredProviders'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
@@ -66,7 +69,10 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  // Known/decode id. Offer/run eligibility is gated separately (opt-in); being
+  // here only lets persisted records with provider 'antigravity' decode.
+  'antigravity'
 ])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
@@ -220,7 +226,7 @@ export function assertProviderId(value: unknown): ProviderId {
 }
 
 export function availableProviderIds(): ProviderId[] {
-  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
+  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity']
 }
 
 /**
@@ -228,24 +234,36 @@ export function availableProviderIds(): ProviderId[] {
  * or security-unqualified providers. Use this for pickers, MCP tool enums, run-command
  * parsing, and "supported provider" error lists. `availableProviderIds()` stays
  * the full known set so decode/validation of historical data keeps working.
+ *
+ * The opt-in `antigravity` provider is admitted ONLY when the caller supplies
+ * settings that pass `isAntigravityOptInEnabled` (both enabled AND consent
+ * recorded). Settings-less callers fail closed — antigravity stays absent from
+ * every offer/run surface until the user has explicitly opted in.
  */
-export function selectableProviderIds(): ProviderId[] {
-  return [...LIVE_SELECTABLE_PROVIDER_IDS]
+export function selectableProviderIds(settings?: AntigravityOptInSettingsLike): ProviderId[] {
+  const ids: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
+  if (isAntigravityOptInEnabled(settings)) ids.push(ANTIGRAVITY_PROVIDER_ID)
+  return ids
 }
 
 /**
  * Like `assertProviderId`, but also rejects unavailable providers. Use at run
  * DISPATCH so a historical/unqualified provider can never start a new run, while
  * read/validate paths keep `assertProviderId` (which still accepts it).
+ *
+ * `antigravity` is admitted only when `settings` passes `isAntigravityOptInEnabled`;
+ * settings-less callers reject it (fail closed).
  */
-export function assertLiveProviderId(value: unknown): ProviderId {
+export function assertLiveProviderId(
+  value: unknown,
+  settings?: AntigravityOptInSettingsLike
+): ProviderId {
   const provider = assertProviderId(value)
-  if (!isLiveSelectableProvider(provider)) {
-    throw new Error(
-      `${provider} is unavailable for new runs. Choose ${selectableProviderIds().join(', ')}.`
-    )
-  }
-  return provider
+  if (isLiveSelectableProvider(provider)) return provider
+  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityOptInEnabled(settings)) return provider
+  throw new Error(
+    `${provider} is unavailable for new runs. Choose ${selectableProviderIds(settings).join(', ')}.`
+  )
 }
 
 export function requireNonEmptyString(value: unknown, label: string): string {

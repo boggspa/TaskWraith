@@ -154,7 +154,7 @@ describe('Ensemble prompt composition', () => {
         maxRoundsPerProvider: 3,
         maxDurationMs: 60 * 60 * 1000,
         enableScoutPass: false,
-        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
         totalRoundsUsed: 0
       }
     })
@@ -448,7 +448,8 @@ describe('Ensemble prompt composition', () => {
           kimi: 0,
           grok: 0,
           cursor: 0,
-          ollama: 0
+          ollama: 0,
+          antigravity: 0
         },
         totalRoundsUsed: 0
       }
@@ -1427,7 +1428,7 @@ describe('Ensemble prompt composition', () => {
       maxRoundsPerProvider: 4,
       maxDurationMs: 60_000,
       enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     const config: EnsembleConfig = {
@@ -2586,7 +2587,7 @@ describe('computeEnsemblePromptShellStamp', () => {
         maxRoundsPerProvider: 5,
         maxDurationMs: 1000,
         enableScoutPass: false,
-        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
         totalRoundsUsed: 0
       }
     }
@@ -2665,7 +2666,7 @@ describe('dynamic ensemble-state snapshots', () => {
       maxRoundsPerProvider: 4,
       maxDurationMs: 60_000,
       enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0 },
+      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
       totalRoundsUsed: 0
     }
     const initial: EnsembleConfig = { ...ensemble, workSession }

@@ -111,7 +111,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   kimi: 'Moonshot Kimi CLI',
   grok: 'xAI Grok CLI',
   cursor: 'Cursor Agent CLI',
-  ollama: 'Local Ollama HTTP'
+  ollama: 'Local Ollama HTTP',
+  antigravity: 'Antigravity CLI'
 }
 
 /** User-facing reason used to make historical provider chats read-only. */

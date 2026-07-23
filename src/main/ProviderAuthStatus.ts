@@ -32,7 +32,10 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   // TaskWraith starts no Cursor process.
   cursor: 'cli',
   // Ollama runs through the local HTTP API rather than a cloud auth flow.
-  ollama: 'http'
+  ollama: 'http',
+  // Opt-in antigravity wraps the user's official `agy` CLI (neutral placeholder;
+  // real transport wiring lands with the runtime slice).
+  antigravity: 'cli'
 }
 
 const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -45,7 +48,9 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // Cursor managed runs are disabled before launch.
   cursor: false,
   // Phase 1 local chat is read-only/no-tools.
-  ollama: false
+  ollama: false,
+  // No runtime/approval flow yet (opt-in provider).
+  antigravity: false
 }
 
 const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -61,7 +66,9 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // Cursor has no source-ahead MCP status surface because no process starts.
   cursor: false,
   // Ollama exposes a TaskWraith-local read-only tool loop through the adapter.
-  ollama: true
+  ollama: true,
+  // No TaskWraith MCP gateway for the opt-in provider yet.
+  antigravity: false
 }
 
 export function buildProviderAuthStatusV2(input: ProviderAuthStatusV2Input): ProviderAuthStatusV2 {

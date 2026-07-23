@@ -4,7 +4,7 @@ import { summarizeProviderUsage, type ProviderUsageSummary } from './ProviderUsa
 import { getStaticProviderModels } from './providers/StaticProviderModels'
 import { selectableProviderIds } from './settings/MainSanitizers'
 import type { ProviderId } from './store/types'
-import { resolveContextWindow } from '../shared/contextWindows'
+import { isContextWindowProviderId, resolveContextWindow } from '../shared/contextWindows'
 
 export interface EnsembleParticipantModelCatalogEntry {
   id: string
@@ -73,7 +73,10 @@ export function buildEnsembleParticipantModelCatalog(
       return {
         id,
         label,
-        contextWindow: resolveContextWindow(provider, id),
+        contextWindow: resolveContextWindow(
+          isContextWindowProviderId(provider) ? provider : undefined,
+          id
+        ),
         ...(record.isDefault === true ? { isDefault: true } : {}),
         ...(typeof record.description === 'string' && record.description.trim()
           ? { description: record.description.trim() }

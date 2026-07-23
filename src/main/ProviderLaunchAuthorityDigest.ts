@@ -5,7 +5,10 @@ import type { ProviderId, TaskWraithMcpProfileId } from './store/types'
 const PROVIDER_LAUNCH_DOMAIN = 'taskwraith:provider-launch-authority:v1\0'
 const MAX_TEXT_LENGTH = 4_096
 
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini'>
+// antigravity is a known/decode ProviderId but has NO launch runtime yet (that
+// arrives in a later opt-in slice); exclude it from the launch-authority lane so
+// no vacuous launch-control/seal entry is minted for a provider that cannot run.
+export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity'>
 
 export interface ProviderLaunchCommonAuthority {
   readonly adapterRevision: string

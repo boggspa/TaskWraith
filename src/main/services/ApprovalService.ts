@@ -658,7 +658,8 @@ export class ApprovalService {
         kimi: userSettings.perProviderMs.kimi,
         grok: userSettings.perProviderMs.grok,
         cursor: userSettings.perProviderMs.cursor,
-        ollama: userSettings.perProviderMs.ollama
+        ollama: userSettings.perProviderMs.ollama,
+        antigravity: userSettings.perProviderMs.antigravity
       },
       mainTimeoutMs: userSettings.mainAuthorityMs
     })

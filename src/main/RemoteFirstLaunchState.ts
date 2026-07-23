@@ -126,7 +126,10 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
     'Cursor Composer via the Cursor CLI. Sign in on the Mac with cursor-agent login; runs use a contained OS sandbox.',
   grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
   ollama:
-    'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.'
+    'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.',
+  // Opt-in provider; never listed in PROVIDER_ORDER, so this placeholder is not
+  // surfaced. Real onboarding copy lives in the buried Settings card slice.
+  antigravity: 'Antigravity.'
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -138,7 +141,9 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   cursor:
     'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
-  ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.'
+  ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.',
+  // Opt-in provider; not in PROVIDER_ORDER, so this placeholder is not surfaced.
+  antigravity: ''
 }
 
 export function buildRemoteFirstLaunchState(
@@ -405,5 +410,7 @@ function providerLabel(provider: ProviderId): string {
       return 'Ollama'
     case 'gemini':
       return 'Gemini'
+    case 'antigravity':
+      return 'Antigravity'
   }
 }

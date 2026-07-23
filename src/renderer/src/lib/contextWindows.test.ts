@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { contextPercent, formatContextTokens, resolveContextWindow } from './contextWindows'
-import type { ProviderId } from '../../../main/store/types'
+import type { ContextWindowProviderId } from '../../../shared/contextWindows'
 
 describe('resolveContextWindow', () => {
   it('prefers a positive finite stats token limit over model and provider defaults', () => {
@@ -61,7 +61,7 @@ describe('resolveContextWindow', () => {
   })
 
   it('uses provider fallbacks for all seven providers when the model is unknown', () => {
-    const expected: Record<ProviderId, number> = {
+    const expected: Record<ContextWindowProviderId, number> = {
       gemini: 1_048_576,
       codex: 1_050_000,
       claude: 200_000,
@@ -71,7 +71,9 @@ describe('resolveContextWindow', () => {
       ollama: 262_144
     }
 
-    for (const [provider, limit] of Object.entries(expected) as Array<[ProviderId, number]>) {
+    for (const [provider, limit] of Object.entries(expected) as Array<
+      [ContextWindowProviderId, number]
+    >) {
       expect(resolveContextWindow(provider, 'unknown-model')).toBe(limit)
     }
   })
