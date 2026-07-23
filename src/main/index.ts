@@ -1605,6 +1605,7 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
+import { createAntigravityGeminiApiMutationSuccessHandler } from './antigravity/AntigravityGeminiApiMutationLifecycle'
 import {
   discoverAuthenticatedAntigravityCombinedModels
 } from './antigravity/AntigravityCombinedModelCatalog'
@@ -31334,10 +31335,10 @@ if (isGeminiMcpBridgeProcess) {
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: antigravityGeminiApiSecretStore,
       isMainRendererSender,
-      onSecretMutationSuccess: () => {
-        managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
-        remoteProviderModelsTrigger?.()
-      }
+      onSecretMutationSuccess: createAntigravityGeminiApiMutationSuccessHandler({
+        startDiscovery: () => managedRunConfiguredProviderDiscovery.start(AppStore.getSettings()),
+        broadcastPendingCatalog: () => remoteProviderModelsTrigger?.()
+      })
     })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
       const ack = normalizeChatUpdateAck(value)

@@ -6,6 +6,7 @@ import {
   registerAntigravityGeminiApiSecretHandlers
 } from './antigravityGeminiApiSecretHandlers'
 import { validateIpcArgs } from '../IpcValidation'
+import { createAntigravityGeminiApiMutationSuccessHandler } from '../antigravity/AntigravityGeminiApiMutationLifecycle'
 
 const handlers = new Map<string, (event: unknown, ...args: unknown[]) => unknown>()
 
@@ -62,6 +63,27 @@ describe('antigravity Gemini API secret IPC', () => {
     expect(store.setApiKey).toHaveBeenCalledWith('key')
     expect(store.clear).toHaveBeenCalledOnce()
     expect(onSecretMutationSuccess).toHaveBeenCalledTimes(2)
+  })
+
+  it('starts discovery before withdrawing the paired catalog on successful set and clear', () => {
+    const order: string[] = []
+    const store = createStore()
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: store,
+      isMainRendererSender: () => true,
+      onSecretMutationSuccess: createAntigravityGeminiApiMutationSuccessHandler({
+        startDiscovery: () => order.push('discovery.start'),
+        broadcastPendingCatalog: () => order.push('paired.pending')
+      })
+    })
+    const event = { sender: { id: 1 } }
+
+    handlers.get(ANTIGRAVITY_GEMINI_API_SECRET_SET_CHANNEL)?.(event, 'key')
+    expect(order).toEqual(['discovery.start', 'paired.pending'])
+
+    order.length = 0
+    handlers.get(ANTIGRAVITY_GEMINI_API_SECRET_CLEAR_CHANNEL)?.(event)
+    expect(order).toEqual(['discovery.start', 'paired.pending'])
   })
 
   it('rejects every channel from a secondary renderer before touching the store', () => {

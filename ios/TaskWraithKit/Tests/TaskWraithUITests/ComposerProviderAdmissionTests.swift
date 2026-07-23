@@ -1,4 +1,6 @@
+import Foundation
 import Testing
+import TaskWraithKit
 
 @testable import TaskWraithUI
 
@@ -91,5 +93,24 @@ struct ComposerProviderAdmissionTests {
             isNewTask: true)
         #expect(!unavailable.isLive)
         #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
+    }
+
+    @Test func geminiApiWireCatalogDecodesSeparateBillingAndAdmitsDynamically() throws {
+        let message = try JSONDecoder().decode(
+            ProviderModelsMessage.self,
+            from: Data(
+                #"{"providers":[{"provider":"antigravity","models":[{"id":"gemini-api:gemini-2.5-flash","label":"Gemini API · gemini-2.5-flash · separate billing"}]}]}"#.utf8
+            ))
+        let models = message.providers.first?.models ?? []
+        let row = models.first
+
+        #expect(message.providers.map(\.provider) == ["antigravity"])
+        #expect(row?.id == "gemini-api:gemini-2.5-flash")
+        #expect(row?.label?.contains("Gemini API") == true)
+        #expect(row?.label?.contains("separate billing") == true)
+        #expect(TWTheme.isProviderOfferedByModelCatalog("antigravity", models: models))
+        #expect(!TWTheme.isLiveSelectableProvider("antigravity"))
+        #expect(TWTheme.isRetiredProvider("gemini"))
+        #expect(!TWTheme.liveSelectableProviderIds.contains("gemini"))
     }
 }
