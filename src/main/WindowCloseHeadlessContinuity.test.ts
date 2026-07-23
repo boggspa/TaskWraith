@@ -1,5 +1,10 @@
 import { readFileSync } from 'fs'
 import { describe, expect, it } from 'vitest'
+import { RUN_MANAGER_PROVIDERS } from './index.constants'
+import { isActiveRunSessionStatus, RunManager } from './RunManager'
+import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
+
+const HEADLESS_LIVE_PROVIDERS = [...LIVE_SELECTABLE_PROVIDER_IDS, 'antigravity'] as const
 
 /**
  * Source contract for user-note-20260723001127: when the last window closes,
@@ -22,6 +27,14 @@ describe('window-all-closed headless continuity', () => {
     expect(end).toBeGreaterThan(0)
     void endRel
     return after.slice(0, end)
+  }
+
+  const sourceBetween = (startMarker: string, endMarker: string): string => {
+    const start = indexSource.indexOf(startMarker)
+    const end = indexSource.indexOf(endMarker, start + startMarker.length)
+    expect(start).toBeGreaterThanOrEqual(0)
+    expect(end).toBeGreaterThan(start)
+    return indexSource.slice(start, end)
   }
 
   it('keeps provider sessions + MCP broker when active runs exist', () => {
@@ -57,5 +70,98 @@ describe('window-all-closed headless continuity', () => {
     const quitIdx = handler.indexOf("process.platform !== 'darwin'")
     expect(quitIdx).toBeGreaterThan(keepBranchEnd)
     expect(handler.slice(quitIdx)).toContain('app.quit()')
+  })
+
+  it('tracks every live provider, including opted-in AntiGravity, in the run owner inventory', () => {
+    expect(RUN_MANAGER_PROVIDERS).toEqual(expect.arrayContaining([...HEADLESS_LIVE_PROVIDERS]))
+    expect(LIVE_SELECTABLE_PROVIDER_IDS).not.toContain('gemini')
+    expect(LIVE_SELECTABLE_PROVIDER_IDS).not.toContain('antigravity')
+
+    const manager = new RunManager()
+    const sessions = HEADLESS_LIVE_PROVIDERS.map((provider, index) =>
+      manager.create({
+        runId: `headless-${provider}-${index}`,
+        provider,
+        appChatId: `headless-chat-${provider}`,
+        status: 'running'
+      })
+    )
+
+    for (const [index, provider] of HEADLESS_LIVE_PROVIDERS.entries()) {
+      expect(manager.getActiveByProvider(provider)).toEqual([sessions[index]])
+      expect(isActiveRunSessionStatus(sessions[index].status)).toBe(true)
+    }
+
+    for (const session of sessions) manager.finish(session.runId, 'completed')
+    expect(
+      HEADLESS_LIVE_PROVIDERS.flatMap((provider) => manager.getActiveByProvider(provider))
+    ).toEqual([])
+  })
+
+  it('uses the same provider inventory for active-count and streaming checks', () => {
+    const activeCount = sourceBetween(
+      'function getActiveTaskWraithThreadCount(): number {',
+      'function hasActiveStreamingTaskWraithRun(): boolean {'
+    )
+    expect(activeCount).toContain('for (const provider of RUN_MANAGER_PROVIDERS)')
+
+    const streamingCheck = sourceBetween(
+      'function hasActiveStreamingTaskWraithRun(): boolean {',
+      'const appShellStatsService = new AppShellStatsService'
+    )
+    expect(streamingCheck).toContain('RUN_MANAGER_PROVIDERS.flatMap')
+    expect(streamingCheck).toContain('hasStreamingRemoteRunSessions')
+  })
+
+  it('does not cancel provider runs or approvals when the renderer closes or crashes', () => {
+    const browserWindowLifecycle = sourceBetween(
+      "app.on('browser-window-created', (_, window) => {",
+      '    // Phase E3: Bridge Networking'
+    )
+
+    expect(browserWindowLifecycle).toContain("window.once('closed'")
+    expect(browserWindowLifecycle).toContain("window.webContents.on('render-process-gone'")
+    expect(browserWindowLifecycle).toContain('chatUpdateDeliveryCoordinator.clearTarget')
+    expect(browserWindowLifecycle).toContain('rendererResponsivenessTracker.clear')
+    expect(browserWindowLifecycle).not.toContain('runManager.cancel(')
+    expect(browserWindowLifecycle).not.toContain('runManager.finish(')
+    expect(browserWindowLifecycle).not.toContain('approvalService?.cancelForRun')
+    expect(browserWindowLifecycle).not.toContain('approvalService?.cancelAll')
+    expect(browserWindowLifecycle).not.toContain('.kill(')
+    expect(browserWindowLifecycle).not.toContain('app.quit()')
+
+    const handler = windowAllClosedHandler()
+    expect(handler).not.toContain('runManager.cancel(')
+    expect(handler).not.toContain('approvalService?.cancelForRun')
+    expect(handler).not.toContain('approvalService?.cancelAll')
+  })
+
+  it('keeps renderer delivery best-effort and makes durable headless sends no-op', () => {
+    const headlessSender = sourceBetween(
+      'function createHeadlessRunSender(): Electron.WebContents {',
+      'function safeSendToWebContents('
+    )
+    expect(headlessSender).toContain('send: () => {}')
+    expect(headlessSender).toContain('isDestroyed: () => false')
+    expect(headlessSender).toContain('id: -1')
+
+    const lifecycle = sourceBetween(
+      "app.on('browser-window-created', (_, window) => {",
+      '    // Phase E3: Bridge Networking'
+    )
+    expect(lifecycle).toContain("details.reason === 'clean-exit'")
+    expect(lifecycle).toContain('recordProductCrash')
+    expect(lifecycle).not.toContain('runManager.finish(')
+  })
+
+  it('reserves destructive process teardown for will-quit', () => {
+    const willQuit = sourceBetween(
+      "app.on('will-quit', () => {",
+      '    // A crash after durable history prepare'
+    )
+    expect(willQuit).toContain('stopBridgeDaemon()')
+    expect(willQuit).toContain('iosRemoteRuntime?.dispose()')
+    expect(willQuit).toContain('workflowBudgetRegistry.disposeAll()')
+    expect(willQuit).not.toContain('window-all-closed')
   })
 })
