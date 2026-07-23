@@ -4,6 +4,7 @@ import {
   MAX_ANTIGRAVITY_GEMINI_API_DISCOVERED_MODELS,
   MAX_ANTIGRAVITY_GEMINI_API_DISCOVERY_PAGES,
   discoverAuthenticatedAntigravityGeminiApiModels,
+  loadOfficialGeminiApiSdk,
   type AntigravityGeminiApiClient,
   type AntigravityGeminiApiClientConstructor,
   type AntigravityGeminiApiListModel,
@@ -14,6 +15,15 @@ import type { AntigravityGeminiApiSecretLoadResult } from './AntigravityGeminiAp
 
 const API_KEY = 'AIza-explicit-user-supplied-test-key'
 const acceptedSettings = { antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_000 }
+
+describe('loadOfficialGeminiApiSdk', () => {
+  it('loads the real packaged official SDK through the production loader', async () => {
+    const sdk = await loadOfficialGeminiApiSdk()
+
+    expect(sdk).not.toBeNull()
+    expect(typeof (sdk?.GoogleGenAI ?? sdk?.default?.GoogleGenAI)).toBe('function')
+  })
+})
 
 function generateCapable(name: string): AntigravityGeminiApiListModel {
   return { name: `models/${name}`, supportedActions: ['generateContent'] }

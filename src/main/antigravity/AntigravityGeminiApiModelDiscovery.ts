@@ -168,15 +168,14 @@ export async function discoverAuthenticatedAntigravityGeminiApiModels(
 }
 
 /**
- * Dynamically loads the already-packaged official SDK only from main. Keeping
- * the specifier out of the module graph prevents renderer/bundler coupling.
+ * Dynamically loads the already-packaged official SDK only from main. The
+ * literal specifier is intentional: electron-vite must see and preserve the
+ * official dependency in the production main bundle. This function remains
+ * the single loader shared by discovery and turn execution.
  */
 export async function loadOfficialGeminiApiSdk(): Promise<AntigravityGeminiApiSdkModule | null> {
   try {
-    const importer = new Function('specifier', 'return import(specifier)') as (
-      specifier: string
-    ) => Promise<unknown>
-    const module = await importer('@google/genai')
+    const module = await import('@google/genai')
     return isRecord(module) ? (module as AntigravityGeminiApiSdkModule) : null
   } catch {
     return null
