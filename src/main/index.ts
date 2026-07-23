@@ -12891,7 +12891,8 @@ async function dispatchDueEnsembleScheduledTaskHeadless(
     const scheduledDmTargetResolution = resolveEnsembleDmTargetForDispatch({
       text: task.prompt,
       participants: scheduledRoutingRoster,
-      advisoryParticipantId: scheduledSnapshot?.dmTargetParticipantId
+      advisoryParticipantId: scheduledSnapshot?.dmTargetParticipantId,
+      exactPickerParticipantId: scheduledSnapshot?.exactPickerParticipantId
     })
     const scheduledDmTargetError = ensembleDmTargetResolutionError(
       scheduledDmTargetResolution,
@@ -42816,6 +42817,7 @@ if (isGeminiMcpBridgeProcess) {
           imageAttachments?: Array<{ id?: string; path?: string; name?: string }>
           discordContextSnapshots?: DiscordContextSnapshot[]
           dmTargetParticipantId?: string
+          exactPickerParticipantId?: string
           externalPathGrants?: ExternalPathGrant[]
           scheduledTaskId?: string
         }
@@ -42859,12 +42861,14 @@ if (isGeminiMcpBridgeProcess) {
         // MAIN owns participant routing. The renderer's id is advisory because
         // its roster snapshot can be stale and its historical plain-mention
         // resolver selected the first seat for duplicate aliases. Re-resolve
-        // the prompt against the current roster; structured picker links retain
-        // exact identity, while ambiguous or stale targets fail before launch.
+        // the prompt against the current roster. Structured legacy links and a
+        // separately transported picker selection retain exact identity, while
+        // ambiguous or stale targets fail before launch.
         const dmTargetResolution = resolveEnsembleDmTargetForDispatch({
           text: prompt,
           participants: ensembleChat.ensemble.participants,
-          advisoryParticipantId: payload?.dmTargetParticipantId
+          advisoryParticipantId: payload?.dmTargetParticipantId,
+          exactPickerParticipantId: payload?.exactPickerParticipantId
         })
         const dmTargetError = ensembleDmTargetResolutionError(
           dmTargetResolution,

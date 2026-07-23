@@ -1577,6 +1577,8 @@ declare global {
         /** Advisory exact target for a no-signal participant-chip gesture;
          * MAIN validates it against the canonical roster before dispatch. */
         dmTargetParticipantId?: string
+        /** Exact participant selected through the composer @ picker. */
+        exactPickerParticipantId?: string
       }) => Promise<{ status: string; roundId?: string }>
       steerQueuedEnsemblePrompt: (payload: {
         chatId: string

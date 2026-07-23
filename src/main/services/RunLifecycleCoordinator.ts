@@ -522,6 +522,7 @@ export class RunLifecycleCoordinator {
           ? request.displayPrompt
           : undefined,
       dmTargetParticipantId: this.normalizeOptionalString(request?.dmTargetParticipantId),
+      exactPickerParticipantId: this.normalizeOptionalString(request?.exactPickerParticipantId),
       selectedModelType: this.normalizeString(request?.selectedModelType, 'cli-default'),
       customModel: this.normalizeOptionalString(request?.customModel) || '',
       approvalMode: this.normalizeString(request?.approvalMode, 'default'),

@@ -1237,6 +1237,8 @@ const api = {
      * accepts this id when the prompt has no participant-routing signal and
      * the seat is current, enabled, and foreground. */
     dmTargetParticipantId?: string
+    /** Exact participant selected through the composer @ picker. */
+    exactPickerParticipantId?: string
     /** 1.0.4-AT4 — composer-level external path grants applied to
      * every participant's effective permissions for the round.
      * Pre-AT4 these were dropped on the IPC boundary, so file-

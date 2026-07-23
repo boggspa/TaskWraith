@@ -4159,6 +4159,8 @@ export interface ScheduledEnsembleSnapshot {
   /** Direct-message target participant id, when scheduled with
    * Cmd/Ctrl-Send while a chip was selected. */
   dmTargetParticipantId?: string
+  /** Exact participant selected from a plain composer picker mention. */
+  exactPickerParticipantId?: string
   maxParticipants?: number
   maxContinuationHops?: number
   /** Snapshot ISO timestamp — purely informational, so the user
@@ -5253,6 +5255,8 @@ export interface RunQueueRequestSnapshot {
   displayPrompt?: string
   /** Stable participant id for a directed Ensemble round. */
   dmTargetParticipantId?: string
+  /** Exact participant identity selected from a plain composer @mention. */
+  exactPickerParticipantId?: string
   selectedModelType: string
   customModel: string
   approvalMode: string

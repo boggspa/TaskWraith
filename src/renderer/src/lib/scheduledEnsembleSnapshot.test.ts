@@ -85,14 +85,17 @@ describe('buildScheduledEnsembleSnapshot', () => {
     expect(snap.maxContinuationHops).toBe(6)
     expect(snap.capturedAt).toBe('2026-05-27T12:00:00.000Z')
     expect(snap.dmTargetParticipantId).toBeUndefined()
+    expect(snap.exactPickerParticipantId).toBeUndefined()
   })
 
-  it('carries dmTargetParticipantId when provided', () => {
+  it('carries explicit and picker participant routing metadata when provided', () => {
     const snap = buildScheduledEnsembleSnapshot(chat(), {
       dmTargetParticipantId: 'codex',
+      exactPickerParticipantId: 'codex-slice',
       now: () => FIXED_NOW
     })!
     expect(snap.dmTargetParticipantId).toBe('codex')
+    expect(snap.exactPickerParticipantId).toBe('codex-slice')
   })
 
   it('deep-copies the participant array so later edits to the chat do not mutate the snapshot', () => {

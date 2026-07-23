@@ -11956,6 +11956,7 @@ function App(): React.JSX.Element {
       prompt: snapshot.prompt,
       ...(snapshot.displayPrompt ? { displayPrompt: snapshot.displayPrompt } : {}),
       dmTargetParticipantId: snapshot.dmTargetParticipantId,
+      exactPickerParticipantId: snapshot.exactPickerParticipantId,
       selectedModelType: snapshot.selectedModelType || fallbackRequest.selectedModelType,
       customModel: snapshot.customModel || fallbackRequest.customModel,
       approvalMode: snapshot.approvalMode || fallbackRequest.approvalMode,
@@ -12053,6 +12054,9 @@ function App(): React.JSX.Element {
     ...(request.displayPrompt ? { displayPrompt: request.displayPrompt } : {}),
     ...(request.dmTargetParticipantId
       ? { dmTargetParticipantId: request.dmTargetParticipantId }
+      : {}),
+    ...(request.exactPickerParticipantId
+      ? { exactPickerParticipantId: request.exactPickerParticipantId }
       : {}),
     selectedModelType: request.selectedModelType,
     customModel: request.customModel,
@@ -12240,6 +12244,7 @@ function App(): React.JSX.Element {
       scheduledRunAt: request.scheduledRunAt,
       effectiveWorkspacePath: restoreQueuedRunWorktreeTarget(request),
       dmTargetParticipantId: request.dmTargetParticipantId,
+      exactPickerParticipantId: request.exactPickerParticipantId,
       runtimeProfileId: queuedProviderSelection
         ? getRuntimeProfileIdForChat(queuedProviderBaseChat, effectiveProvider)
         : job.runtimeProfileId || request.runtimeProfileId,
@@ -12611,6 +12616,7 @@ function App(): React.JSX.Element {
         job.request?.scheduledRunAt === queuedRequest.scheduledRunAt &&
         job.request?.effectiveWorkspacePath === queuedRequest.effectiveWorkspacePath &&
         job.request?.dmTargetParticipantId === queuedRequest.dmTargetParticipantId &&
+        job.request?.exactPickerParticipantId === queuedRequest.exactPickerParticipantId &&
         attachmentQueueKey(job.request?.imageAttachments || []) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(job.request?.discordContextSelection) ===
@@ -12632,6 +12638,7 @@ function App(): React.JSX.Element {
         request.scheduledRunAt === queuedRequest.scheduledRunAt &&
         request.effectiveWorkspacePath === queuedRequest.effectiveWorkspacePath &&
         request.dmTargetParticipantId === queuedRequest.dmTargetParticipantId &&
+        request.exactPickerParticipantId === queuedRequest.exactPickerParticipantId &&
         attachmentQueueKey(request.imageAttachments) ===
           attachmentQueueKey(queuedRequest.imageAttachments) &&
         discordContextSelectionQueueKey(request.discordContextSelection) ===
@@ -12909,12 +12916,13 @@ function App(): React.JSX.Element {
         const mode = isEnsembleActiveRoundDispatchLive(runChat.ensemble?.activeRound)
           ? ('queue' as const)
           : ('normal' as const)
-        const fanoutPolicy: EnsembleFanoutPolicy = request.dmTargetParticipantId
-          ? 'off'
-          : normalizeEnsembleFanoutPolicy(
-              runChat.ensemble?.fanoutPolicy,
-              runChat.ensemble?.concurrentModeEnabled
-            )
+        const fanoutPolicy: EnsembleFanoutPolicy =
+          request.dmTargetParticipantId || request.exactPickerParticipantId
+            ? 'off'
+            : normalizeEnsembleFanoutPolicy(
+                runChat.ensemble?.fanoutPolicy,
+                runChat.ensemble?.concurrentModeEnabled
+              )
         const concurrentMode = ensembleFanoutPolicyEnabled(fanoutPolicy)
         const optimisticQueuedPrompt = runRequestPromptPreview(request)
         const didOptimisticallyQueue =
@@ -12943,6 +12951,9 @@ function App(): React.JSX.Element {
             // participants to just this one for the round.
             ...(request.dmTargetParticipantId
               ? { dmTargetParticipantId: request.dmTargetParticipantId }
+              : {}),
+            ...(request.exactPickerParticipantId
+              ? { exactPickerParticipantId: request.exactPickerParticipantId }
               : {}),
             // 1.0.4-AT4 — composer-level external path grants. Pre-AT4
             // these were dropped at the IPC boundary, so file-mention
@@ -14673,7 +14684,13 @@ function App(): React.JSX.Element {
      * chat's composer selection.
      */
     approvalModeOverride?: string,
-    workflowModeOverride?: ChatWorkflowMode
+    workflowModeOverride?: ChatWorkflowMode,
+    /**
+     * Exact identity selected by the composer @ picker. Unlike the regular
+     * explicit id above, this is only allowed to disambiguate one matching
+     * plain mention when MAIN resolves the current roster.
+     */
+    exactPickerParticipantId?: string
   ) => {
     const baseRequest = buildRunRequest(
       overrideModel,
@@ -14708,9 +14725,15 @@ function App(): React.JSX.Element {
       participants: baseRequest.chatRecord?.ensemble?.participants,
       inferFromPrompt: !existingPrompt && baseRequest.chatRecord?.chatKind === 'ensemble'
     })
-    const request = resolvedDmTargetParticipantId
-      ? { ...baseRequest, dmTargetParticipantId: resolvedDmTargetParticipantId }
-      : baseRequest
+    const request = {
+      ...baseRequest,
+      ...(resolvedDmTargetParticipantId
+        ? { dmTargetParticipantId: resolvedDmTargetParticipantId }
+        : {}),
+      ...(exactPickerParticipantId && baseRequest.chatRecord?.chatKind === 'ensemble'
+        ? { exactPickerParticipantId }
+        : {})
+    }
     if (!runRequestHasContent(request)) {
       settleProjectReferenceContextForRequest(request, 'rejected')
       return
@@ -15633,12 +15656,13 @@ function App(): React.JSX.Element {
         participants: targetChat.ensemble?.participants,
         inferFromPrompt: !existingPrompt
       })
-      const fanoutPolicy: EnsembleFanoutPolicy = dmTargetParticipantId
-        ? 'off'
-        : normalizeEnsembleFanoutPolicy(
-            targetChat.ensemble?.fanoutPolicy,
-            targetChat.ensemble?.concurrentModeEnabled
-          )
+      const fanoutPolicy: EnsembleFanoutPolicy =
+        dmTargetParticipantId || request.exactPickerParticipantId
+          ? 'off'
+          : normalizeEnsembleFanoutPolicy(
+              targetChat.ensemble?.fanoutPolicy,
+              targetChat.ensemble?.concurrentModeEnabled
+            )
       ensembleSteerInFlightChatIdsRef.current.add(targetChatId)
       try {
         await window.api.runEnsembleRound({
@@ -15656,6 +15680,9 @@ function App(): React.JSX.Element {
           concurrentMode: ensembleFanoutPolicyEnabled(fanoutPolicy),
           fanoutPolicy,
           ...(dmTargetParticipantId ? { dmTargetParticipantId } : {}),
+          ...(request.exactPickerParticipantId
+            ? { exactPickerParticipantId: request.exactPickerParticipantId }
+            : {}),
           imageAttachments: request.imageAttachments.map((attachment) => ({
             id: attachment.id,
             path: attachment.path,
@@ -15922,7 +15949,8 @@ function App(): React.JSX.Element {
     const ensembleSnapshot =
       chat.chatKind === 'ensemble'
         ? buildScheduledEnsembleSnapshot(chat, {
-            dmTargetParticipantId: request.dmTargetParticipantId
+            dmTargetParticipantId: request.dmTargetParticipantId,
+            exactPickerParticipantId: request.exactPickerParticipantId
           })
         : null
     return {
@@ -25762,7 +25790,12 @@ function App(): React.JSX.Element {
     []
   )
   const handleRunMultiviewPane = useCallback(
-    (paneIndex: number, chatId: string, dmTargetParticipantId?: string) => {
+    (
+      paneIndex: number,
+      chatId: string,
+      dmTargetParticipantId?: string,
+      exactPickerParticipantId?: string
+    ) => {
       const paneChat = chatByIdRef.current.get(chatId)
       if (!paneChat) return
       const panePrompt = composerDraftsByChatIdRef.current[chatId] || ''
@@ -25793,6 +25826,7 @@ function App(): React.JSX.Element {
       }
       multiview.paneRefs[paneIndex]?.relockToLatest()
       if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId
+      if (exactPickerParticipantId) request.exactPickerParticipantId = exactPickerParticipantId
       if (
         shouldQueueRunBeforeDispatch({
           chatKind: paneChat.chatKind,
@@ -26870,16 +26904,24 @@ function App(): React.JSX.Element {
     const paneExternalPathGrantPromptBusy =
       (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
     const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
-    // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
+    // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget, …, pickerId) with no
     // chat context (it operates on `currentComposerChatId` in the focused case).
     // For a pane we delegate to the pane runner scoped to this pane's chat,
     // including the directed participant selected by an @mention/modifier send.
     const paneHandleRun = (
       _overrideModel?: string,
       _existingPrompt?: string,
-      dmTargetParticipantId?: string
+      dmTargetParticipantId?: string,
+      _approvalModeOverride?: string,
+      _workflowModeOverride?: ChatWorkflowMode,
+      exactPickerParticipantId?: string
     ): void =>
-      handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)
+      handleRunMultiviewPane(
+        viewerPaneIndex,
+        viewerChatId,
+        dmTargetParticipantId,
+        exactPickerParticipantId
+      )
     const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
     const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
       handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)
@@ -28060,16 +28102,24 @@ function App(): React.JSX.Element {
       const paneExternalPathGrantPromptBusy =
         (externalPathGrantPromptBusyCountByChatId[viewerChatId] || 0) > 0
       const paneDiffActionMenuOpen = Boolean(diffActionMenuOpenByChatId[viewerChatId])
-      // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget) with no
+      // Adapter: <Composer> calls handleRun()/handleRun(_, _, dmTarget, …, pickerId) with no
       // chat context (it operates on `currentComposerChatId` in the focused case).
       // For a pane we delegate to the pane runner scoped to this pane's chat,
       // including the directed participant selected by an @mention/modifier send.
       const paneHandleRun = (
         _overrideModel?: string,
         _existingPrompt?: string,
-        dmTargetParticipantId?: string
+        dmTargetParticipantId?: string,
+        _approvalModeOverride?: string,
+        _workflowModeOverride?: ChatWorkflowMode,
+        exactPickerParticipantId?: string
       ): void =>
-        handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)
+        handleRunMultiviewPane(
+          viewerPaneIndex,
+          viewerChatId,
+          dmTargetParticipantId,
+          exactPickerParticipantId
+        )
       const paneHandleCancel = (): void => handleCancelMultiviewPane(viewerPaneIndex, viewerChatId)
       const paneHandleProviderChange = (provider: ProviderId, model?: string): void =>
         handleMultiviewPaneProviderChange(viewerPaneIndex, viewerChatId, provider, model)

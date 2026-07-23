@@ -35,6 +35,7 @@ describe('Ensemble DM routing ingress integration', () => {
     expect(roundStart).toBeGreaterThan(authoritativeResolution)
     expect(handler).toContain('participants: ensembleChat.ensemble.participants')
     expect(handler).toContain('advisoryParticipantId: payload?.dmTargetParticipantId')
+    expect(handler).toContain('exactPickerParticipantId: payload?.exactPickerParticipantId')
     expect(handler).toContain('if (dmTargetError) throw new Error(dmTargetError)')
     expect(handler).toContain('...(dmTargetParticipantId ? { dmTargetParticipantId } : {})')
     expect(handler).not.toContain('dmTargetParticipantId: payload.dmTargetParticipantId')
@@ -58,8 +59,9 @@ describe('Ensemble DM routing ingress integration', () => {
       'const scheduledRoutingRoster = scheduledSnapshot?.participants ?? chat.ensemble.participants'
     )
     expect(scheduled).toContain('resolveEnsembleDmTargetForDispatch({')
+    expect(scheduled).toContain('advisoryParticipantId: scheduledSnapshot?.dmTargetParticipantId')
     expect(scheduled).toContain(
-      'advisoryParticipantId: scheduledSnapshot?.dmTargetParticipantId'
+      'exactPickerParticipantId: scheduledSnapshot?.exactPickerParticipantId'
     )
     expect(scheduled).toContain('Scheduled ensemble dispatch: ${scheduledDmTargetError}')
     expect(scheduled).not.toContain(
@@ -67,15 +69,14 @@ describe('Ensemble DM routing ingress integration', () => {
     )
   })
 
-  it('keeps the exact participant id when the composer picker inserts a mention', () => {
+  it('keeps picker routing metadata while inserting plain editable mention text', () => {
     const picker = sourceSection(
       composerSource,
       "if (mention.kind === 'participant' && mention.participantId)",
       'return formatComposerPathMention'
     )
-    expect(picker).toContain(
-      'return formatEnsembleDmMention(mention.name, mention.participantId)'
-    )
-    expect(picker).not.toContain('return `@${mention.name} `')
+    expect(picker).toContain('formatComposerParticipantMention(mention.name)')
+    expect(picker).toContain('participantId: mention.participantId')
+    expect(picker).not.toContain('formatEnsembleDmMention(mention.name, mention.participantId)')
   })
 })

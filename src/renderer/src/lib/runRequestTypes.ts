@@ -71,6 +71,12 @@ export interface QueuedRunRequest {
    * an independent decision — the next send might be a full round.
    */
   dmTargetParticipantId?: string
+  /**
+   * Exact identity selected from the composer participant picker. This is
+   * deliberately separate from the visible plain `@Role` draft text so the
+   * composer never needs to embed a transport URL in its value.
+   */
+  exactPickerParticipantId?: string
   /** Provider-native slash dispatch (e.g. the Claude `/compact` run): compose
    * the prompt VERBATIM — no context injection or preamble prepends, which
    * would push the slash off the start and stop the provider executing it. */

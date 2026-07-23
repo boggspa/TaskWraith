@@ -79,16 +79,10 @@ export function formatComposerPathMention(path: string): string {
 }
 
 /**
- * Preserve the exact participant selected from the composer picker. Roles,
- * providers, and models are all allowed to collide in an Ensemble roster, so
- * inserting only a plain `@Role` discards the picker identity before MAIN can
- * authorize routing. The transcript markdown renderer already understands this
- * scheme and displays it as a participant chip after send.
- *
- * The plain textarea retains this structured token for dispatch, while the
- * mention overlay compacts it to the same formatted `@tag` shown for manually
- * typed mentions. That preserves exact routing without exposing transport
- * syntax in the composer.
+ * Build a legacy durable participant marker. Retried/persisted prompts may
+ * still contain this form, but the live composer picker now keeps its exact
+ * identity separately and writes only visible plain `@Role` text to the
+ * textarea.
  */
 export function formatEnsembleDmMention(label: string, participantId: string): string {
   const trimmedParticipantId = participantId.trim()
@@ -125,8 +119,7 @@ export interface EnsembleDmCandidate {
  * Two recognised forms (in priority order):
  *
  *   1. Markdown link form `[@Role](ensemble-dm://participant-id)`.
- *      This is the picker contract: it preserves exact participant
- *      identity when aliases collide.
+ *      This remains supported for legacy retry/persisted prompts.
  *
  *   2. Plain `@Token` (multi-word + model-name aliases supported).
  *      Resolved via the shared `EnsembleMentionAlias` module so the

@@ -30,7 +30,7 @@ function normalizeFanoutPolicy(
  * Returns `null` for non-ensemble chats (the caller schedules a
  * regular single-provider task in that case). Returns a frozen
  * snapshot when the chat has ensemble config: orchestration
- * mode, full participant array, dmTarget (if provided), and the
+ * mode, full participant array, DM/picker routing metadata (if provided), and the
  * cap budgets. `capturedAt` is the ISO timestamp the snapshot
  * was taken — purely informational, surfaced in the task list
  * so users can see "scheduled with roster as of <time>".
@@ -40,7 +40,11 @@ function normalizeFanoutPolicy(
  */
 export function buildScheduledEnsembleSnapshot(
   chat: ChatRecord | null | undefined,
-  options: { dmTargetParticipantId?: string; now?: () => Date } = {}
+  options: {
+    dmTargetParticipantId?: string
+    exactPickerParticipantId?: string
+    now?: () => Date
+  } = {}
 ): ScheduledEnsembleSnapshot | null {
   if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) return null
   const now = (options.now || (() => new Date()))()
@@ -57,6 +61,9 @@ export function buildScheduledEnsembleSnapshot(
     participants: chat.ensemble.participants.map((participant) => ({ ...participant })),
     ...(options.dmTargetParticipantId
       ? { dmTargetParticipantId: options.dmTargetParticipantId }
+      : {}),
+    ...(options.exactPickerParticipantId
+      ? { exactPickerParticipantId: options.exactPickerParticipantId }
       : {}),
     ...(typeof chat.ensemble.maxParticipants === 'number'
       ? { maxParticipants: chat.ensemble.maxParticipants }

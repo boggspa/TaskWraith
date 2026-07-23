@@ -78,9 +78,14 @@ import { WorkflowComposeControls } from '../components/WorkflowComposeControls'
 import {
   extractFirstEnsembleDmTarget,
   formatComposerPathMention,
-  formatEnsembleDmMention,
   parseComposerMentionTrigger
 } from '../lib/ComposerMentionTrigger'
+import {
+  exactComposerParticipantMentionTarget,
+  formatComposerParticipantMention,
+  rebaseComposerParticipantMentionSelections,
+  type ComposerParticipantMentionSelection
+} from '../lib/composerParticipantMentionSelection'
 import { withExplicitEnsembleDmTarget } from '../lib/runPromptDmScope'
 import { readPendingProviderChange } from '../../../main/providerChangeQueue'
 import {
@@ -1253,6 +1258,52 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     'mention'
   )
   const mentionTriggerLengthRef = useRef<number>(1)
+  // Picker selections keep an exact participant id outside the visible draft.
+  // The draft itself stays plain `@Role` text rather than a hidden markdown
+  // transport token, so the native textarea is always showing its real value.
+  const pickerParticipantMentionsByChatIdRef = useRef<
+    Map<string, ComposerParticipantMentionSelection[]>
+  >(new Map())
+  const pickerParticipantMentionDraftRef = useRef({
+    chatId: currentComposerChatId,
+    value: prompt
+  })
+  const rebasePickerParticipantMentions = (
+    chatId: string,
+    previousValue: string,
+    nextValue: string
+  ): ComposerParticipantMentionSelection[] => {
+    const selections = pickerParticipantMentionsByChatIdRef.current.get(chatId) || []
+    const rebased = rebaseComposerParticipantMentionSelections({
+      previousValue,
+      nextValue,
+      selections
+    })
+    if (rebased.length > 0) {
+      pickerParticipantMentionsByChatIdRef.current.set(chatId, rebased)
+    } else {
+      pickerParticipantMentionsByChatIdRef.current.delete(chatId)
+    }
+    pickerParticipantMentionDraftRef.current = { chatId, value: nextValue }
+    return rebased
+  }
+  const exactPickerParticipantTarget = (value: string): string | undefined => {
+    if (!currentComposerChatId) return undefined
+    return exactComposerParticipantMentionTarget({
+      value,
+      selections: pickerParticipantMentionsByChatIdRef.current.get(currentComposerChatId) || []
+    })
+  }
+  useEffect(() => {
+    const previous = pickerParticipantMentionDraftRef.current
+    if (previous.chatId === currentComposerChatId && previous.value !== prompt) {
+      rebasePickerParticipantMentions(currentComposerChatId, previous.value, prompt)
+      return
+    }
+    if (previous.chatId !== currentComposerChatId) {
+      pickerParticipantMentionDraftRef.current = { chatId: currentComposerChatId, value: prompt }
+    }
+  }, [currentComposerChatId, prompt])
   const [isSendConfirming, setIsSendConfirming] = useState(false)
   const [isComposerDragOver, setIsComposerDragOver] = useState(false)
   const [voiceCaptureState, setVoiceCaptureState] = useState<ComposerVoiceCaptureState>(
@@ -2637,6 +2688,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             end: e.target.selectionEnd ?? nextValue.length
                           }
                           composerCaretRestoreEpochRef.current += 1
+                          rebasePickerParticipantMentions(
+                            currentComposerChatId,
+                            prompt,
+                            nextValue
+                          )
                           setChatPromptDraft(currentComposerChatId, nextValue)
                           clearPlanImportIfDraftChanged(nextValue)
                           // Composer popover coordinator: scan the text before the
@@ -2701,14 +2757,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                             triggerSendConfirmation()
                             // DM target resolution order (first match wins):
-                            //   1. An explicit `@participant` mention in the
-                            //      prompt body (`ensemble-dm://` markdown link
-                            //      inserted by the mention picker).
-                            //   2. Legacy Cmd/Ctrl+Enter on a selected chip
+                            //   1. A participant chosen from the visible
+                            //      `@participant` picker (exact identity is
+                            //      attached separately from its plain text).
+                            //   2. A legacy `ensemble-dm://` prompt marker.
+                            //   3. Legacy Cmd/Ctrl+Enter on a selected chip
                             //      (A2 from 1.0.3 — kept so muscle memory
                             //      still works).
                             // Plain Enter with no mention + no modifier
                             // dispatches the full round.
+                            const dmFromPicker = isCurrentEnsembleChat
+                              ? exactPickerParticipantTarget(prompt)
+                              : undefined
                             const dmFromMention = isCurrentEnsembleChat
                               ? extractFirstEnsembleDmTarget(
                                   prompt,
@@ -2722,7 +2782,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                               (e.metaKey || e.ctrlKey)
                                 ? effectiveSelectedParticipantId
                                 : undefined)
-                            handleRun(undefined, undefined, dmTarget || undefined)
+                            handleRun(
+                              undefined,
+                              undefined,
+                              dmTarget || undefined,
+                              undefined,
+                              undefined,
+                              dmFromPicker
+                            )
+                            pickerParticipantMentionsByChatIdRef.current.delete(
+                              currentComposerChatId
+                            )
                           }
                         }}
                       />
@@ -2742,6 +2812,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   spellcheckContext={composerContextMenu.spellcheckContext}
                   textareaRef={composerTextareaRef}
                   onValueChange={(value) => {
+                    rebasePickerParticipantMentions(currentComposerChatId, prompt, value)
                     setChatPromptDraft(currentComposerChatId, value)
                     clearPlanImportIfDraftChanged(value)
                   }}
@@ -2826,22 +2897,38 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     const triggerLen = mentionTriggerLengthRef.current
                     const before = prompt.slice(0, anchor)
                     const afterQuery = prompt.slice(anchor + triggerLen + mentionQuery.length)
+                    let selectedParticipantMention: ComposerParticipantMentionSelection | null = null
                     const insertion = (() => {
                       if (mention.kind === 'agent' && mention.agentId) {
                         return `[@${mention.name}](agent://${mention.agentId}) `
                       }
                       if (mention.kind === 'participant' && mention.participantId) {
-                        // Preserve the exact picker identity. A plain @Role
-                        // loses which seat was picked when roles/providers
-                        // collide and used to let roster order choose a
-                        // different permission posture. The textarea retains
-                        // this markdown for dispatch, while its overlay renders
-                        // the same compact tinted tag as a manual mention.
-                        return formatEnsembleDmMention(mention.name, mention.participantId)
+                        // Keep the textarea source plain and editable. Exact
+                        // picker identity lives in the short-lived selection
+                        // map below and is validated by MAIN at dispatch.
+                        const text = formatComposerParticipantMention(mention.name)
+                        selectedParticipantMention = {
+                          participantId: mention.participantId,
+                          start: before.length,
+                          end: before.length + text.trimEnd().length,
+                          text: text.trimEnd()
+                        }
+                        return text
                       }
                       return formatComposerPathMention(mention.path || mention.name)
                     })()
                     const next = `${before}${insertion}${afterQuery}`
+                    const existingSelections = rebasePickerParticipantMentions(
+                      currentComposerChatId,
+                      prompt,
+                      next
+                    )
+                    if (selectedParticipantMention) {
+                      pickerParticipantMentionsByChatIdRef.current.set(currentComposerChatId, [
+                        ...existingSelections,
+                        selectedParticipantMention
+                      ])
+                    }
                     setChatPromptDraft(currentComposerChatId, next)
                     setMentionMenuOpen(false)
                     setMentionQuery('')
@@ -4598,10 +4685,13 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 }
                                 triggerSendConfirmation()
                                 // DM target resolution (same precedence as
-                                // the Enter handler above): explicit
-                                // `@participant` mention wins; falls back
-                                // to legacy Cmd/Ctrl-click on a selected
-                                // chip; plain click = full round.
+                                // the Enter handler above): picker identity
+                                // remains separate from the visible plain
+                                // @text; legacy markers and selected chips
+                                // retain their existing behaviour.
+                                const dmFromPicker = isCurrentEnsembleChat
+                                  ? exactPickerParticipantTarget(prompt)
+                                  : undefined
                                 const dmFromMention = isCurrentEnsembleChat
                                   ? extractFirstEnsembleDmTarget(
                                       prompt,
@@ -4615,7 +4705,17 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   (event.metaKey || event.ctrlKey)
                                     ? effectiveSelectedParticipantId
                                     : undefined)
-                                handleRun(undefined, undefined, dmTarget || undefined)
+                                handleRun(
+                                  undefined,
+                                  undefined,
+                                  dmTarget || undefined,
+                                  undefined,
+                                  undefined,
+                                  dmFromPicker
+                                )
+                                pickerParticipantMentionsByChatIdRef.current.delete(
+                                  currentComposerChatId
+                                )
                               }}
                               disabled={
                                 !currentChat ||

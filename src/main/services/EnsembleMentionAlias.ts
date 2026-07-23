@@ -468,24 +468,27 @@ export function findAllMentions(
  * Resolve the authoritative DM routing state for a round dispatch.
  *
  * Resolution order:
- *   1. A structured `ensemble-dm://<participant-id>` composer link. The link
- *      preserves an exact picker selection even when multiple seats share a
- *      role, provider, or model alias.
+ *   1. A structured `ensemble-dm://<participant-id>` link. Legacy retry and
+ *      stored-prompt paths can still use this durable identity marker.
  *   2. Plain `@alias` tokens resolved against MAIN's current enabled roster.
+ *      When exactly one plain alias is ambiguous, the separately transported
+ *      composer picker id can select one of that alias's live candidates. The
+ *      visible draft remains plain text; the picker identity never leaks into
+ *      it as an internal URL.
  *
  * The result is deliberately typed instead of nullable: an ambiguous alias is
  * a rejected routing request, while no mention and an intentional multi-target
  * prompt are valid panel rounds. A renderer-supplied `dmTargetParticipantId`
  * cannot override any prompt routing signal; MAIN accepts it only for a prompt
  * with no participant signal and only after validating a current, enabled,
- * foreground seat. Picker/retry gestures can instead place an exact structured
- * link in the prompt, which MAIN also validates against the current roster.
+ * foreground seat. A picker id is narrower: it may disambiguate one plain
+ * alias only, and MAIN validates it against that alias's current candidates.
  */
 export type EnsembleDmTargetResolution =
   | {
       kind: 'target'
       participantId: string
-      source: 'structured' | 'plain' | 'advisory'
+      source: 'structured' | 'plain' | 'picker' | 'advisory'
     }
   | {
       kind: 'ambiguous'
@@ -512,6 +515,7 @@ export function resolveEnsembleDmTargetForDispatch(input: {
   text: string
   participants: EnsembleParticipant[]
   advisoryParticipantId?: string
+  exactPickerParticipantId?: string
 }): EnsembleDmTargetResolution {
   const structuredTargets = Array.from(
     input.text.matchAll(/\]\(ensemble-dm:\/\/([^)\s]+)\)/g)
@@ -554,7 +558,27 @@ export function resolveEnsembleDmTargetForDispatch(input: {
     input.participants.filter((participant) => participant.enabled !== false)
   ).filter(isParticipantMention)
   const ambiguousMentions = participantMentions.filter((match) => match.ambiguousAmong?.length)
+  const advisoryParticipantId = input.advisoryParticipantId?.trim()
+  const exactPickerParticipantId = input.exactPickerParticipantId?.trim()
   if (ambiguousMentions.length > 0) {
+    // A picker selection can disambiguate exactly one visible `@Role` token,
+    // but never override a second routing signal. Keep the ordinary advisory
+    // id out of this branch: it represents a Cmd/Ctrl selected-chip gesture
+    // and must not make a hand-typed ambiguous alias silently routable.
+    if (
+      exactPickerParticipantId &&
+      ambiguousMentions.length === 1 &&
+      participantMentions.length === 1
+    ) {
+      const ambiguous = ambiguousMentions[0]
+      const candidates = [ambiguous.participant, ...(ambiguous.ambiguousAmong || [])]
+      const selected = candidates.find(
+        (candidate) => candidate.id === exactPickerParticipantId
+      )
+      if (selected && selected.enabled !== false && selected.stageRole !== 'background') {
+        return { kind: 'target', participantId: selected.id, source: 'picker' }
+      }
+    }
     return {
       kind: 'ambiguous',
       mentions: ambiguousMentions.map((match) => ({
@@ -582,7 +606,6 @@ export function resolveEnsembleDmTargetForDispatch(input: {
   // is never consulted when the prompt contains a unique, multi-target, or
   // ambiguous participant signal, and MAIN validates the exact current seat
   // before accepting it.
-  const advisoryParticipantId = input.advisoryParticipantId?.trim()
   if (advisoryParticipantId) {
     const participant = input.participants.find(
       (candidate) => candidate.id === advisoryParticipantId

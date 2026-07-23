@@ -631,6 +631,34 @@ describe('resolveEnsembleDmTargetForDispatch — MAIN routing authority', () => 
     }
   })
 
+  it('uses the exact composer picker id for one ambiguous plain tag', () => {
+    const duplicateRoleWrite = { ...CLAUDE_WRITE, role: 'Reviewer' }
+    for (const roster of [
+      [duplicateRoleWrite, CLAUDE_READ],
+      [CLAUDE_READ, duplicateRoleWrite]
+    ]) {
+      expect(
+        resolveEnsembleDmTargetForDispatch({
+          text: 'Please @Reviewer check this',
+          participants: roster,
+          exactPickerParticipantId: CLAUDE_READ.id
+        })
+      ).toEqual({ kind: 'target', participantId: CLAUDE_READ.id, source: 'picker' })
+    }
+  })
+
+  it('does not let a picker id override another participant signal', () => {
+    const duplicateRoleWrite = { ...CLAUDE_WRITE, role: 'Reviewer' }
+    const builder = { ...CLAUDE_WRITE, id: 'claude-builder', role: 'Builder' }
+    expect(
+      resolveEnsembleDmTargetForDispatch({
+        text: 'Please @Reviewer and @Builder check this',
+        participants: [duplicateRoleWrite, CLAUDE_READ, builder],
+        exactPickerParticipantId: CLAUDE_READ.id
+      })
+    ).toMatchObject({ kind: 'ambiguous' })
+  })
+
   it('accepts an advisory exact id only when the prompt has no participant routing signal', () => {
     expect(
       resolveEnsembleDmTargetForDispatch({

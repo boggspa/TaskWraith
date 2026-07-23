@@ -27,7 +27,7 @@ export interface ComposerMentionPick {
   name: string
   agentId?: string
   /** Ensemble participant id when `kind === 'participant'`. Routes
-   * the next run as a DM via `dmTargetParticipantId`. */
+   * the next run as a DM via an exact, non-visible picker selection. */
   participantId?: string
   /** Provider id for participant mentions, used by the renderer to
    * apply the matching `--provider-{name}-color` tint on the inserted
@@ -229,11 +229,9 @@ export function AgentMentionMenu({
     }
 
     // `@` trigger in ensemble chats: list participants so the user
-    // can DM-target a specific provider. The pick handler wraps the
-    // choice in an `ensemble-dm://participant-id` markdown link that
-    // (a) renders inline as a provider-tinted chip and (b) on send,
-    // gets extracted into `dmTargetParticipantId` so the orchestrator
-    // routes the round to just that participant.
+    // can DM-target a specific provider. The picker writes plain
+    // editable `@Role` text and Composer keeps the exact seat id as
+    // short-lived selection metadata for the next dispatch.
     if (chat?.chatKind === 'ensemble' && ensembleParticipants) {
       return ensembleParticipants
         .filter((participant) => participant.enabled)

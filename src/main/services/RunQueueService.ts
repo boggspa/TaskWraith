@@ -526,6 +526,7 @@ export class RunQueueService {
         prompt: typeof value.prompt === 'string' ? value.prompt : '',
         displayPrompt: optionalString(value.displayPrompt),
         dmTargetParticipantId: optionalString(value.dmTargetParticipantId),
+        exactPickerParticipantId: optionalString(value.exactPickerParticipantId),
         selectedModelType: optionalString(value.selectedModelType) || 'cli-default',
         customModel: typeof value.customModel === 'string' ? value.customModel : '',
         approvalMode: optionalString(value.approvalMode) || 'default',

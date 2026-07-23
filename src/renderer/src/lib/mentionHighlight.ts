@@ -184,7 +184,7 @@ export function tokeniseMentions(
 /** Does this value contain at least one resolved `@Token` mention?
  * Used by the composer to decide whether to activate the overlay
  * (and zero-out the textarea's text colour). This intentionally
- * tokenises the value so structured picker mentions remain visible
+ * tokenises the value so legacy structured mentions remain visible
  * even when their display label would be ambiguous as plain text.
  *
  * 1.0.4 — user-mentions count too (`@user` / `@human` / `@you`),
