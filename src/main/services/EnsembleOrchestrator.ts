@@ -2095,6 +2095,47 @@ function hasProviderOrModelSeatChange(
   return before.provider !== after.provider || (before.model || '') !== (after.model || '')
 }
 
+/**
+ * User-facing seat equality, used to suppress no-op / duplicate seat changes.
+ *
+ * Deliberately compares ONLY the fields a user would call "the seat" and
+ * ignores the internal side effects `applySeatChangePatch` produces: it nulls
+ * `linkedProviderSessionId` even when the provider value is repeated, and it
+ * drops the prompt / MCP receipt fields it invalidates. A plain object compare
+ * would therefore never read a re-apply of the current seat as "unchanged",
+ * which is exactly the case this predicate exists to catch.
+ */
+function participantSeatSelectionUnchanged(
+  a: EnsembleParticipant,
+  b: EnsembleParticipant
+): boolean {
+  const text = (value: unknown): string =>
+    value === undefined || value === null ? '' : String(value)
+  const json = (value: unknown): string => {
+    try {
+      return JSON.stringify(value ?? null)
+    } catch {
+      return text(value)
+    }
+  }
+  return (
+    a.provider === b.provider &&
+    text(a.model) === text(b.model) &&
+    text(a.role) === text(b.role) &&
+    text(a.instructions) === text(b.instructions) &&
+    text(a.stageRole) === text(b.stageRole) &&
+    text(a.reasoningEffort) === text(b.reasoningEffort) &&
+    text(a.serviceTier) === text(b.serviceTier) &&
+    text(a.permissionPresetId) === text(b.permissionPresetId) &&
+    text(a.runtimeProfileId) === text(b.runtimeProfileId) &&
+    text(a.geminiAuthProfileId) === text(b.geminiAuthProfileId) &&
+    Boolean(a.fastModeEnabled) === Boolean(b.fastModeEnabled) &&
+    Boolean(a.thinkingEnabled) === Boolean(b.thinkingEnabled) &&
+    json(a.permissionOverrides) === json(b.permissionOverrides) &&
+    json(a.ollamaRunProfile) === json(b.ollamaRunProfile)
+  )
+}
+
 function applySeatChangePatch(
   target: EnsembleParticipant,
   patch: RosterEditParticipantInput
@@ -5794,6 +5835,34 @@ export class EnsembleOrchestrator {
     reason: string
   }): EnsembleParticipantSeatChangeResult {
     const { chat, runtime, before, after, patch, changedBy, reason } = input
+    // No-op / duplicate guard. Mid-round the participant picker snaps back to
+    // the seat the participant is actually running, so re-applying the current
+    // seat (or re-submitting a change already pending for it) is easy to
+    // trigger repeatedly. Every one of those used to queue a fresh
+    // authoritative change AND append another identical "seat change queued"
+    // round-status notice — producing a wall of duplicate system notices in
+    // the transcript. Compare against the change already pending for this
+    // participant when there is one, so re-submitting the same target is a
+    // no-op too; only a genuinely different seat queues and announces.
+    if (runtime) {
+      const pendingTarget =
+        (runtime.pendingRoundEndParticipantSeatChanges || []).find(
+          (change) => change.participantId === before.id
+        )?.after ||
+        (runtime.pendingParticipantSeatChanges || []).find(
+          (change) => change.participantId === before.id
+        )?.after ||
+        before
+      if (participantSeatSelectionUnchanged(pendingTarget, after)) {
+        return {
+          ok: true,
+          chat: this.deps.getChat(chat.appChatId) || chat,
+          message: `Participant seat unchanged for ${participantLabel(before)} — nothing queued.`,
+          participantId: before.id,
+          roundId: runtime.roundId
+        }
+      }
+    }
     if (
       runtime &&
       hasProviderOrModelSeatChangePatch(patch) &&

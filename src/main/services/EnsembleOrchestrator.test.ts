@@ -10708,6 +10708,67 @@ Next action:
     ).toBe(true)
   })
 
+  it('does not queue or announce a seat change that re-applies the running seat', async () => {
+    const harness = makeHarness({ probeParticipant: async () => ({ reachable: true }) })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    // The mid-round picker snaps back to the seat the participant is actually
+    // running, so re-applying it is easy to trigger repeatedly.
+    const running = harness.chat.ensemble!.participants.find(
+      (participant) => participant.id === 'claude'
+    )!
+    const result = await harness.orchestrator.requestParticipantSeatChange({
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: { provider: running.provider, model: running.model },
+      changedBy: 'user',
+      reason: 'Re-apply the seat the participant already has.'
+    })
+
+    expect(result.ok).toBe(true)
+    expect(result.status).toBeUndefined()
+    expect(
+      harness.chat.messages.filter((message) =>
+        message.content.includes('Authoritative seat change queued')
+      )
+    ).toHaveLength(0)
+  })
+
+  it('announces a queued seat change once when the same change is resubmitted', async () => {
+    const harness = makeHarness({ probeParticipant: async () => ({ reachable: true }) })
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Plan and execute.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+
+    const change = {
+      chatId: 'ensemble-chat',
+      participantId: 'claude',
+      participant: { provider: 'kimi', model: 'kimi-k2.7-code' },
+      changedBy: 'user' as const,
+      reason: 'Swap the reviewer.'
+    }
+    const first = await harness.orchestrator.requestParticipantSeatChange(change)
+    expect(first).toMatchObject({ ok: true, status: 'queued', participantId: 'claude' })
+
+    const repeat = await harness.orchestrator.requestParticipantSeatChange(change)
+    expect(repeat.ok).toBe(true)
+    expect(repeat.status).toBeUndefined()
+
+    expect(
+      harness.chat.messages.filter((message) =>
+        message.content.includes('Authoritative seat change queued')
+      )
+    ).toHaveLength(1)
+  })
+
   it('skipActiveParticipant returns false when no round is active', async () => {
     const harness = makeHarness()
     const skipped = await harness.orchestrator.skipActiveParticipant('ensemble-chat')
