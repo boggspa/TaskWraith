@@ -13,23 +13,47 @@ function between(startMarker: string, endMarker: string): string {
 }
 
 describe('AntiGravity S3 runtime integration', () => {
-  it('delegates only an official prepared launch into the shared stream and error lifecycle', () => {
-    const runtime = between(
+  it('delegates combined-mode dispatch then keeps official agy launch on the shared stream lifecycle', () => {
+    const dispatch = between(
       'async function runAntigravityProvider(',
+      'async function runAntigravityAgyProvider('
+    )
+    expect(dispatch).toContain('dispatchAntigravityCombinedMode(event, payload, {')
+    expect(dispatch).toContain('getSecretStore: () => antigravityGeminiApiSecretStoreRef')
+    expect(dispatch).toContain('runAgyProvider: runAntigravityAgyProvider')
+    expect(dispatch).not.toContain('routeWithRunId')
+    expect(dispatch).not.toContain('prepareAntigravityProviderLaunch')
+
+    const agy = between(
+      'async function runAntigravityAgyProvider(',
       '// Grok is a first-class provider'
     )
+    expect(agy).toContain('prepareAntigravityProviderLaunch({')
+    expect(agy).toContain('settings: AppStore.getSettings()')
+    expect(agy).toContain('payload.providerSessionId = null')
+    expect(agy).toContain("runCliProviderProcess(event, 'antigravity'")
+    expect(agy).toContain('resolvedEnv: launch.env')
+    expect(agy).toContain("runManager.finish(route.appRunId, 'failed')")
+    expect(agy).toContain("sendAgentCompatError(event.sender, 'antigravity'")
+    expect(agy).toContain("sendAgentCompatExit(event.sender, 'antigravity', 1, route)")
+    expect(agy).not.toContain('resolveCliProviderBinary')
+    expect(agy).not.toContain('--dangerously-skip-permissions')
+    expect(agy).not.toContain('--new-project')
+  })
 
-    expect(runtime).toContain('prepareAntigravityProviderLaunch({')
-    expect(runtime).toContain('settings: AppStore.getSettings()')
-    expect(runtime).toContain("payload.providerSessionId = null")
-    expect(runtime).toContain("runCliProviderProcess(event, 'antigravity'")
-    expect(runtime).toContain('resolvedEnv: launch.env')
-    expect(runtime).toContain("runManager.finish(route.appRunId, 'failed')")
-    expect(runtime).toContain("sendAgentCompatError(event.sender, 'antigravity'")
-    expect(runtime).toContain("sendAgentCompatExit(event.sender, 'antigravity', 1, route)")
-    expect(runtime).not.toContain('resolveCliProviderBinary')
-    expect(runtime).not.toContain('--dangerously-skip-permissions')
-    expect(runtime).not.toContain('--new-project')
+  it('binds the dedicated Gemini API secret store only after app ready', () => {
+    expect(indexSource).toContain(
+      'let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null'
+    )
+    expect(indexSource).toContain(
+      'antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore'
+    )
+    const readyIdx = indexSource.indexOf(
+      'antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore'
+    )
+    const constructIdx = indexSource.indexOf('new AntigravityGeminiApiSecretStore({')
+    expect(constructIdx).toBeGreaterThanOrEqual(0)
+    expect(readyIdx).toBeGreaterThan(constructIdx)
   })
 
   it('uses the shared exact-run cancellation path and lifecycle inventory', () => {

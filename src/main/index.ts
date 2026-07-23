@@ -1276,6 +1276,7 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
+import { dispatchAntigravityCombinedMode } from './antigravity/AntigravityCombinedModeDispatch'
 import {
   AGY_USAGE_FRESH_TTL_MS,
   fetchAuthenticatedAgyQuotaSnapshot,
@@ -1604,6 +1605,9 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
+
+/** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
+let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
 
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
@@ -25896,11 +25900,41 @@ async function runGeminiProvider(
 }
 
 /**
- * S3's only production AntiGravity launch path. Preparation is extracted so
- * this composition root merely delegates into the existing governed CLI
- * stream/cancellation lifecycle with an official-agy, sandboxed launch plan.
+ * Combined-mode AntiGravity production dispatch. Namespace candidates are
+ * quarantined onto the reviewed Gemini API lifecycle adapter; every other
+ * model stays on the unchanged official user-installed `agy` path.
  */
 async function runAntigravityProvider(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload
+) {
+  await dispatchAntigravityCombinedMode(event, payload, {
+    getSettings: () => AppStore.getSettings(),
+    getSecretStore: () => antigravityGeminiApiSecretStoreRef,
+    getRunSession: (runId) => {
+      const session = runManager.get(runId)
+      return session ? { provider: session.provider, status: session.status } : undefined
+    },
+    attachAbortController: (runId, controller) => {
+      runManager.attachAbortController(runId, controller)
+    },
+    sendAgentCompatLine,
+    sendAgentCompatError,
+    sendAgentCompatExit,
+    finishRun: (runId, status) => {
+      runManager.finish(runId, status)
+    },
+    runAgyProvider: runAntigravityAgyProvider
+  })
+}
+
+/**
+ * S3's only production AntiGravity official-agy launch path. Preparation is
+ * extracted so this composition root merely delegates into the existing
+ * governed CLI stream/cancellation lifecycle with an official-agy, sandboxed
+ * launch plan. Combined-mode Gemini API candidates never reach this function.
+ */
+async function runAntigravityAgyProvider(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload
 ) {
@@ -31277,6 +31311,7 @@ if (isGeminiMcpBridgeProcess) {
       userDataPath: app.getPath('userData'),
       safeStorage
     })
+    antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: antigravityGeminiApiSecretStore,
       isMainRendererSender
