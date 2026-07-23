@@ -1,9 +1,6 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
-import {
-  AntigravityOptInCard,
-  createAntigravityOptInPatch
-} from './AntigravityOptInCard'
+import { AntigravityOptInCard, createAntigravityOptInPatch } from './AntigravityOptInCard'
 
 describe('AntigravityOptInCard', () => {
   it('is disabled by default and requires an explicit risk acknowledgement', () => {
@@ -13,9 +10,7 @@ describe('AntigravityOptInCard', () => {
 
     expect(html).toContain('data-provider="antigravity"')
     expect(html).toContain('Disabled — explicit consent required')
-    expect(html).toContain(
-      'Using third party software, tools, or services to access the Service'
-    )
+    expect(html).toContain('Using third party software, tools, or services to access the Service')
     expect(html).toContain('can suspend or terminate your Google account')
     expect(html).toContain('February 2026')
     expect(html).toContain('not ToS-approved or ban-safe')
@@ -47,5 +42,22 @@ describe('AntigravityOptInCard', () => {
     expect(html).toContain('Open Terminal to sign in')
     expect(html).toContain('Disable AntiGravity')
     expect(html).not.toContain('Accept risk and enable')
+  })
+
+  it('keeps Gemini API disclosure separate and explicit inside the buried card', () => {
+    const html = renderToStaticMarkup(
+      <AntigravityOptInCard enabled={false} acceptedAt={null} onChange={() => {}} />
+    )
+
+    expect(html).toContain('Gemini API (separate billing)')
+    expect(html).toContain('Gemini-only')
+    expect(html).toContain('separately metered and billed')
+    expect(html).toContain('tier and rate limits')
+    expect(html).toContain('does not consume AntiGravity subscription quota')
+    expect(html).toContain('does not expose AntiGravity Claude or GPT models')
+    expect(html).toContain('Free Tier content may be used to improve Google products')
+    expect(html).toContain('Paid Services content is not used to improve Google products')
+    expect(html).toContain('type="password"')
+    expect(html).not.toContain('apiKey')
   })
 })

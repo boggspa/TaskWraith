@@ -303,6 +303,7 @@ interface SettingsPanelProps {
   /** Explicit, informed-risk opt-in for the buried AntiGravity setup card. */
   antigravityEnabled?: boolean
   antigravityOptInAcceptedAt?: number | null
+  antigravityGeminiApiDisclosureAcceptedAt?: number | null
   userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
@@ -424,6 +425,7 @@ interface SettingsPanelProps {
     kimiSanitiserCustomKeywords?: string
     antigravityEnabled?: boolean
     antigravityOptInAcceptedAt?: number | null
+    antigravityGeminiApiDisclosureAcceptedAt?: number | null
     userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
@@ -3746,6 +3748,7 @@ export function SettingsPanel({
   kimiSanitiserCustomKeywords,
   antigravityEnabled = false,
   antigravityOptInAcceptedAt = null,
+  antigravityGeminiApiDisclosureAcceptedAt = null,
   userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
@@ -7125,6 +7128,7 @@ export function SettingsPanel({
                   <AntigravityOptInCard
                     enabled={antigravityEnabled}
                     acceptedAt={antigravityOptInAcceptedAt}
+                    geminiApiDisclosureAcceptedAt={antigravityGeminiApiDisclosureAcceptedAt}
                     onChange={onChange}
                     onOpenLogin={
                       onProviderLogin ? () => onProviderLogin('antigravity') : undefined

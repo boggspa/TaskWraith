@@ -983,6 +983,27 @@ describe('MainSanitizers settings patches', () => {
     ).toBe(null)
   })
 
+  it('persists only a finite positive Gemini API disclosure timestamp', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(
+      sanitizeSettingsPatch({
+        antigravityGeminiApiDisclosureAcceptedAt: 1_700_000_000_000
+      }).antigravityGeminiApiDisclosureAcceptedAt
+    ).toBe(1_700_000_000_000)
+    expect(
+      sanitizeSettingsPatch({ antigravityGeminiApiDisclosureAcceptedAt: null })
+        .antigravityGeminiApiDisclosureAcceptedAt
+    ).toBe(null)
+    for (const value of [0, -1, Infinity, NaN, 'yes'] as unknown[]) {
+      expect(
+        sanitizeSettingsPatch({
+          antigravityGeminiApiDisclosureAcceptedAt: value as number
+        }).antigravityGeminiApiDisclosureAcceptedAt
+      ).toBe(null)
+    }
+  })
+
   it('accepts a boolean modelUsageExternalUsage and drops non-boolean values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

@@ -1510,6 +1510,44 @@
   margin-top: 3px;
 }
 
+.settings-provider-auth-status-dot-connected {
+  background: var(--color-success, #3fb950);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--color-success, #3fb950) 16%, transparent);
+}
+
+.settings-antigravity-gemini-api-section {
+  display: grid;
+  gap: 10px;
+  margin-top: 14px;
+  padding: 12px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 14%, transparent);
+  border-radius: var(--radius-sm);
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+}
+
+.settings-antigravity-gemini-api-section h4 {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-provider-auth-field {
+  display: grid;
+  gap: 5px;
+  color: var(--text-secondary);
+  font-size: var(--font-size-sm);
+}
+
+.settings-provider-auth-field input {
+  min-width: 0;
+  padding: 7px 8px;
+  border: 1px solid color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border-radius: var(--radius-sm);
+  background: var(--surface-primary, transparent);
+  color: var(--text-primary);
+  font: inherit;
+}
+
 .settings-provider-auth-command {
   display: grid;
   gap: 4px;

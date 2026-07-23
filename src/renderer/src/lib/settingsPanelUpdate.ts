@@ -66,6 +66,7 @@ export type SettingsPanelUpdate = {
   /** Explicit, informed-risk opt-in for the buried AntiGravity setup card. */
   antigravityEnabled?: AppSettings['antigravityEnabled']
   antigravityOptInAcceptedAt?: AppSettings['antigravityOptInAcceptedAt']
+  antigravityGeminiApiDisclosureAcceptedAt?: AppSettings['antigravityGeminiApiDisclosureAcceptedAt']
   claudeBinaryPath?: string
   kimiBinaryPath?: string
   ollamaBaseUrl?: string

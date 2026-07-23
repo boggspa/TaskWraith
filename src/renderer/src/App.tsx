@@ -6719,6 +6719,10 @@ function App(): React.JSX.Element {
     if (next.antigravityOptInAcceptedAt !== undefined) {
       settingsPatch.antigravityOptInAcceptedAt = next.antigravityOptInAcceptedAt
     }
+    if (next.antigravityGeminiApiDisclosureAcceptedAt !== undefined) {
+      settingsPatch.antigravityGeminiApiDisclosureAcceptedAt =
+        next.antigravityGeminiApiDisclosureAcceptedAt
+    }
 
     if (next.mode !== undefined) {
       settingsPatch.appearanceMode = next.mode

@@ -110,6 +110,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'ollamaDefaultModel',
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
+  'antigravityGeminiApiDisclosureAcceptedAt',
   'codexUsageCredential',
   'storeLocalChatHistory',
   'storeRawEvents',
@@ -1828,6 +1829,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('antigravityOptInAcceptedAt' in sanitized) {
       const value = sanitized.antigravityOptInAcceptedAt
       sanitized.antigravityOptInAcceptedAt =
+        typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+    }
+    if ('antigravityGeminiApiDisclosureAcceptedAt' in sanitized) {
+      const value = sanitized.antigravityGeminiApiDisclosureAcceptedAt
+      sanitized.antigravityGeminiApiDisclosureAcceptedAt =
         typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
     }
     return sanitized as Partial<AppSettings>

@@ -2181,6 +2181,8 @@ export interface AppSettings {
    * account/ToS/ban-risk warning. null/absent = no consent recorded. This is a
    * record of informed opt-in only, NOT a claim of ToS approval or ban-safety. */
   antigravityOptInAcceptedAt?: number | null
+  /** Epoch-ms timestamp for the separate Gemini API disclosure acknowledgement. */
+  antigravityGeminiApiDisclosureAcceptedAt?: number | null
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}

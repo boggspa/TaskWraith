@@ -1377,6 +1377,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               kimiSanitiserCustomKeywords={settings?.kimiSanitiserCustomKeywords ?? ''}
               antigravityEnabled={settings?.antigravityEnabled ?? false}
               antigravityOptInAcceptedAt={settings?.antigravityOptInAcceptedAt ?? null}
+              antigravityGeminiApiDisclosureAcceptedAt={
+                settings?.antigravityGeminiApiDisclosureAcceptedAt ?? null
+              }
               userName={settings?.userName ?? ''}
               claudeBinaryPath={claudeBinaryPath}
               kimiBinaryPath={kimiBinaryPath}
