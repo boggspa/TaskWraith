@@ -109,6 +109,10 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'find_files',
   'workspace_search',
   'workspace_symbols',
+  // Runs a fixed-argv git status snapshot; it does not stage, modify, or
+  // otherwise mutate the repository, so read-only and plan seats may inspect
+  // their working tree without an approval prompt.
+  'git_status',
   'list_chat_attachments',
   'inspect_chat_attachment',
   'workspace_board_snapshot',

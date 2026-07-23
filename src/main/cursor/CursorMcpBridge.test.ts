@@ -98,6 +98,9 @@ describe('canonical global broker allow rules', () => {
     expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}:read_file)`
     )
+    expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).toContain(
+      `Mcp(${CURSOR_MCP_SERVER_NAME}:git_status)`
+    )
     expect(CURSOR_BROKER_READONLY_MCP_ALLOW_RULES).not.toContain(
       `Mcp(${CURSOR_MCP_SERVER_NAME}:write_file)`
     )
