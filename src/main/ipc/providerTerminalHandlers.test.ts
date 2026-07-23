@@ -90,6 +90,66 @@ describe('registerProviderTerminalHandlers', () => {
     })
   })
 
+  it('opens only the official user-installed agy CLI for AntiGravity sign-in', async () => {
+    const { deps, loginDir } = createDeps()
+    const commandFile = join(loginDir, 'antigravity-login.command')
+    registerProviderTerminalHandlers(deps)
+
+    await expect(
+      handlerFor('provider:open-login-terminal')({}, 'antigravity')
+    ).resolves.toEqual({
+      ok: true,
+      scope: 'user-owned-provider-setup',
+      managedRunReady: false,
+      notice: expect.stringMatching(/official user-installed agy CLI/i)
+    })
+
+    expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+    expect(deps.writeFileSync).toHaveBeenCalledWith(
+      commandFile,
+      expect.stringContaining("'agy'"),
+      { mode: 0o755 }
+    )
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('does not read, copy, or store Google or AntiGravity OAuth')
+    expect(script).toContain('unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS')
+    expect(script).not.toContain('--dangerously-skip-permissions')
+    expect(deps.openPath).toHaveBeenCalledWith(commandFile)
+  })
+
+  it.each(['logout', 'upgrade'] as const)(
+    'rejects unsupported AntiGravity %s without starting agy',
+    async (action) => {
+      const { deps } = createDeps()
+      registerProviderTerminalHandlers(deps)
+
+      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'antigravity')).resolves.toEqual({
+        ok: false,
+        error: `AntiGravity terminal ${action} is not supported here. No agy process was started.`
+      })
+      expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
+      expect(deps.writeFileSync).not.toHaveBeenCalled()
+      expect(deps.openPath).not.toHaveBeenCalled()
+    }
+  )
+
+  it('clears Google credential environment variables before agy on Windows', async () => {
+    const { deps } = createDeps()
+    deps.getPlatform.mockReturnValue('win32')
+    registerProviderTerminalHandlers(deps)
+
+    await expect(
+      handlerFor('provider:open-login-terminal')({}, 'antigravity')
+    ).resolves.toMatchObject({ ok: true, scope: 'user-owned-provider-setup' })
+
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain('Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue')
+    expect(script).toContain('Remove-Item Env:GOOGLE_API_KEY -ErrorAction SilentlyContinue')
+    expect(script).toContain(
+      'Remove-Item Env:GOOGLE_APPLICATION_CREDENTIALS -ErrorAction SilentlyContinue'
+    )
+  })
+
   it.each(['login', 'logout'] as const)(
     'opens a Cursor %s terminal via cursor-agent',
     async (action) => {

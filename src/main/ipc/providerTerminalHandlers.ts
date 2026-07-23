@@ -8,11 +8,8 @@ type TerminalAction = 'login' | 'logout' | 'upgrade'
 export type ProviderTerminalResult = {
   ok: boolean
   error?: string
-  /**
-   * Kimi login/upgrade terminals are explicit user-owned setup handoffs. They
-   * are not TaskWraith-managed provider turns and do not qualify a binary for
-   * a later managed run.
-   */
+  /** Explicit user-owned setup handoffs are not TaskWraith-managed provider
+   * turns and do not qualify a binary for a later managed run. */
   scope?: 'user-owned-provider-setup'
   managedRunReady?: false
   notice?: string
@@ -20,6 +17,9 @@ export type ProviderTerminalResult = {
 
 const KIMI_USER_OWNED_SETUP_NOTICE =
   'This is a user-owned Kimi setup command outside TaskWraith managed-run containment. Success does not qualify this runtime for managed Kimi turns or compaction.'
+
+const ANTIGRAVITY_USER_OWNED_SETUP_NOTICE =
+  'This opens the official user-installed agy CLI for a user-owned sign-in. TaskWraith does not read, copy, or store Google or AntiGravity OAuth or keyring credentials. Completing sign-in does not make AntiGravity available for managed runs until its runtime support is available.'
 
 export interface ProviderTerminalHandlersDeps {
   resolveCliProviderBinary: (provider: ProviderId) => Promise<ResolvedProviderBinary>
@@ -49,6 +49,7 @@ async function openProviderAuthTerminal(
     let rawCommand: string | null = null
     let label: string
     let setupNotice: string | null = null
+    let stripGoogleCredentialEnvironment = false
     const actionLabel =
       action === 'login' ? 'Sign-in' : action === 'logout' ? 'Sign-out' : 'Upgrade'
     const actionVerb =
@@ -109,6 +110,20 @@ async function openProviderAuthTerminal(
         // login → `kimi login` (device-code flow).
         commandParts = [resolved.binaryPath || 'kimi', 'login']
       }
+    } else if (provider === 'antigravity') {
+      if (action !== 'login') {
+        return {
+          ok: false,
+          error: `AntiGravity terminal ${action} is not supported here. No agy process was started.`
+        }
+      }
+      // The official CLI starts its own browser/keyring sign-in when launched.
+      // Do not resolve or inspect credentials here; S2 owns any bounded CLI
+      // resolver and S3 owns managed runtime registration.
+      label = 'AntiGravity'
+      setupNotice = ANTIGRAVITY_USER_OWNED_SETUP_NOTICE
+      stripGoogleCredentialEnvironment = true
+      commandParts = ['agy']
     } else if (provider === 'cursor') {
       label = 'Cursor'
       const resolved = await deps.resolveCliProviderBinary('cursor')
@@ -167,6 +182,13 @@ async function openProviderAuthTerminal(
           ...(setupNotice
             ? [`Write-Host "${setupNotice.replace(/"/g, '`"')}"`, 'Write-Host ""']
             : []),
+          ...(stripGoogleCredentialEnvironment
+            ? [
+                'Remove-Item Env:GEMINI_API_KEY -ErrorAction SilentlyContinue',
+                'Remove-Item Env:GOOGLE_API_KEY -ErrorAction SilentlyContinue',
+                'Remove-Item Env:GOOGLE_APPLICATION_CREDENTIALS -ErrorAction SilentlyContinue'
+              ]
+            : []),
           `Write-Host "${actionVerb} ${label} for TaskWraith..."`,
           `Write-Host "> ${command.replace(/"/g, '`"')}"`,
           'Write-Host ""',
@@ -209,6 +231,9 @@ async function openProviderAuthTerminal(
         '[ -f "$HOME/.zprofile" ] && source "$HOME/.zprofile" 2>/dev/null',
         '[ -f "$HOME/.zshrc" ] && source "$HOME/.zshrc" 2>/dev/null',
         ...(setupNotice ? [`echo "${setupNotice}"`, 'echo ""'] : []),
+        ...(stripGoogleCredentialEnvironment
+          ? ['unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS']
+          : []),
         `echo "${actionVerb} ${label} for TaskWraith…"`,
         `echo "> ${command}"`,
         'echo ""',

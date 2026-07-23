@@ -258,6 +258,18 @@ describe('SettingsPanel provider cards', () => {
     expect(html).toContain('Open Terminal to sign in')
   })
 
+  it('buries the AntiGravity risk-consent card after Ollama', () => {
+    const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
+
+    const ollamaCard = html.indexOf('data-provider="ollama"')
+    const antigravityCard = html.indexOf('data-provider="antigravity"')
+    expect(ollamaCard).toBeGreaterThan(-1)
+    expect(antigravityCard).toBeGreaterThan(ollamaCard)
+    expect(html).toContain('Disabled — explicit consent required')
+    expect(html).toContain('Antigravity Additional Terms')
+    expect(html).toContain('February 2026')
+  })
+
   it('does not render the retired Gemini sign-in card on the Providers tab', () => {
     const html = renderToStaticMarkup(<SettingsPanel {...makeSettingsProps()} />)
 

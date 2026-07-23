@@ -69,6 +69,9 @@ describe('FirstLaunchSheet', () => {
     // Gemini is retired — no provider card and no install-command row, so its
     // data-provider marker is absent everywhere in the sheet.
     expect(html).not.toContain('data-provider="gemini"')
+    // AntiGravity is deliberately Settings-only behind its separate risk-consent
+    // card; it must never appear in general First Launch onboarding.
+    expect(html).not.toContain('data-provider="antigravity"')
     expect(html).toContain('data-provider="kimi"')
     expect(html).toContain('data-provider="ollama"')
   })

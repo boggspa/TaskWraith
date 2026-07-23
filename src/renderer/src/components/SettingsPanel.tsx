@@ -129,6 +129,7 @@ import type { ExtensionSecretRef } from '../../../main/ExtensionSecretStore'
 import { canPersistPlaintextFieldValue } from '../../../main/PlaintextSecretPolicy'
 import { GrokTelemetryCard } from './GrokTelemetryCard'
 import { ProviderLogoTile } from './ProviderLogoTile'
+import { AntigravityOptInCard } from './AntigravityOptInCard'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
 import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolFamilyIcon'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
@@ -299,6 +300,9 @@ interface SettingsPanelProps {
   /** 1.0.5-EW26 — User's additional trigger keywords (newline-
    * separated; lines starting with `#` are treated as comments). */
   kimiSanitiserCustomKeywords: string
+  /** Explicit, informed-risk opt-in for the buried AntiGravity setup card. */
+  antigravityEnabled?: boolean
+  antigravityOptInAcceptedAt?: number | null
   userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
@@ -418,6 +422,8 @@ interface SettingsPanelProps {
     kimiSanitiserEnabled?: boolean
     /** 1.0.5-EW26 — User additions to the trigger keyword list. */
     kimiSanitiserCustomKeywords?: string
+    antigravityEnabled?: boolean
+    antigravityOptInAcceptedAt?: number | null
     userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
@@ -3738,6 +3744,8 @@ export function SettingsPanel({
   providerRunPauses,
   kimiSanitiserEnabled,
   kimiSanitiserCustomKeywords,
+  antigravityEnabled = false,
+  antigravityOptInAcceptedAt = null,
   userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
@@ -7113,6 +7121,15 @@ export function SettingsPanel({
                     </p>
                     {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
+
+                  <AntigravityOptInCard
+                    enabled={antigravityEnabled}
+                    acceptedAt={antigravityOptInAcceptedAt}
+                    onChange={onChange}
+                    onOpenLogin={
+                      onProviderLogin ? () => onProviderLogin('antigravity') : undefined
+                    }
+                  />
                 </div>
               </div>
 
