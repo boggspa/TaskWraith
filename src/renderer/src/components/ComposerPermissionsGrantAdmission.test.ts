@@ -17,6 +17,8 @@ describe('Composer permission / tool-grant admission while running', () => {
     // but a live solo run must not freeze tool-grant overrides.
     expect(region).toContain('const pickerDisabled =')
     expect(region).not.toMatch(/const pickerDisabled =\s*[\s\S]*isCurrentComposerLocked/)
-    expect(region).toContain('providerRunUnavailableReason(effectiveProvider)')
+    expect(region).toContain('providerRunUnavailableReason(')
+    expect(region).toContain('effectiveProvider')
+    expect(region).toContain('configuredProviderSnapshot.providerIds')
   })
 })

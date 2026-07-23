@@ -47,7 +47,7 @@ describe('workspace above-row parity', () => {
   it('collapses the empty Codex changes track without changing other shells', () => {
     const css = readSource('src/renderer/src/assets/css/10-provider-shell-overrides.css')
     const selector =
-      '[data-composer-style="codex"]\n  .composer-workspace-above-row.style-unified:not('
+      ':is([data-composer-style="codex"], [data-composer-style="chatgpt"])\n  .composer-workspace-above-row.style-unified:not('
     const start = css.indexOf(selector)
     const end = css.indexOf('}', start)
     const block = css.slice(start, end + 1)
@@ -61,7 +61,7 @@ describe('workspace above-row parity', () => {
   it('keeps detached Codex workspace rows compact without changing other shells', () => {
     const css = readSource('src/renderer/src/assets/css/10-provider-shell-overrides.css')
     const selector =
-      '[data-composer-style="codex"]\n  :is(.composer-area, .composer-primary-stack)\n  > .composer-workspace-above-row.style-unified.composer-above-bar--cursor-lead'
+      ':is([data-composer-style="codex"], [data-composer-style="chatgpt"])\n  :is(.composer-area, .composer-primary-stack)\n  > .composer-workspace-above-row.style-unified.composer-above-bar--cursor-lead'
     const start = css.indexOf(selector)
     const end = css.indexOf('}', start)
     const block = css.slice(start, end + 1)

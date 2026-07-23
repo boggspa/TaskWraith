@@ -4,11 +4,11 @@ export type ComposerVoicePlacement = 'permissions' | 'action-row' | 'send-cluste
 
 export function composerVoicePlacementForStyle(style: ComposerStyle): ComposerVoicePlacement {
   switch (style) {
+    // ChatGPT shell borrows Cursor's capsule body + satellite controls, so the
+    // voice control lives in the permissions row exactly as Cursor's does.
     case 'claude':
     case 'gemini':
     case 'cursor':
-    // ChatGPT shell borrows Cursor's capsule body + satellite controls, so the
-    // voice control lives in the permissions row exactly as Cursor's does.
     case 'chatgpt':
     case 'modular':
     case 'obsidian':
