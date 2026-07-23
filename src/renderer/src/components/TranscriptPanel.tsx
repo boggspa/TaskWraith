@@ -129,7 +129,6 @@ import { MarkdownMessage } from './MarkdownMessage'
 import { RevealingMarkdownMessage } from './RevealingMarkdownMessage'
 import { ProposedPlanCard } from './ProposedPlanCard'
 import type { ProposedPlanState } from '../lib/proposedPlan'
-import { MessageActionsChip } from './MessageActionsChip'
 import { PillButton } from './PillButton'
 import {
   TranscriptMessageContextMenu,
@@ -538,21 +537,7 @@ export type TranscriptPanelProps = {
    * forwarded to every `ActivityStack` so in-flight thinking + tool activity
    * streams inside the masked auto-following region. */
   liveActivityViewport?: boolean
-  /**
-   * 1.0.4-AQ4 — per-message actions on hover.
-   *
-   * `onCopyMessage(messageId, content)` copies the raw `msg.content`
-   * string to the clipboard. 1.0.8: takes the message id too so the
-   * shared copy-feedback hook can show a transient "Copied" on the
-   * originating chip. Pure — does not mutate chat state.
-   *
-   * `onDeleteMessage(messageId)` removes the message from
-   * `currentChat.messages`. The host applies a `confirm()` gate so
-   * the destructive action requires intent. Both user and assistant
-   * bubbles use the same handler; the host can differentiate by
-   * checking the role itself if it ever wants to gate
-   * differently (e.g. forbid deleting in-flight assistant runs).
-   */
+  /** Per-message actions are available from the message context menu. */
   onCopyMessage: (messageId: string, content: string) => void
   onAddMessageToPrompt?: (messageId: string, content: string) => void
   onDeleteMessage: (messageId: string) => void
@@ -1179,85 +1164,19 @@ function FileChangePathCell({ path }: { path: string }): ReactElement {
 
 function TranscriptMessageFooter({
   message,
-  label,
-  copyContent,
-  align,
-  onCopyMessage,
-  onAddMessageToPrompt,
-  onTogglePinMessage,
-  onMessageFeedback,
-  onDeleteMessage,
-  onOpenSideChatFromMessage,
-  pinned,
-  copied
+  align
 }: {
   message: ChatMessage
-  label: string
-  copyContent?: string
   align: 'start' | 'end'
-  onCopyMessage: (messageId: string, content: string) => void
-  onAddMessageToPrompt?: (messageId: string, content: string) => void
-  onTogglePinMessage?: (messageId: string) => void
-  onMessageFeedback?: (messageId: string, vote: 'up' | 'down', details?: MessageFeedbackDetails) => void
-  onDeleteMessage?: (messageId: string) => void
-  onOpenSideChatFromMessage?: (message: ChatMessage) => void
-  pinned: boolean
-  copied: boolean
 }): React.JSX.Element | null {
   const timestamp = formatTranscriptMessageFooterTime(message.timestamp)
-  const hasActionContent = copyContent !== undefined
-  const canOpenSideChatFromMessage =
-    Boolean(onOpenSideChatFromMessage) && message.metadata?.kind !== 'channelInbound'
-  // Thumbs feedback is an ASSISTANT-only signal (rate what the agent produced,
-  // never the user's own turn or a channel-inbound relay).
-  const canRateMessage =
-    Boolean(onMessageFeedback) &&
-    message.role === 'assistant' &&
-    message.metadata?.kind !== 'channelInbound'
-  const thumbsVote = readMessageFeedbackVote(message)
-
-  if (!timestamp && !hasActionContent) return null
+  if (!timestamp) return null
 
   return (
     <div className={`message-footer message-footer-${align}`}>
-      {hasActionContent && (
-        <MessageActionsChip
-          onCopy={() => onCopyMessage(message.id, copyContent)}
-          onAddToPrompt={
-            onAddMessageToPrompt && copyContent.trim()
-              ? () => onAddMessageToPrompt(message.id, copyContent)
-              : undefined
-          }
-          onTogglePin={onTogglePinMessage ? () => onTogglePinMessage(message.id) : undefined}
-          onThumbsUp={
-            canRateMessage && onMessageFeedback
-              ? () => onMessageFeedback(message.id, 'up')
-              : undefined
-          }
-          onThumbsDown={
-            canRateMessage && onMessageFeedback
-              ? () => onMessageFeedback(message.id, 'down')
-              : undefined
-          }
-          onDelete={onDeleteMessage ? () => onDeleteMessage(message.id) : undefined}
-          onOpenSideChat={
-            canOpenSideChatFromMessage ? () => onOpenSideChatFromMessage?.(message) : undefined
-          }
-          pinned={pinned}
-          thumbsVote={thumbsVote}
-          copied={copied}
-          label={label}
-        />
-      )}
-      {timestamp && (
-        <time
-          className="message-footer-time"
-          dateTime={timestamp.dateTime}
-          title={timestamp.title}
-        >
-          {timestamp.label}
-        </time>
-      )}
+      <time className="message-footer-time" dateTime={timestamp.dateTime} title={timestamp.title}>
+        {timestamp.label}
+      </time>
     </div>
   )
 }
@@ -3386,28 +3305,6 @@ export const TranscriptPanel = memo(
                     : undefined
                 }
               : undefined
-            const footerCopyContent =
-              !isDelegationCard &&
-              !isReturnCard &&
-              !isToolActivityStack &&
-              !isParticipantHealth &&
-              !isProviderRunFailure &&
-              !isContextCompaction &&
-              typeof msg.content === 'string'
-                ? msg.content
-                : undefined
-            const footerLabel =
-              msg.role === 'user'
-                ? 'user message'
-                : isFanoutResultCard
-                  ? 'fan-out result'
-                : isGuestReply
-                  ? 'guest participant message'
-                  : isCollaboratorComment
-                    ? 'collaborator message'
-                    : msg.role === 'tool'
-                      ? 'tool message'
-                      : `${msg.role} message`
             const isPinnedMessageTarget = highlightedMessageTarget
               ? highlightedMessageTarget.rowKey
                 ? highlightedMessageTarget.rowKey === rowKey
@@ -4348,17 +4245,7 @@ export const TranscriptPanel = memo(
                 {superGroupHidden ? null : (
                 <TranscriptMessageFooter
                   message={msg}
-                  label={footerLabel}
-                  copyContent={footerCopyContent}
                   align={msg.role === 'user' ? 'end' : 'start'}
-                  onCopyMessage={onCopyMessage}
-                  onAddMessageToPrompt={onAddMessageToPrompt}
-                  onTogglePinMessage={onTogglePinMessage}
-                  onMessageFeedback={onMessageFeedback}
-                  onDeleteMessage={onDeleteMessage}
-                  onOpenSideChatFromMessage={onOpenSideChatFromMessage}
-                  pinned={isPinned}
-                  copied={copiedId === msg.id}
                 />
                 )}
               </div>

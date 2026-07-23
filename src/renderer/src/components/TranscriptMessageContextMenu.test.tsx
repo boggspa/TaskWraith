@@ -32,7 +32,7 @@ function selection(
 }
 
 describe('TranscriptMessageContextMenu', () => {
-  it('renders the same message actions as the hover action pill', () => {
+  it('keeps the full message action set in the context menu', () => {
     const html = renderToStaticMarkup(
       <TranscriptMessageContextMenu
         selection={selection({ pinned: true })}
