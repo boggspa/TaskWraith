@@ -2613,11 +2613,11 @@
    * ride the capsule's bottom edge on multi-line (see Gemini note). */
   anchor-name: --composer-capsule;
 }
-[data-composer-style="cursor"] .composer-textarea-wrap:focus-within {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-textarea-wrap:focus-within {
   border-color: var(--cursor-shell-rim-strong);
   box-shadow: inset 0 1px 0 var(--cursor-shell-rim-strong);
 }
-[data-composer-style="cursor"] .composer-textarea {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-textarea {
   flex: 1;
   background: transparent;
   border: 0;
@@ -4146,13 +4146,13 @@
   margin-right: 6px;
 }
 
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+:is([data-composer-style="gemini"], :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]))
   [data-composer-control="model"] {
   width: max-content;
   max-width: min(260px, calc(100% - 96px));
 }
 
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+:is([data-composer-style="gemini"], :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]))
   [data-composer-control="model"]
   .composer-combined-picker-trigger-provider {
   flex: 0 0 auto;
@@ -4219,11 +4219,11 @@
   background-image: none !important;
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .app-transcript
   .composer-area.interface-codex
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)),
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .app-transcript
   .composer-area.interface-codex
   :is(
@@ -4240,7 +4240,7 @@
 /* The unified ensemble/queue stack owns the white fill; its joined children stay
  * transparent so the existing hairline dividers and tucked-tab geometry are
  * preserved as one continuous Codex container. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .app-transcript
   .composer-area.interface-codex
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
@@ -4283,4 +4283,36 @@ oser-orchestration-cell-label {
 [data-composer-style="chatgpt"] .composer-textarea-wrap,
 [data-composer-style="chatgpt"] .composer-textarea-wrap:focus-within {
   box-shadow: none;
+}
+
+/* (1) The [+] attach button reads as a bare satellite glyph, not a bubble —
+ * drop Cursor's fill + outline (a transient hover wash only). */
+[data-composer-style="chatgpt"] .composer-image-picker-btn {
+  background: transparent;
+  border: 0;
+}
+[data-composer-style="chatgpt"] .composer-image-picker-btn:hover:not(:disabled),
+[data-composer-style="chatgpt"] .composer-image-picker-btn:focus-visible {
+  background: var(--cursor-shell-hover);
+  border: 0;
+}
+
+/* (2) Textarea gutters. The Cursor `.composer-textarea` gutter rule is
+ * cursor-scoped and did not widen, so ChatGPT's text ran under the lifted
+ * [+] and model. Restore the inset with ChatGPT-tuned gutters: a wider right
+ * gutter gives the model/effort chip more room before it clips (see (4)). */
+[data-composer-style="chatgpt"] .composer-textarea {
+  flex: 1;
+  background: transparent;
+  border: 0;
+  padding: 10px 292px 3px 48px;
+  min-height: 32px;
+  font-size: var(--font-size-md);
+  color: var(--cursor-shell-fg);
+}
+
+/* (4) More room for provider/model/effort before the label truncates. */
+[data-composer-style="chatgpt"] [data-composer-control="model"] {
+  max-width: 260px;
+  right: 52px;
 }
