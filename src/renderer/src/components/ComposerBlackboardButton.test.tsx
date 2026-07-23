@@ -112,6 +112,7 @@ describe('ComposerBlackboardPostForm (static render)', () => {
     expect(html).toContain('aria-label="Post to Blackboard"')
     expect(html).toContain('aria-label="Blackboard entry"')
     expect(html).toContain('Post a note to the Blackboard...')
+    expect(html).toContain('rows="4"')
     expect(html).toContain('aria-label="Blackboard section"')
     expect(html).toContain('Post to')
     expect(html).toContain('<option value="note" selected="">Notes</option>')

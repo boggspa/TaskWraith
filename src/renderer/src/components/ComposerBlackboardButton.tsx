@@ -174,7 +174,7 @@ export function ComposerBlackboardPostForm(
         }}
         aria-label="Blackboard entry"
         placeholder="Post a note to the Blackboard..."
-        rows={2}
+        rows={4}
       />
       <label className="composer-blackboard-post-section">
         <span>Post to</span>

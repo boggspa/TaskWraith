@@ -10604,8 +10604,8 @@
 .composer-blackboard-compose textarea {
   grid-area: entry;
   min-width: 0;
-  min-height: 44px;
-  max-height: 104px;
+  min-height: 88px;
+  max-height: 208px;
   resize: vertical;
   box-sizing: border-box;
   padding: 7px 8px;
