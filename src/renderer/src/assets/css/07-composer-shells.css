@@ -2097,12 +2097,12 @@
 [data-composer-style="claude"] .composer-context-trigger {
   transform: translateY(-4px);
 }
-[data-composer-style="cursor"] .context-wheel {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .context-wheel {
   width: 21.6px;
   height: 21.6px;
   color: var(--cursor-shell-muted, color-mix(in srgb, #ffffff 65%, transparent));
 }
-[data-composer-style="cursor"] .context-wheel svg {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .context-wheel svg {
   width: 17.1px;
   height: 17.1px;
 }
@@ -3582,14 +3582,14 @@
   padding-bottom: 18px;
 }
 
-[data-composer-style="codex"] .composer-above-bar,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar,
 [data-composer-style="claude"] .composer-above-bar {
   background: var(--composer-bg);
   border-color: var(--composer-border);
   box-shadow: var(--composer-shadow);
 }
 
-[data-composer-style="codex"] .composer-above-bar {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar {
   min-height: 34px;
   padding: 6px 12px;
   border-radius: 20px;
@@ -3605,8 +3605,8 @@
    highlight; the roster-preset / ensemble / queued rows keep the framed stack.
    Tweak knobs: border-radius (bubble roundness), the codex tint % in background,
    the top-rim alpha + glow in box-shadow, and margin-block (detach gap). */
-[data-composer-style="codex"] .composer-area > .composer-above-bar--cursor-lead,
-[data-composer-style="codex"] .composer-primary-stack > .composer-above-bar--cursor-lead {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-area > .composer-above-bar--cursor-lead,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-primary-stack > .composer-above-bar--cursor-lead {
   align-self: center;
   width: -moz-fit-content;
   width: fit-content;
@@ -3634,10 +3634,10 @@
    flush row inside the merged tray), so re-assert the identical pill here at
    higher specificity + !important to win — otherwise it renders square (clipped)
    with no rim and tucks under the primary pill's shadow. */
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-area
   > .composer-above-bar--cursor-lead.composer-above-bar-secondary,
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-primary-stack
   > .composer-above-bar--cursor-lead.composer-above-bar-secondary {
   padding: 6px 14px !important;
@@ -3653,7 +3653,7 @@
 
 /* Solo Codex chat: the git rows floated out, leaving the merged stack with no
    rows — hide the empty frame so only the floating pills show (mirrors cursor). */
-[data-composer-style="codex"] .composer-area .composer-above-bar-stack:empty {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-area .composer-above-bar-stack:empty {
   display: none;
 }
 
@@ -3710,7 +3710,7 @@
     inset 0 -1px 0 color-mix(in srgb, #ffffff 7%, transparent);
 }
 
-[data-composer-style="codex"] .composer-control-footer {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-control-footer {
   padding-top: 0;
 }
 
@@ -3721,7 +3721,7 @@
   padding-top: 0;
 }
 
-[data-composer-style="codex"] .composer-codex-footer {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-codex-footer {
   min-height: 24px;
   margin-top: 7px;
 }

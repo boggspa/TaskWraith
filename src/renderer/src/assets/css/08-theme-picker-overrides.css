@@ -4592,14 +4592,14 @@
 /* Composer above-bar pills + chips — Claude shell uses these
  * most heavily but the rule is shared for any shell that opts in.
  * Drop the white-on-* fades and use dark text on a faint chip bg. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .composer-above-bar {
   color: rgba(29, 29, 31, 0.72);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar > *,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > *,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar > *,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .composer-above-bar > *,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .composer-above-bar > * {
@@ -4618,7 +4618,7 @@
 /* Workspace access pills (External Path / Tool grants / Worktree /
  * files-changed) live inside the above-bar and inherit the same
  * dark-on-light treatment. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-workspace-access-pill,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-workspace-access-pill,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-workspace-access-pill,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="gemini"] .composer-workspace-access-pill,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="kimi"] .composer-workspace-access-pill {
@@ -5186,7 +5186,7 @@
  * lightens to match. But the base rule also paints a dark glass
  * gradient via ::before; tone that down in light mode so the bar
  * doesn't carry residual navy at the corners. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar {
   background: var(--unified-soft-surface-bg);
   border-color: var(--unified-soft-surface-border);
@@ -5194,14 +5194,14 @@
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.06);
 }
 
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar::before,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar::before,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar::before {
   background: none;
 }
 
 /* Claude composer-chip in the above-bar — light fill, dark text. */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-above-bar .composer-chip,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-codex-chip,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-codex-chip,
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="claude"] .composer-claude-chip {
   background: color-mix(in srgb, var(--unified-soft-surface-bg) 50%, var(--app-bg-elevated));
   border-color: var(--unified-soft-surface-border);
@@ -5813,7 +5813,7 @@
  * on-brand); these rules cover the remaining four shells.
  */
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-  [data-composer-style="codex"],
+  :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
   [data-composer-style="claude"],
   [data-composer-style="gemini"],
   [data-composer-style="kimi"]
@@ -5821,7 +5821,7 @@
   color: rgba(18, 21, 27, 0.62);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-  [data-composer-style="codex"],
+  :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
   [data-composer-style="claude"],
   [data-composer-style="gemini"],
   [data-composer-style="kimi"]
@@ -5829,7 +5829,7 @@
   color: rgba(18, 21, 27, 0.92);
 }
 :is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is(
-  [data-composer-style="codex"],
+  :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
   [data-composer-style="claude"],
   [data-composer-style="gemini"],
   [data-composer-style="kimi"]
@@ -8029,19 +8029,19 @@
 /* Drop the navy ::before overlay on the tucked tab so the fill
  * stays clean. Without this, the per-provider gradient at
  * line 13763-13781 paints over the tab. */
-[data-composer-style="codex"] .composer-above-bar::before {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar::before {
   display: none;
 }
 
 /* CX1 (refined): branch is the only flexible region in the Codex tab.
  * The files+diff cluster, sync chip, and action stay fixed-size so they
  * remain readable and never wrap; the branch text ellipsizes instead. */
-[data-composer-style="codex"] .composer-above-bar > .composer-above-bar-branch {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-above-bar-branch {
   flex: 1 1 auto;
   min-width: 0;
   overflow: hidden;
 }
-[data-composer-style="codex"] .composer-above-bar > .composer-above-bar-files-cluster {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-above-bar-files-cluster {
   flex: 0 0 auto;
   display: inline-flex !important;
   flex-direction: row !important;
@@ -8051,15 +8051,15 @@
   order: 30;
   margin-left: 6px;
 }
-[data-composer-style="codex"] .composer-above-bar > .git-status-push,
-[data-composer-style="codex"] .composer-above-bar > .git-status-ci {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .git-status-push,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .git-status-ci {
   flex: 0 0 auto;
   white-space: nowrap;
 }
-[data-composer-style="codex"] .composer-above-bar > .composer-above-bar-branch > svg {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-above-bar-branch > svg {
   flex: 0 0 auto;
 }
-[data-composer-style="codex"] .composer-above-bar > .composer-above-bar-branch > span {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-above-bar-branch > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -8070,18 +8070,18 @@
  * to defeat any stale build cache, late-stage cascade override, or
  * future stylesheet inversion. Files render at order 1 (left), diff
  * stats at order 2 (right). */
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-files-cluster
   .composer-above-bar-files {
   order: 1 !important;
 }
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-files-cluster
   .composer-above-bar-stats {
   order: 2 !important;
 }
-[data-composer-style="codex"] .composer-above-bar > .composer-above-bar-action,
-[data-composer-style="codex"] .composer-above-bar > .composer-diff-action-menu-wrap {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-above-bar-action,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-diff-action-menu-wrap {
   flex: 0 0 auto;
   margin-left: 0;
 }
@@ -8090,7 +8090,7 @@
  * explicitly — would push the action button into a phantom 4th
  * column. Hidden for Codex shell; Gemini still shows the
  * worktree pill if/when that shell is active. */
-[data-composer-style="codex"] .composer-above-bar > .composer-workspace-access {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar > .composer-workspace-access {
   display: none;
 }
 
@@ -8125,7 +8125,7 @@
  * pass landed for "stronger than surface-2"; using it here
  * keeps the tab consistent with other depth surfaces in light
  * themes (sheets, popovers, etc.). */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar {
   /* the maintainer's call — match the white composer-surface family the
    * chip strip below already uses. The previous `surface-3 80% /
    * surface-2 20%` mix produced a visibly darker pill that broke
@@ -8230,13 +8230,13 @@
 /* Mirror the suppression on Codex shell too — the same per-provider
  * gradient `::before` overlay was painting on top of the white
  * surface-2 fill and producing the gray-white look the maintainer flagged. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar::before {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar::before {
   display: none;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar .composer-above-bar-secondary-branch {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar .composer-above-bar-secondary-branch {
   color: rgba(29, 29, 31, 0.62) !important;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-action {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-action {
   color: rgba(29, 29, 31, 0.86) !important;
   border-color: var(--surface-border) !important;
 }

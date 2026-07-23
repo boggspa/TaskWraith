@@ -535,16 +535,16 @@
 /* Alabaster app theme: Codex + Claude composer shells keep their dark
  * textarea/surface treatment, with explicit dark-subtree tokens so typed
  * text, the mention overlay, and inline controls stay readable. */
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-area,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface,
-[data-theme="alabaster"][data-composer-style="codex"] .composer-above-bar-stack,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-area,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-surface,
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-above-bar,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .ensemble-above-row,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .queued-messages-above-row,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-create-pr-row {
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-above-bar,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .ensemble-above-row,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .queued-messages-above-row,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-create-pr-row {
   --text-primary: rgba(255, 255, 255, 0.94);
   --text-secondary: rgba(255, 255, 255, 0.72);
   --text-tertiary: rgba(255, 255, 255, 0.54);
@@ -564,40 +564,40 @@
   color-scheme: dark;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface {
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-surface {
   background: linear-gradient(180deg, #1c1c21 0%, #151519 100%) !important;
   border-color: rgba(255, 255, 255, 0.14) !important;
   box-shadow: 0 14px 34px rgba(0, 0, 0, 0.34);
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea-highlight,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea-highlight-content {
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea-highlight,
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea-highlight-content {
   color: rgba(255, 255, 255, 0.94) !important;
   caret-color: rgba(255, 255, 255, 0.96);
   -webkit-text-fill-color: rgba(255, 255, 255, 0.94) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea::placeholder {
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea::placeholder {
   color: rgba(255, 255, 255, 0.42) !important;
   -webkit-text-fill-color: rgba(255, 255, 255, 0.42) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   :is(.composer-combined-picker-trigger, .composer-combined-picker-trigger-primary, .composer-combined-picker-trigger-suffix, [data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"], [data-composer-control="ensemble-mode"], .composer-ensemble-mode-button, .composer-image-picker-btn, .composer-thread-token-tally, .composer-telemetry-row) {
   color: rgba(255, 255, 255, 0.82) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-ensemble-mode-button.is-active {
   color: rgba(255, 255, 255, 0.96) !important;
   background: rgba(255, 255, 255, 0.14) !important;
 }
 
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-above-bar-stack:has(.ensemble-above-row)
   > .ensemble-roster-preset-picker.is-compact,
-[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="alabaster"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: linear-gradient(180deg, #1b1b20 0%, #151519 100%) !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
@@ -609,15 +609,15 @@
  * their provider shell identity remains legible on the near-black app
  * background. This is intentionally NOT applied to the Obsidian composer
  * shell, which stays theme-immune. */
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-area,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-area,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-surface,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-above-bar,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .ensemble-above-row,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .queued-messages-above-row,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-create-pr-row {
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-above-bar,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .ensemble-above-row,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .queued-messages-above-row,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-create-pr-row {
   --text-primary: rgba(18, 21, 27, 0.94);
   --text-secondary: rgba(18, 21, 27, 0.72);
   --text-tertiary: rgba(18, 21, 27, 0.56);
@@ -637,7 +637,7 @@
   color-scheme: light;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-surface {
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-surface {
   background: linear-gradient(180deg, #ffffff 0%, #f3f2ee 100%) !important;
   border-color: rgba(18, 21, 27, 0.15) !important;
   box-shadow: 0 18px 44px rgba(0, 0, 0, 0.32);
@@ -648,34 +648,34 @@
   border-color: transparent !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea-highlight,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea-highlight-content {
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea-highlight,
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea-highlight-content {
   color: rgba(18, 21, 27, 0.94) !important;
   caret-color: rgba(18, 21, 27, 0.96);
   -webkit-text-fill-color: rgba(18, 21, 27, 0.94) !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"]) .composer-textarea::placeholder {
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"]) .composer-textarea::placeholder {
   color: rgba(18, 21, 27, 0.42) !important;
   -webkit-text-fill-color: rgba(18, 21, 27, 0.42) !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   :is(.composer-combined-picker-trigger, .composer-combined-picker-trigger-primary, .composer-combined-picker-trigger-suffix, [data-composer-control="model"], [data-composer-control="provider"], [data-composer-control="workspace"], [data-composer-control="ensemble-mode"], .composer-ensemble-mode-button, .composer-image-picker-btn, .composer-thread-token-tally, .composer-telemetry-row) {
   color: rgba(18, 21, 27, 0.82) !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-ensemble-mode-button.is-active {
   color: rgba(18, 21, 27, 0.96) !important;
   background: rgba(18, 21, 27, 0.12) !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-above-bar-stack
   > .ensemble-roster-preset-picker.is-compact,
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   :is(.composer-above-bar, .ensemble-above-row, .queued-messages-above-row, .composer-create-pr-row) {
   background: linear-gradient(180deg, #ffffff 0%, #f4f3ef 100%) !important;
   border-color: rgba(18, 21, 27, 0.14) !important;
@@ -683,7 +683,7 @@
   color: rgba(18, 21, 27, 0.9) !important;
 }
 
-[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="claude"])
+[data-theme="obsidian"]:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="claude"])
   .composer-action-btn.run-btn:not(:disabled) {
   background: rgba(18, 21, 27, 0.12) !important;
   color: rgba(18, 21, 27, 0.92) !important;
@@ -805,7 +805,7 @@
 /* 1.0.6-EW77 — Final extreme-theme polish for provider shells.
  * Keep this after EW76: these are deliberately narrower overrides for
  * the last screenshots the maintainer flagged. */
-[data-theme="obsidian"][data-composer-style="codex"]
+[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: transparent !important;
   border-color: transparent !important;
@@ -820,12 +820,12 @@
   padding-bottom: 0;
 }
 
-[data-theme="obsidian"][data-composer-style="codex"]
+[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > * {
   margin-bottom: 0;
 }
 
-[data-theme="obsidian"][data-composer-style="codex"]
+[data-theme="obsidian"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
   border-top-color: rgba(18, 21, 27, 0.12) !important;
 }
@@ -943,7 +943,7 @@
 
 /* 1.0.6-EW78 — final Alabaster/Codex seam, summary-card contrast,
  * and Kimi solid-shell enforcement. */
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: linear-gradient(180deg, #1b1b20 0%, #151519 100%) !important;
   border-color: rgba(255, 255, 255, 0.12) !important;
@@ -954,7 +954,7 @@
   padding-bottom: 0;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > :is(
     .composer-above-bar,
@@ -970,13 +970,13 @@
   opacity: 1;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > * {
   margin-bottom: 0;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact))
   > *:not(:first-child) {
   border-top-color: rgba(255, 255, 255, 0.12) !important;
@@ -985,7 +985,7 @@
 /* Alabaster + Codex keeps the above rows dark, so undo the base
  * Alabaster light-theme text fixes that still target nested branch/file
  * elements directly. Keep the semantic git accents explicit below. */
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   :is(
     .composer-above-bar-branch,
@@ -996,110 +996,110 @@
   color: rgba(255, 255, 255, 0.84) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-files
   strong {
   color: rgba(255, 255, 255, 0.94) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-secondary-branch {
   color: rgba(255, 255, 255, 0.68) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-secondary-branch.git-tone-main {
   color: #4b84ff !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-secondary-branch.git-tone-feature {
   color: #a78bfa !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-secondary-branch.git-tone-fix {
   color: #f0c674 !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-push.git-status-unpublished,
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-ahead,
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-stale {
   color: #ffc248 !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-push.git-status-synced {
   color: var(--diff-stat-add-color, #2db777) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-ready,
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-merged {
   color: #6ddfa8 !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-blocked,
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-closed {
   color: #ff6b7a !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-pr.git-pr-open {
   color: #a78bfa !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-secondary-branch.git-tone-release {
   color: #6ddfa8 !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-diff-add {
   color: var(--diff-stat-add-color, #2db777) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-behind {
   color: #ffc248 !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .git-status-behind.git-status-diverged {
   color: #ff6b7a !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-diff-del {
   color: var(--diff-stat-del-color, #ec3d35) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action:not(.is-success):not(.is-error) {
   color: rgba(255, 255, 255, 0.86) !important;
@@ -1107,7 +1107,7 @@
   background: rgba(255, 255, 255, 0.06) !important;
 }
 
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action:hover:not(:disabled):not(.is-success):not(.is-error) {
   color: rgba(255, 255, 255, 0.96) !important;
@@ -1115,10 +1115,10 @@
   background: rgba(255, 255, 255, 0.1) !important;
 }
 
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action--git-commit-icon,
-[data-theme="alabaster"][data-composer-style="codex"]
+[data-theme="alabaster"]:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action--git-commit-icon:not(.is-success):not(.is-error) {
   border-color: transparent !important;
@@ -1126,10 +1126,10 @@
   box-shadow: none !important;
 }
 
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action--git-commit-icon:hover:not(:disabled),
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar
   .composer-above-bar-action--git-commit-icon:focus-visible:not(:disabled) {
   border-color: transparent !important;
@@ -1137,7 +1137,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1150,7 +1150,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1166,7 +1166,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1184,7 +1184,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1195,7 +1195,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1205,7 +1205,7 @@
 }
 
 [data-theme="alabaster"]:is(
-    [data-composer-style="codex"],
+    :is([data-composer-style="codex"], [data-composer-style="chatgpt"]),
     [data-composer-style="claude"],
     [data-composer-style="gemini"],
     [data-composer-style="kimi"]
@@ -1216,7 +1216,7 @@
   border-color: rgba(18, 21, 27, 0.12) !important;
 }
 
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -1238,7 +1238,7 @@
   background-image: none !important;
 }
 
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -1251,7 +1251,7 @@
   .composer-area.interface-codex
   > .composer-surface
   > .composer-inner-module,
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -1265,7 +1265,7 @@
   > .composer-primary-stack
   > .composer-surface
   > .composer-inner-module,
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -1287,7 +1287,7 @@
     inset 0 -1px 0 rgba(0, 0, 0, 0.28) !important;
 }
 
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -1304,7 +1304,7 @@
     .composer-create-pr-row,
     .ensemble-roster-preset-picker.is-compact
   )::before,
-[data-composer-style="codex"]:not(
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]):not(
     :is(
       [data-theme="light"],
       [data-theme="citrus"],
@@ -2197,7 +2197,7 @@
 [data-composer-style="default"] [data-composer-control="ensemble-mode"] .composer-picker-label,
 [data-composer-style="codex"] [data-composer-control="ensemble-mode"] .composer-picker-label,
 [data-composer-style="claude"] [data-composer-control="ensemble-mode"] .composer-picker-label,
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] .composer-picker-label,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] .composer-picker-label,
 [data-composer-style="grok"] [data-composer-control="ensemble-mode"] .composer-picker-label,
 [data-composer-style="satellite"] [data-composer-control="ensemble-mode"] .composer-picker-label,
 /* Fan-out toggle — Satellite only */
@@ -2211,8 +2211,8 @@
 /* Provider + Workspace — Claude / Cursor */
 [data-composer-style="claude"] :is([data-composer-control="provider"], [data-composer-control="workspace"]),
 [data-composer-style="claude"] :is([data-composer-control="provider"], [data-composer-control="workspace"]) :is(.composer-picker-label, .composer-combined-picker-trigger),
-[data-composer-style="cursor"] :is([data-composer-control="provider"], [data-composer-control="workspace"]),
-[data-composer-style="cursor"] :is([data-composer-control="provider"], [data-composer-control="workspace"]) :is(.composer-picker-label, .composer-combined-picker-trigger) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) :is([data-composer-control="provider"], [data-composer-control="workspace"]),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) :is([data-composer-control="provider"], [data-composer-control="workspace"]) :is(.composer-picker-label, .composer-combined-picker-trigger) {
   background: transparent !important;
   background-image: none !important;
   border-color: transparent !important;
@@ -2318,7 +2318,7 @@
  * overrides) — gray throughout, never black/white, never the
  * mustard `--provider-cursor-color` accent. All chrome pulls from
  * the `--cursor-shell-*` tokens (distinct from the provider's
- * `--provider-cursor-*`), declared on `[data-composer-style="cursor"]`
+ * `--provider-cursor-*`), declared on `:is([data-composer-style="cursor"], [data-composer-style="chatgpt"])`
  * (the <html> root) so they cascade to the composer, the app-wide
  * `[data-interface-style="cursor"]` chrome, AND the body-portaled
  * popovers alike.
@@ -2331,7 +2331,7 @@
  * ============================================================ */
 
 /* Neutral-gray token set — dark default (light-gray-on-dark-gray). */
-[data-composer-style="cursor"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) {
   --cursor-shell-bg: #1f1f1f;
   --cursor-shell-surface: #2a2a2a;
   --cursor-shell-fg: #d8d8d8;
@@ -2355,7 +2355,7 @@
   --cursor-shell-stack-header: #101010;
 }
 /* Light themes flip to dark-gray-on-light-gray (still gray, not white). */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="cursor"] {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]):is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) {
   --cursor-shell-bg: #ededed;
   --cursor-shell-surface: #f4f4f4;
   --cursor-shell-fg: #2e2e2e;
@@ -2372,7 +2372,7 @@
 }
 /* `system` theme follows the OS appearance. */
 @media (prefers-color-scheme: light) {
-  [data-theme="system"][data-composer-style="cursor"] {
+  [data-theme="system"]:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) {
     --cursor-shell-bg: #ededed;
     --cursor-shell-surface: #f4f4f4;
     --cursor-shell-fg: #2e2e2e;
@@ -2396,15 +2396,15 @@
  * `.composer-area` / `.composer-primary-stack` so the Settings preview and
  * every multiview pane pick it up. Light themes reset to the light surface
  * (higher specificity), so this is strictly a dark-mode change. */
-[data-composer-style="cursor"] :is(.composer-area, .composer-primary-stack) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) :is(.composer-area, .composer-primary-stack) {
   --cursor-shell-surface: #1e1e1e;
 }
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"])[data-composer-style="cursor"]
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"], [data-theme="alabaster"]):is([data-composer-style="cursor"], [data-composer-style="chatgpt"])
   :is(.composer-area, .composer-primary-stack) {
   --cursor-shell-surface: #f4f4f4;
 }
 @media (prefers-color-scheme: light) {
-  [data-theme="system"][data-composer-style="cursor"]
+  [data-theme="system"]:is([data-composer-style="cursor"], [data-composer-style="chatgpt"])
     :is(.composer-area, .composer-primary-stack) {
     --cursor-shell-surface: #f4f4f4;
   }
@@ -2424,9 +2424,9 @@
  * ============================================================ */
 
 /* Hide the same extra controls Gemini hides. */
-[data-composer-style="cursor"] .composer-top-toggles,
-[data-composer-style="cursor"] .composer-chips,
-[data-composer-style="cursor"] .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-top-toggles,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-chips,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left > *:not([data-composer-control="attach"]):not([data-composer-control="schedule"]):not([data-composer-control="ensemble-mode"]):not([data-composer-control="permission"]):not([data-composer-control="voice"]):not([data-composer-control="model"]):not([data-composer-control="provider"]):not([data-composer-control="workspace"]):not([data-composer-control="guest"]):not([data-composer-control="ollama-tier"]) {
   display: none !important;
 }
 
@@ -2567,8 +2567,8 @@
  * transparent. `position: relative` + `overflow: visible` so the
  * lifted +/model/send aren't clipped. `!important` mirrors Gemini's
  * (beats the native-glass `.composer-surface` fill). */
-[data-composer-style="cursor"] .composer-surface,
-[data-composer-style="cursor"] .composer-surface:focus-within {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-surface,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-surface:focus-within {
   background: transparent !important;
   border-color: transparent !important;
   box-shadow: none !important;
@@ -2590,14 +2590,14 @@
    * inherits down to the lifted controls for the lift below. */
   --composer-capsule-single-h: calc(1.55 * var(--font-size-md) + 30px);
 }
-[data-composer-style="cursor"] .composer-surface::before {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-surface::before {
   content: none !important;
 }
 
 /* THE CAPSULE — the single rounded pill; holds the textarea, with
  * +/model/send lifted into it (lift block below). Flat gray fill,
  * faint neutral rim, no gradient/glow. */
-[data-composer-style="cursor"] .composer-textarea-wrap {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-textarea-wrap {
   position: relative;
   z-index: 1;
   display: flex;
@@ -2632,21 +2632,21 @@
   font-size: var(--font-size-md);
   color: var(--cursor-shell-fg);
 }
-[data-composer-style="cursor"] .composer-textarea::placeholder {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-textarea::placeholder {
   color: var(--cursor-shell-faint);
 }
 
 /* SATELLITE row — permission / turn-mode / provider / workspace flow
  * here, transparent, below the capsule. */
-[data-composer-style="cursor"] .composer-control-footer {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-control-footer {
   display: contents;
 }
-[data-composer-style="cursor"] .composer-inline-pickers {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers {
   margin-top: 0;
   padding: 0 6px;
   overflow: visible;
 }
-[data-composer-style="cursor"] .composer-inline-pickers-left {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-inline-pickers-left {
   display: flex;
   align-items: center;
   gap: 6px;
@@ -2654,17 +2654,17 @@
   /* load-bearing: the lifted [+]/[model] extend ABOVE this row. */
   overflow: visible;
 }
-[data-composer-style="cursor"] [data-composer-control="schedule"] { order: 1; }
-[data-composer-style="cursor"] [data-composer-control="permission"] { order: 2; }
-[data-composer-style="cursor"] [data-composer-control="voice"] { order: 2; }
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] { order: 3; }
-[data-composer-style="cursor"] [data-composer-control="provider"] { order: 4; }
-[data-composer-style="cursor"] [data-composer-control="workspace"] { order: 5; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="schedule"] { order: 1; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="permission"] { order: 2; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="voice"] { order: 2; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] { order: 3; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="provider"] { order: 4; }
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="workspace"] { order: 5; }
 /* Ollama tier picker — Cursor styles triggers per-control-key (never the generic
  * `.composer-combined-picker-trigger` class), so style it explicitly with the
  * flat-gray `--cursor-shell-*` tokens (auto light/dark via the token flip).
  * order:1 ties permission; DOM source-order resolves it after. */
-[data-composer-style="cursor"] [data-composer-control="ollama-tier"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ollama-tier"] {
   order: 1;
   min-height: 28px;
   padding: 4px 10px;
@@ -2674,20 +2674,20 @@
   border: 1px solid var(--cursor-shell-border);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="cursor"] [data-composer-control="ollama-tier"]:hover:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ollama-tier"]:hover:not(:disabled) {
   background: var(--cursor-shell-hover);
   border-color: var(--cursor-shell-border-strong);
 }
-[data-composer-style="cursor"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-primary {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-primary {
   color: var(--cursor-shell-fg);
 }
-[data-composer-style="cursor"] [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ollama-tier"] .composer-combined-picker-trigger-suffix {
   color: var(--cursor-shell-muted);
 }
 /* Flat-gray shell: the Tier-4-ineffective ⚠ glyph is muted to grey. The picker
  * trigger is bare across all shells (glyph-only warning), honouring cursor's
  * flat-gray, chroma-free design. */
-[data-composer-style="cursor"] .composer-ollama-tier-warning {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-ollama-tier-warning {
   color: var(--cursor-shell-muted) !important;
 }
 
@@ -2699,7 +2699,7 @@
  * single-line collapses to the original 16/17/16 px insets exactly, and
  * multi-line tracks the capsule bottom. The textarea's 46px / 224px
  * gutters reserve the horizontal space. */
-[data-composer-style="cursor"] [data-composer-control="attach"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="attach"] {
   position: absolute;
   position-anchor: --composer-capsule;
   /* 1.0.6 — the trailing `+ Npx` on each of these three `top:` calcs is the
@@ -2712,7 +2712,7 @@
   margin: 0;
   z-index: 3;
 }
-[data-composer-style="cursor"] [data-composer-control="model"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] {
   position: absolute;
   position-anchor: --composer-capsule;
   top: calc(anchor(--composer-capsule bottom) - var(--composer-capsule-single-h) + 15px);
@@ -2721,7 +2721,7 @@
   margin: 0;
   z-index: 3;
 }
-[data-composer-style="cursor"] .composer-send-cluster {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-send-cluster {
   display: inline-flex;
   align-items: center;
   position: absolute;
@@ -2732,7 +2732,7 @@
 }
 
 /* Workspace chip (satellite) — flat gray outline pill. */
-[data-composer-style="cursor"] [data-composer-control="workspace"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="workspace"] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2741,11 +2741,11 @@
   border: 1px solid var(--cursor-shell-border);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="cursor"] [data-composer-control="workspace"]:hover:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="workspace"]:hover:not(:disabled) {
   background: var(--cursor-shell-hover);
   border-color: var(--cursor-shell-border-strong);
 }
-[data-composer-style="cursor"] [data-composer-control="workspace"] .composer-control-icon {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="workspace"] .composer-control-icon {
   width: 12px;
   height: 12px;
   flex: 0 0 12px;
@@ -2755,7 +2755,7 @@
 /* + button — clean circular icon button. Improved layout: a 30px
  * circle with a subtle persistent surface so it reads as a button
  * (like the official Cursor composer), not a bare glyph. */
-[data-composer-style="cursor"] .composer-image-picker-btn {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-image-picker-btn {
   width: 30px;
   height: 30px;
   background: var(--cursor-shell-fill);
@@ -2764,8 +2764,8 @@
   border-radius: 999px;
   transform: none;
 }
-[data-composer-style="cursor"] .composer-image-picker-btn:hover:not(:disabled),
-[data-composer-style="cursor"] .composer-image-picker-btn:focus-visible {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-image-picker-btn:hover:not(:disabled),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-image-picker-btn:focus-visible {
   background: var(--cursor-shell-hover);
   border-color: var(--cursor-shell-border-strong);
   color: var(--cursor-shell-fg);
@@ -2773,7 +2773,7 @@
 }
 
 /* Permission picker (Plan / Default approval) — plain text. */
-[data-composer-style="cursor"] [data-composer-control="permission"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="permission"] {
   background: transparent;
   border: 0;
   padding: 0 6px;
@@ -2781,11 +2781,11 @@
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
 }
-[data-composer-style="cursor"] [data-composer-control="permission"] svg {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="permission"] svg {
   display: none;
 }
 
-[data-composer-style="cursor"] .composer-action-btn.voice-btn {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn {
   width: 28px;
   height: 28px;
   min-width: 28px;
@@ -2797,31 +2797,31 @@
   transform: none;
 }
 
-[data-composer-style="cursor"] .composer-action-btn.voice-btn:hover:not(:disabled),
-[data-composer-style="cursor"] .composer-action-btn.voice-btn.is-recording {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn:hover:not(:disabled),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn.is-recording {
   background: var(--cursor-shell-hover);
   color: var(--cursor-shell-fg);
   transform: none;
 }
 
-[data-composer-style="cursor"] .composer-action-btn.voice-btn .sf-symbol-icon,
-[data-composer-style="cursor"] .composer-action-btn.voice-btn .sf-symbol-icon svg {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn .sf-symbol-icon,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn .sf-symbol-icon svg {
   width: 16px;
   height: 16px;
 }
 
-[data-composer-style="cursor"] .composer-action-btn.voice-btn:disabled,
-[data-composer-style="cursor"] .composer-voice-chevron:disabled {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.voice-btn:disabled,
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-voice-chevron:disabled {
   color: var(--cursor-shell-faint);
 }
 
-[data-composer-style="cursor"] .composer-voice-chevron {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-voice-chevron {
   width: 14px;
   color: var(--cursor-shell-muted);
 }
 
-[data-composer-style="cursor"] .composer-voice-chevron:hover:not(:disabled),
-[data-composer-style="cursor"] .composer-voice-control.is-menu-open .composer-voice-chevron {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-voice-chevron:hover:not(:disabled),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-voice-control.is-menu-open .composer-voice-chevron {
   background: var(--cursor-shell-hover);
   color: var(--cursor-shell-fg);
 }
@@ -2832,7 +2832,7 @@
  * matching the official Cursor composer: bare model label + ⌄ riding the
  * capsule's right edge (satellite), not a filled pill. Hover = transient
  * highlight only. */
-[data-composer-style="cursor"] [data-composer-control="model"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] {
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -2846,25 +2846,25 @@
   border: 0;
   overflow: visible;
 }
-[data-composer-style="cursor"] [data-composer-control="model"] .composer-combined-picker-trigger-primary {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] .composer-combined-picker-trigger-primary {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
   min-width: 0;
 }
-[data-composer-style="cursor"] [data-composer-control="model"] .composer-combined-picker-trigger-suffix {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] .composer-combined-picker-trigger-suffix {
   flex: 0 0 auto;
   color: var(--cursor-shell-muted);
 }
-[data-composer-style="cursor"] [data-composer-control="model"]:hover {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"]:hover {
   background: var(--cursor-shell-hover);
 }
-[data-composer-style="cursor"] [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"] svg:not(.composer-combined-picker-trigger-fast-bolt) {
   display: none;
 }
 /* Dropdown chevron — drawn with borders (no extra DOM), neutral gray; sits
  * just past the model/reasoning label like the reference. */
-[data-composer-style="cursor"] [data-composer-control="model"]::after {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"]::after {
   content: '';
   width: 6px;
   height: 6px;
@@ -2873,12 +2873,12 @@
   border-bottom: 1.5px solid var(--cursor-shell-muted);
   transform: translateY(-2px) rotate(45deg);
 }
-[data-composer-style="cursor"] [data-composer-control="model"]:hover::after {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="model"]:hover::after {
   border-color: var(--cursor-shell-fg);
 }
 
 /* Provider picker — gray outline pill. */
-[data-composer-style="cursor"] [data-composer-control="provider"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="provider"] {
   min-height: 28px;
   padding: 4px 10px;
   border-radius: 999px;
@@ -2887,12 +2887,12 @@
   border: 1px solid var(--cursor-shell-border);
   font-size: var(--font-size-xs);
 }
-[data-composer-style="cursor"] [data-composer-control="provider"]:hover {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="provider"]:hover {
   background: var(--cursor-shell-hover);
 }
 
 /* Turn / Continuous toggle — gray outline; inverse-fill on active. */
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] {
   min-height: 28px;
   padding: 1px;
   border-radius: 999px;
@@ -2902,24 +2902,24 @@
   font-size: var(--font-size-xs);
   font-weight: 500;
 }
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button {
   color: var(--cursor-shell-muted);
   font-size: var(--font-size-xs);
   font-weight: 500;
   padding: 3px 10px;
 }
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button:hover {
   color: var(--cursor-shell-fg);
   background: var(--cursor-shell-hover);
 }
-[data-composer-style="cursor"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {
   color: var(--cursor-shell-bg);
   background: var(--cursor-shell-fg);
   font-weight: 600;
 }
 
 /* Send button — gray filled circle (inverse-of-surface), dark arrow. */
-[data-composer-style="cursor"] .composer-action-btn.run-btn:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.run-btn:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -2928,12 +2928,12 @@
   border: 0;
   box-shadow: none;
 }
-[data-composer-style="cursor"] .composer-action-btn.run-btn:hover:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.run-btn:hover:not(:disabled) {
   background: var(--cursor-shell-fg);
   opacity: 0.85;
 }
-[data-composer-style="cursor"] .composer-action-btn.stop-btn:not(:disabled),
-[data-composer-style="cursor"] .composer-action-btn.steer-btn:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.stop-btn:not(:disabled),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn.steer-btn:not(:disabled) {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -2942,7 +2942,7 @@
   border: 1px solid var(--cursor-shell-border);
   box-shadow: none;
 }
-[data-composer-style="cursor"] .composer-action-btn:disabled {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-action-btn:disabled {
   width: 32px;
   height: 32px;
   border-radius: 999px;
@@ -2953,14 +2953,14 @@
 }
 
 /* Context donut + inline percent (real Cursor composer parity). */
-[data-composer-style="cursor"] .composer-context-trigger--cursor {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-context-trigger--cursor {
   display: inline-flex;
   align-items: center;
   gap: 5px;
   border-radius: 6px;
   padding: 0 2px;
 }
-[data-composer-style="cursor"] .composer-context-trigger-pct {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-context-trigger-pct {
   font-size: calc(var(--font-size-xs) + 1px);
   font-weight: 500;
   line-height: 1;
@@ -2969,11 +2969,11 @@
 }
 
 /* Diff signal — canonical +N/−N hues (kept coloured across all shells). */
-[data-composer-style="cursor"] .composer-diff-add {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-add {
   color: var(--diff-stat-add-color, #2db777) !important;
   font-weight: 600;
 }
-[data-composer-style="cursor"] .composer-diff-del {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-del {
   color: var(--diff-stat-del-color, #ec3d35) !important;
   font-weight: 600;
 }
@@ -3141,7 +3141,7 @@
 }
 
 /* Inline Review-changes / Create-PR menu (not portaled). */
-[data-composer-style="cursor"] .composer-diff-action-menu {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-action-menu {
   background: var(--tw-popover-glass-bg) !important;
   background-image: none !important;
   border: 1px solid color-mix(in srgb, var(--panel-border) 90%, transparent) !important;
@@ -3152,8 +3152,8 @@
   backdrop-filter: blur(18px) saturate(150%) !important;
   -webkit-backdrop-filter: blur(18px) saturate(150%) !important;
 }
-[data-composer-style="cursor"] .composer-diff-action-menu button:hover:not(:disabled),
-[data-composer-style="cursor"] .composer-diff-action-menu button:focus-visible:not(:disabled) {
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-action-menu button:hover:not(:disabled),
+:is([data-composer-style="cursor"], [data-composer-style="chatgpt"]) .composer-diff-action-menu button:focus-visible:not(:disabled) {
   background: var(--cursor-shell-hover) !important;
 }
 
@@ -3896,7 +3896,7 @@
 /* Codex/Grok workspace rows — use the same three-zone alignment for
  * primary and secondary workspace metadata. The center zone is only the
  * files-changed + diff group; left/right zones absorb the spacer. */
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified {
   display: grid !important;
   grid-template-columns: minmax(0, 1fr) max-content minmax(0, 1fr);
@@ -3904,7 +3904,7 @@
   column-gap: 8px;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill {
   display: flex;
@@ -3914,7 +3914,7 @@
   margin-inline: 0 !important;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git {
   grid-column: 1;
@@ -3924,7 +3924,7 @@
   order: 0 !important;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .composer-above-bar-branch {
@@ -3932,7 +3932,7 @@
   overflow: hidden;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--git
   .composer-above-bar-branch
@@ -3943,7 +3943,7 @@
   white-space: nowrap;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--changes {
   grid-column: 2;
@@ -3957,7 +3957,7 @@
   white-space: nowrap;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   > .composer-above-bar-pill--action {
   grid-column: 3;
@@ -3967,7 +3967,7 @@
   order: 0 !important;
 }
 
-:is([data-composer-style="codex"], [data-composer-style="grok"])
+:is(:is([data-composer-style="codex"], [data-composer-style="chatgpt"]), [data-composer-style="grok"])
   .composer-workspace-above-row.style-unified
   .composer-diff-action-menu-wrap {
   margin-left: 0 !important;
@@ -3977,13 +3977,13 @@
 /* Codex detached rows are shrink-wrapped. When there is no changes pill,
  * collapse the otherwise-empty centre track so workspace + action sit together
  * instead of reserving space for data that is not present. */
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-workspace-above-row.style-unified:not(
     :has(> .composer-above-bar-pill--changes)
   ) {
   grid-template-columns: minmax(0, max-content) max-content;
 }
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-workspace-above-row.style-unified:not(
     :has(> .composer-above-bar-pill--changes)
   )
@@ -3995,7 +3995,7 @@
  * pills. Keep those rows out of the shared Codex/Grok three-zone grid: its
  * flexible side tracks create a large empty spacer before the action. The
  * detached pill chrome and centered fit-content width remain owned by shard 07. */
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   :is(.composer-area, .composer-primary-stack)
   > .composer-workspace-above-row.style-unified.composer-above-bar--cursor-lead {
   display: flex !important;
@@ -4266,4 +4266,21 @@
 }
 oser-orchestration-cell-label {
   color: var(--text-secondary);
+}
+
+/* ============================================================
+ * ChatGPT shell — final overrides.
+ *
+ * The ChatGPT shell is a Codex × Cursor cross, assembled above by widening
+ * the source shells' selectors to also match [data-composer-style="chatgpt"]:
+ * it wears Cursor's capsule body + satellite bottom rows (model / context
+ * donut / workspace) and Codex's tucked-tab above-row (git-commit icon,
+ * float-above-stack). One deliberate departure from Cursor: the official
+ * ChatGPT composer body is FLAT, so drop Cursor's inset top-lip "rim" on the
+ * input capsule. The Codex above-row tabs keep their own rim/border, which is
+ * exactly the requested split ("no rim on the body, yes on the above-row").
+ * ============================================================ */
+[data-composer-style="chatgpt"] .composer-textarea-wrap,
+[data-composer-style="chatgpt"] .composer-textarea-wrap:focus-within {
+  box-shadow: none;
 }

@@ -295,7 +295,7 @@
 :root .composer-ensemble-orchestration-row .composer-ensemble-hop-meter.is-success {
   color: color-mix(in srgb, var(--status-success, #46a758) 88%, var(--text-primary) 12%) !important;
 }
-[data-composer-style="codex"]
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"])
   .composer-above-bar-stack:not(:has(.ensemble-above-row))
   > .composer-above-bar:not(:first-child) {
   border-top-left-radius: 14px;
@@ -1171,19 +1171,19 @@
  * flex:1 chip strip reclaims that slack and its centred chips re-balance. No
  * overall width change. Sibling-guarded so it only kicks in when BOTH buttons
  * are present (e.g. not at the cap, where the + is hidden). */
-[data-composer-style="codex"] .ensemble-above-row {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row {
   gap: 6px;
 }
-[data-composer-style="codex"] .ensemble-above-row-controls,
-[data-composer-style="codex"] .ensemble-above-row-roster-actions {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-controls,
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions {
   gap: 6px;
 }
-[data-composer-style="codex"] .ensemble-above-row-roster-actions
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant:has(+ .ensemble-above-remove-participant) {
   border-top-right-radius: 0;
   border-bottom-right-radius: 0;
 }
-[data-composer-style="codex"] .ensemble-above-row-roster-actions
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .ensemble-above-row-roster-actions
   > .ensemble-above-add-participant
   + .ensemble-above-remove-participant {
   margin-left: -6px;
@@ -2348,7 +2348,7 @@
  * the same white pill family as its sibling chrome above, not a
  * darker contrasting surface). The purple accent moves to the
  * border only, kept subtle so it doesn't fight the bright base. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) {
   background: #e3e3e9;
   border-color: color-mix(in srgb, #000000 12%, transparent);
   box-shadow: 0 4px 18px rgba(0, 0, 0, 0.08);
@@ -2408,7 +2408,7 @@
 }
 
 /* Codex unified-container light-mode strip-children rule. The
- * existing `:is([data-theme="light"])[data-composer-style="codex"]
+ * existing `:is([data-theme="light"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"])
  * .composer-above-bar` rule at line 22509 uses `!important` on
  * background + border-color, which beats the dark-mode unified-
  * container "child stays transparent" rule even though that rule
@@ -2416,10 +2416,10 @@
  * win the cascade, mirroring the same pattern. The chip-strip
  * also gets the same strip so the unified container is the only
  * visible chrome (matches the dark-mode unified treatment). */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .composer-above-bar,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .queued-messages-above-row,
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-roster-preset-picker.is-compact {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .composer-above-bar,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .queued-messages-above-row,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-roster-preset-picker.is-compact {
   border: 0 !important;
   border-radius: 0 !important;
   background: transparent !important;
@@ -2441,7 +2441,7 @@
  * white surface-2 base + a faint mixed `surface-border` hairline
  * was barely visible. A darker rgba reads as a crisp black hairline
  * against white. */
-:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"]):is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > *:not(:first-child) {
   border-top: 1px solid rgba(18, 21, 27, 0.22) !important;
 }
 
@@ -3172,7 +3172,7 @@
   display: none;
 }
 
-[data-composer-style="codex"] .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row::before {
+:is([data-composer-style="codex"], [data-composer-style="chatgpt"]) .composer-above-bar-stack:has(:is(.ensemble-above-row, .queued-messages-above-row, .ensemble-roster-preset-picker.is-compact)) > .ensemble-above-row::before {
   display: none;
 }
 
