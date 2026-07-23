@@ -44,12 +44,12 @@ describe('AntigravityOptInCard', () => {
     expect(html).not.toContain('Accept risk and enable')
   })
 
-  it('keeps Gemini API disclosure separate and explicit inside the buried card', () => {
+  it('keeps Gemini API disclosure separate and explicit inside the card', () => {
     const html = renderToStaticMarkup(
       <AntigravityOptInCard enabled={false} acceptedAt={null} onChange={() => {}} />
     )
 
-    expect(html).toContain('Gemini API (separate billing)')
+    expect(html).toContain('Gemini API (BYO key; separate billing)')
     expect(html).toContain('Gemini-only')
     expect(html).toContain('separately metered and billed')
     expect(html).toContain('tier and rate limits')
@@ -59,5 +59,22 @@ describe('AntigravityOptInCard', () => {
     expect(html).toContain('Paid Services content is not used to improve Google products')
     expect(html).toContain('type="password"')
     expect(html).not.toContain('apiKey')
+  })
+
+  it('presents the API-key lane as normal BYO-key setup without AGY risk framing', () => {
+    const html = renderToStaticMarkup(
+      <AntigravityOptInCard enabled={false} acceptedAt={null} onChange={() => {}} />
+    )
+    const apiSection = html.match(
+      /<section class="settings-antigravity-gemini-api-section"[\s\S]*?<\/section>/
+    )?.[0]
+
+    expect(apiSection).toBeDefined()
+    expect(apiSection).toContain('BYO key; separate billing')
+    expect(apiSection).toContain('Saving a valid key is sufficient')
+    expect(apiSection).not.toContain('Accept risk and enable')
+    expect(apiSection).not.toContain('ban-safe')
+    expect(apiSection).not.toContain('suspend or terminate')
+    expect(apiSection).toContain('I understand the separate Gemini API billing')
   })
 })

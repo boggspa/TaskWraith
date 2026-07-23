@@ -96,9 +96,11 @@ class TestElement extends TestNode {
   readonly dataset: Record<string, string> = {}
 
   get textContent(): string {
-    return this.childNodes.map((child) =>
-      child instanceof TestText ? child.nodeValue : (child as TestElement).textContent
-    ).join('')
+    return this.childNodes
+      .map((child) =>
+        child instanceof TestText ? child.nodeValue : (child as TestElement).textContent
+      )
+      .join('')
   }
 
   set textContent(value: string) {
@@ -164,7 +166,14 @@ function installDom(): { document: TestDocument; container: TestElement } {
   windowTarget.setTimeout = globalThis.setTimeout
   windowTarget.clearTimeout = globalThis.clearTimeout
   document.defaultView = windowTarget
-  for (const name of ['window', 'document', 'Node', 'Element', 'HTMLElement', 'IS_REACT_ACT_ENVIRONMENT']) {
+  for (const name of [
+    'window',
+    'document',
+    'Node',
+    'Element',
+    'HTMLElement',
+    'IS_REACT_ACT_ENVIRONMENT'
+  ]) {
     originalDescriptors[name] = Object.getOwnPropertyDescriptor(globalThis, name)
   }
   Object.defineProperties(globalThis, {
@@ -196,7 +205,10 @@ describe('AntigravityOptInCard successful mutation integration', () => {
     const pendingReloads: Array<(value: unknown) => void> = []
     let renderedSnapshot: ConfiguredProviderSnapshot = { ready: false, providerIds: [] }
     const api = {
-      getAntigravityGeminiApiSecretStatus: async () => ({ configured: false, encryptionAvailable: true }),
+      getAntigravityGeminiApiSecretStatus: async () => ({
+        configured: false,
+        encryptionAvailable: true
+      }),
       setAntigravityGeminiApiSecret: vi.fn(async () => ({
         ok: true as const,
         status: { configured: true, encryptionAvailable: true }
@@ -217,17 +229,16 @@ describe('AntigravityOptInCard successful mutation integration', () => {
       }
     }
     Object.assign(window, { api })
-    window.addEventListener(
-      'taskwraith-antigravity-gemini-api-secret-mutated',
-      (event) => mutationEvents.push(event)
+    window.addEventListener('taskwraith-antigravity-gemini-api-secret-mutated', (event) =>
+      mutationEvents.push(event)
     )
 
     function Harness(): ReactNode {
       const identity = useAntigravityGeminiApiSecretRefreshIdentity()
       renderedSnapshot = useConfiguredProviderSnapshot(identity)
       return createElement(AntigravityOptInCard, {
-        enabled: true,
-        acceptedAt: 1,
+        enabled: false,
+        acceptedAt: null,
         geminiApiDisclosureAcceptedAt: 2,
         onChange: () => undefined
       })
@@ -285,5 +296,81 @@ describe('AntigravityOptInCard successful mutation integration', () => {
       })
     })
     expect(renderedSnapshot.providerIds).toEqual(['antigravity'])
+  })
+})
+
+describe('AntigravityOptInCard header/status lane awareness', () => {
+  it('reflects a configured Gemini API key neutrally, with no AGY risk framing, even without AGY consent', async () => {
+    const { document, container } = installDom()
+    document.body.appendChild(container)
+    const api = {
+      getAntigravityGeminiApiSecretStatus: async () => ({
+        configured: true,
+        encryptionAvailable: true
+      }),
+      setAntigravityGeminiApiSecret: vi.fn(),
+      clearAntigravityGeminiApiSecret: vi.fn(),
+      getConfiguredProviderSnapshot: () =>
+        Promise.resolve({ ready: true, providerIds: ['antigravity'], modelsByProvider: {} })
+    }
+    Object.assign(window, { api })
+
+    await act(async () => {
+      mountedRoot = createRoot(container as unknown as Element)
+      mountedRoot.render(
+        createElement(AntigravityOptInCard, {
+          enabled: false,
+          acceptedAt: null,
+          onChange: () => undefined
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const badge = container.querySelector('[data-testid="antigravity-card-badge"]')
+    const status = container.querySelector('[data-testid="antigravity-card-status"]')
+    expect(badge?.textContent).toBe('BYO key')
+    expect(status?.textContent).toBe('Gemini API key configured')
+
+    const text = container.textContent
+    // The AGY/CLI ban-risk consent lane itself remains fully intact and explicitly scoped,
+    // even though the card-level header/status no longer describe it as disabled/experimental.
+    expect(text).toContain('Official')
+    expect(text).toContain('ban-risk; requires explicit consent')
+    expect(text).toContain('Accept risk and enable')
+    expect(text).toContain('ban-safe')
+  })
+
+  it('keeps the AGY-only default state exactly as before when no Gemini API key is configured', async () => {
+    const { document, container } = installDom()
+    document.body.appendChild(container)
+    const api = {
+      getAntigravityGeminiApiSecretStatus: async () => ({
+        configured: false,
+        encryptionAvailable: true
+      }),
+      setAntigravityGeminiApiSecret: vi.fn(),
+      clearAntigravityGeminiApiSecret: vi.fn(),
+      getConfiguredProviderSnapshot: () =>
+        Promise.resolve({ ready: false, providerIds: [], modelsByProvider: {} })
+    }
+    Object.assign(window, { api })
+
+    await act(async () => {
+      mountedRoot = createRoot(container as unknown as Element)
+      mountedRoot.render(
+        createElement(AntigravityOptInCard, {
+          enabled: false,
+          acceptedAt: null,
+          onChange: () => undefined
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+
+    const badge = container.querySelector('[data-testid="antigravity-card-badge"]')
+    const status = container.querySelector('[data-testid="antigravity-card-status"]')
+    expect(badge?.textContent).toBe('Experimental')
+    expect(status?.textContent).toBe('Disabled — explicit consent required')
   })
 })

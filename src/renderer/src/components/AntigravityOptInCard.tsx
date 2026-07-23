@@ -44,9 +44,13 @@ function safeMutationMessage(result: AntigravityGeminiApiSecretMutationResult): 
 }
 
 /**
- * Deliberately buried, explicitly risky setup for the distinct AntiGravity
- * provider. It stays outside generic provider ordering and picker surfaces,
- * records an informed choice, and opens only the user's official `agy` CLI.
+ * Deliberately buried setup card for the distinct AntiGravity provider, with
+ * two independent admission lanes. The official `agy` CLI lane stays
+ * explicitly risky: it requires an informed ban-risk consent before it opens
+ * anything. The Gemini API (BYO key) lane is a normal auth card: saving a
+ * valid key is sufficient to enable it, with no ban-risk framing, only the
+ * separate (non-ban-risk) Gemini data-use/billing disclosure. The card
+ * header/status reflect whichever lane is actually admitted.
  */
 export function AntigravityOptInCard({
   enabled,
@@ -66,6 +70,10 @@ export function AntigravityOptInCard({
   const [geminiApiBusy, setGeminiApiBusy] = useState(false)
   const [geminiApiMessage, setGeminiApiMessage] = useState<string | null>(null)
   const consentRecorded = enabled && typeof acceptedAt === 'number' && acceptedAt > 0
+  // A configured Gemini API key is an independent, first-class admission lane
+  // (A1). The card header/status must reflect that lane neutrally instead of
+  // always describing the separate agy/CLI ban-risk consent state.
+  const geminiApiConfigured = Boolean(geminiApiStatus?.configured)
 
   useEffect(() => {
     let active = true
@@ -144,20 +152,29 @@ export function AntigravityOptInCard({
       <div className="settings-provider-auth-card-header">
         <ProviderLogoTile provider="antigravity" />
         <strong>AntiGravity</strong>
-        <span className="settings-provider-auth-optional">Experimental</span>
+        <span className="settings-provider-auth-optional" data-testid="antigravity-card-badge">
+          {geminiApiConfigured ? 'BYO key' : 'Experimental'}
+        </span>
       </div>
       <div className="settings-provider-auth-status">
         <span
           className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${
-            consentRecorded ? 'partial' : 'not-available'
+            geminiApiConfigured ? 'connected' : consentRecorded ? 'partial' : 'not-available'
           }`}
           aria-hidden
         />
-        <span>
-          {consentRecorded ? 'Risk acceptance recorded' : 'Disabled — explicit consent required'}
+        <span data-testid="antigravity-card-status">
+          {geminiApiConfigured
+            ? 'Gemini API key configured'
+            : consentRecorded
+              ? 'Risk acceptance recorded'
+              : 'Disabled — explicit consent required'}
         </span>
       </div>
 
+      <h4 className="settings-antigravity-agy-heading">
+        Official <code>agy</code> CLI (ban-risk; requires explicit consent)
+      </h4>
       <p>
         Google&apos;s Antigravity Additional Terms state: “Using third party software, tools, or
         services to access the Service (e.g. using OpenClaw with Antigravity OAuth) is a breach of
@@ -232,7 +249,12 @@ export function AntigravityOptInCard({
         className="settings-antigravity-gemini-api-section"
         aria-labelledby="antigravity-gemini-api-heading"
       >
-        <h4 id="antigravity-gemini-api-heading">Gemini API (separate billing)</h4>
+        <h4 id="antigravity-gemini-api-heading">Gemini API (BYO key; separate billing)</h4>
+        <p className="settings-provider-auth-hint">
+          Use your own Google project API key to enable Gemini API models. Saving a valid key is
+          sufficient for this Gemini-only mode; it does not enable the separate official{' '}
+          <code>agy</code> CLI lane above.
+        </p>
         <p className="settings-provider-auth-hint">
           Gemini-only. This mode uses a Google project API key that you supply for a later official
           Google API/SDK connection. It is separately metered and billed under that project and is
@@ -244,7 +266,7 @@ export function AntigravityOptInCard({
           is not used to improve Google products. TaskWraith cannot determine your tier; verify it
           in AI Studio.
         </p>
-        <label className="settings-antigravity-risk-acknowledgement">
+        <label className="settings-antigravity-gemini-api-disclosure">
           <input
             type="checkbox"
             checked={geminiApiAcknowledged}
