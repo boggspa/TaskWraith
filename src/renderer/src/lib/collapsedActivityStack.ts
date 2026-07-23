@@ -52,7 +52,7 @@ function pluralize(count: number, singular: string, plural = `${singular}s`): st
 }
 
 function thinkingDurationLabel(totalMs: number): string {
-  if (totalMs < 1000) return 'Thought'
+  if (totalMs < 1000) return 'Thought for <1s'
   const seconds = Math.round(totalMs / 1000)
   if (seconds < 60) return `Thought for ${seconds}s`
   const minutes = Math.floor(seconds / 60)

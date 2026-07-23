@@ -63,6 +63,19 @@ describe('summarizeCollapsedActivityStack', () => {
     ).toBe('Thought for 1m 35s')
     expect(summarizeCollapsedActivityStack([]).label).toBe('Activity')
   })
+
+  it('always includes a duration for sub-second and untimed thoughts', () => {
+    expect(
+      summarizeCollapsedActivityStack([
+        activity({ toolName: 'thinking', displayName: 'Thinking', durationMs: 450 })
+      ]).label
+    ).toBe('Thought for <1s')
+    expect(
+      summarizeCollapsedActivityStack([
+        activity({ toolName: 'reasoning', displayName: 'Reasoning' })
+      ]).label
+    ).toBe('Thought for <1s')
+  })
 })
 
 describe('collapsedSystemNoticeLabel', () => {
