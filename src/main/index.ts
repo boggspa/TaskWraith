@@ -43820,16 +43820,29 @@ if (isGeminiMcpBridgeProcess) {
   })
 
   app.on('window-all-closed', () => {
-    // Headless bridge (BD1): when the iOS remote bridge is enabled, closing
-    // the window must NOT tear down provider sessions or the MCP broker —
-    // phone dispatches keep running against them. Full teardown still
-    // happens in will-quit.
+    // Headless continuity: closing the last window must NOT tear down live
+    // provider sessions or the TaskWraith MCP broker while work is still
+    // running (or while the iOS remote bridge keeps the process as a daemon).
+    //
+    // History: only the iOS-remote path preserved sessions (BD1). Ordinary
+    // desktop closes killed Codex/Gemini processes and closed the shared MCP
+    // broker — so tool-capable seats (including Cursor with TaskWraith MCP
+    // bridge active) stalled mid-tool even though RunManager still owned the
+    // child process. Full process teardown remains on will-quit / app.quit.
     const keepBridgeAlive = resolveDaemonShouldRun(
       AppStore.getSettings().iosRemoteEnabled === true,
       process.env.IOS_REMOTE_TRUE
     ).shouldRun
-    if (keepBridgeAlive) {
-      console.log('[remote-bridge] window closed — bridge stays up (headless mode)')
+    const keepActiveRunsAlive =
+      getActiveTaskWraithThreadCount() > 0 || hasActiveStreamingTaskWraithRun()
+    if (keepBridgeAlive || keepActiveRunsAlive) {
+      console.log(
+        keepBridgeAlive
+          ? '[remote-bridge] window closed — bridge stays up (headless mode)'
+          : '[runs] window closed — active provider sessions kept alive (headless continuity)'
+      )
+      // UI-only: shell stats need a renderer; leave provider/MCP alone.
+      appShellStatsService.stop()
       return
     }
     appShellStatsService.stop()
