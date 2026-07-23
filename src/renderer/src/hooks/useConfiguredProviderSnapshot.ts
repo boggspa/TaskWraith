@@ -16,6 +16,53 @@ export interface ConfiguredProviderSnapshot {
   modelsByProvider?: Partial<Record<ProviderId, ConfiguredProviderModel[]>>
 }
 
+export const ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT =
+  'taskwraith-antigravity-gemini-api-secret-mutated'
+
+export function notifyAntigravityGeminiApiSecretMutation(): void {
+  window.dispatchEvent(new Event(ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT))
+}
+
+export function antigravityGeminiApiSecretRefreshIdentity(value: unknown): string {
+  const status = value && typeof value === 'object' ? (value as Record<string, unknown>) : null
+  const configured = status?.configured === true ? 'configured' : 'unconfigured'
+  const updatedAt = typeof status?.updatedAt === 'string' ? status.updatedAt : ''
+  return `${configured}:${updatedAt}`
+}
+
+export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
+  const [identity, setIdentity] = useState('')
+  const [mutationGeneration, setMutationGeneration] = useState(0)
+
+  useEffect(() => {
+    const handleMutation = (): void => setMutationGeneration((generation) => generation + 1)
+    window.addEventListener(ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT, handleMutation)
+    return () =>
+      window.removeEventListener(ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT, handleMutation)
+  }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    let timer: number | null = null
+    const poll = async (): Promise<void> => {
+      try {
+        const status = await window.api.getAntigravityGeminiApiSecretStatus()
+        if (!cancelled) setIdentity(antigravityGeminiApiSecretRefreshIdentity(status))
+      } catch {
+        if (!cancelled) setIdentity('unavailable')
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 500)
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
+    }
+  }, [])
+
+  return `${identity}:mutation-${mutationGeneration}`
+}
+
 export function sanitizeConfiguredProviderSnapshot(value: unknown): ConfiguredProviderSnapshot {
   const snapshot = value && typeof value === 'object' ? value as Record<string, unknown> : null
   const rawModels =

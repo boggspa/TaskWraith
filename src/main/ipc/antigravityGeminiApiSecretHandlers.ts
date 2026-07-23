@@ -13,6 +13,7 @@ export const ANTIGRAVITY_GEMINI_API_SECRET_CLEAR_CHANNEL = 'antigravity-gemini-a
 export interface AntigravityGeminiApiSecretHandlerDeps {
   secretStore: Pick<AntigravityGeminiApiSecretStore, 'getStatus' | 'setApiKey' | 'clear'>
   isMainRendererSender: (event: IpcMainInvokeEvent) => boolean
+  onSecretMutationSuccess?: () => void
 }
 
 const RECOGNIZED_MUTATION_ERRORS = new Set([
@@ -89,7 +90,9 @@ export function registerAntigravityGeminiApiSecretHandlers(
     ANTIGRAVITY_GEMINI_API_SECRET_SET_CHANNEL,
     (event, apiKey: string): AntigravityGeminiApiSecretMutationResult => {
       assertMainRenderer(deps, event)
-      return projectMutation(deps.secretStore.setApiKey(apiKey))
+      const result = projectMutation(deps.secretStore.setApiKey(apiKey))
+      if (result.ok) deps.onSecretMutationSuccess?.()
+      return result
     }
   )
 
@@ -97,7 +100,9 @@ export function registerAntigravityGeminiApiSecretHandlers(
     ANTIGRAVITY_GEMINI_API_SECRET_CLEAR_CHANNEL,
     (event): AntigravityGeminiApiSecretMutationResult => {
       assertMainRenderer(deps, event)
-      return projectMutation(deps.secretStore.clear())
+      const result = projectMutation(deps.secretStore.clear())
+      if (result.ok) deps.onSecretMutationSuccess?.()
+      return result
     }
   )
 }

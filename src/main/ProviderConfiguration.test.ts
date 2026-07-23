@@ -340,4 +340,44 @@ describe('configured AntiGravity discovery', () => {
       vi.useRealTimers()
     }
   })
+
+  it('invalidates a completed catalog when disclosure or key generation changes', async () => {
+    vi.useFakeTimers()
+    try {
+      let keyGeneration = 'missing'
+      const getAntigravityCombinedModels = vi.fn(async () => [
+        { id: 'gemini-api:gemini-one', label: 'Gemini API · gemini-one · separate billing' }
+      ])
+      const settings = {
+        ...optedInSettings,
+        antigravityGeminiApiDisclosureAcceptedAt: 1
+      } as AppSettings
+      const detector = createConfiguredProviderDetector(
+        {
+          getAntigravityCombinedModels,
+          getAntigravityGeminiApiKeyGeneration: () => keyGeneration,
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 }),
+          resolveProviderBinary: async () => ({ binaryPath: null })
+        },
+        { staggerMs: 0 }
+      )
+
+      detector.start(settings)
+      await vi.runAllTimersAsync()
+      expect(detector.modelsSnapshot(settings).get('antigravity')).toHaveLength(1)
+      expect(getAntigravityCombinedModels).toHaveBeenCalledTimes(1)
+
+      keyGeneration = 'configured-at-2'
+      detector.start(settings)
+      await vi.runAllTimersAsync()
+      expect(getAntigravityCombinedModels).toHaveBeenCalledTimes(2)
+
+      const withdrawn = { ...settings, antigravityGeminiApiDisclosureAcceptedAt: null }
+      detector.start(withdrawn)
+      await vi.runAllTimersAsync()
+      expect(getAntigravityCombinedModels).toHaveBeenCalledTimes(3)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })

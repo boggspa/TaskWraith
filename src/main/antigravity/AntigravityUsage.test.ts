@@ -8,6 +8,7 @@ import {
   type AgyPtyLike,
   type AgyUsageProbeDependencies
 } from './AntigravityUsage'
+import { isAuthenticatedAgyRateLimitConnection } from './AntigravityCombinedModelCatalog'
 
 const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1 }
 const now = () => '2026-07-23T12:00:00.000Z'
@@ -107,6 +108,36 @@ describe('parseAgyUsagePanel', () => {
 })
 
 describe('fetchAuthenticatedAgyQuotaSnapshot', () => {
+  it('keeps the get-agent-rate-limits API-only path side-effect free', async () => {
+    const apiOnlyModels = [
+      { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini API · flash · separate billing' }
+    ]
+    const resolveBinary = vi.fn()
+    const spawnPty = vi.fn()
+
+    const authenticatedConnection = isAuthenticatedAgyRateLimitConnection(
+      { ready: true, configuredProviders: new Set(['antigravity']) },
+      apiOnlyModels
+    )
+    expect(authenticatedConnection).toBe(false)
+
+    await expect(
+      fetchAuthenticatedAgyQuotaSnapshot(
+        optedIn,
+        authenticatedConnection,
+        {
+          cwd: '/private/tmp/agy-test',
+          resolveBinary,
+          spawnPty,
+          now
+        }
+      )
+    ).resolves.toMatchObject({ configured: false })
+
+    expect(resolveBinary).not.toHaveBeenCalled()
+    expect(spawnPty).not.toHaveBeenCalled()
+  })
+
   it('does not resolve or launch before recorded consent and authenticated S4 connection', async () => {
     const resolveBinary = vi.fn()
     const spawnPty = vi.fn()

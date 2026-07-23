@@ -2,6 +2,7 @@ import type { AppSettings, ProviderId } from './store/types'
 import { resolveCliProviderBinary } from './providers/CliProviderRuntime'
 import { getOllamaStatusSnapshot } from './ollama/OllamaProvider'
 import { discoverAuthenticatedAgyModels } from './antigravity/AntigravityModelDiscovery'
+import type { AntigravityCombinedCatalogModel } from './antigravity/AntigravityCombinedModelCatalog'
 import { isAntigravityOptInEnabled } from '../shared/retiredProviders'
 
 export interface ConfiguredProviderModel {
@@ -30,6 +31,10 @@ export interface DetectConfiguredProvidersDependencies {
   ) => Promise<{ available: boolean; modelCount: number }>
   /** Official `agy models` probe; only called after explicit AntiGravity opt-in. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
+  /** Combined authenticated agy + Gemini API catalog; called only after opt-in. */
+  getAntigravityCombinedModels?: (settings: AppSettings) => Promise<AntigravityCombinedCatalogModel[]>
+  /** Nonsecret key-generation identity used to invalidate a completed catalog. */
+  getAntigravityGeminiApiKeyGeneration?: (settings: AppSettings) => string | null
   /** Called after a complete cached generation; never authorizes a provider. */
   onDiscoveryComplete?: (settings: AppSettings) => void
   /**
@@ -165,7 +170,9 @@ function configuredProviderProbes(
   }
   if (isAntigravityOptInEnabled(settings)) {
     const getAntigravityConfiguredModels =
-      dependencies.getAntigravityConfiguredModels ?? discoverAuthenticatedAgyModels
+      dependencies.getAntigravityCombinedModels ??
+      dependencies.getAntigravityConfiguredModels ??
+      discoverAuthenticatedAgyModels
     probes.push({
       provider: 'antigravity',
       includeWhenUnknown: false,
@@ -227,7 +234,10 @@ export async function detectConfiguredProviders(
   return configured
 }
 
-function configuredProviderCacheKey(settings: AppSettings): string {
+function configuredProviderCacheKey(
+  settings: AppSettings,
+  dependencies: DetectConfiguredProvidersDependencies = {}
+): string {
   return JSON.stringify({
     claudeApiKey: Boolean(settings.claudeApiKey),
     claudeBinaryPath: settings.claudeBinaryPath || '',
@@ -238,7 +248,11 @@ function configuredProviderCacheKey(settings: AppSettings): string {
     ollamaBaseUrl: settings.ollamaBaseUrl || '',
     ollamaDefaultModel: settings.ollamaDefaultModel || '',
     antigravityEnabled: settings.antigravityEnabled === true,
-    antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt || null
+    antigravityOptInAcceptedAt: settings.antigravityOptInAcceptedAt || null,
+    antigravityGeminiApiDisclosureAcceptedAt:
+      settings.antigravityGeminiApiDisclosureAcceptedAt || null,
+    antigravityGeminiApiKeyGeneration:
+      dependencies.getAntigravityGeminiApiKeyGeneration?.(settings) ?? null
   })
 }
 
@@ -273,7 +287,7 @@ export function createConfiguredProviderDetector(
   let configuredModels = new Map<ProviderId, ConfiguredProviderModel[]>()
 
   const start = (settings: AppSettings): void => {
-    const key = configuredProviderCacheKey(settings)
+    const key = configuredProviderCacheKey(settings, dependencies)
     if (startedKey === key) return
     startedKey = key
     completedKey = null
@@ -317,11 +331,11 @@ export function createConfiguredProviderDetector(
   return {
     start,
     snapshot: async (settings) => {
-      const key = configuredProviderCacheKey(settings)
+      const key = configuredProviderCacheKey(settings, dependencies)
       return completedKey === key ? new Set(rosterConfigured) : new Set()
     },
     statusSnapshot: (settings) => {
-      const key = configuredProviderCacheKey(settings)
+      const key = configuredProviderCacheKey(settings, dependencies)
       if (startedKey !== key) {
         return { ready: false, configuredProviders: new Set() }
       }
@@ -331,7 +345,7 @@ export function createConfiguredProviderDetector(
       }
     },
     modelsSnapshot: (settings) => {
-      const key = configuredProviderCacheKey(settings)
+      const key = configuredProviderCacheKey(settings, dependencies)
       return completedKey === key
         ? new Map([...configuredModels].map(([provider, models]) => [provider, [...models]]))
         : new Map()

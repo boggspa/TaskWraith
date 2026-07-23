@@ -5,6 +5,7 @@ import type {
   AntigravityGeminiApiSecretMutationResult,
   AntigravityGeminiApiSecretStatus
 } from '../../../main/antigravity/AntigravityGeminiApiSecretStore'
+import { notifyAntigravityGeminiApiSecretMutation } from '../hooks/useConfiguredProviderSnapshot'
 
 export type AntigravityOptInPatch = {
   antigravityEnabled: true
@@ -103,6 +104,7 @@ export function AntigravityOptInCard({
       const result = await window.api.setAntigravityGeminiApiSecret(geminiApiKey)
       if (result.ok) {
         setGeminiApiStatus(result.status)
+        notifyAntigravityGeminiApiSecretMutation()
         setGeminiApiMessage('Gemini API key saved securely in the desktop main process.')
       } else {
         setGeminiApiMessage(safeMutationMessage(result))
@@ -122,6 +124,9 @@ export function AntigravityOptInCard({
     try {
       const result = await window.api.clearAntigravityGeminiApiSecret()
       setGeminiApiStatus(result.status)
+      if (result.ok) {
+        notifyAntigravityGeminiApiSecretMutation()
+      }
       setGeminiApiMessage(result.ok ? 'Gemini API key cleared.' : GEMINI_API_ERROR_MESSAGE)
     } catch {
       setGeminiApiMessage(GEMINI_API_ERROR_MESSAGE)
@@ -263,6 +268,7 @@ export function AntigravityOptInCard({
         <label className="settings-provider-auth-field">
           <span>Google project API key</span>
           <input
+            data-testid="antigravity-gemini-api-key"
             type="password"
             value={geminiApiKey}
             autoComplete="off"
@@ -274,6 +280,7 @@ export function AntigravityOptInCard({
         </label>
         <div className="settings-provider-auth-actions">
           <PillButton
+            data-testid="antigravity-gemini-api-save"
             size="compact"
             variant="primary"
             disabled={!geminiApiAcknowledged || !geminiApiKey || geminiApiBusy}
@@ -282,6 +289,7 @@ export function AntigravityOptInCard({
             Save Gemini API key
           </PillButton>
           <PillButton
+            data-testid="antigravity-gemini-api-clear"
             size="compact"
             variant="danger"
             disabled={!geminiApiStatus?.configured || geminiApiBusy}

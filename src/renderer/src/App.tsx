@@ -27,6 +27,7 @@ import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
 import {
   useConfiguredProviderSnapshot,
+  useAntigravityGeminiApiSecretRefreshIdentity,
   type ConfiguredProviderSnapshot
 } from './hooks/useConfiguredProviderSnapshot'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
@@ -1885,8 +1886,11 @@ function App(): React.JSX.Element {
   const [cursorProviderAvailable, setCursorProviderAvailable] = useState(false)
   const antigravityOptInActive =
     settings?.antigravityEnabled === true && Boolean(settings?.antigravityOptInAcceptedAt)
+  const antigravityGeminiApiSecretIdentity = useAntigravityGeminiApiSecretRefreshIdentity()
   const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
-    `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}`
+    `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}:` +
+      `${settings?.antigravityGeminiApiDisclosureAcceptedAt || ''}:` +
+      antigravityGeminiApiSecretIdentity
   )
   // The main process starts a fresh cache generation after a settings change,
   // but do not render a prior successful AntiGravity snapshot for even one

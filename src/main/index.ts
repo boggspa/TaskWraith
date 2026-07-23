@@ -1605,6 +1605,13 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
+import {
+  discoverAuthenticatedAntigravityCombinedModels
+} from './antigravity/AntigravityCombinedModelCatalog'
+import {
+  createAntigravityRateLimitHandler,
+  registerAntigravityRateLimitHandler
+} from './antigravity/AntigravityRateLimitHandler'
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
@@ -13956,6 +13963,18 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
   getOllamaStatus: async (settings) => {
     const models = await fetchOllamaModels(settings)
     return { available: true, modelCount: models.length }
+  },
+  getAntigravityCombinedModels: (settings) =>
+    discoverAuthenticatedAntigravityCombinedModels(settings, {
+      getSecretStore: () => antigravityGeminiApiSecretStoreRef
+    }),
+  getAntigravityGeminiApiKeyGeneration: () => {
+    try {
+      const status = antigravityGeminiApiSecretStoreRef?.getStatus()
+      return status?.updatedAt ?? (status?.configured ? 'configured' : 'unconfigured')
+    } catch {
+      return 'unavailable'
+    }
   },
   onDiscoveryComplete: () => remoteProviderModelsTrigger?.()
 })
@@ -31314,7 +31333,11 @@ if (isGeminiMcpBridgeProcess) {
     antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: antigravityGeminiApiSecretStore,
-      isMainRendererSender
+      isMainRendererSender,
+      onSecretMutationSuccess: () => {
+        managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        remoteProviderModelsTrigger?.()
+      }
     })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
       const ack = normalizeChatUpdateAck(value)
@@ -41152,95 +41175,81 @@ if (isGeminiMcpBridgeProcess) {
       return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)
     })
 
-    ipcMain.handle(
-      'get-agent-rate-limits',
-      async (_, provider: ProviderId, options?: { force?: unknown }) => {
-        provider = assertProviderId(provider)
-        const force = options?.force === true
-        // gemini retired — no live account to meter (falls through to null below)
-        if (provider === 'kimi') {
-          return fetchKimiUsageSnapshot({ force })
+    const getAntigravityRateLimits = createAntigravityRateLimitHandler({
+      getSettings: () => AppStore.getSettings(),
+      statusSnapshot: (settings) => managedRunConfiguredProviderDiscovery.statusSnapshot(settings),
+      modelsSnapshot: (settings) => managedRunConfiguredProviderDiscovery.modelsSnapshot(settings),
+      fetchQuota: (settings, authenticatedConnection, quotaOptions) =>
+        fetchAuthenticatedAgyQuotaSnapshot(settings, authenticatedConnection, quotaOptions),
+      fetchAuthenticatedQuota: async (settings, force) => {
+        if (
+          !force &&
+          antigravityUsageProbeCache &&
+          Date.now() - antigravityUsageProbeCache.fetchedAt < AGY_USAGE_FRESH_TTL_MS
+        ) {
+          return antigravityUsageProbeCache.snapshot
         }
-        if (provider === 'claude') {
-          return fetchClaudeUsageSnapshot({ force })
-        }
-        // Cursor has no CLI usage command — read the editor dashboard token
-        // and hit Cursor's period-usage RPC (same path as Limit Counter).
-        if (provider === 'cursor') {
-          return fetchCursorUsageSnapshot({ force })
-        }
-        if (provider === 'antigravity') {
-          const settings = AppStore.getSettings()
-          const configuredSnapshot = managedRunConfiguredProviderDiscovery.statusSnapshot(settings)
-          const configuredModels = managedRunConfiguredProviderDiscovery
-            .modelsSnapshot(settings)
-            .get('antigravity')
-          const authenticatedConnection =
-            configuredSnapshot.ready &&
-            configuredSnapshot.configuredProviders.has('antigravity') &&
-            Boolean(configuredModels?.length)
 
-          // Keep all no-consent/no-connection paths side-effect free: the S5
-          // helper returns quota-unavailable without resolving or spawning agy.
-          if (!authenticatedConnection) {
-            return fetchAuthenticatedAgyQuotaSnapshot(settings, false, {})
-          }
-          if (
-            !force &&
-            antigravityUsageProbeCache &&
-            Date.now() - antigravityUsageProbeCache.fetchedAt < AGY_USAGE_FRESH_TTL_MS
-          ) {
-            return antigravityUsageProbeCache.snapshot
-          }
-
-          // A private temporary cwd keeps the documented interactive panel out
-          // of a real workspace. It is removed only when this exact probe made
-          // it successfully, never by a broad cleanup operation.
-          let probeCwd = os.tmpdir()
-          try {
-            probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'agy-usage-'))
-          } catch {
-            probeCwd = os.tmpdir()
-          }
-          const isTempDir = probeCwd !== os.tmpdir()
-          try {
-            const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(settings, true, {
-              cwd: probeCwd,
-              spawnPty: (command, args, options): AgyPtyLike => {
-                const term = pty.spawn(command, [...args], {
-                  name: 'xterm-256color',
-                  cols: 100,
-                  rows: 30,
-                  cwd: options.cwd,
-                  env: options.env
-                })
-                return {
-                  onData: (listener) => term.onData(listener),
-                  onExit: (listener) => term.onExit((event) => listener({ exitCode: event.exitCode })),
-                  write: (data) => term.write(data),
-                  kill: () => {
-                    try {
-                      term.kill()
-                    } catch {
-                      // The terminal already exited.
-                    }
+        // A private temporary cwd keeps the documented interactive panel out
+        // of a real workspace. It is removed only when this exact probe made
+        // it successfully, never by a broad cleanup operation.
+        let probeCwd = os.tmpdir()
+        try {
+          probeCwd = await fs.mkdtemp(join(os.tmpdir(), 'agy-usage-'))
+        } catch {
+          probeCwd = os.tmpdir()
+        }
+        const isTempDir = probeCwd !== os.tmpdir()
+        try {
+          const snapshot = await fetchAuthenticatedAgyQuotaSnapshot(settings, true, {
+            cwd: probeCwd,
+            spawnPty: (command, args, options): AgyPtyLike => {
+              const term = pty.spawn(command, [...args], {
+                name: 'xterm-256color',
+                cols: 100,
+                rows: 30,
+                cwd: options.cwd,
+                env: options.env
+              })
+              return {
+                onData: (listener) => term.onData(listener),
+                onExit: (listener) => term.onExit((event) => listener({ exitCode: event.exitCode })),
+                write: (data) => term.write(data),
+                kill: () => {
+                  try {
+                    term.kill()
+                  } catch {
+                    // The terminal already exited.
                   }
                 }
               }
-            })
-            if (snapshot.windows?.length) {
-              antigravityUsageProbeCache = { snapshot, fetchedAt: Date.now() }
             }
-            return snapshot
-          } finally {
-            if (isTempDir) {
-              await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})
-            }
+          })
+          if (snapshot.windows?.length) {
+            antigravityUsageProbeCache = { snapshot, fetchedAt: Date.now() }
+          }
+          return snapshot
+        } finally {
+          if (isTempDir) {
+            await fs.rm(probeCwd, { recursive: true, force: true }).catch(() => {})
           }
         }
-        if (provider !== 'codex') {
-          return null
-        }
+      }
+    })
+
+    registerAntigravityRateLimitHandler(
+      ipcMain,
+      getAntigravityRateLimits,
+      async (_, rawProvider, options) => {
+        const provider = assertProviderId(rawProvider)
+        const force = options?.force === true
+        // gemini retired — no live account to meter (falls through to null below)
+        if (provider === 'kimi') return fetchKimiUsageSnapshot({ force })
+        if (provider === 'claude') return fetchClaudeUsageSnapshot({ force })
+        // Cursor has no CLI usage command — read the editor dashboard token
+        // and hit Cursor's period-usage RPC (same path as Limit Counter).
+        if (provider === 'cursor') return fetchCursorUsageSnapshot({ force })
+        if (provider !== 'codex') return null
         const client = getCodexClient()
         await client.ensureStarted(app.getVersion())
         return client.request('account/rateLimits/read', {}, 15_000)
@@ -41840,6 +41849,10 @@ if (isGeminiMcpBridgeProcess) {
         } catch {
           return getStaticProviderModels('ollama')
         }
+      }
+      if (provider === 'antigravity') {
+        const settings = AppStore.getSettings()
+        return managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
       }
       if (provider !== 'codex') {
         return getStaticProviderModels(provider, {

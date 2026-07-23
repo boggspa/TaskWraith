@@ -39,9 +39,11 @@ describe('antigravity Gemini API secret IPC', () => {
 
   it('registers dedicated status/set/clear channels and returns renderer-safe store results', () => {
     const store = createStore()
+    const onSecretMutationSuccess = vi.fn()
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: store,
-      isMainRendererSender: () => true
+      isMainRendererSender: () => true,
+      onSecretMutationSuccess
     })
 
     const event = { sender: { id: 1 } }
@@ -59,6 +61,7 @@ describe('antigravity Gemini API secret IPC', () => {
     })
     expect(store.setApiKey).toHaveBeenCalledWith('key')
     expect(store.clear).toHaveBeenCalledOnce()
+    expect(onSecretMutationSuccess).toHaveBeenCalledTimes(2)
   })
 
   it('rejects every channel from a secondary renderer before touching the store', () => {
