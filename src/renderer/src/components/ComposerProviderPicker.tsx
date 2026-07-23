@@ -138,14 +138,14 @@ export function resolveProviderRows(
   providerRunPauses?: AppSettings['providerRunPauses'],
   availability?: ProviderPickerAvailability
 ): ProviderRow[] {
-  const allowedProviders = availability
-    ? new Set<ProviderId>([
-        ...availability.snapshot.providerIds,
-        ...(!availability.snapshot.ready && availability.pendingFallbackProvider
-          ? [availability.pendingFallbackProvider]
-          : [])
-      ])
-    : null
+  // The live-selectable providers are the canonical offer set and are ALWAYS
+  // selectable — you switch to a provider (and sign in, if needed) BY picking
+  // it, so a background discovery probe must never hide one. Gating live rows
+  // on the discovery snapshot regressed Claude off the picker whenever its
+  // auth probe timed out ('unknown') or reported not-authenticated. Only
+  // AntiGravity — the opt-in, discovery-admitted provider — is gated on the
+  // snapshot; Grok / Path-B Cursor keep their own runtime-availability flags.
+  const antigravityAdmitted = Boolean(availability?.snapshot.providerIds.includes('antigravity'))
   const ids: ProviderId[] = ([
     'gemini',
     'codex',
@@ -154,13 +154,11 @@ export function resolveProviderRows(
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
     'ollama',
-    // This is not a static offer: the id survives only when the strict,
-    // post-connection main-process snapshot contains it.
-    ...(allowedProviders?.has('antigravity') ? (['antigravity'] as ProviderId[]) : [])
-  ] as ProviderId[]).filter(
-    (id) =>
-      (isLiveSelectableProvider(id) || id === 'antigravity') &&
-      (!allowedProviders || allowedProviders.has(id))
+    // Not a static offer: survives only when the strict, post-connection
+    // main-process discovery snapshot has admitted it.
+    ...(antigravityAdmitted ? (['antigravity'] as ProviderId[]) : [])
+  ] as ProviderId[]).filter((id) =>
+    id === 'antigravity' ? antigravityAdmitted : isLiveSelectableProvider(id)
   )
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)

@@ -117,7 +117,7 @@ describe('buildParticipantProviderModelPatch', () => {
 })
 
 describe('ParticipantPickerCluster', () => {
-  it('limits provider choices to the ready connected snapshot', () => {
+  it('always offers live-selectable providers even when discovery omits them', () => {
     expect(
       buildParticipantPickerProviderGroups(
         true,
@@ -125,7 +125,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['claude', 'cursor'])
+    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -142,7 +142,12 @@ describe('ParticipantPickerCluster', () => {
       'claude'
     )
 
+    // Live providers still show; AntiGravity carries its snapshot-authenticated models.
     expect(groups).toMatchObject([
+      { provider: 'codex' },
+      { provider: 'claude' },
+      { provider: 'kimi' },
+      { provider: 'ollama' },
       {
         provider: 'antigravity',
         modelOptions: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
@@ -150,7 +155,7 @@ describe('ParticipantPickerCluster', () => {
     ])
   })
 
-  it('keeps only the current provider while discovery is pending', () => {
+  it('keeps live providers visible while discovery is pending', () => {
     expect(
       buildParticipantPickerProviderGroups(
         true,
@@ -158,10 +163,12 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['kimi'])
+    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
   })
 
-  it('never leaks retired, missing, or runtime-unavailable providers', () => {
+  it('never leaks retired or flag-gated providers through the configured snapshot', () => {
+    // gemini (retired) and grok (flag off) cannot be smuggled in via the snapshot;
+    // only the always-offered live rows remain.
     expect(
       buildParticipantPickerProviderGroups(
         false,
@@ -169,7 +176,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex'])
+    ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {

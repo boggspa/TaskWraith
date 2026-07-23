@@ -130,21 +130,25 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
     expect(codex?.rerouteLabel).toBe('reroutes to Ollama')
   })
 
-  it('shows only confirmed connected providers once discovery is ready', () => {
+  it('always offers live-selectable providers even when discovery omits them', () => {
+    // A provider is selected — and signed in, if needed — BY picking it, so a
+    // background discovery snapshot must never hide a live provider. Here the
+    // snapshot only lists claude+cursor, yet every live row still shows.
     expect(
       resolveProviderRows(true, true, undefined, {
         snapshot: { ready: true, providerIds: ['claude', 'cursor'] },
         pendingFallbackProvider: 'codex'
       }).map((row) => row.id)
-    ).toEqual(['claude', 'cursor'])
+    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
   })
 
   it('offers AntiGravity only when the configured snapshot has admitted it', () => {
+    // AntiGravity is the sole discovery-gated row; live providers show alongside it.
     expect(
       resolveProviderRows(false, false, undefined, {
         snapshot: { ready: true, providerIds: ['codex', 'antigravity'] }
       }).map((row) => row.id)
-    ).toEqual(['codex', 'antigravity'])
+    ).toEqual(['codex', 'claude', 'kimi', 'ollama', 'antigravity'])
 
     expect(
       resolveProviderRows(false, false, undefined, {
@@ -153,21 +157,25 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
     ).not.toContain('antigravity')
   })
 
-  it('keeps only the active provider as a cold-start fallback while discovery is pending', () => {
+  it('keeps live providers visible while discovery is still pending', () => {
+    // Cold start (snapshot not ready) must not blank the picker: a user can
+    // switch providers before any probe finishes.
     expect(
       resolveProviderRows(true, true, undefined, {
         snapshot: { ready: false, providerIds: [] },
         pendingFallbackProvider: 'kimi'
       }).map((row) => row.id)
-    ).toEqual(['kimi'])
+    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
   })
 
-  it('does not leak unavailable or retired providers through the configured snapshot', () => {
+  it('never surfaces retired or flag-gated providers through the configured snapshot', () => {
+    // The snapshot cannot smuggle in gemini (retired) or grok (its availability
+    // flag is off); only the always-offered live rows remain.
     expect(
       resolveProviderRows(false, false, undefined, {
         snapshot: { ready: true, providerIds: ['gemini', 'grok', 'codex'] }
       }).map((row) => row.id)
-    ).toEqual(['codex'])
+    ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
   })
 })
 
