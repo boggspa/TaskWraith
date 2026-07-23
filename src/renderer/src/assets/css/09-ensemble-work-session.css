@@ -1277,6 +1277,34 @@
   -webkit-user-select: none;
 }
 
+/* The roster is sorted by participant.order before chips render, so this
+ * compact marker always shows the next normal dispatch position and follows
+ * drag reorders immediately. */
+.ensemble-above-chip-turn-order {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  box-sizing: border-box;
+  min-width: 15px;
+  height: 15px;
+  padding: 0 3px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--surface-elevated) 50%, transparent);
+  color: color-mix(in srgb, var(--text-primary) 74%, transparent);
+  font-size: 9px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+}
+
+.ensemble-above-chip.is-selected .ensemble-above-chip-turn-order {
+  border-color: color-mix(in srgb, var(--accent-color) 62%, transparent);
+  background: color-mix(in srgb, var(--accent-color) 18%, var(--surface-elevated));
+  color: var(--text-primary);
+}
+
 /* 1.0.5-EW22 — `.ensemble-above-chip-overflow` (the inline ⋯
  * button) was removed; the popover is now opened by clicking a
  * second time on the already-selected chip. Old rules removed.

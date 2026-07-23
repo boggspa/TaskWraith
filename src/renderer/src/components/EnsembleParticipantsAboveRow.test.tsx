@@ -671,8 +671,8 @@ describe('EnsembleParticipantsAboveRow', () => {
 
   it('renders a chip per participant with role + idle status by default', () => {
     const chat = makeChat([
-      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
-      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 2 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 1 })
     ])
     const html = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow
@@ -684,6 +684,12 @@ describe('EnsembleParticipantsAboveRow', () => {
     )
     expect(html).toContain('Explorer')
     expect(html).toContain('Worker')
+    expect(html).toContain('data-participant-id="ensemble-codex" data-turn-order="1"')
+    expect(html).toContain('data-participant-id="ensemble-claude" data-turn-order="2"')
+    expect(html).toContain('aria-description="Turn 1 in roster order"')
+    expect(html.indexOf('data-participant-id="ensemble-codex"')).toBeLessThan(
+      html.indexOf('data-participant-id="ensemble-claude"')
+    )
     expect(html).toContain('aria-haspopup="dialog"')
     // Two `status-idle` pills should appear (one per participant when no
     // active round).

@@ -1455,6 +1455,7 @@ export function EnsembleParticipantsAboveRow({
               key={participant.id}
               participant={participant}
               mentionParticipants={participants}
+              turnOrder={participantIndex + 1}
               gridSpan={chipGridSpans?.[participantIndex]}
               statusLabel={statusLabel}
               statusTooltip={wakeupTooltip || statusTooltip}
@@ -1559,6 +1560,8 @@ export function EnsembleParticipantsAboveRow({
               (participant) => participant.id === dragGhost.participantId
             )
             if (!ghostParticipant) return null
+            const ghostTurnOrder =
+              participants.findIndex((participant) => participant.id === ghostParticipant.id) + 1
             return createPortal(
               <div
                 className={`ensemble-above-chip ensemble-above-chip-drag-ghost provider-${resolveProviderHueClass(ghostParticipant.provider, ghostParticipant.model)} is-selected`}
@@ -1572,6 +1575,7 @@ export function EnsembleParticipantsAboveRow({
                 aria-hidden
               >
                 <div className="ensemble-above-chip-body">
+                  <span className="ensemble-above-chip-turn-order">{ghostTurnOrder}</span>
                   <span className="ensemble-above-chip-role">
                     {ghostParticipant.role || getProviderName(ghostParticipant.provider)}
                   </span>
@@ -2029,6 +2033,8 @@ export function EnsembleAddParticipantFields({
 interface ParticipantChipProps {
   participant: EnsembleParticipant
   mentionParticipants: EnsembleParticipant[]
+  /** One-based order in the sorted roster; this is the normal dispatch order. */
+  turnOrder: number
   /** `grid-column` span in the wrapped balanced-rows strip (see
    * computeEnsembleChipGridSpans); undefined in single-row flex mode. */
   gridSpan?: number
@@ -2109,6 +2115,7 @@ interface ParticipantChipProps {
 function ParticipantChip({
   participant,
   mentionParticipants,
+  turnOrder,
   gridSpan,
   statusLabel,
   statusTooltip,
@@ -2280,6 +2287,7 @@ function ParticipantChip({
     <div
       ref={setChipAnchor}
       data-participant-id={participant.id}
+      data-turn-order={turnOrder}
       data-linked-session={participant.linkedProviderSessionId ? 'true' : undefined}
       onPointerDown={handlePointerDown}
       onPointerEnter={handleTooltipPointerEnter}
@@ -2306,6 +2314,7 @@ function ParticipantChip({
         tabIndex={0}
         aria-pressed={isSelected}
         aria-label={`${authorityAriaPrefix}${participant.role || providerDisplayName}`}
+        aria-description={`Turn ${turnOrder} in roster order`}
         onKeyDown={(event) => {
           if (event.key === 'Enter' || event.key === ' ') {
             event.preventDefault()
@@ -2322,6 +2331,9 @@ function ParticipantChip({
           Boss/Captain/stage authority icon). Keeps the chip face lean
           and gives the role name back the reclaimed width.
         */}
+        <span className="ensemble-above-chip-turn-order" aria-hidden="true">
+          {turnOrder}
+        </span>
         <span className="ensemble-above-chip-role">
           <ParticipantLeadingRoleIcon
             stageRole={participant.stageRole}
