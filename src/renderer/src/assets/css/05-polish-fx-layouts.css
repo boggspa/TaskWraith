@@ -3630,15 +3630,21 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   outline: none;
 }
 
+/* `ask_user_question` options land here verbatim, so a row can hold a couple of
+   sentence-length choices. Wrap them onto further lines — and let a single
+   over-long choice shrink and wrap its own text — rather than letting the row
+   run past the popover's edge. */
 .sidebar-footer-approval-actions {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 5px;
   padding: 0 8px 2px 24px;
 }
 
 .sidebar-footer-approval-action {
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  max-width: 100%;
   min-height: 24px;
   padding: 3px 8px;
   border: 1px solid color-mix(in srgb, var(--panel-border) 80%, transparent);
@@ -3649,6 +3655,8 @@ button.sidebar-footer-approval-row.is-clickable:focus-visible {
   font-size: var(--font-size-xs, 11px);
   font-weight: 600;
   line-height: 1.2;
+  text-align: left;
+  overflow-wrap: anywhere;
   cursor: pointer;
 }
 

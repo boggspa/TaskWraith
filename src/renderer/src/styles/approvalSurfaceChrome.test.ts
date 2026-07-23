@@ -44,4 +44,18 @@ describe('approval surface chrome', () => {
     expect(composerCss).toContain('flex-wrap: wrap')
     expect(composerCss).toContain('@media (max-width: 620px)')
   })
+
+  it('wraps mini approvals popover choices instead of running past its edge', () => {
+    const layoutCss = readSource('src/renderer/src/assets/css/05-polish-fx-layouts.css')
+
+    const actions = cssBlockStartingAt(layoutCss, '.sidebar-footer-approval-actions {')
+    expect(actions).toContain('flex-wrap: wrap')
+
+    // `ask_user_question` options are free text, so a lone choice can be wider
+    // than the popover: it has to be able to shrink and wrap its own label.
+    const action = cssBlockStartingAt(layoutCss, '.sidebar-footer-approval-action {')
+    expect(action).toContain('flex: 0 1 auto')
+    expect(action).toContain('max-width: 100%')
+    expect(action).toContain('overflow-wrap: anywhere')
+  })
 })
