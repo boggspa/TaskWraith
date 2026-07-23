@@ -5,6 +5,7 @@ type ArgSpec =
   | 'any'
   | 'string'
   | 'nonEmptyString'
+  | 'antigravityGeminiApiKey'
   | 'optionalString'
   | 'number'
   | 'optionalNumber'
@@ -261,6 +262,9 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-extension-secret-status': [],
   'set-extension-secret': ['object', 'string'],
   'clear-extension-secret': ['object'],
+  'antigravity-gemini-api:get-secret-status': [],
+  'antigravity-gemini-api:set-secret': ['antigravityGeminiApiKey'],
+  'antigravity-gemini-api:clear-secret': [],
   'get-managed-policy-status': [],
   // 1.0.6-CRUX42 — open a Terminal running a provider's interactive CLI login.
   'provider:open-login-terminal': ['provider'],
@@ -553,6 +557,12 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
     throw new Error(`${label} must be a string.`)
   if (spec === 'nonEmptyString' && (typeof value !== 'string' || !value.trim()))
     throw new Error(`${label} must be a non-empty string.`)
+  if (
+    spec === 'antigravityGeminiApiKey' &&
+    (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value.trim(), 'utf8') > 4_096)
+  ) {
+    throw new Error(`${label} must be a non-empty Gemini API key of at most 4096 bytes.`)
+  }
   if (
     (spec === 'workspacePath' || spec === 'filePath' || spec === 'runId' || spec === 'chatId') &&
     (typeof value !== 'string' || !value.trim())

@@ -258,6 +258,12 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
  * catalogue changes.
  */
 export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
+  // The Gemini API key is main-renderer-only; workspace popouts and utility
+  // renderers must never be able to submit or clear credential material.
+  'antigravity-gemini-api:get-secret-status',
+  'antigravity-gemini-api:set-secret',
+  'antigravity-gemini-api:clear-secret',
+
   // Canvas WebContentsView state belongs to the primary window. Popouts and
   // other secondary renderers must not create or reposition an overlay over it.
   'canvas:open-window',

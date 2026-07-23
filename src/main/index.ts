@@ -1406,6 +1406,7 @@ import {
 import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
+import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
@@ -1602,6 +1603,7 @@ import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
 import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
+import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
 
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null
@@ -31271,6 +31273,14 @@ if (isGeminiMcpBridgeProcess) {
     registerTwMediaProtocol(join(app.getPath('userData'), TRANSCRIPT_MEDIA_ASSET_DIR))
     electronApp.setAppUserModelId('com.electron')
     registerProductCrashHandlers()
+    const antigravityGeminiApiSecretStore = new AntigravityGeminiApiSecretStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage
+    })
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: antigravityGeminiApiSecretStore,
+      isMainRendererSender
+    })
     ipcMain.on(CHAT_UPDATE_ACK_CHANNEL, (event, value: unknown) => {
       const ack = normalizeChatUpdateAck(value)
       if (!ack) return

@@ -138,6 +138,10 @@ import type {
   ExtensionSecretRef,
   ExtensionSecretStatusSnapshot
 } from '../main/ExtensionSecretStore'
+import type {
+  AntigravityGeminiApiSecretMutationResult,
+  AntigravityGeminiApiSecretStatus
+} from '../main/antigravity/AntigravityGeminiApiSecretStore'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -1475,6 +1479,11 @@ declare global {
         value: string
       ) => Promise<ExtensionSecretMutationResult>
       clearExtensionSecret: (ref: ExtensionSecretRef) => Promise<ExtensionSecretMutationResult>
+      getAntigravityGeminiApiSecretStatus: () => Promise<AntigravityGeminiApiSecretStatus>
+      setAntigravityGeminiApiSecret: (
+        apiKey: string
+      ) => Promise<AntigravityGeminiApiSecretMutationResult>
+      clearAntigravityGeminiApiSecret: () => Promise<AntigravityGeminiApiSecretMutationResult>
       getManagedPolicyStatus: () => Promise<Record<string, unknown> | null>
       getHandoffCards: (filter?: HandoffCardFilter) => Promise<HandoffCard[]>
       saveHandoffCard: (
