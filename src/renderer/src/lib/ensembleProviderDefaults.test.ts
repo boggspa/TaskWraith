@@ -589,7 +589,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(getEnsembleReasoningOptions('grok', 'grok-composer-2.5-fast')).toEqual([])
   })
 
-  it('exposes cursor Composer without reasoning and Cursor Grok 4.5 with reasoning/Fast', () => {
+  it('exposes Cursor Composer without reasoning and Grok 4.5 with reasoning/Fast', () => {
     const cursor = getEnsembleModelDefaults('cursor')
     expect(cursor.defaultModelId).toBe('composer-2.5-fast')
     expect(cursor.modelOptions.map((o) => o.id)).toEqual([
@@ -597,6 +597,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'composer-2.5',
       'grok-4.5'
     ])
+    expect(cursor.modelOptions.find((option) => option.id === 'grok-4.5')?.label).toBe('Grok 4.5')
     expect(cursor.reasoningOptions).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5')).toEqual([])
     expect(getEnsembleReasoningOptions('cursor', 'composer-2.5-fast')).toEqual([])

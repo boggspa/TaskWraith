@@ -186,7 +186,7 @@ const GROK_MODELS: CombinedModelPickerModelOption[] = [
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast' },
   { id: 'composer-2.5', label: 'Composer 2.5' },
-  { id: CURSOR_GROK_45_BASE_MODEL_ID, label: 'Cursor Grok 4.5' }
+  { id: CURSOR_GROK_45_BASE_MODEL_ID, label: 'Grok 4.5' }
 ]
 
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [

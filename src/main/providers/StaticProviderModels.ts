@@ -624,7 +624,7 @@ const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
     id: CURSOR_GROK_45_BASE_MODEL_ID,
-    label: 'Cursor Grok 4.5',
+    label: 'Grok 4.5',
     description: 'First-party Cursor model pool - 500K context',
     supportedReasoningEfforts: [...GROK_45_REASONING_EFFORTS],
     defaultReasoningEffort: GROK_45_DEFAULT_REASONING_EFFORT,

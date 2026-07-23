@@ -54,6 +54,7 @@ describe('shortModelName', () => {
   it('renders Cursor Composer model ids as human labels', () => {
     expect(shortModelName('cursor', '', 'composer-2.5-fast')).toBe('Composer 2.5 Fast')
     expect(shortModelName('cursor', '', 'composer-2.5')).toBe('Composer 2.5')
+    expect(shortModelName('cursor', 'Cursor Grok 4.5', 'grok-4.5')).toBe('Grok 4.5')
   })
 
   it('renders Grok CLI model ids as Grok model labels', () => {
@@ -422,6 +423,19 @@ describe('formatComposerModelChip', () => {
         codexReasoningEffort: 'high'
       })
     ).toBe('GPT-5.5 · High')
+  })
+
+  it('uses an unprefixed Cursor Grok label and separates High from Fast', () => {
+    expect(
+      formatComposerModelChip({
+        provider: 'cursor',
+        composerStyle: 'default',
+        modelId: 'grok-4.5',
+        modelLabel: 'Cursor Grok 4.5',
+        cursorReasoningEffort: 'high',
+        shellFastModeActive: true
+      })
+    ).toBe('Grok 4.5 · High Fast')
   })
 
   it('Creative shells use the default format (no shell-specific match)', () => {

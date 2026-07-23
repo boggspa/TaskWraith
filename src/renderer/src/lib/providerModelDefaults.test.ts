@@ -65,6 +65,14 @@ describe('Codex provider model defaults', () => {
   })
 })
 
+describe('Cursor provider model defaults', () => {
+  it('uses an unprefixed Grok 4.5 label because the picker renders Cursor separately', () => {
+    expect(CURSOR_DEFAULT_MODELS.find((model) => model.id === 'grok-4.5')).toMatchObject({
+      label: 'Grok 4.5'
+    })
+  })
+})
+
 describe('Claude provider model defaults', () => {
   it('exposes Sonnet 5 and Fable 5 as real rows while keeping Mythos out of the picker', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)

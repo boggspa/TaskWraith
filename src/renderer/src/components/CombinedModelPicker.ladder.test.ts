@@ -309,21 +309,21 @@ describe('splitChipReasoningPieces', () => {
       suffix: 'Light',
       tail: ''
     })
-    expect(splitChipReasoningPieces('Cursor Grok 4.5 \u00b7 High', 'High')).toEqual({
-      primary: 'Cursor Grok 4.5',
+    expect(splitChipReasoningPieces('Grok 4.5 \u00b7 High', 'High')).toEqual({
+      primary: 'Grok 4.5',
       suffix: 'High',
       tail: ''
     })
   })
 
   it('keeps the reasoning suffix span when Cursor appends " Fast" after it', () => {
-    expect(splitChipReasoningPieces('Cursor Grok 4.5 \u00b7 High Fast', 'High')).toEqual({
-      primary: 'Cursor Grok 4.5',
+    expect(splitChipReasoningPieces('Grok 4.5 \u00b7 High Fast', 'High')).toEqual({
+      primary: 'Grok 4.5',
       suffix: 'High',
       tail: 'Fast'
     })
-    expect(splitChipReasoningPieces('Cursor Grok 4.5 High Fast', 'High')).toEqual({
-      primary: 'Cursor Grok 4.5',
+    expect(splitChipReasoningPieces('Grok 4.5 High Fast', 'High')).toEqual({
+      primary: 'Grok 4.5',
       suffix: 'High',
       tail: 'Fast'
     })
@@ -371,6 +371,9 @@ describe('trigger chip fast-mode rendering', () => {
     expect(html).toMatch(/composer-combined-picker-trigger-suffix[^>]*>High</)
     // …and "Fast" renders as its own plain tail, not inside the suffix.
     expect(html).toMatch(/composer-combined-picker-trigger-fast[^-][^>]*>Fast</)
+    // Cursor needs its Fast tail to retain a visible gap after the reasoning suffix.
+    expect(html).toContain('style="margin-left:0"')
+    expect(html).toMatch(/composer-combined-picker-trigger-primary[^>]*>Grok 4\.5</)
     expect(html).toContain('data-selected-reasoning="high"')
   })
 

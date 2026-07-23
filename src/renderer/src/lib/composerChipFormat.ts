@@ -49,7 +49,7 @@ export interface ComposerChipContext {
  * Kimi (`kimi-k2.7-code`, `kimi-k2.7-code-thinking`) → `K2.7 Coding`
  * Kimi (`kimi-k3`)                         → `K3`
  * Gemini (`gemini-2.5-pro`)                → `2.5 Pro`
- * Cursor (`grok-4.5`)                      → `Cursor Grok 4.5`
+ * Cursor (`grok-4.5`)                      → `Grok 4.5`
  * Grok (`grok-4.5`)                        → `Grok 4.5 Fast` (permanently Fast-mode)
  * Ollama (`qwen3:4b-instruct`)             → `Qwen 3 (4B Param)`
  *
@@ -130,7 +130,7 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
     if (id === 'composer-2.5-fast') return 'Composer 2.5 Fast'
     if (id === 'composer-2.5') return 'Composer 2.5'
     if (id === 'grok-4.5' || id === 'cursor-grok-4.5' || id.startsWith('grok-4.5')) {
-      return 'Cursor Grok 4.5'
+      return 'Grok 4.5'
     }
   }
 
@@ -390,9 +390,11 @@ export function formatComposerModelChip(ctx: ComposerChipContext): string {
 
   // Default (TaskWraith native shell, mismatched shell/provider, or
   // creative shells: modular / terminal / stub / satellite).
+  const defaultModelLabel =
+    provider === 'cursor' ? shortModelName(provider, modelLabel, modelId) : modelLabel
   if (provider === 'cursor' && ctx.shellFastModeActive) {
-    const label = modelId === 'composer-2.5-fast' ? 'Composer 2.5' : modelLabel
+    const label = modelId === 'composer-2.5-fast' ? 'Composer 2.5' : defaultModelLabel
     return reasoning ? `${label} · ${reasoning} Fast` : `${label} · Fast`
   }
-  return reasoning ? `${modelLabel} · ${reasoning}` : modelLabel
+  return reasoning ? `${defaultModelLabel} · ${reasoning}` : defaultModelLabel
 }

@@ -1871,7 +1871,12 @@ export function CombinedModelPicker({
                   />
                 )}
                 {chipPieces.tail && (
-                  <span className="composer-combined-picker-trigger-fast">{chipPieces.tail}</span>
+                  <span
+                    className="composer-combined-picker-trigger-fast"
+                    style={provider === 'cursor' ? { marginLeft: 0 } : undefined}
+                  >
+                    {chipPieces.tail}
+                  </span>
                 )}
               </>
             )}

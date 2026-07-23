@@ -155,6 +155,12 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
   })
 
+  it('uses an unprefixed Grok 4.5 label in Cursor model metadata', () => {
+    expect(getStaticProviderModels('cursor').find((model) => model.id === 'grok-4.5')).toMatchObject({
+      label: 'Grok 4.5'
+    })
+  })
+
   it('normalizes invalid cross-provider model ids back to provider defaults', () => {
     expect(normalizeCliProviderModel('grok', 'flash')).toBe('grok-4.5')
     expect(normalizeCliProviderModel('cursor', 'pro')).toBe('composer-2.5-fast')
