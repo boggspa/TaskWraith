@@ -61,7 +61,7 @@ describe('resolveComposerRunDmTarget', () => {
     const ensembleSteer = appSource.slice(steerStart, steerEnd)
     expect(ensembleSteer).toContain('const dmTargetParticipantId = resolveComposerRunDmTarget({')
     expect(ensembleSteer).toContain(
-      'const fanoutPolicy: EnsembleFanoutPolicy = dmTargetParticipantId'
+      'dmTargetParticipantId || request.exactPickerParticipantId'
     )
     expect(ensembleSteer).toContain("? 'off'")
     expect(ensembleSteer).toContain(

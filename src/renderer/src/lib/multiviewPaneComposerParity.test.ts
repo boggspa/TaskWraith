@@ -171,11 +171,16 @@ describe('Multiview pane Composer context parity', () => {
     expect(editQueue).toContain('mapQueuedAttachmentsForComposer')
     expect(editQueue).toContain('setImageAttachmentsByChatId')
     expect(editQueue).toContain('result.imageAttachments')
-    expect(builder).toContain(
-      'handleRunMultiviewPane(viewerPaneIndex, viewerChatId, dmTargetParticipantId)'
-    )
+    expect(builder).toContain('handleRunMultiviewPane(')
+    expect(builder).toContain('viewerPaneIndex,')
+    expect(builder).toContain('viewerChatId,')
+    expect(builder).toContain('dmTargetParticipantId,')
+    expect(builder).toContain('exactPickerParticipantId')
     expect(paneRun).toContain(
       'if (dmTargetParticipantId) request.dmTargetParticipantId = dmTargetParticipantId'
+    )
+    expect(paneRun).toContain(
+      'if (exactPickerParticipantId) request.exactPickerParticipantId = exactPickerParticipantId'
     )
     expect(paneRun).toContain(
       'discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null'
