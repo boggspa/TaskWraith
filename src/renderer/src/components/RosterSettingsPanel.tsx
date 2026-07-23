@@ -14,7 +14,8 @@ import type {
   AgenticServicesSettings,
   ComposerStyle,
   EnsembleOrchestrationMode,
-  EnsembleParticipant
+  EnsembleParticipant,
+  ProviderId
 } from '../../../main/store/types'
 import { isLiveSelectableProvider, isRetiredProvider } from '../../../shared/retiredProviders'
 import {
@@ -47,7 +48,11 @@ import {
   ENSEMBLE_STAGE_ROLE_OPTIONS,
   normalizeEnsembleStageRole
 } from '../lib/ensembleStageRoles'
-import { ParticipantPickerCluster } from './ParticipantPickerCluster'
+import {
+  ParticipantPickerCluster,
+  buildParticipantPickerProviderGroups
+} from './ParticipantPickerCluster'
+import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { EnsembleBriefEditor } from './EnsembleBriefEditor'
 import {
@@ -79,6 +84,8 @@ interface RosterSettingsPanelProps {
   agenticServices?: AgenticServicesSettings
   grokAvailable?: boolean
   cursorAvailable?: boolean
+  configuredProviderSnapshot?: ConfiguredProviderSnapshot
+  pendingFallbackProvider?: ProviderId
 }
 
 function uniqueNewName(existing: EnsembleRosterPreset[]): string {
@@ -299,6 +306,7 @@ function freshWorkingId(existing: EnsembleParticipant[]): string {
 // ── Per-participant row ─────────────────────────────────────────────────────
 export interface RosterParticipantRowProps {
   participant: EnsembleParticipant
+  configuredProviderSnapshot?: ConfiguredProviderSnapshot
   mentionParticipants: EnsembleParticipant[]
   index: number
   total: number
@@ -322,6 +330,7 @@ export interface RosterParticipantRowProps {
 
 export function RosterParticipantRow({
   participant,
+  configuredProviderSnapshot,
   mentionParticipants,
   index,
   total,
@@ -551,6 +560,7 @@ export function RosterParticipantRow({
         <div className="settings-roster-participant-top">
           <ParticipantPickerCluster
             participant={participant}
+            configuredProviderSnapshot={configuredProviderSnapshot}
             composerStyle={composerStyle}
             agenticServices={agenticServices}
             grokAvailable={grokAvailable}
@@ -643,7 +653,9 @@ export function RosterSettingsPanel({
   composerStyle = 'default',
   agenticServices,
   grokAvailable = false,
-  cursorAvailable = false
+  cursorAvailable = false,
+  configuredProviderSnapshot = { ready: false, providerIds: [] },
+  pendingFallbackProvider = 'codex'
 }: RosterSettingsPanelProps): JSX.Element {
   const [presets, setPresets] = useState<EnsembleRosterPreset[]>(() => loadPresets())
   const [selectedId, setSelectedId] = useState<string | null>(() => loadPresets()[0]?.id ?? null)
@@ -654,6 +666,21 @@ export function RosterSettingsPanel({
   const [transferPicker, setTransferPicker] = useState<RosterTransferPickerState | null>(null)
   const nameInputRef = useRef<HTMLInputElement | null>(null)
   const importInputRef = useRef<HTMLInputElement | null>(null)
+  const newParticipantProviderGroups = useMemo(
+    () =>
+      buildParticipantPickerProviderGroups(
+        grokAvailable,
+        cursorAvailable,
+        configuredProviderSnapshot,
+        pendingFallbackProvider
+      ),
+    [
+      configuredProviderSnapshot,
+      cursorAvailable,
+      grokAvailable,
+      pendingFallbackProvider
+    ]
+  )
 
   // Always-latest editing snapshot for the flush-on-switch safety net below.
   // Kept in sync during render AND synchronously inside commit/patch so a
@@ -948,13 +975,15 @@ export function RosterSettingsPanel({
   const addParticipant = useCallback((): void => {
     const current = editingRef.current
     if (!current || current.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS) return
+    const provider = newParticipantProviderGroups[0]?.provider
+    if (!provider) return
     const id = freshWorkingId(current.participants)
-    const participant = defaultParticipantForProvider('claude', id, current.participants.length + 1)
+    const participant = defaultParticipantForProvider(provider, id, current.participants.length + 1)
     const participants = [...current.participants, participant]
     // Keep the cap >= the roster size (mirrors applyEnsembleRosterPreset).
     const maxParticipants = Math.max(current.meta.maxParticipants, participants.length)
     commit({ ...current, meta: { ...current.meta, maxParticipants }, participants })
-  }, [commit])
+  }, [commit, newParticipantProviderGroups])
 
   // ── Agent Pool wiring ─────────────────────────────────────────────────────
   // Live pool list for the "+ Add from pool" picker. Subscribes to the same
@@ -1362,6 +1391,7 @@ export function RosterSettingsPanel({
                   <RosterParticipantRow
                     key={`${editing.meta.id}:${participant.id}`}
                     participant={participant}
+                    configuredProviderSnapshot={configuredProviderSnapshot}
                     mentionParticipants={orderedParticipants}
                     index={index}
                     total={orderedParticipants.length}
@@ -1393,11 +1423,16 @@ export function RosterSettingsPanel({
                   type="button"
                   className="settings-roster-add"
                   onClick={addParticipant}
-                  disabled={editing.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS}
+                  disabled={
+                    editing.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS ||
+                    newParticipantProviderGroups.length === 0
+                  }
                   title={
                     editing.participants.length >= MAX_ROSTER_PRESET_PARTICIPANTS
                       ? `Up to ${MAX_ROSTER_PRESET_PARTICIPANTS} participants`
-                      : 'Add a participant'
+                      : newParticipantProviderGroups.length === 0
+                        ? 'Connect a provider before adding a participant'
+                        : 'Add a participant'
                   }
                 >
                   + Add participant

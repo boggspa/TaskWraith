@@ -29,6 +29,7 @@ import {
 } from './CombinedModelPicker'
 import { CombinedPermissionsPicker, type PermissionOption } from './CombinedPermissionsPicker'
 import { resolveProviderRows } from './ComposerProviderPicker'
+import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { isCursorGrok45ModelId } from '../../../shared/grok45Models'
 
 // Lossless permission options: the values ARE the PermissionPresetId, so
@@ -112,6 +113,7 @@ export function buildParticipantProviderModelPatch(
 
 interface ParticipantPickerClusterProps {
   participant: EnsembleParticipant
+  configuredProviderSnapshot?: ConfiguredProviderSnapshot
   composerStyle: ComposerStyle
   agenticServices?: AgenticServicesSettings
   grokAvailable: boolean
@@ -121,6 +123,28 @@ interface ParticipantPickerClusterProps {
    *  edits (model/provider/permissions) persist immediately. */
   onPatch: (patch: Partial<EnsembleParticipant>) => void
   onApplyPermissionsToAll?: (source: EnsembleParticipant) => void
+}
+
+export function buildParticipantPickerProviderGroups(
+  grokAvailable: boolean,
+  cursorAvailable: boolean,
+  configuredProviderSnapshot: ConfiguredProviderSnapshot,
+  currentProvider: ProviderId
+): CombinedModelPickerProviderGroup[] {
+  return resolveProviderRows(grokAvailable, cursorAvailable, undefined, {
+    snapshot: configuredProviderSnapshot,
+    pendingFallbackProvider: currentProvider
+  }).map((row) => {
+    const providerDefaults = getEnsembleModelDefaults(row.id)
+    return {
+      provider: row.id,
+      label: row.label,
+      modelOptions: providerDefaults.modelOptions,
+      fastModeCapableModelIds: providerDefaults.fastModeCapableModelIds,
+      ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
+      ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
+    }
+  })
 }
 
 /**
@@ -133,6 +157,7 @@ interface ParticipantPickerClusterProps {
  */
 export function ParticipantPickerCluster({
   participant,
+  configuredProviderSnapshot = { ready: false, providerIds: [] },
   composerStyle,
   agenticServices,
   grokAvailable,
@@ -149,20 +174,12 @@ export function ParticipantPickerCluster({
   // the churning AgenticServicesSettings shape.
   const services = agenticServices ?? ({} as AgenticServicesSettings)
   const modelOptions: CombinedModelPickerModelOption[] = defaults.modelOptions
-  const providerGroups: CombinedModelPickerProviderGroup[] = resolveProviderRows(
+  const providerGroups = buildParticipantPickerProviderGroups(
     grokAvailable,
-    cursorAvailable
-  ).map((row) => {
-    const providerDefaults = getEnsembleModelDefaults(row.id)
-    return {
-      provider: row.id,
-      label: row.label,
-      modelOptions: providerDefaults.modelOptions,
-      fastModeCapableModelIds: providerDefaults.fastModeCapableModelIds,
-      ...(row.pauseLabel ? { pauseLabel: row.pauseLabel } : {}),
-      ...(row.rerouteLabel ? { rerouteLabel: row.rerouteLabel } : {})
-    }
-  })
+    cursorAvailable,
+    configuredProviderSnapshot,
+    participant.provider
+  )
   // Display the participant's model, mapping the agnostic 'cli-default' seed to
   // the provider's preferred id so the chip reads cleanly. The stored value is
   // untouched until the user actually picks a model.

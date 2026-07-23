@@ -226,7 +226,7 @@ export function ComposerProviderPicker({
   composerStyle,
   grokAvailable,
   cursorAvailable,
-  configuredProviderSnapshot,
+  configuredProviderSnapshot = { ready: false, providerIds: [] },
   onSelect,
   providerRunPauses,
   disabled,
@@ -247,12 +247,10 @@ export function ComposerProviderPicker({
     grokAvailable,
     cursorAvailable,
     providerRunPauses,
-    configuredProviderSnapshot
-      ? {
-          snapshot: configuredProviderSnapshot,
-          pendingFallbackProvider: provider
-        }
-      : undefined
+    {
+      snapshot: configuredProviderSnapshot,
+      pendingFallbackProvider: provider
+    }
   )
   const activePauseInfo = getProviderPauseInfo(providerRunPauses, provider)
   const providerHueClass = resolveProviderHueClass(provider, activeModelId)

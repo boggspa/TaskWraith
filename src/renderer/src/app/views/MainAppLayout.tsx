@@ -155,6 +155,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   codexThreads,
   collaboratingChatIds,
   composerCtx,
+  configuredProviderSnapshot,
   executionMapProjection,
   executionMapSelectedStepId,
   handleBackFromExecutionMap,
@@ -1348,6 +1349,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               userBubbleColor={appearance.userBubbleColor}
               promptSurfaceStyle={appearance.promptSurfaceStyle}
               composerStyle={appearance.composerStyle}
+              configuredProviderSnapshot={configuredProviderSnapshot}
               transcriptFontFamily={appearance.transcriptFontFamily}
               composerFontFamily={appearance.composerFontFamily}
               persistedTranscriptFontFamily={settings?.transcriptFontFamily ?? ''}

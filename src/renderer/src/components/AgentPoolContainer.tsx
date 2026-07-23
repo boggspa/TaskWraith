@@ -24,6 +24,7 @@ import {
 import { PooledAgentIcon } from './icons/PooledAgentIcon'
 import { CommittedDraftField } from './CommittedDraftField'
 import { ParticipantPickerCluster } from './ParticipantPickerCluster'
+import type { ConfiguredProviderSnapshot } from '../hooks/useConfiguredProviderSnapshot'
 import { AgentPoolCard } from './AgentPoolCard'
 import { IdentityIconPicker } from './IdentityIconPicker'
 import { AgentPoolLeaderboardTable } from './AgentPoolLeaderboardTable'
@@ -33,6 +34,7 @@ interface AgentPoolContainerProps {
   agenticServices?: AgenticServicesSettings
   grokAvailable: boolean
   cursorAvailable: boolean
+  configuredProviderSnapshot?: ConfiguredProviderSnapshot
   /** Save a participant (by working id) into the pool — wired to the panel's
    *  editingRef-reading handler so a dropped participant captures unblurred
    *  edits. Enables the participant→pool drag direction. */
@@ -57,6 +59,7 @@ export function AgentPoolContainer({
   agenticServices,
   grokAvailable,
   cursorAvailable,
+  configuredProviderSnapshot,
   onSaveParticipantToPool
 }: AgentPoolContainerProps): JSX.Element {
   const [agents, setAgents] = useState<PooledAgent[]>(() => listPooledAgents())
@@ -340,6 +343,7 @@ export function AgentPoolContainer({
           <div className="agent-pool-editor-controls">
             <ParticipantPickerCluster
               participant={syntheticParticipant(editing)}
+              configuredProviderSnapshot={configuredProviderSnapshot}
               composerStyle={composerStyle}
               agenticServices={agenticServices}
               grokAvailable={grokAvailable}

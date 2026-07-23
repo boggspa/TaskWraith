@@ -388,13 +388,17 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
 
     it('uses the live provider order and omits retired providers and synthetic custom models', () => {
-      expect(buildEnsembleAddProviderGroups(false, false).map((group) => group.provider)).toEqual([
-        'codex',
-        'claude',
-        'kimi',
-        'ollama'
-      ])
-      const expanded = buildEnsembleAddProviderGroups(true, true)
+      expect(
+        buildEnsembleAddProviderGroups(false, false, {
+          snapshot: { ready: true, providerIds: ['codex', 'claude', 'kimi', 'ollama'] }
+        }).map((group) => group.provider)
+      ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
+      const expanded = buildEnsembleAddProviderGroups(true, true, {
+        snapshot: {
+          ready: true,
+          providerIds: ['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama']
+        }
+      })
       expect(expanded.map((group) => group.provider)).toEqual([
         'codex',
         'claude',
@@ -512,6 +516,7 @@ describe('EnsembleParticipantsAboveRow', () => {
 
     it('preserves an explicitly empty connected-provider catalog without falling back', () => {
       expect(resolveEnsembleAddProviderGroups([], true, true)).toEqual([])
+      expect(resolveEnsembleAddProviderGroups(undefined, true, true)).toEqual([])
     })
 
     it('materializes the chosen execution settings without inheriting seat identity or grants', () => {

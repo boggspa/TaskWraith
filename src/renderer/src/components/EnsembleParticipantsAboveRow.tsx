@@ -65,7 +65,10 @@ import {
   codexReasoningDisplayLabel,
   grokReasoningDisplayLabel
 } from '../lib/composerChipFormat'
-import { resolveProviderRows } from './ComposerProviderPicker'
+import {
+  resolveProviderRows,
+  type ProviderPickerAvailability
+} from './ComposerProviderPicker'
 import {
   CombinedModelPicker,
   type CombinedModelPickerProviderGroup,
@@ -247,9 +250,10 @@ export type EnsembleParticipantAddDraft = EnsembleParticipantAddConfiguration &
 /** Ordered, synthetic-custom-free catalogs for the Ensemble `+` picker. */
 export function buildEnsembleAddProviderGroups(
   grokAvailable: boolean,
-  cursorAvailable: boolean
+  cursorAvailable: boolean,
+  availability: ProviderPickerAvailability
 ): CombinedModelPickerProviderGroup[] {
-  return resolveProviderRows(grokAvailable, cursorAvailable).map((row) => {
+  return resolveProviderRows(grokAvailable, cursorAvailable, undefined, availability).map((row) => {
     const defaults = getEnsembleModelDefaults(row.id)
     return {
       provider: row.id,
@@ -267,9 +271,12 @@ export function resolveEnsembleAddProviderGroups(
   grokAvailable: boolean,
   cursorAvailable: boolean
 ): CombinedModelPickerProviderGroup[] {
-  const source = providerGroups
-    ? providerGroups
-    : buildEnsembleAddProviderGroups(grokAvailable, cursorAvailable)
+  // There is no safe unfiltered fallback: live callers must supply the catalog
+  // derived from the configured-provider snapshot. Missing catalog means no
+  // add choices, while existing participant chips remain visible and editable.
+  void grokAvailable
+  void cursorAvailable
+  const source = providerGroups ?? []
   return source.map((group) => ({
     ...group,
     modelOptions: group.modelOptions.filter((option) => option.id !== 'custom')
@@ -1704,6 +1711,7 @@ function EnsembleAddParticipantButton({
     () => resolveEnsembleAddProviderGroups(providerGroups, grokAvailable, cursorAvailable),
     [cursorAvailable, grokAvailable, providerGroups]
   )
+  const pickerDisabled = disabled || availableProviderGroups.length === 0
   const resolvedInitialProvider = availableProviderGroups.some(
     (group) => group.provider === initialProvider
   )
@@ -1878,7 +1886,7 @@ function EnsembleAddParticipantButton({
           ? handleToggleFastMode
           : undefined
       }
-      disabled={disabled}
+      disabled={pickerDisabled}
       repositionOnScroll
       topContent={
         <EnsembleAddParticipantFields
@@ -1887,7 +1895,7 @@ function EnsembleAddParticipantButton({
           details={detailsDraft}
           rolePresetId={rolePresetId}
           hasLeadership={hasLeadership || detailsDraft.authority !== 'agent'}
-          disabled={disabled}
+          disabled={pickerDisabled}
           onDetailsChange={patchDetails}
           onRolePresetIdChange={setRolePresetId}
           onAutoApprovalsChange={handleAutoApprovalsChange}
@@ -1898,12 +1906,17 @@ function EnsembleAddParticipantButton({
       customTrigger={{
         className: 'ensemble-above-add-participant',
         content: '+',
-        title,
+        title:
+          !disabled && availableProviderGroups.length === 0
+            ? 'Connect a provider before adding a participant.'
+            : title,
         ariaLabel: 'Add Ensemble participant'
       }}
       confirmAction={{
         label: 'Add',
-        onConfirm: () => onAdd({ ...draft, ...detailsDraft })
+        onConfirm: () => {
+          if (!pickerDisabled) onAdd({ ...draft, ...detailsDraft })
+        }
       }}
       onOpenChange={handleOpenChange}
     />

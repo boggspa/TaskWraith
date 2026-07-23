@@ -3,7 +3,8 @@ import { describe, expect, it } from 'vitest'
 import type { EnsembleParticipant } from '../../../main/store/types'
 import {
   ParticipantPickerCluster,
-  buildParticipantProviderModelPatch
+  buildParticipantProviderModelPatch,
+  buildParticipantPickerProviderGroups
 } from './ParticipantPickerCluster'
 
 function participant(
@@ -116,6 +117,62 @@ describe('buildParticipantProviderModelPatch', () => {
 })
 
 describe('ParticipantPickerCluster', () => {
+  it('limits provider choices to the ready connected snapshot', () => {
+    expect(
+      buildParticipantPickerProviderGroups(
+        true,
+        true,
+        { ready: true, providerIds: ['claude', 'cursor'] },
+        'kimi'
+      ).map((group) => group.provider)
+    ).toEqual(['claude', 'cursor'])
+  })
+
+  it('keeps only the current provider while discovery is pending', () => {
+    expect(
+      buildParticipantPickerProviderGroups(
+        true,
+        true,
+        { ready: false, providerIds: [] },
+        'kimi'
+      ).map((group) => group.provider)
+    ).toEqual(['kimi'])
+  })
+
+  it('never leaks retired, missing, or runtime-unavailable providers', () => {
+    expect(
+      buildParticipantPickerProviderGroups(
+        false,
+        false,
+        { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
+        'claude'
+      ).map((group) => group.provider)
+    ).toEqual(['codex'])
+  })
+
+  it('keeps an existing disconnected participant visible and editable', () => {
+    const html = renderToStaticMarkup(
+      <ParticipantPickerCluster
+        participant={
+          participant({
+            provider: 'kimi',
+            model: 'kimi-k2.7-code',
+            thinkingEnabled: true
+          })
+        }
+        configuredProviderSnapshot={{ ready: true, providerIds: ['codex'] }}
+        composerStyle="default"
+        grokAvailable
+        cursorAvailable
+        onPatch={() => undefined}
+      />
+    )
+
+    expect(html).toContain('Kimi')
+    expect(html).toContain('K2.7 Coding')
+    expect(html).toContain('data-composer-control="permission"')
+  })
+
   it('renders one unified provider/model trigger plus the permissions picker', () => {
     const html = renderToStaticMarkup(
       <ParticipantPickerCluster

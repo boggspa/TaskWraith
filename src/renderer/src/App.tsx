@@ -28782,6 +28782,7 @@ function App(): React.JSX.Element {
     codexThreads,
     collaboratingChatIds,
     composerCtx,
+    configuredProviderSnapshot,
     executionMapProjection: openExecutionMap ? openExecutionMapProjection : null,
     executionMapSelectedStepId: openExecutionMap?.selectedStepId,
     handleBackFromExecutionMap,

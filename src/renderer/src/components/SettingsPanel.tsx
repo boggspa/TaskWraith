@@ -245,6 +245,7 @@ interface SettingsPanelProps {
   appIconVariant: AppIconVariant
   promptSurfaceStyle: PromptSurfaceStyle
   composerStyle: ComposerStyle
+  configuredProviderSnapshot?: import('../hooks/useConfiguredProviderSnapshot').ConfiguredProviderSnapshot
   transcriptFontFamily: string
   composerFontFamily: string
   /**
@@ -3704,6 +3705,7 @@ export function SettingsPanel({
   userBubbleColor,
   promptSurfaceStyle,
   composerStyle,
+  configuredProviderSnapshot = { ready: false, providerIds: [] },
   transcriptFontFamily,
   composerFontFamily,
   persistedTranscriptFontFamily,
@@ -10675,6 +10677,8 @@ export function SettingsPanel({
             agenticServices={agenticServices}
             grokAvailable={grokProviderAvailable}
             cursorAvailable={cursorProviderAvailable}
+            configuredProviderSnapshot={configuredProviderSnapshot}
+            pendingFallbackProvider={activeProvider}
           />
         )}
 
@@ -10686,6 +10690,7 @@ export function SettingsPanel({
             agenticServices={agenticServices}
             grokAvailable={grokProviderAvailable}
             cursorAvailable={cursorProviderAvailable}
+            configuredProviderSnapshot={configuredProviderSnapshot}
           />
         )}
 

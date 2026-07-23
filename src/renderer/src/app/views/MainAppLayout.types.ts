@@ -219,6 +219,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   codexThreads: any
   collaboratingChatIds: MainAppLayoutSidebarProps['collaboratingChatIds']
   composerCtx: any
+  configuredProviderSnapshot: import('../../hooks/useConfiguredProviderSnapshot').ConfiguredProviderSnapshot
   executionMapProjection: ExecutionGraphProjection | null
   executionMapSelectedStepId?: string
   handleBackFromExecutionMap: () => void
