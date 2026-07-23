@@ -1595,3 +1595,20 @@ weaponized payloads to this file or its verification artifacts.
 - **Release disposition:** Keep `Remediated`, not `Verified`, until those final
   candidate gates are green. The source-ahead usage residual itself is closed;
   unqualified claims about released v1.8.4 behavior remain out of bounds.
+
+## Combined AntiGravity/Gemini API certification contract
+
+The source-ahead combined-mode implementation has a tracked threat model and
+migration contract in
+[`docs/antigravity-gemini-api-threat-model-and-migration.md`](docs/antigravity-gemini-api-threat-model-and-migration.md).
+It is the authoritative concise reference for the dedicated main-only
+purpose-bound safeStorage boundary, unsafe-backend fail-closed behavior,
+official `@google/genai` public transport, and the prohibition on OAuth,
+keyring, `agy`, retired-Gemini, legacy-profile, environment, argv, or private
+endpoint credential reuse. It also records default-null upgrade behavior,
+set/clear/dormant/rollback semantics, Free/Paid data-use disclosure without
+tier inference, separate billing/project limits/quota, AGY parity, and
+renderer/paired-iOS nonsecret projection. The contract preserves the static
+live set, retired `gemini`, First Launch, and marketing boundaries; it does not
+authorize capability removal. Verify the linked source regressions on the
+exact release candidate before clearing the combined-mode release block.
