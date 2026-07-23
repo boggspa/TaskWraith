@@ -1,8 +1,8 @@
 # AntiGravity combined-mode threat model and migration contract
 
-This contract applies to the opt-in `antigravity` provider's separately
-labelled Gemini API mode. It describes the source-ahead implementation at
-`73f08b535`; it is a certification contract, not a new provider or a request to
+This contract applies to the existing `antigravity` provider and its two
+separately governed lanes. It describes the source-ahead implementation at
+`d5dbf7919`; it is a certification contract, not a new provider or a request to
 remove or disable an existing user capability.
 
 ## Scope and assets
@@ -44,10 +44,15 @@ do not cross a projection boundary.
 ## Upgrade, set, clear, and rollback semantics
 
 An existing installation upgrades with no migration of credentials or legacy
-Gemini state. Missing AntiGravity consent, missing Gemini disclosure, and a
-missing dedicated key are represented by absent/null/unconfigured state and
-fail closed. The static selectable-provider set is unchanged: `antigravity`
-and retired `gemini` are not added to it.
+Gemini state. The API lane is admitted when its dedicated secret is configured
+and its separate data-use disclosure is accepted; it does not require the AGY
+ban-risk consent. The AGY lane remains default-off and requires
+`isAntigravityOptInEnabled`. The combined admission gate is therefore
+`(Gemini API secret configured) OR isAntigravityOptInEnabled`, followed by the
+completed nonempty model snapshot. Missing disclosure or a missing dedicated
+key is represented by absent/null/unconfigured state and fails the API lane
+closed. The static selectable-provider set is unchanged: `antigravity` and
+retired `gemini` are not added to it.
 
 The separate disclosure is accepted only by an explicit user action and stores
 only a bounded nonsecret timestamp. A successful key set or clear starts a new
@@ -56,11 +61,24 @@ catalog state to paired devices, withdrawing stale rows immediately. A
 successful set leaves the new key available only to the dedicated store; a
 successful clear removes that record and the next generation cannot discover
 Gemini API rows. Failed set/clear operations do not emit the success
-invalidation path and preserve the previous usable state. If discovery,
-encryption, or transport fails, the affected lane returns a fixed empty or
-unavailable result; the AGY lane remains independent. Restart, rollback, or a
-downgrade therefore cannot silently resurrect a legacy credential or stale API
-admission.
+invalidation path. A write is temporary-file-fsynced and renamed before the
+directory durability fsync: a post-rename durability error can therefore
+return `writeFailed` after the new record is already authoritative, so a
+previous usable state is not guaranteed on every failure path. A clear failure
+returns `clearFailed` and does not claim deletion; an absent record is already
+clear. If discovery, encryption, or transport fails, the affected lane returns
+a fixed empty or unavailable result; the AGY lane remains independent.
+
+The dedicated record can remain encrypted and configured while its lane is
+ineligible. This is the **dormant** state: a configured Gemini API key record
+becomes dormant when the separate Gemini API data-use disclosure is missing
+or withdrawn — that alone blocks API-lane admission, key loading, discovery,
+and turns without deleting the record. Withdrawing AGY opt-in consent is
+orthogonal: it disables only the `agy` lane and has no effect on the
+dedicated API-key record's eligibility, admission, or dormancy. Restoring the
+Gemini disclosure can make a dormant record eligible again. Only an explicit
+clear removes the dedicated record. Restart or downgrade cannot migrate or
+silently resurrect a legacy credential or stale API admission.
 
 ## Billing, data use, and quota
 
@@ -86,11 +104,15 @@ remains unchanged and `gemini` remains retired/unavailable for new runs.
 
 ## Invariants and review evidence
 
-Preserve default-off informed AntiGravity consent and its account/ToS/ban-risk
-warning, First Launch silence, live-list silence, and marketing silence. Any
-future change must preserve the dedicated secret-store boundary, official SDK
-transport, no-credential-reuse rule, lane/quota isolation, pending-broadcast
-ordering, exact `gemini-api:gemini-*` namespace, and static live-set parity.
+Preserve the per-lane consent boundary: the Gemini API key lane is first-class
+BYO-key admission with no AGY account/ToS/ban-risk consent, while the official
+`agy` CLI lane remains default-off with informed account/ToS/ban-risk consent
+and warning. The committed gate is `(Gemini API secret configured) OR
+isAntigravityOptInEnabled`. First Launch, live-list, and marketing surfaces
+remain silent. Any future change must preserve the dedicated secret-store
+boundary, official SDK transport, no-credential-reuse rule, lane/quota
+isolation, pending-broadcast ordering, exact `gemini-api:gemini-*` namespace,
+and static live-set parity.
 The source regression suites cover successful set and clear ordering, dynamic
 paired-iOS wire decoding/admission, and the unchanged retired/static provider
 boundaries.
