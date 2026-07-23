@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   createMainSanitizers,
   normalizeEnsembleRunIdentity,
@@ -11,6 +11,10 @@ import {
 } from './MainSanitizers'
 import type { AppSettings, ExternalPathGrant, WorkspaceRecord } from '../store/types'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
+import {
+  resetAntigravityGeminiApiKeyConfiguredProbeForTests,
+  setAntigravityGeminiApiKeyConfiguredProbe
+} from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 
 describe('normalizeAuditRunIdentity', () => {
   it('accepts a valid audit role identity with optional dimension/findingId', () => {
@@ -1417,5 +1421,41 @@ describe('AntiGravity opt-in admission (S0b settings-aware gate)', () => {
 
   it('keeps gemini retired even under a valid antigravity opt-in', () => {
     expect(() => assertLiveProviderId('gemini', optedIn)).toThrow()
+  })
+})
+
+describe('AntiGravity Gemini API-key admission (independent of the AGY opt-in lane)', () => {
+  afterEach(() => {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+  })
+
+  it('defaults to excluding antigravity when no Gemini API key is configured', () => {
+    expect(selectableProviderIds()).not.toContain('antigravity')
+    expect(() => assertLiveProviderId('antigravity')).toThrow()
+  })
+
+  it('admits antigravity via a configured Gemini API key alone, with no opt-in', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    expect(selectableProviderIds()).toContain('antigravity')
+    expect(assertLiveProviderId('antigravity')).toBe('antigravity')
+  })
+
+  it('keeps the AGY opt-in lane admitting antigravity even without a configured key', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    const optedIn = { antigravityEnabled: true, antigravityOptInAcceptedAt: 1_700_000_000_000 }
+    expect(selectableProviderIds(optedIn)).toContain('antigravity')
+    expect(assertLiveProviderId('antigravity', optedIn)).toBe('antigravity')
+  })
+
+  it('fails closed when neither the opt-in lane nor a configured key admits antigravity', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    const enabledNoConsent = { antigravityEnabled: true, antigravityOptInAcceptedAt: null }
+    expect(selectableProviderIds(enabledNoConsent)).not.toContain('antigravity')
+    expect(() => assertLiveProviderId('antigravity', enabledNoConsent)).toThrow()
+  })
+
+  it('keeps gemini retired even when a Gemini API key is configured', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    expect(() => assertLiveProviderId('gemini')).toThrow()
   })
 })

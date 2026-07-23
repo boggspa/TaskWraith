@@ -21,6 +21,10 @@ import {
 import { TASKWRAITH_RUNTIME_PREAMBLE_VERSION } from '../PromptComposition'
 import { KIMI_ACP_PRODUCTION_POSTURE_VERSION } from '../../shared/kimiAcpPosture'
 import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import {
+  resetAntigravityGeminiApiKeyConfiguredProbeForTests,
+  setAntigravityGeminiApiKeyConfiguredProbe
+} from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 
 function makeSettings(overrides: Partial<AppSettings> = {}): AppSettings {
   return {
@@ -419,6 +423,37 @@ describe('ComposerService', () => {
         approvalMode: 'default'
       })
     ).toThrow('gemini is unavailable for new runs.')
+  })
+
+  it('rejects a new antigravity run when no Gemini API key is configured', () => {
+    expect(() => compose({ provider: 'antigravity' }, {})).toThrow(
+      'antigravity is unavailable for new runs.'
+    )
+  })
+
+  it('admits a new antigravity run once a Gemini API key is configured, with no AGY opt-in', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const payload = compose({ provider: 'antigravity' }, {})
+      expect(payload.provider).toBe('antigravity')
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('still rejects the official agy/CLI antigravity lane from interactive compose even with a configured key', () => {
+    // Interactive compose only ever dispatches the in-app Gemini API kernel;
+    // the agy/CLI lane always opens an external terminal instead, so a
+    // configured key alone does not change that this local admission check
+    // never depends on the AGY opt-in flag.
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    try {
+      expect(() => compose({ provider: 'antigravity' }, {})).toThrow(
+        'antigravity is unavailable for new runs.'
+      )
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
   })
 
   it('maps non-plan global runs back to default approval mode', () => {

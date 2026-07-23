@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ChatService, type ChatServiceDeps, type ChatServiceStore } from './ChatService'
 import type {
   ChatListItem,
@@ -9,6 +9,10 @@ import type {
   ProviderSeatGeneration,
   WorkspaceRecord
 } from '../store/types'
+import {
+  resetAntigravityGeminiApiKeyConfiguredProbeForTests,
+  setAntigravityGeminiApiKeyConfiguredProbe
+} from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 
 function makeChat(overrides: Partial<ChatRecord> = {}): ChatRecord {
   return {
@@ -1948,6 +1952,39 @@ describe('ChatService', () => {
       })
     ).toThrow(/safe chat id/)
     expect(store.createSubThread).not.toHaveBeenCalled()
+  })
+
+  describe('antigravity sub-thread admission (Gemini API-key lane, independent of AGY opt-in)', () => {
+    afterEach(() => {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    })
+
+    it('rejects an antigravity sub-thread when no Gemini API key is configured', () => {
+      const { deps, store } = makeDeps()
+      const service = new ChatService(deps)
+      expect(() =>
+        service.createSubThread({
+          parentChatId: 'chat-1',
+          provider: 'antigravity',
+          delegationPrompt: 'Prompt',
+          returnResultToParent: false
+        })
+      ).toThrow('antigravity is unavailable for new chats or delegated runs.')
+      expect(store.createSubThread).not.toHaveBeenCalled()
+    })
+
+    it('admits an antigravity sub-thread once a Gemini API key is configured', () => {
+      setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+      const { deps } = makeDeps()
+      const service = new ChatService(deps)
+      const subThread = service.createSubThread({
+        parentChatId: 'chat-1',
+        provider: 'antigravity',
+        delegationPrompt: 'Prompt',
+        returnResultToParent: false
+      })
+      expect(subThread.provider).toBe('antigravity')
+    })
   })
 
   it('validates getSubThreads parent id before reading children', () => {

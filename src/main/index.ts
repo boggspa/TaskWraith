@@ -1615,9 +1615,17 @@ import {
   createAntigravityRateLimitHandler,
   registerAntigravityRateLimitHandler
 } from './antigravity/AntigravityRateLimitHandler'
+import { setAntigravityGeminiApiKeyConfiguredProbe } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
+// Wires the shared, nonsecret "is a Gemini API key configured" signal that
+// MainSanitizers/ComposerService/ChatService read at run-dispatch chokepoints.
+// The closure captures the ref above lazily, so this is safe to register
+// before app.whenReady constructs the actual secret store.
+setAntigravityGeminiApiKeyConfiguredProbe(
+  () => antigravityGeminiApiSecretStoreRef?.getStatus()?.configured === true
+)
 
 let mainWindow: BrowserWindow | null = null
 let deferredProjectReferenceReconciler: DeferredProjectReferenceReconciler | null = null

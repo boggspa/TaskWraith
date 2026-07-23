@@ -50,6 +50,7 @@ import {
   isAntigravityOptInEnabled,
   type AntigravityOptInSettingsLike
 } from '../../shared/retiredProviders'
+import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isAppIconVariant, isWwdc26IconAvailable } from '../../shared/iconVariants'
 import { canPersistPlaintextFieldValue } from '../PlaintextSecretPolicy'
 import {
@@ -236,14 +237,19 @@ export function availableProviderIds(): ProviderId[] {
  * parsing, and "supported provider" error lists. `availableProviderIds()` stays
  * the full known set so decode/validation of historical data keeps working.
  *
- * The opt-in `antigravity` provider is admitted ONLY when the caller supplies
+ * The `antigravity` provider is admitted when EITHER the caller supplies
  * settings that pass `isAntigravityOptInEnabled` (both enabled AND consent
- * recorded). Settings-less callers fail closed — antigravity stays absent from
- * every offer/run surface until the user has explicitly opted in.
+ * recorded, for the AGY/CLI ban-risk lane) OR a Gemini API key is currently
+ * configured in the dedicated secret store (the independent, non-ban-risk
+ * BYO-key lane; see `AntigravityGeminiApiKeyConfiguredSignal`). Settings-less,
+ * no-key callers fail closed — antigravity stays absent from every offer/run
+ * surface until at least one lane is admitted.
  */
 export function selectableProviderIds(settings?: AntigravityOptInSettingsLike): ProviderId[] {
   const ids: ProviderId[] = [...LIVE_SELECTABLE_PROVIDER_IDS]
-  if (isAntigravityOptInEnabled(settings)) ids.push(ANTIGRAVITY_PROVIDER_ID)
+  if (isAntigravityOptInEnabled(settings) || isAntigravityGeminiApiKeyConfigured()) {
+    ids.push(ANTIGRAVITY_PROVIDER_ID)
+  }
   return ids
 }
 
@@ -252,8 +258,9 @@ export function selectableProviderIds(settings?: AntigravityOptInSettingsLike): 
  * DISPATCH so a historical/unqualified provider can never start a new run, while
  * read/validate paths keep `assertProviderId` (which still accepts it).
  *
- * `antigravity` is admitted only when `settings` passes `isAntigravityOptInEnabled`;
- * settings-less callers reject it (fail closed).
+ * `antigravity` is admitted when `settings` passes `isAntigravityOptInEnabled`
+ * OR a Gemini API key is currently configured; settings-less, no-key callers
+ * reject it (fail closed).
  */
 export function assertLiveProviderId(
   value: unknown,
@@ -261,7 +268,12 @@ export function assertLiveProviderId(
 ): ProviderId {
   const provider = assertProviderId(value)
   if (isLiveSelectableProvider(provider)) return provider
-  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityOptInEnabled(settings)) return provider
+  if (
+    provider === ANTIGRAVITY_PROVIDER_ID &&
+    (isAntigravityOptInEnabled(settings) || isAntigravityGeminiApiKeyConfigured())
+  ) {
+    return provider
+  }
   throw new Error(
     `${provider} is unavailable for new runs. Choose ${selectableProviderIds(settings).join(', ')}.`
   )

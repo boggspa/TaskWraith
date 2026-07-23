@@ -37,7 +37,8 @@ import {
   type HumanCollaborationAuditLike
 } from '../collaboration/HumanCollaborationAuditLog'
 import { isTaskWraithMcpProfileReceiptForSession } from '../mcp/McpSessionProfileFence'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { clearPendingProviderChange, readPendingProviderChange } from '../providerChangeQueue'
 import {
   EXTERNAL_PATH_GRANT_METADATA_KEYS,
@@ -1232,12 +1233,21 @@ function assertProviderId(value: unknown): ProviderId {
   throw new Error('Provider is invalid.')
 }
 
+/**
+ * The official agy/CLI AntiGravity lane never dispatches through subthreads,
+ * forks, side chats, or ensemble participants created here (it opens an
+ * external terminal), so it is never admitted regardless of opt-in. The
+ * independent Gemini API-key lane DOES dispatch an in-app turn through the
+ * Gemini kernel, so it is admitted here on a currently configured key alone
+ * -- see `AntigravityGeminiApiKeyConfiguredSignal`.
+ */
 function assertLiveProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
-  if (!isLiveSelectableProvider(provider)) {
-    throw new Error(`${provider} is unavailable for new chats or delegated runs.`)
+  if (isLiveSelectableProvider(provider)) return provider
+  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+    return provider
   }
-  return provider
+  throw new Error(`${provider} is unavailable for new chats or delegated runs.`)
 }
 
 /**

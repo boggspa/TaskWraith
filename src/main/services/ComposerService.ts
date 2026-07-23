@@ -1,5 +1,10 @@
 import type { AgentRunPayload } from '../run/AgentRunTypes'
-import { DEFAULT_PROVIDER, isLiveSelectableProvider } from '../../shared/retiredProviders'
+import {
+  ANTIGRAVITY_PROVIDER_ID,
+  DEFAULT_PROVIDER,
+  isLiveSelectableProvider
+} from '../../shared/retiredProviders'
+import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { composeRunPrompt, type ComposeRunPromptResult } from '../PromptComposition'
 import {
   formatDiscordContextPromptAppendix,
@@ -874,12 +879,20 @@ function assertProviderId(value: unknown): ProviderId {
   throw new Error('Provider is invalid.')
 }
 
+/**
+ * The official agy/CLI AntiGravity lane never dispatches through interactive
+ * compose (it opens an external terminal), so it is never admitted here
+ * regardless of opt-in. The independent Gemini API-key lane DOES dispatch an
+ * in-app turn through the Gemini kernel, so it is admitted here on a
+ * currently configured key alone -- see `AntigravityGeminiApiKeyConfiguredSignal`.
+ */
 function assertLiveProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
-  if (!isLiveSelectableProvider(provider)) {
-    throw new Error(`${provider} is unavailable for new runs.`)
+  if (isLiveSelectableProvider(provider)) return provider
+  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+    return provider
   }
-  return provider
+  throw new Error(`${provider} is unavailable for new runs.`)
 }
 
 function requireNonEmptyString(value: unknown, label: string): string {
