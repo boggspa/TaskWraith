@@ -3012,49 +3012,58 @@ export const TranscriptPanel = memo(
     // chat mounts are baseline (no fold animation on open); reduced motion
     // commits instantly.
     const [foldTick, setFoldTick] = useState(0)
-    const superFoldFirstSeenRef = useRef<Map<string, number>>(new Map())
-    const superFoldBaselineChatRef = useRef<string | null>(null)
+    const superFoldStateRef = useRef<{
+      chatId: string | null
+      seen: Set<string>
+      committed: Set<string>
+    }>({ chatId: null, seen: new Set(), committed: new Set() })
     const foldingSuperGroups = useMemo(() => {
-      void foldTick // re-derives after the commit timer so folds expire
-      if (superGroupByMessageId.size === 0) {
-        superFoldFirstSeenRef.current.clear()
-        return EMPTY_FOLDING_SUPER_GROUPS
-      }
-      const firstSeen = superFoldFirstSeenRef.current
-      const isBaselinePass = superFoldBaselineChatRef.current !== chatId
+      void foldTick // re-derives after the commit timer moves leads to committed
+      if (superGroupByMessageId.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
+      const foldState = superFoldStateRef.current
+      const foldChatId = currentChat?.appChatId ?? null
+      const isBaselinePass = foldState.chatId !== foldChatId
       if (isBaselinePass) {
-        superFoldBaselineChatRef.current = chatId
-        firstSeen.clear()
+        foldState.chatId = foldChatId
+        foldState.seen.clear()
+        foldState.committed.clear()
       }
       const reducedMotion =
+        typeof window !== 'undefined' &&
         typeof window.matchMedia === 'function' &&
         window.matchMedia('(prefers-reduced-motion: reduce)').matches
-      const now = Date.now()
       const liveLeads = new Set<string>()
       const folding = new Set<string>()
       for (const group of superGroupByMessageId.values()) {
         if (liveLeads.has(group.leadId)) continue
         liveLeads.add(group.leadId)
-        let seenAt = firstSeen.get(group.leadId)
-        if (seenAt === undefined) {
-          seenAt = isBaselinePass || reducedMotion ? 0 : now
-          firstSeen.set(group.leadId, seenAt)
+        if (!foldState.seen.has(group.leadId)) {
+          foldState.seen.add(group.leadId)
+          // Baseline (chat open) and reduced motion commit instantly; only
+          // groups that settle while the chat is on screen animate.
+          if (isBaselinePass || reducedMotion) foldState.committed.add(group.leadId)
         }
-        if (now - seenAt < SUPER_FOLD_COMMIT_MS && !expandedSuperGroups.has(group.leadId)) {
+        if (!foldState.committed.has(group.leadId) && !expandedSuperGroups.has(group.leadId)) {
           folding.add(group.leadId)
         }
       }
-      for (const leadId of firstSeen.keys()) {
-        if (!liveLeads.has(leadId)) firstSeen.delete(leadId)
+      for (const leadId of foldState.seen) {
+        if (!liveLeads.has(leadId)) {
+          foldState.seen.delete(leadId)
+          foldState.committed.delete(leadId)
+        }
       }
       return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
-    }, [superGroupByMessageId, expandedSuperGroups, chatId, foldTick])
+    }, [superGroupByMessageId, expandedSuperGroups, currentChat?.appChatId, foldTick])
     useEffect(() => {
       if (foldingSuperGroups.size === 0) return
-      const timer = window.setTimeout(
-        () => setFoldTick((tick) => tick + 1),
-        SUPER_FOLD_COMMIT_MS + 40
-      )
+      // Commit exactly the leads this timer observed; leads that start
+      // folding later re-arm the (cleared) timer and get their own window.
+      const observed = [...foldingSuperGroups]
+      const timer = window.setTimeout(() => {
+        for (const leadId of observed) superFoldStateRef.current.committed.add(leadId)
+        setFoldTick((tick) => tick + 1)
+      }, SUPER_FOLD_COMMIT_MS)
       return () => window.clearTimeout(timer)
     }, [foldingSuperGroups])
     // Rows hidden inside a COLLAPSED super group render an empty block whose
@@ -3663,9 +3672,9 @@ export const TranscriptPanel = memo(
             )
             const superGroupFolding = Boolean(
               superGroup &&
-                !superGroupExpanded &&
-                !isSuperLead &&
-                foldingSuperGroups.has(superGroup.leadId)
+              !superGroupExpanded &&
+              !isSuperLead &&
+              foldingSuperGroups.has(superGroup.leadId)
             )
             const superGroupHidden = Boolean(
               superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
