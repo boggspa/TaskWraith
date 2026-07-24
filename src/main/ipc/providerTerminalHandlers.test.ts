@@ -289,7 +289,10 @@ describe('registerProviderTerminalHandlers', () => {
     })
 
     const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
-    expect(script).toContain("$env:CODEX_HOME = '/tmp/taskwraith/codex-home'")
+    // join() like the product: on a real win32 runner the generated script
+    // carries native separators, so a POSIX literal never matches (its sibling
+    // at line ~263 already does this).
+    expect(script).toContain(`$env:CODEX_HOME = '${join('/tmp/taskwraith', 'codex-home')}'`)
     expect(script).toContain("& '/usr/local/bin/codex' 'login'")
   })
 
