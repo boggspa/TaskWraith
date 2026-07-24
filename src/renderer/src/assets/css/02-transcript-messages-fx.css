@@ -3385,7 +3385,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 
 /* First-party artwork for semantic provider/model labels. The source PNGs
  * stay unmodified; paired monochrome marks switch by the actual app surface.
- * ProviderGlyph remains the monoline fallback and generic-picker asset. */
+ * ProviderGlyph remains the TaskWraith fallback and generic-picker asset. */
 .provider-brand-logo {
   --provider-brand-logo-scale: 1;
   position: relative;

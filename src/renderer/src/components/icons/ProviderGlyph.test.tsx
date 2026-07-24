@@ -32,6 +32,28 @@ describe('ProviderGlyph', () => {
     expect(html.match(/fill-rule="evenodd"/g)).toHaveLength(2)
   })
 
+  it('renders Ensemble as the full-colour Confluence Loom with collision-safe paint ids', () => {
+    const html = renderToStaticMarkup(
+      <>
+        <ProviderGlyph provider="ensemble" />
+        <ProviderGlyph provider="ensemble" />
+      </>
+    )
+    const spectrumIds = Array.from(
+      html.matchAll(/id="(provider-glyph-ensemble-spectrum-[^"]+)"/g),
+      (match) => match[1]
+    )
+
+    expect(new Set(spectrumIds).size).toBe(2)
+    expect(html).toContain('data-brand="antigravity"')
+    expect(html).toContain('data-brand="gemini-google"')
+    expect(html).toContain('provider-glyph-ensemble-hub-')
+    expect(html).toContain('provider-glyph-ensemble-sparkle-')
+    expect(html).toContain('stroke="#000000"')
+    expect(html).toContain('fill="#F8FAFF"')
+    expect(html).not.toContain('M6.6 19.8c.25-3.45')
+  })
+
   it('renders Codex as the approved filled command cloud', () => {
     const html = renderToStaticMarkup(<ProviderGlyph provider="codex" />)
 

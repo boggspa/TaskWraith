@@ -1289,26 +1289,11 @@ function SidebarChatTitleEditable({
 // out of the bundle entirely so the unused-import lint stays clean.
 
 /**
- * `EnsembleSymbolIcon` — two overlapping circles to convey "multiple
- * agents collaborating" in the same thread. Used by the Ensembles sidebar
- * section header and empty-state caption.
+ * Keep the Ensembles empty-state identity on the same canonical artwork used
+ * by chat rows, badges, notifications, and the composer toggle.
  */
 function EnsembleSymbolIcon() {
-  return (
-    <span className="sf-symbol-icon" aria-hidden>
-      <svg
-        viewBox="0 0 16 16"
-        fill="none"
-        stroke="currentColor"
-        strokeWidth="1.3"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-      >
-        <circle cx="6" cy="8" r="3.2" />
-        <circle cx="10" cy="8" r="3.2" />
-      </svg>
-    </span>
-  )
+  return <ProviderGlyph provider="ensemble" className="sidebar-ensemble-symbol-icon" />
 }
 
 /**

@@ -30,6 +30,8 @@ describe('ProviderBadgeIcon', () => {
 
     expect(ensemble).toContain('provider-ensemble')
     expect(ensemble).toContain('provider-glyph-ensemble')
-    expect(ensemble).toContain('M6.6 19.8c.25-3.45')
+    expect(ensemble).toContain('provider-glyph-ensemble-spectrum-')
+    expect(ensemble).toContain('data-brand="antigravity"')
+    expect(ensemble).not.toContain('M6.6 19.8c.25-3.45')
   })
 })

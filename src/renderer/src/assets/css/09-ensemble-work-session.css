@@ -668,11 +668,10 @@
   line-height: 1.4;
 }
 
-.sidebar-ensembles-empty-icon .sf-symbol-icon {
+.sidebar-ensembles-empty-icon .sidebar-ensemble-symbol-icon {
   width: 16px;
   height: 16px;
   margin-top: 2px;
-  color: color-mix(in srgb, var(--sidebar-text) 64%, transparent);
 }
 
 .sidebar-ensembles-empty-copy strong {

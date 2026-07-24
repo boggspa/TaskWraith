@@ -1259,6 +1259,23 @@ describe('Sidebar ensembles section', () => {
     expect(html).toContain('aria-label="New Ensemble"')
   })
 
+  it('uses the canonical Ensemble glyph in the empty state without SF Symbol paint rules', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('ensembles')
+    })
+
+    const html = renderSidebar([])
+    const emptyState = html.slice(
+      html.indexOf('sidebar-ensembles-empty'),
+      html.indexOf('sidebar-ensembles-empty-copy')
+    )
+
+    expect(emptyState).toContain('sidebar-ensemble-symbol-icon')
+    expect(emptyState).toContain('provider-glyph-ensemble')
+    expect(emptyState).toContain('data-brand="antigravity"')
+    expect(emptyState).not.toContain('sf-symbol-icon')
+  })
+
   it('hides the Ensembles section when Ensemble Mode is disabled', () => {
     stubSidebarStorage({})
 
@@ -1304,7 +1321,9 @@ describe('Sidebar ensembles section', () => {
     // 1.0.7), plus the pinned ensemble in the Pinned section. Pinned ensembles
     // are excluded from Recents by selectRecentChats, so only the unpinned one
     // dual-surfaces.
-    expect((html.match(/provider-glyph-ensemble/g) || []).length).toBe(3)
+    expect(
+      (html.match(/class="provider-glyph provider-glyph-ensemble(?:\s|")/g) || []).length
+    ).toBe(3)
     expect(html).not.toContain('sidebar-provider-dot-ensemble')
   })
 
