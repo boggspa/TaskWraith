@@ -129,7 +129,15 @@ describe('AntigravityGeminiApiSecretStore', () => {
     }
   })
 
-  it.each(['gnome_libsecret', 'kwallet', 'kwallet5', 'kwallet6'])(
+  // Writes under linux emulation hit the same POSIX tail as the darwin
+  // round-trip (see ROUND_TRIP_PLATFORMS above) — unsound atop a real win32
+  // fs, natively covered by the Linux CI leg.
+  it.skipIf(process.platform === 'win32').each([
+    'gnome_libsecret',
+    'kwallet',
+    'kwallet5',
+    'kwallet6'
+  ])(
     'accepts the reviewed encrypted Linux backend %s',
     (backend) => {
       emulateProcessPlatform('linux')
