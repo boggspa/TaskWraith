@@ -10,7 +10,7 @@ describe('providerPlanName', () => {
     ['kimi', 'LEVEL_BASIC', 'Moderato'],
     ['kimi', 'LEVEL_BALANCE_ACCOUNT', 'Moderato'],
     ['kimi', 'LEVEL_PRO', 'Allegretto'],
-    ['cursor', 'pro_plus', 'Pro_Plus'],
+    ['cursor', 'pro_plus', 'Pro +'],
     ['grok', 'Free credits with SuperGrok', 'SuperGrok'],
     ['grok', 'SuperGrok Heavy', 'SuperGrok Heavy']
   ] as const)('maps %s %s to %s', (provider, raw, expected) => {

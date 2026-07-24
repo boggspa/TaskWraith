@@ -47,7 +47,7 @@ export function providerPlanName(provider: ProviderId, rawValue: unknown): strin
   }
 
   if (provider === 'cursor') {
-    if (normalized === 'pro_plus') return 'Pro_Plus'
+    if (normalized === 'pro_plus') return 'Pro +'
     if (normalized === 'pro') return 'Pro'
     if (normalized === 'free') return 'Free'
     if (normalized === 'business') return 'Business'
