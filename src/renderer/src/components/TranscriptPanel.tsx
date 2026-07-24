@@ -220,16 +220,20 @@ function WorkingContextPressureHint({
   estimatedTokens: number
 }): ReactElement | null {
   const [quiet, setQuiet] = useState(false)
-  const lastGrowthRef = useRef<{ tokens: number; atMs: number }>({
-    tokens: estimatedTokens,
-    atMs: Date.now()
-  })
-  if (estimatedTokens !== lastGrowthRef.current.tokens) {
-    lastGrowthRef.current = { tokens: estimatedTokens, atMs: Date.now() }
-  }
+  // Growth timestamps are recorded in an effect keyed on estimatedTokens
+  // (render-time ref writes + Date.now() violate react-hooks/purity); the
+  // one-commit lag is irrelevant against the 20s stall threshold. Null until
+  // the first commit, which the interval reads as "not quiet yet".
+  const lastGrowthAtMsRef = useRef<number | null>(null)
+  useEffect(() => {
+    lastGrowthAtMsRef.current = Date.now()
+  }, [estimatedTokens])
   useEffect(() => {
     const timer = window.setInterval(() => {
-      setQuiet(Date.now() - lastGrowthRef.current.atMs >= WORKING_QUIET_COMPACTION_MS)
+      const lastGrowthAtMs = lastGrowthAtMsRef.current
+      setQuiet(
+        lastGrowthAtMs !== null && Date.now() - lastGrowthAtMs >= WORKING_QUIET_COMPACTION_MS
+      )
     }, 1000)
     return () => window.clearInterval(timer)
   }, [])
