@@ -1965,23 +1965,15 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-17","kind":"addition","title":"New Additions","body":"K3, K2.7 Coding Highspeed, the GPT-5.6 Luna/Terra/Sol trio, Grok 4.5 Fast, and four new local Ollama models are all available now.","tone":"default","accent":"default","dismissible":true,"groups":[
-            {"provider":"codex","label":"Codex","models":[
-              {"name":"GPT-5.6-Luna","blurb":"Fast and affordable agentic coding — with the Max reasoning tier."},
-              {"name":"GPT-5.6-Terra","blurb":"Balanced agentic coding for everyday work — Max and Ultra reasoning tiers."},
-              {"name":"GPT-5.6-Sol","blurb":"Latest frontier agentic coding model — Max and Ultra reasoning tiers."}
+          {"id":"new-additions-2026-07-24","kind":"addition","title":"New Additions","body":"AntiGravity is here — bring your own Gemini API key for Gemini 3.1 Pro, 3.1 Flash-Lite, and the 2.5 family (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"antigravity","label":"AntiGravity","models":[
+              {"name":"Gemini 3.1 Pro","blurb":"Google's frontier reasoning and coding model — bring your own Gemini API key."},
+              {"name":"Gemini 3.1 Flash-Lite","blurb":"Fast, economical agentic runs on the same key — ideal for quick passes and fan-out seats."},
+              {"name":"Gemini 2.5 Pro + Flash","blurb":"The proven 2.5 family stays selectable, with an estimated-spend meter and a soft monthly budget."}
             ]},
             {"provider":"kimi","label":"Kimi","models":[
               {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."},
               {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
-            ]},
-            {"provider":"grok","label":"Grok","models":[
-              {"name":"Grok 4.5 Fast","blurb":"xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."}
-            ]},
-            {"provider":"ollama","label":"Ollama","models":[
-              {"name":"Deep Reinforce - Ornith 9B + Ornith 35B","blurb":"Open-source 262K-context coding models — local inference.","accentProvider":"deep-reinforce"},
-              {"name":"Liquid - LFM 2.5 8B-A1B","blurb":"A 131K-context local tool/thinking model for agentic coding — local inference.","accentProvider":"liquid"},
-              {"name":"Poolside - Laguna XS 2.1 33B-A3B Q8","blurb":"A 262K-context local coding model with tool use and thinking — local inference.","accentProvider":"poolside"}
             ]}
           ]}
          ],

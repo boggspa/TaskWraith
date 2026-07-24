@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-17'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-24'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,26 +137,31 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'K3, K2.7 Coding Highspeed, the GPT-5.6 Luna/Terra/Sol trio, Grok 4.5 Fast, and four new local Ollama models are all available now.',
+    body: 'AntiGravity is here — bring your own Gemini API key for Gemini 3.1 Pro, 3.1 Flash-Lite, and the 2.5 family (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.',
     dismissible: true,
     groups: [
       {
-        provider: 'codex',
-        label: 'Codex',
-        // Official GA metadata (2026-07-09): 1M+ raw context on all three,
-        // Max on all three, and the Ultra tier on Sol + Terra.
+        // The Gemini API-key (BYOK) lane only — the agy CLI lane stays behind
+        // its own informed-consent card and is never advertised here. Model
+        // names mirror the curated static fallback rows
+        // (AntigravityGeminiApiStaticModels) with the product prefix restored
+        // for recognition outside the ANTIGRAVITY picker header.
+        provider: 'antigravity',
+        label: 'AntiGravity',
         models: [
           {
-            name: 'GPT-5.6-Luna',
-            blurb: 'Fast and affordable agentic coding — with the Max reasoning tier.'
+            name: 'Gemini 3.1 Pro',
+            blurb: "Google's frontier reasoning and coding model — bring your own Gemini API key."
           },
           {
-            name: 'GPT-5.6-Terra',
-            blurb: 'Balanced agentic coding for everyday work — Max and Ultra reasoning tiers.'
+            name: 'Gemini 3.1 Flash-Lite',
+            blurb:
+              'Fast, economical agentic runs on the same key — ideal for quick passes and fan-out seats.'
           },
           {
-            name: 'GPT-5.6-Sol',
-            blurb: 'Latest frontier agentic coding model — Max and Ultra reasoning tiers.'
+            name: 'Gemini 2.5 Pro + Flash',
+            blurb:
+              'The proven 2.5 family stays selectable, with an estimated-spend meter and a soft monthly budget.'
           }
         ]
       },
@@ -173,39 +178,6 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'K2.7 Coding Highspeed',
             blurb:
               'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
-          }
-        ]
-      },
-      {
-        provider: 'grok',
-        label: 'Grok',
-        models: [
-          {
-            name: 'Grok 4.5 Fast',
-            blurb:
-              "xAI's 500K-context coding model behind Grok Build, with Low/Medium/High reasoning."
-          }
-        ]
-      },
-      {
-        provider: 'ollama',
-        label: 'Ollama',
-        models: [
-          {
-            name: 'Deep Reinforce - Ornith 9B + Ornith 35B',
-            blurb: 'Open-source 262K-context coding models — local inference.',
-            accentProvider: 'deep-reinforce'
-          },
-          {
-            name: 'Liquid - LFM 2.5 8B-A1B',
-            blurb: 'A 131K-context local tool/thinking model for agentic coding — local inference.',
-            accentProvider: 'liquid'
-          },
-          {
-            name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
-            blurb:
-              'A 262K-context local coding model with tool use and thinking — local inference.',
-            accentProvider: 'poolside'
           }
         ]
       }

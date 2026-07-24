@@ -309,12 +309,19 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
-      'codex',
-      'kimi',
-      'grok',
-      'ollama'
+      'antigravity',
+      'kimi'
     ])
     expect(newAdditions?.groups?.some((group) => group.provider === 'claude')).toBe(false)
+    const antigravityGroup = newAdditions?.groups?.find(
+      (group) => group.provider === 'antigravity'
+    )
+    expect(antigravityGroup?.models[0]).toEqual(
+      expect.objectContaining({
+        name: 'Gemini 3.1 Pro',
+        blurb: expect.stringMatching(/bring your own Gemini API key/)
+      })
+    )
     const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
     expect(kimiGroup?.models).toEqual([
       expect.objectContaining({
@@ -326,11 +333,6 @@ describe('buildRemoteFirstLaunchState', () => {
         blurb: expect.stringMatching(/5–6×.*Fast mode/)
       })
     ])
-    const ollamaGroup = newAdditions?.groups?.find((group) => group.provider === 'ollama')
-    expect(ollamaGroup?.models.at(-1)).toMatchObject({
-      name: 'Poolside - Laguna XS 2.1 33B-A3B Q8',
-      accentProvider: 'poolside'
-    })
   })
 
   it('surfaces stale usage snapshots and no-workspace access without leaking setup internals', () => {

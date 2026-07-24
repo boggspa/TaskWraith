@@ -147,17 +147,23 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['codex', 'kimi', 'grok', 'ollama'])
-    expect(groups.map((g) => g.label)).toEqual(['Codex', 'Kimi', 'Grok', 'Ollama'])
+    expect(groups.map((g) => g.provider)).toEqual(['antigravity', 'kimi'])
+    expect(groups.map((g) => g.label)).toEqual(['AntiGravity', 'Kimi'])
     expect(groups.some((g) => g.provider === 'claude')).toBe(false)
 
-    const codex = groups.find((g) => g.provider === 'codex')
-    // Official hyphenated display names (GA 2026-07-09).
-    expect(codex?.models.map((m) => m.name)).toEqual([
-      'GPT-5.6-Luna',
-      'GPT-5.6-Terra',
-      'GPT-5.6-Sol'
+    const antigravity = groups.find((g) => g.provider === 'antigravity')
+    // BYOK Gemini API lane only — mirrors the curated static fallback rows;
+    // the consent-gated agy CLI lane is deliberately not advertised.
+    expect(antigravity?.models.map((m) => m.name)).toEqual([
+      'Gemini 3.1 Pro',
+      'Gemini 3.1 Flash-Lite',
+      'Gemini 2.5 Pro + Flash'
     ])
+    expect(antigravity?.models[0]?.blurb).toContain('bring your own Gemini API key')
+    expect(antigravity?.models[2]?.blurb).toContain('spend meter')
+    for (const model of antigravity?.models ?? []) {
+      expect(model.blurb).not.toMatch(/agy|ban|OAuth/i)
+    }
 
     const kimi = groups.find((g) => g.provider === 'kimi')
     expect(kimi?.models).toEqual([
@@ -172,27 +178,6 @@ describe('notification registry', () => {
           'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
       }
     ])
-
-    const grok = groups.find((g) => g.provider === 'grok')
-    expect(grok?.models.map((m) => m.name)).toEqual(['Grok 4.5 Fast'])
-
-    const ollama = groups.find((g) => g.provider === 'ollama')
-    expect(ollama?.models.map((m) => m.name)).toEqual([
-      'Deep Reinforce - Ornith 9B + Ornith 35B',
-      'Liquid - LFM 2.5 8B-A1B',
-      'Poolside - Laguna XS 2.1 33B-A3B Q8'
-    ])
-    expect(ollama?.models.map((model) => model.accentProvider)).toEqual([
-      'deep-reinforce',
-      'liquid',
-      'poolside'
-    ])
-    // Local models advertise "local inference" — not account/billing framing.
-    for (const model of ollama?.models ?? []) {
-      expect(model.blurb).toMatch(/local inference\.$/)
-      expect(model.blurb).not.toContain('no cloud account')
-      expect(model.blurb).not.toContain('per-token')
-    }
 
     for (const group of groups) {
       for (const model of group.models) {
