@@ -535,10 +535,11 @@ describe('loadExternalProviderUsageRecords', () => {
         now: new Date('2026-05-31T23:00:00.000Z')
       })
 
-      expect(records.filter((record) => record.provider === 'codex')).toHaveLength(270)
-      expect(
-        records.some((record) => record.provider === 'codex' && record.totalTokens === 269)
-      ).toBe(true)
+      // Records leave the scan time-bucketed; every source file must still be
+      // represented (runCount) with all its tokens (269 files × 2 + one 269).
+      const codex = records.filter((record) => record.provider === 'codex')
+      expect(codex.reduce((sum, record) => sum + (record.runCount ?? 1), 0)).toBe(270)
+      expect(codex.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(269 * 2 + 269)
     } finally {
       await rm(homeDir, { recursive: true, force: true })
     }
@@ -601,7 +602,9 @@ describe('loadExternalProviderUsageRecords', () => {
       })
       const claudeRecords = records.filter((record) => record.provider === 'claude')
 
-      expect(claudeRecords).toHaveLength(271)
+      // Time-bucketed: all 271 source sessions must survive (runCount), and
+      // the older heavy opus session keeps its own (model, hour) bucket.
+      expect(claudeRecords.reduce((sum, record) => sum + (record.runCount ?? 1), 0)).toBe(271)
       expect(claudeRecords.some((record) => record.totalTokens === 10_000)).toBe(true)
     } finally {
       await rm(homeDir, { recursive: true, force: true })
@@ -1127,7 +1130,7 @@ describe('getExternalUsageCached front door', () => {
   it('merges forwarded cursor records without clobbering other providers', async () => {
     const codex = usageRecord('c1', 'codex', Date.now())
     const cursorOld = usageRecord('cu-old', 'cursor', Date.now() - 5000)
-    const cursorNew = usageRecord('cu-new', 'cursor', Date.now())
+    const cursorNew = { ...usageRecord('cu-new', 'cursor', Date.now()), totalTokens: 40 }
     setExternalScanDriver(async () => [codex, cursorOld])
     await getExternalUsageCached()
 
@@ -1137,8 +1140,12 @@ describe('getExternalUsageCached front door', () => {
 
     expect(updates.length).toBe(1)
     const merged = updates[0]
+    // Non-cursor providers pass through untouched; the cursor subset is
+    // REPLACED by the (time-bucketed) new set — the old 100-token record is
+    // gone and the new 40-token one is fully represented.
     expect(merged).toContainEqual(codex)
-    expect(merged).toContainEqual(cursorNew)
-    expect(merged).not.toContainEqual(cursorOld)
+    const cursor = merged.filter((record) => record.provider === 'cursor')
+    expect(cursor.reduce((sum, record) => sum + record.totalTokens, 0)).toBe(40)
+    expect(cursor.reduce((sum, record) => sum + (record.runCount ?? 1), 0)).toBe(1)
   })
 })

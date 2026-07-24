@@ -4006,6 +4006,10 @@ export interface UsageRecord {
   cacheReadInputTokens?: number
   /** Input tokens written to a provider prompt cache. */
   cacheCreationInputTokens?: number
+  /** Source records folded into this row when it is a time-bucket aggregate
+   * (external activity scan). Count consumers must add `runCount ?? 1`, never
+   * 1 per record. Absent on ordinary single-run records. */
+  runCount?: number
   /** Ensemble prompt shell selected for this participant dispatch. */
   ensemblePromptKind?: 'full' | 'slim'
   /** Character count of the canonical dynamic-state replacement block. */

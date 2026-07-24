@@ -11,6 +11,7 @@ import {
   externalActivityRecordTokens,
   externalActivityWindowBounds
 } from '../shared/usageAccounting'
+import { aggregateExternalUsageRecords } from '../shared/externalUsageBuckets'
 import {
   loadCursorIdeUsageEvents,
   prewarmCursorIdeUsageCache,
@@ -288,12 +289,17 @@ export function setCursorRecordsForwarder(fn: ((records: UsageRecord[]) => void)
  * chunk listener and records forwarded from the worker process. */
 export function applyCursorUsageRecords(cursorRecords: UsageRecord[]): void {
   if (cursorRecords.length === 0) return
+  // Cursor chunk sets bypass loadExternalProviderUsageRecords, so bucket them
+  // here — each update carries the COMPLETE cursor set (the merge below
+  // replaces the provider subset wholesale), and aggregation is idempotent,
+  // so worker-forwarded sets that were already bucketed re-group unchanged.
+  const bucketed = aggregateExternalUsageRecords(cursorRecords, Date.now())
   if (!externalUsageCache) {
-    commitExternalUsageRecords(cursorRecords)
+    commitExternalUsageRecords(bucketed)
     return
   }
   const other = externalUsageCache.records.filter((record) => record.provider !== 'cursor')
-  commitExternalUsageRecords([...other, ...cursorRecords].sort((a, b) => b.timestamp - a.timestamp))
+  commitExternalUsageRecords([...other, ...bucketed].sort((a, b) => b.timestamp - a.timestamp))
 }
 
 function replaceCachedCursorExternalRecords(
@@ -532,7 +538,13 @@ export async function loadExternalProviderUsageRecords(
     const record = eventToUsageRecord(event)
     if (record) byId.set(record.id, record)
   }
-  return [...byId.values()].sort((a, b) => b.timestamp - a.timestamp)
+  // Collapse per-turn records into wall-clock buckets BEFORE they leave the
+  // scan. This is the choke point both drivers share, so the worker's
+  // postMessage payload, main's cached record set, the get-external-usage IPC
+  // response, and the renderer's contextBridge copy all shrink from ~1.4M
+  // records to a few thousand — the unaggregated array was the launch-stall
+  // (see shared/externalUsageBuckets.ts).
+  return aggregateExternalUsageRecords([...byId.values()], now.getTime())
 }
 
 async function safeRead(

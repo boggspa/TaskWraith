@@ -30,6 +30,7 @@
 
 import type { ProviderId, UsageRecord } from '../../../main/store/types'
 import { estimateUsageRecordCostUsd, usageRecordInputTokens, type RendererProviderRates } from './providerRateEstimate'
+import { usageRecordRunCount } from '../../../shared/externalUsageBuckets'
 import { formatCost, type DisplayCurrency } from './formatCost'
 
 /** Rolling window keys for the per-provider spend rows. */
@@ -225,10 +226,12 @@ export function buildApiSpendByProvider(
     const tokensOut = toNonNegative(record.outputTokens)
     const costUsd = recordCostUsd(record, rates)
 
+    // External records may be time-bucket aggregates standing for many runs.
+    const runCount = usageRecordRunCount(record)
     const apply = (acc: SpendAccumulator) => {
       acc.tokensIn += tokensIn
       acc.tokensOut += tokensOut
-      acc.runs += 1
+      acc.runs += runCount
       acc.costUsd += costUsd
     }
 
@@ -308,7 +311,7 @@ export function buildProviderCalendarMonthSpend(
     if (!Number.isFinite(timestamp) || timestamp > now || timestamp < monthStart) continue
     const costUsd = recordCostUsd(record, rates)
     if (costUsd > 0) spentUsd += costUsd
-    runs += 1
+    runs += usageRecordRunCount(record)
   }
 
   const cap = Number.isFinite(capUsd) && (capUsd as number) > 0 ? (capUsd as number) : null

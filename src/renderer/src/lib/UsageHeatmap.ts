@@ -16,6 +16,7 @@ import {
   externalActivityRecordTokens,
   externalActivityWindowBounds
 } from '../../../shared/usageAccounting'
+import { usageRecordRunCount } from '../../../shared/externalUsageBuckets'
 
 export const HEATMAP_COLUMNS = 30 // days (default sidebar window)
 export const HEATMAP_ROWS = 12 // 2-hour buckets per day (00-02, 02-04, …, 22-24)
@@ -120,8 +121,10 @@ export function buildHeatmapGrid(
     const tokens = externalActivityRecordTokens(record)
     // External-provider activity sources such as Cursor can report "used in
     // this bucket" without a token estimate. Keep those cells visible while
-    // leaving token totals honest at zero.
-    const visualWeight = tokens > 0 ? tokens : 50
+    // leaving token totals honest at zero. A time-bucket aggregate stands for
+    // `runCount` source records, so the synthetic weight scales with it.
+    const runCount = usageRecordRunCount(record)
+    const visualWeight = tokens > 0 ? tokens : 50 * runCount
 
     const eventDate = new Date(record.timestamp)
     const dayOffset = Math.floor((eventDate.getTime() - startMs) / oneDayMs)
@@ -138,7 +141,7 @@ export function buildHeatmapGrid(
     }
     bucket.totalTokens += tokens
     bucket.visualWeight += visualWeight
-    bucket.eventCount += 1
+    bucket.eventCount += runCount
     if (record.provider) {
       bucket.providerTokens.set(
         record.provider,

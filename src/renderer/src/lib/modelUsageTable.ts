@@ -46,6 +46,7 @@ import {
   usageRecordInputTokens,
   type RendererProviderRates
 } from './providerRateEstimate'
+import { usageRecordRunCount } from '../../../shared/externalUsageBuckets'
 import { formatCost, type DisplayCurrency } from './formatCost'
 
 /** Rolling window keys for the per-model rows (shortest → longest). */
@@ -440,10 +441,12 @@ export function buildModelUsageTable(
         modelMap.set(modelKey, windowSet)
       }
 
+      // External records may be time-bucket aggregates standing for many runs.
+      const runCount = usageRecordRunCount(record)
       const apply = (acc: UsageAccumulator) => {
         acc.tokensIn += tokensIn
         acc.tokensOut += tokensOut
-        acc.runs += 1
+        acc.runs += runCount
         acc.costUsd += costUsd
       }
 
