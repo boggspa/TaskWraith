@@ -3,9 +3,11 @@ import type { MutableRefObject, RefObject } from 'react'
 
 import {
   CODE_BLOCK_RESIZE_EVENT,
+  LIVE_EDGE_PROXIMITY_PX,
   STICK_ENGAGE_PX,
   advanceExternalRestoreLifecycle,
   captureChatScrollState,
+  countJumpToLatestCountableMessages,
   expectedBottomScrollTop,
   hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
@@ -147,7 +149,15 @@ export function useTranscriptScrollState({
     targetChatId: string | null
     messageId: string
   } | null>(null)
+  // Whether the viewport is genuinely above the live-edge band. Follow
+  // ownership alone cannot answer this: shrink clamps and contained
+  // live-activity viewports leave follow off while the reader still sees the
+  // scroller's bottom, and a pill shown there jumps nowhere. Synced from live
+  // geometry at every seam that can move it (scroll evaluate, content resize,
+  // message layout, chat switch).
+  const [awayFromLiveEdge, setAwayFromLiveEdge] = useState(false)
   const unreadFromBottomCountRef = useRef(0)
+  const awayFromLiveEdgeRef = useRef(false)
   const previousMessagesCountRef = useRef<{ chatId: string | null; count: number }>({
     chatId: null,
     count: 0
@@ -370,6 +380,30 @@ export function useTranscriptScrollState({
     [scheduleProgrammaticScrollTargetClear]
   )
 
+  // Re-derive `awayFromLiveEdge` from live scroller geometry. Reaching the
+  // band also clears the unread tally: at the live edge everything below the
+  // fold has been seen, and a count held past that point would resurface as a
+  // stale pill the next time content grows. Idempotent and cheap, so every
+  // geometry seam calls it unconditionally.
+  const syncLiveEdgeProximity = useCallback(
+    (scroller?: HTMLElement | null) => {
+      const node = scroller ?? transcriptScrollRef.current
+      if (!node) return
+      const distanceFromBottom = node.scrollHeight - node.scrollTop - node.clientHeight
+      if (!Number.isFinite(distanceFromBottom)) return
+      const away = distanceFromBottom > LIVE_EDGE_PROXIMITY_PX
+      if (!away && unreadFromBottomCountRef.current !== 0) {
+        unreadFromBottomCountRef.current = 0
+        setUnreadFromBottomCount(0)
+      }
+      if (awayFromLiveEdgeRef.current !== away) {
+        awayFromLiveEdgeRef.current = away
+        setAwayFromLiveEdge(away)
+      }
+    },
+    [transcriptScrollRef]
+  )
+
   const disengageIfLiveScrollShowsUserAway = useCallback(
     (scroller: HTMLElement): boolean => {
       const nextScrollTop = scroller.scrollTop
@@ -474,6 +508,10 @@ export function useTranscriptScrollState({
       const previousScrollTop = lastTranscriptScrollTopRef.current
       const nextScrollTop = scroller.scrollTop
       const distanceFromBottom = scroller.scrollHeight - nextScrollTop - scroller.clientHeight
+      // Every scroll — user, clamp, or programmatic — can move the viewport
+      // across the live-edge band; keep the pill's proximity gate current
+      // before any of the early returns below.
+      syncLiveEdgeProximity(scroller)
       if (distanceFromBottom <= STICK_ENGAGE_PX) {
         // The live edge is reached by any means — a jump flight (smooth or
         // snapped short by the messages effect) has arrived.
@@ -608,7 +646,14 @@ export function useTranscriptScrollState({
       scroller.removeEventListener('scroll', onScroll)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, clearProgrammaticScrollTarget, setAutoFollow, snapScrollToBottom, transcriptMounted])
+  }, [
+    chatId,
+    clearProgrammaticScrollTarget,
+    setAutoFollow,
+    snapScrollToBottom,
+    syncLiveEdgeProximity,
+    transcriptMounted
+  ])
 
   useEffect(() => {
     return () => clearProgrammaticScrollTarget()
@@ -750,6 +795,7 @@ export function useTranscriptScrollState({
         rafId = null
         const node = transcriptScrollRef.current
         if (!node) return
+        syncLiveEdgeProximity(node)
         if (disengageIfLiveScrollShowsUserAway(node)) return
         if (
           !shouldRepinAfterCodeBlockResize({
@@ -768,7 +814,13 @@ export function useTranscriptScrollState({
       scroller.removeEventListener(CODE_BLOCK_RESIZE_EVENT, onCodeBlockResize)
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom, transcriptMounted])
+  }, [
+    chatId,
+    disengageIfLiveScrollShowsUserAway,
+    snapScrollToBottom,
+    syncLiveEdgeProximity,
+    transcriptMounted
+  ])
 
   useEffect(() => {
     if (!transcriptMounted) return
@@ -784,6 +836,11 @@ export function useTranscriptScrollState({
         rafId = null
         const node = transcriptScrollRef.current
         if (!node) return
+        // Streamed growth below a stationary reader arrives here (no scroll
+        // event fires for them) — this sync is what flips the pill's
+        // proximity gate on when real content extends past the band, and off
+        // again when a shrink clamp lands them back at the tail.
+        syncLiveEdgeProximity(node)
         if (disengageIfLiveScrollShowsUserAway(node)) return
         if (
           !shouldRepinAfterTranscriptResize({
@@ -802,10 +859,22 @@ export function useTranscriptScrollState({
       observer.disconnect()
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [chatId, disengageIfLiveScrollShowsUserAway, snapScrollToBottom, transcriptMounted])
+  }, [
+    chatId,
+    disengageIfLiveScrollShowsUserAway,
+    snapScrollToBottom,
+    syncLiveEdgeProximity,
+    transcriptMounted
+  ])
 
   useLayoutEffect(() => {
-    const currentMessageCount = messages?.length ?? 0
+    // Both the baseline and the delta count only conversational messages
+    // (user/assistant/error bubbles, guest replies, attention cards). Raw
+    // array length also grows for every tool batch and system lifecycle row a
+    // run appends — machinery that renders inside existing stack rows'
+    // contained viewports — which inflated the pill to "44 new messages"
+    // while nothing new existed below the reader.
+    const currentMessageCount = countJumpToLatestCountableMessages(messages)
     const sameChatAsBaseline = previousMessagesCountRef.current.chatId === chatId
     const deltaSinceLastPass = sameChatAsBaseline
       ? currentMessageCount - previousMessagesCountRef.current.count
@@ -827,20 +896,28 @@ export function useTranscriptScrollState({
 
     if (!autoFollowRef.current) {
       incrementUnreadIfNewMessagesArrived()
+      // Layout has already committed the new rows — read the resulting
+      // geometry so the pill's proximity gate reflects this very update
+      // (and an increment that landed while the reader still sees the live
+      // edge is immediately cleared instead of surfacing as a phantom pill).
+      syncLiveEdgeProximity()
       return
     }
     const scroller = transcriptScrollRef.current
     if (!scroller) return
     if (userScrolledAwayInFrameRef.current) {
       incrementUnreadIfNewMessagesArrived()
+      syncLiveEdgeProximity(scroller)
       return
     }
     if (disengageIfLiveScrollShowsUserAway(scroller)) {
       incrementUnreadIfNewMessagesArrived()
+      syncLiveEdgeProximity(scroller)
       return
     }
     userScrolledAwayInFrameRef.current = false
     snapScrollToBottom(scroller)
+    syncLiveEdgeProximity(scroller)
     repinRafIdRef.current = requestAnimationFrame(() => {
       repinRafIdRef.current = null
       const node = transcriptScrollRef.current
@@ -855,6 +932,7 @@ export function useTranscriptScrollState({
         return
       }
       snapScrollToBottom(node)
+      syncLiveEdgeProximity(node)
     })
     return () => {
       if (repinRafIdRef.current !== null) {
@@ -862,7 +940,14 @@ export function useTranscriptScrollState({
         repinRafIdRef.current = null
       }
     }
-  }, [chatId, disengageIfLiveScrollShowsUserAway, messages, runCompleteNotice, snapScrollToBottom])
+  }, [
+    chatId,
+    disengageIfLiveScrollShowsUserAway,
+    messages,
+    runCompleteNotice,
+    snapScrollToBottom,
+    syncLiveEdgeProximity
+  ])
 
   useEffect(() => {
     if (!transcriptMounted) return
@@ -901,10 +986,17 @@ export function useTranscriptScrollState({
       unreadFromBottomCountRef.current = 0
       setUnreadFromBottomCount(0)
     }
+    // Same countable metric as the message layout effect — a raw-length
+    // baseline here would poison every unread delta until the counts happened
+    // to re-align.
     previousMessagesCountRef.current = {
       chatId,
-      count: messages?.length ?? 0
+      count: countJumpToLatestCountableMessages(messages)
     }
+    // Restore/snap writes below re-sync through their scroll events; this
+    // covers the degenerate paths that never move scrollTop (short chats,
+    // landing geometry identical to the previous chat's).
+    syncLiveEdgeProximity(scroller)
     let cancelRestore = () => {}
     const rafId = requestAnimationFrame(() => {
       const hasStillPendingManualJump = Boolean(
@@ -953,7 +1045,8 @@ export function useTranscriptScrollState({
     showJumpToLatestPill: shouldShowJumpToLatestPill({
       autoFollow: autoFollowActive,
       unreadCount: unreadFromBottomCount,
-      streamingActive: streamingActive === true
+      streamingActive: streamingActive === true,
+      awayFromLiveEdge
     }),
     handleJumpToLatest,
     relockToLatest,

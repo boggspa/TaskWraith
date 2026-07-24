@@ -7,11 +7,13 @@ import {
   STICK_DISENGAGE_PX,
   PROGRAMMATIC_SCROLL_EPSILON_PX,
   captureChatScrollState,
+  countJumpToLatestCountableMessages,
   expectedBottomScrollTop,
   hasExplicitTranscriptScrollAwayIntent,
   hasRecentTranscriptDownwardIntent,
   isEditableTranscriptKeyTarget,
   isExpectedProgrammaticScroll,
+  isJumpToLatestCountableMessage,
   isTranscriptScrollbarPointer,
   normalizeChatScrollState,
   restoreChatScrollAnchor,
@@ -1401,31 +1403,69 @@ describe('TranscriptScroll', () => {
       // The pill is a "jump to where new content is" affordance. When
       // the transcript is sticky-bottom the user already sees new
       // content, so the pill would be visual noise.
-      expect(shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 0 })).toBe(false)
-      expect(shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 5 })).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 0, awayFromLiveEdge: true })
+      ).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 5, awayFromLiveEdge: true })
+      ).toBe(false)
     })
 
     it('hides the pill when there are no unread messages', () => {
       // Even when the user has scrolled up, an empty counter means
       // nothing new arrived while they were reading — nothing to
       // advertise.
-      expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0 })).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0, awayFromLiveEdge: true })
+      ).toBe(false)
     })
 
     it('shows the pill when scrolled away AND at least one new message arrived', () => {
       // The intended use case: user is reading older content while
       // messages stream in below. Pill surfaces "↓ N new messages".
-      expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 1 })).toBe(true)
-      expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 47 })).toBe(true)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 1, awayFromLiveEdge: true })
+      ).toBe(true)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 47, awayFromLiveEdge: true })
+      ).toBe(true)
+    })
+
+    it('hides the pill while the viewport still shows the live edge', () => {
+      // Follow can be off with the reader parked at the tail: shrink clamps
+      // land there without re-arming follow, and contained live-activity
+      // viewports churn without growing the outer scroller. A pill there
+      // would "jump" to where the user already is.
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 5, awayFromLiveEdge: false })
+      ).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({
+          autoFollow: false,
+          unreadCount: 0,
+          streamingActive: true,
+          awayFromLiveEdge: false
+        })
+      ).toBe(false)
     })
 
     it('treats non-finite unread counts as zero (no pill)', () => {
       // Defensive parity with shouldEngageAutoFollow's NaN guard: a
       // partially-initialised or corrupted counter must not bleed
       // through as a visible pill.
-      expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: Number.NaN })).toBe(false)
       expect(
-        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: Number.POSITIVE_INFINITY })
+        shouldShowJumpToLatestPill({
+          autoFollow: false,
+          unreadCount: Number.NaN,
+          awayFromLiveEdge: true
+        })
+      ).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({
+          autoFollow: false,
+          unreadCount: Number.POSITIVE_INFINITY,
+          awayFromLiveEdge: true
+        })
       ).toBe(false)
     })
 
@@ -1433,7 +1473,9 @@ describe('TranscriptScroll', () => {
       // A negative delta should never reach this helper, but guard
       // against an off-by-one reset bug from the caller — show
       // nothing rather than a confusing "↓ -2 new messages".
-      expect(shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: -1 })).toBe(false)
+      expect(
+        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: -1, awayFromLiveEdge: true })
+      ).toBe(false)
     })
 
     it('shows the pill during an active stream even with zero unread messages', () => {
@@ -1441,20 +1483,111 @@ describe('TranscriptScroll', () => {
       // unread number, so a user who scrolled up mid-answer needs the
       // affordance from the streaming signal instead.
       expect(
-        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0, streamingActive: true })
+        shouldShowJumpToLatestPill({
+          autoFollow: false,
+          unreadCount: 0,
+          streamingActive: true,
+          awayFromLiveEdge: true
+        })
       ).toBe(true)
     })
 
     it('never shows the pill while auto-follow is engaged, streaming or not', () => {
       expect(
-        shouldShowJumpToLatestPill({ autoFollow: true, unreadCount: 0, streamingActive: true })
+        shouldShowJumpToLatestPill({
+          autoFollow: true,
+          unreadCount: 0,
+          streamingActive: true,
+          awayFromLiveEdge: true
+        })
       ).toBe(false)
     })
 
     it('hides the pill after the stream ends when nothing is unread', () => {
       expect(
-        shouldShowJumpToLatestPill({ autoFollow: false, unreadCount: 0, streamingActive: false })
+        shouldShowJumpToLatestPill({
+          autoFollow: false,
+          unreadCount: 0,
+          streamingActive: false,
+          awayFromLiveEdge: true
+        })
       ).toBe(false)
+    })
+  })
+
+  describe('isJumpToLatestCountableMessage / countJumpToLatestCountableMessages', () => {
+    it('counts conversational bubbles and skips run machinery', () => {
+      // The pill promises "N new MESSAGES". Tool activity batches and
+      // system lifecycle rows are run machinery — most of it renders inside
+      // an existing stack row's contained viewport, so counting it both
+      // inflates the number and advertises content that is not below the
+      // reader at all.
+      expect(isJumpToLatestCountableMessage({ role: 'user' })).toBe(true)
+      expect(isJumpToLatestCountableMessage({ role: 'assistant' })).toBe(true)
+      expect(isJumpToLatestCountableMessage({ role: 'error' })).toBe(true)
+      expect(isJumpToLatestCountableMessage({ role: 'tool', toolActivities: [{}] })).toBe(false)
+      expect(isJumpToLatestCountableMessage({ role: 'system' })).toBe(false)
+    })
+
+    it('counts assistant-style and attention cards stored under machinery roles', () => {
+      // Guest replies persist as system/tool rows but render as assistant
+      // bubbles; questions/plan choices/approvals demand user input. All of
+      // them are exactly what a scrolled-up reader must not miss.
+      expect(
+        isJumpToLatestCountableMessage({
+          role: 'system',
+          metadata: { kind: 'guestParticipantReply' }
+        })
+      ).toBe(true)
+      expect(
+        isJumpToLatestCountableMessage({
+          role: 'tool',
+          metadata: { kind: 'guestParticipantReply' }
+        })
+      ).toBe(true)
+      expect(
+        isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'agentQuestion' } })
+      ).toBe(true)
+      expect(
+        isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'planChoice' } })
+      ).toBe(true)
+      expect(
+        isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'pendingApproval' } })
+      ).toBe(true)
+    })
+
+    it('treats sub-thread and closeout chrome as machinery', () => {
+      expect(
+        isJumpToLatestCountableMessage({ role: 'tool', metadata: { kind: 'subThreadReturn' } })
+      ).toBe(false)
+      expect(
+        isJumpToLatestCountableMessage({ role: 'system', metadata: { kind: 'contextCompaction' } })
+      ).toBe(false)
+    })
+
+    it('is defensive against malformed entries', () => {
+      expect(isJumpToLatestCountableMessage(null)).toBe(false)
+      expect(isJumpToLatestCountableMessage(undefined)).toBe(false)
+      expect(isJumpToLatestCountableMessage('assistant')).toBe(false)
+      expect(isJumpToLatestCountableMessage({})).toBe(false)
+      expect(isJumpToLatestCountableMessage({ role: 42 })).toBe(false)
+      expect(isJumpToLatestCountableMessage({ role: 'assistant', metadata: null })).toBe(true)
+    })
+
+    it('counts across an array the way a real streamed run interleaves kinds', () => {
+      expect(countJumpToLatestCountableMessages(undefined)).toBe(0)
+      expect(countJumpToLatestCountableMessages([])).toBe(0)
+      expect(
+        countJumpToLatestCountableMessages([
+          { role: 'user' },
+          { role: 'tool', toolActivities: [{}] },
+          { role: 'tool', toolActivities: [{}] },
+          { role: 'system' },
+          { role: 'assistant' },
+          { role: 'system', metadata: { kind: 'agentQuestion' } },
+          null
+        ])
+      ).toBe(3)
     })
   })
 

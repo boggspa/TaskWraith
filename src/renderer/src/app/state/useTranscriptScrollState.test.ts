@@ -219,6 +219,80 @@ describe('useTranscriptScrollState', () => {
     expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
   })
 
+  it('counts only conversational messages toward the unread pill', () => {
+    const autoFollowRef = { current: false }
+    // The hook treats the messages array as opaque and diffs countable
+    // totals between layout passes; mutating one array in place lets a
+    // single hook call express successive stream commits.
+    const messages: Array<Record<string, unknown>> = [{ id: 'm1', role: 'assistant' }]
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages,
+      runCompleteNotice: null,
+      autoFollowRef,
+      setAutoFollowRef: (next) => {
+        autoFollowRef.current = next
+      },
+      transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
+      transcriptContentRef: { current: hookHarness.scroller as HTMLDivElement }
+    })
+
+    // Layout effect 2 owns unread accounting. First pass records the
+    // chat baseline (no unread yet).
+    hookHarness.layoutEffectFactories[2]?.()
+    const unreadSetter = hookHarness.stateSetters[1]
+    expect(unreadSetter).not.toHaveBeenCalled()
+
+    // Run machinery streams in: tool activity batches and a system
+    // lifecycle row. None of it is a "new message".
+    messages.push(
+      { id: 't1', role: 'tool', toolActivities: [{ id: 'a1' }] },
+      { id: 't2', role: 'tool', toolActivities: [{ id: 'a2' }] },
+      { id: 's1', role: 'system' }
+    )
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(unreadSetter).not.toHaveBeenCalled()
+
+    // A real assistant bubble arrives below the scrolled-up reader.
+    messages.push({ id: 'm2', role: 'assistant' })
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(unreadSetter).toHaveBeenLastCalledWith(1)
+  })
+
+  it('clears the unread tally and away gate when the viewport shows the live edge', () => {
+    const autoFollowRef = { current: false }
+    const messages: Array<Record<string, unknown>> = [{ id: 'm1', role: 'assistant' }]
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages,
+      runCompleteNotice: null,
+      autoFollowRef,
+      setAutoFollowRef: (next) => {
+        autoFollowRef.current = next
+      },
+      transcriptScrollRef: { current: hookHarness.scroller as HTMLDivElement },
+      transcriptContentRef: { current: hookHarness.scroller as HTMLDivElement }
+    })
+
+    hookHarness.layoutEffectFactories[2]?.()
+    const unreadSetter = hookHarness.stateSetters[1]
+    const awaySetter = hookHarness.stateSetters[3]
+    // Scroller starts 300px above the bottom — the reader is genuinely away.
+    expect(awaySetter).toHaveBeenLastCalledWith(true)
+
+    messages.push({ id: 'm2', role: 'assistant' })
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(unreadSetter).toHaveBeenLastCalledWith(1)
+
+    // A shrink clamp (or slow scrollbar drag) lands the reader at the tail
+    // WITHOUT re-arming follow: everything below the fold is now read, so
+    // the tally clears and the away gate closes — no phantom pill.
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    hookHarness.layoutEffectFactories[2]?.()
+    expect(unreadSetter).toHaveBeenLastCalledWith(0)
+    expect(awaySetter).toHaveBeenLastCalledWith(false)
+  })
+
   it('captures the outgoing chat into its supplied pane-local cache with exact follow ownership', () => {
     const autoFollowRef = { current: false }
     const chatScrollStateByIdRef = { current: new Map() }

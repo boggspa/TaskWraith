@@ -89,6 +89,22 @@ export const OVERLAY_SCROLLBAR_HIT_PX = 14
 
 export const PROGRAMMATIC_SCROLL_EPSILON_PX = 1
 
+/**
+ * Distance, in CSS pixels, within which the transcript viewport counts as
+ * showing the live edge. This is the same 24px band `captureChatScrollState`
+ * uses for its `atBottom` capture and `VIEWPORT_STICK_PX` uses for the
+ * contained live-activity viewport, kept as one named constant so "the user
+ * can see the latest content" means the same thing everywhere.
+ *
+ * The jump-to-latest pill uses it as a visibility gate: run machinery
+ * (tool batches, reasoning) streams inside fixed-height contained viewports,
+ * so raw message arrivals do not prove anything new exists BELOW the reader's
+ * viewport. While the reader is inside this band there is nowhere to jump —
+ * showing the pill there is a lie, and any unread tally is by definition
+ * already read.
+ */
+export const LIVE_EDGE_PROXIMITY_PX = 24
+
 /** Whether a recorded user-input voucher is still fresh enough to re-arm follow. */
 export function hasRecentTranscriptDownwardIntent(input: {
   intentAt: number
@@ -172,7 +188,7 @@ export function captureChatScrollState(
     scrollHeight: scroller.scrollHeight,
     clientHeight: scroller.clientHeight,
     scrollRatio: maxScrollTop > 0 ? scrollTop / maxScrollTop : 1,
-    atBottom: distanceFromBottom <= 24
+    atBottom: distanceFromBottom <= LIVE_EDGE_PROXIMITY_PX
   }
   if (!state.atBottom && typeof scroller.getBoundingClientRect === 'function') {
     const scrollerRect = scroller.getBoundingClientRect()
@@ -841,6 +857,74 @@ export function shouldRepinAfterTranscriptResize(input: {
 }
 
 /**
+ * Message roles that render as first-class conversational bubbles. Everything
+ * else in the messages array is run machinery: `tool` rows fold into activity
+ * stacks (and stream inside the contained live-activity viewport), `system`
+ * rows are notices/lifecycle/closeout chrome. Neither is a "new message" in
+ * the sense the jump-to-latest pill promises.
+ */
+const JUMP_PILL_COUNTABLE_ROLES = new Set(['user', 'assistant', 'error'])
+
+/**
+ * Metadata kinds that count as messages regardless of their stored role.
+ * Guest replies are persisted with `role: 'system' | 'tool'` but render as
+ * assistant-style bubbles; the attention kinds (agent questions, plan
+ * choices, approvals) are interactive cards that demand the user's input —
+ * missing one while scrolled up is exactly what the pill exists to prevent.
+ */
+const JUMP_PILL_COUNTABLE_METADATA_KINDS = new Set([
+  'guestParticipantReply',
+  'agentQuestion',
+  'planChoice',
+  'approval',
+  'pendingApproval'
+])
+
+/**
+ * Whether a transcript entry counts toward the "↓ N new messages" tally.
+ *
+ * The unread number must count what the USER calls a message — a
+ * conversational bubble or an attention card — not every array entry. Long
+ * runs append dozens of `tool` activity batches and `system` lifecycle rows
+ * per reply; counting those inflated the pill ("44 new messages") while the
+ * only *message* still streaming was the current assistant bubble. Most of
+ * that machinery also renders INSIDE an existing stack row's contained
+ * viewport, so it adds nothing below the reader that a jump could reveal.
+ *
+ * Accepts `unknown` because the scroll-state hook deliberately treats the
+ * messages array as opaque; malformed entries count as machinery (false).
+ */
+export function isJumpToLatestCountableMessage(message: unknown): boolean {
+  if (!message || typeof message !== 'object') return false
+  const source = message as {
+    role?: unknown
+    metadata?: { kind?: unknown } | null
+  }
+  const kind = source.metadata?.kind
+  if (typeof kind === 'string' && JUMP_PILL_COUNTABLE_METADATA_KINDS.has(kind)) {
+    return true
+  }
+  return typeof source.role === 'string' && JUMP_PILL_COUNTABLE_ROLES.has(source.role)
+}
+
+/**
+ * Count the pill-countable messages in a transcript array. Used for BOTH the
+ * unread baseline and the per-update delta so the two are always measured in
+ * the same unit — a raw-length baseline against a filtered current count (or
+ * vice versa) would corrupt every delta after a chat switch.
+ */
+export function countJumpToLatestCountableMessages(
+  messages: readonly unknown[] | undefined
+): number {
+  if (!messages) return 0
+  let count = 0
+  for (const message of messages) {
+    if (isJumpToLatestCountableMessage(message)) count += 1
+  }
+  return count
+}
+
+/**
  * Decide whether the "↓ N new messages" jump-to-latest pill should be
  * visible on the transcript scroller.
  *
@@ -851,16 +935,24 @@ export function shouldRepinAfterTranscriptResize(input: {
  * the user has a one-tap way back to the live edge without losing their
  * place mid-read.
  *
- * Visibility rule — `autoFollow` must be disengaged (user is reading older
- * content; if the transcript is already pinned to the bottom the user can
- * see the new messages directly and the pill would be noise), AND at least
- * one of:
- *   1. `unreadCount > 0` — whole new messages arrived below the viewport.
- *   2. `streamingActive` — a run is streaming into the CURRENT tail bubble.
- *      Text growth inside one message never bumps the message-count-based
- *      unread number, so a user who scrolls up mid-answer would otherwise
- *      get no affordance at all back to the live edge (Claude/Codex show
- *      their jump arrow for this case).
+ * Visibility rule — ALL of:
+ *   a. `autoFollow` is disengaged (user owns the scroll; when pinned the
+ *      new content is already in view and the pill would be noise), AND
+ *   b. `awayFromLiveEdge` — the viewport is genuinely more than
+ *      `LIVE_EDGE_PROXIMITY_PX` above the scroller's bottom. Follow can be
+ *      off while the reader still SEES the live edge (shrink clamps land
+ *      there without re-arming follow, and contained live-activity
+ *      viewports stream run machinery without growing the outer scroller).
+ *      In that state there is nowhere to jump — a pill would send the user
+ *      to where they already are, AND
+ *   c. at least one of:
+ *      1. `unreadCount > 0` — countable messages (see
+ *         `isJumpToLatestCountableMessage`) arrived below the viewport.
+ *      2. `streamingActive` — a run is streaming into the CURRENT tail
+ *         bubble. Text growth inside one message never bumps the
+ *         message-count-based unread number, so a user who scrolls up
+ *         mid-answer would otherwise get no affordance at all back to the
+ *         live edge (Claude/Codex show their jump arrow for this case).
  *
  * Defensive against malformed inputs: a NaN/negative count is treated
  * as zero (no pill unless streaming). This mirrors the
@@ -872,8 +964,10 @@ export function shouldShowJumpToLatestPill(input: {
   autoFollow: boolean
   unreadCount: number
   streamingActive?: boolean
+  awayFromLiveEdge: boolean
 }): boolean {
   if (input.autoFollow) return false
+  if (!input.awayFromLiveEdge) return false
   if (input.streamingActive === true) return true
   if (!Number.isFinite(input.unreadCount)) return false
   return input.unreadCount > 0
