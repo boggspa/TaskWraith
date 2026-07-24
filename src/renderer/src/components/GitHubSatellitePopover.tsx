@@ -209,6 +209,9 @@ export function GitHubSatellitePopover({
   model,
   notice,
   onNotify,
+  isWatching,
+  onToggleWatch,
+  watchDisabledReason,
   anchorRect,
   onMouseEnter,
   onMouseLeave
@@ -216,12 +219,21 @@ export function GitHubSatellitePopover({
   model: SatellitePopoverModel
   notice?: CiNotice | null
   onNotify?: (notice: CiNotice) => void
+  /**
+   * Slice-6 watch-PR opt-in gate — presentational only. The toggle IS the entire
+   * authorization; the parent owns descriptor persistence (saveChat) + the host
+   * poller wiring. Rendered only when `onToggleWatch` is provided.
+   */
+  isWatching?: boolean
+  onToggleWatch?: (next: boolean) => void
+  /** When set, the toggle is disabled and shows this specific, actionable reason (e.g. "No open PR to watch", "GitHub CLI not authenticated"). */
+  watchDisabledReason?: string
   anchorRect: DOMRect | null
   onMouseEnter: () => void
   onMouseLeave: () => void
 }): React.JSX.Element | null {
   if (!anchorRect || typeof document === 'undefined') return null
-  if (!model.pr && !model.ci) return null
+  if (!model.pr && !model.ci && !watchDisabledReason) return null
 
   const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - POPOVER_WIDTH - 8))
   const bottom = Math.max(8, window.innerHeight - anchorRect.top + 8)
@@ -280,6 +292,30 @@ export function GitHubSatellitePopover({
               )}
             </ul>
           )}
+        </div>
+      )}
+      {(onToggleWatch || watchDisabledReason) && (model.pr || watchDisabledReason) && (
+        <div className="github-satellite-popover-watch">
+          <button
+            type="button"
+            role="switch"
+            aria-checked={isWatching ?? false}
+            className="github-satellite-watch-toggle"
+            data-on={isWatching ? 'true' : 'false'}
+            disabled={Boolean(watchDisabledReason) || !onToggleWatch}
+            onClick={() => onToggleWatch?.(!(isWatching ?? false))}
+            title={watchDisabledReason ?? (isWatching ? 'Stop watching this PR' : 'Watch this PR')}
+          >
+            <span className="github-satellite-watch-track" aria-hidden>
+              <span className="github-satellite-watch-thumb" />
+            </span>
+            <span className="github-satellite-watch-label">
+              {isWatching ? 'Watching this PR' : 'Watch this PR'}
+            </span>
+          </button>
+          <span className="github-satellite-watch-hint">
+            {watchDisabledReason ?? 'Notify this thread when checks finish'}
+          </span>
         </div>
       )}
       {notice?.shouldOffer && onNotify && (

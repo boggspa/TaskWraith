@@ -4531,6 +4531,93 @@
   font-size: var(--font-size-xs, 11px);
 }
 
+/* Slice-6 "Watch this PR" auto-notify opt-in gate — a per-chat switch (green = active). */
+.github-satellite-popover-watch {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  border-top: 1px solid color-mix(in srgb, var(--text-primary) 10%, transparent);
+  padding-top: 8px;
+}
+.github-satellite-watch-toggle {
+  align-self: flex-start;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 4px 3px 3px;
+  border: 0;
+  background: transparent;
+  color: var(--text-primary);
+  font-size: var(--font-size-xs, 11px);
+  font-weight: 600;
+  cursor: pointer;
+}
+.github-satellite-watch-toggle:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.github-satellite-watch-track {
+  position: relative;
+  flex: none;
+  width: 30px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--text-primary) 16%, transparent);
+  border: 1px solid color-mix(in srgb, var(--text-primary) 22%, transparent);
+  transition:
+    background 120ms ease,
+    border-color 120ms ease;
+}
+.github-satellite-watch-thumb {
+  position: absolute;
+  top: 1px;
+  left: 1px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--text-secondary);
+  transition:
+    transform 120ms ease,
+    background 120ms ease;
+}
+.github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-track {
+  background: color-mix(in srgb, #6ddfa8 34%, transparent);
+  border-color: color-mix(in srgb, #6ddfa8 62%, transparent);
+}
+.github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-thumb {
+  transform: translateX(12px);
+  background: #6ddfa8;
+}
+.github-satellite-watch-toggle:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.github-satellite-watch-hint {
+  color: var(--text-tertiary);
+  font-size: var(--font-size-xs, 11px);
+}
+/* Light-family: the on-state green mirrors the tone-success light value. */
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) .github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-track {
+  background: color-mix(in srgb, #138a59 26%, transparent);
+  border-color: color-mix(in srgb, #138a59 60%, transparent);
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) .github-satellite-watch-toggle[data-on='true'] .github-satellite-watch-thumb {
+  background: #138a59;
+}
+
 /* Tone accents inside the popover (dark default). */
 .github-satellite-popover .tone-open {
   color: #a78bfa;

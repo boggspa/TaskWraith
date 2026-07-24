@@ -33,6 +33,15 @@ export interface GitHubSatelliteRowProps {
   snapshot?: GitRepositorySnapshot | null
   /** Soft-action: post a CI-failure/PR-blocked notice to the thread (no steer). */
   onNotify?: (notice: CiNotice) => void
+  /** Slice-6 watch-PR opt-in gate. When provided, the popover shows the per-chat Watch toggle. */
+  isWatching?: boolean
+  onToggleWatch?: (next: boolean) => void
+  /**
+   * When set, the Watch toggle is disabled and this specific, actionable reason is
+   * surfaced — and the row renders a hoverable warning affordance even when no PR/CI
+   * exists, so a gh-auth / no-open-PR failure is no longer silent.
+   */
+  watchDisabledReason?: string
 }
 
 type CiTone = 'success' | 'danger' | 'warning' | 'muted'
@@ -159,7 +168,10 @@ export function GitHubSatelliteRow({
   pr,
   ci,
   snapshot,
-  onNotify
+  onNotify,
+  isWatching,
+  onToggleWatch,
+  watchDisabledReason
 }: GitHubSatelliteRowProps): React.JSX.Element | null {
   // Hook must run unconditionally, before any early return.
   const hover = useSatelliteHover()
@@ -170,8 +182,10 @@ export function GitHubSatelliteRow({
   const lifecycle = pr && pr.number != null ? prLifecycle(pr, snapshot) : null
   const ciResolved = resolveCi(pr, ci)
 
-  // Only surface the row for relevant GH/PR/CI actions.
-  if (!lifecycle && !ciResolved) return null
+  // Only surface the row for relevant GH/PR/CI actions — or a watch-error affordance
+  // (gh-auth / no-open-PR) so the failure is no longer silent (Slice-6).
+  if (!lifecycle && !ciResolved && !watchDisabledReason) return null
+  const watchOnly = !lifecycle && !ciResolved
 
   const prNumberLabel = typeof pr?.number === 'number' ? `#${pr.number}` : 'PR'
   const popoverModel = buildSatellitePopoverModel(pr, ci, snapshot)
@@ -206,10 +220,26 @@ export function GitHubSatelliteRow({
           <ToolFamilyIcon family="ci" size={14} />
         </SatelliteIndicator>
       )}
+      {watchOnly && watchDisabledReason && (
+        <SatelliteIndicator
+          kind="pr"
+          tone="warning"
+          title={watchDisabledReason}
+          label="PR"
+          onHoverStart={hover.show}
+          onHoverEnd={hover.scheduleClose}
+        >
+          <span className="github-satellite-dot tone-warning" aria-hidden />
+          <ToolFamilyIcon family="pull-request" size={14} />
+        </SatelliteIndicator>
+      )}
       <GitHubSatellitePopover
         model={popoverModel}
         notice={notice}
         onNotify={onNotify}
+        isWatching={isWatching}
+        onToggleWatch={onToggleWatch}
+        watchDisabledReason={watchDisabledReason}
         anchorRect={hover.anchorRect}
         onMouseEnter={hover.keepOpen}
         onMouseLeave={hover.scheduleClose}
