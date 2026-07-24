@@ -54,4 +54,19 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
     )
     expect(markup).toBe('')
   })
+
+  it('keeps an active watch visible without a remote so the user can turn it off', () => {
+    const markup = renderToStaticMarkup(
+      <GitHubSatelliteRow
+        pr={null}
+        ci={null}
+        snapshot={null}
+        isWatching
+        onToggleWatch={() => {}}
+        watchStatusMessage="GitHub CLI isn't authenticated"
+      />
+    )
+    expect(markup).toContain('github-satellite-row')
+    expect(markup).toContain("GitHub CLI isn&#x27;t authenticated")
+  })
 })

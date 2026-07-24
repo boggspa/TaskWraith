@@ -212,6 +212,7 @@ export function GitHubSatellitePopover({
   isWatching,
   onToggleWatch,
   watchDisabledReason,
+  watchStatusMessage,
   anchorRect,
   onMouseEnter,
   onMouseLeave
@@ -228,12 +229,14 @@ export function GitHubSatellitePopover({
   onToggleWatch?: (next: boolean) => void
   /** When set, the toggle is disabled and shows this specific, actionable reason (e.g. "No open PR to watch", "GitHub CLI not authenticated"). */
   watchDisabledReason?: string
+  /** Live poll/persistence state shown without disabling an active watch. */
+  watchStatusMessage?: string
   anchorRect: DOMRect | null
   onMouseEnter: () => void
   onMouseLeave: () => void
 }): React.JSX.Element | null {
   if (!anchorRect || typeof document === 'undefined') return null
-  if (!model.pr && !model.ci && !watchDisabledReason) return null
+  if (!model.pr && !model.ci && !watchDisabledReason && !isWatching) return null
 
   const left = Math.max(8, Math.min(anchorRect.left, window.innerWidth - POPOVER_WIDTH - 8))
   const bottom = Math.max(8, window.innerHeight - anchorRect.top + 8)
@@ -314,7 +317,9 @@ export function GitHubSatellitePopover({
             </span>
           </button>
           <span className="github-satellite-watch-hint">
-            {watchDisabledReason ?? 'Notify this thread when checks finish'}
+            {watchDisabledReason ??
+              watchStatusMessage ??
+              'Notify this thread when checks finish'}
           </span>
         </div>
       )}

@@ -410,6 +410,10 @@ export interface ComposerProps {
   primaryPr: any
   primaryCi?: any
   onNotifyThreadOfCi?: (notice: any) => void
+  isWatchingPr?: boolean
+  onToggleWatchPr?: (next: boolean) => void
+  watchPrDisabledReason?: string
+  watchPrStatusMessage?: string
   providerRates: any
   queuedMessagesAboveRowEntries: any
   executionStackProjection?: ExecutionGraphProjection | null
@@ -738,6 +742,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     primaryPr,
     primaryCi,
     onNotifyThreadOfCi,
+    isWatchingPr,
+    onToggleWatchPr,
+    watchPrDisabledReason,
+    watchPrStatusMessage,
     providerRates,
     queuedMessagesAboveRowEntries,
     // executionStackProjection / executionHistory / stack handlers remain on
@@ -2045,6 +2053,10 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       ci={primaryCi}
                       snapshot={primaryGitSnapshot}
                       onNotify={onNotifyThreadOfCi}
+                      isWatching={isWatchingPr}
+                      onToggleWatch={onToggleWatchPr}
+                      watchDisabledReason={watchPrDisabledReason}
+                      watchStatusMessage={watchPrStatusMessage}
                     />
                   ) : null
                 const primaryWorkspaceAboveBar =

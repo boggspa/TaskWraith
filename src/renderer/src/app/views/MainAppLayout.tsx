@@ -982,6 +982,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         handleCreateGithubPr: noSideComposerAction,
         getCreatePrState: () => ({ status: 'idle' }),
         onNotifyThreadOfCi: undefined,
+        isWatchingPr: false,
+        onToggleWatchPr: undefined,
+        watchPrDisabledReason: undefined,
+        watchPrStatusMessage: undefined,
         pendingAgentApproval:
           pendingAgentApprovalByChatId?.[sideChat.appChatId] || null,
         queuedMessagesAboveRowEntries: sideQueuedMessagesAboveRowEntries,

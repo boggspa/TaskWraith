@@ -608,6 +608,8 @@ import {
 } from './lib/usageRefresh'
 import { isCiStatusTerminal, shouldRunCiPoll } from './lib/ciStatusRefresh'
 import type { CiNotice } from './lib/ciNotice'
+import { githubWatchDisabledReason } from './lib/watchedPrUi'
+import { useWatchedPrController } from './app/hooks/useWatchedPrController'
 import {
   shouldBuildWelcomeUsageDashboardData,
   shouldRenderWelcome,
@@ -2462,6 +2464,9 @@ function App(): React.JSX.Element {
   // Live rich CI summary for the focused workspace's PR (github:ci-status).
   // Feeds the satellite row's dot/popover; kept fresh by the bounded poll below.
   const [primaryCi, setPrimaryCi] = useState<GitCiStatusSummary | null>(null)
+  const [primaryPrWatchDisabledReason, setPrimaryPrWatchDisabledReason] = useState<string | null>(
+    null
+  )
   const primaryCiInFlightRef = useRef(false)
   const primaryCiLastPolledAtRef = useRef<number | null>(null)
   const primaryCiRequestGenerationRef = useRef(0)
@@ -2526,22 +2531,36 @@ function App(): React.JSX.Element {
         primaryPrStatusKeyRef.current = ''
         primaryPrOwnerPathRef.current = null
         setPrimaryPr(null)
+        setPrimaryPrWatchDisabledReason(
+          currentGitPresentationPath
+            ? "GitHub pull request status isn't available for this workspace."
+            : null
+        )
         return
       }
       const requestKey = `${currentGitPresentationPath}\u0000${key}`
       if (primaryPrStatusKeyRef.current === requestKey) return
       primaryPrStatusKeyRef.current = requestKey
+      setPrimaryPrWatchDisabledReason(null)
       void window.api.githubPrStatus({ workspacePath: currentGitPresentationPath }).then(
         (prRes) => {
           if (primaryPrStatusKeyRef.current === requestKey) {
-            primaryPrOwnerPathRef.current = currentGitPresentationPath
-            setPrimaryPr(prRes?.ok ? prRes.data : null)
+            if (prRes?.ok) {
+              primaryPrOwnerPathRef.current = currentGitPresentationPath
+              setPrimaryPr(prRes.data)
+              setPrimaryPrWatchDisabledReason(null)
+            } else {
+              primaryPrOwnerPathRef.current = null
+              setPrimaryPr(null)
+              setPrimaryPrWatchDisabledReason(githubWatchDisabledReason(prRes?.error))
+            }
           }
         },
-        () => {
+        (error) => {
           if (primaryPrStatusKeyRef.current === requestKey) {
             primaryPrOwnerPathRef.current = null
             setPrimaryPr(null)
+            setPrimaryPrWatchDisabledReason(githubWatchDisabledReason(error))
           }
         }
       )
@@ -2678,6 +2697,7 @@ function App(): React.JSX.Element {
     setPrimaryGitSnapshot(null)
     setPrimaryPr(null)
     setPrimaryCi(null)
+    setPrimaryPrWatchDisabledReason(null)
   }, [currentGitPresentationPath])
 
   useEffect(() => {
@@ -14286,6 +14306,11 @@ function App(): React.JSX.Element {
           resumeSessionId &&
           typeof window.api.startAgentReview === 'function'
         ) {
+          if (runtimeWorktreeIntent?.status === 'selection-required') {
+            throw new Error(
+              "Native review can't allocate an isolated worktree. Select a worktree in the composer, or run a normal turn first."
+            )
+          }
           await window.api.startAgentReview('codex', resumeSessionId, {
             model: modelToPass,
             target: { type: 'uncommittedChanges' },
@@ -21412,6 +21437,26 @@ function App(): React.JSX.Element {
       normalizeWorkspacePath(currentGitPresentationPath || '')
       ? primaryCi
       : null
+  const readWatchedPrCachedChat = useCallback(
+    (chatId: string): ChatRecord | null => chatByIdRef.current.get(chatId) || null,
+    []
+  )
+  const applyWatchedPrPersistedChat = useCallback((chat: ChatRecord): void => {
+    chatByIdRef.current.set(chat.appChatId, chat)
+    setChats((previous) => mergeChatRecord(previous, chat))
+    setCurrentChat((previous) => (previous?.appChatId === chat.appChatId ? chat : previous))
+  }, [])
+  const watchedPrController = useWatchedPrController({
+    currentChat,
+    workspacePath: currentGitPresentationPath,
+    primaryPr: focusedPrimaryPr,
+    primaryPrDisabledReason: primaryPrWatchDisabledReason,
+    disabled: isMultiviewSplit,
+    readCachedChat: readWatchedPrCachedChat,
+    updateChatLocal: updateChatByIdLocalOnly,
+    applyPersistedChat: applyWatchedPrPersistedChat,
+    setChatPromptDraft
+  })
 
   const currentExternalWorkspaceState = useMemo(
     () => {
@@ -28734,6 +28779,10 @@ function App(): React.JSX.Element {
     primaryPr: focusedPrimaryPr,
     primaryCi: focusedPrimaryCi,
     onNotifyThreadOfCi: handleNotifyThreadOfCi,
+    isWatchingPr: watchedPrController.isWatching,
+    onToggleWatchPr: watchedPrController.onToggleWatch,
+    watchPrDisabledReason: watchedPrController.disabledReason,
+    watchPrStatusMessage: watchedPrController.statusMessage,
     queuedMessagesAboveRowEntries,
     executionStackProjection,
     executionHistory,

@@ -42,6 +42,8 @@ export interface GitHubSatelliteRowProps {
    * exists, so a gh-auth / no-open-PR failure is no longer silent.
    */
   watchDisabledReason?: string
+  /** Live progress / failure copy shown in the popover without changing authorization. */
+  watchStatusMessage?: string
 }
 
 type CiTone = 'success' | 'danger' | 'warning' | 'muted'
@@ -171,20 +173,21 @@ export function GitHubSatelliteRow({
   onNotify,
   isWatching,
   onToggleWatch,
-  watchDisabledReason
+  watchDisabledReason,
+  watchStatusMessage
 }: GitHubSatelliteRowProps): React.JSX.Element | null {
   // Hook must run unconditionally, before any early return.
   const hover = useSatelliteHover()
 
   // No GitHub remote → nothing to be a satellite of.
-  if (!snapshot?.remoteUrl) return null
+  if (!snapshot?.remoteUrl && !isWatching) return null
 
   const lifecycle = pr && pr.number != null ? prLifecycle(pr, snapshot) : null
   const ciResolved = resolveCi(pr, ci)
 
   // Only surface the row for relevant GH/PR/CI actions — or a watch-error affordance
   // (gh-auth / no-open-PR) so the failure is no longer silent (Slice-6).
-  if (!lifecycle && !ciResolved && !watchDisabledReason) return null
+  if (!lifecycle && !ciResolved && !watchDisabledReason && !isWatching) return null
   const watchOnly = !lifecycle && !ciResolved
 
   const prNumberLabel = typeof pr?.number === 'number' ? `#${pr.number}` : 'PR'
@@ -220,11 +223,11 @@ export function GitHubSatelliteRow({
           <ToolFamilyIcon family="ci" size={14} />
         </SatelliteIndicator>
       )}
-      {watchOnly && watchDisabledReason && (
+      {watchOnly && (watchDisabledReason || isWatching) && (
         <SatelliteIndicator
           kind="pr"
           tone="warning"
-          title={watchDisabledReason}
+          title={watchDisabledReason || watchStatusMessage || 'Watching this pull request'}
           label="PR"
           onHoverStart={hover.show}
           onHoverEnd={hover.scheduleClose}
@@ -240,6 +243,7 @@ export function GitHubSatelliteRow({
         isWatching={isWatching}
         onToggleWatch={onToggleWatch}
         watchDisabledReason={watchDisabledReason}
+        watchStatusMessage={watchStatusMessage}
         anchorRect={hover.anchorRect}
         onMouseEnter={hover.keepOpen}
         onMouseLeave={hover.scheduleClose}
