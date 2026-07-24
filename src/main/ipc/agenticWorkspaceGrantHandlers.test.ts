@@ -124,16 +124,23 @@ describe('registerAgenticWorkspaceGrantHandlers', () => {
     expect(deps.getSettings).toHaveBeenCalledTimes(1)
   })
 
-  it('rejects a new Cursor grant but permits legacy Cursor grant removal', () => {
+  it('grants Cursor workspace Tool Grants with full provider parity', () => {
+    // Cursor's B-mode TaskWraith MCP broker routes tool calls through the
+    // central approval gate, where resolvePermission honors workspace grants —
+    // so grant upserts must work for Cursor exactly like every other provider.
     const deps = createDeps()
     const event = { sender: { id: 1 } }
     registerAgenticWorkspaceGrantHandlers(deps)
 
     expect(() =>
       handlerFor('upsert-agentic-workspace-grant')(event, 'cursor', '/tmp/workspace', 'fileChanges')
-    ).toThrow('TaskWraith Tool Grants do not apply')
+    ).not.toThrow()
     expect(deps.assertLiveProviderId).toHaveBeenCalledWith('cursor')
-    expect(deps.permissionService.upsertWorkspaceGrant).not.toHaveBeenCalled()
+    expect(deps.permissionService.upsertWorkspaceGrant).toHaveBeenCalledWith(
+      'cursor',
+      '/tmp/workspace',
+      'fileChanges'
+    )
 
     expect(() =>
       handlerFor('remove-agentic-workspace-grant')(event, 'cursor', '/tmp/workspace', 'fileChanges')

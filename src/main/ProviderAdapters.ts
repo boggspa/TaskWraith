@@ -3,7 +3,6 @@ import type {
   ProviderCapabilityContract,
   ProviderId
 } from './store/types'
-import { supportsTaskWraithToolGrants } from '../shared/providerToolGrantSupport'
 
 export interface ProviderRunContext<TPayload = unknown, TEvent = unknown> {
   event: TEvent
@@ -103,7 +102,6 @@ export function providerLabel(provider: ProviderId): string {
 }
 
 export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapterDescriptor {
-  const workspaceGrants = supportsTaskWraithToolGrants(provider)
   if (provider === 'codex') {
     return {
       provider,
@@ -114,7 +112,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: false,
         providerManagedMcp: true,
         nativeThreadTools: true,
@@ -142,7 +140,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: true,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -170,7 +168,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: true,
         appManagedApprovals: true,
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: true,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -218,7 +216,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         appManagedApprovals: false,
         // Grok native tools + TaskWraith MCP both route through PermissionService
         // / requestAgenticServiceApproval, so per-provider workspace grants apply.
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: false,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -248,7 +246,9 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
   }
   if (provider === 'cursor') {
     // Path B: real ~/.cursor login + contained --sandbox argv. Native tools
-    // stay provider-managed; TaskWraith does not mediate per-tool approvals.
+    // stay provider-managed (sandbox-bounded, not individually mediated), but
+    // brokered TaskWraith MCP tools route through PermissionService /
+    // requestAgenticServiceApproval, so per-provider workspace grants apply.
     return {
       provider,
       label: providerLabel(provider),
@@ -258,7 +258,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: false,
         appManagedApprovals: false,
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: false,
         providerManagedMcp: true,
         nativeThreadTools: true,
@@ -281,7 +281,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
           capability: 'approvalModes',
           title: 'Cursor uses native tools under OS sandbox',
           message:
-            'Cursor runs are contained by --sandbox enabled (honest partial backstop). TaskWraith does not mediate Cursor per-tool approvals.'
+            'Cursor runs are contained by --sandbox enabled (honest partial backstop). Native tool calls are not individually mediated; brokered TaskWraith MCP tools route through TaskWraith approvals and Tool Grants.'
         }
       ]
     }
@@ -297,7 +297,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         persistentSessions: false,
         appManagedApprovals: true,
         // Local tool loop uses the same PermissionService workspace-grant path.
-        workspaceGrants,
+        workspaceGrants: true,
         agentBenchMcpBridge: false,
         providerManagedMcp: false,
         nativeThreadTools: false,
@@ -325,7 +325,10 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       features: {
         persistentSessions: false,
         appManagedApprovals: false,
-        workspaceGrants: false,
+        // The gemini-api agentic lane executes TaskWraith MCP tools through the
+        // shared executeGeminiMcpTool gateway (central approval gate), so
+        // per-provider workspace grants apply here too.
+        workspaceGrants: true,
         agentBenchMcpBridge: false,
         providerManagedMcp: false,
         nativeThreadTools: true,
@@ -365,7 +368,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       persistentSessions: true,
       appManagedApprovals: false,
       // Claude TaskWraith MCP + brokered tools honor per-provider workspace grants.
-      workspaceGrants,
+      workspaceGrants: true,
       agentBenchMcpBridge: false,
       providerManagedMcp: true,
       nativeThreadTools: false,

@@ -195,11 +195,19 @@ describe('defaultProviderDescriptor capabilities', () => {
   })
 
   it('live TaskWraith-gated providers advertise workspace grants', () => {
-    for (const provider of ['codex', 'claude', 'kimi', 'grok', 'ollama'] as const) {
+    // Cursor included: its B-mode TaskWraith MCP broker routes tool calls
+    // through the central approval gate, where workspace grants apply.
+    for (const provider of [
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'ollama',
+      'cursor',
+      'antigravity'
+    ] as const) {
       expect(defaultProviderDescriptor(provider).features.workspaceGrants).toBe(true)
     }
-    // Cursor Path-B: sandbox-contained native tools; no TaskWraith grant UX.
-    expect(defaultProviderDescriptor('cursor').features.workspaceGrants).toBe(false)
   })
 
   it('pins Cursor to Path-B sandbox-contained native tools', () => {

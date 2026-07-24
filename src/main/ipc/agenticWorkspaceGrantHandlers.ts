@@ -2,10 +2,6 @@ import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AppSettings, AgenticServiceId, ProviderId } from '../store/types'
 import type { PermissionService } from '../PermissionService'
 import { rendererSafeSettings } from './settingsHandlers'
-import {
-  supportsTaskWraithToolGrants,
-  taskWraithToolGrantUnsupportedReason
-} from '../../shared/providerToolGrantSupport'
 
 export interface AgenticWorkspaceGrantHandlerDeps {
   permissionService: Pick<PermissionService, 'upsertWorkspaceGrant' | 'removeWorkspaceGrant'>
@@ -26,12 +22,12 @@ export function registerAgenticWorkspaceGrantHandlers(
   ipcMain.handle(
     'upsert-agentic-workspace-grant',
     (event, provider: ProviderId, workspacePath: string, service: AgenticServiceId) => {
+      // Every live provider routes tool calls through the central approval
+      // gate (natively, via its TaskWraith MCP broker, or both), where
+      // resolvePermission honors per-provider workspace grants — Cursor
+      // included since its B-mode broker shipped. assertLiveProviderId is
+      // the only admission check a grant upsert needs.
       const validatedProvider = deps.assertLiveProviderId(provider)
-      if (!supportsTaskWraithToolGrants(validatedProvider)) {
-        throw new Error(
-          taskWraithToolGrantUnsupportedReason(validatedProvider) || 'Tool Grants unavailable.'
-        )
-      }
       const validatedWorkspacePath = deps.requireNonEmptyString(workspacePath, 'Workspace path')
       const validatedService = deps.assertAgenticServiceId(service)
       const authorizedWorkspacePath = deps.assertSenderCanManageAgenticWorkspaceGrants(

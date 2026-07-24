@@ -14,7 +14,6 @@ import {
 } from '../../../main/store/types'
 import type { CodexModelOption } from '../lib/providerModelDefaults'
 import { resolveWorkspaceDisplayName } from '../../../shared/workspaceDisplayName'
-import { supportsTaskWraithToolGrants } from '../../../shared/providerToolGrantSupport'
 import type { HumanCollaborationShare } from '../../../main/collaboration/HumanCollaborationStore'
 import type {
   HumanCollaborationInviteCopyResult,
@@ -3069,308 +3068,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                         }}
                       />
                     )}
-                    {pendingAgentApproval && (
-                      <div
-                        ref={agentApprovalCardRef}
-                        role="alertdialog"
-                        aria-modal="false"
-                        aria-labelledby="composer-agent-approval-title"
-                        aria-describedby={
-                          agentApprovalCountdownMs != null
-                            ? 'composer-agent-approval-countdown'
-                            : undefined
-                        }
-                        className={`composer-permission-card provider-${pendingAgentApproval.provider}`}
-                      >
-                        <div className="composer-permission-title">
-                          <span id="composer-agent-approval-title">{pendingAgentApproval.title}</span>
-                          <span className="composer-permission-source">
-                            {getProviderLabel(pendingAgentApproval.provider)}
-                            {/* 1.0.4-AK4 — surface the queue depth so the
-                              user knows other approvals are waiting on
-                              this same chat. Common case (single
-                              approval at a time) shows nothing extra. */}
-                            {(() => {
-                              const queue = currentComposerChatId
-                                ? pendingApprovalQueueByChatId[currentComposerChatId] || []
-                                : []
-                              if (queue.length === 0) return null
-                              return (
-                                <span
-                                  className="composer-permission-queue-badge"
-                                  title={`${queue.length} more approval${
-                                    queue.length === 1 ? '' : 's'
-                                  } queued behind this one — they appear in order as you respond.`}
-                                >
-                                  +{queue.length} more
-                                </span>
-                              )
-                            })()}
-                          </span>
-                        </div>
-                        {agentApprovalCountdownMs != null && (
-                          <div
-                            id="composer-agent-approval-countdown"
-                            className="composer-permission-countdown"
-                            role="status"
-                            aria-live="polite"
-                          >
-                            Auto-denies in {formatApprovalCountdown(agentApprovalCountdownMs)}
-                          </div>
-                        )}
-                        {pendingAgentApproval.body && (
-                          <div className="composer-permission-message">
-                            {pendingAgentApproval.body}
-                          </div>
-                        )}
-                        {/* Slice 4 of the external-path-redesign arc.
-                          When the runtime detector emits an external-path
-                          approval, it stashes the detected path under
-                          `preview.externalPathDetection`. Render it
-                          prominently so the user knows WHICH path they're
-                          granting before clicking the action button. */}
-                        {pendingAgentApproval.preview?.externalPathDetection?.path && (
-                          <div className="composer-permission-external-path">
-                            <span className="composer-permission-external-path-label">Path</span>
-                            <code className="composer-permission-external-path-value">
-                              {pendingAgentApproval.preview.externalPathDetection.path}
-                            </code>
-                          </div>
-                        )}
-                        {renderAgentApprovalPreview(pendingAgentApproval.preview)}
-                        {/* Order-4 — optional one-line intent note. Always
-                          optional: it never blocks approve/deny. The text
-                          is captured at click time in
-                          `handleAgentApprovalAction` and persisted onto
-                          the approval-ledger row's metadata as
-                          `intentNote` (no schema migration). */}
-                        <input
-                          type="text"
-                          className="composer-permission-note"
-                          value={intentNote}
-                          onChange={(e) => setIntentNote(e.target.value)}
-                          placeholder="why? (optional)"
-                          aria-label="Optional note explaining this approval decision"
-                          maxLength={280}
-                        />
-                        <div className="composer-permission-actions">
-                          {(pendingAgentApproval.actions || ['accept']).includes('accept') && (
-                            <PillButton
-                              variant="primary"
-                              size="compact"
-                              type="button"
-                              title={
-                                pendingAgentApproval.method === 'hostCommand/rerun'
-                                  ? 'Rerun this request outside the current sandbox once. This does not grant future approvals.'
-                                  : 'Allow only this approval request. Future similar requests will still ask.'
-                              }
-                              onClick={() =>
-                                void handleAgentApprovalAction(pendingAgentApproval.id, 'accept')
-                              }
-                            >
-                              {pendingAgentApproval.method === 'hostCommand/rerun'
-                                ? 'Rerun outside sandbox'
-                                : 'Allow once'}
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || []).includes('useProviderNative') && (
-                            <PillButton
-                              variant="primary"
-                              size="compact"
-                              type="button"
-                              title="Use the provider CLI or SDK native approval flow for this request instead of TaskWraith handling it."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'useProviderNative'
-                                )
-                              }
-                            >
-                              Use Provider Native
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || []).includes('useTaskWraithSubthread') && (
-                            <PillButton
-                              variant="ghost"
-                              size="compact"
-                              type="button"
-                              title="Move this work into a TaskWraith sub-thread so it can continue with isolated context and its own approval handling."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'useTaskWraithSubthread'
-                                )
-                              }
-                            >
-                              Use TaskWraith Sub-thread
-                            </PillButton>
-                          )}
-                          {((pendingAgentApproval.actions || []).includes('acceptForWorkspace') ||
-                            (pendingAgentApproval.actions || ['acceptForSession']).includes(
-                              'acceptForSession'
-                            )) && (
-                            <div
-                              className="composer-permission-scope-actions"
-                              role="group"
-                              aria-label="Longer approval scopes"
-                            >
-                              {(pendingAgentApproval.actions || ['acceptForSession']).includes(
-                                'acceptForSession'
-                              ) && (
-                                <PillButton
-                                  className="composer-permission-scope-action"
-                                  variant="secondary"
-                                  size="compact"
-                                  type="button"
-                                  title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
-                                  onClick={() =>
-                                    void handleAgentApprovalAction(
-                                      pendingAgentApproval.id,
-                                      'acceptForSession'
-                                    )
-                                  }
-                                >
-                                  Allow for session
-                                </PillButton>
-                              )}
-                              {(pendingAgentApproval.actions || []).includes(
-                                'acceptForWorkspace'
-                              ) && (
-                                <PillButton
-                                  className="composer-permission-scope-action"
-                                  variant="secondary"
-                                  size="compact"
-                                  type="button"
-                                  title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
-                                  onClick={() =>
-                                    void handleAgentApprovalAction(
-                                      pendingAgentApproval.id,
-                                      'acceptForWorkspace'
-                                    )
-                                  }
-                                >
-                                  Allow in workspace
-                                </PillButton>
-                              )}
-                            </div>
-                          )}
-                          {/* Trusted Session is lane-scoped: the current ensemble participant or solo
-                            chat receives the signed full_access preset, then this request is
-                            accepted once. It deliberately does not enable process-wide YOLO or
-                            mint a hidden matching-service session grant via acceptForSession. */}
-                          {!isNativeSubAgentPreferenceApproval(pendingAgentApproval) &&
-                            pendingAgentApproval.preview?.requestOnly !== true &&
-                            pendingAgentApproval.preview?.requiresExactDesktopReview !== true &&
-                            !pendingAgentApproval.preview?.externalPathDetection && (
-                              <PillButton
-                                variant="ghost"
-                                size="compact"
-                                type="button"
-                                disabled={Boolean(trustedSessionMutationDisabledReason)}
-                                title={
-                                  trustedSessionMutationDisabledReason ||
-                                  'Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged.'
-                                }
-                                onClick={() => {
-                                  if (trustedSessionMutationDisabledReason) return
-                                  setTrustedSessionApprovalId(pendingAgentApproval.id)
-                                  setTrustedSessionConfirmOpen(true)
-                                }}
-                              >
-                                {trustedSessionMutationDisabledReason
-                                  ? 'Trusted Session in main window'
-                                  : 'Start Trusted Session...'}
-                              </PillButton>
-                            )}
-                          {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
-                            <PillButton
-                              variant="danger"
-                              size="compact"
-                              type="button"
-                              title="Deny this request and let the current run continue or fail according to the provider."
-                              onClick={() =>
-                                void handleAgentApprovalAction(pendingAgentApproval.id, 'decline')
-                              }
-                            >
-                              Deny
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || ['cancel']).includes('cancel') && (
-                            <PillButton
-                              variant="danger"
-                              size="compact"
-                              type="button"
-                              title={
-                                approvalCancelPresentation.title
-                              }
-                              onClick={() =>
-                                void handleAgentApprovalAction(pendingAgentApproval.id, 'cancel')
-                              }
-                            >
-                              {approvalCancelPresentation.label}
-                            </PillButton>
-                          )}
-                          {/* Slice 4 external-path actions — only render when
-                            the runtime detector emitted the new action
-                            triplet. The generic accept/decline buttons
-                            above won't match those approvals' action list,
-                            so only these three appear for external-path
-                            prompts. */}
-                          {(pendingAgentApproval.actions || []).includes(
-                            'grantExternalPathRead'
-                          ) && (
-                            <PillButton
-                              variant="primary"
-                              size="compact"
-                              type="button"
-                              title="Grant read-only access to the detected external path for this request."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'grantExternalPathRead'
-                                )
-                              }
-                            >
-                              Grant read access
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || []).includes(
-                            'grantExternalPathEdit'
-                          ) && (
-                            <PillButton
-                              variant="primary"
-                              size="compact"
-                              type="button"
-                              title="Grant edit access to the detected external path for this request."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'grantExternalPathEdit'
-                                )
-                              }
-                            >
-                              Grant edit access
-                            </PillButton>
-                          )}
-                          {(pendingAgentApproval.actions || []).includes('declineExternalPath') && (
-                            <PillButton
-                              variant="ghost"
-                              size="compact"
-                              type="button"
-                              title="Deny this external path request once. The agent may ask again if it still needs the path."
-                              onClick={() =>
-                                void handleAgentApprovalAction(
-                                  pendingAgentApproval.id,
-                                  'declineExternalPath'
-                                )
-                              }
-                            >
-                              Deny once
-                            </PillButton>
-                          )}
-                        </div>
-                      </div>
-                    )}
                     <div className="composer-inline-pickers">
                       <div className="composer-inline-pickers-left">
                         {(() => {
@@ -4309,12 +4006,12 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                   })
                                   .map((grant) => grant.service)
                               )
-                          // Hide Tool Grants without a scoped workspace and for providers
-                          // whose native tools do not pass through TaskWraith's grant gate.
+                          // Hide Tool Grants without a scoped workspace. Every live
+                          // provider (Cursor included, via its TaskWraith MCP broker)
+                          // routes tool calls through the central approval gate where
+                          // workspace grants apply, so there is no per-provider gate.
                           const grantServicesForPicker =
-                            currentWorkspace &&
-                            !isCurrentGlobalChat &&
-                            supportsTaskWraithToolGrants(effectiveProvider)
+                            currentWorkspace && !isCurrentGlobalChat
                               ? WORKSPACE_POLICY_SERVICES
                               : []
                           const grantTimingNote =
@@ -5218,6 +4915,318 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 </div>
               )}
             </div>
+            {/* Agent-approval OVERLAY — deliberately OUTSIDE `.composer-surface`.
+              The surface clips (`overflow: hidden` is load-bearing for the native
+              shell's full-bleed inner-module corners), so a card nested in the
+              control-footer can only ever sit in flow between the textarea and
+              the footer rows. Rendered as a `.composer-area` child instead, the
+              card floats OVER the composer stack on the z-axis as the pending-
+              approval interaction surface (geometry in `.composer-permission-
+              card--overlay`); approval state, focus autoselect and the countdown
+              are unchanged. Order: after the surface so tab order stays
+              textarea → footer → approval actions. */}
+            {pendingAgentApproval && (
+              <div
+                ref={agentApprovalCardRef}
+                role="alertdialog"
+                aria-modal="false"
+                aria-labelledby="composer-agent-approval-title"
+                aria-describedby={
+                  agentApprovalCountdownMs != null
+                    ? 'composer-agent-approval-countdown'
+                    : undefined
+                }
+                className={`composer-permission-card composer-permission-card--overlay provider-${pendingAgentApproval.provider}`}
+              >
+                <div className="composer-permission-title">
+                  <span id="composer-agent-approval-title">{pendingAgentApproval.title}</span>
+                  <span className="composer-permission-source">
+                    {getProviderLabel(pendingAgentApproval.provider)}
+                    {/* 1.0.4-AK4 — surface the queue depth so the
+                      user knows other approvals are waiting on
+                      this same chat. Common case (single
+                      approval at a time) shows nothing extra. */}
+                    {(() => {
+                      const queue = currentComposerChatId
+                        ? pendingApprovalQueueByChatId[currentComposerChatId] || []
+                        : []
+                      if (queue.length === 0) return null
+                      return (
+                        <span
+                          className="composer-permission-queue-badge"
+                          title={`${queue.length} more approval${
+                            queue.length === 1 ? '' : 's'
+                          } queued behind this one — they appear in order as you respond.`}
+                        >
+                          +{queue.length} more
+                        </span>
+                      )
+                    })()}
+                  </span>
+                </div>
+                {agentApprovalCountdownMs != null && (
+                  <div
+                    id="composer-agent-approval-countdown"
+                    className="composer-permission-countdown"
+                    role="status"
+                    aria-live="polite"
+                  >
+                    Auto-denies in {formatApprovalCountdown(agentApprovalCountdownMs)}
+                  </div>
+                )}
+                {pendingAgentApproval.body && (
+                  <div className="composer-permission-message">
+                    {pendingAgentApproval.body}
+                  </div>
+                )}
+                {/* Slice 4 of the external-path-redesign arc.
+                  When the runtime detector emits an external-path
+                  approval, it stashes the detected path under
+                  `preview.externalPathDetection`. Render it
+                  prominently so the user knows WHICH path they're
+                  granting before clicking the action button. */}
+                {pendingAgentApproval.preview?.externalPathDetection?.path && (
+                  <div className="composer-permission-external-path">
+                    <span className="composer-permission-external-path-label">Path</span>
+                    <code className="composer-permission-external-path-value">
+                      {pendingAgentApproval.preview.externalPathDetection.path}
+                    </code>
+                  </div>
+                )}
+                {renderAgentApprovalPreview(pendingAgentApproval.preview)}
+                {/* Order-4 — optional one-line intent note. Always
+                  optional: it never blocks approve/deny. The text
+                  is captured at click time in
+                  `handleAgentApprovalAction` and persisted onto
+                  the approval-ledger row's metadata as
+                  `intentNote` (no schema migration). */}
+                <input
+                  type="text"
+                  className="composer-permission-note"
+                  value={intentNote}
+                  onChange={(e) => setIntentNote(e.target.value)}
+                  placeholder="why? (optional)"
+                  aria-label="Optional note explaining this approval decision"
+                  maxLength={280}
+                />
+                <div className="composer-permission-actions">
+                  {(pendingAgentApproval.actions || ['accept']).includes('accept') && (
+                    <PillButton
+                      variant="primary"
+                      size="compact"
+                      type="button"
+                      title={
+                        pendingAgentApproval.method === 'hostCommand/rerun'
+                          ? 'Rerun this request outside the current sandbox once. This does not grant future approvals.'
+                          : 'Allow only this approval request. Future similar requests will still ask.'
+                      }
+                      onClick={() =>
+                        void handleAgentApprovalAction(pendingAgentApproval.id, 'accept')
+                      }
+                    >
+                      {pendingAgentApproval.method === 'hostCommand/rerun'
+                        ? 'Rerun outside sandbox'
+                        : 'Allow once'}
+                    </PillButton>
+                  )}
+                  {(pendingAgentApproval.actions || []).includes('useProviderNative') && (
+                    <PillButton
+                      variant="primary"
+                      size="compact"
+                      type="button"
+                      title="Use the provider CLI or SDK native approval flow for this request instead of TaskWraith handling it."
+                      onClick={() =>
+                        void handleAgentApprovalAction(
+                          pendingAgentApproval.id,
+                          'useProviderNative'
+                        )
+                      }
+                    >
+                      Use Provider Native
+                    </PillButton>
+                  )}
+                  {(pendingAgentApproval.actions || []).includes('useTaskWraithSubthread') && (
+                    <PillButton
+                      variant="ghost"
+                      size="compact"
+                      type="button"
+                      title="Move this work into a TaskWraith sub-thread so it can continue with isolated context and its own approval handling."
+                      onClick={() =>
+                        void handleAgentApprovalAction(
+                          pendingAgentApproval.id,
+                          'useTaskWraithSubthread'
+                        )
+                      }
+                    >
+                      Use TaskWraith Sub-thread
+                    </PillButton>
+                  )}
+                  {((pendingAgentApproval.actions || []).includes('acceptForWorkspace') ||
+                    (pendingAgentApproval.actions || ['acceptForSession']).includes(
+                      'acceptForSession'
+                    )) && (
+                    <div
+                      className="composer-permission-scope-actions"
+                      role="group"
+                      aria-label="Longer approval scopes"
+                    >
+                      {(pendingAgentApproval.actions || ['acceptForSession']).includes(
+                        'acceptForSession'
+                      ) && (
+                        <PillButton
+                          className="composer-permission-scope-action"
+                          variant="secondary"
+                          size="compact"
+                          type="button"
+                          title="Allow matching requests for the rest of this app session. Restarting the app clears the grant."
+                          onClick={() =>
+                            void handleAgentApprovalAction(
+                              pendingAgentApproval.id,
+                              'acceptForSession'
+                            )
+                          }
+                        >
+                          Allow for session
+                        </PillButton>
+                      )}
+                      {(pendingAgentApproval.actions || []).includes(
+                        'acceptForWorkspace'
+                      ) && (
+                        <PillButton
+                          className="composer-permission-scope-action"
+                          variant="secondary"
+                          size="compact"
+                          type="button"
+                          title="Allow this kind of request for this workspace. The grant persists until revoked in Approvals & Grants."
+                          onClick={() =>
+                            void handleAgentApprovalAction(
+                              pendingAgentApproval.id,
+                              'acceptForWorkspace'
+                            )
+                          }
+                        >
+                          Allow in workspace
+                        </PillButton>
+                      )}
+                    </div>
+                  )}
+                  {/* Trusted Session is lane-scoped: the current ensemble participant or solo
+                    chat receives the signed full_access preset, then this request is
+                    accepted once. It deliberately does not enable process-wide YOLO or
+                    mint a hidden matching-service session grant via acceptForSession. */}
+                  {!isNativeSubAgentPreferenceApproval(pendingAgentApproval) &&
+                    pendingAgentApproval.preview?.requestOnly !== true &&
+                    pendingAgentApproval.preview?.requiresExactDesktopReview !== true &&
+                    !pendingAgentApproval.preview?.externalPathDetection && (
+                      <PillButton
+                        variant="ghost"
+                        size="compact"
+                        type="button"
+                        disabled={Boolean(trustedSessionMutationDisabledReason)}
+                        title={
+                          trustedSessionMutationDisabledReason ||
+                          'Raise only this chat or selected participant to Trusted Session, then approve this request once. Other lanes are unchanged.'
+                        }
+                        onClick={() => {
+                          if (trustedSessionMutationDisabledReason) return
+                          setTrustedSessionApprovalId(pendingAgentApproval.id)
+                          setTrustedSessionConfirmOpen(true)
+                        }}
+                      >
+                        {trustedSessionMutationDisabledReason
+                          ? 'Trusted Session in main window'
+                          : 'Start Trusted Session...'}
+                      </PillButton>
+                    )}
+                  {(pendingAgentApproval.actions || ['decline']).includes('decline') && (
+                    <PillButton
+                      variant="danger"
+                      size="compact"
+                      type="button"
+                      title="Deny this request and let the current run continue or fail according to the provider."
+                      onClick={() =>
+                        void handleAgentApprovalAction(pendingAgentApproval.id, 'decline')
+                      }
+                    >
+                      Deny
+                    </PillButton>
+                  )}
+                  {(pendingAgentApproval.actions || ['cancel']).includes('cancel') && (
+                    <PillButton
+                      variant="danger"
+                      size="compact"
+                      type="button"
+                      title={
+                        approvalCancelPresentation.title
+                      }
+                      onClick={() =>
+                        void handleAgentApprovalAction(pendingAgentApproval.id, 'cancel')
+                      }
+                    >
+                      {approvalCancelPresentation.label}
+                    </PillButton>
+                  )}
+                  {/* Slice 4 external-path actions — only render when
+                    the runtime detector emitted the new action
+                    triplet. The generic accept/decline buttons
+                    above won't match those approvals' action list,
+                    so only these three appear for external-path
+                    prompts. */}
+                  {(pendingAgentApproval.actions || []).includes(
+                    'grantExternalPathRead'
+                  ) && (
+                    <PillButton
+                      variant="primary"
+                      size="compact"
+                      type="button"
+                      title="Grant read-only access to the detected external path for this request."
+                      onClick={() =>
+                        void handleAgentApprovalAction(
+                          pendingAgentApproval.id,
+                          'grantExternalPathRead'
+                        )
+                      }
+                    >
+                      Grant read access
+                    </PillButton>
+                  )}
+                  {(pendingAgentApproval.actions || []).includes(
+                    'grantExternalPathEdit'
+                  ) && (
+                    <PillButton
+                      variant="primary"
+                      size="compact"
+                      type="button"
+                      title="Grant edit access to the detected external path for this request."
+                      onClick={() =>
+                        void handleAgentApprovalAction(
+                          pendingAgentApproval.id,
+                          'grantExternalPathEdit'
+                        )
+                      }
+                    >
+                      Grant edit access
+                    </PillButton>
+                  )}
+                  {(pendingAgentApproval.actions || []).includes('declineExternalPath') && (
+                    <PillButton
+                      variant="ghost"
+                      size="compact"
+                      type="button"
+                      title="Deny this external path request once. The agent may ask again if it still needs the path."
+                      onClick={() =>
+                        void handleAgentApprovalAction(
+                          pendingAgentApproval.id,
+                          'declineExternalPath'
+                        )
+                      }
+                    >
+                      Deny once
+                    </PillButton>
+                  )}
+                </div>
+              </div>
+            )}
             {isWelcomeChat && isWorkflowComposeChat && workflowDraft && (
               <WorkflowComposeControls
                 cadence={workflowDraft.cadence}

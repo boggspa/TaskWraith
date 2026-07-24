@@ -511,9 +511,9 @@ function approvalContract(
       effectiveMode,
       providerMode: 'native Cursor tools bounded by the OS sandbox',
       inAppApprovals: false,
-      supportsWorkspaceGrants: false,
+      supportsWorkspaceGrants: true,
       notes: [
-        'Cursor runs its native tools contained by the native OS sandbox (--sandbox enabled) plus a read-only mode for read seats. TaskWraith does not mediate Cursor per-tool approvals; the sandbox is an honest partial backstop (it blocks $HOME-root sensitive dirs for a normal project workspace, but not a workspace placed directly under $HOME).'
+        'Cursor runs its native tools contained by the native OS sandbox (--sandbox enabled) plus a read-only mode for read seats. Native per-tool calls are not individually mediated; the sandbox is an honest partial backstop (it blocks $HOME-root sensitive dirs for a normal project workspace, but not a workspace placed directly under $HOME). Brokered TaskWraith MCP tools route through TaskWraith approvals, where workspace Tool Grants apply.'
       ]
     }
   }

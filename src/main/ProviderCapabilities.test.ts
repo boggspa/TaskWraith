@@ -317,6 +317,9 @@ describe('ProviderCapabilities', () => {
     // An available Cursor carries no disabled-state error.
     expect(contract.availability.error).toBeUndefined()
     expect(contract.approvals.effectiveMode).not.toBe('unavailable')
+    // Cursor's brokered TaskWraith MCP tools route through the central
+    // approval gate, so workspace Tool Grants apply (provider parity).
+    expect(contract.approvals.supportsWorkspaceGrants).toBe(true)
   })
 
   it('marks write-capable Grok as TaskWraith MCP bridge-backed', () => {
