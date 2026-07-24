@@ -76,6 +76,15 @@ describe('PromptCachePolicy', () => {
           guaranteeTier: 'unsupported',
           retired: true,
           defaultMode: 'off'
+        }),
+        // The provider ships two transports; the table has to name it, and the
+        // weaker lane sets the tier.
+        expect.objectContaining({
+          provider: 'antigravity',
+          guaranteeTier: 'automatic-observed',
+          controllable: false,
+          supportsModeControl: false,
+          retired: undefined
         })
       ])
     )

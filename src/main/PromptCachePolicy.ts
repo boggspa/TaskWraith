@@ -128,6 +128,21 @@ const STATIC_CAPABILITIES: StaticCacheCapability[] = [
     controllable: false,
     supportsModeControl: false,
     retired: true,
+  },
+  {
+    // AntiGravity carries two transports under one id, and the weaker one sets
+    // the tier: the Gemini API key lane gets Google's provider-side implicit
+    // caching (no breakpoints TaskWraith can set), and the official agy CLI
+    // lane is opaque like every other CLI row.
+    provider: 'antigravity',
+    label: 'Antigravity',
+    transport: 'api-managed',
+    guaranteeTier: 'automatic-observed',
+    guaranteeLabel: 'Automatic',
+    detail:
+      'Gemini API key runs use Google-managed implicit caching; the official agy CLI lane is an opaque transport. TaskWraith records cache tokens only where the transport reports them and cannot force cache breakpoints on either lane.',
+    controllable: false,
+    supportsModeControl: false
   }
 ]
 
