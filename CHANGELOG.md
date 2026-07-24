@@ -19,11 +19,13 @@ to answer.
   semantics.
 - **A ChatGPT composer shell.** A new shell style that pairs the Codex
   above-row with a flat capsule body, with satellite actions, a tucked-tab
-  above-row, and a wider model control.
+  above-row, and a wider model control — on desktop and the iPhone/iPad
+  companion alike.
 - **Live token telemetry while providers work.** Grok, Cursor, and Kimi now
   stream estimated working telemetry — text, thinking, and tool output — from
   one shared token-estimate authority. The working indicator and composer
-  tally mark estimates and prefer live provider totals for context tracking.
+  tally mark estimates and prefer live provider totals for context tracking,
+  and the iPhone/iPad companion mirrors the same usage surfaces.
 - **Boss full-roster fan-out.** An Ensemble Boss can fan work out to the
   entire roster in one action, with each participant running under its own
   permission posture; the panel now also shows participant turn order.
