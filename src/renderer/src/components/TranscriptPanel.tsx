@@ -852,6 +852,21 @@ const EMPTY_FOLDING_SUPER_GROUPS: ReadonlySet<string> = new Set()
  * are already 0px tall — the removal is then invisible.
  */
 const SUPER_FOLD_COMMIT_MS = 300
+
+/**
+ * Level-1 roll-up: how long a freshly collapsed stack row keeps its
+ * `.is-stack-collapsing` class. The CSS animation (260ms) rolls the row from
+ * its last measured slot height down to the one-liner instead of teleporting.
+ */
+const STACK_COLLAPSE_COMMIT_MS = 300
+
+function prefersReducedMotionNow(): boolean {
+  return (
+    typeof window !== 'undefined' &&
+    typeof window.matchMedia === 'function' &&
+    window.matchMedia('(prefers-reduced-motion: reduce)').matches
+  )
+}
 /** Stable empty expansion set so unopened tool rows share one reference. */
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
 
@@ -3032,10 +3047,7 @@ export const TranscriptPanel = memo(
         foldState.seen.clear()
         foldState.committed.clear()
       }
-      const reducedMotion =
-        typeof window !== 'undefined' &&
-        typeof window.matchMedia === 'function' &&
-        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const reducedMotion = prefersReducedMotionNow()
       const liveLeads = new Set<string>()
       const folding = new Set<string>()
       for (const group of superGroupByMessageId.values()) {
@@ -3059,17 +3071,52 @@ export const TranscriptPanel = memo(
       }
       return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
     }, [superGroupByMessageId, expandedSuperGroups, currentChat?.appChatId, foldTick])
+    // Arm-once commit timers. A deps-cleanup timer would re-arm on every
+    // streaming render (memo identities churn each frame) and starve the
+    // commit; an armed timer instead runs to completion, and any late
+    // arrivals get the next arming after the tick re-render.
+    const superFoldCommitTimerRef = useRef<number | null>(null)
+    const stackCollapseStateRef = useRef<{
+      chatId: string | null | undefined
+      lastCollapsed: Map<string, boolean>
+      entering: Map<string, number>
+    }>({ chatId: undefined, lastCollapsed: new Map(), entering: new Map() })
+    const stackCollapseCommitTimerRef = useRef<number | null>(null)
+    const [, setStackCollapseTick] = useState(0)
     useEffect(() => {
-      if (foldingSuperGroups.size === 0) return
-      // Commit exactly the leads this timer observed; leads that start
-      // folding later re-arm the (cleared) timer and get their own window.
+      if (foldingSuperGroups.size === 0 || superFoldCommitTimerRef.current !== null) return
       const observed = [...foldingSuperGroups]
-      const timer = window.setTimeout(() => {
+      superFoldCommitTimerRef.current = window.setTimeout(() => {
+        superFoldCommitTimerRef.current = null
         for (const leadId of observed) superFoldStateRef.current.committed.add(leadId)
         setFoldTick((tick) => tick + 1)
       }, SUPER_FOLD_COMMIT_MS)
-      return () => window.clearTimeout(timer)
     }, [foldingSuperGroups])
+    useEffect(() => {
+      if (
+        stackCollapseStateRef.current.entering.size === 0 ||
+        stackCollapseCommitTimerRef.current !== null
+      ) {
+        return
+      }
+      const observed = [...stackCollapseStateRef.current.entering.keys()]
+      stackCollapseCommitTimerRef.current = window.setTimeout(() => {
+        stackCollapseCommitTimerRef.current = null
+        for (const key of observed) stackCollapseStateRef.current.entering.delete(key)
+        setStackCollapseTick((tick) => tick + 1)
+      }, STACK_COLLAPSE_COMMIT_MS)
+    })
+    useEffect(
+      () => () => {
+        if (superFoldCommitTimerRef.current !== null) {
+          window.clearTimeout(superFoldCommitTimerRef.current)
+        }
+        if (stackCollapseCommitTimerRef.current !== null) {
+          window.clearTimeout(stackCollapseCommitTimerRef.current)
+        }
+      },
+      []
+    )
     // Rows hidden inside a COLLAPSED super group render an empty block whose
     // CSS zeroes all spacing, so their real slot height is 0 — but a 0px slot
     // can never record a measurement (the measure pass skips non-positive
@@ -3219,6 +3266,8 @@ export const TranscriptPanel = memo(
       setExpandedSubThreadResults(new Set())
       setActiveParticipantFilterKeys(new Set())
       rowElementCacheRef.current.clear()
+      stackCollapseStateRef.current.lastCollapsed.clear()
+      stackCollapseStateRef.current.entering.clear()
       setHighlightedMessageTarget(null)
       setPendingFocusTarget(null)
       scrollAnimatorRef.current?.cancel()
@@ -3663,7 +3712,7 @@ export const TranscriptPanel = memo(
               !isPinnedMessageTarget
             const collapsedSystemExpanded =
               systemAutoCollapsible && expandedCollapsedStacks.has(msg.id)
-            const collapsedStackKey = stackAutoCollapsible
+            let collapsedStackKey = stackAutoCollapsible
               ? `collapsible:${collapsedStackExpanded ? 'open' : 'closed'}`
               : systemAutoCollapsible
                 ? `system:${collapsedSystemExpanded ? 'open' : 'closed'}`
@@ -3674,18 +3723,19 @@ export const TranscriptPanel = memo(
             const superGroupExpanded = Boolean(
               superGroup && expandedSuperGroups.has(superGroup.leadId)
             )
-            const superGroupFolding = Boolean(
-              superGroup &&
-              !superGroupExpanded &&
-              !isSuperLead &&
-              foldingSuperGroups.has(superGroup.leadId)
+            const superGroupFoldPhase = Boolean(
+              superGroup && !superGroupExpanded && foldingSuperGroups.has(superGroup.leadId)
             )
+            const superGroupFolding = superGroupFoldPhase && !isSuperLead
+            // The lead swaps to the merged one-liner while its members fold —
+            // it fades the new line in rather than height-folding.
+            const superLeadEntering = superGroupFoldPhase && isSuperLead
             const superGroupHidden = Boolean(
               superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
             )
             const superGroupKey = superGroup
               ? `${superGroup.leadId}:${superGroup.size}:${
-                  superGroupExpanded ? 'open' : superGroupFolding ? 'folding' : 'closed'
+                  superGroupExpanded ? 'open' : superGroupFoldPhase ? 'folding' : 'closed'
                 }:${isSuperLead ? 'lead' : 'member'}`
               : ''
             const superSummary =
@@ -3696,6 +3746,43 @@ export const TranscriptPanel = memo(
                     firstSystemPreview: superGroup.firstSystemPreview
                   })
                 : null
+            // Level-1 roll-up: when a settled stack first swaps to its
+            // one-liner, animate the row height down from the slot's last
+            // measured height instead of teleporting. Super-group members are
+            // excluded — the fold-out phase owns their height; first sighting
+            // of a row (chat open, fresh mount) never animates.
+            let stackCollapseEntering = false
+            let stackCollapseFromPx = 0
+            if (isToolActivityStack && liveViewportStackKey && virtualizeEnabled) {
+              const collapseState = stackCollapseStateRef.current
+              const renderedCollapsed =
+                stackAutoCollapsible &&
+                !collapsedStackExpanded &&
+                !superGroupHidden &&
+                !superGroupFolding &&
+                !(isSuperLead && superSummary)
+              const prevCollapsed = collapseState.lastCollapsed.get(liveViewportStackKey)
+              collapseState.lastCollapsed.set(liveViewportStackKey, renderedCollapsed)
+              if (!renderedCollapsed) {
+                collapseState.entering.delete(liveViewportStackKey)
+              } else if (
+                prevCollapsed === false &&
+                !collapseState.entering.has(liveViewportStackKey) &&
+                !prefersReducedMotionNow()
+              ) {
+                const projIndex = Number(rowKey.slice(rowKey.lastIndexOf('#') + 1))
+                const measured = Number.isFinite(projIndex) ? virtualHeights[projIndex] : undefined
+                if (typeof measured === 'number' && measured > 72) {
+                  collapseState.entering.set(liveViewportStackKey, Math.round(measured))
+                }
+              }
+              const fromPx = collapseState.entering.get(liveViewportStackKey)
+              if (fromPx) {
+                stackCollapseEntering = true
+                stackCollapseFromPx = fromPx
+                collapsedStackKey = `${collapsedStackKey}:entering`
+              }
+            }
             const pendingPlanChoiceKey =
               pendingPlanChoice && pendingPlanChoice.messageId === msg.id
                 ? [
@@ -3878,7 +3965,14 @@ export const TranscriptPanel = memo(
                   // its height to 0; the hidden state commits ~300ms later on
                   // an already-invisible row.
                   superGroupFolding ? ' is-super-folding' : ''
+                }${superLeadEntering ? ' is-super-lead-entering' : ''}${
+                  stackCollapseEntering ? ' is-stack-collapsing' : ''
                 }`}
+                style={
+                  stackCollapseEntering
+                    ? ({ '--collapse-from': `${stackCollapseFromPx}px` } as React.CSSProperties)
+                    : undefined
+                }
                 data-vrow-id={rowKey}
                 data-message-id={msg.id}
                 // Selecting the side-chat seed on pointer hover made this full-row
