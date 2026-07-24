@@ -331,9 +331,12 @@ describe('FirstLaunchSheet', () => {
     expect(card).not.toContain('aria-label="Sign out of Ollama"')
   })
 
-  it('Codex card surfaces "signed in" when codexStatus.codexUsage.planType is present', () => {
+  it('Codex card surfaces "signed in" from the private-home account result', () => {
     const codexStatus = {
       available: true,
+      authState: 'chatgpt',
+      account: { type: 'chatgpt', planType: 'pro' },
+      planType: 'pro',
       codexUsage: { planType: 'pro', userId: 'user-123' }
     }
     const html = renderToStaticMarkup(
@@ -358,13 +361,19 @@ describe('FirstLaunchSheet', () => {
         onDismiss={() => {}}
         onOpenSettings={() => {}}
         onProviderLogin={() => {}}
-        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'user-123' } }}
+        codexStatus={{
+          available: true,
+          authState: 'chatgpt',
+          account: { type: 'chatgpt', planType: 'pro' },
+          planType: 'pro',
+          codexUsage: { planType: 'pro', userId: 'user-123' }
+        }}
         claudeAuthStatus={makeProviderApiKeyStatus({ apiKeyConfigured: true })}
         kimiAuthStatus={null}
       />
     )
-    expect(providerCardMarkup(html, 'codex')).not.toContain('Sign in')
-    expect(providerCardMarkup(html, 'claude')).not.toContain('Sign in')
+    expect(providerCardMarkup(html, 'codex')).not.toContain('aria-label="Sign in to Codex"')
+    expect(providerCardMarkup(html, 'claude')).not.toContain('aria-label="Sign in to Claude"')
   })
 
   it('Codex card surfaces "Codex CLI not found" when available is false', () => {
@@ -393,6 +402,27 @@ describe('FirstLaunchSheet', () => {
     expect(html).toContain('Usage credential missing')
   })
 
+  it('keeps a usage-only Codex import distinct from runtime sign-in', () => {
+    const html = renderToStaticMarkup(
+      <FirstLaunchSheet
+        open={true}
+        onDismiss={() => {}}
+        onOpenSettings={() => {}}
+        onProviderLogin={() => {}}
+        codexStatus={{
+          available: true,
+          authState: 'unknown',
+          codexUsage: { planType: 'pro', userId: 'usage-only' }
+        }}
+        claudeAuthStatus={null}
+        kimiAuthStatus={null}
+      />
+    )
+    const card = providerCardMarkup(html, 'codex')
+    expect(card).toContain('Usage session available')
+    expect(card).toContain('Sign in')
+  })
+
   it('flips a signed-in provider to "out of usage" when its quota window is maxed', () => {
     const usageSummary = [
       {
@@ -414,7 +444,13 @@ describe('FirstLaunchSheet', () => {
         open={true}
         onDismiss={() => {}}
         onOpenSettings={() => {}}
-        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
+        codexStatus={{
+          available: true,
+          authState: 'chatgpt',
+          account: { type: 'chatgpt', planType: 'pro' },
+          planType: 'pro',
+          codexUsage: { planType: 'pro', userId: 'u1' }
+        }}
         claudeAuthStatus={null}
         kimiAuthStatus={null}        usageSummary={usageSummary}
       />
@@ -449,7 +485,13 @@ describe('FirstLaunchSheet', () => {
         onDismiss={() => {}}
         onOpenSettings={() => {}}
         onProviderLogin={() => {}}
-        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
+        codexStatus={{
+          available: true,
+          authState: 'chatgpt',
+          account: { type: 'chatgpt', planType: 'pro' },
+          planType: 'pro',
+          codexUsage: { planType: 'pro', userId: 'u1' }
+        }}
         claudeAuthStatus={null}
         kimiAuthStatus={null}
         usageSummary={usageSummary}
@@ -457,7 +499,7 @@ describe('FirstLaunchSheet', () => {
     )
     const card = providerCardMarkup(html, 'codex')
     expect(card).toContain('first-launch-sheet-provider-card-out-of-usage')
-    expect(card).not.toContain('Sign in')
+    expect(card).not.toContain('aria-label="Sign in to Codex"')
     expect(card).toContain('Open Settings')
   })
 
@@ -474,7 +516,13 @@ describe('FirstLaunchSheet', () => {
         open={true}
         onDismiss={() => {}}
         onOpenSettings={() => {}}
-        codexStatus={{ available: true, codexUsage: { planType: 'pro', userId: 'u1' } }}
+        codexStatus={{
+          available: true,
+          authState: 'chatgpt',
+          account: { type: 'chatgpt', planType: 'pro' },
+          planType: 'pro',
+          codexUsage: { planType: 'pro', userId: 'u1' }
+        }}
         claudeAuthStatus={null}
         kimiAuthStatus={null}        usageSummary={usageSummary}
       />

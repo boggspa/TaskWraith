@@ -119,9 +119,30 @@ function deriveAuthState(
   }
 
   if (provider === 'codex') {
+    const normalized = String(rawAuthState || '').trim().toLowerCase()
+    if (normalized === 'missing' || normalized === 'expired') {
+      return {
+        authState: normalized,
+        authReason:
+          errorReason ||
+          (normalized === 'expired'
+            ? 'TaskWraith Codex sign-in has expired.'
+            : 'TaskWraith Codex sign-in is required.')
+      }
+    }
+    if (
+      normalized === 'authenticated' ||
+      normalized === 'chatgpt' ||
+      normalized === 'api-key' ||
+      normalized === 'apikey' ||
+      normalized === 'not-required'
+    ) {
+      return { authState: 'authenticated' }
+    }
     return {
       authState: 'not-queried',
-      authReason: 'Codex auth lives in the app-server. Call account/read for live state.'
+      authReason:
+        errorReason || 'Codex app-server account/read did not return a definitive auth state.'
     }
   }
 

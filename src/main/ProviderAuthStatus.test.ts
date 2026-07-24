@@ -118,6 +118,28 @@ describe('buildProviderAuthStatusV2 — codex', () => {
     expect(result.authReason).toContain('account/read')
   })
 
+  it('projects definitive private-home account states', () => {
+    expect(
+      buildProviderAuthStatusV2({
+        provider: 'codex',
+        available: true,
+        codexClientStarted: true,
+        rawAuthState: 'apiKey'
+      }).authState
+    ).toBe('authenticated')
+    expect(
+      buildProviderAuthStatusV2({
+        provider: 'codex',
+        available: true,
+        codexClientStarted: true,
+        rawAuthState: 'missing'
+      })
+    ).toMatchObject({
+      authState: 'missing',
+      authReason: expect.stringContaining('sign-in')
+    })
+  })
+
   it('marks codex unavailable when neither binary nor client are present', () => {
     const result = buildProviderAuthStatusV2({
       provider: 'codex',

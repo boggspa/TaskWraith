@@ -358,6 +358,7 @@ interface SettingsPanelProps {
   // Open a Terminal running a provider's interactive CLI login (Cursor, Grok, …).
   onProviderLogin?: (provider: ProviderId) => void
   onProviderLogout?: (provider: ProviderId) => void
+  onRefreshProviderStatus?: (provider: ProviderId) => void
   onRemoveAgenticWorkspaceGrant?: (
     provider: ProviderId,
     workspacePath: string,
@@ -3800,6 +3801,7 @@ export function SettingsPanel({
   onProviderUpgrade,
   onProviderLogin,
   onProviderLogout,
+  onRefreshProviderStatus,
   onRemoveAgenticWorkspaceGrant,
   onInstallGeminiMcpBridge,
   onRefreshGeminiMcpBridgeStatus,
@@ -6880,8 +6882,10 @@ export function SettingsPanel({
                     description="OpenAI Codex CLI for fast shell and agentic work."
                   >
                     <div className="settings-provider-auth-command">
-                      <code>codex login</code>
-                      <span>Run once in Terminal for official Codex CLI runtime auth.</span>
+                      <code>TaskWraith Codex sign-in</code>
+                      <span>
+                        Run once for the private Codex home used only by TaskWraith.
+                      </span>
                     </div>
                     <div className="settings-provider-auth-action-row">
                       {onProviderLogin && (
@@ -6902,6 +6906,15 @@ export function SettingsPanel({
                           Open Terminal to sign out
                         </PillButton>
                       )}
+                      {onRefreshProviderStatus && (
+                        <PillButton
+                          size="compact"
+                          variant="ghost"
+                          onClick={() => onRefreshProviderStatus('codex')}
+                        >
+                          Refresh sign-in status
+                        </PillButton>
+                      )}
                       {renderProviderUpgradeButton('codex')}
                       <PillButton size="compact" variant="primary" onClick={onImportCodexUsageCredential}>
                         Import usage session
@@ -6917,8 +6930,10 @@ export function SettingsPanel({
                       )}
                     </div>
                     <p className="settings-provider-auth-footnote">
-                      Usage import powers quota and credit meters only; Codex runs still use the
-                      official CLI login.
+                      This sign-in is separate from the Codex app, so TaskWraith tasks do not enter
+                      the app&apos;s history. Usage import powers meters only and does not sign the
+                      runtime in. Config and native Codex plugins are intentionally independent;
+                      TaskWraith and user MCP servers are attached at launch.
                       {renderProviderUpgradeHint('codex')}
                     </p>
                     {renderProviderPauseControls('codex')}

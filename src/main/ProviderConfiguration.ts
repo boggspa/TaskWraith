@@ -78,7 +78,9 @@ function configuredStatusIsAuthenticated(status: {
   const authState = String(status.authState || '')
     .trim()
     .toLowerCase()
-  return ['oauth', 'api-key', 'authenticated', 'chatgpt', 'not-required'].includes(authState)
+  return ['oauth', 'api-key', 'apikey', 'authenticated', 'chatgpt', 'not-required'].includes(
+    authState
+  )
 }
 
 function hasConfiguredGeminiApiKey(generation: string | null | undefined): boolean {
@@ -123,7 +125,8 @@ function boundedProviderProbe(
 function settingsConfiguredProviders(settings: AppSettings): Set<ProviderId> {
   const configured = new Set<ProviderId>()
   if (settings.claudeApiKey || settings.claudeBinaryPath) configured.add('claude')
-  if (settings.codexUsageCredential?.encryptedAccessToken) configured.add('codex')
+  // Codex usage imports are quota telemetry only. Runtime configuration is
+  // established exclusively by the private-home auth probe below.
   if ((settings.geminiAuthProfiles?.length ?? 0) > 0 || settings.defaultGeminiAuthProfileId) {
     configured.add('gemini')
   }
@@ -259,7 +262,6 @@ function configuredProviderCacheKey(
   return JSON.stringify({
     claudeApiKey: Boolean(settings.claudeApiKey),
     claudeBinaryPath: settings.claudeBinaryPath || '',
-    codexUsageCredential: Boolean(settings.codexUsageCredential?.encryptedAccessToken),
     geminiAuthProfileIds: (settings.geminiAuthProfiles || []).map((profile) => profile.id),
     defaultGeminiAuthProfileId: settings.defaultGeminiAuthProfileId || '',
     kimiBinaryPath: settings.kimiBinaryPath || '',
@@ -285,6 +287,7 @@ export function createConfiguredProviderDetector(
   options: ConfiguredProviderDetectorOptions = {}
 ): {
   start: (settings: AppSettings) => void
+  refresh: (settings: AppSettings) => void
   snapshot: (settings: AppSettings) => Promise<Set<ProviderId>>
   statusSnapshot: (settings: AppSettings) => ConfiguredProviderDiscoveryStatus
   modelsSnapshot: (settings: AppSettings) => ReadonlyMap<ProviderId, ConfiguredProviderModel[]>
@@ -347,6 +350,10 @@ export function createConfiguredProviderDetector(
   }
 
   return {
+    refresh: (settings) => {
+      startedKey = null
+      start(settings)
+    },
     start,
     snapshot: async (settings) => {
       const key = configuredProviderCacheKey(settings, dependencies)

@@ -61,6 +61,25 @@ describe('Codex app-server thread admission integration', () => {
     expect(timeout).toBeLessThan(noRetry)
   })
 
+  it('journals manual compaction usage only from its exact terminal notification', () => {
+    const notifications = between(
+      'function handleCodexManualCompactionNotification(message: any): void {',
+      '/**\n * Append the persisted "Context compacted" system card'
+    )
+    const usageSnapshot = notifications.indexOf('pending.tokenUsage = tokenUsage')
+    const terminal = notifications.indexOf(
+      "message.method === 'turn/completed' || message.method === 'turn/failed'"
+    )
+    const usageRecord = notifications.indexOf('recordCodexUsageOnCompletion({', terminal)
+    const settle = notifications.indexOf('pending.settle({ ok: true })', terminal)
+
+    expect(usageSnapshot).toBeGreaterThanOrEqual(0)
+    expect(terminal).toBeGreaterThan(usageSnapshot)
+    expect(usageRecord).toBeGreaterThan(terminal)
+    expect(usageRecord).toBeLessThan(settle)
+    expect(notifications).toContain('runId: `codex-maintenance:${pending.turnId}`')
+  })
+
   it('uses the same lane and exact response id for inline native review', () => {
     const review = between("'start-agent-review'", '// Single source for per-provider model catalogs')
     const reserved = review.indexOf('codexThreadAdmissionRegistry.reserve({')

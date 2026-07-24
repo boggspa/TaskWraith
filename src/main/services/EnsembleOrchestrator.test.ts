@@ -18689,6 +18689,10 @@ describe('slim resumed-turn prompts', () => {
       expect(harness.dispatched[0].ensembleRun?.promptMode).toBe('slim')
       expect(harness.dispatched[0].prompt).toContain('TaskWraith Ensemble Mode — resumed turn')
       expect(harness.dispatched[0].prompt).not.toContain('Participant roster:')
+      expect(harness.dispatched[0].resumeFallbackPrompt).toContain('Participant roster:')
+      expect(harness.dispatched[0].resumeFallbackPrompt).not.toContain(
+        'TaskWraith Ensemble Mode — resumed turn'
+      )
     } finally {
       if (previous === undefined) delete process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME
       else process.env.TASKWRAITH_ENSEMBLE_SLIM_RESUME = previous

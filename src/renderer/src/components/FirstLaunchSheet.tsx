@@ -60,7 +60,7 @@ type OnboardingProviderId =
  *      `onOpenSettings()` — the host opens Settings and the user
  *      finishes the flow there. Codex is a special case: it has
  *      no in-app auth UI today (the user signs in to the OS
- *      `codex` CLI via `codex login` in their shell), so the card
+ *      `codex` CLI via TaskWraith's private-home sign-in), so the card
  *      surfaces the shell command directly with a copy affordance.
  *
  *   3. **Sidebar hint retained.** Per the "safer" path in the spec:
@@ -371,7 +371,7 @@ export function FirstLaunchSheet({
       id: 'codex',
       label: 'Codex',
       description:
-        'OpenAI Codex CLI. Fast-twitch shell / agentic work. Sign-in is at the OS level — run `codex login` in your terminal once.',
+        'OpenAI Codex CLI. Sign in once to TaskWraith’s private Codex home; its tasks and native sessions stay separate from the Codex app history.',
       ...codexSummary
     },
     {

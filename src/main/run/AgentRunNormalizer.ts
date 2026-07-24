@@ -239,6 +239,8 @@ export function normalizeAgentRunPayload(
     scope,
     workspace,
     prompt: typeof payload.prompt === 'string' ? payload.prompt : String(payload.prompt ?? ''),
+    usagePromptText:
+      typeof payload.usagePromptText === 'string' ? payload.usagePromptText : undefined,
     resumeFallbackPrompt: optionalString(payload.resumeFallbackPrompt),
     activeGoal: normalizeAgentRunActiveGoal(payload.activeGoal),
     appRunId,

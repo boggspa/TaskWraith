@@ -149,6 +149,7 @@ function makeService(input: { tamperPersistedSeal?: boolean }) {
     resolveUnattendedElevation: () => null,
     getChat: () => null,
     getRuntimeProfile: (id) => (id === 'cursor-profile' ? profile() : null),
+    codexHomePath: () => join(TEMP_ROOT, 'codex-home'),
     getScheduledTask: () => current,
     persistOccurrenceSeal: (_taskId, _runId, occurrenceSeal) => {
       const persisted = input.tamperPersistedSeal

@@ -38,6 +38,10 @@ import {
   kimiCredentialCandidatePaths,
   selectValidKimiAccessToken
 } from './KimiCredential'
+import {
+  ensureTaskWraithCodexHomeForProtectedRead,
+  taskWraithCodexHomePath
+} from '../codex/CodexHome'
 import type {
   GeminiAuthProfile,
   GeminiAuthProfileKind,
@@ -239,17 +243,21 @@ export function storedCodexUsageCredential(): CodexUsageCredential | null {
 }
 
 /**
- * Read the CURRENT Codex credential straight from `~/.codex/auth.json` on every
- * call. The Codex CLI rotates that file's access token regularly, so a one-time
- * imported/encrypted copy in settings goes stale within ~days and the usage
- * fetch then 401s — which froze the meters at 0%. Reading live (like Kimi reads
- * ~/.kimi and Gemini reads ~/.gemini) tracks the rotated token automatically.
+ * Read the CURRENT Codex credential straight from TaskWraith's private
+ * CODEX_HOME on every call. The Codex CLI rotates that file's access token
+ * regularly, so a one-time imported/encrypted copy in settings goes stale
+ * within ~days and the usage fetch then 401s — which froze the meters at 0%.
+ * Reading live tracks the token used by TaskWraith runs without consulting the
+ * Codex app's separate home.
  * Returns null if the file is absent/unparseable; callers fall back to the
  * stored import.
  */
-export async function readCodexUsageCredentialLive(): Promise<CodexUsageCredential | null> {
+export async function readCodexUsageCredentialLive(
+  codexHome: string = taskWraithCodexHomePath(app.getPath('userData'))
+): Promise<CodexUsageCredential | null> {
   try {
-    const raw = await fs.readFile(join(os.homedir(), '.codex', 'auth.json'), 'utf8')
+    await ensureTaskWraithCodexHomeForProtectedRead(codexHome, ['auth.json'])
+    const raw = await fs.readFile(join(codexHome, 'auth.json'), 'utf8')
     return parseCodexUsageCredential(raw, 'chatgpt-auth-live')
   } catch {
     return null
@@ -906,11 +914,13 @@ export function usageSnapshotWithPersistedFallback(
 
 export async function resolveCodexUsageImportPath(
   event: IpcMainInvokeEvent,
-  requestedPath?: string | null
+  requestedPath?: string | null,
+  codexHome: string = taskWraithCodexHomePath(app.getPath('userData'))
 ): Promise<string | null> {
   const explicitPath = expandHomePath(requestedPath)
   if (explicitPath) return explicitPath
-  const defaultPath = join(os.homedir(), '.codex', 'auth.json')
+  await ensureTaskWraithCodexHomeForProtectedRead(codexHome, ['auth.json'])
+  const defaultPath = join(codexHome, 'auth.json')
   if (await fileExists(defaultPath)) {
     return defaultPath
   }
@@ -981,8 +991,8 @@ function markStaleUsageSnapshot(
 async function loadCodexUsageSnapshotLive(): Promise<NormalizedProviderUsageSnapshot> {
   if (codexUsageInFlight) return codexUsageInFlight
   codexUsageInFlight = (async () => {
-    // Prefer the live, CLI-rotated token from ~/.codex/auth.json; fall back to the
-    // one-time encrypted import only when the file is missing/unreadable.
+    // Prefer the live, CLI-rotated token from TaskWraith's private CODEX_HOME;
+    // fall back to the usage-only encrypted import when it is unavailable.
     const credential = (await readCodexUsageCredentialLive()) ?? storedCodexUsageCredential()
     if (!credential) {
       const stored = AppStore.getSettings().codexUsageCredential

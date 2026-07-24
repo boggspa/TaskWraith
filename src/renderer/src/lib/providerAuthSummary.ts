@@ -144,7 +144,7 @@ export function summariseCodexStatus(status: any): ProviderAuthSummary {
     return {
       variant: 'not-signed-in',
       statusText: 'Status not loaded yet',
-      hint: 'Make sure the codex CLI is installed and run `codex login` in your shell.'
+      hint: 'Open Settings → Providers → Codex to check the private TaskWraith sign-in.'
     }
   }
   if (status.available === false) {
@@ -154,32 +154,43 @@ export function summariseCodexStatus(status: any): ProviderAuthSummary {
       hint: 'Install Codex first (`npm i -g @openai/codex` or upstream installer).'
     }
   }
-  const usage = status.codexUsage
-  if (usage && (usage.planType || usage.userId)) {
-    const plan = String(usage.planType || '').toLowerCase()
-    if (plan) {
-      return {
-        variant: 'signed-in',
-        statusText: `Signed in (${plan})`,
-        hint: 'You can launch Codex runs.'
-      }
+  const authState = String(status.authState || '').toLowerCase()
+  if (status.requiresOpenaiAuth === true || authState === 'missing') {
+    return {
+      variant: 'not-signed-in',
+      statusText: 'TaskWraith Codex sign-in required',
+      hint:
+        'Open Settings → Providers → Codex to sign in. TaskWraith uses a private Codex home separate from the Codex app.'
     }
+  }
+  const account = status.account && typeof status.account === 'object' ? status.account : null
+  if (account || authState === 'not-required') {
+    const plan = String(status.planType || account?.planType || '').toLowerCase()
     return {
       variant: 'signed-in',
-      statusText: 'Signed in',
-      hint: 'You can launch Codex runs.'
+      statusText: plan ? `Signed in (${plan})` : 'Signed in',
+      hint: 'You can launch Codex runs from TaskWraith.'
+    }
+  }
+  const usage = status.codexUsage
+  if (usage && (usage.planType || usage.userId)) {
+    return {
+      variant: 'partial',
+      statusText: 'Usage session available',
+      hint:
+        'Usage telemetry does not sign the private TaskWraith Codex runtime in. Use the Codex sign-in action in Settings.'
     }
   }
   if (usage && usage.error) {
     return {
       variant: 'partial',
       statusText: 'Usage credential missing',
-      hint: 'Run `codex login` in your shell to authenticate the OS-level Codex CLI.'
+      hint: 'Open Settings → Providers → Codex to sign in to TaskWraith Codex.'
     }
   }
   return {
     variant: 'not-signed-in',
     statusText: 'Not signed in',
-    hint: 'Run `codex login` in your shell to authenticate the OS-level Codex CLI.'
+    hint: 'Open Settings → Providers → Codex to sign in to TaskWraith Codex.'
   }
 }

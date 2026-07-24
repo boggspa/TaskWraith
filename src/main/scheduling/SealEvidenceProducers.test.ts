@@ -1,5 +1,5 @@
 import { createHmac } from 'node:crypto'
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterAll, describe, expect, it, vi } from 'vitest'
@@ -256,7 +256,7 @@ describe('codex seal evidence', () => {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: { PATH: '/usr/bin' },
+        resolvedEnv: { PATH: '/usr/bin', CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
         binaryPath: binary,
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
@@ -318,7 +318,7 @@ describe('codex seal evidence', () => {
         model: 'gpt-5.6-terra',
         promptEnvelope: PROMPT_ENVELOPE,
         session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
-        resolvedEnv: {},
+        resolvedEnv: { CODEX_HOME: join(TEMP_ROOT, 'codex-home') },
         binaryPath: binary,
         workspacePath: WORKSPACE,
         approvalMode: 'plan',
@@ -334,6 +334,62 @@ describe('codex seal evidence', () => {
         policy
       })
     ).rejects.toThrow(/does not match the app-server MCP configuration/i)
+  })
+
+  it('rejects Codex seal evidence without an absolute private CODEX_HOME', async () => {
+    const binary = fakeBinary('codex-home-required')
+    await expect(
+      buildCodexSealEvidence(deps(), {
+        model: 'gpt-5.6-terra',
+        promptEnvelope: PROMPT_ENVELOPE,
+        session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
+        resolvedEnv: { CODEX_HOME: 'relative/codex-home' },
+        binaryPath: binary,
+        workspacePath: WORKSPACE,
+        approvalMode: 'plan',
+        effectivePermissions: readOnlyPermissions(),
+        reasoningEffort: null,
+        serviceTier: null,
+        settings: { agenticServices: {} } as unknown as AppSettings,
+        codexMcpConfig: null,
+        taskWraithMcpAdvertised: false,
+        taskWraithMcpProfileId: null,
+        capabilityContract: {},
+        userMcpConfiguration: {},
+        policy
+      })
+    ).rejects.toThrow(/absolute path/i)
+  })
+
+  it('rejects a symlinked protected file inside the private CODEX_HOME', async () => {
+    const binary = fakeBinary('codex-home-protected-link-bin')
+    const codexHome = join(TEMP_ROOT, 'codex-home-protected-link')
+    const outsideConfig = join(TEMP_ROOT, 'outside-config.toml')
+    mkdirSync(codexHome, { recursive: true })
+    writeFileSync(outsideConfig, 'model = "gpt-5.6-terra"')
+    symlinkSync(outsideConfig, join(codexHome, 'config.toml'))
+
+    await expect(
+      buildCodexSealEvidence(deps(), {
+        model: 'gpt-5.6-terra',
+        promptEnvelope: PROMPT_ENVELOPE,
+        session: { sessionMode: 'fresh', providerSessionId: null, seatGeneration: null },
+        resolvedEnv: { CODEX_HOME: codexHome },
+        binaryPath: binary,
+        workspacePath: WORKSPACE,
+        approvalMode: 'plan',
+        effectivePermissions: readOnlyPermissions(),
+        reasoningEffort: null,
+        serviceTier: null,
+        settings: { agenticServices: {} } as unknown as AppSettings,
+        codexMcpConfig: null,
+        taskWraithMcpAdvertised: false,
+        taskWraithMcpProfileId: null,
+        capabilityContract: {},
+        userMcpConfiguration: {},
+        policy
+      })
+    ).rejects.toThrow(/symlink.*config\.toml/i)
   })
 })
 

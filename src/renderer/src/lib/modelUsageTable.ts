@@ -11,14 +11,13 @@
  * Two data sources feed it, and the `includeExternal` flag SWITCHES between
  * them — it does NOT sum them:
  *   - off (default): TaskWraith's OWN runs only (`window.api.getUsage()`).
- *   - on: the externally-tracked provider activity only
- *     (`window.api.getExternalUsage()`, the same 90-day dataset behind the
- *     External Activity heatmap). That set is provider-WIDE and already
- *     includes TaskWraith's own runs — we spawn the real provider CLIs, whose
- *     session logs the external scanner reads — so for every provider in the
- *     roster it is a SUPERSET of the internal set. Summing the two would
- *     double-count every TaskWraith run, so we pick one source, mirroring how
- *     the External Activity heatmap keeps its two datasets isolated.
+ *   - on: provider-wide activity built from externally-tracked provider
+ *     activity plus TaskWraith-owned records for providers whose native logs
+ *     are not part of that external dataset. The external side comes from
+ *     `window.api.getExternalUsage()` (the same 90-day dataset behind the
+ *     External Activity heatmap). Codex now keeps TaskWraith sessions in a
+ *     private CODEX_HOME, so its `window.api.getUsage()` records are
+ *     deliberately supplemented by the Settings entry point.
  *
  * **Honesty:** records carry token counts only — never a billed cost (see
  * `providerRateEstimate.ts`'s HONESTY GUARDRAILS). Every `costUsd` here is a
@@ -500,11 +499,13 @@ export function buildModelUsageTable(
 
 /**
  * Providers whose TaskWraith-internal records are always folded into the table
- * when External Usage is ON. Grok is never scanned externally. Cursor is
- * additive for reporting: IDE-native Composer activity comes from the external
- * scanner while historical TaskWraith Cursor records stay visible.
+ * when External Usage is ON. Codex's TaskWraith-owned sessions live outside
+ * the shared home scanned for external activity; Grok is never scanned
+ * externally. Cursor is additive for reporting: IDE-native Composer activity
+ * comes from the external scanner while historical TaskWraith Cursor records
+ * stay visible.
  */
-const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = ['grok', 'cursor']
+const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = ['codex', 'grok', 'cursor']
 
 /** Cursor's IDE activity scanner exposes input + output but no cache split. Match
  * historical internal Cursor rows on that same fresh-input + output basis; display
@@ -660,7 +661,7 @@ export function buildModelUsageTableForSettings(
       byProvider.set(provider, internalGroup)
       continue
     }
-    if (provider === 'cursor') {
+    if (provider === 'codex' || provider === 'cursor') {
       byProvider.set(
         provider,
         mergeModelUsageProviderGroups(existing, internalGroup, currency, overestimatePercent, locale)
@@ -687,6 +688,7 @@ function modelUsageRecordsForSettingsMatrix(
   const filteredExternal = dedupeCursorExternalAgainstInternal(internalRecords, externalRecords)
   const supplemental = internalRecords.filter(
     (record) =>
+      record?.provider === 'codex' ||
       record?.provider === 'grok' ||
       (record?.provider === 'cursor' &&
         !filteredExternal.some((external) => {

@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
+import { isAbsolute } from 'node:path'
 import { createInterface, type Interface as ReadlineInterface } from 'readline'
 import {
   createCliEnv,
@@ -9,7 +10,17 @@ import { withCodexCodeModeHostEnv } from './CodexCodeModeHost'
 import type { RuntimeProfile } from './store/types'
 import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
 import { CodexAppServerRequestTimeoutError } from './codex/CodexAppServerRequestError'
-export { isCodexAppServerThreadId } from './CodexSessionIdentity'
+import {
+  type CodexRolloutMigrationResult,
+  CodexHomeContinuityError,
+  ensureTaskWraithCodexHomeForLaunch,
+  legacyCodexHomePath,
+  migrateLinkedCodexRollout,
+  requireAbsoluteCodexHome,
+  withTaskWraithCodexHomeEnv
+} from './codex/CodexHome'
+import { isCodexAppServerThreadId } from './CodexSessionIdentity'
+export { isCodexAppServerThreadId }
 export {
   CodexAppServerRequestTimeoutError,
   isCodexAppServerRequestTimeout
@@ -17,9 +28,9 @@ export {
 
 /**
  * Detect the specific failure where the codex CLI refuses to start because
- * it cannot deserialize `~/.codex/config.toml`. This happens when the user's
- * Codex.app (a newer CLI) writes a config value that the older homebrew CLI
- * TaskWraith spawns does not understand — the real error we hit in production was:
+ * it cannot deserialize its private `config.toml`. A configured runtime binary
+ * may be older than the binary that last wrote that TaskWraith-owned config —
+ * the real error we hit in production was:
  *
  *   Error loading config.toml: unknown variant `priority`, expected `fast`
  *   or `flex` in `service_tier`
@@ -69,7 +80,7 @@ export function isCodexConfigParseError(stderr: string | null | undefined): bool
 export function codexConfigParseUserMessage(stderr: string): string {
   const detail = stderr.trim().split('\n')[0]?.trim() || stderr.trim()
   return (
-    `Your ~/.codex/config.toml has a value the codex CLI rejected: ${detail} ` +
+    `TaskWraith's private Codex config.toml has a value the codex CLI rejected: ${detail} ` +
     `Edit it (for example, service_tier must be "fast" or "flex") or run ` +
     '`brew upgrade codex` to update the CLI, then retry.'
   )
@@ -374,11 +385,19 @@ export class CodexAppServerClient {
   private runtimeProfileKey = codexRuntimeProfileKey(null)
   private initializeResult: unknown = null
   // Ring buffer of the most recent stderr the codex CLI emitted. When the
-  // app-server refuses to start because of a bad ~/.codex/config.toml, the
+  // app-server refuses to start because of a bad private config.toml, the
   // CLI writes the parse error here and exits — and `ensureStarted` otherwise
   // rejects with a generic "exited" message. We retain stderr so the start
   // failure can be enriched with (and classified against) the real cause.
   private recentStderr = ''
+  private readonly codexHome: string
+  private readonly legacyCodexHomes: () => readonly string[]
+  private readonly privateHomeThreadIds = new Set<string>()
+
+  constructor(codexHome: string, legacyCodexHomes: () => readonly string[] = () => []) {
+    this.codexHome = requireAbsoluteCodexHome(codexHome)
+    this.legacyCodexHomes = legacyCodexHomes
+  }
 
   /**
    * The most recent stderr captured from the codex CLI (bounded). Callers use
@@ -462,6 +481,18 @@ export class CodexAppServerClient {
     if (!this.proc || this.proc.killed || !this.proc.stdin.writable) {
       throw new Error('Codex app-server is not running.')
     }
+    const requestThreadId =
+      params && typeof params.threadId === 'string' && isCodexAppServerThreadId(params.threadId)
+        ? params.threadId
+        : null
+    if (requestThreadId && !this.privateHomeThreadIds.has(requestThreadId.toLowerCase())) {
+      const continuity = await this.ensureLinkedThreadAvailable(requestThreadId)
+      if (continuity !== 'already-present' && continuity !== 'migrated') {
+        throw new CodexHomeContinuityError(
+          `Codex thread ${requestThreadId} is not available in TaskWraith's private Codex home (${continuity}).`
+        )
+      }
+    }
 
     const id = this.nextId++
     const payload = { id, method, params }
@@ -473,6 +504,45 @@ export class CodexAppServerClient {
       this.pending.set(id, { resolve, reject, timeout })
     })
     this.write(payload)
+    const response = await result
+    const responseThreadId =
+      typeof (response as any)?.thread?.id === 'string'
+        ? (response as any).thread.id
+        : typeof (response as any)?.threadId === 'string'
+          ? (response as any).threadId
+          : null
+    if (responseThreadId && isCodexAppServerThreadId(responseThreadId)) {
+      this.privateHomeThreadIds.add(responseThreadId.toLowerCase())
+    }
+    return response
+  }
+
+  async ensureLinkedThreadAvailable(threadId: string): Promise<CodexRolloutMigrationResult> {
+    const normalized = threadId.trim().toLowerCase()
+    if (this.privateHomeThreadIds.has(normalized)) return 'already-present'
+    let configuredLegacyHomes: readonly string[] = []
+    try {
+      configuredLegacyHomes = this.legacyCodexHomes()
+    } catch {
+      configuredLegacyHomes = []
+    }
+    const profileHome = this.runtimeProfile?.env?.CODEX_HOME?.trim()
+    const legacyHomes = [
+      ...(profileHome && isAbsolute(profileHome) ? [profileHome] : []),
+      ...configuredLegacyHomes.filter(
+        (candidate): candidate is string =>
+          typeof candidate === 'string' && isAbsolute(candidate.trim())
+      ),
+      legacyCodexHomePath()
+    ]
+    const result = await migrateLinkedCodexRollout({
+      threadId,
+      codexHome: this.codexHome,
+      legacyCodexHomes: legacyHomes
+    })
+    if (result === 'already-present' || result === 'migrated') {
+      this.privateHomeThreadIds.add(normalized)
+    }
     return result
   }
 
@@ -500,6 +570,10 @@ export class CodexAppServerClient {
   dispose() {
     this.startPromise = null
     this.initializeResult = null
+    // This is only a daemon-lifetime cache. A restart must revalidate disk
+    // continuity so a deleted/corrupt rollout takes the full-context recovery
+    // path instead of being trusted from stale in-memory evidence.
+    this.privateHomeThreadIds.clear()
     this.startedMcpConfigFingerprint = null
     this.mcpConfigStale = false
     this.stdoutReader?.close()
@@ -515,6 +589,7 @@ export class CodexAppServerClient {
     appVersion: string,
     options: { forceFastServiceTier?: boolean } = {}
   ): Promise<void> {
+    await ensureTaskWraithCodexHomeForLaunch(this.codexHome)
     // Phase I2: prepend `-c mcp_servers.TaskWraith.*` config flags so
     // the Codex CLI registers the TaskWraith MCP bridge as an MCP server
     // for the whole app-server lifetime. The bridge subprocess
@@ -531,11 +606,14 @@ export class CodexAppServerClient {
       ...mcpArgs,
       'app-server'
     ]
-    const codexEnv: Record<string, string> = {
-      ...collectUserMcpProviderEnv(effectiveMcpConfig.userMcpServers),
-      FORCE_COLOR: '0',
-      NO_COLOR: '1'
-    }
+    const codexEnv = withTaskWraithCodexHomeEnv(
+      {
+        ...collectUserMcpProviderEnv(effectiveMcpConfig.userMcpServers),
+        FORCE_COLOR: '0',
+        NO_COLOR: '1'
+      },
+      this.codexHome
+    )
     if (effectiveMcpConfig.enabled) {
       codexEnv.TASKWRAITH_PARENT_PROVIDER = effectiveMcpConfig.parentProvider
     }

@@ -227,6 +227,9 @@ describe('DesktopToolExecutors Kimi auth projection', () => {
       getGeminiAuthStatusSnapshot: async () => {
         throw new Error('not used by Kimi projection')
       },
+      getCodexStatusSnapshot: async () => {
+        throw new Error('not used by Kimi projection')
+      },
       getCliProviderStatus: async () => status,
       getStoredClaudeApiKey: () => null,
       getStoredKimiApiKey: () => storedKimiApiKey,
@@ -295,5 +298,51 @@ describe('DesktopToolExecutors Kimi auth projection', () => {
         }
       }
     })
+  })
+})
+
+describe('DesktopToolExecutors Codex auth projection', () => {
+  it('uses the private-home app-server snapshot instead of the generic CLI probe', async () => {
+    const getCliProviderStatus = vi.fn(async () => ({
+      available: true,
+      authState: 'unknown'
+    }))
+    const getCodexStatusSnapshot = vi.fn(async () => ({
+      available: true,
+      appServer: 'started',
+      authState: 'missing',
+      requiresOpenaiAuth: true,
+      setupRequired: true
+    }))
+    const { executor } = createExecutor({
+      chats: [],
+      providerAuth: {
+        getGeminiAuthStatusSnapshot: async () => {
+          throw new Error('not used by Codex projection')
+        },
+        getCodexStatusSnapshot,
+        getCliProviderStatus,
+        getStoredClaudeApiKey: () => null,
+        getStoredKimiApiKey: () => null,
+        encryptionAvailable: () => true,
+        isCodexClientStarted: () => true
+      }
+    })
+
+    await expect(
+      executor.executeProviderAuthStatus({ provider: 'codex' })
+    ).resolves.toMatchObject({
+      providers: {
+        codex: {
+          authState: 'missing',
+          requiresOpenaiAuth: true,
+          setupRequired: true,
+          serverState: 'started',
+          transport: 'app-server'
+        }
+      }
+    })
+    expect(getCodexStatusSnapshot).toHaveBeenCalledOnce()
+    expect(getCliProviderStatus).not.toHaveBeenCalled()
   })
 })

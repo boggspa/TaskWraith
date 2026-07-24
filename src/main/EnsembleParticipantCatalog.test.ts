@@ -18,7 +18,7 @@ describe('EnsembleParticipantCatalog', () => {
     )
   })
 
-  it('combines runtime configuration and available quota evidence', () => {
+  it('keeps Codex quota evidence separate from runtime configuration', () => {
     const catalog = buildEnsembleParticipantProviderCatalog(
       (provider) =>
         provider === 'codex'
@@ -44,7 +44,7 @@ describe('EnsembleParticipantCatalog', () => {
     )
 
     expect(catalog.find((entry) => entry.provider === 'codex')).toMatchObject({
-      configured: true,
+      configured: false,
       usage: { worstBand: 'critical' }
     })
     expect(catalog.find((entry) => entry.provider === 'grok')).toMatchObject({
@@ -52,6 +52,14 @@ describe('EnsembleParticipantCatalog', () => {
     })
     expect(catalog.find((entry) => entry.provider === 'claude')).toMatchObject({
       configured: false
+    })
+
+    const authenticatedCatalog = buildEnsembleParticipantProviderCatalog(
+      () => null,
+      new Set(['codex'])
+    )
+    expect(authenticatedCatalog.find((entry) => entry.provider === 'codex')).toMatchObject({
+      configured: true
     })
   })
 })

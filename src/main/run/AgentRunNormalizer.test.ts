@@ -167,6 +167,22 @@ describe('normalizeAgentRunPayload — wrapper-level invariants (faked deps)', (
     expect(result.taskWraithMcpProfileFence).toBeUndefined()
   })
 
+  it('preserves the display-safe usage prompt separately from provider context', () => {
+    const result = normalizeAgentRunPayload(
+      {
+        provider: 'codex',
+        scope: 'workspace',
+        workspace: '/repo',
+        prompt: 'Provider prompt with redacted contextual material',
+        usagePromptText: 'Visible user request'
+      },
+      makeDeps()
+    )
+
+    expect(result.prompt).toBe('Provider prompt with redacted contextual material')
+    expect(result.usagePromptText).toBe('Visible user request')
+  })
+
   it('preserves only a structurally valid main-canonical provider reroute', () => {
     const valid = normalizeAgentRunPayload(
       {

@@ -114,7 +114,10 @@ export function buildEnsembleParticipantProviderCatalog(
       provider,
       label: providerLabel(provider),
       ...(configuredProviders
-        ? { configured: configuredProviders.has(provider) || usage.configured }
+        ? {
+            configured:
+              configuredProviders.has(provider) || (provider !== 'codex' && usage.configured)
+          }
         : {}),
       usage,
       models: buildEnsembleParticipantModelCatalog(provider)

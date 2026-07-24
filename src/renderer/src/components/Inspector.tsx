@@ -167,6 +167,7 @@ interface InspectorProps {
   onImportCodexUsageCredential?: () => void
   onClearCodexUsageCredential?: () => void
   onCodexLogin?: () => void
+  onRefreshCodexStatus?: () => void
   onInstallGeminiMcpBridge?: () => void
   onRefreshGeminiMcpBridgeStatus?: () => void
   /** Current chat — used by the Live Invocations tab to list active provider-native invocations. */
@@ -2627,6 +2628,7 @@ function SafetyTab(props: InspectorProps) {
     onImportCodexUsageCredential,
     onClearCodexUsageCredential,
     onCodexLogin,
+    onRefreshCodexStatus,
     externalPathGrants = []
   } = props
   const { copiedId, copy } = useCopyFeedback()
@@ -2782,14 +2784,23 @@ function SafetyTab(props: InspectorProps) {
             Sign in once to the private Codex home used by TaskWraith. This is separate from the
             Codex app, keeping TaskWraith native sessions out of its history.
           </p>
-          <PillButton
-            variant="primary"
-            style={{ width: '100%' }}
-            onClick={onCodexLogin}
-            disabled={!onCodexLogin}
-          >
-            Open TaskWraith Codex sign-in...
-          </PillButton>
+          <div style={{ display: 'flex', gap: 'var(--space-sm)' }}>
+            <PillButton
+              variant="primary"
+              style={{ flex: 1 }}
+              onClick={onCodexLogin}
+              disabled={!onCodexLogin}
+            >
+              Open TaskWraith Codex sign-in...
+            </PillButton>
+            <PillButton
+              variant="ghost"
+              onClick={onRefreshCodexStatus}
+              disabled={!onRefreshCodexStatus}
+            >
+              Refresh status
+            </PillButton>
+          </div>
         </div>
       </div>
     )

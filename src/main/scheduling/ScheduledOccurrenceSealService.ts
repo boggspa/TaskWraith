@@ -119,6 +119,8 @@ export interface ScheduledOccurrenceSealServiceDeps {
   resolveUnattendedElevation(taskId: string): { ack: UnattendedElevationAck } | null
   getChat(chatId: string): ChatRecord | null
   getRuntimeProfile(id: string): RuntimeProfile | null
+  /** Stable TaskWraith-owned root passed as CODEX_HOME to every Codex process. */
+  codexHomePath(): string
   getScheduledTask(taskId: string): ScheduledTask | null
   persistOccurrenceSeal(
     taskId: string,
@@ -550,7 +552,8 @@ export class ScheduledOccurrenceSealService {
         {
           FORCE_COLOR: '0',
           NO_COLOR: '1',
-          TASKWRAITH_PARENT_PROVIDER: 'codex'
+          TASKWRAITH_PARENT_PROVIDER: 'codex',
+          CODEX_HOME: this.deps.codexHomePath()
         },
         resolved.binaryPath as string,
         this.deps.cliRuntimeDeps,

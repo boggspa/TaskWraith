@@ -9,6 +9,7 @@ import { AppStore } from '../store'
 import type { EffectiveRunPermissions } from '../store/types'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import { ScheduledOccurrenceSealService } from './ScheduledOccurrenceSealService'
+import { taskWraithCodexHomePath } from '../codex/CodexHome'
 
 /**
  * Stage-2 construction for the first live seal lane. Only Cursor is admitted:
@@ -47,6 +48,7 @@ export function createCursorScheduledOccurrenceSealService(input: {
     getChat: (chatId) => AppStore.getChat(chatId),
     getRuntimeProfile: (id) =>
       AppStore.getRuntimeProfiles().find((profile) => profile.id === id) ?? null,
+    codexHomePath: () => taskWraithCodexHomePath(input.userDataPath),
     getScheduledTask: (taskId) =>
       AppStore.getScheduledTasks().find((task) => task.id === taskId) ?? null,
     persistOccurrenceSeal: (taskId, ownerRunId, occurrenceSeal) => {
@@ -70,7 +72,14 @@ export function createCursorScheduledOccurrenceSealService(input: {
       throw new Error('Kimi scheduled occurrence seals are not wired yet.')
     },
     probeCliVersion: async (binaryPath) => {
-      const result = await captureProcessOutput(binaryPath, ['--version'])
+      const result = await captureProcessOutput(
+        binaryPath,
+        ['--version'],
+        undefined,
+        8_000,
+        undefined,
+        { CODEX_HOME: taskWraithCodexHomePath(input.userDataPath) }
+      )
       const output = (result.stdout || result.stderr || result.error || '').trim()
       return output ? output.split('\n')[0] : null
     }

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { summariseProviderApiKeyStatus } from './providerAuthSummary'
+import { summariseCodexStatus, summariseProviderApiKeyStatus } from './providerAuthSummary'
 
 describe('summariseProviderApiKeyStatus — Kimi', () => {
   it('recognises an admitted OAuth-only runtime', () => {
@@ -75,5 +75,48 @@ describe('summariseProviderApiKeyStatus — Kimi', () => {
     })
     expect(summary.hint).toContain('does not bypass admission')
     expect(summary.hint).not.toContain('/opt/kimi')
+  })
+})
+
+describe('summariseCodexStatus', () => {
+  it('makes the private-home app-server auth state authoritative over usage telemetry', () => {
+    expect(
+      summariseCodexStatus({
+        available: true,
+        authState: 'missing',
+        requiresOpenaiAuth: true,
+        codexUsage: { planType: 'plus', userId: 'legacy-usage-user' }
+      })
+    ).toMatchObject({
+      variant: 'not-signed-in',
+      statusText: 'TaskWraith Codex sign-in required'
+    })
+  })
+
+  it('recognises an account observed in the private home', () => {
+    expect(
+      summariseCodexStatus({
+        available: true,
+        authState: 'chatgpt',
+        account: { type: 'chatgpt', planType: 'pro' },
+        planType: 'pro'
+      })
+    ).toMatchObject({
+      variant: 'signed-in',
+      statusText: 'Signed in (pro)'
+    })
+  })
+
+  it('keeps a usage-only import distinct from runtime authentication', () => {
+    expect(
+      summariseCodexStatus({
+        available: true,
+        authState: 'unknown',
+        codexUsage: { planType: 'plus', userId: 'usage-user' }
+      })
+    ).toMatchObject({
+      variant: 'partial',
+      statusText: 'Usage session available'
+    })
   })
 })

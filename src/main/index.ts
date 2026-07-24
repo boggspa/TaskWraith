@@ -226,6 +226,21 @@ import {
   updateCodexCompactionLaunchEvidence
 } from './codex/CodexMaintenanceCompactionActivity'
 import {
+  CodexHomeContinuityError,
+  ensureTaskWraithCodexHomeForLaunch,
+  taskWraithCodexHomePath,
+  withTaskWraithCodexHomeEnv
+} from './codex/CodexHome'
+import {
+  codexPrivateHomeColdStartPrompt,
+  prepareCodexPrivateHomeLink
+} from './codex/CodexPrivateHomeRecovery'
+import {
+  codexUsageResponseText,
+  mergeCodexExecUsageJsonLines,
+  recordCodexUsageOnCompletion
+} from './codex/CodexUsagePersistence'
+import {
   codexProviderOperationId,
   codexTerminalMethodMatchesAdmission,
   CodexThreadAdmissionRegistry,
@@ -1005,7 +1020,6 @@ import {
   importCodexUsageCredential,
   loadTailscaleOAuthCredentials,
   markGeminiAuthProfileUsed,
-  readCodexUsageCredentialLive,
   resolveGeminiAuthProfileEnv,
   saveGeminiAuthProfile,
   setDefaultGeminiAuthProfile,
@@ -1760,6 +1774,7 @@ const latestSpellcheckContextByWebContentsId = new Map<number, SpellcheckContext
 let geminiProcess: ChildProcess | null = null
 let geminiSessionProcess: pty.IPty | null = null
 let codexClient: CodexAppServerClient | null = null
+const taskWraithCodexHome = (): string => taskWraithCodexHomePath(app.getPath('userData'))
 let codexAppServerStartupLeaseCount = 0
 let codexExecProcess: ChildProcess | null = null
 // Fire the "a newer codex is installed" hint at most once per app session so we
@@ -3121,6 +3136,7 @@ const desktopToolExecutors = createDesktopToolExecutors({
   shell,
   providerAuth: {
     getGeminiAuthStatusSnapshot,
+    getCodexStatusSnapshot: getCodexStatusSnapshotForCliRuntime,
     getCliProviderStatus,
     getStoredClaudeApiKey,
     getStoredKimiApiKey,
@@ -13815,9 +13831,14 @@ async function getCodexStatusSnapshotForCliRuntime(): Promise<any> {
     try {
       const client = getCodexClient()
       accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
-      rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
     } catch (error) {
       accountStatus = { error: error instanceof Error ? error.message : String(error) }
+    }
+    try {
+      const client = getCodexClient()
+      rateLimitStatus = await client.request('account/rateLimits/read', {}, 15_000)
+    } catch (error) {
+      rateLimitStatus = { error: error instanceof Error ? error.message : String(error) }
     }
   }
   try {
@@ -13931,17 +13952,22 @@ async function getKimiRosterConfigurationStatus(): Promise<{
 }
 
 const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
-  getCodexConfiguredStatus: async (settings) => {
-    const [resolved, liveCredential] = await Promise.all([
-      resolveCliProviderBinary('codex'),
-      readCodexUsageCredentialLive()
-    ])
+  getCodexConfiguredStatus: async () => {
+    const resolved = await resolveCliProviderBinary('codex')
+    if (!resolved.binaryPath) return { available: false, authState: 'unknown' }
+    const client = getCodexClient()
+    await client.ensureStarted(app.getVersion())
+    const accountStatus = await client.request('account/read', { refreshToken: false }, 15_000)
+    const snapshot = buildCodexStatusSnapshot({
+      version: 'configured-provider-probe',
+      clientStarted: true,
+      accountStatus
+    })
     return {
-      available: Boolean(resolved.binaryPath),
-      authState:
-        liveCredential || settings.codexUsageCredential?.encryptedAccessToken
-          ? 'authenticated'
-          : 'missing'
+      available: snapshot.available === true,
+      // The private-home app-server account result is authoritative. Imported
+      // quota telemetry never configures a runtime seat.
+      authState: snapshot.authState
     }
   },
   getClaudeConfiguredStatus: async (settings) => {
@@ -18865,7 +18891,13 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
 
 function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerClient {
   if (!codexClient) {
-    codexClient = new CodexAppServerClient()
+    codexClient = new CodexAppServerClient(taskWraithCodexHome(), () => [
+      ...(process.env.CODEX_HOME ? [process.env.CODEX_HOME] : []),
+      ...AppStore.getRuntimeProfiles()
+        .filter((profile) => profile.provider === 'codex')
+        .map((profile) => profile.env.CODEX_HOME)
+        .filter((candidate): candidate is string => Boolean(candidate?.trim()))
+    ])
   }
   if (arguments.length > 0) {
     codexClient.setRuntimeProfile(runtimeProfile ?? null)
@@ -20154,6 +20186,7 @@ function createCodexRunState(
     taskWraithMcpProfileId: payload?.taskWraithMcpProfileId,
     effectivePermissions: payload?.effectivePermissions,
     ensembleRun: payload?.ensembleRun,
+    usagePromptText: payload?.usagePromptText,
     ...normalizeRunRoute(route),
     assistantTextByItemId: new Map(),
     timelineStartedItemIds: new Set(),
@@ -20520,9 +20553,12 @@ function emitCodexContextCompaction(
 interface PendingCodexManualCompaction {
   chatId: string
   threadId: string
+  model: string
   startedAtMs: number
   itemId?: string
   postTokens?: number
+  tokenUsage?: unknown
+  usageRecorded?: boolean
   itemSeen?: boolean
   turnId?: string
   nativeActivityStarted?: boolean
@@ -20590,7 +20626,9 @@ function handleCodexManualCompactionNotification(message: any): void {
     return
   }
   if (message.method === 'thread/tokenUsage/updated') {
-    const lastTotal = params.tokenUsage?.last?.totalTokens
+    const tokenUsage = params.tokenUsage || params.usage || params
+    pending.tokenUsage = tokenUsage
+    const lastTotal = tokenUsage?.last?.totalTokens
     if (typeof lastTotal === 'number' && Number.isFinite(lastTotal)) {
       pending.postTokens = lastTotal
     }
@@ -20609,6 +20647,18 @@ function handleCodexManualCompactionNotification(message: any): void {
     return
   }
   if (message.method === 'turn/completed' || message.method === 'turn/failed') {
+    if (!pending.usageRecorded && pending.turnId) {
+      const durationMs = Math.max(0, Date.now() - pending.startedAtMs)
+      const recordedStats = recordCodexUsageOnCompletion({
+        chat: AppStore.getChat(pending.chatId),
+        runId: `codex-maintenance:${pending.turnId}`,
+        model: pending.model,
+        stats: codexUsageToStats(pending.tokenUsage, durationMs),
+        fallbackDurationMs: durationMs,
+        recordUsage: (entry) => AppStore.recordUsage(entry)
+      })
+      pending.usageRecorded = recordedStats._taskwraith_usage_recorded === true
+    }
     if (pending.nativeActivityStarted && !pending.nativeActivityEnded) {
       pending.nativeActivityEnded = true
       maintenanceCompactionRegistry.endNativeActivity(pending.reservation)
@@ -20860,6 +20910,7 @@ async function compactCodexProviderContext(payload: {
     pendingRecord = {
       chatId: payload.chatId,
       threadId,
+      model: payload.model || persistedSoloModel || 'cli-default',
       startedAtMs,
       reservation: payload.reservation,
       admissionReservation,
@@ -23070,6 +23121,19 @@ function handleCodexNotification(message: any) {
     const durationMs = Number(turn.durationMs || turn.duration_ms || 0)
     const providerFailed = message.method === 'turn/failed' || message.method === 'review/failed'
     const providerTerminalStatus = turn.status || params.status || (providerFailed ? 'failed' : '')
+    let terminalStats = codexUsageToStats(state.tokenUsage, durationMs)
+    if (!state.ensembleRun) {
+      terminalStats = recordCodexUsageOnCompletion({
+        chat: state.appChatId ? AppStore.getChat(state.appChatId) : null,
+        runId: state.appRunId,
+        model: state.reviewModel || state.model,
+        stats: terminalStats,
+        fallbackDurationMs: durationMs || Math.max(0, Date.now() - state.startedAt),
+        promptText: state.usagePromptText,
+        responseText: codexUsageResponseText(state.assistantTextByItemId.values()),
+        recordUsage: (entry) => AppStore.recordUsage(entry)
+      })
+    }
     // Seal main's own AppStore copy of a SOLO Codex run before we notify the
     // renderer: the app-server never exits per-run, so nothing else writes
     // status/endedAt/stats here and the frozen copy would otherwise clobber the
@@ -23083,7 +23147,7 @@ function handleCodexNotification(message: any) {
         appChatId: state.appChatId,
         runId: state.appRunId,
         status: normalizeCodexTurnStatus(providerTerminalStatus),
-        stats: codexUsageToStats(state.tokenUsage, durationMs),
+        stats: terminalStats,
         endedAt: new Date().toISOString()
       })
     }
@@ -23099,7 +23163,7 @@ function handleCodexNotification(message: any) {
         // back to 'unknown' and a solo Codex run's in-memory status + close-out
         // prose read "unknown" even though the persisted run now seals success.
         status: normalizeCodexTurnStatus(providerTerminalStatus),
-        stats: codexUsageToStats(state.tokenUsage, durationMs),
+        stats: terminalStats,
         provider: 'codex',
         providerThreadId: state.threadId,
         providerRunId: turn.id || state.turnId,
@@ -23157,11 +23221,51 @@ function handleCodexNotification(message: any) {
 
   if (message.method === 'error') {
     if (params.willRetry === true) return
+    if (state.completed) {
+      completeCodexAppServerTurnProjection(state)
+      return
+    }
     const error = params.message || params.error || 'Codex app-server error.'
     state.completed = true
     if (state.threadId) pendingCodexInterrupts.delete(state.threadId)
+    const durationMs = Math.max(0, Date.now() - state.startedAt)
+    let terminalStats = codexUsageToStats(state.tokenUsage, durationMs)
+    if (!state.ensembleRun) {
+      terminalStats = recordCodexUsageOnCompletion({
+        chat: state.appChatId ? AppStore.getChat(state.appChatId) : null,
+        runId: state.appRunId,
+        model: state.reviewModel || state.model,
+        stats: terminalStats,
+        fallbackDurationMs: durationMs,
+        promptText: state.usagePromptText,
+        responseText: codexUsageResponseText(state.assistantTextByItemId.values()),
+        recordUsage: (entry) => AppStore.recordUsage(entry)
+      })
+    }
+    if (!state.ensembleRun && !state.reviewActivityId) {
+      sealSoloCodexRunOnCompletion({
+        appChatId: state.appChatId,
+        runId: state.appRunId,
+        status: 'failed',
+        stats: terminalStats,
+        endedAt: new Date().toISOString()
+      })
+    }
     settleCodexMultiAgentEpisode(state, { rawStatus: 'failed', error })
     sendAgentCompatError(state.sender, 'codex', error, state)
+    sendAgentCompatLine(
+      state.sender,
+      'codex',
+      {
+        type: 'result',
+        status: 'failed',
+        stats: terminalStats,
+        provider: 'codex',
+        providerThreadId: state.threadId,
+        providerRunId: state.turnId
+      },
+      state
+    )
     sendAgentCompatExit(state.sender, 'codex', 1, state)
     runManager.finish(state.appRunId, 'failed')
     if (activeCodexRunState === state) {
@@ -24270,10 +24374,38 @@ async function runCodexAppServerWithClient(
   const persistedChat = payload.appChatId ? AppStore.getChat(payload.appChatId) : null
   const taskWraithOwnsThisRun =
     Boolean(payload.ensembleRun) || persistedChat?.chatKind === 'ensemble'
-  const resumableThreadId =
-    payload.providerSessionId && isCodexAppServerThreadId(payload.providerSessionId)
-      ? payload.providerSessionId
-      : null
+  const preparedLink = prepareCodexPrivateHomeLink(payload)
+  payload.prompt = preparedLink.prompt
+  payload.providerSessionId = preparedLink.providerSessionId
+  let resumableThreadId = preparedLink.resumableThreadId
+  if (preparedLink.discardedSessionId) {
+    console.warn(
+      `[codex-home] non-UUID linked session ${preparedLink.discardedSessionId} cannot resume; starting a fresh private-home thread`
+    )
+  }
+  if (resumableThreadId) {
+    const migration = await client.ensureLinkedThreadAvailable(resumableThreadId)
+    if (migration === 'migrated') {
+      console.log(`[codex-home] migrated linked TaskWraith rollout ${resumableThreadId}`)
+    } else if (migration === 'not-found' || migration === 'not-taskwraith') {
+      const recoveryPrompt = codexPrivateHomeColdStartPrompt({
+        prompt: payload.prompt,
+        resumeFallbackPrompt: payload.resumeFallbackPrompt,
+        ensemblePromptMode: payload.ensembleRun?.promptMode
+      })
+      if (!recoveryPrompt) {
+        throw new CodexHomeContinuityError(
+          `Codex thread ${resumableThreadId} is linked to the legacy shared home but its TaskWraith rollout could not be migrated safely. Start a fresh Codex task to establish private-home continuity.`
+        )
+      }
+      console.warn(
+        `[codex-home] ${migration} for linked thread ${resumableThreadId}; starting one full-context private-home thread`
+      )
+      payload.providerSessionId = undefined
+      payload.prompt = recoveryPrompt
+      resumableThreadId = null
+    }
+  }
   if (persistedChat?.chatKind === 'ensemble') {
     for (const participant of persistedChat.ensemble?.participants || []) {
       if (
@@ -24347,15 +24479,6 @@ async function runCodexAppServerWithClient(
   }
 
   let threadResponse: any
-  if (payload.providerSessionId && !resumableThreadId) {
-    // A codex-exec fallback session id (`codex-exec-<ts>`) is not a valid
-    // app-server thread UUID — resuming it throws "invalid thread id" and
-    // wedges the chat into perpetual exec fallback. Start a fresh thread; its
-    // UUID replaces the bad providerSessionId, self-healing the chat.
-    console.warn(
-      `[codex] non-UUID providerSessionId not resumable on app-server; starting a fresh thread (was: ${payload.providerSessionId})`
-    )
-  }
   // Last synchronous authority check before the RPC that creates or revives a
   // provider-native thread. A fresh (non-resumable) run holds no admission
   // reservation yet, so a history clear prepared during the ensureStarted
@@ -24622,6 +24745,15 @@ async function runCodexExecFallback(
     advertised: false,
     coreProfile: false
   })
+  if (payload.resumeFallbackPrompt) {
+    payload.resumeFallbackPrompt = sanitizeTaskWraithMcpPromptClaims(
+      payload.resumeFallbackPrompt,
+      {
+        advertised: false,
+        coreProfile: false
+      }
+    )
+  }
   const settings = runtimeSettings(AppStore.getSettings(), payload.runtimeProfile)
   if (payload.scope === 'global') {
     sendAgentCompatError(
@@ -24647,6 +24779,7 @@ async function runCodexExecFallback(
   }
 
   const model = normalizeCodexModel(payload.model)
+  const codexHome = await ensureTaskWraithCodexHomeForLaunch(taskWraithCodexHome())
   const codexReasoning = resolveCodexOutboundReasoning(model, payload.reasoningEffort)
   const sandbox = codexSandboxForMode(
     payload.approvalMode,
@@ -24670,7 +24803,7 @@ async function runCodexExecFallback(
   for (const imagePath of payload.imagePaths || []) {
     args.push('--image', imagePath)
   }
-  args.push(payload.prompt)
+  args.push(payload.resumeFallbackPrompt || payload.prompt)
 
   const resolvedCodex = await resolveCliProviderBinary('codex', payload.runtimeProfile)
   if (!resolvedCodex.binaryPath) {
@@ -24709,8 +24842,11 @@ async function runCodexExecFallback(
   const codexExecStderrSanitizer = createCanvasEvalJsonLineSanitizer(
     `codex:${route.appRunId || route.appChatId || 'unrouted'}:stderr`
   )
+  const codexExecStartedAtMs = Date.now()
+  let codexExecUsage: Record<string, unknown> | undefined
   const emitCodexExecStdout = (text: string): void => {
     if (!text) return
+    codexExecUsage = mergeCodexExecUsageJsonLines(codexExecUsage, text)
     appendDurableRunEventForRoute(
       'codex',
       route,
@@ -24750,13 +24886,29 @@ async function runCodexExecFallback(
       )
     }
     const exitCode = spawnFailure ? -1 : (terminalCode ?? -1)
+    const durationMs = Math.max(0, Date.now() - codexExecStartedAtMs)
+    let terminalStats: Record<string, unknown> = {
+      ...(codexExecUsage || {}),
+      duration_ms: durationMs
+    }
+    if (!payload.ensembleRun) {
+      terminalStats = recordCodexUsageOnCompletion({
+        chat: route.appChatId ? AppStore.getChat(route.appChatId) : null,
+        runId: route.appRunId,
+        model,
+        stats: terminalStats,
+        fallbackDurationMs: durationMs,
+        promptText: payload.usagePromptText,
+        recordUsage: (entry) => AppStore.recordUsage(entry)
+      })
+    }
     sendAgentCompatLine(
       event.sender,
       'codex',
       {
         type: 'result',
         status: exitCode === 0 ? 'success' : 'failed',
-        stats: {},
+        stats: terminalStats,
         timestamp: new Date().toISOString(),
         provider: 'codex',
         fallback: true
@@ -24849,21 +25001,27 @@ async function runCodexExecFallback(
       cwd: payload.workspace!,
       shell: codexSpawnPlan.shell,
       stdio: ['ignore', 'pipe', 'pipe'],
-      env: createCliEnv({
-        FORCE_COLOR: '0',
-        NO_COLOR: '1',
-        TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
-        // Audit role-run: advertise the audit_* MCP tools to this exec-fallback's
-        // bridge child. NOTE (v1 gap): Codex's PRIMARY path is the shared
-        // app-server daemon (runCodexAppServer), whose MCP bridge env is fixed at
-        // daemon start — there is no per-role-run injection point there, and the
-        // daemon does not stamp TASKWRAITH_RUN_ID, so audit tool calls from the
-        // app-server path would not route back to the role-run's audit context.
-        // Making Codex fully audit-capable needs daemon-scoped advertisement +
-        // per-turn run-id correlation, deferred to a follow-up. This exec path is
-        // only the fallback; threading the flag here is harmless and forward-looking.
-        ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {})
-      })
+      env: createCliEnv(
+        withTaskWraithCodexHomeEnv(
+          {
+            FORCE_COLOR: '0',
+            NO_COLOR: '1',
+            TASKWRAITH_RUNTIME_PROFILE_ID: payload.runtimeProfileId || '',
+            // Audit role-run: advertise the audit_* MCP tools to this exec-fallback's
+            // bridge child. NOTE (v1 gap): Codex's PRIMARY path is the shared
+            // app-server daemon (runCodexAppServer), whose MCP bridge env is fixed at
+            // daemon start — there is no per-role-run injection point there, and the
+            // daemon does not stamp TASKWRAITH_RUN_ID, so audit tool calls from the
+            // app-server path would not route back to the role-run's audit context.
+            // Making Codex fully audit-capable needs daemon-scoped advertisement +
+            // per-turn run-id correlation, deferred to a follow-up. This exec path is
+            // only the fallback; threading the flag here is harmless and forward-looking.
+            ...(payload.auditRun ? { TASKWRAITH_MCP_AUDIT: '1' } : {})
+          },
+          codexHome
+        ),
+        resolvedCodex.binaryPath
+      )
     })
   } catch (error) {
     spawnFailure = error instanceof Error ? error : new Error(String(error))
@@ -24881,7 +25039,7 @@ async function runCodexExecFallback(
   let execConfigErrorSurfaced = false
   child.stderr?.on('data', (data) => {
     const text = data.toString()
-    // The exec fallback runs the SAME codex CLI, so a bad ~/.codex/config.toml
+    // The exec fallback runs the SAME codex CLI and private home, so a bad config.toml
     // fails it too. Surface the actionable message once (not per chunk) so the
     // exec path isn't another dead-end with a cryptic deserialize dump.
     if (!execConfigErrorSurfaced && isCodexConfigParseError(text)) {
@@ -24927,7 +25085,8 @@ async function maybeWarnNewerCodexBinary(
   try {
     const resolved = await resolveCliProviderBinary('codex', runtimeProfile)
     if (!resolved.binaryPath) return
-    const usedVersion = await readResolvedCliVersion(resolved)
+    const codexVersionEnv = withTaskWraithCodexHomeEnv({}, taskWraithCodexHome())
+    const usedVersion = await readResolvedCliVersion(resolved, undefined, codexVersionEnv)
 
     let newest: { path: string; version: string } | null = null
     for (const candidate of KNOWN_OFF_PATH_CODEX_BINARIES) {
@@ -24942,11 +25101,15 @@ async function maybeWarnNewerCodexBinary(
         exists = false
       }
       if (!exists) continue
-      const candidateVersion = await readResolvedCliVersion({
-        provider: 'codex',
-        binaryPath: candidate,
-        source: 'common'
-      })
+      const candidateVersion = await readResolvedCliVersion(
+        {
+          provider: 'codex',
+          binaryPath: candidate,
+          source: 'common'
+        },
+        undefined,
+        codexVersionEnv
+      )
       // candidate strictly newer than the one TaskWraith uses?
       if (compareCodexVersions(candidateVersion, usedVersion) > 0) {
         // And the newest among multiple candidates.
@@ -24968,9 +25131,8 @@ async function maybeWarnNewerCodexBinary(
         title: 'Newer Codex CLI detected',
         message:
           `A newer codex CLI (${newest.version.trim()}) is installed at ${newest.path} than the one TaskWraith uses ` +
-          `(${usedVersion.trim()} at ${resolved.binaryPath}). The newer CLI can write ~/.codex/config.toml values the ` +
-          'older one rejects (causing run failures). Either upgrade the CLI TaskWraith resolves, or create a Codex ' +
-          `runtime profile that uses ${newest.path}.`
+          `(${usedVersion.trim()} at ${resolved.binaryPath}). Either upgrade the CLI TaskWraith resolves, or create a ` +
+          `Codex runtime profile that uses ${newest.path}. TaskWraith's private Codex home remains isolated either way.`
       },
       route
     )
@@ -24996,6 +25158,13 @@ async function runCodexProvider(
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
     if (error instanceof CodexEnsembleGoalIsolationError) {
+      const route = routeWithRunId('codex', payload)
+      sendAgentCompatError(event.sender, 'codex', message, route)
+      sendAgentCompatExit(event.sender, 'codex', -1, route)
+      runManager.finish(route.appRunId, 'failed')
+      return
+    }
+    if (error instanceof CodexHomeContinuityError) {
       const route = routeWithRunId('codex', payload)
       sendAgentCompatError(event.sender, 'codex', message, route)
       sendAgentCompatExit(event.sender, 'codex', -1, route)
@@ -25036,7 +25205,7 @@ async function runCodexProvider(
       return
     }
     // If the app-server failed because the codex CLI couldn't parse
-    // ~/.codex/config.toml (e.g. a value only the newer Codex.app CLI accepts),
+    // TaskWraith's private config.toml (for example after a CLI downgrade),
     // surface a clear, actionable message instead of only the cryptic
     // exec-fallback notice. The exec fallback below will likely hit the same
     // config error, but we still attempt it (and re-classify its stderr there).
@@ -26407,9 +26576,15 @@ async function readCliVersion(command: string): Promise<string> {
     : command
 
   return new Promise((resolve) => {
+    const probeEnv = createCliEnv(
+      provider === 'codex'
+        ? withTaskWraithCodexHomeEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, taskWraithCodexHome())
+        : { FORCE_COLOR: '0', NO_COLOR: '1' },
+      resolvedCommand
+    )
     const proc = spawn(resolvedCommand, ['--version'], {
       shell: false,
-      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, resolvedCommand)
+      env: probeEnv
     })
     let stdout = ''
     proc.stdout?.on('data', (data) => {
@@ -27605,7 +27780,7 @@ async function executeAgentRosterPresetImport(
     configuredProviders.add(participant.provider)
   }
   for (const provider of selectableProviderIds()) {
-    if (AppStore.getProviderUsageSnapshot(provider)?.configured === true) {
+    if (provider !== 'codex' && AppStore.getProviderUsageSnapshot(provider)?.configured === true) {
       configuredProviders.add(provider)
     }
   }
@@ -29052,7 +29227,7 @@ async function executeGeminiMcpTool(
             configured:
               configuredProviders.has(entry.provider) ||
               entry.configured === true ||
-              entry.usage.configured === true
+              (entry.provider !== 'codex' && entry.usage.configured === true)
           }))
         : result.availableProviders
       toolIsError = result.ok === false
@@ -41483,10 +41658,47 @@ if (isGeminiMcpBridgeProcess) {
       discoverGeminiMemory
     })
 
-    ipcMain.handle('get-agent-status', async (event, provider: ProviderId) => {
-      const status = await getAgentStatusSnapshot(assertProviderId(provider))
-      return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)
-    })
+    ipcMain.handle(
+      'get-agent-status',
+      async (
+        event,
+        provider: ProviderId,
+        options?: {
+          refreshAuth?: boolean
+        }
+      ) => {
+        const resolvedProvider = assertProviderId(provider)
+        const refreshCodexAuth =
+          resolvedProvider === 'codex' &&
+          options?.refreshAuth === true &&
+          isMainRendererSender(event)
+        let codexAuthRuntimeRefreshed = refreshCodexAuth && !codexClient
+        if (
+          refreshCodexAuth &&
+          codexClient
+        ) {
+          const canRecycle = shouldRestartCodexAppServerForMcpConfig({
+            stale: true,
+            startupLeaseCount: codexAppServerStartupLeaseCount,
+            activeStates: runManager
+              .getActiveByProvider('codex')
+              .map((session) => session.state as Partial<CodexRunState> | null | undefined),
+            admissionReservationCount: codexThreadAdmissionRegistry.activeLaneReservationCount
+          })
+          if (canRecycle) {
+            console.log('[codex-home] restarting idle app-server to refresh private-home auth')
+            codexClient.dispose()
+            codexClient = null
+            codexAuthRuntimeRefreshed = true
+          }
+        }
+        const status = await getAgentStatusSnapshot(resolvedProvider)
+        if (codexAuthRuntimeRefreshed) {
+          managedRunConfiguredProviderDiscovery.refresh(AppStore.getSettings())
+        }
+        return isMainRendererSender(event) ? status : rendererSafeProviderStatus(status)
+      }
+    )
 
     const getAntigravityRateLimits = createAntigravityRateLimitHandler({
       getSettings: () => AppStore.getSettings(),
@@ -41811,6 +42023,7 @@ if (isGeminiMcpBridgeProcess) {
       getUserDataPath: () => app.getPath('userData'),
       openPath: (path) => shell.openPath(path),
       mkdirSync: (path, options) => fsSync.mkdirSync(path, options),
+      lstatSync: (path) => fsSync.lstatSync(path),
       writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
       chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
       getPlatform: () => process.platform
@@ -41956,6 +42169,8 @@ if (isGeminiMcpBridgeProcess) {
             'workspace',
             route
           )
+          reviewState.usagePromptText =
+            typeof params?.usagePromptText === 'string' ? params.usagePromptText : undefined
           reviewState.admissionKind = 'review'
           reviewState.admissionReservation = reviewAdmissionReservation
           const sessionBeforeReviewRegistration = runManager.get(route.appRunId)
@@ -42986,10 +43201,9 @@ if (isGeminiMcpBridgeProcess) {
     //     later enhancement; the resolver only excludes on configured/auth/usage).
     //   - usageBand omitted (cheap path only) — the resolver treats a missing
     //     band as 'unknown', which never excludes a provider.
-    //   - codex is treated as authenticated when configured: codex auth lives in
-    //     its app-server and a real probe would spin the server up here; the run
-    //     fails at dispatch and the orchestrator substitutes if it's actually
-    //     logged out.
+    //   - Codex authentication is read from the same private-home app-server
+    //     account status used by ordinary provider preflight. A binary or
+    //     usage-only imported token never qualifies a logged-out seat.
     const resolveAuditProviderSignals = async (): Promise<
       import('./audit/ProviderCapabilityResolver').ProviderSignal[]
     > => {
@@ -43048,8 +43262,14 @@ if (isGeminiMcpBridgeProcess) {
             const geminiAuth = await getGeminiAuthStatusSnapshot()
             authenticated = geminiAuth.authState === 'authenticated'
           } else if (provider === 'codex') {
-            // v1 cut (see header): treat a configured codex as authenticated.
-            authenticated = configured
+            const codexStatus = await getCodexStatusSnapshotForCliRuntime()
+            const codexAuthState = String(codexStatus?.authState || '').toLowerCase()
+            authenticated =
+              configured &&
+              codexStatus?.available === true &&
+              codexStatus?.setupRequired !== true &&
+              codexAuthState !== 'missing' &&
+              codexAuthState !== 'unknown'
           }
         } catch {
           // Binary resolution / auth probe failed → leave unconfigured so the

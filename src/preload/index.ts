@@ -290,7 +290,8 @@ const api = {
   runAgent: (payload: any) => ipcRenderer.invoke('run-agent', payload),
   cancelAgentRun: (provider: ProviderId = 'gemini', runId?: string) =>
     ipcRenderer.invoke('cancel-agent-run', provider, runId),
-  getAgentStatus: (provider: ProviderId) => ipcRenderer.invoke('get-agent-status', provider),
+  getAgentStatus: (provider: ProviderId, options?: { refreshAuth?: boolean }) =>
+    ipcRenderer.invoke('get-agent-status', provider, options),
   getProviderCapabilities: (provider: ProviderId, workspace?: string, approvalMode?: string) =>
     ipcRenderer.invoke('get-provider-capabilities', provider, workspace, approvalMode),
   getProviderAdapters: () => ipcRenderer.invoke('get-provider-adapters'),

@@ -26,23 +26,46 @@ export function buildCodexStatusSnapshot(input: CodexStatusSnapshotInput): any {
     }
   }
 
-  const account = input.accountStatus?.account || null
+  const accountStatus =
+    input.accountStatus && typeof input.accountStatus === 'object' ? input.accountStatus : null
+  const account = accountStatus?.account || null
+  const accountError =
+    typeof accountStatus?.error === 'string' && accountStatus.error.trim()
+      ? accountStatus.error.trim()
+      : null
+  const accountReadSucceeded = Boolean(
+    accountStatus &&
+      !accountError &&
+      (account || typeof accountStatus.requiresOpenaiAuth === 'boolean')
+  )
+  const requiresOpenaiAuth =
+    accountReadSucceeded && !account && accountStatus.requiresOpenaiAuth === true
+  const authState = account
+    ? account.type
+    : requiresOpenaiAuth
+      ? 'missing'
+      : accountReadSucceeded
+        ? 'not-required'
+        : 'unknown'
   return {
     provider: 'codex',
     available: true,
+    ...(requiresOpenaiAuth
+      ? {
+          setupRequired: true,
+          error:
+            'TaskWraith Codex sign-in is required. Open Settings → Providers → Codex to sign in to the private TaskWraith Codex home.'
+        }
+      : {}),
     version: input.version,
     appServer: input.clientStarted ? 'started' : 'lazy',
-    authState: account
-      ? account.type
-      : input.accountStatus?.requiresOpenaiAuth
-        ? 'missing'
-        : 'not-required',
+    authState,
     planType: account?.planType || null,
     account,
-    requiresOpenaiAuth: Boolean(input.accountStatus?.requiresOpenaiAuth),
+    requiresOpenaiAuth,
     rateLimits: input.rateLimitStatus?.rateLimits || null,
     rateLimitsByLimitId: input.rateLimitStatus?.rateLimitsByLimitId || null,
     codexUsage: input.codexUsage,
-    error: input.accountStatus?.error
+    ...(!requiresOpenaiAuth && accountError ? { error: accountError } : {})
   }
 }

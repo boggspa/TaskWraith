@@ -559,6 +559,19 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   workspaces
   } = props
   const currentChatAppChatId = currentChat?.appChatId || null
+  const refreshProviderAuthStatus = useCallback(
+    async (provider: Parameters<typeof refreshProviderMetadata>[0]) => {
+      if (provider === 'codex') {
+        try {
+          await window.api.getAgentStatus('codex', { refreshAuth: true })
+        } catch (error) {
+          console.warn('[provider sign-in] could not recycle Codex auth status:', error)
+        }
+      }
+      await refreshProviderMetadata(provider, currentWorkspace?.path)
+    },
+    [currentWorkspace?.path, refreshProviderMetadata]
+  )
   const handleTranscriptInspectRun = useCallback(
     (runId: string) => {
       setInspectingRunId(runId)
@@ -1450,6 +1463,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   if (!r?.ok) console.warn('[provider sign-out] could not open Terminal:', r?.error)
                 })
               }}
+              onRefreshProviderStatus={(provider) =>
+                void refreshProviderAuthStatus(provider)
+              }
               onRemoveAgenticWorkspaceGrant={(provider, workspacePath, service) =>
                 void handleRemoveAgenticWorkspaceGrant(provider, workspacePath, service)
               }
@@ -2667,6 +2683,19 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               onRollbackCodexThread={handleRollbackCodexThread}
               onImportCodexUsageCredential={handleImportCodexUsageCredential}
               onClearCodexUsageCredential={handleClearCodexUsageCredential}
+              onCodexLogin={() => {
+                void window.api.openProviderLoginTerminal('codex').then((result) => {
+                  if (!result?.ok) {
+                    console.warn(
+                      '[provider sign-in] could not open TaskWraith Codex sign-in:',
+                      result?.error
+                    )
+                  }
+                })
+              }}
+              onRefreshCodexStatus={() =>
+                void refreshProviderAuthStatus('codex')
+              }
               onInstallGeminiMcpBridge={() => void installGeminiMcpBridge()}
               onRefreshGeminiMcpBridgeStatus={() => void refreshGeminiMcpBridgeStatus()}
               currentChat={currentChat}

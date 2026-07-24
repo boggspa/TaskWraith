@@ -54,6 +54,9 @@ export interface AgentRunPayload {
   scope: ChatScope
   workspace?: string
   prompt: string
+  /** Renderer-selected prompt text for opt-in usage history. This can differ
+   * from the provider prompt when contextual material must remain redacted. */
+  usagePromptText?: string
   /**
    * Separately authorized cold-session prompt used only when a provider-native
    * resume cannot be completed. Bound into effectivePermissionsSignature with

@@ -25,6 +25,7 @@ import {
   pruneExternalActivityFileCache,
   setCachedExternalFileEvents
 } from './ExternalActivityFileCache'
+import { isTaskWraithCodexRolloutOriginator } from './codex/CodexHome'
 
 type ExternalActivityProvider = Extract<
   ProviderId,
@@ -667,6 +668,19 @@ async function parseCodexSessionFile(filePath: string): Promise<ExternalUsageEve
   // event of a fork to be measured by its own delta.
   let previousCumulative: number | null = null
   for await (const { json, lineIndex } of parseJsonLineFile(filePath, isCodexActivityLine)) {
+    const payload =
+      json?.payload && typeof json.payload === 'object'
+        ? (json.payload as Record<string, unknown>)
+        : {}
+    if (
+      (json?.type === 'session_meta' || payload.type === 'session_meta') &&
+      isTaskWraithCodexRolloutOriginator(payload.originator)
+    ) {
+      // Shared-home TaskWraith rollouts are legacy copies after the private
+      // CODEX_HOME cutover. Settings adds TaskWraith's durable usage journal
+      // explicitly, so treating these as external would double-count them.
+      return []
+    }
     const turnModel = extractCodexSessionModel(json)
     if (turnModel) sessionModel = turnModel
     if (json?.payload?.type !== 'token_count') continue
@@ -1196,7 +1210,11 @@ function parseJsonLines(text: string): any[] {
  * message bodies are the overwhelming bulk of a rollout's bytes and can never
  * contribute, so this keeps a full-file scan affordable without truncating. */
 function isCodexActivityLine(line: string): boolean {
-  return line.includes('"token_count"') || line.includes('"turn_context"')
+  return (
+    line.includes('"session_meta"') ||
+    line.includes('"token_count"') ||
+    line.includes('"turn_context"')
+  )
 }
 
 async function* parseJsonLineFile(

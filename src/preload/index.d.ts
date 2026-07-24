@@ -309,6 +309,7 @@ interface AgentRunPayload {
   scope?: 'workspace' | 'global'
   workspace?: string
   prompt: string
+  usagePromptText?: string
   appRunId?: string
   appChatId?: string
   model?: string
@@ -615,7 +616,10 @@ declare global {
       composeRun: (input: ComposerRunInput) => Promise<ComposerRunPayload>
       runAgent: (payload: AgentRunPayload) => Promise<DispatchResult>
       cancelAgentRun: (provider?: ProviderId, runId?: string) => Promise<void>
-      getAgentStatus: (provider: ProviderId) => Promise<any>
+      getAgentStatus: (
+        provider: ProviderId,
+        options?: { refreshAuth?: boolean }
+      ) => Promise<any>
       getProviderCapabilities: (
         provider: ProviderId,
         workspace?: string,

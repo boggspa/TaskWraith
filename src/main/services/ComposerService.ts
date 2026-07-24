@@ -541,9 +541,17 @@ export class ComposerService {
     // The slim native-resume prompt and this full-context recovery prompt are
     // signed together below. AcpTurnClient selects the latter only when Kimi
     // cannot rehydrate the saved session and must use session/new.
-    const resumeFallbackPrompt = kimiNativeSessionResume
-      ? composeRunPrompt({ ...promptInput, nativeSessionResume: false }).contextualPrompt
-      : undefined
+    const codexNativeSessionResume = Boolean(
+      provider === 'codex' && resumeDecision.sessionId
+    )
+    const resumeFallbackPrompt =
+      kimiNativeSessionResume || codexNativeSessionResume
+        ? composeRunPrompt({
+            ...promptInput,
+            ...(kimiNativeSessionResume ? { nativeSessionResume: false } : {}),
+            ...(codexNativeSessionResume ? { resumeSessionId: undefined } : {})
+          }).contextualPrompt
+        : undefined
 
     const providerMetadataPatchData = {
       ...buildProviderMetadataPatch(composed, codexHandoffsApplied),

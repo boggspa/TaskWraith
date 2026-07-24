@@ -62,6 +62,8 @@ export interface CodexRunState {
   ensembleRun?: EnsembleRunIdentity
   appRunId?: string
   appChatId?: string
+  /** Display-safe prompt selected by the dispatch producer for optional usage history. */
+  usagePromptText?: string
   tokenUsage?: any
   /** Context tokens (`tokenUsage.last.totalTokens`) snapshotted when a
    * `contextCompaction` item STARTS, so the completion card can report an

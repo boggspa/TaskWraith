@@ -463,6 +463,50 @@ describe('buildModelUsageWorkspaceMatrix', () => {
       totalTokens: 38_031
     })
   })
+
+  it('keeps private-home TaskWraith Codex usage alongside external Codex activity', () => {
+    const internal = [
+      makeRecord({
+        workspaceId: 'ws-alpha',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 1_000_000
+      })
+    ]
+    const external = [
+      makeRecord({
+        id: 'external-codex',
+        workspaceId: 'external',
+        chatId: '',
+        runId: '',
+        timestamp: NOW - HOURS(2),
+        inputTokens: 2_000_000
+      })
+    ]
+    const chats = [
+      makeChat({
+        appChatId: 'chat-1',
+        workspaceId: 'ws-alpha',
+        workspacePath: '/repo/alpha'
+      })
+    ]
+
+    const matrix = buildModelUsageWorkspaceMatrix(
+      internal,
+      external,
+      chats,
+      RATES,
+      { ...USD, includeExternal: true },
+      NOW
+    )
+
+    expect(matrix.workspaces.map((workspace) => workspace.workspaceId)).toEqual([
+      'external',
+      'ws-alpha'
+    ])
+    const codex = matrix.groups.find((group) => group.provider === 'codex')!
+    expect(codex.totals.external.totalTokens).toBe(2_000_000)
+    expect(codex.totals['ws-alpha'].totalTokens).toBe(1_000_000)
+  })
 })
 
 describe('buildModelUsageTable — currency conversion + overestimate', () => {
@@ -620,13 +664,35 @@ describe('buildModelUsageTable — External Usage switches source (no double-cou
   })
 })
 
-describe('buildModelUsageTableForSettings — grok/cursor supplement when external is on', () => {
+describe('buildModelUsageTableForSettings — private-home supplements when external is on', () => {
   const externalCodex = makeRecord({
     id: 'external-codex',
     provider: 'codex',
     model: 'gpt-5.5',
     timestamp: NOW - HOURS(1),
     inputTokens: 2_000_000
+  })
+
+  it('combines private-home TaskWraith Codex runs with external Codex activity', () => {
+    const internal = [
+      makeRecord({
+        provider: 'codex',
+        model: 'gpt-5.5',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 1_000_000
+      })
+    ]
+    const result = buildModelUsageTableForSettings(
+      internal,
+      [externalCodex],
+      RATES,
+      { currency: 'USD', includeExternal: true },
+      NOW
+    )
+
+    const codex = result.find((group) => group.provider === 'codex')!
+    expect(codex.totals.h24.tokensIn).toBe(3_000_000)
+    expect(codex.totals.h24.runs).toBe(2)
   })
 
   it('folds internal grok runs into the external-only table', () => {

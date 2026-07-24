@@ -44,6 +44,26 @@ describe('one-shot provider transport history join', () => {
     expect(provider.slice(error, awaited)).not.toContain('markTransportClosed()')
   })
 
+  it('journals parsed Codex exec usage before projecting its terminal result', () => {
+    const provider = between(
+      'async function runCodexExecFallback(',
+      '/**\n * Other well-known codex install locations'
+    )
+    const sanitizedUsage = provider.indexOf(
+      'codexExecUsage = mergeCodexExecUsageJsonLines(codexExecUsage, text)'
+    )
+    const flushed = provider.indexOf('codexExecStdoutSanitizer.flush()')
+    const persisted = provider.indexOf('recordCodexUsageOnCompletion({', flushed)
+    const terminalResult = provider.indexOf("type: 'result'", persisted)
+
+    expect(sanitizedUsage).toBeGreaterThanOrEqual(0)
+    expect(flushed).toBeGreaterThan(sanitizedUsage)
+    expect(persisted).toBeGreaterThan(flushed)
+    expect(terminalResult).toBeGreaterThan(persisted)
+    expect(provider).toContain('stats: terminalStats')
+    expect(provider).toContain('if (!payload.ensembleRun)')
+  })
+
   it('tracks Codex app-server before admission and awaits the exact terminal projection', () => {
     const provider = between(
       'async function runCodexAppServerWithClient(',
@@ -95,6 +115,28 @@ describe('one-shot provider transport history join', () => {
     )
     expect(finished).toBeGreaterThanOrEqual(0)
     expect(projectionComplete).toBeGreaterThan(finished)
+  })
+
+  it('journals and seals solo Codex usage on an unretried app-server error', () => {
+    const notifications = between(
+      'function handleCodexNotification(message: any)',
+      'function formatCodexApprovalRequest('
+    )
+    const errorBranch = notifications.slice(
+      notifications.lastIndexOf("if (message.method === 'error') {")
+    )
+    const usageRecord = errorBranch.indexOf('recordCodexUsageOnCompletion({')
+    const sealed = errorBranch.indexOf('sealSoloCodexRunOnCompletion({')
+    const terminalResult = errorBranch.indexOf("type: 'result'")
+    const finished = errorBranch.indexOf("runManager.finish(state.appRunId, 'failed')")
+
+    expect(errorBranch).toContain('if (params.willRetry === true) return')
+    expect(errorBranch).toContain('if (state.completed)')
+    expect(usageRecord).toBeGreaterThanOrEqual(0)
+    expect(sealed).toBeGreaterThan(usageRecord)
+    expect(terminalResult).toBeGreaterThan(sealed)
+    expect(errorBranch).toContain('stats: terminalStats')
+    expect(finished).toBeGreaterThan(terminalResult)
   })
 
   it('issues a fresh-run Codex continuation after host rerun', () => {

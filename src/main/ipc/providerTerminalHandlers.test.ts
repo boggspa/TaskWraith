@@ -37,6 +37,12 @@ function createResolved(binaryPath: string | null): ResolvedProviderBinary {
 
 function createDeps() {
   const userDataPath = '/tmp/taskwraith'
+  const lstatSync = vi.fn(
+    (_path: string): { isDirectory(): boolean; isSymbolicLink(): boolean } => ({
+      isDirectory: () => true,
+      isSymbolicLink: () => false
+    })
+  )
   const deps = {
     resolveCliProviderBinary: vi.fn(async (provider: string) =>
       createResolved(`/usr/local/bin/${provider}`)
@@ -44,6 +50,7 @@ function createDeps() {
     getUserDataPath: vi.fn(() => userDataPath),
     openPath: vi.fn(async () => ''),
     mkdirSync: vi.fn(),
+    lstatSync,
     writeFileSync: vi.fn(),
     chmodSync: vi.fn(),
     getPlatform: vi.fn(() => 'darwin' as NodeJS.Platform)
@@ -241,6 +248,79 @@ describe('registerProviderTerminalHandlers', () => {
       expect.stringContaining('powershell.exe -NoProfile -ExecutionPolicy Bypass -NoExit -File "%~dp0codex-upgrade.ps1"')
     )
     expect(deps.openPath).toHaveBeenCalledWith(cmdFile)
+  })
+
+  it.each(['login', 'logout'] as const)(
+    'targets the private TaskWraith Codex home for macOS %s',
+    async (action) => {
+      const { deps, loginDir } = createDeps()
+      registerProviderTerminalHandlers(deps)
+
+      await expect(handlerFor(`provider:open-${action}-terminal`)({}, 'codex')).resolves.toEqual({
+        ok: true
+      })
+
+      const codexHome = join('/tmp/taskwraith', 'codex-home')
+      const commandFile = join(loginDir, `codex-${action}.command`)
+      const script = String(
+        deps.writeFileSync.mock.calls.find(([path]) => path === commandFile)?.[1] || ''
+      )
+      expect(deps.mkdirSync).toHaveBeenCalledWith(codexHome, {
+        recursive: true,
+        mode: 0o700
+      })
+      expect(deps.chmodSync).toHaveBeenCalledWith(codexHome, 0o700)
+      expect(script).toContain(`export CODEX_HOME='${codexHome}'`)
+      expect(script.indexOf('source "$HOME/.zshrc"')).toBeLessThan(
+        script.indexOf('export CODEX_HOME=')
+      )
+      expect(script).toContain(`'/usr/local/bin/codex' '${action}'`)
+      expect(script).toContain('refresh provider status')
+    }
+  )
+
+  it('targets the private TaskWraith Codex home for Windows login', async () => {
+    const { deps } = createDeps()
+    deps.getPlatform.mockReturnValue('win32')
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'codex')).resolves.toEqual({
+      ok: true
+    })
+
+    const script = String(deps.writeFileSync.mock.calls[0]?.[1] || '')
+    expect(script).toContain("$env:CODEX_HOME = '/tmp/taskwraith/codex-home'")
+    expect(script).toContain("& '/usr/local/bin/codex' 'login'")
+  })
+
+  it('refuses to open Codex login through a symlinked private home', async () => {
+    const { deps } = createDeps()
+    deps.lstatSync.mockReturnValue({
+      isDirectory: () => true,
+      isSymbolicLink: () => true
+    })
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'codex')).resolves.toEqual({
+      ok: false,
+      error: 'TaskWraith CODEX_HOME must resolve to a private directory, not a symlink.'
+    })
+    expect(deps.openPath).not.toHaveBeenCalled()
+  })
+
+  it('refuses Codex login when protected private-home state is symlinked', async () => {
+    const { deps } = createDeps()
+    deps.lstatSync.mockImplementation((path: string) => ({
+      isDirectory: () => path.endsWith('codex-home'),
+      isSymbolicLink: () => path.endsWith('auth.json')
+    }))
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-login-terminal')({}, 'codex')).resolves.toEqual({
+      ok: false,
+      error: 'TaskWraith CODEX_HOME contains a symlink in protected Codex state: auth.json'
+    })
+    expect(deps.openPath).not.toHaveBeenCalled()
   })
 
   it('returns shell.openPath error strings and catch-to-string error shapes', async () => {

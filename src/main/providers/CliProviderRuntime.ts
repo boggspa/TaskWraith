@@ -516,7 +516,8 @@ export function captureProcessOutput(
   args: string[],
   cwd?: string,
   timeoutMs = 8_000,
-  deps?: CliProviderRuntimeDependencies
+  deps?: CliProviderRuntimeDependencies,
+  extraEnv: Record<string, string> = {}
 ): Promise<CapturedProcessOutput> {
   return new Promise((resolveCapture) => {
     let stdout = ''
@@ -526,7 +527,7 @@ export function captureProcessOutput(
     const child = spawn(plan.command, plan.args, {
       cwd,
       shell: plan.shell,
-      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1' }, command, deps)
+      env: createCliEnv({ FORCE_COLOR: '0', NO_COLOR: '1', ...extraEnv }, command, deps)
     })
     const timeout = setTimeout(() => {
       if (settled) return
@@ -559,7 +560,8 @@ export function captureProcessOutput(
 
 export async function readResolvedCliVersion(
   resolved: ResolvedProviderBinary,
-  deps?: CliProviderRuntimeDependencies
+  deps?: CliProviderRuntimeDependencies,
+  extraEnv: Record<string, string> = {}
 ): Promise<string> {
   if (!resolved.binaryPath) return 'missing'
   const output = await captureProcessOutput(
@@ -567,7 +569,8 @@ export async function readResolvedCliVersion(
     ['--version'],
     undefined,
     8_000,
-    deps
+    deps,
+    extraEnv
   )
   return (
     (output.stdout || output.stderr || output.error || 'unknown').trim().split('\n')[0] || 'unknown'

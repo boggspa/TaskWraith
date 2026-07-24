@@ -32,7 +32,9 @@ import { createInterface } from 'readline'
 // deltas from the cumulative advance (was: summing possibly-repeated deltas).
 // v4: Claude dedupes on requestId+messageId (was: keyed on timestamp too,
 // which never matched across the per-content-block rows of one message).
-export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 4
+// v5: Codex excludes shared-home rollouts created by TaskWraith; those runs
+// now come from TaskWraith's own usage journal after CODEX_HOME isolation.
+export const EXTERNAL_ACTIVITY_FILE_CACHE_VERSION = 5
 
 // Bound cache-load CPU the same way the scan duty-cycle does: a warm install
 // can hold multi-MB of JSONL, and parsing it synchronously freezes main.

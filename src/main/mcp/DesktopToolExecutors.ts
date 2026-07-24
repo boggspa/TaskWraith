@@ -177,6 +177,7 @@ export interface ProviderAuthStatusProbe {
 
 export interface DesktopProviderAuthDeps {
   getGeminiAuthStatusSnapshot(): Promise<GeminiAuthStatus>
+  getCodexStatusSnapshot(): Promise<ProviderAuthStatusProbe>
   getCliProviderStatus(provider: ProviderId): Promise<ProviderAuthStatusProbe>
   getStoredClaudeApiKey(): unknown
   getStoredKimiApiKey(): unknown
@@ -2004,7 +2005,10 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       })
       return { ...summarizeGeminiAuthStatusForMcp(snapshot), ...v2 }
     }
-    const status = await auth.getCliProviderStatus(provider)
+    const status =
+      provider === 'codex'
+        ? await auth.getCodexStatusSnapshot()
+        : await auth.getCliProviderStatus(provider)
     const rawAuthState = typeof status.authState === 'string' ? status.authState : null
     const errorReason = typeof status.error === 'string' ? status.error : undefined
     if (provider === 'claude') {
@@ -2065,8 +2069,12 @@ export function createDesktopToolExecutors(deps: DesktopToolExecutorDeps) {
       ...status,
       apiKeyConfigured: false,
       encryptionAvailable: auth.encryptionAvailable(),
-      appServer: auth.isCodexClientStarted() ? 'started' : 'lazy',
-      accountStatus: 'not-queried',
+      appServer:
+        typeof status.appServer === 'string'
+          ? status.appServer
+          : auth.isCodexClientStarted()
+            ? 'started'
+            : 'lazy',
       codexUsageConfigured,
       ...v2
     }

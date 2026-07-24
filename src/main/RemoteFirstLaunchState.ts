@@ -134,7 +134,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
 
 const SETUP_HINTS: Record<ProviderId, string> = {
   gemini: 'Gemini is not offered for new runs.',
-  codex: 'On your Mac, install Codex if needed, then run codex login in Terminal.',
+  codex:
+    'Install Codex if needed, then use TaskWraith’s Codex sign-in. Its private Codex home stays separate from the Codex app history.',
   claude: 'On your Mac, open TaskWraith Settings or run the Claude auth flow.',
   kimi:
     'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml, then confirm the exact runtime is admitted. The key saved in TaskWraith Settings is usage-only.',
@@ -236,17 +237,27 @@ function deriveProviderStatus(
   contract: ProviderCapabilityContract | null,
   usage: ProviderUsageSummary | null
 ): { kind: RemoteFirstLaunchProviderStatusKind; text: string; detail?: string } {
+  const availability = contract?.availability
+  const codexRuntimeAuthenticated =
+    provider !== 'codex' ||
+    Boolean(
+      availability?.available &&
+        !availability.setupRequired &&
+        ['authenticated', 'chatgpt', 'api-key', 'apikey', 'not-required'].includes(
+          String(availability.authState || '').toLowerCase()
+        )
+    )
   const exhausted = usage?.windows.some(
     (window) => typeof window.usedPercent === 'number' && window.usedPercent >= 99
   )
-  if (exhausted) {
+  if (codexRuntimeAuthenticated && exhausted) {
     return {
       kind: 'outOfUsage',
       text: 'Out of usage',
       detail: 'Signed in on the Mac, but the current quota window is exhausted.'
     }
   }
-  if (usage?.stale) {
+  if (codexRuntimeAuthenticated && usage?.stale) {
     return {
       kind: 'stale',
       text: 'Stale',
@@ -254,7 +265,6 @@ function deriveProviderStatus(
         'The last usage/readiness snapshot is cached. Open TaskWraith on the Mac to refresh it.'
     }
   }
-  const availability = contract?.availability
   if (!availability) {
     return {
       kind: 'notObservable',

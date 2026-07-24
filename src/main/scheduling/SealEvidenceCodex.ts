@@ -1,6 +1,9 @@
-import { homedir } from 'node:os'
 import { join } from 'node:path'
 import { buildCodexTaskWraithMcpArgs, type CodexMcpTaskWraithConfig } from '../CodexAppServerClient'
+import {
+  ensureTaskWraithCodexHomeForProtectedRead,
+  requireAbsoluteCodexHome
+} from '../codex/CodexHome'
 import { codexSandboxForMode } from '../codex/CodexRunPolicy'
 import { resolveCodexOutboundReasoning } from '../codex/CodexOutboundReasoning'
 import { normalizeCodexModel } from '../providers/StaticProviderModels'
@@ -82,6 +85,8 @@ export async function buildCodexSealEvidence(
   deps: SealEvidenceDeps,
   facts: CodexSealEvidenceFacts
 ): Promise<ProviderLaunchAuthorityInputByProvider['codex']> {
+  const codexHome = requireAbsoluteCodexHome(facts.resolvedEnv.CODEX_HOME)
+  await ensureTaskWraithCodexHomeForProtectedRead(codexHome, ['auth.json', 'config.toml'])
   const model = normalizeCodexModel(facts.model)
   const reasoning = resolveCodexOutboundReasoning(model, facts.reasoningEffort)
   const fullAccessGranted = isFullShellAccessGranted(facts.effectivePermissions)
@@ -112,13 +117,13 @@ export async function buildCodexSealEvidence(
     promptEnvelope: facts.promptEnvelope,
     session: facts.session,
     resolvedEnv: facts.resolvedEnv,
-    credentialState: await codexCredentialStateEvidence(),
+    credentialState: await codexCredentialStateEvidence(codexHome),
     providerConfiguration: {
       kind: 'codex-home-config',
       configToml: await fileContentHmacEvidence(
         deps.authorityRoot,
         'codex',
-        join(homedir(), '.codex', 'config.toml')
+        join(codexHome, 'config.toml')
       ),
       persistExtendedHistory: true,
       experimentalRawEvents: false

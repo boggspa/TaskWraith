@@ -12181,7 +12181,7 @@ export class EnsembleOrchestrator {
         runtime.discordContextSnapshots
       )}${externalPathGrantPromptAppendix(permissions.externalPathGrants)}`
       const resumeFallbackPrompt =
-        slimTurn && participant.provider === 'kimi'
+        slimTurn && (participant.provider === 'kimi' || participant.provider === 'codex')
           ? `${buildEnsembleParticipantPrompt({
               chat: dispatchChat,
               config: ensembleConfigForRound,

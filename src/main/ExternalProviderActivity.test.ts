@@ -254,6 +254,53 @@ describe('loadExternalProviderUsageRecords', () => {
     }
   })
 
+  it('excludes legacy TaskWraith Codex rollouts while keeping Codex Desktop activity', async () => {
+    const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-codex-originator-'))
+    try {
+      const sessionDir = join(homeDir, '.codex', 'sessions', '2026', '05', '31')
+      await mkdir(sessionDir, { recursive: true })
+      const tokenEvent = JSON.stringify({
+        timestamp: '2026-05-31T09:00:00.000Z',
+        type: 'event_msg',
+        payload: {
+          type: 'token_count',
+          info: {
+            last_token_usage: { input_tokens: 40, output_tokens: 4, total_tokens: 44 }
+          }
+        }
+      })
+      for (const [index, originator] of [
+        'taskwraith',
+        'AGBench',
+        'guigemini',
+        'Codex Desktop'
+      ].entries()) {
+        await writeFile(
+          join(sessionDir, `rollout-${index}.jsonl`),
+          [
+            JSON.stringify({
+              timestamp: '2026-05-31T08:59:00.000Z',
+              type: 'session_meta',
+              payload: { type: 'session_meta', originator }
+            }),
+            tokenEvent
+          ].join('\n')
+        )
+      }
+
+      const records = await loadExternalProviderUsageRecords({
+        homeDir,
+        now: new Date('2026-05-31T13:00:00.000Z')
+      })
+      const codex = records.filter((record) => record.provider === 'codex')
+
+      expect(codex).toHaveLength(1)
+      expect(codex[0].totalTokens).toBe(44)
+    } finally {
+      await rm(homeDir, { recursive: true, force: true })
+    }
+  })
+
   it('reads Grok turn usage from the unified log without double-counting subsets', async () => {
     const homeDir = await mkdtemp(join(tmpdir(), 'taskwraith-external-grok-'))
     try {

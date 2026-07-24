@@ -14311,7 +14311,8 @@ function App(): React.JSX.Element {
             delivery: 'inline',
             cwd: runDiffWorkspacePath || runWorkspace!.path,
             appRunId: currentRunId,
-            appChatId: runChatId
+            appChatId: runChatId,
+            usagePromptText
           })
           dispatchAccepted = true
           settleProjectReferenceContextForRequest(request, 'rejected')
@@ -14327,6 +14328,7 @@ function App(): React.JSX.Element {
           // part of the signed posture context, so this cannot affect the clamp.
           const dispatchPayload = {
             ...composedPayload,
+            usagePromptText,
             ...(runtimeWorktreeIntent ? { runtimeWorktree: runtimeWorktreeIntent } : {}),
             ...(composerEffectiveWorkspacePath
               ? { effectiveWorkspacePath: composerEffectiveWorkspacePath }

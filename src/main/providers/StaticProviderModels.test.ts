@@ -372,7 +372,7 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
   })
 
   it('resolves unset and unknown effort to an explicit renderer-equivalent default', () => {
-    // Never omit the wire value: omission would inherit ~/.codex/config.toml,
+    // Never omit the wire value: omission would inherit CODEX_HOME/config.toml,
     // which can contain a tier (for example max) that the selected model rejects.
     expect(codexWireReasoningEffort('', 'gpt-5.5')).toBe('medium')
     expect(codexWireReasoningEffort('   ', 'gpt-5.5')).toBe('medium')

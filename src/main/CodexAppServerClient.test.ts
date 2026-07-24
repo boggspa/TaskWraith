@@ -83,7 +83,7 @@ describe('CodexAppServerClient runtime profile tracking', () => {
   })
 
   it('disposes a running client when switching profiles', () => {
-    const client = new CodexAppServerClient()
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
     const dispose = vi.spyOn(client, 'dispose')
     client.setRuntimeProfile(makeRuntimeProfile({ id: 'profile-1' }))
     expect(client.getRuntimeProfileKey()).toBe('profile-1')
@@ -96,7 +96,7 @@ describe('CodexAppServerClient runtime profile tracking', () => {
   })
 
   it('marks a running client stale when MCP config changes and clears it on dispose', () => {
-    const client = new CodexAppServerClient()
+    const client = new CodexAppServerClient('/tmp/taskwraith-codex-home')
     const initialConfig = makeMcpConfig()
     client.setMcpConfig(initialConfig)
     const kill = vi.fn()
@@ -138,9 +138,11 @@ describe('CodexAppServerClient runtime profile tracking', () => {
     )
     expect(client.hasStaleMcpConfig()).toBe(true)
 
+    ;(client as any).privateHomeThreadIds.add('7b057c8b-33fa-4eca-9efe-3313a83669f4')
     client.dispose()
     expect(kill).toHaveBeenCalled()
     expect(client.hasStaleMcpConfig()).toBe(false)
+    expect((client as any).privateHomeThreadIds.size).toBe(0)
   })
 })
 
@@ -371,7 +373,7 @@ describe('codexConfigParseUserMessage', () => {
     const msg = codexConfigParseUserMessage(
       'Error loading config.toml: unknown variant `priority`, expected `fast` or `flex` in `service_tier`\n  at line 4'
     )
-    expect(msg).toContain('~/.codex/config.toml')
+    expect(msg).toContain("TaskWraith's private Codex config.toml")
     expect(msg).toContain('unknown variant `priority`')
     // First line only — the trailing "  at line 4" is dropped.
     expect(msg).not.toContain('at line 4')

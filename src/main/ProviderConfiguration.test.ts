@@ -75,6 +75,82 @@ describe('detectConfiguredProviders — Kimi roster configuration', () => {
 })
 
 describe('detectConfiguredProviders — CLI binary probes', () => {
+  it('does not let a stored Codex usage token override missing private-home auth', async () => {
+    const settings = {
+      codexUsageCredential: {
+        encryptedAccessToken: 'usage-only-token',
+        accountId: 'usage-account'
+      }
+    } as AppSettings
+    const probe = vi.fn(async () => ({ available: true, authState: 'missing' }))
+
+    const configured = await detectConfiguredProviders(settings, {
+      getCodexConfiguredStatus: probe,
+      resolveProviderBinary: async () => ({ binaryPath: null }),
+      getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+    })
+
+    expect(probe).toHaveBeenCalledOnce()
+    expect(configured.has('codex')).toBe(false)
+  })
+
+  it('keeps the cached Codex roster probe authoritative over usage settings', async () => {
+    vi.useFakeTimers()
+    try {
+      const settings = {
+        codexUsageCredential: {
+          encryptedAccessToken: 'usage-only-token',
+          accountId: 'usage-account'
+        }
+      } as AppSettings
+      const discovery = createConfiguredProviderDetector(
+        {
+          getCodexConfiguredStatus: async () => ({
+            available: true,
+            authState: 'missing'
+          }),
+          resolveProviderBinary: async () => ({ binaryPath: null }),
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+        },
+        { staggerMs: 0 }
+      )
+
+      discovery.start(settings)
+      await vi.runAllTimersAsync()
+      await expect(discovery.snapshot(settings)).resolves.not.toContain('codex')
+      expect(discovery.statusSnapshot(settings).configuredProviders.has('codex')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('can explicitly refresh discovery after private-home auth changes', async () => {
+    vi.useFakeTimers()
+    try {
+      let authState = 'missing'
+      const settings = {} as AppSettings
+      const discovery = createConfiguredProviderDetector(
+        {
+          getCodexConfiguredStatus: async () => ({ available: true, authState }),
+          resolveProviderBinary: async () => ({ binaryPath: null }),
+          getOllamaStatus: async () => ({ available: false, modelCount: 0 })
+        },
+        { staggerMs: 0 }
+      )
+
+      discovery.start(settings)
+      await vi.runAllTimersAsync()
+      await expect(discovery.snapshot(settings)).resolves.not.toContain('codex')
+
+      authState = 'chatgpt'
+      discovery.refresh(settings)
+      await vi.runAllTimersAsync()
+      await expect(discovery.snapshot(settings)).resolves.toContain('codex')
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('seeds grok and cursor when their binaries resolve', async () => {
     const configured = await detectConfiguredProviders({} as AppSettings, {
       resolveProviderBinary: async (provider) => ({
@@ -226,7 +302,7 @@ describe('detectConfiguredProviders — CLI binary probes', () => {
         {
           getCodexConfiguredStatus: async () => ({
             available: true,
-            authState: 'chatgpt'
+            authState: 'apiKey'
           }),
           getClaudeConfiguredStatus: async () => ({
             available: true,

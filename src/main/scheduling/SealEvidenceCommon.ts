@@ -395,9 +395,9 @@ export async function fileContentHmacEvidence(
 /** Secret-free credential descriptors, one per provider family. */
 
 export async function codexCredentialStateEvidence(
-  home: string = homedir()
+  codexHome: string
 ): Promise<CanonicalEvidenceValue> {
-  const authJsonPath = join(home, '.codex', 'auth.json')
+  const authJsonPath = join(codexHome, 'auth.json')
   if (!existsSync(authJsonPath)) return { mode: 'none' }
   try {
     const parsed = JSON.parse(await readFile(authJsonPath, 'utf8')) as Record<string, unknown>

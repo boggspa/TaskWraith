@@ -157,6 +157,28 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(JSON.stringify(kimi)).not.toContain('/Users/alice')
   })
 
+  it('does not let Codex usage telemetry override a missing private-home sign-in', () => {
+    const state = buildRemoteFirstLaunchState({
+      generatedAt: '2026-07-24T15:00:00.000Z',
+      workspace,
+      providers: {
+        codex: contract('codex', {
+          available: true,
+          version: '1.0.0',
+          authState: 'missing',
+          setupRequired: true
+        })
+      },
+      usage: { codex: usage('codex', 100) },
+      notifications: []
+    })
+
+    expect(state.providerCards.find((card) => card.id === 'codex')).toMatchObject({
+      statusKind: 'needsSignIn',
+      statusText: 'Needs sign-in on Mac'
+    })
+  })
+
   it('includes activated plugin provider setup hints in remote provider cards', () => {
     const providerSetup: TaskWraithPluginActivatedProviderSetup[] = [
       {

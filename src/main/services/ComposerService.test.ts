@@ -1117,6 +1117,20 @@ describe('ComposerService', () => {
     expect(payload.composer.contextTurnsApplied).toBe(2)
   })
 
+  it('pairs a slim native Codex resume with a full-context cutover fallback', () => {
+    const payload = compose(
+      {
+        provider: 'codex',
+        linkedProviderSessionId: '7b057c8b-33fa-4eca-9efe-3313a83669f4'
+      },
+      { selectedModelType: 'gpt-5.6-sol' }
+    )
+
+    expect(payload.prompt).not.toContain('Conversation context')
+    expect(payload.resumeFallbackPrompt).toContain('Conversation context')
+    expect(payload.resumeFallbackPrompt).toContain('Previous answer')
+  })
+
   it('caps context turns at twenty from settings', () => {
     const messages = Array.from({ length: 25 }, (_, index) => [
       { id: `u${index}`, role: 'user' as const, content: `user-${index}`, timestamp: 't' },
