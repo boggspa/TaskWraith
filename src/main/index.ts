@@ -872,6 +872,7 @@ import {
   UserMcpServerConfig
 } from './store/types'
 import type { AgentRunPayload, AgentRunRoute } from './run/AgentRunTypes'
+import { ThreadWorktreeAllocator } from './run/ThreadWorktreeBinding'
 import { applyPendingProviderChangeOnFinalize, applyProviderChange } from './providerChangeQueue'
 import {
   AGENT_ROSTER_IMPORT_MAX_BYTES,
@@ -6345,23 +6346,45 @@ async function ensureProviderRunPreflight(
   return failPreflight(preflight.reason)
 }
 
+const threadWorktreeAllocator = new ThreadWorktreeAllocator()
+
 async function resolveRuntimeWorktreeWorkspace(
   payload: AgentRunPayload,
   registeredWorkspace: string
 ): Promise<string> {
   const intent = payload.runtimeWorktree
   if (!intent?.requested) return registeredWorkspace
+  const baseWorkspace = bindRuntimeWorktreeBaseWorkspace({
+    requestedBaseWorkspacePath: intent.baseWorkspacePath,
+    registeredWorkspace,
+    canonicalizePath: canonicalPath
+  })
+  if (intent.status === 'selection-required' && intent.source === 'runtimeProfile') {
+    const chatId = requireNonEmptyString(payload.appChatId, 'Workspace chat')
+    const binding = await threadWorktreeAllocator.ensure({
+      chatId,
+      baseWorkspacePath: baseWorkspace,
+      binding: await AppStore.getThreadWorktreeBinding(chatId),
+      git: new GitService(),
+      persist: async (nextBinding) => {
+        await AppStore.persistThreadWorktreeBinding(chatId, nextBinding)
+      }
+    })
+    const targetPath = canonicalPath(binding.effectiveWorkspacePath)
+    payload.runtimeWorktree = {
+      ...intent,
+      baseWorkspacePath: baseWorkspace,
+      effectiveWorkspacePath: targetPath,
+      status: 'selected'
+    }
+    return targetPath
+  }
   if (intent.status !== 'selected' || !intent.effectiveWorkspacePath) {
     const profile = intent.profileName ? ` (${intent.profileName})` : ''
     throw new Error(
       `Runtime profile${profile} requires an isolated worktree. Create or select one from Branch & worktree before running.`
     )
   }
-  const baseWorkspace = bindRuntimeWorktreeBaseWorkspace({
-    requestedBaseWorkspacePath: intent.baseWorkspacePath,
-    registeredWorkspace,
-    canonicalizePath: canonicalPath
-  })
   const targetPath = canonicalPath(requireNonEmptyString(intent.effectiveWorkspacePath, 'Worktree'))
   const list = await new GitService().listWorktrees(baseWorkspace)
   if (!list.ok) {

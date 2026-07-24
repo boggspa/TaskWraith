@@ -11,6 +11,11 @@ export interface PersistThreadWorktreeBindingPatchInput {
   admitMutation?: (chat: ChatRecord) => Promise<void>
 }
 
+export interface ReadThreadWorktreeBindingInput {
+  chatsDir: string
+  chatId: string
+}
+
 /**
  * Writes the small, main-owned worktree identity patch without using the
  * legacy synchronous whole-record writer. The caller is responsible for
@@ -35,6 +40,21 @@ export async function persistThreadWorktreeBindingPatch(
   }
   await writeJsonAtomically(chatPath, next)
   return next
+}
+
+/** Returns a valid durable binding, treating malformed legacy data as absent
+ * so the allocator can re-check or recreate the isolated worktree safely. */
+export async function readThreadWorktreeBinding(
+  input: ReadThreadWorktreeBindingInput
+): Promise<ThreadWorktreeBinding | undefined> {
+  if (!isSafeChatId(input.chatId)) return undefined
+  const stored = await readStoredChat(chatPathForId(input.chatsDir, input.chatId), input.chatId)
+  if (!stored.threadWorktreeBinding) return undefined
+  try {
+    return normalizeBinding(stored.threadWorktreeBinding)
+  } catch {
+    return undefined
+  }
 }
 
 async function readStoredChat(chatPath: string, chatId: string): Promise<ChatRecord> {
@@ -65,12 +85,22 @@ async function readStoredChat(chatPath: string, chatId: string): Promise<ChatRec
   return parsed as ChatRecord
 }
 
-function normalizeBinding(binding: ThreadWorktreeBinding): ThreadWorktreeBinding {
-  const baseWorkspacePath = binding.baseWorkspacePath.trim().replace(/\/+$/, '')
-  const effectiveWorkspacePath = binding.effectiveWorkspacePath.trim().replace(/\/+$/, '')
-  const branch = binding.branch.trim()
+function normalizeBinding(binding: unknown): ThreadWorktreeBinding {
+  const record =
+    binding && typeof binding === 'object' && !Array.isArray(binding)
+      ? (binding as Partial<ThreadWorktreeBinding>)
+      : null
+  const baseWorkspacePath =
+    typeof record?.baseWorkspacePath === 'string'
+      ? record.baseWorkspacePath.trim().replace(/\/+$/, '')
+      : ''
+  const effectiveWorkspacePath =
+    typeof record?.effectiveWorkspacePath === 'string'
+      ? record.effectiveWorkspacePath.trim().replace(/\/+$/, '')
+      : ''
+  const branch = typeof record?.branch === 'string' ? record.branch.trim() : ''
   if (
-    binding.schemaVersion !== 1 ||
+    record?.schemaVersion !== 1 ||
     !baseWorkspacePath ||
     !effectiveWorkspacePath ||
     !branch

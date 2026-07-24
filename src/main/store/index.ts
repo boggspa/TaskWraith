@@ -256,7 +256,10 @@ import {
 import { createProductCrashRecord, filterProductCrashRecords } from '../ProductOperations'
 import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
-import { persistThreadWorktreeBindingPatch } from './ThreadWorktreeBindingPersistence'
+import {
+  persistThreadWorktreeBindingPatch,
+  readThreadWorktreeBinding
+} from './ThreadWorktreeBindingPersistence'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import {
   acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
@@ -5110,6 +5113,12 @@ export class AppStore {
   static getChatRecordPath(chatId: string): string | null {
     if (!isSafeChatId(chatId)) return null
     return chatPathForId(chatsDir, chatId)
+  }
+
+  static async getThreadWorktreeBinding(
+    chatId: string
+  ): Promise<ThreadWorktreeBinding | undefined> {
+    return readThreadWorktreeBinding({ chatsDir, chatId })
   }
 
   /**

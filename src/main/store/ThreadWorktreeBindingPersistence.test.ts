@@ -1,7 +1,10 @@
 import * as fs from 'fs'
 import * as path from 'path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { persistThreadWorktreeBindingPatch } from './ThreadWorktreeBindingPersistence'
+import {
+  persistThreadWorktreeBindingPatch,
+  readThreadWorktreeBinding
+} from './ThreadWorktreeBindingPersistence'
 import type { ChatRecord } from './types'
 
 const testRoot = path.join('/tmp', `taskwraith-worktree-binding-persist-${process.pid}`)
@@ -62,6 +65,9 @@ describe('persistThreadWorktreeBindingPatch', () => {
     ) as ChatRecord
     expect(onDisk).toMatchObject(saved)
     expect((await fs.promises.readdir(chatsDir)).filter((entry) => entry.endsWith('.tmp'))).toEqual([])
+    await expect(readThreadWorktreeBinding({ chatsDir, chatId })).resolves.toEqual(
+      saved.threadWorktreeBinding
+    )
   })
 
   it('does not create a binding for a missing chat', async () => {
@@ -77,5 +83,20 @@ describe('persistThreadWorktreeBindingPatch', () => {
         }
       })
     ).rejects.toThrow('no longer available')
+  })
+
+  it('treats a malformed legacy binding as absent so allocation can recover', async () => {
+    const chatId = 'legacy-thread'
+    const chatsDir = path.join(testRoot, 'chats')
+    await fs.promises.mkdir(chatsDir, { recursive: true })
+    await fs.promises.writeFile(
+      path.join(chatsDir, `${chatId}.json`),
+      JSON.stringify({
+        ...storedChat(chatId),
+        threadWorktreeBinding: { schemaVersion: 1, baseWorkspacePath: '/repo' }
+      })
+    )
+
+    await expect(readThreadWorktreeBinding({ chatsDir, chatId })).resolves.toBeUndefined()
   })
 })
