@@ -244,7 +244,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('File changes display official provider marks')
   })
 
-  it('bundles the current 1.8.8 release notes', () => {
+  it('bundles the frozen 1.8.8 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.8' }, null)
     expect(entry).toMatchObject({
       version: '1.8.8',
@@ -256,6 +256,24 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Live token telemetry while providers work')
     expect(entry.releaseNotes).toContain('Closing the window no longer ends active runs')
     expect(entry.releaseNotes).toContain('Read-only plans can run `git status`')
+  })
+
+  it('bundles the current 1.8.9 release notes (narrative format)', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.9' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.9',
+      releaseDate: '2026-07-24'
+    })
+    // 1.8.9 is written as a story (themed sections, no Added/Changed/Fixed) —
+    // pin the narrative beats rather than taxonomy headers.
+    expect(entry.releaseNotes).toContain('A room of their own')
+    expect(entry.releaseNotes).toContain('isolated worktree before dispatch')
+    expect(entry.releaseNotes).toContain('Watch this PR')
+    expect(entry.releaseNotes).toContain('AntiGravity takes a full seat')
+    expect(entry.releaseNotes).toContain('Claude Opus 5')
+    // Wrap-safe: the source hard-wraps between "Work" and "Session".
+    expect(entry.releaseNotes).toContain('Session mode retires in favor of the primitives')
+    expect(entry.releaseNotes).toContain('folds instead of jumping')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
