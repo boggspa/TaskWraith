@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-24'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-24-v2'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,31 +137,30 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'AntiGravity is here — bring your own Gemini API key for Gemini 3.1 Pro, 3.1 Flash-Lite, and the 2.5 family (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.',
+    body: 'AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.',
     dismissible: true,
     groups: [
       {
         // The Gemini API-key (BYOK) lane only — the agy CLI lane stays behind
-        // its own informed-consent card and is never advertised here. Model
-        // names mirror the curated static fallback rows
-        // (AntigravityGeminiApiStaticModels) with the product prefix restored
+        // its own informed-consent card and is never advertised here. These
+        // are the exact current GA model names, with the product prefix kept
         // for recognition outside the ANTIGRAVITY picker header.
         provider: 'antigravity',
         label: 'AntiGravity',
         models: [
           {
-            name: 'Gemini 3.1 Pro',
-            blurb: "Google's frontier reasoning and coding model — bring your own Gemini API key."
+            name: 'Gemini 3.6 Flash',
+            blurb:
+              "Google's newest production model for agentic coding and multimodal work — bring your own Gemini API key."
           },
           {
-            name: 'Gemini 3.1 Flash-Lite',
-            blurb:
-              'Fast, economical agentic runs on the same key — ideal for quick passes and fan-out seats.'
+            name: 'Gemini 3.5 Flash',
+            blurb: 'Sustained frontier performance for long-horizon agentic and coding tasks.'
           },
           {
-            name: 'Gemini 2.5 Pro + Flash',
+            name: 'Gemini 3.5 Flash-Lite',
             blurb:
-              'The proven 2.5 family stays selectable, with an estimated-spend meter and a soft monthly budget.'
+              'The fastest, lowest-cost 3.5 model for high-throughput subagents and structured extraction.'
           }
         ]
       },

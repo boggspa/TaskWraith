@@ -338,12 +338,12 @@ describe('buildRemoteFirstLaunchState', () => {
     const antigravityGroup = newAdditions?.groups?.find(
       (group) => group.provider === 'antigravity'
     )
-    expect(antigravityGroup?.models[0]).toEqual(
-      expect.objectContaining({
-        name: 'Gemini 3.1 Pro',
-        blurb: expect.stringMatching(/bring your own Gemini API key/)
-      })
-    )
+    expect(antigravityGroup?.models.map((model) => model.name)).toEqual([
+      'Gemini 3.6 Flash',
+      'Gemini 3.5 Flash',
+      'Gemini 3.5 Flash-Lite'
+    ])
+    expect(antigravityGroup?.models[0]?.blurb).toMatch(/bring your own Gemini API key/)
     const kimiGroup = newAdditions?.groups?.find((group) => group.provider === 'kimi')
     expect(kimiGroup?.models).toEqual([
       expect.objectContaining({

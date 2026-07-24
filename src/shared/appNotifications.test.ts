@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs'
 import { describe, it, expect } from 'vitest'
 import {
   APP_NOTIFICATIONS,
@@ -152,15 +153,16 @@ describe('notification registry', () => {
     expect(groups.some((g) => g.provider === 'claude')).toBe(false)
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
-    // BYOK Gemini API lane only — mirrors the curated static fallback rows;
-    // the consent-gated agy CLI lane is deliberately not advertised.
+    // BYOK Gemini API lane only; the consent-gated agy CLI lane is deliberately
+    // not advertised.
     expect(antigravity?.models.map((m) => m.name)).toEqual([
-      'Gemini 3.1 Pro',
-      'Gemini 3.1 Flash-Lite',
-      'Gemini 2.5 Pro + Flash'
+      'Gemini 3.6 Flash',
+      'Gemini 3.5 Flash',
+      'Gemini 3.5 Flash-Lite'
     ])
     expect(antigravity?.models[0]?.blurb).toContain('bring your own Gemini API key')
-    expect(antigravity?.models[2]?.blurb).toContain('spend meter')
+    expect(newAdditions?.body).toContain('spend meter')
+    expect(newAdditions?.body).not.toContain('2.5 family')
     for (const model of antigravity?.models ?? []) {
       expect(model.blurb).not.toMatch(/agy|ban|OAuth/i)
     }
@@ -184,6 +186,31 @@ describe('notification registry', () => {
         expect(model.name.length).toBeGreaterThan(0)
         expect(model.blurb.length).toBeGreaterThan(0)
         expect(model.blurb.length).toBeLessThanOrEqual(120)
+      }
+    }
+  })
+
+  it('keeps the iOS demo New Additions payload aligned with Electron', () => {
+    const newAdditions = PINNED_APP_NOTIFICATIONS.find(
+      (notification) => notification.id === NEW_ADDITIONS_NOTIFICATION_ID
+    )
+    expect(newAdditions).toBeDefined()
+
+    const iosDemoSource = readFileSync(
+      new URL(
+        '../../ios/TaskWraithKit/Sources/TaskWraithUI/RemoteSessionModel.swift',
+        import.meta.url
+      ),
+      'utf8'
+    )
+    expect(iosDemoSource).toContain(`"id":"${NEW_ADDITIONS_NOTIFICATION_ID}"`)
+    expect(iosDemoSource).toContain(`"body":${JSON.stringify(newAdditions?.body)}`)
+    for (const group of newAdditions?.groups ?? []) {
+      expect(iosDemoSource).toContain(
+        `"provider":${JSON.stringify(group.provider)},"label":${JSON.stringify(group.label)}`
+      )
+      for (const model of group.models) {
+        expect(iosDemoSource).toContain(JSON.stringify(model))
       }
     }
   })
