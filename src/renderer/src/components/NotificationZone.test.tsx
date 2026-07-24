@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { NotificationZone, notificationDirectionForDrag } from './NotificationZone'
-import type { AppNotification } from '../../../shared/appNotifications'
+import { PINNED_APP_NOTIFICATIONS, type AppNotification } from '../../../shared/appNotifications'
 
 /**
  * Server-rendered smoke tests (the codebase uses renderToStaticMarkup, no
@@ -174,6 +174,16 @@ describe('NotificationZone', () => {
     expect(html).not.toContain('provider-glyph-ollama')
     // The plain body fallback paragraph is not rendered when groups are present.
     expect(html).not.toContain('Fallback summary text.')
+  })
+
+  it('renders the official Antigravity PNG in the pinned New Additions notice', () => {
+    const html = renderToStaticMarkup(<NotificationZone notifications={PINNED_APP_NOTIFICATIONS} />)
+
+    expect(html).toContain('notification-newadditions-provider provider-antigravity')
+    expect(html).toContain('data-provider-logo="antigravity"')
+    expect(html).toContain('provider-brand-logo-antigravity')
+    expect(html).toContain('provider-logo-antigravity.png')
+    expect(html).not.toContain('provider-glyph-antigravity')
   })
 
   it('drops expired notifications when now is past expiresAt', () => {

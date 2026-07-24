@@ -22,7 +22,7 @@ catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
 - Label requested derivatives explicitly and retain their source relationship,
   transform, hash, and alpha verification in the manifest.
 - Keep official light/dark variants when supplied.
-- Include all seven canonical provider ids. Gemini is labelled historical
+- Include all eight canonical provider ids. Gemini is labelled historical
   because it is retained for old chats but retired for new runs; Cursor is live
   again under Path-B managed containment. Canonical identity still does not
   imply every provider is admitted on every package (see Kimi packaged roster).
@@ -62,11 +62,14 @@ the actual light/dark app surface while preserving the sourced pixels.
 | `codex` | Untiled Codex banner/cloud icon | [Official transparent PNG](https://developers.openai.com/images/codex/codex-banner-icon.png) and [OpenAI docs usage](https://learn.chatgpt.com/docs/windows/windows-sandbox) | [OpenAI Design Guidelines](https://openai.com/brand/); not included in the public logo pack |
 | `claude` | Claude Spark, Clay | [Anthropic press kit](https://www.anthropic.com/press-kit) | [Anthropic newsroom](https://www.anthropic.com/news) |
 | `kimi` | Rounded-corner icon without wordmark | [KIMI Brand Guidelines](https://moonshotai.github.io/Branding-Guide/) | [First-party `icon-without-kimi` assets](https://github.com/MoonshotAI/Branding-Guide/tree/main/scenarios/03-icon-without-kimi) |
+| `antigravity` | Antigravity icon, full colour | [Google Antigravity press assets](https://antigravity.google/press?app=antigravity) | Official press-download PNG, preserved unmodified for provider identification |
 | `cursor` | Cursor 2D Cube, light + dark | [Cursor brand pack](https://ptht05hbb1ssoooe.public.blob.vercel-storage.com/assets/brand/cursor-brand-assets.zip) | [Cursor Brand Guidelines](https://cursor.com/en-US/brand) |
 | `grok` | Grok logomark, dark + light | [xAI logo pack](https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip) | [xAI Brand Guidelines](https://x.ai/legal/brand-guidelines) |
 | `ollama` | Transparent Ollama llama + recorded RGB-inverted dark derivative | [Ollama repository PNG](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/docs/ollama.png) | [Ollama terms](https://ollama.com/terms) and [repository licence](https://github.com/ollama/ollama/blob/573386c35eac76124ffce571f4b0fefa0a7fe13c/LICENSE) |
 
-Retrieved and verified on **2026-07-18**.
+The original seven-provider set was retrieved and verified on **2026-07-18**.
+The Antigravity press asset was added on **2026-07-23** and reverified against
+Google's press download on **2026-07-24**.
 
 ## Trademark and repository boundary
 

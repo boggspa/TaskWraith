@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import { ProviderBrandLogo } from './ProviderBrandLogo'
@@ -59,6 +61,20 @@ describe('ProviderBrandLogo', () => {
     expect(html).toContain('aria-hidden="true"')
     expect(html.match(/alt=""/g)).toHaveLength(2)
     expect(html.match(/draggable="false"/g)).toHaveLength(2)
+  })
+
+  it('keeps the desktop and iOS Antigravity copies byte-identical to the design asset', () => {
+    const designAsset = readFileSync(
+      resolve('design-assets/provider-logos/png/provider-logo-antigravity.png')
+    )
+    const runtimeCopies = [
+      'src/renderer/src/assets/provider-logos/provider-logo-antigravity.png',
+      'ios/TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-antigravity.png'
+    ]
+
+    for (const runtimeCopy of runtimeCopies) {
+      expect(readFileSync(resolve(runtimeCopy))).toEqual(designAsset)
+    }
   })
 
   it.each([

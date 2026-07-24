@@ -1,6 +1,6 @@
 {
   "catalogVersion": 1,
-  "retrievedAt": "2026-07-18",
+  "retrievedAt": "2026-07-23",
   "purpose": "provider-identity-reference-and-runtime-source",
   "runtimeIntegrated": true,
   "catalogueFilesLoadedAtRuntime": false,
@@ -140,6 +140,34 @@
             "transparentPixels": 57624,
             "partialAlphaPixels": 2332,
             "opaquePixels": 988620
+          }
+        }
+      ]
+    },
+    {
+      "id": "antigravity",
+      "label": "Antigravity",
+      "owner": "Google LLC",
+      "status": "live",
+      "artwork": "Google Antigravity icon — full color",
+      "sourcePage": "https://antigravity.google/press?app=antigravity",
+      "brandGuidance": "https://antigravity.google/press?app=antigravity",
+      "rightsNote": "Exact full-color icon supplied by the official Google Antigravity press page. Preserve it unmodified for factual provider identification; no affiliation or endorsement is implied.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-antigravity.png",
+          "originalFilename": "Google-Antigravity-Icon-Full-Color.png",
+          "downloadUrl": "https://antigravity.google/assets/image/brand/antigravity-icon__full-color.png",
+          "dimensions": { "width": 540, "height": 540 },
+          "bytes": 71914,
+          "sha256": "e0cd08ccd10cd8d08ccf0ba449823ee88495825c0841619618100d3ab089f51e",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 235630,
+            "partialAlphaPixels": 1446,
+            "opaquePixels": 54524
           }
         }
       ]

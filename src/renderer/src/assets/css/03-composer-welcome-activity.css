@@ -13569,6 +13569,10 @@ button.diff-file-row {
 .notification-newadditions-model.provider-kimi {
   color: var(--provider-kimi-color, #0073e6);
 }
+.notification-newadditions-provider.provider-antigravity,
+.notification-newadditions-model.provider-antigravity {
+  color: var(--provider-antigravity-color, #308713);
+}
 .notification-newadditions-provider.provider-cursor,
 .notification-newadditions-model.provider-cursor {
   color: var(--provider-cursor-color, #8d7312);
