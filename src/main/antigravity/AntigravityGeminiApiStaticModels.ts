@@ -1,4 +1,5 @@
 import { ANTIGRAVITY_GEMINI_API_MODEL_PREFIX } from './AntigravityGeminiApiModelDiscovery'
+import { antigravityGeminiApiModelLabel } from './AntigravityGeminiApiModelNaming'
 
 /**
  * Offer rows for the separately billed Gemini API lane when the user has a key
@@ -27,11 +28,9 @@ const STATIC_MODEL_IDS: readonly string[] = [
   'gemini-2.5-flash'
 ]
 
-const LABEL_PREFIX = 'Gemini API'
-
 /** Shared with live discovery so a fallback row is indistinguishable in the UI. */
 export function formatAntigravityGeminiApiLabel(modelId: string): string {
-  return `${LABEL_PREFIX} · ${modelId} · separate billing`
+  return antigravityGeminiApiModelLabel(modelId)
 }
 
 export function antigravityGeminiApiStaticModels(): Array<{ id: string; label: string }> {

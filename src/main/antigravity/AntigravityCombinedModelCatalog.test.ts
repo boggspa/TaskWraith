@@ -19,13 +19,13 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
   it('only treats actual AGY rows as authenticated AGY quota eligibility', () => {
     expect(
       hasAuthenticatedAgyCatalogRow([
-        { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini API · flash · separate billing' }
+        { id: 'gemini-api:gemini-2.5-flash', label: '2.5 Flash' }
       ])
     ).toBe(false)
     expect(
       hasAuthenticatedAgyCatalogRow([
         { id: 'agy-model', label: 'AGY model' },
-        { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini API · flash · separate billing' }
+        { id: 'gemini-api:gemini-2.5-flash', label: '2.5 Flash' }
       ])
     ).toBe(true)
     expect(
@@ -57,7 +57,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     ).resolves.toEqual([
       { id: 'agy-one', label: 'AGY One' },
       { id: 'duplicate', label: 'AGY Duplicate' },
-      { id: 'gemini-api:gemini-one', label: 'Gemini API · gemini-one · separate billing' }
+      { id: 'gemini-api:gemini-one', label: 'One' }
     ])
     expect(discoverAgy).toHaveBeenCalledOnce()
     expect(discoverGeminiApi).toHaveBeenCalledOnce()
@@ -94,7 +94,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         timeoutMs: 5
       })
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-fast', label: 'Gemini API · gemini-fast · separate billing' }
+      { id: 'gemini-api:gemini-fast', label: 'Fast' }
     ])
   })
 
@@ -176,7 +176,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-live', label: 'Gemini API · gemini-live · separate billing' }
+      { id: 'gemini-api:gemini-live', label: 'Live' }
     ])
   })
 
@@ -208,7 +208,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-solo', label: 'Gemini API · gemini-solo · separate billing' }
+      { id: 'gemini-api:gemini-solo', label: 'Solo' }
     ])
     expect(discoverAgy).not.toHaveBeenCalled()
     expect(discoverGeminiApi).toHaveBeenCalledOnce()
@@ -228,7 +228,7 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
         { discoverAgy, discoverGeminiApi, getSecretStore: () => store }
       )
     ).resolves.toEqual([
-      { id: 'gemini-api:gemini-both', label: 'Gemini API · gemini-both · separate billing' }
+      { id: 'gemini-api:gemini-both', label: 'Both' }
     ])
     expect(discoverAgy).not.toHaveBeenCalled()
   })
