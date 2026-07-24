@@ -6189,7 +6189,11 @@ public struct EditableRosterStrip: View {
                         ))
                     commit()
                 } label: {
-                    Label(TWTheme.providerLabel(provider), systemImage: "cpu")
+                    Label {
+                            Text(TWTheme.providerLabel(provider))
+                        } icon: {
+                            ProviderLogoIcon(provider: provider, modelId: nil, size: 14)
+                        }
                 }
             }
         } label: {
@@ -6287,10 +6291,44 @@ struct RosterChipEditor: View {
             set: { entry.permissionPresetId = $0 }
         )
     }
-    private var reasoningBinding: Binding<String> {
+    /// Combined-picker adapter bindings: same side-effects the old native
+    /// Menus applied (default reasoning per model, Kimi thinking re-arm,
+    /// Fast reset off non-fast-capable models), expressed once here.
+    private var providerPickerBinding: Binding<String> {
         Binding(
-            get: { entry.reasoningEffort ?? reasoningEfforts.first ?? "medium" },
-            set: { entry.reasoningEffort = $0 }
+            get: { entry.provider },
+            set: { provider in
+                guard provider.lowercased() != entry.provider.lowercased() else { return }
+                entry.provider = provider
+                entry.model = nil
+                let nextCatalog = catalogs.first {
+                    $0.provider.lowercased() == provider.lowercased()
+                }
+                entry.reasoningEffort = twDefaultReasoningEffort(
+                    for: twReasoningModelOption(in: nextCatalog, modelId: nil))
+                if provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
+                entry.fastModeEnabled = false
+            }
+        )
+    }
+    private var modelPickerBinding: Binding<String?> {
+        Binding(
+            get: { entry.model },
+            set: { modelId in
+                entry.model = modelId
+                entry.reasoningEffort = twDefaultReasoningEffort(
+                    for: twReasoningModelOption(in: participantCatalog, modelId: modelId))
+                if entry.provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
+                if modelId == nil || !twModelUsesFastToggle(modelId!) {
+                    entry.fastModeEnabled = false
+                }
+            }
+        )
+    }
+    private var thinkingPickerBinding: Binding<Bool> {
+        Binding(
+            get: { entry.thinkingEnabled },
+            set: { entry.thinkingEnabled = $0 }
         )
     }
     /// "" = no stage (permission-inferred scheduling); mapped to nil on the
@@ -6365,63 +6403,20 @@ struct RosterChipEditor: View {
                 }
                 .twGlassSheetRowBackground()
                 Section("Provider · model") {
-                    Menu {
-                        ForEach(catalogs.map(\.provider), id: \.self) { provider in
-                            Button(TWTheme.providerLabel(provider)) {
-                                entry.provider = provider
-                                entry.model = nil
-                                let nextCatalog = catalogs.first {
-                                    $0.provider.lowercased() == provider.lowercased()
-                                }
-                                entry.reasoningEffort = twDefaultReasoningEffort(
-                                    for: twReasoningModelOption(in: nextCatalog, modelId: nil))
-                                if provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
-                                entry.fastModeEnabled = false
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Circle()
-                                .fill(TWTheme.providerAccent(entry.provider))
-                                .frame(width: 7, height: 7)
-                            Text(TWTheme.providerLabel(entry.provider))
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                        }
-                    }
-                    Menu {
-                        Button("CLI Default") {
-                            entry.model = nil
-                            entry.reasoningEffort = twDefaultReasoningEffort(
-                                for: twReasoningModelOption(in: participantCatalog, modelId: nil))
-                            if entry.provider.lowercased() == "kimi" {
-                                entry.thinkingEnabled = true
-                            }
-                            entry.fastModeEnabled = false
-                        }
-                        ForEach(
-                            catalogs.first {
-                                $0.provider.lowercased() == entry.provider.lowercased()
-                            }?.models ?? []
-                        ) { modelOption in
-                            Button(modelOption.label ?? modelOption.id) {
-                                entry.model = modelOption.id
-                                entry.reasoningEffort = twDefaultReasoningEffort(for: modelOption)
-                                if entry.provider.lowercased() == "kimi" {
-                                    entry.thinkingEnabled = true
-                                }
-                                if !twModelUsesFastToggle(modelOption.id) {
-                                    entry.fastModeEnabled = false
-                                }
-                            }
-                        }
-                    } label: {
-                        HStack {
-                            Text(entry.model ?? "CLI Default")
-                            Spacer()
-                            Image(systemName: "chevron.up.chevron.down").font(.caption2)
-                        }
-                    }
+                    // Composer-parity combined picker: provider sections + model
+                    // rows + the reasoning ladder + Fast pill in ONE glass
+                    // popover — replaces the two native Menus and the separate
+                    // Reasoning section this editor used to carry. Adapter
+                    // bindings reproduce the exact side-effects the Menus had
+                    // (default reasoning per model, Kimi thinking re-arm, Fast
+                    // reset on non-fast-capable models).
+                    ProviderModelPicker(
+                        catalogs: catalogs,
+                        provider: providerPickerBinding,
+                        modelId: modelPickerBinding,
+                        reasoningEffort: $entry.reasoningEffort,
+                        fastModeEnabled: $entry.fastModeEnabled,
+                        kimiThinkingEnabled: thinkingPickerBinding)
                 }
                 .twGlassSheetRowBackground()
                 Section("Permission") {
@@ -6459,30 +6454,6 @@ struct RosterChipEditor: View {
                     )
                 }
                 .twGlassSheetRowBackground()
-                if !reasoningEfforts.isEmpty {
-                    Section("Reasoning") {
-                        if reasoningEfforts == ["on"] {
-                            LabeledContent("Thinking", value: "On")
-                        } else {
-                            Picker("Effort", selection: reasoningBinding) {
-                                ForEach(reasoningEfforts, id: \.self) { effort in
-                                    Text(twReasoningDisplayLabel(effort, provider: entry.provider))
-                                        .tag(effort)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                        }
-                        if (entry.provider.lowercased() == "codex"
-                            || entry.provider.lowercased() == "claude"
-                            || entry.provider.lowercased() == "kimi")
-                            && selectedModelSupportsFastMode
-                        {
-                            Toggle("Fast mode", isOn: $entry.fastModeEnabled)
-                                .tint(TWTheme.providerAccent(entry.provider))
-                        }
-                    }
-                    .twGlassSheetRowBackground()
-                }
                 Section {
                     HStack {
                         Button {

@@ -558,7 +558,11 @@ public struct EnsembleRosterSheet: View {
                     Button {
                         addParticipant(provider)
                     } label: {
-                        Label(TWTheme.providerLabel(provider), systemImage: "cpu")
+                        Label {
+                            Text(TWTheme.providerLabel(provider))
+                        } icon: {
+                            ProviderLogoIcon(provider: provider, modelId: nil, size: 14)
+                        }
                     }
                 }
             } label: {
@@ -575,18 +579,22 @@ public struct EnsembleRosterSheet: View {
 
     private func addParticipant(_ provider: String) {
         guard draft.count < maxEnsembleRosterParticipants else { return }
-        draft.append(
-            RemoteSessionModel.RosterDraftEntry(
-                id: "draft-\(UUID().uuidString.prefix(8))",
-                provider: provider,
-                model: nil,
-                role: TWTheme.providerLabel(provider),
-                brief: "",
-                enabled: true,
-                reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
-                thinkingEnabled: provider.lowercased() == "kimi"
-            ))
+        let entry = RemoteSessionModel.RosterDraftEntry(
+            id: "draft-\(UUID().uuidString.prefix(8))",
+            provider: provider,
+            model: nil,
+            role: TWTheme.providerLabel(provider),
+            brief: "",
+            enabled: true,
+            reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
+            thinkingEnabled: provider.lowercased() == "kimi"
+        )
+        draft.append(entry)
         commit()
+        // Electron add-participant parity: the seeded seat opens straight into
+        // the editor, whose combined picker (provider sections + reasoning
+        // ladder) is the model-selection surface — no blind "cpu menu" seat.
+        editingEntry = entry
     }
 
     @ViewBuilder
