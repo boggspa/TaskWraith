@@ -803,16 +803,8 @@ function ParticipantLeadingRoleIcon({
   if (!stageRole) return null
 
   const stageTitle = ENSEMBLE_STAGE_ROLE_OPTIONS.find((option) => option.id === stageRole)?.label
-  // Stage identity wears a tinted badge container — and background a text
-  // pill — so the leading stage vocabulary can't be mistaken for the bare
-  // trailing status marks (the 14px BG terminal glyph read as yielded's "»").
-  if (stageRole === 'background') {
-    return (
-      <span className="ensemble-above-chip-stage-pill is-background" title={stageTitle}>
-        BG
-      </span>
-    )
-  }
+  // Stage identity wears a tinted badge container so the leading stage
+  // vocabulary stays distinct from the bare trailing status marks.
   return (
     <span className={`ensemble-above-chip-stage-badge is-${stageRole}`} title={stageTitle}>
       <EnsembleStageRoleIcon

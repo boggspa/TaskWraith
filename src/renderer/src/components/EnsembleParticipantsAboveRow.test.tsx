@@ -1150,7 +1150,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).not.toContain('Boss')
   })
 
-  it('renders a badged glyph per stage, a BG text pill, and no slot for Any', () => {
+  it('renders a badged glyph per stage, including a terminal for BG, and no slot for Any', () => {
     const chat = makeChat([
       makeParticipant({
         id: 'ensemble-any',
@@ -1197,21 +1197,21 @@ describe('EnsembleParticipantsAboveRow', () => {
       />
     )
 
-    expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(3)
+    expect(html.match(/ensemble-above-chip-stage-icon/g) || []).toHaveLength(4)
     expect(html).toContain('ensemble-above-chip-stage-badge is-scout')
     expect(html).toContain('ensemble-above-chip-stage-badge is-worker')
     expect(html).toContain('ensemble-above-chip-stage-badge is-reviewer')
-    expect(html).toContain('ensemble-above-chip-stage-pill is-background')
-    expect(html).toContain('>BG</span>')
-    expect(html).not.toContain('ensemble-above-chip-stage-icon is-background')
+    expect(html).toContain('ensemble-above-chip-stage-badge is-background')
+    expect(html).toContain('ensemble-above-chip-stage-icon is-background')
+    expect(html).not.toContain('ensemble-above-chip-stage-pill')
     expect(html).toContain('title="Scout — investigates at round start"')
     expect(html).toContain('title="BG — async, only when delegated"')
     expect(html).not.toMatch(/ensemble-above-chip-stage-icon is-(?:file|edit|search)/)
     expect(
       html.match(
-        /ensemble-above-chip-stage-icon is-(?:scout|worker|reviewer)" width="14" height="14"[^>]*fill="none" stroke="currentColor"[^>]*aria-hidden="true" focusable="false"/g
+        /ensemble-above-chip-stage-icon is-(?:scout|worker|reviewer|background)" width="14" height="14"[^>]*fill="none" stroke="currentColor"[^>]*aria-hidden="true" focusable="false"/g
       ) || []
-    ).toHaveLength(3)
+    ).toHaveLength(4)
 
     const css = readFileSync(
       new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
@@ -1223,7 +1223,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(css).toMatch(
       /\.ensemble-above-chip-stage-badge\s*\{[^}]*color-mix\(in srgb, currentColor 12%, transparent\);/
     )
-    expect(css).toMatch(/\.ensemble-above-chip-stage-pill\s*\{[^}]*font-size: 9px;/)
+    expect(css).not.toContain('.ensemble-above-chip-stage-pill')
   })
 
   it('keeps the four stage-role design sources theme-aware and monoline', () => {

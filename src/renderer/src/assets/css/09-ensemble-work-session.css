@@ -1493,9 +1493,8 @@
   color: var(--text-primary);
 }
 
-/* Stage identity wears a tinted badge container — and background a text
-   pill — so the leading stage vocabulary can't be confused with the bare
-   trailing status marks (the BG terminal glyph read as yielded's "»").
+/* Stage identity wears a tinted badge container so the leading stage
+   vocabulary can't be confused with the bare trailing status marks.
    currentColor tints inherit each chip's hue in dark and light themes. */
 .ensemble-above-chip-stage-badge {
   flex: 0 0 auto;
@@ -1505,21 +1504,6 @@
   padding: 1px;
   border-radius: 5px;
   background: color-mix(in srgb, currentColor 12%, transparent);
-}
-
-.ensemble-above-chip-stage-pill {
-  flex: 0 0 auto;
-  display: inline-flex;
-  align-items: center;
-  padding: 0 4px;
-  border-radius: 5px;
-  font-size: 9px;
-  font-weight: 700;
-  letter-spacing: 0.05em;
-  line-height: 14px;
-  color: var(--text-primary);
-  background: color-mix(in srgb, currentColor 14%, transparent);
-  border: 1px solid color-mix(in srgb, currentColor 22%, transparent);
 }
 
 .ensemble-above-chip-crown.is-second-in-command {
