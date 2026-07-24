@@ -232,7 +232,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('canvas_eval')
   })
 
-  it('bundles the current 1.8.7 release notes', () => {
+  it('bundles the frozen 1.8.7 release notes', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.7' }, null)
     expect(entry).toMatchObject({
       version: '1.8.7',
@@ -242,6 +242,20 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Settled transcript activity folds into readable one-line summaries')
     expect(entry.releaseNotes).toContain('welcome usage heatmap can build a full 90-day view')
     expect(entry.releaseNotes).toContain('File changes display official provider marks')
+  })
+
+  it('bundles the current 1.8.8 release notes', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.8.8' }, null)
+    expect(entry).toMatchObject({
+      version: '1.8.8',
+      releaseDate: '2026-07-24'
+    })
+    expect(entry.releaseNotes).toContain('AntiGravity joins the provider roster')
+    expect(entry.releaseNotes).toContain('estimated-spend meter with a soft monthly budget')
+    expect(entry.releaseNotes).toContain('ChatGPT composer shell')
+    expect(entry.releaseNotes).toContain('Live token telemetry while providers work')
+    expect(entry.releaseNotes).toContain('Closing the window no longer ends active runs')
+    expect(entry.releaseNotes).toContain('Read-only plans can run `git status`')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

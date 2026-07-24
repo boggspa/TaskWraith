@@ -6,6 +6,64 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.8.8 - 2026-07-24
+
+### Added
+- **AntiGravity joins the provider roster (opt-in).** Bring your own Gemini
+  API key and run Gemini models as a first-class provider: isolated per-turn
+  execution, authenticated model discovery with product names, a prompt-cache
+  setting, and an estimated-spend meter with a soft monthly budget in Model
+  Usage. The plain API-key lane behaves like every other bring-your-own-key
+  provider; the separate AntiGravity CLI integration stays behind its own
+  informed-consent card with per-lane consent and honest dormant/rollback
+  semantics.
+- **A ChatGPT composer shell.** A new shell style that pairs the Codex
+  above-row with a flat capsule body, with satellite actions, a tucked-tab
+  above-row, and a wider model control.
+- **Live token telemetry while providers work.** Grok, Cursor, and Kimi now
+  stream estimated working telemetry — text, thinking, and tool output — from
+  one shared token-estimate authority. The working indicator and composer
+  tally mark estimates and prefer live provider totals for context tracking.
+- **Boss full-roster fan-out.** An Ensemble Boss can fan work out to the
+  entire roster in one action, with each participant running under its own
+  permission posture; the panel now also shows participant turn order.
+- **Transcript super-groups.** Adjacent one-line activity summaries condense
+  into compact super-groups on desktop and iOS, collapsed summaries render as
+  body text with tool-family icons, and every message gains a message-only
+  copy action.
+- **Blackboard housekeeping.** A confirmed full-board wipe, a larger post
+  field, and section-highlighted cards.
+
+### Changed
+- **Read-only plans can run `git status`.** Tool grants respond immediately,
+  and the grants picker is wider and easier to scan.
+- **The sidebar organizes work more predictably.** Workspace ensembles are
+  dual-listed under their workspace, unstarted draft chats stay hidden with
+  one reusable draft per workspace, and Active Runs rows show the chat name.
+- **The provider picker shows only connected providers.** Live providers are
+  always offered; only AntiGravity is gated on its own discovery.
+
+### Fixed
+- **Closing the window no longer ends active runs.** Runs keep executing after
+  the window closes and are there when you come back.
+- **Startup does less before first paint.** Project-reference reconciliation
+  is deferred, roster discovery prewarms after paint, and ensemble provider
+  discovery is bounded.
+- **Ensemble routing and lifecycle are more dependable.** Explicit foreground
+  yields are honored, picker routing stays out of composer text, no-op and
+  duplicate seat changes are no longer announced, remaining participant
+  choices are filtered, and Cursor runs are bounded against yield/transport
+  zombies and missing terminal events, with concurrent Cursor MCP broker
+  routes isolated. Codex tolerates structured app-server errors.
+- **Transcript reading stays calm.** Short thought durations are included,
+  mixed file-change lists keep a stable attribution column, the sky stays
+  behind message text, the attachment-access modal respects read-only posture,
+  and the advisory chip, hover seed highlight, and per-message action pill no
+  longer add noise. Long approval choices wrap in the mini approvals popover.
+- **Permission grants are enforced more precisely.** Trusted external writes
+  are honored, effective grant scope is clearer, and unsupported provider
+  grants are rejected.
+
 ## 1.8.7 - 2026-07-22
 
 ### Added
