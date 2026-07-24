@@ -26,7 +26,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       sideChat,
-      'if (!isLiveSelectableProvider(sideProvider))',
+      'if (!isRunnableProvider(sideProvider))',
       'await window.api.createSideChat({'
     )
 
@@ -36,7 +36,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       duplicate,
-      'if (!isLiveSelectableProvider(provider))',
+      'if (!isRunnableProvider(provider))',
       'await window.api.createGlobalChat()'
     )
 
@@ -46,7 +46,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       handoff,
-      'if (!isLiveSelectableProvider(provider))',
+      'if (!isRunnableProvider(provider))',
       'await window.api.createGlobalChat()'
     )
   })
@@ -55,7 +55,7 @@ describe('unavailable provider renderer admission', () => {
     const sideRun = sourceBetween('const handleSideRun =', 'const cancelRunningScheduledTaskForChat =')
     expectBefore(
       sideRun,
-      'if (!isLiveSelectableProvider(sideComposerProvider))',
+      'if (!isRunnableProvider(sideComposerProvider))',
       'const sideRunAttachments ='
     )
     expect(sideRun).toContain('Switch this linked chat to a live provider to continue.')
@@ -64,7 +64,7 @@ describe('unavailable provider renderer admission', () => {
       'const sideComposerProvider =',
       'const sideComposerModelOptionsRaw ='
     )
-    expect(sideRunEligibility).toContain('isLiveSelectableProvider(sideComposerProvider)')
+    expect(sideRunEligibility).toContain('isRunnableProvider(sideComposerProvider)')
 
     const sideGrant = sourceBetween(
       'const handleSetSideAgenticWorkspaceGrant =',
@@ -72,7 +72,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       sideGrant,
-      'if (enabled && !isLiveSelectableProvider(sideComposerProvider))',
+      'if (enabled && !isRunnableProvider(sideComposerProvider))',
       'await window.api.upsertAgenticWorkspaceGrant('
     )
   })
@@ -84,7 +84,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       mainGrant,
-      'if (enabled && !isLiveSelectableProvider(targetProvider))',
+      'if (enabled && !isRunnableProvider(targetProvider))',
       'await window.api.upsertAgenticWorkspaceGrant('
     )
   })
@@ -96,12 +96,12 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       paneRun,
-      'if (!isLiveSelectableProvider(request.provider))',
+      'if (!isRunnableProvider(request.provider))',
       'multiview.paneRefs[paneIndex]?.relockToLatest()'
     )
     expectBefore(
       paneRun,
-      'if (!isLiveSelectableProvider(request.provider))',
+      'if (!isRunnableProvider(request.provider))',
       'queueRunRequestRef.current('
     )
     expect(paneRun).toContain('Switch this pane to a live provider to continue.')
@@ -112,7 +112,7 @@ describe('unavailable provider renderer admission', () => {
     )
     expectBefore(
       paneGrant,
-      'if (enabled && !isLiveSelectableProvider(paneProvider))',
+      'if (enabled && !isRunnableProvider(paneProvider))',
       'await window.api.upsertAgenticWorkspaceGrant('
     )
   })
