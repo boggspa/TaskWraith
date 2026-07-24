@@ -148,9 +148,18 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['antigravity', 'kimi'])
-    expect(groups.map((g) => g.label)).toEqual(['AntiGravity', 'Kimi'])
-    expect(groups.some((g) => g.provider === 'claude')).toBe(false)
+    expect(groups.map((g) => g.provider)).toEqual(['claude', 'antigravity', 'kimi'])
+    expect(groups.map((g) => g.label)).toEqual(['Claude', 'AntiGravity', 'Kimi'])
+
+    const claude = groups.find((g) => g.provider === 'claude')
+    expect(claude?.models).toEqual([
+      {
+        name: 'Opus 5',
+        blurb:
+          'Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode.'
+      }
+    ])
+    expect(newAdditions?.body).toContain('Claude Opus 5')
 
     const antigravity = groups.find((g) => g.provider === 'antigravity')
     // BYOK Gemini API lane only; the consent-gated agy CLI lane is deliberately

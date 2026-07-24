@@ -42,6 +42,7 @@ public enum ContextWindows {
         "claude-fable-5": 1_000_000,
         "claude-fable-5-1m": 1_000_000,
         "claude-mythos-5": 1_000_000,
+        "claude-opus-5": 1_000_000,
         "claude-opus-4-8": 200_000,
         "claude-opus-4-8-1m": 1_000_000,
         "claude-opus-4-7": 200_000,

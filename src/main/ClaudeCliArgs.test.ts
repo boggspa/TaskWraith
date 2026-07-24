@@ -57,6 +57,8 @@ describe('normalizeClaudeEffortFlagForModel', () => {
   })
 
   it('allows Opus/Fable/Mythos/custom models to use the full Claude CLI ladder', () => {
+    expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-opus-5')).toBe('xhigh')
+    expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-opus-5')).toBe('max')
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-opus-4-8')).toBe('xhigh')
     expect(normalizeClaudeEffortFlagForModel('ultracode', 'claude-fable-5-1m')).toBe('max')
     expect(normalizeClaudeEffortFlagForModel('xhigh', 'claude-mythos-5')).toBe('xhigh')

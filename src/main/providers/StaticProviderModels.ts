@@ -440,6 +440,7 @@ export const CLAUDE_THINKING_BUDGET: Record<string, number> = {
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_FAST_MODE_MODEL_IDS: ReadonlySet<string> = new Set([
   'opus',
+  'claude-opus-5',
   'claude-opus-4-8',
   'claude-opus-4-7',
   'claude-opus-4-6'
@@ -463,6 +464,14 @@ export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
 // actually shows. `additionalSpeedTiers` must be carried through so the
 // renderer knows which models offer the paid Fast tier.
 const CLAUDE_STATIC_MODELS = [
+  {
+    id: 'claude-opus-5',
+    label: 'Claude Opus 5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
   {
     id: 'claude-opus-4-8-1m',
     label: 'Claude Opus 4.8 1M',

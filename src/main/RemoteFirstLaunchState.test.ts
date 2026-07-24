@@ -331,10 +331,13 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'claude',
       'antigravity',
       'kimi'
     ])
-    expect(newAdditions?.groups?.some((group) => group.provider === 'claude')).toBe(false)
+    const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
+    expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Opus 5'])
+    expect(claudeGroup?.models[0]?.blurb).toMatch(/half the price.*Fast mode/)
     const antigravityGroup = newAdditions?.groups?.find(
       (group) => group.provider === 'antigravity'
     )

@@ -1974,7 +1974,10 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-24-v2","kind":"addition","title":"New Additions","body":"AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-07-24-v3","kind":"addition","title":"New Additions","body":"Claude Opus 5 lands today — near-Fable 5 intelligence at half the price, with Fast mode. AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"claude","label":"Claude","models":[
+              {"name":"Opus 5","blurb":"Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode."}
+            ]},
             {"provider":"antigravity","label":"AntiGravity","models":[
               {"name":"Gemini 3.6 Flash","blurb":"Google's newest production model for agentic coding and multimodal work — bring your own Gemini API key."},
               {"name":"Gemini 3.5 Flash","blurb":"Sustained frontier performance for long-horizon agentic and coding tasks."},

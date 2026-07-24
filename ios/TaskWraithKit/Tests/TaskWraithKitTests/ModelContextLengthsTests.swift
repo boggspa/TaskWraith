@@ -100,6 +100,7 @@ struct ModelContextLengthsTests {
         let groups = ModelContextLengths.buildGroups()
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
         #expect(claudeModels.map(\.modelId) == [
+            "claude-opus-5",
             "claude-opus-4-8-1m",
             "claude-fable-5",
             "claude-sonnet-5",

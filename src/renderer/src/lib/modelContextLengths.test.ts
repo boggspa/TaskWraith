@@ -39,6 +39,13 @@ describe('buildModelContextLengthGroups', () => {
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).not.toContain('claude-opus-4-7')
     expect(ids).not.toContain('claude-opus-4-6')
+    // Opus 5 is 1M on its base id, so it IS a picker row.
+    const opus5 = claudeGroup!.models.find((m) => m.modelId === 'claude-opus-5')
+    expect(opus5).toMatchObject({
+      label: 'Claude Opus 5',
+      contextWindow: 1_000_000,
+      formatted: '1.0M'
+    })
   })
 
   it('codex gpt-5.5 resolves to 1.1M (1_050_000)', () => {

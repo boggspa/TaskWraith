@@ -90,9 +90,9 @@ export function getComposerPreviewMeta(style: ComposerStyle): ComposerPreviewMet
     case 'claude':
       return {
         providerLabel: 'Claude',
-        // 1.0.6 — Opus 4.8 is the current default (4.7 is now "Legacy" in the
-        // model picker); keep the preview in step with the live composer chip.
-        modelLabel: 'Opus 4.8',
+        // Opus 5 (launched 2026-07-24) leads the Claude picker; keep the
+        // preview in step with the live composer chip.
+        modelLabel: 'Opus 5',
         permissionLabel: 'Plan',
         placeholder: 'Describe a task or ask a question'
       }
@@ -190,7 +190,7 @@ function previewModelIdForStyle(style: ComposerStyle): string {
     case 'chatgpt':
       return 'gpt-5.5'
     case 'claude':
-      return 'claude-opus-4-8'
+      return 'claude-opus-5'
     case 'cursor':
       return 'composer-2.5'
     case 'grok':

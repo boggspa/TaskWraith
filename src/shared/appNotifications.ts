@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-24-v2'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-24-v3'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,9 +137,20 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.',
+    body: 'Claude Opus 5 lands today — near-Fable 5 intelligence at half the price, with Fast mode. AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.',
     dismissible: true,
     groups: [
+      {
+        provider: 'claude',
+        label: 'Claude',
+        models: [
+          {
+            name: 'Opus 5',
+            blurb:
+              'Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode.'
+          }
+        ]
+      },
       {
         // The Gemini API-key (BYOK) lane only — the agy CLI lane stays behind
         // its own informed-consent card and is never advertised here. These

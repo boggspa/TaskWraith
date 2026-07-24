@@ -20,6 +20,7 @@ struct ContextWindowsTests {
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.5") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4") == 1_050_000)
         #expect(ContextWindows.resolve(provider: "codex", model: "gpt-5.4-mini") == 400_000)
+        #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-5") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8-1m") == 1_000_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-opus-4-8") == 200_000)
         #expect(ContextWindows.resolve(provider: "claude", model: "claude-sonnet-5") == 1_000_000)

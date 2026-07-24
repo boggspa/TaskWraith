@@ -162,6 +162,14 @@ const CLAUDE_DEFAULT_REASONING_EFFORT = 'medium'
 const CLAUDE_DEFAULT_MODEL = 'claude-sonnet-5'
 const CLAUDE_DEFAULT_MODELS = [
   {
+    id: 'claude-opus-5',
+    label: 'Claude Opus 5',
+    description: '1M context window — adaptive thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     id: 'claude-opus-4-8-1m',
     label: 'Claude Opus 4.8 1M',
     description: '1M context window — extended thinking',
@@ -352,6 +360,7 @@ const CLAUDE_MODEL_IDS = new Set([
   'fable',
   'mythos',
   'custom',
+  'claude-opus-5',
   'claude-opus-4-8-1m',
   'claude-fable-5',
   'claude-fable-5-1m',

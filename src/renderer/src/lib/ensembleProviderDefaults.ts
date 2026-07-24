@@ -137,6 +137,7 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'claude-opus-5', label: 'Claude Opus 5' },
   { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
   { id: 'claude-fable-5', label: 'Claude Fable 5' },
   { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
@@ -229,6 +230,7 @@ const CODEX_FAST_CAPABLE = new Set<string>([
 // Claude Fast mode is limited to supported Opus models. Fable 5 deliberately
 // keeps its full reasoning ladder but does not expose the paid Fast toggle.
 const CLAUDE_FAST_CAPABLE = new Set<string>([
+  'claude-opus-5',
   'claude-opus-4-8-1m',
   'claude-opus-4-7-1m'
 ])

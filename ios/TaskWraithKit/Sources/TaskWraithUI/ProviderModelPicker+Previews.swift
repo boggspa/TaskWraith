@@ -35,6 +35,11 @@ enum ProviderModelPickerPreviewData {
             provider: "claude",
             models: [
                 .init(
+                    id: "claude-opus-5",
+                    label: "Claude Opus 5",
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "medium"),
+                .init(
                     id: "claude-opus-4-8-1m",
                     label: "Claude Opus 4.8 1M",
                     isDefault: true,

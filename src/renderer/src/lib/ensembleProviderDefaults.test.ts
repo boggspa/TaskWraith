@@ -518,6 +518,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled
     ).toBeFalsy()
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
+      'claude-opus-5',
       'claude-opus-4-8-1m',
       'claude-fable-5',
       'claude-sonnet-5',
@@ -526,6 +527,7 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
       'claude-haiku-4-5'
     ])
     expect(claude.defaultModelId).toBe('claude-sonnet-5')
+    expect(claude.fastModeCapableModelIds.has('claude-opus-5')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-8-1m')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-opus-4-7-1m')).toBe(true)
     expect(claude.fastModeCapableModelIds.has('claude-fable-5')).toBe(false)

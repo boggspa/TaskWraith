@@ -55,10 +55,14 @@ describe('normalizeCliProviderModel (claude)', () => {
     // The 1M window is entitlement-based on the base id.
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-8-1m')).toBe('claude-opus-4-8')
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-7-1m')).toBe('claude-opus-4-7')
+    // Opus 5 ships 1M by default with no -1m picker row, but a stray suffixed
+    // id (forged/persisted) still strips to the runnable base id.
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5-1m')).toBe('claude-opus-5')
   })
 
   it('passes through base claude ids and bare family aliases unchanged', () => {
     expect(normalizeCliProviderModel('claude', 'claude-opus-4-8')).toBe('claude-opus-4-8')
+    expect(normalizeCliProviderModel('claude', 'claude-opus-5')).toBe('claude-opus-5')
     for (const alias of ['sonnet', 'opus', 'haiku']) {
       expect(normalizeCliProviderModel('claude', alias)).toBe(alias)
     }
@@ -101,6 +105,7 @@ describe('normalizeCliProviderModel (claude)', () => {
 
 describe('claudeModelSupportsFastMode', () => {
   it('allows supported Opus variants but rejects Fable 5', () => {
+    expect(claudeModelSupportsFastMode('claude-opus-5')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-8-1m')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-opus-4-7')).toBe(true)
     expect(claudeModelSupportsFastMode('claude-fable-5')).toBe(false)
@@ -599,6 +604,9 @@ describe('getStaticProviderModels (claude)', () => {
     expect(ids).not.toContain('preview:anthropic:claude-mythos-5')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).toContain('claude-opus-4-8-1m')
+    // Opus 5 is 1M by default — the base id is the picker row.
+    expect(ids).toContain('claude-opus-5')
+    expect(ids).not.toContain('claude-opus-5-1m')
     // Sonnet 5 and Fable 5 are selectable rows; Mythos 5 stays runnable as a
     // historical/tombstoned model but is no longer offered in pickers.
     expect(ids).toContain('claude-sonnet-5')
@@ -628,6 +636,7 @@ describe('getStaticProviderModels (claude)', () => {
   })
 
   it('keeps the paid Fast tier on supported Opus rows but not Fable 5', () => {
+    expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')

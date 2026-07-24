@@ -6,7 +6,7 @@ TaskWraith's model picker is provider-aware: choose a provider, then a model,
 the reasoning level it supports, and (where offered) a Fast tier. This page is
 the concise, public reference for the curated picker catalogue.
 
-> **Snapshot: 18 July 2026.** Your actual picker is still governed by the
+> **Snapshot: 24 July 2026.** Your actual picker is still governed by the
 > provider CLI, your account and plan, and (for Ollama) the models installed on
 > your machine. Codex is refreshed from its live provider catalogue when
 > available; the rows below describe TaskWraith's curated fallback and the
@@ -62,6 +62,7 @@ not the monoline glyph set.
 
 | Model                                               | Reasoning                                       | Fast   | Notes                                                  |
 | --------------------------------------------------- | ----------------------------------------------- | ------ | ------------------------------------------------------ |
+| **Claude Opus 5** `claude-opus-5`                   | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, adaptive thinking.              |
 | **Claude Opus 4.8 1M** `claude-opus-4-8-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context, extended thinking.                         |
 | **Claude Fable 5** `claude-fable-5`                 | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking.                         |
 | **Claude Sonnet 5** `claude-sonnet-5` **(Default)** | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, extended thinking.                         |

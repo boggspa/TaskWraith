@@ -104,10 +104,14 @@ describe('Claude provider model defaults', () => {
     expect(isClaudeModelId('preview:anthropic:claude-fable-5')).toBe(false)
     expect(isClaudeModelId('preview:anthropic:claude-mythos-5')).toBe(false)
     expect(isClaudeModelId('claude-opus-4-8')).toBe(true)
+    expect(isClaudeModelId('claude-opus-5')).toBe(true)
   })
 
   it('exposes only 1M Opus defaults while keeping Sonnet as the default model', () => {
     const ids = CLAUDE_DEFAULT_MODELS.map((model) => model.id)
+    // Opus 5 is 1M by default, so its base id IS the 1M row (no -1m variant).
+    expect(ids).toContain('claude-opus-5')
+    expect(ids).not.toContain('claude-opus-5-1m')
     expect(ids).not.toContain('claude-opus-4-8')
     expect(ids).not.toContain('claude-opus-4-7')
     expect(ids).not.toContain('claude-opus-4-6')
@@ -119,6 +123,7 @@ describe('Claude provider model defaults', () => {
 
   it('offers Fast mode on supported Opus rows but not Fable 5', () => {
     const byId = new Map(CLAUDE_DEFAULT_MODELS.map((model) => [model.id, model]))
+    expect(byId.get('claude-opus-5')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-8-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-opus-4-7-1m')?.additionalSpeedTiers).toContain('fast')
     expect(byId.get('claude-fable-5')?.additionalSpeedTiers ?? []).not.toContain('fast')

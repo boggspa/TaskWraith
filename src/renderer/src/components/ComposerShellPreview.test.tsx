@@ -116,14 +116,14 @@ describe('ComposerShellPreview — single metadata source', () => {
     expect(getComposerPreviewMeta('terminal').modelLabel).toBe('Shell')
     expect(getComposerPreviewMeta('terminal')).not.toEqual(getComposerPreviewMeta('default'))
     // The canonical claude/codex copy (kept in step with the live composer chip).
-    expect(getComposerPreviewMeta('claude').modelLabel).toBe('Opus 4.8')
+    expect(getComposerPreviewMeta('claude').modelLabel).toBe('Opus 5')
     expect(getComposerPreviewMeta('claude').permissionLabel).toBe('Plan')
     expect(getComposerPreviewMeta('codex').modelLabel).toBe('GPT-5.5')
   })
 
   it('renders the resolved metadata into the card', () => {
     const html = render('claude')
-    expect(html).toContain('Opus 4.8')
+    expect(html).toContain('Opus 5')
     expect(html).toContain('Plan')
     expect(html).toContain('Claude')
   })
@@ -159,7 +159,7 @@ describe('ComposerShellPreview — single metadata source', () => {
       [ComposerStyle, string, string, string, string]
     > = [
       ['codex', 'codex', '5.5', 'full_access', 'Full Workspace Access'],
-      ['claude', 'claude', 'Opus 4.8', 'plan', 'Plan'],
+      ['claude', 'claude', 'Opus 5', 'plan', 'Plan'],
       ['cursor', 'cursor', 'Composer 2.5', 'default', 'Default Approval'],
       ['grok', 'grok', 'Grok Composer 2.5 Fast', 'default', 'Default Approval'],
       ['gemini', 'gemini', 'Pro 3.1', 'default', 'Default Approval'],
