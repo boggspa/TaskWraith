@@ -8220,6 +8220,89 @@ button.composer-run-timecode.is-open {
   z-index: 2;
 }
 
+/* ── Agent-approval OVERLAY variant ──────────────────────────────
+ * The pending-approval card mounts as a direct child of
+ * `.composer-area`, NOT inside `.composer-surface` — the surface's
+ * `overflow: hidden` is load-bearing (it clips the native shell's
+ * full-bleed inner module to the frame's rounded corners), so an
+ * in-surface card can never float over the textarea or outgrow the
+ * frame. Out here the card overlays the whole composer stack on the
+ * z-axis as THE interaction surface while an approval is pending:
+ * anchored to the area's bottom edge, slightly wider than the
+ * surface's width cap, growing upward over the transcript as its
+ * content needs. `.composer-area` is `pointer-events: none`, so the
+ * card re-enables its own hit-testing. */
+.composer-permission-card--overlay {
+  position: absolute;
+  left: 0;
+  right: 0;
+  /* Lifted off the area's bottom edge: the area itself sits only
+   * --composer-bottom-gap (12px) above the window bottom, so a flush
+   * card reads as riding the window edge. */
+  bottom: var(--space-lg, 16px);
+  margin: 0 auto;
+  /* Wider than the composer surface (which caps at
+   * --composer-content-max-width), while the 100%-based bound keeps
+   * the card inside narrow panes — side-chat sets the cap var to
+   * 100%, turning the +96px term into the larger min() arm there. */
+  width: min(calc(100% - 12px), calc(var(--composer-content-max-width) + 96px));
+  /* Above every in-area sibling: surface (2), chip strips (4). */
+  z-index: 40;
+  pointer-events: auto;
+  padding: var(--space-md);
+  border-radius: 18px;
+  /* Backstop for huge previews (canvas-eval review pres run to 60vh).
+   * The card box itself must NOT scroll — the ::after rim and the
+   * radius clip both assume a non-scrolling box — so the preview
+   * region below is the designated scroller instead. */
+  max-height: min(66vh, 680px);
+  overflow: hidden;
+  box-shadow:
+    inset 0 1px 0 color-mix(in srgb, var(--text-primary) 10%, transparent),
+    0 10px 26px rgba(0, 0, 0, 0.3),
+    0 30px 80px rgba(0, 0, 0, 0.42);
+  backdrop-filter: blur(26px) saturate(160%);
+  -webkit-backdrop-filter: blur(26px) saturate(160%);
+}
+
+.composer-permission-card--overlay .composer-permission-title {
+  font-size: var(--font-size-sm);
+}
+
+.composer-permission-card--overlay .agent-approval-preview {
+  min-height: 0;
+  overflow-y: auto;
+}
+
+.composer-permission-card--overlay .composer-permission-note {
+  padding: var(--space-xs, 8px) var(--space-sm, 10px);
+}
+
+@keyframes composer-permission-overlay-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.985);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.composer-permission-card--overlay {
+  animation: composer-permission-overlay-in 180ms cubic-bezier(0.22, 0.9, 0.32, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-permission-card--overlay {
+    animation: none;
+  }
+}
+
+[data-reduce-motion="true"] .composer-permission-card--overlay {
+  animation: none;
+}
+
 .composer-seat-change-notice {
   flex-direction: row;
   align-items: center;
