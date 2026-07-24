@@ -16,6 +16,7 @@ import {
 import type { ProviderUsageSummary } from '../ProviderUsageStatus'
 import { summarizeProviderUsage } from '../ProviderUsageStatus'
 import { buildExternalUsageRollup } from '../ExternalProviderActivity'
+import { projectRemoteModelUsageExtras } from '../RemoteModelUsageProjection'
 import type { RemoteWorkspaceCapability } from '../RemoteWorkspaceAllowlist'
 import type { TaskWraithPluginActivationSnapshot } from '../../shared/plugins/PluginTypes'
 
@@ -76,7 +77,14 @@ export interface UsageRatesHandlerDeps {
   }) => void
   broadcastWelcomeDashboard: (payload: { dashboard: unknown }) => void
   hasRemoteBroadcaster: () => boolean
-  broadcastModelUsage: (payload: { usage: { providers: unknown[]; generatedAt: string } }) => void
+  broadcastModelUsage: (payload: {
+    usage: {
+      providers: unknown[]
+      generatedAt: string
+      spend?: unknown
+      antigravityBudget?: unknown
+    }
+  }) => void
   broadcastFirstLaunchState: (payload: { state: unknown }) => void
   fetchCodexUsageSnapshot: UsageSnapshotFetcher
   fetchClaudeUsageSnapshot: UsageSnapshotFetcher
@@ -268,9 +276,19 @@ export function registerUsageRatesHandlers(deps: UsageRatesHandlerDeps): void {
       const providers = entries.filter(
         (entry): entry is NonNullable<(typeof entries)[number]> => Boolean(entry)
       )
-      if (providers.length === 0) return
+      // Quota windows remain the persisted provider-usage-snapshots.json
+      // projection above. Spend and the AntiGravity soft budget are additive
+      // companion detail: older iOS builds ignore them and retain this exact
+      // quota-only view.
+      const extras = projectRemoteModelUsageExtras({
+        records: deps.getUsage(),
+        settings: deps.getSettings(),
+        providerRates: deps.getCurrentProviderRates(),
+        fxRates: deps.getCurrentFxRates()
+      })
+      if (providers.length === 0 && !extras.spend && !extras.antigravityBudget) return
       deps.broadcastModelUsage({
-        usage: { providers, generatedAt: new Date().toISOString() }
+        usage: { providers, generatedAt: new Date().toISOString(), ...extras }
       })
     })()
   }

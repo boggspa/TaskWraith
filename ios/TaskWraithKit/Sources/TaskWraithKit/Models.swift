@@ -34,6 +34,11 @@ public struct ModelUsageMessage: Codable, Sendable {
     public struct Usage: Codable, Sendable {
         public let providers: [ProviderUsage]
         public let generatedAt: String?
+        /// Optional View-B projection. Older Macs omit it, preserving the
+        /// existing quota-only UsagePanel without a decode failure.
+        public let spend: Spend?
+        /// Optional soft, advisory budget for the AntiGravity Gemini API lane.
+        public let antigravityBudget: AntigravityBudget?
     }
 
     public struct ProviderUsage: Codable, Sendable, Identifiable {
@@ -47,6 +52,33 @@ public struct ModelUsageMessage: Codable, Sendable {
         public let label: String
         public let usedPercent: Int
         public let limitLabel: String
+        public let resetAt: String?
+    }
+
+    public struct Spend: Codable, Sendable {
+        public let providers: [SpendProvider]
+    }
+
+    public struct SpendProvider: Codable, Sendable, Identifiable {
+        public let provider: String
+        public let windows: [SpendWindow]
+        public var id: String { provider }
+    }
+
+    public struct SpendWindow: Codable, Sendable, Identifiable {
+        public let id: String
+        public let label: String
+        public let totalTokens: Int
+        public let runs: Int
+        /// Mac-formatted projected API-equivalent cost, not an invoice total.
+        public let costText: String?
+    }
+
+    public struct AntigravityBudget: Codable, Sendable {
+        public let provider: String
+        public let spentText: String?
+        public let capText: String
+        public let usedPercent: Int
         public let resetAt: String?
     }
 }

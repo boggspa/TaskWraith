@@ -7392,24 +7392,29 @@ public struct AppSettingsSheet: View {
                 WelcomeUsageDashboardCard(dashboard: dashboard, accent: TWTheme.chroma1)
             }
             VStack(alignment: .leading, spacing: 10) {
-                Label("Quota windows", systemImage: "gauge.with.dots.needle.50percent")
+                Label("Model usage", systemImage: "chart.bar.xaxis")
                     .font(.headline.weight(.semibold))
                     .foregroundStyle(TWTheme.textPrimary)
                 UsagePanel(model: model, threadId: nil)
             }
             .frame(maxWidth: .infinity, alignment: .leading)
-            VStack(alignment: .leading, spacing: 10) {
-                Label("Model Context Lengths", systemImage: "ruler")
-                    .font(.headline.weight(.semibold))
-                    .foregroundStyle(TWTheme.textPrimary)
-                Text("Official maximum context window per model.")
-                    .font(.caption)
-                    .foregroundStyle(TWTheme.textSecondary)
-                // Gemini is retired on iOS (TWTheme.retiredProviderIds) and never
-                // selectable here, so it is excluded; local Ollama is included.
-                ContextLengthsView(includeOllama: true, excludeProviders: ["gemini"])
+            // Preserve the existing standalone context reference for older Macs.
+            // Newer broadcasts advertise Spend (and optional AntiGravity budget),
+            // which unlocks UsagePanel's compact Plan / Spend / Context switch.
+            if model.modelUsage?.spend == nil && model.modelUsage?.antigravityBudget == nil {
+                VStack(alignment: .leading, spacing: 10) {
+                    Label("Model Context Lengths", systemImage: "ruler")
+                        .font(.headline.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text("Official maximum context window per model.")
+                        .font(.caption)
+                        .foregroundStyle(TWTheme.textSecondary)
+                    // Gemini is retired on iOS (TWTheme.retiredProviderIds) and never
+                    // selectable here, so it is excluded; local Ollama is included.
+                    ContextLengthsView(includeOllama: true, excludeProviders: ["gemini"])
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
-            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -10080,8 +10085,24 @@ private struct MiniThreadComposerHeightKey: PreferenceKey {
 struct UsagePanel: View {
     @ObservedObject var model: RemoteSessionModel
     let threadId: String?
+    @State private var selectedView: UsagePanelView = .plan
 
     private static let providerOrder = ["gemini", "codex", "claude", "kimi", "cursor", "grok"]
+
+    private enum UsagePanelView: String, CaseIterable, Identifiable {
+        case plan
+        case spend
+        case context
+
+        var id: String { rawValue }
+        var title: String {
+            switch self {
+            case .plan: return "Plan"
+            case .spend: return "Spend"
+            case .context: return "Context"
+            }
+        }
+    }
 
     private var providers: [ModelUsageMessage.ProviderUsage] {
         let entries = (model.modelUsage?.providers ?? [])
@@ -10090,6 +10111,19 @@ struct UsagePanel: View {
             (Self.providerOrder.firstIndex(of: $0.provider) ?? 99)
                 < (Self.providerOrder.firstIndex(of: $1.provider) ?? 99)
         }
+    }
+
+    private var spendProviders: [ModelUsageMessage.SpendProvider] {
+        (model.modelUsage?.spend?.providers ?? [])
+            .filter { !TWTheme.isRetiredProvider($0.provider) }
+            .sorted {
+                (Self.providerOrder.firstIndex(of: $0.provider) ?? 99)
+                    < (Self.providerOrder.firstIndex(of: $1.provider) ?? 99)
+            }
+    }
+
+    private var hasSpendView: Bool {
+        !spendProviders.isEmpty || model.modelUsage?.antigravityBudget != nil
     }
 
     private var asOfText: String? {
@@ -10150,22 +10184,37 @@ struct UsagePanel: View {
                         .foregroundStyle(TWTheme.textMuted)
                 }
             }
-            if providers.isEmpty {
-                VStack(spacing: 8) {
-                    Image(systemName: "gauge.with.dots.needle.50percent")
-                        .font(.title2)
-                        .foregroundStyle(TWTheme.textTertiary)
-                    Text("Usage data arrives from your computer within a few minutes of connecting.")
-                        .font(.footnote)
-                        .foregroundStyle(TWTheme.textSecondary)
-                        .multilineTextAlignment(.center)
+            if hasSpendView {
+                Picker("Usage view", selection: $selectedView) {
+                    ForEach(UsagePanelView.allCases) { view in
+                        Text(view.title).tag(view)
+                    }
                 }
-                .frame(maxWidth: .infinity)
-                .padding(.top, 24)
-            } else {
-                ForEach(providers) { entry in
-                    providerSection(entry)
+                .pickerStyle(.segmented)
+            }
+            switch hasSpendView ? selectedView : .plan {
+            case .plan:
+                if providers.isEmpty {
+                    VStack(spacing: 8) {
+                        Image(systemName: "gauge.with.dots.needle.50percent")
+                            .font(.title2)
+                            .foregroundStyle(TWTheme.textTertiary)
+                        Text("Usage data arrives from your computer within a few minutes of connecting.")
+                            .font(.footnote)
+                            .foregroundStyle(TWTheme.textSecondary)
+                            .multilineTextAlignment(.center)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.top, 24)
+                } else {
+                    ForEach(providers) { entry in
+                        providerSection(entry)
+                    }
                 }
+            case .spend:
+                spendView
+            case .context:
+                ContextLengthsView(includeOllama: true, excludeProviders: ["gemini"])
             }
 
             ActivityHeatmapStack(entries: activityHeatmapEntries)
@@ -10198,6 +10247,111 @@ struct UsagePanel: View {
             ForEach(entry.windows) { window in
                 limitRow(window, accent: accent)
             }
+        }
+        .padding(10)
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+    }
+
+    @ViewBuilder
+    private var spendView: some View {
+        if spendProviders.isEmpty && model.modelUsage?.antigravityBudget == nil {
+            Text("No API spend tracked in the last 30 days.")
+                .font(.footnote)
+                .foregroundStyle(TWTheme.textSecondary)
+        } else {
+            ForEach(spendProviders) { entry in
+                spendProviderSection(entry)
+            }
+            if let budget = model.modelUsage?.antigravityBudget {
+                antigravityBudgetSection(budget)
+            }
+            Text("Projected API-equivalent spend — estimated, not billed.")
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textTertiary)
+        }
+    }
+
+    @ViewBuilder
+    private func spendProviderSection(_ entry: ModelUsageMessage.SpendProvider) -> some View {
+        let accent = TWTheme.providerAccent(entry.provider)
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 7) {
+                RoundedRectangle(cornerRadius: 5, style: .continuous)
+                    .fill(accent.opacity(0.18))
+                    .frame(width: 20, height: 20)
+                    .overlay(
+                        Image(systemName: "dollarsign.circle")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(accent)
+                    )
+                Text(TWTheme.providerLabel(entry.provider))
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer()
+            }
+            ForEach(entry.windows) { window in
+                HStack(alignment: .firstTextBaseline, spacing: 8) {
+                    Text(window.label)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                    Text("\(window.totalTokens.formatted()) tok")
+                        .font(.caption2.monospacedDigit())
+                        .foregroundStyle(TWTheme.textTertiary)
+                    Spacer()
+                    Text(window.costText.map { "~\($0)" } ?? "—")
+                        .font(.caption.monospacedDigit().weight(.semibold))
+                        .foregroundStyle(TWTheme.textPrimary)
+                }
+                Text("\(window.runs) run\(window.runs == 1 ? "" : "s")")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+        }
+        .padding(10)
+        .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(TWTheme.border))
+    }
+
+    @ViewBuilder
+    private func antigravityBudgetSection(_ budget: ModelUsageMessage.AntigravityBudget) -> some View {
+        let accent = TWTheme.providerAccent(budget.provider)
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(spacing: 7) {
+                Image(systemName: "gauge.with.dots.needle.67percent")
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(accent)
+                Text("AntiGravity budget")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                Spacer()
+                Text("\(budget.usedPercent)%")
+                    .font(.caption.monospacedDigit().weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+            }
+            HStack {
+                Text(budget.spentText.map { "~\($0)" } ?? "—")
+                Text("of \(budget.capText)")
+                    .foregroundStyle(TWTheme.textTertiary)
+                Spacer()
+                if let resets = resetsText(budget.resetAt) {
+                    Text(resets)
+                        .foregroundStyle(TWTheme.textTertiary)
+                }
+            }
+            .font(.caption2.monospacedDigit())
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(TWTheme.textPrimary.opacity(0.08))
+                    Capsule()
+                        .fill(accent)
+                        .frame(width: max(2, geo.size.width * CGFloat(budget.usedPercent) / 100))
+                }
+            }
+            .frame(height: 6)
+            Text("Soft advisory budget — it never blocks a run.")
+                .font(.caption2)
+                .foregroundStyle(TWTheme.textTertiary)
         }
         .padding(10)
         .background(TWTheme.surface1, in: RoundedRectangle(cornerRadius: 10))

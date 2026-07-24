@@ -323,4 +323,143 @@ describe('registerUsageRatesHandlers', () => {
 
     expect(deps.broadcastModelUsage).toHaveBeenCalledTimes(1)
   })
+
+  it('adds spend and AntiGravity budget fields without changing quota providers', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+
+    deps.fetchCodexUsageSnapshot.mockResolvedValue({
+      windows: [{ id: 'codex-5h', label: '5h', usedPercent: 42 }]
+    })
+    deps.fetchClaudeUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchKimiUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchCursorUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.getSettings.mockReturnValue({
+      currency: 'USD',
+      antigravityGeminiApiMonthlySpendCapUsd: 10
+    })
+    deps.getCurrentProviderRates.mockReturnValue({
+      baseline: {
+        antigravity: {
+          models: [
+            {
+              modelId: 'gemini-api:gemini-2.5-flash',
+              inputUsdPerMillion: 2,
+              outputUsdPerMillion: 10
+            }
+          ]
+        }
+      }
+    } as any)
+    deps.getUsage.mockReturnValue([
+      {
+        id: 'usage-1',
+        provider: 'antigravity',
+        timestamp: Date.now() - 1_000,
+        workspaceId: 'ws-1',
+        chatId: 'chat-1',
+        runId: 'run-1',
+        model: 'gemini-api:gemini-2.5-flash',
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        totalTokens: 1_000_000,
+        durationMs: 100
+      }
+    ])
+
+    callbacks.triggerUsageModel()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastModelUsage).toHaveBeenCalledWith({
+      usage: expect.objectContaining({
+        providers: expect.arrayContaining([expect.objectContaining({ provider: 'codex' })]),
+        spend: expect.objectContaining({
+          providers: expect.arrayContaining([
+            expect.objectContaining({
+              provider: 'antigravity',
+              windows: expect.arrayContaining([
+                expect.objectContaining({ id: 'day', costText: '$2.00' })
+              ])
+            })
+          ])
+        }),
+        antigravityBudget: expect.objectContaining({
+          provider: 'antigravity',
+          spentText: '$2.00',
+          capText: '$10.00',
+          usedPercent: 20
+        })
+      })
+    })
+  })
+
+  it('broadcasts AntiGravity spend and budget when quota snapshots are empty', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+
+    deps.fetchCodexUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchClaudeUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchKimiUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.fetchCursorUsageSnapshot.mockResolvedValue({ windows: [] })
+    deps.getSettings.mockReturnValue({
+      currency: 'USD',
+      antigravityGeminiApiMonthlySpendCapUsd: 10
+    })
+    deps.getCurrentProviderRates.mockReturnValue({
+      baseline: {
+        antigravity: {
+          models: [
+            {
+              modelId: 'gemini-api:gemini-2.5-flash',
+              inputUsdPerMillion: 2,
+              outputUsdPerMillion: 10
+            }
+          ]
+        }
+      }
+    } as any)
+    deps.getUsage.mockReturnValue([
+      {
+        id: 'usage-antigravity-only',
+        provider: 'antigravity',
+        timestamp: Date.now() - 1_000,
+        workspaceId: 'ws-1',
+        chatId: 'chat-1',
+        runId: 'run-1',
+        model: 'gemini-api:gemini-2.5-flash',
+        inputTokens: 1_000_000,
+        outputTokens: 0,
+        totalTokens: 1_000_000,
+        durationMs: 100
+      }
+    ])
+
+    callbacks.triggerUsageModel()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastModelUsage).toHaveBeenCalledWith({
+      usage: expect.objectContaining({
+        providers: [],
+        spend: expect.objectContaining({
+          providers: expect.arrayContaining([
+            expect.objectContaining({ provider: 'antigravity' })
+          ])
+        }),
+        antigravityBudget: expect.objectContaining({
+          provider: 'antigravity',
+          capText: '$10.00'
+        })
+      })
+    })
+  })
+
+  it('keeps the legacy no-data broadcast silent', async () => {
+    const { deps, callbacks } = createDeps()
+    registerUsageRatesHandlers(deps)
+
+    callbacks.triggerUsageModel()
+    await flushAsyncTasks()
+
+    expect(deps.broadcastModelUsage).not.toHaveBeenCalled()
+  })
 })
