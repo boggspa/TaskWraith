@@ -33,6 +33,7 @@ public enum ComposerShellResolver {
         switch style {
         case .defaultShell: return defaultRecipe(context)
         case .codex: return codexRecipe(context)
+        case .chatgpt: return chatgptRecipe(context)
         case .claude: return claudeRecipe(context)
         case .cursor: return cursorRecipe(context)
         case .grok: return grokRecipe(context)
@@ -108,8 +109,15 @@ public enum ComposerShellResolver {
             return ComposerShellLayout(
                 controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
                 surfaceIsCapsule: true)
-        case .cursor:
+        case .cursor, .chatgpt:
             // Gemini-style capsule clone with bare-text control satellites.
+            // CS14 chatgpt shares cursor's layout VERBATIM — FINAL SPEC drops the
+            // tuck: tuck-over-capsule has no filled card body to merge into, and
+            // live desktop components/Composer.tsx floats chatgpt above-rows
+            // alongside cursor/codex, so the untucked detached-card-above IS the
+            // faithful analog. chatgpt's ONLY delta from cursor is the recipe
+            // (rim=nil flat pill), never the layout — composerLayout(.chatgpt)
+            // == composerLayout(.cursor) field-for-field.
             return ComposerShellLayout(
                 controlsBelowTextarea: true, detachedAboveRows: true, liftedSend: true,
                 surfaceIsCapsule: true, controlsAsPlainText: true)
@@ -430,6 +438,30 @@ public enum ComposerShellResolver {
             rowPolicy: .floatAbove,      // git/Create-PR rows detached above the stack
             effects: [],                 // no rimChase/grain/etc. at rest
             themeImmune: true)
+    }
+
+    /// ChatGPT shell (CS14) — VISUAL-ONLY cross of codex + cursor (desktop
+    /// src/main/store/types.ts:115-123). The BODY reuses the cursor
+    /// flat-neutral-gray capsule recipe VERBATIM, with the ONE desktop tweak:
+    /// the inset top rim lip is REMOVED so the input pill reads FLAT like the
+    /// official ChatGPT composer. On iOS the codex-family "above-row" chrome is
+    /// rendered UNTUCKED (FINAL SPEC dropped the tuck — a capsule body has no
+    /// filled card to tuck into); the cursor context-wheel pairing + the untucked
+    /// detached above-rows are STRUCTURAL and live in composerLayout(for:), which
+    /// folds `case .cursor, .chatgpt` so chatgpt's layout == cursor's.
+    /// Theme-immune (inherits cursor's locked flat gray — the vibe-correct
+    /// "official ChatGPT" neutral; the desktop alabaster/obsidian codex-derive is
+    /// an exotic two-theme refinement the coarse iOS model intentionally skips).
+    /// NOT a provider/runtime. Evidence: types.ts:115-123 (comment);
+    /// 07-composer-shells.css:2100-2105 (.context-wheel w/ cursor), :3585-3724
+    /// (above-bar/footer w/ codex); 10-provider-shell-overrides.css (theme derive
+    /// grouped w/ codex).
+    private static func chatgptRecipe(_ context: ComposerShellContext) -> ResolvedComposerShell {
+        var shell = cursorRecipe(context)
+        shell.style = .chatgpt
+        // Flat pill: drop the cursor capsule's 1px inset top rim lip.
+        shell.palette.rim = nil
+        return shell
     }
 
     private static func grokRecipe(_ context: ComposerShellContext) -> ResolvedComposerShell {

@@ -9,9 +9,9 @@ import Testing
 
 @Suite("Composer shell — style model")
 struct ComposerShellStyleTests {
-    @Test("known raws round-trip; the canonical list has 13 styles")
+    @Test("known raws round-trip; the canonical list has 14 styles")
     func knownRoundTrip() {
-        #expect(TWComposerStyle.known.count == 13)
+        #expect(TWComposerStyle.known.count == 14)
         for style in TWComposerStyle.known {
             #expect(TWComposerStyle(raw: style.raw) == style)
             #expect(style.isKnown)
@@ -19,6 +19,12 @@ struct ComposerShellStyleTests {
         }
         #expect(TWComposerStyle(raw: "default") == .defaultShell)
         #expect(TWComposerStyle(raw: "obsidian") == .obsidian)
+        // CS14 — the 14th shell 'chatgpt' (VISUAL-ONLY codex×cursor cross).
+        #expect(TWComposerStyle(raw: "chatgpt") == .chatgpt)
+        #expect(TWComposerStyle.chatgpt.raw == "chatgpt")
+        #expect(TWComposerStyle.chatgpt.label == "ChatGPT")
+        #expect(TWComposerStyle.chatgpt.isKnown)
+        #expect(TWComposerStyle.chatgpt.renderStyle == .chatgpt)
     }
 
     @Test("unknown raw is preserved but renders as default")

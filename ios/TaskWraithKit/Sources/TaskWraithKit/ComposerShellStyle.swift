@@ -1,4 +1,4 @@
-// ComposerShellStyle.swift — the 13 desktop composer "shell styles"
+// ComposerShellStyle.swift — the 14 desktop composer "shell styles"
 // (data-composer-style) modeled for iOS parity. Pure (Foundation only) so it
 // lives in TaskWraithKit and is unit-testable; the SwiftUI recipes that turn a
 // style into colors/geometry live in TaskWraithUI. Mirrors the desktop union
@@ -12,6 +12,7 @@ import Foundation
 public enum TWComposerStyle: Equatable, Hashable, Sendable {
     case defaultShell
     case codex
+    case chatgpt
     case claude
     case cursor
     case grok
@@ -31,6 +32,7 @@ public enum TWComposerStyle: Equatable, Hashable, Sendable {
         switch raw {
         case "default": self = .defaultShell
         case "codex": self = .codex
+        case "chatgpt": self = .chatgpt
         case "claude": self = .claude
         case "cursor": self = .cursor
         case "grok": self = .grok
@@ -51,6 +53,7 @@ public enum TWComposerStyle: Equatable, Hashable, Sendable {
         switch self {
         case .defaultShell: return "default"
         case .codex: return "codex"
+        case .chatgpt: return "chatgpt"
         case .claude: return "claude"
         case .cursor: return "cursor"
         case .grok: return "grok"
@@ -82,6 +85,7 @@ public enum TWComposerStyle: Equatable, Hashable, Sendable {
         switch self {
         case .defaultShell: return "Default (Native)"
         case .codex: return "Codex"
+        case .chatgpt: return "ChatGPT"
         case .claude: return "Claude"
         case .cursor: return "Cursor"
         case .grok: return "Grok"
@@ -99,7 +103,7 @@ public enum TWComposerStyle: Equatable, Hashable, Sendable {
 
     /// All known styles in canonical desktop order (drives the iOS picker).
     public static let known: [TWComposerStyle] = [
-        .defaultShell, .codex, .claude, .cursor, .grok, .gemini, .kimi,
+        .defaultShell, .codex, .chatgpt, .claude, .cursor, .grok, .gemini, .kimi,
         .modular, .terminal, .stub, .satellite, .obsidian, .alabaster,
     ]
 }

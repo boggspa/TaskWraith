@@ -7,17 +7,19 @@
 > reference this document.
 
 **Scope:** iOS parity for desktop **`data-composer-style` only** (NOT the broader
-`data-interface-style` app chrome). 13 styles. The `default` shell is **already shipped and
-signed off on iOS** — this effort adds the other 12 + their theme handling, plus an iOS picker.
+`data-interface-style` app chrome). 14 styles. The `default` shell is **already shipped and
+signed off on iOS** — this effort adds the other 13 + their theme handling, plus an iOS picker.
 **Do NOT clone the CSS cascade in SwiftUI** — build a pure Swift resolver + recipe system.
 
 ---
 
 ## Part A — Canonical style list & selection
 
-- **Type:** `ComposerStyle` union — `src/main/store/types.ts:103-153`. Exactly **13**:
-  `default, codex, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster`.
-  No others. `cursor`/`grok` are **VISUAL-ONLY** shells, independent of the same-named providers.
+- **Type:** `ComposerStyle` union — `src/main/store/types.ts:103-160`. Exactly **14**:
+  `default, codex, chatgpt, claude, cursor, grok, gemini, kimi, modular, terminal, stub, satellite, obsidian, alabaster`.
+  No others. `cursor`/`grok`/`chatgpt` are **VISUAL-ONLY** shells, independent of any provider. `chatgpt`
+  (added CS14) is a cross of the codex + cursor shells — codex above-row tucked-tab chrome + cursor capsule
+  body, with the cursor inset rim removed so the input pill reads flat; NOT the ChatGPT product/runtime.
 - **Setting:** `AppSettings.composerStyle` (`types.ts:1381`), default `'default'` (`store/index.ts:392`).
   **Global, not per-chat.**
 - **Applied to DOM:** `src/renderer/src/hooks/useAppearance.ts:227-320` (`applyToDocument`) sets BOTH
@@ -27,7 +29,7 @@ signed off on iOS** — this effort adds the other 12 + their theme handling, pl
   (`SettingsPanel.tsx:462-548`), `SIDEBAR_COMPOSER_STYLE_OPTIONS` (`Sidebar.tsx:316-330`).
   Picker = SettingsPanel `<select>` (`:2469-2491`) + Sidebar quick-switcher.
 - **Send-glyph mapping** (`App.tsx:20675-20685`): `claude`→ClaudeReturn (return); `codex`/`gemini`/
-  `cursor`/`grok`/`kimi`→ArrowUp; **all others**→RunSymbol (triangle).
+  `cursor`/`grok`/`kimi`/`chatgpt`→ArrowUp; **all others**→RunSymbol (triangle).
 
 ---
 
@@ -37,7 +39,7 @@ signed off on iOS** — this effort adds the other 12 + their theme handling, pl
 .composer-area  (interface-${style})
 ├─ welcome-hero / welcome-hero-ensemble        (welcome only)
 ├─ ABOVE-BAR REGION  (gated)
-│   ├─ float-above (cursor + codex ONLY):       App.tsx:18185-18186 aboveRowsFloatAboveStack
+│   ├─ float-above (cursor + codex + chatgpt):       components/Composer.tsx:2040+ aboveRowsFloatAboveStack
 │   │     primaryWorkspaceAboveBar + externalWorkspaceAboveRows  (rendered DETACHED above stack)
 │   └─ .composer-above-bar-stack
 │       ├─ .composer-above-bar.style-unified    (pills: git · changes · action[Create PR])
@@ -89,6 +91,22 @@ signed off on iOS** — this effort adds the other 12 + their theme handling, pl
 **A11y fallbacks:** reduce-motion → codex above-row aura pulse killed (05:3272-3284); shell control transitions dropped. reduce-transparency → forces `backdrop-filter:none` (minimal — surface already solid). No codex-specific forced-colors; relies on fill-delta (#212121 vs #252525) — SwiftUI should add explicit borders for high-contrast.
 **Skeptic:** accurate=false; corrections applied = inner-module inset highlight is BOTTOM-edge (`inset 0 -1px 0`), not top (07:44). Send glyph arrow-up matches global facts. Confidence: high.
 **Evidence:** `07-composer-shells.css:22-29` (outer #212121 r22), `:30-45` (inner #252525 r21/21/14/14 + insets), `:60-73` (focus + rim removed), `:107-118` (order), `:200-226` (ensemble Codex provider accent), `:247-268` (permission #ff7a59 + ▾), `:271-321` (model + lightning ::before), `:323-350` (send light circle 32px, glyph #0d0d0d); `App.tsx:18185-18186` (float above), `:20677-20684` (ArrowUpSendIcon); `AppChromeSymbols.tsx:439-455` (ArrowUpSendIcon); `05-polish-fx-layouts.css:2634-2637` (Codex provider aura), `:3027-3088` (codex `:not(:has(.ensemble-above-row))`); `08-theme-picker-overrides.css:3971-4047` (light derive).
+
+### chatgpt — ChatGPT (visual-only cross of codex + cursor)
+**Essence:** A VISUAL-ONLY cross (NOT the ChatGPT product/runtime): the **Codex** "above-row" tucked-tab chrome worn over the **Cursor** flat-neutral-gray capsule body + bare-text bottom-control row (model / context / workspace), with the cursor capsule's inset top rim lip REMOVED so the input pill reads FLAT like the official ChatGPT composer. Context-wheel pairs with cursor.
+**Material:** = **cursor** verbatim — flat solid neutral GRAY, no glass/gradient/chroma, theme-immune. Capsule surface **#2a2a2a** D / **#f4f4f4** L (`--cursor-shell-surface`); page bg #1f1f1f/#ededed.
+**Palette:** = **cursor** — surfaceFill #2a2a2a/#f4f4f4 · innerModuleFill n/a (the filled capsule IS the module) · border `--cursor-shell-border` rgba(216,216,216,0.16)/rgba(46,46,46,0.16) · focusAccent no chroma → `--cursor-shell-rim-strong` rgba(216,216,216,0.42)/rgba(46,46,46,0.30) · textPrimary `--cursor-shell-fg` #d8d8d8/#2e2e2e · placeholder `--cursor-shell-faint` rgba(216,216,216,0.38)/rgba(46,46,46,0.4) · rimOrGlow **REMOVED** — the sole delta vs cursor: cursor's `inset 0 1px 0 --cursor-shell-rim` top lip is dropped so the pill reads flat.
+**Geometry:** = **cursor** — capsule radius **26px**, surface radius 0 (input owns the surface), 32px neutral send circle (999px), surface flex column gap 6px.
+**Controls:** = **cursor** — LIFTED into the capsule (attach / model label / send-cluster), DEMOTED transparent satellite row (permission plain text / ensemble-mode segmented / provider+workspace outline pills); bottom-control rows read model / context / workspace.
+**Send glyph:** arrow-up (= cursor).
+**Typography:** System sans (= cursor). No mono/serif/italic/tabular-nums.
+**Row policy:** Pure **cursor** above-rows on iOS (FINAL SPEC — no tuck): `detachedAboveRows` with `tucksSecondaryRows` FALSE, so git/Create-PR **and** the roster/queued secondary rows all render as detached floating cards above the capsule. This is the faithful analog of live desktop, whose extracted `components/Composer.tsx:2040+` `aboveRowsFloatAboveStack` FLOATS chatgpt above-rows alongside cursor+codex; the codex *tucked-tab* look was never reachable over a capsule body (no filled card to tuck into), so iOS renders untucked. Desktop still groups chatgpt's `.composer-above-bar` + `.composer-control-footer`/`.composer-codex-footer` with codex and `.context-wheel` with cursor. Radius: chatgpt shares cursor's 26px capsule via desktop's explicit `:is(cursor, chatgpt)` scope — no override (see `s1-chatgpt-radius-answer`).
+**Effects:** = cursor at rest (no rimChase/grain); the removed top-rim lip is the only visual subtraction. Cursor's activity aura on the merged stack applies as for cursor.
+**Theme behavior:** Theme-IMMUNE flat gray (inherits cursor). Desktop groups chatgpt's theme-derive with codex ONLY for the exotic alabaster/obsidian themes; the coarse iOS model keeps the vibe-correct locked gray (matches "official ChatGPT") and does not split that edge.
+**A11y fallbacks:** = cursor — reduce-transparency degrades only native-glass floating rows (capsule never blurs); reduce-motion suppresses the stack aura pulse. No chatgpt-specific rule.
+**iOS recipe:** `chatgptRecipe` = `cursorRecipe(context)` with `palette.rim = nil` + `style = .chatgpt` (mutate-clone → zero divergence; radius inherited = cursor's 26px, correct per desktop's shared `:is(cursor, chatgpt)` scope). `composerLayout(for:)` folds `case .cursor, .chatgpt`, so chatgpt's layout equals cursor's field-for-field (`tucksSecondaryRows` FALSE) — no first-ever flag combination, brick risk nil. Verified by `ComposerShellResolverChatgptTests` (`style == .chatgpt`, `palette.rim == nil`, `composerLayout(.chatgpt) == composerLayout(.cursor)`). `.unknown(raw)→defaultShell` fallback intact.
+**Skeptic:** cross-shell, so values inherit their verified parents (cursor body / codex chrome); the untucked pure-cursor layout is deliberate reuse, covered field-for-field by `ComposerShellResolverChatgptTests`, and rim removal (per types.ts:115-123) is the only recipe delta. Confidence: high.
+**Evidence:** `src/main/store/types.ts:115-123` (union entry + "cross of Codex + Cursor … inset rim removed" comment); `07-composer-shells.css:2100-2105` (`.context-wheel` grouped w/ cursor), `:3585-3656` (`.composer-above-bar` grouped w/ codex), `:3713-3724` (footer grouped w/ codex); `10-provider-shell-overrides.css` (alabaster/obsidian theme-derive grouped w/ codex, 183 selectors); iOS `ComposerShellResolver.swift` (`chatgptRecipe` + `composerLayout(.chatgpt)`), `ComposerShellStyle.swift` (14th `case chatgpt`).
 
 ### claude — Claude
 **Essence:** Whisper-quiet near-monochrome dark shell mimicking Claude Code's terminal composer — a single rounded-rect bubble (the textarea) with chrome-less floating-satellite footer controls and a matched dark header band above. Tiny squared send button with a return-arrow glyph nudged up 9px.
