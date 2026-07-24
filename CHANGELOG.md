@@ -42,6 +42,8 @@ to answer.
   one reusable draft per workspace, and Active Runs rows show the chat name.
 - **The provider picker shows only connected providers.** Live providers are
   always offered; only AntiGravity is gated on its own discovery.
+- **Usage plan labels read cleanly.** Sidebar plan labels are simpler, and
+  Kimi's subscription tiers are shown by name.
 
 ### Fixed
 - **Closing the window no longer ends active runs.** Runs keep executing after
