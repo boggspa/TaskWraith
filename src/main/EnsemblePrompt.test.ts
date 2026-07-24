@@ -1967,6 +1967,7 @@ describe('stage-role prompt stanza', () => {
     expect(prompt).toContain('Stage role: background')
     expect(prompt).toContain('do not consume an ordinary round turn')
     expect(prompt).toContain('respect the lane permission posture')
+    expect(prompt).toContain('If this lane holds write permissions')
     expect(prompt).not.toContain('Turn position: 0')
     expect(prompt).not.toContain('designated SYNTHESIZER')
     expect(prompt).not.toContain('you speak last as the chair')

@@ -57,3 +57,37 @@ export function backgroundDispatchFailureStatusLine(
   }
   return `Background dispatch not launched: ${result.reason}${detail}.`
 }
+
+export type BackgroundDispatchPosture =
+  | { mode: 'own_permissions'; statusLine: string }
+  | { mode: 'read_only_clamp'; statusLine: string | null }
+
+/**
+ * Decides how a background lane is permissioned
+ * (docs/bg-user-mention-posture-design.md). `honorSeatPosture` is set ONLY by
+ * the user-origin round path — composer @mention or DM chip target; every
+ * beginRound prompt is user-authored by construction. Peer mentions and yield
+ * routes never set it, so they always take the silent read-only clamp. The
+ * TASKWRAITH_CONCURRENT_WRITE_LANES kill-switch restores the clamp for
+ * user-directed lanes too — loudly, so the downgrade is visible in the round.
+ */
+export function resolveBackgroundDispatchPosture(input: {
+  honorSeatPosture: boolean
+  writeLanesEnabled: boolean
+  laneCount: number
+}): BackgroundDispatchPosture {
+  if (!input.honorSeatPosture) {
+    return { mode: 'read_only_clamp', statusLine: null }
+  }
+  if (!input.writeLanesEnabled) {
+    return {
+      mode: 'read_only_clamp',
+      statusLine:
+        'Background lane(s) clamped to read-only: TASKWRAITH_CONCURRENT_WRITE_LANES=0.'
+    }
+  }
+  return {
+    mode: 'own_permissions',
+    statusLine: `Background: launching ${input.laneCount} lane(s) under their own permissions (user-directed).`
+  }
+}

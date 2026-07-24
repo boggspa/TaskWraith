@@ -84,6 +84,7 @@ import {
   backgroundDispatchFailureStatusLine,
   isBackgroundDispatchFailure,
   preflightBackgroundDispatchTarget,
+  resolveBackgroundDispatchPosture,
   type BackgroundDispatchResult
 } from './EnsembleBackgroundDispatch'
 import {
@@ -11742,7 +11743,12 @@ export class EnsembleOrchestrator {
         await this.dispatchBackgroundParticipants(
           runtime,
           chatForBackground,
-          options.backgroundParticipants
+          options.backgroundParticipants,
+          // beginRound-only path: every prompt reaching here is user-authored
+          // (composer send / steer / queued drain), so the seat's own posture
+          // applies. Peer mentions and the yield route dispatch elsewhere and
+          // keep the read-only clamp.
+          { honorSeatPosture: true }
         )
       }
     }
@@ -13241,7 +13247,17 @@ export class EnsembleOrchestrator {
     runtime: ActiveRoundRuntime,
     chat: ChatRecord,
     requested: EnsembleParticipant[],
-    options: { prompt?: string; sourceRunId?: string; reason?: string } = {}
+    options: {
+      prompt?: string
+      sourceRunId?: string
+      reason?: string
+      /** User-directed dispatch (composer @mention / DM chip target): run
+       * each lane under the seat's OWN normal-turn permissions instead of
+       * the read-only clamp — boss_fanout_all semantics. Peer mentions and
+       * yield routes never set this. TASKWRAITH_CONCURRENT_WRITE_LANES=0
+       * restores the clamp, loudly. */
+      honorSeatPosture?: boolean
+    } = {}
   ): Promise<BackgroundDispatchResult> {
     if (!concurrentLanesEnabled()) {
       const result = { ok: false as const, reason: 'concurrent_lanes_disabled' as const }
@@ -13327,13 +13343,22 @@ export class EnsembleOrchestrator {
     try {
       const latestChat = this.deps.getChat(runtime.chatId) || chat
       const acceptedRuns: ActiveParticipantRun[] = []
+      const posture = resolveBackgroundDispatchPosture({
+        honorSeatPosture: Boolean(options.honorSeatPosture),
+        writeLanesEnabled: concurrentWriteLanesEnabled(),
+        laneCount: participants.length
+      })
+      if (posture.statusLine) {
+        this.appendRoundStatus(runtime.chatId, runtime.roundId, posture.statusLine)
+      }
       await this.runParallelFanoutPass(runtime, latestChat, participants, {
         prompt: options.prompt,
         reason: options.reason,
-        mode: 'read_only',
         sourceRunId: options.sourceRunId,
         label: 'Background',
-        forceReadOnlyDispatch: true,
+        ...(posture.mode === 'own_permissions'
+          ? { dispatchOwnPermissions: true }
+          : { mode: 'read_only' as const, forceReadOnlyDispatch: true }),
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: 'background'
