@@ -57,12 +57,13 @@ describe('composer shell row aura CSS', () => {
     }
   })
 
-  it('suppresses Gemini/Cursor composer aura pseudos while preserving shell chrome', () => {
+  it('suppresses invisible-shell composer aura pseudos while preserving capsule chrome', () => {
     const css = readCss()
-    const block = cssBlockStartingAt(css, 'Gemini/Cursor render')
+    const block = cssBlockStartingAt(css, 'Gemini/Cursor/ChatGPT render')
 
     expect(block).toContain('[data-composer-style="gemini"]')
     expect(block).toContain('[data-composer-style="cursor"]')
+    expect(block).toContain('[data-composer-style="chatgpt"]')
     expect(block).toContain(':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after')
     expect(block).toContain(
       ':is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after'

@@ -3729,19 +3729,19 @@
   opacity: 0 !important;
 }
 
-/* Gemini/Cursor render their actual input chrome on the capsule, while the
- * `.composer-surface` is an invisible layout shell. Do not let the active-round
- * composer aura draw a pulsing rectangle around that shell. */
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+/* Gemini/Cursor/ChatGPT render their actual input chrome on the capsule, while
+ * the `.composer-surface` is an invisible layout shell. Do not let the
+ * active-round composer aura draw a pulsing rectangle around that shell. */
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura::after,
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-running::after,
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-approval::after,
-:is([data-composer-style="gemini"], [data-composer-style="cursor"])
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   .app-transcript
   :is(.composer-surface, .composer-above-bar-stack).fx-agent-aura.fx-status-failed::after {
   display: none !important;
