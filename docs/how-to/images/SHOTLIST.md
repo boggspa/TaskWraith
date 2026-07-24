@@ -49,7 +49,7 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `composer__ensemble-mode-picker.png` | Electron | Composer ensemble mode picker showing Turn / Continuous / Work Session options | In an **ensemble chat**, look at the **composer's action row** above the input box. |
+| `composer__ensemble-mode-picker.png` | Electron | Composer ensemble mode picker showing Turn / Continuous options | In an **ensemble chat**, look at the **composer's action row** above the input box. |
 | `composer__goal-button.png` | Electron | Composer goal button popover showing objective and status | In the **composer's telemetry row** (the icon row beneath the prompt box), next to the Screen Watch and schedule controls. |
 | `composer__plus-tools-menu.png` | Electron | Composer + tools menu expanded showing attachments, multiview, screen watch | Click the **+ button** at the start of the composer's action row (next to the prompt input, identified by the plus icon). |
 | `composer__provider-model-permissions-pickers.png` | Electron | Composer inline pickers row with provider, model+reasoning, and permissions chips | In the **composer's inline pickers row**, just below the prompt input. |
@@ -60,9 +60,9 @@ The current refresh uses latest-source development apps, not an installed releas
 
 | Save as | Platform | Capture | Where to find it |
 |---|---|---|---|
-| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous / Work Session mode picker, whenever Continuous mode is active for the current round. |
+| `ensemble-mode__continuous-hops-meter.png` | Electron | Continuous hops meter chip showing "2/6" | In an ensemble chat's composer, next to the Turn / Continuous mode picker, whenever Continuous mode is active for the current round. |
 | `ensemble-mode__create-ensemble-chat.png` | Electron | Active new Ensemble draft with roster controls and participant chips | Create a new draft, turn **Ensemble** on before first send, and capture the active Ensemble composer plus its roster controls. |
-| `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous / Work Session orchestration mode picker in the composer's action row. |
+| `ensemble-mode__fan-out.png` | Electron | Fan-out toggle chip next to the mode picker | In an ensemble chat, it sits as a separate chip group right beside the Turn / Continuous orchestration mode picker in the composer's action row. |
 | `ensemble-mode__ios-ensemble-ui.png` | iOS | iOS companion showing ensemble strip and roster sheet | Open any Ensemble chat on the companion app — the chip strip appears automatically in the composer, above the message field. |
 | `ensemble-mode__mention-yield-routing.png` | Electron | Composer showing an @-mention being typed with role autocomplete | Type `@` followed by a participant's role or model name in the composer during an ensemble chat — an autocomplete menu lists matching participants. |
 | `ensemble-mode__participant-chip-strip.png` | Electron | Participant chip strip above composer with multiple provider chips | In an ensemble chat, the strip sits in the composer's above-row stack: below the branch / files-changed / Create PR row (and any external-path rows), and above the message textarea. |

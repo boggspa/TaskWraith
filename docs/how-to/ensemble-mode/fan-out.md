@@ -6,7 +6,7 @@
 The Fan-Out toggle is the **Off / Read / Write** button group (labeled **Fan-Out**) that lets an ensemble round dispatch multiple participants in parallel lanes instead of one at a time, so they can investigate simultaneously and report back before the round continues.
 
 ## Where to find it
-In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row of the Roster Presets section above the composer input, right beside the Turn / Continuous / Work Session orchestration mode picker.
+In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row of the Roster Presets section above the composer input, right beside the Turn / Continuous orchestration mode picker.
 
 ![Fan-out toggle in the roster presets second row next to the mode picker](../images/ensemble-mode__fan-out.png)
 
@@ -26,7 +26,7 @@ In an ensemble chat, it sits in the labeled **Fan-Out** cell on the second row o
    writeScopes=...)` path when scoped background mutation is genuinely required.
 
 ## Tips & related
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — the adjacent Turn/Continuous/Work Session control this toggle composes with.
+- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — the adjacent Turn/Continuous control this toggle composes with.
 - [Continuous Hops Meter](continuous-hops-meter.md) — the handoff-budget chip shown when Continuous mode is active alongside fan-out.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start an ensemble chat before this toggle becomes available.
 - [Participant Chip Strip](participant-chip-strip.md) — manage which participants are read-only vs. writer-capable, which determines what each fan-out lane can do.

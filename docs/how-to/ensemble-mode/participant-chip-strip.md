@@ -22,5 +22,5 @@ In an ensemble chat, the strip sits in the composer's above-row stack: below the
 - [Create an Ensemble Chat](create-ensemble-chat.md) to get an ensemble chat with a chip strip in the first place.
 - [Saved Roster Presets](saved-roster-presets.md) to apply or save a participant lineup instead of building one chip at a time.
 - [Mention & Yield Routing](mention-yield-routing.md) for how `@Role` mentions and explicit yields change who speaks next, independent of chip order.
-- BG seats are workers, not round owners: do not assign one as Boss, Captain, Work Session lead/manager, or synthesizer. TaskWraith ignores conflicting authority assignments at dispatch time.
+- BG seats are workers, not round owners: do not assign one as Boss, Captain, or synthesizer. TaskWraith ignores conflicting authority assignments at dispatch time.
 - [Continuous Hops Meter](continuous-hops-meter.md) for the related handoff-budget control shown alongside the strip in Continuous mode.

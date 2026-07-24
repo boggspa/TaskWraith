@@ -28,5 +28,5 @@ Open a new draft and turn on the **Ensemble** button in the composer's bottom ro
 ## Tips & related
 - [Participant Chip Strip](participant-chip-strip.md) — full detail on selecting, reordering, and editing participants.
 - [Saved Roster Presets](saved-roster-presets.md) — apply a saved line-up instead of editing the default panel by hand.
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — choose Turn, Continuous, or Work Session orchestration for the chat.
+- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — choose Turn or Continuous orchestration for the chat.
 - [Round Cards in Transcript](round-cards.md) — how completed rounds are displayed once the ensemble starts responding.

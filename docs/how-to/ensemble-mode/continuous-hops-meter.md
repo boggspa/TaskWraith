@@ -12,7 +12,7 @@ count (`n`) is read-only. The popover still labels this limit "Max handoff
 turns," but the runtime budget covers both paths.
 
 ## Where to find it
-In the labeled **Turn Budget** cell on the second row of the Roster Presets section above the composer input, next to the Turn / Continuous / Work Session mode picker and Fan-Out toggle, whenever Continuous mode is active for the current round.
+In the labeled **Turn Budget** cell on the second row of the Roster Presets section above the composer input, next to the Turn / Continuous mode picker and Fan-Out toggle, whenever Continuous mode is active for the current round.
 
 ![Continuous hops meter chip showing "2/6" in the Turn Budget cell](../images/ensemble-mode__continuous-hops-meter.png)
 

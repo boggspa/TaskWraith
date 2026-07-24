@@ -22,7 +22,7 @@ Open it from the **chat composer** in three ways:
 
 Commands fall into a few groups:
 - **Provider commands** (vary by provider, e.g. Codex's `/status`, `/model`, `/fast`, `/diff`, `/mcp`, `/review`, `/resume`, `/fork`, `/permissions`) — passed through to that provider.
-- **TaskWraith actions** — `/audit`, `/goal`, `/import-plan`, `/clear`, `/attach`, `/screen`, `/detach-screen`, `/stop` (alias `/cancel`), `/copy-transcript` (alias `/copy`), `/files`, `/workbench`, `/editor`, `/diff-window`, `/side`, `/side-drawer`, `/side-popout`, `/side-main`, `/help`, `/feedback`, `/settings`, and (in ensemble chats) `/ensemble-turn` and `/ensemble-work-session`.
+- **TaskWraith actions** — `/audit`, `/goal`, `/import-plan`, `/clear`, `/attach`, `/screen`, `/detach-screen`, `/stop` (alias `/cancel`), `/copy-transcript` (alias `/copy`), `/files`, `/workbench`, `/editor`, `/diff-window`, `/side`, `/side-drawer`, `/side-popout`, `/side-main`, `/help`, `/feedback`, `/settings`, and (in ensemble chats) `/ensemble-turn`.
 - **Prompt templates** — `/compact` (plus `/compact-shared` and `/compact-selected` in ensemble chats), `/explain`, `/test`, and `/review-diff` insert canned prompt text instead of dispatching an action.
 - **Insert shortcuts** — `/discuss` and `/meta` insert provider-recognized prefixes without dispatching anything.
 

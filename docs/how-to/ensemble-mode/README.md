@@ -15,4 +15,4 @@ Guides for TaskWraith's multi-provider ensemble chat feature.
 
 ## Cross-links
 
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — for orchestration mode settings (Turn / Continuous / Work Session).
+- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — for orchestration mode settings (Turn / Continuous).

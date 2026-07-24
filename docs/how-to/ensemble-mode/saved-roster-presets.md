@@ -21,6 +21,6 @@ Settings → **AI & Providers → Ensemble roster** for the full editor (create,
 ## Tips & related
 - Keep a new panel small: three seats for ordinary delivery work, four when an independent review adds value, and five only when the task genuinely needs two specialist domains plus an outsider.
 - [Create an Ensemble Chat](create-ensemble-chat.md) — start a multi-provider chat that a roster preset can populate.
-- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — orchestration mode settings (Turn / Continuous / Work Session).
+- [Ensemble Mode Picker](../composer/ensemble-mode-picker.md) — orchestration mode settings (Turn / Continuous).
 - [Participant Chip Strip](participant-chip-strip.md) — the in-chat strip for adjusting participants once a chat is running.
 - [Providers tab](../settings-and-configuration/providers-tab.md) — sign in to the providers a roster preset references.
