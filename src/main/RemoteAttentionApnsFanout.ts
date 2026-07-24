@@ -3,6 +3,10 @@ import type { BridgeApnsTokenStore } from './BridgeApnsTokenStore'
 import { sealPush } from '../shared/e2ee/pushSeal'
 import { buildCompletionPushPlaintext, type CompletionPushContent } from './CompletionPushContent'
 import { buildQuestionPushPlaintext, type QuestionPushContent } from './QuestionPushContent'
+import {
+  isRemoteNotificationReason,
+  type RemoteNotificationReason
+} from './RemoteNotificationPolicy'
 
 export interface RemoteAttentionApnsFanoutDeps {
   getTokenStore: () => BridgeApnsTokenStore | null
@@ -47,11 +51,18 @@ export class RemoteAttentionApnsFanout {
   }
 
   notify(
-    input: Omit<BridgeRemoteAttentionPushPayload, 'pairID'> & {
+    input: Omit<BridgeRemoteAttentionPushPayload, 'pairID' | 'reason'> & {
+      reason: RemoteNotificationReason
       rich?: CompletionPushContent
       question?: QuestionPushContent
     }
   ): void {
+    // Runtime guard as well as the narrowed TypeScript input: legacy sessions,
+    // plugins, or tests can still hand us a wider transport reason.
+    if (!isRemoteNotificationReason(input.reason)) {
+      this.log(`[APNs] suppressed non-actionable notification reason=${input.reason}`)
+      return
+    }
     const tokenStore = this.deps.getTokenStore()
     const pusher = this.deps.getPusher() as Pushable | null
     if (!tokenStore || !pusher) return
@@ -109,10 +120,7 @@ export class RemoteAttentionApnsFanout {
           // silent background supplement so a closed/locked app gets CPU to
           // reconnect-and-hydrate — not just approvals.
           const blocksOnUser =
-            payload.reason === 'approval' ||
-            payload.reason === 'question' ||
-            payload.reason === 'yieldToUser' ||
-            payload.reason === 'taskNeedsAttention'
+            payload.reason === 'approval' || payload.reason === 'question'
           if (blocksOnUser && typeof pusher.pushSilentToToken === 'function') {
             try {
               const wakeResult = await pusher.pushSilentToToken(

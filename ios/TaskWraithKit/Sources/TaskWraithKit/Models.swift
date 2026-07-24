@@ -713,6 +713,10 @@ public struct RemoteTaskCard: Codable, Sendable, Equatable {
     /// so the iOS thread count matches the desktop sidebar.
     public let archived: Bool?
     public let runId: String?
+    /// Host-authoritative gate for a user-visible completion notification.
+    /// `status` may look terminal during stale-round recovery; this is true only
+    /// after the real round settles and no follow-up remains queued.
+    public var completionNotificationEligible: Bool? = nil
     /// One-screen text preview of the latest message (Mac-sanitized — the same
     /// field the desktop card shows). Used to enrich the foreground completion
     /// banner body. Older Mac builds omit it ⇒ nil.

@@ -320,6 +320,13 @@ export interface RemoteTaskCard {
   latestRunId?: string
   runStartedAt?: string
   runEndedAt?: string
+  /**
+   * Host-authoritative gate for a user-visible completion notification.
+   * Separate from `status`: stale-round recovery may deliberately project a
+   * still-persisted running round as visually complete, while notifications
+   * must wait for the real round terminal + drained follow-up queue.
+   */
+  completionNotificationEligible?: boolean
   preview: string
   previewTruncated: boolean
   pendingApprovalCount: number
@@ -1113,6 +1120,11 @@ export function buildRemoteTaskCard(
   const pendingQuestionCount = Math.max(0, Math.floor(options.pendingQuestionCount ?? 0))
   const pendingApprovalCount = Math.max(0, Math.floor(options.pendingApprovalCount ?? 0))
   const preview = previewForChat(chat, options.previewMaxChars ?? DEFAULT_PREVIEW_MAX)
+  const hasQueuedFollowup = hasQueuedRemoteComposerJobs(options.queuedComposerJobs)
+  const status = deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount, {
+    ensembleRound: chat.ensemble?.activeRound,
+    hasQueuedFollowup
+  })
   const card: RemoteTaskCard = {
     id: chat.appChatId,
     threadId: chat.appChatId,
@@ -1135,10 +1147,12 @@ export function buildRemoteTaskCard(
     workspaceId: chat.workspaceId && chat.workspaceId.length > 0 ? chat.workspaceId : null,
     provider: chat.provider ?? 'gemini',
     title: normalizeThreadTitle(chat.title, 'Untitled chat'),
-    status: deriveTaskStatus(latestRun, pendingApprovalCount, pendingQuestionCount, {
-      ensembleRound: chat.ensemble?.activeRound,
-      hasQueuedFollowup: hasQueuedRemoteComposerJobs(options.queuedComposerJobs)
-    }),
+    status,
+    completionNotificationEligible: isRemoteTaskCompletionNotificationEligible(
+      chat,
+      status,
+      { hasQueuedFollowup }
+    ),
     preview: preview.preview,
     previewTruncated: preview.truncated,
     pendingApprovalCount,
@@ -1278,6 +1292,22 @@ export function buildRemoteQueuedComposerPrompts(
 
 function hasQueuedRemoteComposerJobs(jobs: RunQueueJob[] | undefined): boolean {
   return Boolean(jobs?.some((job) => job.status === 'queued' && job.request?.remoteComposer))
+}
+
+/**
+ * Notification-only terminal policy. This intentionally does not change the
+ * task card's visual status or the ensemble lifecycle: it answers only whether
+ * a successful card is settled enough to interrupt the user.
+ */
+export function isRemoteTaskCompletionNotificationEligible(
+  chat: ChatRecord,
+  status: RemoteTaskStatus,
+  options: { hasQueuedFollowup?: boolean } = {}
+): boolean {
+  if (status !== 'success' || options.hasQueuedFollowup) return false
+  const round = chat.ensemble?.activeRound
+  if (!round) return true
+  return round.status === 'completed' && combinedQueuedPrompts(round).length === 0
 }
 
 export function buildRemoteTaskFeedSnapshot(

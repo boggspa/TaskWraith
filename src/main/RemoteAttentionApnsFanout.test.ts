@@ -43,7 +43,7 @@ describe('RemoteAttentionApnsFanout', () => {
       threadId: 'thread-id',
       approvalId: 'approval-id',
       summary: 'Run rm -rf /Users/dev/project?'
-    } as Omit<BridgeRemoteAttentionPushPayload, 'pairID'> & { summary: string })
+    } as never)
     await flushFanout()
 
     expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(2)
@@ -266,34 +266,33 @@ describe('RemoteAttentionApnsFanout', () => {
     expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(5)
   })
 
-  it('sends the silent wake supplement for yield-to-user notifications', async () => {
+  it.each([
+    'yieldToUser',
+    'taskNeedsAttention',
+    'ensemble',
+    'wakeup',
+    'resume',
+    'runFailed',
+    'runCancelled'
+  ] as const)('suppresses non-policy reason %s at the production fanout boundary', async (reason) => {
     const tokenStore = makeTokenStore()
-    const pushRemoteAttentionToToken = vi.fn(async () => ({
-      delivered: true,
-      apnsId: 'apns-1'
-    }))
-    const pushSilentToToken = vi.fn(async () => ({
-      delivered: true,
-      apnsId: 'apns-silent-1'
-    }))
+    const pushRemoteAttentionToToken = vi.fn()
+    const pushSilentToToken = vi.fn()
+    const log = vi.fn()
     const fanout = new RemoteAttentionApnsFanout({
       getTokenStore: () => tokenStore as never,
       getPusher: () => ({ pushRemoteAttentionToToken, pushSilentToToken }),
-      isUserAtDesktop: () => false
+      isUserAtDesktop: () => false,
+      log
     })
 
-    fanout.notify({ reason: 'yieldToUser', threadId: 'thread-id', runId: 'run-1' })
+    fanout.notify({ reason, threadId: 'thread-id', runId: 'run-1' } as never)
     await flushFanout()
 
-    expect(pushRemoteAttentionToToken).toHaveBeenCalledTimes(1)
-    expect(pushSilentToToken).toHaveBeenCalledTimes(1)
-    expect((pushRemoteAttentionToToken.mock.calls as unknown as AttentionPushCall[])[0][2]).toEqual(
-      expect.objectContaining({
-        pairID: 'pair-1',
-        reason: 'yieldToUser',
-        threadId: 'thread-id',
-        runId: 'run-1'
-      })
+    expect(pushRemoteAttentionToToken).not.toHaveBeenCalled()
+    expect(pushSilentToToken).not.toHaveBeenCalled()
+    expect(log).toHaveBeenCalledWith(
+      expect.stringContaining(`suppressed non-actionable notification reason=${reason}`)
     )
   })
 

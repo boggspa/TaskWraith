@@ -892,8 +892,9 @@ public final class RemoteSessionModel: ObservableObject {
 
     // MARK: - Foreground completion banners
 
-    /// When a task card flips running → success/failed LIVE while the app is in the
-    /// foreground, post a rich LOCAL notification built from data the phone already
+    /// When the Mac marks a task's successful completion as notification-eligible
+    /// LIVE while the app is in the foreground, post a rich LOCAL notification
+    /// built from data the phone already
     /// holds over the E2EE projection (`card.preview` + `diffSummaries`). The content
     /// is NEVER inlined into the Mac's routing-only remote push — the phone composes
     /// it locally. willPresent (PushAppDelegate) drops the Mac's generic
@@ -905,12 +906,13 @@ public final class RemoteSessionModel: ObservableObject {
         #if canImport(UIKit)
             guard !isDemo, !previous.isEmpty else { return }
             guard UIApplication.shared.applicationState == .active else { return }
-            var previousStatus: [String: String] = [:]
-            previousStatus.reserveCapacity(previous.count)
-            for card in previous { previousStatus[card.id] = card.status }
+            var previousCards: [String: RemoteTaskCard] = [:]
+            previousCards.reserveCapacity(previous.count)
+            for card in previous { previousCards[card.id] = card }
             for card in taskCards {
-                guard previousStatus[card.id] == "running" else { continue }
-                guard card.status == "success" || card.status == "failed" else { continue }
+                guard let prior = previousCards[card.id] else { continue }
+                guard CompletionNotificationPolicy.shouldNotify(previous: prior, current: card)
+                else { continue }
                 guard visibleThreadId != card.id else { continue }
                 postCompletionBanner(for: card)
             }
@@ -919,14 +921,13 @@ public final class RemoteSessionModel: ObservableObject {
 
     #if canImport(UIKit)
         private func postCompletionBanner(for card: RemoteTaskCard) {
-            let failed = card.status == "failed"
             let name = (card.title?.isEmpty == false) ? card.title! : "TaskWraith"
             let content = UNMutableNotificationContent()
-            content.title = failed ? "\u{26A0}\u{FE0F} \(name)" : name
+            content.title = name
             var lines: [String] = []
             if let summary = Self.bannerSentences(card.preview) { lines.append(summary) }
-            if !failed, let diff = diffBannerLine(forThread: card.id) { lines.append(diff) }
-            if lines.isEmpty { lines.append(failed ? "Run needs your attention." : "Run finished.") }
+            if let diff = diffBannerLine(forThread: card.id) { lines.append(diff) }
+            if lines.isEmpty { lines.append("Run finished.") }
             content.body = lines.joined(separator: "\n")
             content.sound = .default
             content.userInfo = ["tw_rich_local": true, "threadId": card.id]
@@ -3586,7 +3587,6 @@ public final class RemoteSessionModel: ObservableObject {
         }
 
         let nextTaskCards = Array(insertedCards.reversed()) + existingCards
-        if nextTaskCards != taskCards { taskCards = nextTaskCards }
         if nextApprovals != approvals { approvals = nextApprovals }
         if nextQuestions != questions { questions = nextQuestions }
         if nextWorkflows != workflows { workflows = nextWorkflows }
@@ -3595,6 +3595,9 @@ public final class RemoteSessionModel: ObservableObject {
         if nextThreadSnapshots != threadSnapshots { threadSnapshots = nextThreadSnapshots }
         if nextEnsembleStates != ensembleStates { ensembleStates = nextEnsembleStates }
         if nextDiffSummaries != diffSummaries { diffSummaries = nextDiffSummaries }
+        // Publish notification metadata first: taskCards.didSet may immediately
+        // compose the final banner and must not read the previous run's diff.
+        if nextTaskCards != taskCards { taskCards = nextTaskCards }
         if nextGitSnapshots != gitSnapshots { gitSnapshots = nextGitSnapshots }
         for appearance in shellAppearances { applyShellAppearance(appearance) }
     }
@@ -5594,24 +5597,6 @@ public final class RemoteSessionModel: ObservableObject {
         for appearance in shellAppearances {
             applyShellAppearance(appearance)
         }
-        // Non-destructive empty-snapshot guard (Codex-diagnosed): a Mac
-        // mid-restart can emit an establish snapshot BEFORE its state has
-        // settled. Accepting empty-over-populated as authoritative produced
-        // 'connected, no chats' — keep what we have; the delayed rehydrate
-        // snapshot (Mac-side) supplies the real state moments later.
-        if tasks.isEmpty, !taskCards.isEmpty {
-            print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
-        } else {
-            if taskCards != tasks {
-                taskCards = tasks
-            }
-            for card in tasks {
-                rememberWorkspace(for: card)
-            }
-            if !tasks.isEmpty {
-                fallbackThreadListCardIds.removeAll()
-            }
-        }
         // Non-destructive empty guard for workflows — but only treat an empty
         // workflow set as "settling" when the WHOLE snapshot is empty (no task
         // cards either). A snapshot that carries task cards yet no workflows is
@@ -5695,6 +5680,27 @@ public final class RemoteSessionModel: ObservableObject {
         }
         if diffSummaries != nextDiffSummaries {
             diffSummaries = nextDiffSummaries
+        }
+        // Non-destructive empty-snapshot guard (Codex-diagnosed): a Mac
+        // mid-restart can emit an establish snapshot BEFORE its state has
+        // settled. Accepting empty-over-populated as authoritative produced
+        // 'connected, no chats' — keep what we have; the delayed rehydrate
+        // snapshot (Mac-side) supplies the real state moments later.
+        //
+        // Publish task cards only after their embedded ensemble/diff metadata:
+        // taskCards.didSet may synchronously compose the completion banner.
+        if tasks.isEmpty, !taskCards.isEmpty {
+            print("[tw] ignoring empty snapshot (have \(taskCards.count) cards)")
+        } else {
+            if taskCards != tasks {
+                taskCards = tasks
+            }
+            for card in tasks {
+                rememberWorkspace(for: card)
+            }
+            if !tasks.isEmpty {
+                fallbackThreadListCardIds.removeAll()
+            }
         }
         var nextGitSnapshots = gitSnapshots
         for (workspaceId, git) in incomingGitSnapshots {

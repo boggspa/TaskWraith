@@ -405,6 +405,7 @@ describe('RemoteTaskProjection', () => {
     )
 
     expect(card.status).toBe('running')
+    expect(card.completionNotificationEligible).toBe(false)
     expect(card.queuedComposerPrompts).toHaveLength(1)
     expect(card.queuedComposerPrompts?.[0]?.id).toBe('queued-follow-up')
   })
@@ -873,6 +874,7 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('success')
+    expect(card.completionNotificationEligible).toBe(false)
     expect(card.ensembleState).toMatchObject({
       status: 'completed',
       queuedPromptCount: 0
@@ -925,7 +927,7 @@ describe('RemoteTaskProjection', () => {
     // Mid-round: participant p1 has finished (its ChatRun is 'success' and is
     // the latest in chat.runs) but the round itself is still 'running' because
     // p2 has not spoken yet. The card must NOT report 'success' off p1 alone —
-    // otherwise maybeNotifyRemoteTaskNeedsAttention emits a premature
+    // otherwise the notification tracker sees a premature
     // runComplete push per participant instead of one at round end.
     const card = buildRemoteTaskCard(
       chat({
@@ -965,6 +967,7 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('running')
+    expect(card.completionNotificationEligible).toBe(false)
   })
 
   it('reports "success" for an ensemble card once the round completes', () => {
@@ -999,6 +1002,7 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('success')
+    expect(card.completionNotificationEligible).toBe(true)
   })
 
   it('keeps a completed ensemble card non-terminal while follow-up prompts are queued', () => {
@@ -1034,6 +1038,7 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('running')
+    expect(card.completionNotificationEligible).toBe(false)
     expect(card.ensembleState?.queuedPromptCount).toBe(1)
   })
 
@@ -1045,6 +1050,7 @@ describe('RemoteTaskProjection', () => {
       })
     )
     expect(card.status).toBe('success')
+    expect(card.completionNotificationEligible).toBe(true)
   })
 
   it('derives per-lane todo plans from the activity stream (ensemble PlanRail)', () => {

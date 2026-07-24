@@ -426,14 +426,6 @@ export interface EnsembleOrchestratorDeps {
   ) => NormalizedProviderUsageSnapshot | null | undefined
   scheduleWakeupTimer?: (wakeup: EnsembleWakeupRecord) => void
   cancelWakeupTimer?: (wakeupId: string) => void
-  notifyUserAttention?: (input: {
-    reason: 'yieldToUser'
-    chatId: string
-    workspaceId?: string | null
-    runId?: string
-    roundId?: string
-    participantId?: string
-  }) => void
   /**
    * 1.0.7 — record a finished participant run's usage into the shared usage
    * store. Ensemble runs complete inside the orchestrator (not via the
@@ -12410,14 +12402,6 @@ export class EnsembleOrchestrator {
             routedByYieldTarget = true
             this.clearYieldReturnStack(runtime)
             remaining.length = 0
-            this.deps.notifyUserAttention?.({
-              reason: 'yieldToUser',
-              chatId: runtime.chatId,
-              workspaceId: chat.workspaceId ?? null,
-              runId: run.runId,
-              roundId: runtime.roundId,
-              participantId: participant.id
-            })
             break
           case 'background': {
             const backgroundTarget = chat.ensemble.participants.find(
