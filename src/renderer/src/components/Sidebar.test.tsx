@@ -9,6 +9,7 @@ import type {
 } from '../../../main/store/types'
 import {
   Sidebar,
+  SidebarSettingsMenu,
   DevicesFooterPopover,
   ApprovalsFooterPopover,
   SharesFooterPopover,
@@ -263,6 +264,23 @@ function makeApproval(overrides: Partial<AgentApprovalRequest> = {}): AgentAppro
 
 afterEach(() => {
   vi.unstubAllGlobals()
+})
+
+describe('Sidebar settings quick menu', () => {
+  it('includes the ChatGPT composer shell beside the other provider shells', () => {
+    const html = renderToStaticMarkup(
+      <SidebarSettingsMenu
+        pane="composer"
+        setPane={() => undefined}
+        onOpenSettings={() => undefined}
+        onClose={() => undefined}
+      />
+    )
+
+    expect(html).toContain('ChatGPT shell')
+    expect(html.indexOf('Codex shell')).toBeLessThan(html.indexOf('ChatGPT shell'))
+    expect(html.indexOf('ChatGPT shell')).toBeLessThan(html.indexOf('Claude shell'))
+  })
 })
 
 describe('Sidebar masthead', () => {

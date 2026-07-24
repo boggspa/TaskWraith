@@ -530,6 +530,7 @@ export type SidebarSettingsMenuPane = 'root' | 'themes' | 'composer' | 'accent' 
 const SIDEBAR_COMPOSER_STYLE_OPTIONS: Array<{ value: ComposerStyle; label: string }> = [
   { value: 'default', label: 'TaskWraith native' },
   { value: 'codex', label: 'Codex shell' },
+  { value: 'chatgpt', label: 'ChatGPT shell' },
   { value: 'claude', label: 'Claude shell' },
   { value: 'cursor', label: 'Cursor shell' },
   { value: 'grok', label: 'Grok shell' },
