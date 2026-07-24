@@ -37,7 +37,7 @@ tokens (`#141414` bg, `#1c1c20/#24242a/#2e2e36` surfaces, chroma
   allowlist add-form preselects every provider + both approval modes (one-tap
   grant). The gate still exists for users who want it.
 
-## Current state (iOS 0.1.0 build 79; desktop 1.8.4 baseline)
+## Current state (iOS 0.1.0 build 82; desktop 1.8.8 baseline)
 
 - App icon: current variants are regular, WWDC26, monoline, and glass, backed by
   the checked-in `AppIcon-*` asset sets.
@@ -1008,6 +1008,64 @@ The Swift follow-up landed in `a175ff111` and was integrated by `bee0e467e` for
 TaskWraith 1.8.2: workflow rows now expose pause/resume and run-now swipe and
 context-menu controls with standard bridge-ack reconciliation. Destructive
 `workflowDelete` remains intentionally deferred.
+
+## v0.44 — desktop 1.8.5–1.8.8 parity catch-up (2026-07-14 → 2026-07-24)
+
+iOS stayed ahead of its own design doc while desktop moved fast through 1.8.5–
+1.8.8. This entry records the headlines that landed on the phone (or were already
+solid) between the v0.43 audit boundary and build 82 / desktop 1.8.8 — not a
+full feature dump, just the parity-relevant set so DESIGN.md stops lying about
+build 79 / 1.8.4.
+
+### Already solid on iOS (no further action)
+
+- **Ensemble stageRole + Boss/Captain roster editing** — mutual exclusion,
+  wire-key guards (`isBoss` / do-not-rename comments), Mac-authoritative
+  roster mutation. Verified in EnsembleRosterSheet / Models / RemoteSessionModel.
+- **Transcript settled-stack collapse** — one-line activity fold plus second-level
+  `.superStack`, with explicit desktop-parity comments in
+  TranscriptStackCollapse / ThreadDetailViews. Real-device visual QA remains
+  the only residual (not a code gap).
+- **AntiGravity + Gemini retirement mapping** — `retiredProviderIds=["gemini"]`,
+  static live set keeps Gemini out, dynamic AntiGravity admission via nonempty
+  Mac model catalog (`isProviderOfferedByModelCatalog`). Covered by
+  ComposerProviderAdmissionTests; already committed before this session.
+- **Workflow write-actions** — pause/resume/run-now on the phone; only
+  `workflowDelete` deferred pending a confirm/elevation contract (see follow-ups).
+
+### Landed or closing in this parity session
+
+- **ChatGPT composer shell (14th style)** — desktop's VISUAL-ONLY Codex-top +
+  Cursor-body blend mirrored into `TWComposerStyle.chatgpt` +
+  ComposerShellResolver; COMPOSER-SHELL-PARITY.md Part A 13→14.
+- **Usage projection Plan / Spend / Context + AntiGravity budget** — additive
+  optional fields on the Mac→iOS usage broadcast; iOS UsagePanel stays
+  quota-only when fields are absent (backward compatible).
+- **Demo Mode catalog/notice reconcile** — demo `providerModels` fixture now
+  includes `antigravity` + `kimi` (and the other first-launch providers) so the
+  "New Additions" notice is selectable, not just readable. Live paired-Mac paths
+  are unchanged.
+- **Live working-token estimate (S4 boundary)** — desktop unifies on
+  `shared/tokenEstimate.ts` and streams mid-run ≈ tallies on an ephemeral
+  Electron-only working-telemetry lane that never enters ChatRecord /
+  run.stats / remote projection. iOS TelemetryFooterRail and ContextDonut
+  still consume sealed `RunSummary` tokens only, so mid-stream stays blank
+  or prior-seal until terminal (graceful, not broken). Bridging live estimates
+  needs a new Mac→iOS working-telemetry payload — deferred follow-up, not
+  claimed parity this session.
+
+### Desktop 1.8.8 surface map (iOS relevance)
+
+From desktop CHANGELOG 1.8.8: AntiGravity BYOK roster + spend meter, ChatGPT
+composer shell, live estimated working telemetry (Grok/Cursor/Kimi), Boss
+full-roster fan-out, transcript super-groups, blackboard housekeeping. iOS
+either already mirrors these (ensemble/transcript/AGY admission) or is catching
+up in the slices above; provider login/key entry remains Mac-owned.
+
+Verified baseline for this entry: iOS project `CURRENT_PROJECT_VERSION` = 82
+(`ios/TaskWraithApp/project.yml`); desktop packaging may still show 1.8.7 in
+`package.json` while CHANGELOG already records 1.8.8 — use the changelog /
+ship baseline as the design-doc desktop pin.
 
 ## Current follow-ups
 

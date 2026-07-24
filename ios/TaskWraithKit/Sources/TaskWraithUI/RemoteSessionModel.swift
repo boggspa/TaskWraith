@@ -1887,8 +1887,16 @@ public final class RemoteSessionModel: ObservableObject {
           {"id":"s2b","role":"assistant","kind":"message","speaker":"Codex","preview":"Added to blackboard — Fact: Test asserted before the upload buffer drained.","timestamp":"2026-06-18T17:05:10Z"}
         ]}
         """
+        // Demo catalog must cover every provider the demo notice advertises.
+        // AntiGravity is NOT in the static live set — dynamic admission needs a
+        // nonempty catalog (TWTheme.isProviderOfferedByModelCatalog). Kimi is
+        // live-selectable but still needs models so the demo picker is usable.
+        // AGY IDs/labels mirror AntigravityGeminiApiStaticModels (`gemini-api:`
+        // prefix). Kimi IDs/labels mirror StaticProviderModels KIMI_STATIC_MODELS
+        // (kimi-k3 / kimi-k2.7-code label "K2.7 Coding"; Highspeed is a speed
+        // tier, not the model label).
         let providerModelsJSON = """
-        {"claude":[{"id":"cli-default","label":"Default"}],"codex":[{"id":"cli-default","label":"Default"}]}
+        {"claude":[{"id":"cli-default","label":"Default"}],"codex":[{"id":"cli-default","label":"Default"}],"kimi":[{"id":"kimi-k3","label":"K3"},{"id":"kimi-k2.7-code","label":"K2.7 Coding"}],"antigravity":[{"id":"gemini-api:gemini-3.1-pro","label":"Gemini 3.1 Pro"},{"id":"gemini-api:gemini-3.1-flash-lite","label":"Gemini 3.1 Flash-Lite"},{"id":"gemini-api:gemini-2.5-pro","label":"Gemini 2.5 Pro"},{"id":"gemini-api:gemini-2.5-flash","label":"Gemini 2.5 Flash"}],"cursor":[{"id":"cli-default","label":"Default"}],"grok":[{"id":"cli-default","label":"Default"}],"ollama":[{"id":"qwen3:4b-instruct","label":"Qwen 3 (4B Param)"}]}
         """
         let workflowsJSON = """
         [
