@@ -380,7 +380,6 @@ import {
   normalizeWorkspacePath,
   resolveComposerEffectiveWorkspacePath,
   updateComposerWorktreeSelectionForChat,
-  worktreeSelectionRequiredWarning,
   type ComposerWorktreeSelection
 } from './lib/composerWorktreeSelection'
 import {
@@ -13172,29 +13171,13 @@ function App(): React.JSX.Element {
               runtimeProfile: runRuntimeProfile
             })
           : undefined
-      const worktreeRequiredMessage = worktreeSelectionRequiredWarning(runtimeWorktreeIntent)
-      if (worktreeRequiredMessage) {
-        settleProjectReferenceContextForRequest(request, 'rejected')
-        updateRunQueueJobStatus(
-          currentRunId,
-          'failed',
-          'Worktree selection required.',
-          worktreeRequiredMessage
-        )
-        appendThreadRawLog(runChat.appChatId, { type: 'stderr', content: worktreeRequiredMessage })
-        updateChatById(runChat.appChatId, (source) => ({
-          ...source,
-          messages: [
-            ...source.messages,
-            {
-              id: createMessageId(),
-              role: 'error',
-              content: worktreeRequiredMessage,
-              timestamp: new Date().toISOString()
-            }
-          ]
-        }))
-        return
+      // A runtime profile can require an isolated worktree with no composer
+      // selection: main preflight now allocates and persists one
+      // asynchronously (ThreadWorktreeAllocator). Keep the run pending with a
+      // visible preparing state; allocation failures surface through the
+      // existing preflight error path with the allocator's recovery guidance.
+      if (runtimeWorktreeIntent?.status === 'selection-required') {
+        updateRunQueueJobStatus(currentRunId, 'starting', 'Preparing an isolated worktree…')
       }
       const composerEffectiveWorkspacePath =
         runtimeWorktreeIntent?.status === 'selected'
