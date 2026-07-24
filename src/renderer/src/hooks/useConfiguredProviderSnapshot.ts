@@ -41,6 +41,25 @@ export function antigravityGeminiApiSecretIdentityIsConfigured(identity: string)
   return typeof identity === 'string' && identity.startsWith('configured:')
 }
 
+/**
+ * Renderer dispatch-lane admission: the canonical live set plus an admitted
+ * AntiGravity. `antigravity` is deliberately outside
+ * `LIVE_SELECTABLE_PROVIDER_IDS`, so the App send/run/grant handlers must gate
+ * on THIS union — mirroring main's `assertLiveProviderId` — not on the bare
+ * live-set predicate. Gating dispatch on the bare set while the picker offered
+ * the provider made every AntiGravity model selectable but physically unable
+ * to send: the renderer rejected before IPC ever fired.
+ */
+export function isDispatchableProviderForRun(
+  provider: string | null | undefined,
+  antigravityAdmitted: boolean
+): boolean {
+  return (
+    isLiveSelectableProvider(provider) ||
+    (provider === ANTIGRAVITY_PROVIDER_ID && antigravityAdmitted === true)
+  )
+}
+
 export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
   const [identity, setIdentity] = useState('')
   const [mutationGeneration, setMutationGeneration] = useState(0)

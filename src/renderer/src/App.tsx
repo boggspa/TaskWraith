@@ -27,6 +27,7 @@ import { resolveSlashParticipantForChat } from './lib/resolveSlashParticipant'
 import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
 import {
   useConfiguredProviderSnapshot,
+  isDispatchableProviderForRun,
   useAntigravityGeminiApiSecretRefreshIdentity,
   antigravityGeminiApiSecretIdentityIsConfigured,
   type ConfiguredProviderSnapshot
@@ -1895,6 +1896,16 @@ function App(): React.JSX.Element {
   const antigravityAdmissible =
     antigravityOptInActive ||
     antigravityGeminiApiSecretIdentityIsConfigured(antigravityGeminiApiSecretIdentity)
+  const antigravityAdmissibleRef = useRef(antigravityAdmissible)
+  antigravityAdmissibleRef.current = antigravityAdmissible
+  // Dispatch-lane admission for the send/run/grant handlers below. The snapshot
+  // union above governs what pickers OFFER; this governs what may DISPATCH, and
+  // the two must widen together — gating dispatch on the bare live set while
+  // the picker offered AntiGravity made its models selectable but physically
+  // unable to send. Reads the ref so the []-dep useCallback handlers stay
+  // fresh across admission changes.
+  const isRunnableProvider = (provider: string | null | undefined): boolean =>
+    isDispatchableProviderForRun(provider, antigravityAdmissibleRef.current)
   const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
     `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}:` +
       `${settings?.antigravityGeminiApiDisclosureAcceptedAt || ''}:` +
@@ -7003,9 +7014,10 @@ function App(): React.JSX.Element {
     // default. providerOverride threads it through; falls back to the
     // chat-level currentProvider when not specified (the solo path).
     const targetProvider = providerOverride ?? currentProvider
-    // New grants only for live-selectable providers. Removals still run so
-    // historical/unavailable provider grants can be cleaned up.
-    if (enabled && !isLiveSelectableProvider(targetProvider)) {
+    // New grants only for dispatchable providers (live set + admitted
+    // AntiGravity). Removals still run so historical/unavailable provider
+    // grants can be cleaned up.
+    if (enabled && !isRunnableProvider(targetProvider)) {
       setRawLogs((prev) => [
         ...prev,
         {
@@ -14727,7 +14739,7 @@ function App(): React.JSX.Element {
     )
     if (
       baseRequest.chatRecord?.chatKind !== 'ensemble' &&
-      !isLiveSelectableProvider(baseRequest.provider)
+      !isRunnableProvider(baseRequest.provider)
     ) {
       settleProjectReferenceContextForRequest(baseRequest, 'rejected')
       appendThreadRawLog(baseRequest.chatRecord?.appChatId || currentChat?.appChatId, {
@@ -14876,7 +14888,7 @@ function App(): React.JSX.Element {
             null
           : null
       const sideProvider = selectedSideParticipant?.provider || parentProvider
-      if (!isLiveSelectableProvider(sideProvider)) {
+      if (!isRunnableProvider(sideProvider)) {
         const message = `${getProviderLabel(sideProvider)} managed runs are unavailable, so a new side chat cannot use this provider. Switch to a live provider first.`
         appendThreadRawLog(parentChat.appChatId, { type: 'info', content: message })
         window.alert(message)
@@ -15416,7 +15428,7 @@ function App(): React.JSX.Element {
     dmTargetParticipantId?: string
   ) => {
     if (!sideChat) return
-    if (!isLiveSelectableProvider(sideComposerProvider)) {
+    if (!isRunnableProvider(sideComposerProvider)) {
       const message = `${getProviderLabel(sideComposerProvider)} managed runs are unavailable. Switch this linked chat to a live provider to continue.`
       appendThreadRawLog(sideChat.appChatId, { type: 'info', content: message })
       window.alert(message)
@@ -16871,7 +16883,7 @@ function App(): React.JSX.Element {
     const { chat, prompt: sourcePrompt } = getCockpitRunSource(lane)
     if (!chat) return
     const provider = lane.provider || getChatProvider(chat)
-    if (!isLiveSelectableProvider(provider)) {
+    if (!isRunnableProvider(provider)) {
       const message = `${getProviderLabel(provider)} managed runs are unavailable, so this run lane cannot be duplicated. Switch to a live provider first.`
       appendThreadRawLog(chat.appChatId, { type: 'info', content: message })
       window.alert(message)
@@ -16960,7 +16972,7 @@ function App(): React.JSX.Element {
       chatByIdRef.current.get(card.sourceChatId) ||
       chats.find((item) => item.appChatId === card.sourceChatId)
     const provider = card.recommendedProvider || card.sourceProvider
-    if (!isLiveSelectableProvider(provider)) {
+    if (!isRunnableProvider(provider)) {
       const message = `${getProviderLabel(provider)} managed runs are unavailable, so this handoff cannot be dispatched to that provider. Choose a live provider first.`
       appendThreadRawLog(sourceChat?.appChatId || card.sourceChatId, {
         type: 'info',
@@ -20285,7 +20297,7 @@ function App(): React.JSX.Element {
     (sideComposerSourceChat ? getChatProvider(sideComposerSourceChat) : sideProvider)
   const sideCanRun = Boolean(
     sideChat &&
-      isLiveSelectableProvider(sideComposerProvider) &&
+      isRunnableProvider(sideComposerProvider) &&
       (getChatScope(sideChat) === 'global' || sideWorkspace)
   )
   const sideComposerModelOptionsRaw = getProviderModelOptions(sideComposerProvider)
@@ -20644,7 +20656,7 @@ function App(): React.JSX.Element {
     if (!sideChat || isSideEnsembleComposerLocked || sideIsGlobalChat || !sideWorkspace?.path) {
       return false
     }
-    if (enabled && !isLiveSelectableProvider(sideComposerProvider)) {
+    if (enabled && !isRunnableProvider(sideComposerProvider)) {
       setRawLogs((prev) => [
         ...prev,
         {
@@ -25837,7 +25849,7 @@ function App(): React.JSX.Element {
         imageAttachments: paneAttachments,
         discordContextSelection: discordContextSelectionByChatIdRef.current[chatId] || null
       })
-      if (!isLiveSelectableProvider(request.provider)) {
+      if (!isRunnableProvider(request.provider)) {
         settleProjectReferenceContextForRequest(request, 'rejected')
         const message = `${getProviderLabel(request.provider)} managed runs are unavailable. Switch this pane to a live provider to continue.`
         appendThreadRawLog(chatId, { type: 'info', content: message })
@@ -25945,7 +25957,7 @@ function App(): React.JSX.Element {
       const paneWorkspace = getWorkspaceForChat(paneChat)
       if (!paneWorkspace?.path) return false
       const paneProvider = getChatProvider(paneChat)
-      if (enabled && !isLiveSelectableProvider(paneProvider)) {
+      if (enabled && !isRunnableProvider(paneProvider)) {
         setRawLogs((prev) => [
           ...prev,
           {

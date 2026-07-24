@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from 'vitest'
 import {
   antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
+  isDispatchableProviderForRun,
   ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT,
   notifyAntigravityGeminiApiSecretMutation,
   sanitizeConfiguredProviderSnapshot,
@@ -215,6 +216,34 @@ describe('antigravityGeminiApiSecretRefreshIdentity', () => {
     for (const identity of ['unconfigured::mutation-0', 'unavailable:mutation-1', ':mutation-0', '']) {
       expect(antigravityGeminiApiSecretIdentityIsConfigured(identity)).toBe(false)
     }
+  })
+})
+
+describe('isDispatchableProviderForRun', () => {
+  it('admits the live set regardless of AntiGravity admission', () => {
+    for (const provider of ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama']) {
+      expect(isDispatchableProviderForRun(provider, false)).toBe(true)
+      expect(isDispatchableProviderForRun(provider, true)).toBe(true)
+    }
+  })
+
+  it('admits antigravity only when a lane is admitted', () => {
+    // The regression this guards: the picker offered AntiGravity via the
+    // snapshot union while every App dispatch gate still used the bare live-set
+    // predicate, so a selected AntiGravity model physically could not send.
+    expect(isDispatchableProviderForRun('antigravity', true)).toBe(true)
+    expect(isDispatchableProviderForRun('antigravity', false)).toBe(false)
+  })
+
+  it('keeps retired and unknown providers out even when antigravity is admitted', () => {
+    for (const provider of ['gemini', 'made-up', '', null, undefined]) {
+      expect(isDispatchableProviderForRun(provider, true)).toBe(false)
+    }
+  })
+
+  it('fails closed on a non-boolean admission flag', () => {
+    expect(isDispatchableProviderForRun('antigravity', 'yes' as unknown as boolean)).toBe(false)
+    expect(isDispatchableProviderForRun('antigravity', 1 as unknown as boolean)).toBe(false)
   })
 })
 
