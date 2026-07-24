@@ -920,6 +920,24 @@ struct ThreadDetailView: View {
         settledDisplayItemsBeforeLive + settledDisplayItemsAfterLive
     }
 
+    /// Changes exactly when the settled fold shape changes — a stack or
+    /// super-group forming/dissolving, the force-expanded tail moving on, or
+    /// the user toggling a summary line — so the one-liner swap animates
+    /// instead of teleporting, without ever animating streaming updates
+    /// (display-item ids stay stable while text streams).
+    private var settledFoldMotionSignature: String {
+        var parts: [String] = [tailForceExpandedItemId ?? ""]
+        for item in visibleDisplayItems {
+            switch item {
+            case .settledStack(let id, _, _, _): parts.append(id)
+            case .superStack(let id, _, _, _, _, _): parts.append("super-\(id)")
+            default: continue
+            }
+        }
+        parts.append(contentsOf: expandedSettledStacks.sorted())
+        return parts.joined(separator: "|")
+    }
+
     /// One row of the LIVE block: a snapshot tool row or a streamed text
     /// segment, in finished-transcript order.
     private enum LiveElement: Identifiable {
@@ -1356,6 +1374,9 @@ struct ThreadDetailView: View {
                         .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                         .listRowBackground(Color.clear)
                         .listRowSeparator(.hidden)
+                        .animation(
+                            ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
+                            value: settledFoldMotionSignature)
                     // Desktop parity: each run's Task-complete card follows
                     // its final transcript row, persisting in the thread.
                     if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
@@ -1409,6 +1430,9 @@ struct ThreadDetailView: View {
                             .listRowInsets(EdgeInsets(top: 2, leading: 12, bottom: 2, trailing: 12))
                             .listRowBackground(Color.clear)
                             .listRowSeparator(.hidden)
+                            .animation(
+                                ComposerMotion.inlineAnimation(reduceMotion: reduceMotion),
+                                value: settledFoldMotionSignature)
                         if showsRunCompleteSummary, let runCard = runCardSummary(after: item.lastRow) {
                             TaskCompleteCard(
                                 run: runCard,
