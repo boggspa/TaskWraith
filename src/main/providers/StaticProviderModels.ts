@@ -267,7 +267,14 @@ export const CODEX_STAGED_ROLLOUT_MODEL_IDS: ReadonlySet<string> = new Set([
 // TaskWraith until the shared lifecycle schedule reaches a verified sunset.
 export const CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS: ReadonlySet<string> = new Set([
   'gpt-5.4',
-  'gpt-5.4-mini'
+  'gpt-5.4-mini',
+  // 2026-07-25: a later CLI catalog update dropped the GPT-5.3 Codex Spark
+  // research-preview row from `model/list` the same way, which silently
+  // removed it from every picker (the merge only re-appends listed ids).
+  // Spark has NO published sunset (see CODEX_MODEL_RETIREMENTS) and its
+  // static row is already hedged ("Research preview where available"), so
+  // keep it offered; the CLI's own row wins the id-dedupe if it returns.
+  'gpt-5.3-codex-spark'
 ])
 
 // Fallback default when a persisted/unknown id can't be resolved. Deliberately

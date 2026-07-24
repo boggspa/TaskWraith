@@ -319,8 +319,13 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     expect(isPreviewCatalogModelId('preview:openai:gpt-5.6:sol')).toBe(false)
   })
 
-  it('keeps explicitly runnable GPT-5.4 rows available when CLI discovery omits them', () => {
-    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS).toEqual(new Set(['gpt-5.4', 'gpt-5.4-mini']))
+  it('keeps explicitly runnable rows available when CLI discovery omits them', () => {
+    // 5.4 / 5.4-mini dropped from model/list at CLI 0.144.0; the Spark
+    // research-preview row was dropped by a later catalog update the same way.
+    // None have a published sunset, so TaskWraith keeps offering them.
+    expect(CODEX_EXPLICITLY_RUNNABLE_MODEL_IDS).toEqual(
+      new Set(['gpt-5.4', 'gpt-5.4-mini', 'gpt-5.3-codex-spark'])
+    )
   })
 
   it('adds Max on the whole GPT-5.6 trio and Ultra(code) on Sol + Terra only', () => {
@@ -438,7 +443,8 @@ describe('mergeCodexLiveModelRows', () => {
       'gpt-5.6-terra',
       'gpt-5.6-luna',
       'gpt-5.4',
-      'gpt-5.4-mini'
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark'
     ])
     // The live row object itself is preserved (not replaced by a static row).
     expect(merged?.[0]).toBe(live[0])
@@ -465,19 +471,21 @@ describe('mergeCodexLiveModelRows', () => {
       { id: 'gpt-5.6-luna' },
       { id: 'gpt-5.5', isDefault: true },
       { id: 'gpt-5.4' },
-      { id: 'gpt-5.4-mini' }
+      { id: 'gpt-5.4-mini' },
+      { id: 'gpt-5.3-codex-spark' }
     ]
     const merged = mergeCodexLiveModelRows(live, staticFallback, {
       includePreviewAppends: true
     })
-    expect(merged).toHaveLength(6)
+    expect(merged).toHaveLength(7)
     expect(merged?.map((model) => model.id)).toEqual([
       'gpt-5.6-sol',
       'gpt-5.6-terra',
       'gpt-5.6-luna',
       'gpt-5.5',
       'gpt-5.4',
-      'gpt-5.4-mini'
+      'gpt-5.4-mini',
+      'gpt-5.3-codex-spark'
     ])
   })
 })
