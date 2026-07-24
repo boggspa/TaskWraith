@@ -4,6 +4,7 @@ import {
   BLACKBOARD_MANUAL_ROUND_ID,
   BLACKBOARD_MAX_ENTRIES,
   BLACKBOARD_MAX_KEY_LEN,
+  BLACKBOARD_MAX_POLL_OPTIONS,
   BLACKBOARD_MAX_STORE_LEN,
   BLACKBOARD_MAX_VALUE_LEN,
   deriveBlackboardFromRoundSummary,
@@ -22,6 +23,7 @@ import {
   selectBlackboardReadWindow,
   selectUnseenBlackboard,
   upsertBlackboardEntry,
+  validateBlackboardPollOptions,
   validateBlackboardPostFields
 } from './Blackboard'
 
@@ -37,9 +39,39 @@ function entry(overrides: Partial<BlackboardEntry> = {}): BlackboardEntry {
     scope: overrides.scope ?? 'session',
     ...(overrides.derivedFrom ? { derivedFrom: overrides.derivedFrom } : {}),
     createdAt: overrides.createdAt ?? '2026-05-31T00:00:00.000Z',
-    ...(overrides.seenBy ? { seenBy: overrides.seenBy } : {})
+    ...(overrides.seenBy ? { seenBy: overrides.seenBy } : {}),
+    ...(overrides.poll ? { poll: overrides.poll } : {})
   }
 }
+
+describe('validateBlackboardPollOptions', () => {
+  it('normalizes 2–6 unique plain-text options', () => {
+    expect(validateBlackboardPollOptions(['  Ship now  ', 'Keep working'])).toEqual({
+      ok: true,
+      options: ['Ship now', 'Keep working']
+    })
+    expect(
+      validateBlackboardPollOptions(
+        Array.from({ length: BLACKBOARD_MAX_POLL_OPTIONS }, (_, index) => `Choice ${index + 1}`)
+      ).ok
+    ).toBe(true)
+  })
+
+  it('rejects malformed, duplicate, and oversized options', () => {
+    expect(validateBlackboardPollOptions(['only one'])).toMatchObject({
+      ok: false,
+      code: 'blackboard_poll_options_invalid'
+    })
+    expect(validateBlackboardPollOptions(['Yes', ' yes '])).toMatchObject({
+      ok: false,
+      code: 'blackboard_poll_options_duplicate'
+    })
+    expect(validateBlackboardPollOptions(['Yes', 'x'.repeat(161)])).toMatchObject({
+      ok: false,
+      code: 'blackboard_poll_option_too_long'
+    })
+  })
+})
 
 describe('normalizeBlackboardCategory', () => {
   it('passes through valid categories', () => {
@@ -146,6 +178,26 @@ describe('makeBlackboardEntry', () => {
     expect(e!.value).toBe(long)
     expect(e!.value.length).toBeGreaterThan(BLACKBOARD_MAX_VALUE_LEN)
     expect(e!.value.endsWith('…')).toBe(false)
+  })
+
+  it('creates a durable open poll with an eligibility snapshot', () => {
+    const e = makeBlackboardEntry({
+      ...base,
+      key: 'release-vote',
+      value: '**Ship this release?**',
+      pollOptions: ['Ship', 'Keep working'],
+      pollEligibleParticipantIds: ['p1', 'p2', 'p2'],
+      createdAt: '2026-05-31T00:00:00.000Z'
+    })
+
+    expect(e?.poll).toEqual({
+      status: 'open',
+      options: ['Ship', 'Keep working'],
+      votes: [],
+      eligibleParticipantIds: ['p1', 'p2'],
+      includeUser: true,
+      updatedAt: '2026-05-31T00:00:00.000Z'
+    })
   })
 
   it('rejects stored values over the store limit instead of silently clamping', () => {
@@ -502,6 +554,56 @@ describe('formatBlackboardForPrompt', () => {
     expect(out).toContain('[truncated origLen=')
     expect(out).toContain('(—Codex)')
   })
+
+  it('injects durable poll choices, tally, id, and voting instructions', () => {
+    const pollEntry = entry({
+      id: 'blackboard-poll-1',
+      key: 'release-vote',
+      value: 'Ship this release?',
+      category: 'decision',
+      poll: {
+        status: 'open',
+        options: ['Ship', 'Keep working'],
+        votes: [
+          {
+            voterId: 'p1',
+            choice: 'Ship',
+            votedAt: '2026-05-31T00:01:00.000Z'
+          }
+        ],
+        eligibleParticipantIds: ['p1', 'p2'],
+        includeUser: true,
+        updatedAt: '2026-05-31T00:01:00.000Z'
+      }
+    })
+
+    const out = formatBlackboardForPrompt([pollEntry])
+    expect(out).toContain('poll open')
+    expect(out).toContain('"Ship" (1)')
+    expect(out).toContain('"Keep working" (0)')
+    expect(out).toContain('1/2 participants voted')
+    expect(out).toContain(
+      'ensemble_poll_response({ pollId: "blackboard-poll-1", choice: "<exact option>" })'
+    )
+  })
+
+  it('does not crash prompt injection when a persisted poll is malformed', () => {
+    const malformed = entry({
+      id: 'blackboard-poll-bad',
+      poll: {
+        status: 'open',
+        options: ['Ship', 'Keep working'],
+        votes: [null] as unknown as NonNullable<BlackboardEntry['poll']>['votes'],
+        eligibleParticipantIds: ['p1', 'p2'],
+        includeUser: true,
+        updatedAt: '2026-05-31T00:01:00.000Z'
+      }
+    })
+
+    expect(formatBlackboardForPrompt([malformed])).toContain(
+      '[poll unavailable: malformed]'
+    )
+  })
 })
 
 describe('deriveBlackboardFromRoundSummary', () => {
@@ -592,19 +694,35 @@ describe('deriveBlackboardFromRoundSummary', () => {
 })
 
 describe('Wave 2 acceptance', () => {
-  it('rejects >4000 posts without mutating the board', () => {
+  it('accepts 8000-character posts and rejects larger posts without mutating the board', () => {
     const existing = entry({ key: 'keep-me' })
+    const atLimit = 'y'.repeat(8000)
+    expect(BLACKBOARD_MAX_STORE_LEN).toBe(8000)
+    expect(validateBlackboardPostFields('big', atLimit)).toBeNull()
+    expect(
+      makeBlackboardEntry({
+        id: 'at-limit',
+        chatId: 'chat-1',
+        roundId: 'round-1',
+        participantId: 'p1',
+        key: 'big',
+        value: atLimit,
+        createdAt: '2026-05-31T00:00:00.000Z'
+      })
+    ).not.toBeNull()
     const oversize = 'y'.repeat(BLACKBOARD_MAX_STORE_LEN + 1)
     expect(validateBlackboardPostFields('big', oversize)?.code).toBe('blackboard_value_too_long')
-    expect(makeBlackboardEntry({
-      id: 'x',
-      chatId: 'chat-1',
-      roundId: 'round-1',
-      participantId: 'p1',
-      key: 'big',
-      value: oversize,
-      createdAt: '2026-05-31T00:00:00.000Z'
-    })).toBeNull()
+    expect(
+      makeBlackboardEntry({
+        id: 'x',
+        chatId: 'chat-1',
+        roundId: 'round-1',
+        participantId: 'p1',
+        key: 'big',
+        value: oversize,
+        createdAt: '2026-05-31T00:00:00.000Z'
+      })
+    ).toBeNull()
     const upsert = upsertBlackboardEntry([existing], entry({ id: 'never', key: 'never' }))
     expect(upsert.ok).toBe(true)
     if (upsert.ok) expect(upsert.entries.some((e) => e.key === 'keep-me')).toBe(true)

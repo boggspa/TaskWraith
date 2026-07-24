@@ -1237,6 +1237,33 @@ export type BlackboardScope = 'round' | 'session' | 'chat'
  * round summary can be auto-derived into blackboard entries. */
 export type BlackboardCategory = 'decision' | 'fact' | 'risk' | 'do-not-repeat' | 'note'
 
+export type BlackboardPollStatus = 'open' | 'closed'
+
+/** One durable vote on a Blackboard poll. `user` is the human voter id; all
+ * other ids resolve through the Ensemble roster. Re-voting replaces the
+ * voter's prior record rather than adding another ballot. */
+export interface BlackboardPollVote {
+  voterId: string
+  choice: string
+  rationale?: string
+  votedAt: string
+}
+
+/** Optional structured poll carried by an otherwise ordinary Blackboard
+ * entry. The entry value is the poll question/context (and can use the same
+ * formatted Markdown/HTML as any other entry); options stay plain text. */
+export interface BlackboardPoll {
+  status: BlackboardPollStatus
+  options: string[]
+  votes: BlackboardPollVote[]
+  /** Enabled participant ids captured when the poll was posted. */
+  eligibleParticipantIds: string[]
+  /** Blackboard polls are user-votable by default; explicit for persistence. */
+  includeUser: boolean
+  updatedAt: string
+  closedAt?: string
+}
+
 /** M4 — a single entry in the cross-participant shared scratchpad. Participants
  * read a compact digest of in-scope entries in their prompt (so shared context
  * doesn't mean dumping full transcript memory) and can post new entries via the
@@ -1264,6 +1291,8 @@ export interface BlackboardEntry {
    * key resets the list (new content = unseen again).
    */
   seenBy?: string[]
+  /** Present when this entry is an interactive durable poll. */
+  poll?: BlackboardPoll
 }
 
 /** Wave 2 — tombstone left when a blackboard entry is evicted under the 60-entry cap. */

@@ -41,7 +41,7 @@ function participant(partial: Partial<EnsembleParticipant> & { id: string }): En
 // Only the ensemble roster/leadership paths are read by attribution; the cast
 // keeps fixtures minimal without reproducing the whole ChatRecord shape.
 function chatWith(ensemble: Partial<NonNullable<ChatRecord['ensemble']>>): ChatRecord {
-  return { ensemble } as unknown as ChatRecord
+  return { appChatId: 'chat-1', ensemble } as unknown as ChatRecord
 }
 
 const rosterChat = chatWith({
@@ -214,6 +214,103 @@ describe('BlackboardEntryCard (static render)', () => {
     expect(html).not.toContain('user-note-20260710103458')
     expect(html).toContain('Concurrent streaming session committed.')
     expect(html).not.toContain('role="listitem"')
+  })
+
+  it('renders Markdown and sanitised HTML formatting in entry bodies', () => {
+    const html = renderToStaticMarkup(
+      <BlackboardEntryCard
+        chat={rosterChat}
+        entry={entry({
+          key: 'formatted-note',
+          value: [
+            'Markdown **bold**.',
+            '',
+            '<p>HTML <strong onclick="alert(1)">strong</strong>.<br>Next line.</p>',
+            '<script>alert("unsafe")</script>'
+          ].join('\n'),
+          participantId: 'user'
+        })}
+        variant="panel"
+      />
+    )
+
+    expect(html).toContain('Markdown <strong>bold</strong>.')
+    expect(html).toContain('HTML <strong>strong</strong>.<br/>Next line.')
+    expect(html).not.toContain('onclick')
+    expect(html).not.toContain('<script')
+  })
+
+  it('renders durable poll tallies, the user selection, and participant voters', () => {
+    const target = entry({
+      id: 'blackboard-poll-1',
+      key: 'release-vote',
+      value: '**Ship this release?**',
+      category: 'decision',
+      poll: {
+        status: 'open',
+        options: ['Ship', 'Keep working'],
+        votes: [
+          {
+            voterId: 'ensemble-participant-2',
+            choice: 'Ship',
+            votedAt: '2026-07-09T10:01:00.000Z'
+          },
+          {
+            voterId: 'user',
+            choice: 'Keep working',
+            votedAt: '2026-07-09T10:02:00.000Z'
+          }
+        ],
+        eligibleParticipantIds: ['ensemble-participant-1', 'ensemble-participant-2'],
+        includeUser: true,
+        updatedAt: '2026-07-09T10:02:00.000Z'
+      }
+    })
+    const html = renderToStaticMarkup(
+      <BlackboardEntryCard chat={rosterChat} entry={target} variant="panel" />
+    )
+
+    expect(html).toContain('<strong>Ship this release?</strong>')
+    expect(html).toContain('Poll · open')
+    expect(html).toContain('2 votes')
+    expect(html).toContain('aria-label="Vote for Ship, 1 vote"')
+    expect(html).toContain('aria-label="Vote for Keep working, 1 vote"')
+    expect(html).toContain('aria-pressed="true"')
+    expect(html).toContain('Codex')
+    expect(html).toContain('You')
+    expect(html).toContain(' voted Ship')
+  })
+
+  it('keeps poll options as plain text and uses compact counts in the popover', () => {
+    const html = renderToStaticMarkup(
+      <BlackboardEntryCard
+        chat={rosterChat}
+        entry={entry({
+          id: 'blackboard-poll-2',
+          key: 'markup-option',
+          value: 'Choose one',
+          poll: {
+            status: 'open',
+            options: ['<b>Literal</b>', 'Plain'],
+            votes: [
+              {
+                voterId: 'ensemble-participant-2',
+                choice: '<b>Literal</b>',
+                votedAt: '2026-07-09T10:01:00.000Z'
+              }
+            ],
+            eligibleParticipantIds: ['ensemble-participant-1', 'ensemble-participant-2'],
+            includeUser: true,
+            updatedAt: '2026-07-09T10:01:00.000Z'
+          }
+        })}
+        variant="popover"
+      />
+    )
+
+    expect(html).toContain('&lt;b&gt;Literal&lt;/b&gt;')
+    expect(html).not.toContain('<b>Literal</b>')
+    expect(html).not.toContain(' voted &lt;b&gt;Literal')
   })
 })
 

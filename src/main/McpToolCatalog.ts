@@ -2,6 +2,13 @@ import { selectableProviderIds } from './settings/MainSanitizers'
 import { TASKWRAITH_MCP_TOOLS, type TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import { ASSIGNABLE_PERMISSION_PRESETS } from './EnsembleRosterMutation'
 import { CANVAS_EVAL_SCRIPT_CAP } from './canvas/canvasTypes'
+import {
+  BLACKBOARD_MAX_KEY_LEN,
+  BLACKBOARD_MAX_POLL_OPTION_LEN,
+  BLACKBOARD_MAX_POLL_OPTIONS,
+  BLACKBOARD_MAX_STORE_LEN,
+  BLACKBOARD_MIN_POLL_OPTIONS
+} from './blackboard/Blackboard'
 
 export interface TaskWraithMcpToolDefinition {
   name: TaskWraithMcpToolName
@@ -2764,7 +2771,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_poll_response',
       description:
-        'In Ensemble Mode, cast or update this participant’s response to an open Boss/Captain poll created by ensemble_bossman_control({ action: "create_poll" }). Active participant runs only. The choice must match one of the poll options.',
+        'Vote/change an active Ensemble poll choice. Blackboard uses entry id as pollId and an exact option; Boss/Captain polls also work.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3168,7 +3175,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'blackboard_post',
       description:
-        'Post a durable shared-memory entry for the Ensemble. Use for agreed facts, decisions, risks, do-not-repeat notes, or concise session notes. Do not use this for conversational side messages; use ensemble_send instead.',
+        'Post a durable Blackboard entry/poll. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced or retired.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3178,8 +3185,16 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          key: { type: 'string' },
-          value: { type: 'string' },
+          key: { type: 'string', maxLength: BLACKBOARD_MAX_KEY_LEN },
+          value: { type: 'string', maxLength: BLACKBOARD_MAX_STORE_LEN },
+          pollOptions: {
+            type: 'array',
+            minItems: BLACKBOARD_MIN_POLL_OPTIONS,
+            maxItems: BLACKBOARD_MAX_POLL_OPTIONS,
+            items: { type: 'string', minLength: 1, maxLength: BLACKBOARD_MAX_POLL_OPTION_LEN },
+            description:
+              'Optional plain-text choices. When present, this entry becomes an open durable Blackboard poll.'
+          },
           category: {
             type: 'string',
             enum: ['decision', 'fact', 'risk', 'do-not-repeat', 'note']

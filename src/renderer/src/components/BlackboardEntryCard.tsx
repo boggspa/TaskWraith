@@ -7,6 +7,7 @@ import type {
 } from '../../../main/store/types'
 import { providerDisplayName } from '../lib/AgentInvocationPresentation'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
+import { BlackboardPollControls } from './BlackboardPollControls'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { MarkdownMessage } from './MarkdownMessage'
 
@@ -288,7 +289,7 @@ export function BlackboardSeenByRail({
 export interface BlackboardEntryCardProps {
   chat: ChatRecord | null
   entry: BlackboardEntry
-  /** popover = composer quick glance (read-only), panel = right-dock Notes. */
+  /** popover = composer quick glance, panel = right-dock Notes. */
   variant: 'panel' | 'popover'
   /** Surface-owned trailing header controls (e.g. the panel's delete button). */
   actions?: ReactNode
@@ -327,8 +328,23 @@ export function BlackboardEntryCard({
         </h4>
       )}
       <div className="blackboard-card-body">
-        <MarkdownMessage content={entry.value} chat={chat || undefined} />
+        <MarkdownMessage content={entry.value} chat={chat || undefined} allowSafeHtml />
       </div>
+      {entry.poll && (
+        <BlackboardPollControls
+          chat={chat}
+          entry={entry}
+          variant={variant}
+          renderVoter={(voterId, choice) => (
+            <BlackboardParticipantChip
+              chat={chat}
+              participantId={voterId}
+              size="sm"
+              titleSuffix={` voted ${choice}`}
+            />
+          )}
+        />
+      )}
       {showSeenBy && <BlackboardSeenByRail chat={chat} entry={entry} />}
     </article>
   )

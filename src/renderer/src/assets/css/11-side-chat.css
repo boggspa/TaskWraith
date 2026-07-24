@@ -1339,6 +1339,129 @@
   margin-bottom: 0;
 }
 
+/* --- Durable polls -------------------------------------------------- */
+.blackboard-poll {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.blackboard-poll-status {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  color: color-mix(in srgb, var(--blackboard-cat-color) 62%, var(--text-secondary));
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+}
+
+.blackboard-poll-options,
+.blackboard-poll-option {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.blackboard-poll-option-button {
+  position: relative;
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  overflow: hidden;
+  padding: 6px 9px;
+  border: 1px solid color-mix(in srgb, var(--blackboard-cat-color) 34%, var(--panel-border));
+  border-radius: 7px;
+  background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: 11px;
+  line-height: 1.3;
+  text-align: left;
+  cursor: pointer;
+}
+
+.blackboard-poll-option-button:hover:not(:disabled),
+.blackboard-poll-option-button:focus-visible {
+  outline: none;
+  border-color: color-mix(in srgb, var(--blackboard-cat-color) 68%, var(--panel-border));
+  background: color-mix(in srgb, var(--blackboard-cat-color) 8%, transparent);
+}
+
+.blackboard-poll-option-button:focus-visible {
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--blackboard-cat-color) 18%, transparent);
+}
+
+.blackboard-poll-option-button:disabled {
+  cursor: default;
+}
+
+.blackboard-poll-option-button:disabled:not(.is-selected) {
+  opacity: 0.72;
+}
+
+.blackboard-poll-option-button.is-selected {
+  border-color: color-mix(in srgb, var(--blackboard-cat-color) 74%, var(--panel-border));
+  background: color-mix(in srgb, var(--blackboard-cat-color) 10%, transparent);
+}
+
+.blackboard-poll-option-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: var(--blackboard-poll-share, 0%);
+  background: color-mix(in srgb, var(--blackboard-cat-color) 11%, transparent);
+  pointer-events: none;
+}
+
+.blackboard-poll-option-label,
+.blackboard-poll-option-count {
+  position: relative;
+  z-index: 1;
+}
+
+.blackboard-poll-option-label {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  font-weight: 700;
+}
+
+.blackboard-poll-option-count {
+  min-width: 20px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--blackboard-cat-color) 14%, transparent);
+  color: color-mix(in srgb, var(--blackboard-cat-color) 76%, var(--text-primary));
+  font-size: 10px;
+  font-weight: 800;
+  text-align: center;
+}
+
+.blackboard-poll-voters {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px;
+  padding: 0 2px 2px;
+}
+
+.blackboard-poll-voter-more {
+  color: var(--text-secondary);
+  font-size: 10px;
+  font-weight: 800;
+}
+
+.blackboard-poll-error {
+  color: var(--danger, #ff6b6b);
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.3;
+}
+
 /* --- Participant chips (author attribution + seen rail) ------------ */
 .blackboard-chip {
   display: inline-flex;

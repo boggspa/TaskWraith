@@ -110,6 +110,48 @@ describe('MarkdownMessage', () => {
     expect(html).toContain('<strong>safe</strong>')
   })
 
+  it('renders raw html only through the opt-in sanitised path', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        content={[
+          '<details><summary>More</summary>',
+          '',
+          '<p>HTML <strong onclick="alert(1)">strong</strong>.</p>',
+          '</details>',
+          '<img src="https://evil.example/pixel.png" alt="beacon">',
+          '<script>bad()</script>'
+        ].join('\n')}
+        allowSafeHtml
+      />
+    )
+
+    expect(html).toContain('<details><summary>More</summary>')
+    expect(html).toContain('<p>HTML <strong>strong</strong>.</p>')
+    expect(html).toContain('</details>')
+    expect(html).not.toContain('onclick')
+    expect(html).not.toContain('<script')
+    expect(html).not.toContain('<img')
+    expect(html).not.toContain('evil.example')
+    expect(html).toContain('Image: beacon')
+  })
+
+  it('keeps internal mention protocols while rejecting unsafe links in safe-html mode', () => {
+    const html = renderToStaticMarkup(
+      <MarkdownMessage
+        chat={ensembleChat([participant({ id: 'p1', provider: 'codex', role: 'Builder' })])}
+        content={[
+          'Talk to [@Builder](ensemble-dm://p1).',
+          'Unsafe [link](javascript:alert(1)).'
+        ].join('\n\n')}
+        allowSafeHtml
+      />
+    )
+
+    expect(html).toContain('class="participant-mention"')
+    expect(html).toContain('@Builder')
+    expect(html).not.toContain('javascript:')
+  })
+
   it('renders markdown image syntax as inert text instead of loading images', () => {
     const html = renderToStaticMarkup(
       <MarkdownMessage

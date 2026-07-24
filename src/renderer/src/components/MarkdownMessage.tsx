@@ -9,6 +9,8 @@ import type { ChatRecord } from '../../../main/store/types'
 
 interface MarkdownMessageProps {
   content: string
+  /** Render raw HTML only after conservative sanitisation. Off by default. */
+  allowSafeHtml?: boolean
   /** Chat used to look up subagent identities for `[@Name](agent://id)` chips. */
   chat?: ChatRecord
   /** This message's media refs, used to replace inline `![]()` placeholders with
@@ -182,11 +184,17 @@ function MarkdownMessageImpl({
   mediaRefs,
   workspacePath,
   onPreviewImage,
-  streamRunId
+  streamRunId,
+  allowSafeHtml = false
 }: MarkdownMessageProps) {
   // useMemo the block split so a re-render NOT caused by a content change
   // (e.g. an identity-registry update) doesn't re-run the O(n) string scan.
-  const { stable, tail } = useMemo(() => splitMarkdownIntoBlocks(content), [content])
+  const blocks = useMemo(
+    () => (allowSafeHtml ? null : splitMarkdownIntoBlocks(content)),
+    [allowSafeHtml, content]
+  )
+  const stable = blocks?.stable || []
+  const tail = blocks?.tail || null
   // Stabilise the context value across the churning `chat` reference. `chat`
   // is a NEW object on every coalesced flush / ensemble broadcast, but the
   // markdown subtree's context consumers (<AgentMention>, <ParticipantMention>)
@@ -208,20 +216,31 @@ function MarkdownMessageImpl({
     <AgentIdentityContext.Provider value={ctxRef.current}>
       <MarkdownMediaContext.Provider value={mediaCtx}>
         <div className="message-markdown message-markdown-pro">
-          {stable.map((block, index) => (
+          {allowSafeHtml ? (
             <StableMarkdownBlock
-              key={`${index}-${block.id}`}
-              raw={block.raw}
+              key="safe-html"
+              raw={content}
               streamRunId={streamRunId}
+              allowSafeHtml
             />
-          ))}
-          {tail ? (
-            <StableMarkdownBlock
-              key={`tail-${stable.length}`}
-              raw={tail.raw}
-              streamRunId={streamRunId}
-            />
-          ) : null}
+          ) : (
+            <>
+              {stable.map((block, index) => (
+                <StableMarkdownBlock
+                  key={`${index}-${block.id}`}
+                  raw={block.raw}
+                  streamRunId={streamRunId}
+                />
+              ))}
+              {tail ? (
+                <StableMarkdownBlock
+                  key={`tail-${stable.length}`}
+                  raw={tail.raw}
+                  streamRunId={streamRunId}
+                />
+              ) : null}
+            </>
+          )}
         </div>
       </MarkdownMediaContext.Provider>
     </AgentIdentityContext.Provider>
@@ -244,6 +263,7 @@ function propsAreEqual(prev: MarkdownMessageProps, next: MarkdownMessageProps): 
   // small, so the value compare is far cheaper than the re-render it prevents.
   return (
     prev.content === next.content &&
+    prev.allowSafeHtml === next.allowSafeHtml &&
     identityContextEqual(prev.chat, next.chat) &&
     prev.streamRunId === next.streamRunId &&
     markdownMediaSignature(prev.mediaRefs, prev.workspacePath) ===

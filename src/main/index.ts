@@ -1392,6 +1392,7 @@ import { registerCheckpointHandlers } from './ipc/checkpointHandlers'
 import { registerContextCompactionHandlers } from './ipc/contextCompactionHandlers'
 import { registerComposeRunHandlers } from './ipc/composeRunHandlers'
 import { registerAgentQuestionHandlers } from './ipc/agentQuestionHandlers'
+import { registerBlackboardPollHandlers } from './ipc/blackboardPollHandlers'
 import { registerApnsHandlers } from './ipc/apnsHandlers'
 import { registerImageGenerationHandlers } from './ipc/imageGenerationHandlers'
 import { registerMediaAssetHandlers } from './ipc/mediaAssetHandlers'
@@ -1599,8 +1600,10 @@ import {
   selectBlackboardForRound,
   selectBlackboardReadWindow,
   upsertBlackboardEntry,
+  validateBlackboardPollOptions,
   validateBlackboardPostFields
 } from './blackboard/Blackboard'
+import { executeBlackboardAwarePollResponse } from './blackboard/BlackboardPollMcp'
 import { WorkspaceWriteIntentRegistry, type WriteIntentToken } from './WorkspaceWriteIntentRegistry'
 import { CreativeApprovalGate } from './CreativeApprovalGate'
 import { assignAgentIdentityFromSeed } from './AgentIdentitySeed'
@@ -28716,16 +28719,35 @@ async function executeGeminiMcpTool(
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_poll_response') {
-      const result = ensembleOrchestratorRef?.pollResponseForRun(context.appRunId, {
-        pollId: optionalString(args.pollId || args.poll_id),
-        choice: optionalString(args.choice),
-        rationale: optionalString(args.rationale || args.reason)
-      }) || {
-        ok: false,
-        tool: 'ensemble_poll_response' as const,
-        message: 'Ensemble orchestrator is not available.',
-        error: 'no_active_run' as const
-      }
+      const pollId = optionalString(args.pollId || args.poll_id) || ''
+      const choice = optionalString(args.choice) || ''
+      const rationale = optionalString(args.rationale || args.reason)
+      const result = executeBlackboardAwarePollResponse(
+        {
+          getChat: (chatId) => AppStore.getChat(chatId),
+          getParticipantIdForRun: (runId) =>
+            ensembleOrchestratorRef?.getParticipantIdForRun(runId) ?? undefined,
+          saveAndBroadcastChat
+        },
+        {
+          appChatId: context.appChatId,
+          appRunId: context.appRunId || '',
+          pollId,
+          choice,
+          rationale,
+          fallback: () =>
+            ensembleOrchestratorRef?.pollResponseForRun(context.appRunId, {
+              pollId,
+              choice,
+              rationale
+            }) || {
+              ok: false,
+              tool: 'ensemble_poll_response' as const,
+              message: 'Ensemble orchestrator is not available.',
+              error: 'no_active_run' as const
+            }
+        }
+      )
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_propose_goal_complete') {
@@ -29070,6 +29092,8 @@ async function executeGeminiMcpTool(
         const postKey = optionalString(args.key) || ''
         const postValue = optionalString(args.value) || ''
         const fieldError = validateBlackboardPostFields(postKey, postValue)
+        const pollOptionsInput = args.pollOptions ?? args.poll_options
+        const pollOptions = validateBlackboardPollOptions(pollOptionsInput)
         if (fieldError) {
           toolIsError = true
           text = mcpJson({
@@ -29078,6 +29102,17 @@ async function executeGeminiMcpTool(
             code: fieldError.code,
             maxLength: fieldError.maxLength,
             originalLength: fieldError.originalLength
+          })
+        } else if (!pollOptions.ok) {
+          toolIsError = true
+          text = mcpJson({
+            ok: false,
+            tool: 'blackboard_post',
+            code: pollOptions.code,
+            error: pollOptions.message,
+            ...(pollOptions.maxLength ? { maxLength: pollOptions.maxLength } : {}),
+            ...(pollOptions.minItems ? { minItems: pollOptions.minItems } : {}),
+            ...(pollOptions.maxItems ? { maxItems: pollOptions.maxItems } : {})
           })
         } else {
           const entry = makeBlackboardEntry({
@@ -29091,6 +29126,10 @@ async function executeGeminiMcpTool(
             value: postValue,
             category: args.category,
             scope: args.scope,
+            pollOptions: pollOptions.options,
+            pollEligibleParticipantIds: chat.ensemble.participants
+              .filter((participant) => participant.enabled)
+              .map((participant) => participant.id),
             createdAt
           })
           if (!entry) {
@@ -29129,7 +29168,9 @@ async function executeGeminiMcpTool(
               saveAndBroadcastChat(updated)
               ensembleOrchestratorRef?.appendStatusForRun(
                 context.appRunId || '',
-                `Blackboard updated: ${entry.category} / ${entry.key}.`
+                entry.poll
+                  ? `Blackboard poll opened: ${entry.key} (${entry.poll.options.length} choices).`
+                  : `Blackboard updated: ${entry.category} / ${entry.key}.`
               )
               text = mcpJson({
                 ok: true,
@@ -39682,34 +39723,17 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId)
     })
 
-    ipcMain.handle(
-      'answer-ensemble-poll',
-      (
-        event,
-        payload: {
-          appChatId?: string
-          pollId?: string
-          choice?: string
-        }
-      ) => {
-        const appChatId = optionalString(payload.appChatId)
-        if (appChatId) {
-          assertRendererChatScope(event, appChatId)
-        } else if (!isMainRendererSender(event)) {
-          throw new Error('Renderer cannot resolve Ensemble poll chat authority.')
-        }
-        const result = ensembleOrchestratorRef?.userPollResponseForChat(appChatId, {
-          pollId: optionalString(payload.pollId),
-          choice: optionalString(payload.choice)
-        }) || {
+    registerBlackboardPollHandlers({
+      isMainRendererSender,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      getChat: (chatId) => AppStore.getChat(chatId),
+      saveAndBroadcastChat,
+      userPollResponseForChat: (chatId, payload) =>
+        ensembleOrchestratorRef?.userPollResponseForChat(chatId, payload) || {
           ok: false,
-          tool: 'ensemble_poll_response' as const,
-          message: 'Ensemble orchestrator is not available.',
-          error: 'no_active_round' as const
+          message: 'Ensemble orchestrator is not available.'
         }
-        return result.ok ? { ok: true } : { ok: false, error: result.message }
-      }
-    )
+    })
 
     // Settings
     registerSettingsHandlers({

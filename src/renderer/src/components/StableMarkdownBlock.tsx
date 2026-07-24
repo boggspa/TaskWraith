@@ -10,7 +10,13 @@ import {
   type ReactElement,
   type ReactNode
 } from 'react'
-import ReactMarkdown, { defaultUrlTransform, type Components } from 'react-markdown'
+import ReactMarkdown, {
+  defaultUrlTransform,
+  type Components,
+  type Options
+} from 'react-markdown'
+import rehypeRaw from 'rehype-raw'
+import rehypeSanitize, { defaultSchema } from 'rehype-sanitize'
 import remarkGfm from 'remark-gfm'
 import { HighlightedCodeBlock } from './HighlightedCodeBlock'
 import { AgentMention } from './AgentMention'
@@ -549,6 +555,21 @@ const MARKDOWN_COMPONENTS: Components = {
 }
 
 const REMARK_PLUGINS = [remarkGfm]
+// Raw HTML is opt-in for bounded, non-streaming surfaces such as the
+// Blackboard. Parse it, then immediately apply the conservative GitHub-style
+// sanitiser before React ever sees an element. Transcript messages retain the
+// existing escaped-HTML posture unless their caller explicitly opts in.
+const SAFE_HTML_SCHEMA = {
+  ...defaultSchema,
+  protocols: {
+    ...defaultSchema.protocols,
+    href: [...(defaultSchema.protocols?.href || []), 'agent', 'ensemble-dm']
+  }
+}
+const SAFE_HTML_REHYPE_PLUGINS: NonNullable<Options['rehypePlugins']> = [
+  rehypeRaw,
+  [rehypeSanitize, SAFE_HTML_SCHEMA]
+]
 
 // react-markdown's default urlTransform only allows http(s)/irc(s)/mailto/xmpp
 // protocols and silently replaces anything else with an empty string — which
@@ -578,6 +599,8 @@ interface StableMarkdownBlockProps {
   animatedWordWindow?: number
   /** Used to resume old words at their prior fade progress after a Markdown reparse. */
   revealDurationMs?: number
+  /** Parse raw HTML through rehype-sanitize. Off by default. */
+  allowSafeHtml?: boolean
 }
 
 function StableMarkdownBlockImpl({
@@ -585,7 +608,8 @@ function StableMarkdownBlockImpl({
   streamRunId,
   revealTokens = false,
   animatedWordWindow = 0,
-  revealDurationMs = 175
+  revealDurationMs = 175,
+  allowSafeHtml = false
 }: StableMarkdownBlockProps) {
   const previousRawRef = useRef(raw)
   const transitionRef = useRef({ existingWordCount: 0, existingDelayMs: 0 })
@@ -626,6 +650,7 @@ function StableMarkdownBlockImpl({
     <MarkdownRevealContext.Provider value={revealContext}>
       <ReactMarkdown
         remarkPlugins={REMARK_PLUGINS}
+        rehypePlugins={allowSafeHtml ? SAFE_HTML_REHYPE_PLUGINS : undefined}
         components={MARKDOWN_COMPONENTS}
         urlTransform={markdownUrlTransform}
       >
@@ -660,5 +685,6 @@ export const StableMarkdownBlock = memo(
     prev.streamRunId === next.streamRunId &&
     prev.revealTokens === next.revealTokens &&
     prev.animatedWordWindow === next.animatedWordWindow &&
-    prev.revealDurationMs === next.revealDurationMs
+    prev.revealDurationMs === next.revealDurationMs &&
+    prev.allowSafeHtml === next.allowSafeHtml
 )

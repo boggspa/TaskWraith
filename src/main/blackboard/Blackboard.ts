@@ -15,14 +15,29 @@ import type {
   BlackboardCategory,
   BlackboardEntry,
   BlackboardEvictionTombstone,
+  BlackboardPoll,
   BlackboardScope
 } from '../store/types'
+import {
+  validateBlackboardPollOptions,
+  validateBlackboardPollRecord
+} from '../../shared/blackboardPollValidation'
+export {
+  BLACKBOARD_MAX_POLL_OPTION_LEN,
+  BLACKBOARD_MAX_POLL_OPTIONS,
+  BLACKBOARD_MIN_POLL_OPTIONS,
+  validateBlackboardPollOptions
+} from '../../shared/blackboardPollValidation'
+export type {
+  BlackboardPollOptionsErrorCode,
+  BlackboardPollOptionsValidation
+} from '../../shared/blackboardPollValidation'
 
 /** Hard caps so the digest can never balloon a prompt. */
 export const BLACKBOARD_MAX_ENTRIES = 60
 export const BLACKBOARD_MAX_TOMBSTONES = 60
 export const BLACKBOARD_MAX_VALUE_LEN = 1000
-export const BLACKBOARD_MAX_STORE_LEN = 4000
+export const BLACKBOARD_MAX_STORE_LEN = 8000
 export const BLACKBOARD_MAX_KEY_LEN = 80
 
 export type BlackboardPostFieldErrorCode = 'blackboard_key_too_long' | 'blackboard_value_too_long'
@@ -246,6 +261,8 @@ export interface MakeBlackboardEntryInput {
   category?: unknown
   scope?: unknown
   derivedFrom?: string
+  pollOptions?: unknown
+  pollEligibleParticipantIds?: string[]
   createdAt: string
 }
 
@@ -259,7 +276,26 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
   const value = trimField(input.value ?? '')
   if (!key || !value) return null
   if (validateBlackboardPostFields(key, value)) return null
+  const pollValidation = validateBlackboardPollOptions(input.pollOptions)
+  if (!pollValidation.ok) return null
   const participantId = input.participantId || 'system'
+  const eligibleParticipantIds = [
+    ...new Set(
+      (input.pollEligibleParticipantIds || [])
+        .map((candidate) => String(candidate || '').trim())
+        .filter(Boolean)
+    )
+  ]
+  const poll: BlackboardPoll | undefined = pollValidation.options
+    ? {
+        status: 'open',
+        options: pollValidation.options,
+        votes: [],
+        eligibleParticipantIds,
+        includeUser: true,
+        updatedAt: input.createdAt
+      }
+    : undefined
   return {
     id: input.id,
     chatId: input.chatId,
@@ -274,7 +310,8 @@ export function makeBlackboardEntry(input: MakeBlackboardEntryInput): Blackboard
     // The author has, by definition, seen their own post. Upserts mint a NEW
     // entry object, so a rewritten key resets to author-only — the fresh
     // content is correctly "unseen" for everyone else.
-    seenBy: [participantId]
+    seenBy: [participantId],
+    ...(poll ? { poll } : {})
   }
 }
 
@@ -567,6 +604,25 @@ export function selectBlackboardReadWindow(
  * Render a compact, category-grouped digest for prompt injection. Returns ''
  * when there are no entries so the caller can omit the section entirely.
  */
+function formatBlackboardPollForPrompt(entry: BlackboardEntry): string {
+  const rawPoll: unknown = entry.poll
+  if (rawPoll === undefined) return ''
+  const validation = validateBlackboardPollRecord(rawPoll)
+  if (!validation.ok) return ' [poll unavailable: malformed]'
+
+  const { poll } = validation
+  const tallies = poll.options.map((option) => {
+    const count = poll.votes.filter((vote) => vote.choice === option).length
+    return `${JSON.stringify(option)} (${count})`
+  })
+  const participantVoteCount = poll.votes.filter((vote) => vote.voterId !== 'user').length
+  const voteHint =
+    poll.status === 'open'
+      ? `; vote with ensemble_poll_response({ pollId: ${JSON.stringify(entry.id)}, choice: "<exact option>" })`
+      : ''
+  return ` [poll ${poll.status}; ${participantVoteCount}/${poll.eligibleParticipantIds.length} participants voted; choices: ${tallies.join(', ')}${voteHint}]`
+}
+
 export function formatBlackboardForPrompt(
   entries: BlackboardEntry[],
   options?: { allEntries?: BlackboardEntry[] }
@@ -587,7 +643,8 @@ export function formatBlackboardForPrompt(
     lines.push(`  ${CATEGORY_LABEL[category]}:`)
     for (const entry of bucket) {
       const value = formatPromptBlackboardValue(entry.value, entry.key)
-      lines.push(`    - ${entry.key}: ${value} (—${entry.participantId})`)
+      const pollSuffix = formatBlackboardPollForPrompt(entry)
+      lines.push(`    - ${entry.key}: ${value}${pollSuffix} (—${entry.participantId})`)
     }
   }
   return lines.join('\n')

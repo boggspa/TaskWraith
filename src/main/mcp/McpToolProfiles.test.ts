@@ -187,9 +187,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // runtime-admission, active-recall queueing, and typed-terminal semantics.
     // Keep the exact values review-sensitive; the 40k gateway limit below is
     // the transport contract.
-    // Measured after Path-B Cursor re-entry into live selectable / delegate enums.
-    expect(fullChars).toBe(132_123)
-    expect(gatewayChars).toBe(39_669)
+    // Measured after Path-B Cursor re-entry into live selectable / delegate enums,
+    // then the bounded Blackboard poll schema and lifecycle guidance.
+    expect(fullChars).toBe(132_236)
+    expect(gatewayChars).toBe(39_782)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })
