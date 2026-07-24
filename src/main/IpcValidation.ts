@@ -342,6 +342,8 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'github:pr-status': ['optionalObject'],
   'github:pr-readiness': ['optionalObject'],
   'github:ci-status': ['optionalObject'],
+  'github:set-watched-pr': ['optionalObject'],
+  'github:watch-pr-notify-ack': ['optionalObject'],
   'create-github-pr': ['optionalObject'],
   'agentic-yolo-get': [],
   'agentic-yolo-set': ['boolean'],

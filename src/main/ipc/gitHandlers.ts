@@ -23,6 +23,8 @@ import type {
   GitSnapshotInvalidationReason,
   GitSnapshotPublisher
 } from '../services/GitSnapshotPublisher'
+import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
+import type { SetWatchedPrPayload, WatchPrAckPayload } from '../services/WatchPrPoller'
 import type {
   ExternalPublishReceiptCompletion,
   ExternalPublishReceiptInput,
@@ -89,6 +91,18 @@ export interface GitHandlersDeps {
   >
   externalPublishReceipts?: Pick<ExternalPublishReceiptWriter, 'begin' | 'complete'>
   openExternal: (url: string) => Promise<unknown>
+  /**
+   * Slice-6 "watch PR" (A1d) wiring, provided by main's poller composition.
+   * Optional so existing handler tests constructed without a poller stay valid.
+   */
+  watchPr?: {
+    setWatchedPr: (
+      chatId: string,
+      descriptor: WatchedPrDescriptor | null
+    ) => Promise<{ ok: true } | { ok: false; error: string }>
+    resolveAck: (chatId: string, signature: string, ok: boolean, error?: string) => void
+    forgetWatch: (chatId: string) => void
+  }
   assertSenderScope: (
     event: IpcMainInvokeEvent,
     input: { capability: 'git'; chatId?: string; workspacePath: string }
@@ -700,6 +714,62 @@ export function registerGitHandlers(deps: GitHandlersDeps): void {
         maxFailedLogs: payload?.maxFailedLogs,
         maxLogChars: payload?.maxLogChars
       })
+    }
+  )
+
+  // Slice-6 "watch PR" (A1d) — the visible per-chat toggle is the ENTIRE
+  // authorization: setting Chat.watchedPr opts the chat into the host poller,
+  // clearing it also drops the poller's dedupe cursor. The descriptor is
+  // validated/normalized by the store's async race-safe persistWatchedPr; the
+  // workspace stays scope-asserted like the rest of the github: family.
+  ipcMain.handle(
+    'github:set-watched-pr',
+    async (
+      event,
+      payload?: SetWatchedPrPayload
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      if (!deps.watchPr) return { ok: false, error: 'PR watching is unavailable.' }
+      const chatId = typeof payload?.chatId === 'string' ? payload.chatId.trim() : ''
+      if (!chatId) return { ok: false, error: 'A chat is required to watch a pull request.' }
+      const watched = payload?.watchedPr
+      if (watched == null) {
+        const cleared = await deps.watchPr.setWatchedPr(chatId, null)
+        if (cleared.ok) deps.watchPr.forgetWatch(chatId)
+        return cleared
+      }
+      const workspacePath =
+        typeof watched.workspacePath === 'string' ? watched.workspacePath.trim() : ''
+      if (!workspacePath) {
+        return { ok: false, error: 'A workspace is required to watch a pull request.' }
+      }
+      deps.assertSenderScope(event, { capability: 'git', chatId, workspacePath })
+      return deps.watchPr.setWatchedPr(chatId, {
+        chatId,
+        workspacePath,
+        owner: typeof watched.owner === 'string' ? watched.owner.trim() : '',
+        repo: typeof watched.repo === 'string' ? watched.repo.trim() : '',
+        prNumber: Number(watched.prNumber)
+      })
+    }
+  )
+
+  // Renderer → poller outcome for a requested thread notification. The dedupe
+  // cursor advances ONLY on an ok ack; the poller's pending-ack map enforces
+  // chatId+signature pairing, so a stray ack is a no-op.
+  ipcMain.handle(
+    'github:watch-pr-notify-ack',
+    (_event, payload?: WatchPrAckPayload): { ok: true } => {
+      const chatId = typeof payload?.chatId === 'string' ? payload.chatId : ''
+      const signature = typeof payload?.signature === 'string' ? payload.signature : ''
+      if (deps.watchPr && chatId && signature) {
+        deps.watchPr.resolveAck(
+          chatId,
+          signature,
+          payload?.ok === true,
+          typeof payload?.error === 'string' ? payload.error : undefined
+        )
+      }
+      return { ok: true }
     }
   )
 

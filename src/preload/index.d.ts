@@ -183,6 +183,8 @@ import type {
   GitSnapshotChangedPayload,
   GitSnapshotInvalidationReason
 } from '../main/services/GitSnapshotPublisher'
+import type { WatchPollProgress } from '../shared/watchPrPollCycle'
+import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
 import type {
   FallbackPromotedSteerInput,
   FallbackPromotedSteerJobResult,
@@ -786,6 +788,18 @@ declare global {
         maxFailedLogs?: number
         maxLogChars?: number
       }) => Promise<GitResult<GitCiStatusSummary>>
+      githubSetWatchedPr: (payload: {
+        chatId: string
+        watchedPr: { workspacePath: string; owner: string; repo: string; prNumber: number } | null
+      }) => Promise<{ ok: true } | { ok: false; error: string }>
+      githubWatchPrNotifyAck: (payload: {
+        chatId: string
+        signature: string
+        ok: boolean
+        error?: string
+      }) => Promise<{ ok: true }>
+      onGitHubWatchPrNotify: (callback: (payload: WatchPrNotifyPayload) => void) => () => void
+      onGitHubWatchPrProgress: (callback: (progress: WatchPollProgress) => void) => () => void
       createGithubPr: (payload: {
         workspacePath?: string
         repoPath?: string

@@ -72,6 +72,8 @@ import type {
   TaskWraithPluginSecretStatusSnapshot
 } from '../shared/plugins/PluginTypes'
 import type { ContextCompactionProgressEvent } from '../shared/contextCompaction'
+import type { WatchPollProgress } from '../shared/watchPrPollCycle'
+import type { WatchPrNotifyPayload } from '../main/services/WatchPrPoller'
 import type { ParticipantWorkingTelemetryEvent } from '../shared/participantWorkingTelemetry'
 import {
   CHAT_UPDATE_ACK_CHANNEL,
@@ -479,6 +481,31 @@ const api = {
     maxFailedLogs?: number
     maxLogChars?: number
   }) => ipcRenderer.invoke('github:ci-status', payload) as Promise<GitResult<GitCiStatusSummary>>,
+  // Slice-6 "watch PR" (A1d): the per-chat toggle = the entire opt-in; the host
+  // poller asks the renderer to post the thread notify and awaits this ack.
+  githubSetWatchedPr: (payload: {
+    chatId: string
+    watchedPr: { workspacePath: string; owner: string; repo: string; prNumber: number } | null
+  }) =>
+    ipcRenderer.invoke('github:set-watched-pr', payload) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
+  githubWatchPrNotifyAck: (payload: {
+    chatId: string
+    signature: string
+    ok: boolean
+    error?: string
+  }) => ipcRenderer.invoke('github:watch-pr-notify-ack', payload) as Promise<{ ok: true }>,
+  onGitHubWatchPrNotify: (callback: (payload: WatchPrNotifyPayload) => void): (() => void) => {
+    const wrapped = (_event: unknown, payload: WatchPrNotifyPayload): void => callback(payload)
+    ipcRenderer.on('github:watch-pr-notify', wrapped)
+    return () => ipcRenderer.removeListener('github:watch-pr-notify', wrapped)
+  },
+  onGitHubWatchPrProgress: (callback: (progress: WatchPollProgress) => void): (() => void) => {
+    const wrapped = (_event: unknown, progress: WatchPollProgress): void => callback(progress)
+    ipcRenderer.on('github:watch-pr-progress', wrapped)
+    return () => ipcRenderer.removeListener('github:watch-pr-progress', wrapped)
+  },
   createGithubPr: (payload: {
     workspacePath?: string
     repoPath?: string

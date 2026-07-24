@@ -127,6 +127,8 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'github:ci-status',
   'github:pr-readiness',
   'github:pr-status',
+  'github:set-watched-pr',
+  'github:watch-pr-notify-ack',
   'grok-usage:probe',
   'human-collaboration-collaborator:append-comment',
   'human-collaboration-collaborator:confirm',
