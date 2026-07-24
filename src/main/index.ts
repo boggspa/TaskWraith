@@ -687,6 +687,7 @@ import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
+import { createWatchPrPoller } from './services/WatchPrPoller'
 import type { GitPrReadiness, GitPrSummary, GitRepositorySnapshot } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
 import { getCachedHostWeather } from './services/HostWeatherService'
@@ -41820,6 +41821,21 @@ if (isGeminiMcpBridgeProcess) {
       }
     })
 
+    const watchPrPoller = createWatchPrPoller({
+      listWatchedChats: () =>
+        AppStore.getChats().flatMap((chat) => (chat.watchedPr ? [chat.watchedPr] : [])),
+      fetchCiSummary: (descriptor, options) =>
+        gitService.ciStatus({
+          repoPath: descriptor.workspacePath,
+          pr: descriptor.prNumber,
+          maxRuns: options.maxRuns
+        }),
+      send: (channel, payload) => {
+        mainWindow?.webContents.send(channel, payload)
+      }
+    })
+    watchPrPoller.start()
+
     registerGitHandlers({
       getChat: (chatId) => AppStore.getChat(chatId),
       executableExternalPathGrantsForChat,
@@ -41834,7 +41850,29 @@ if (isGeminiMcpBridgeProcess) {
       gitService,
       gitSnapshotPublisher,
       externalPublishReceipts: externalPublishReceiptsForOrigin('desktop-ui'),
-      openExternal: (url) => shell.openExternal(url)
+      openExternal: (url) => shell.openExternal(url),
+      watchPr: {
+        setWatchedPr: async (chatId, descriptor) => {
+          try {
+            await AppStore.persistWatchedPr(chatId, descriptor)
+            return { ok: true }
+          } catch (error) {
+            return {
+              ok: false,
+              error:
+                error instanceof Error
+                  ? error.message
+                  : "Couldn't update this thread's PR watch."
+            }
+          }
+        },
+        resolveAck: (chatId, signature, ok, error) => {
+          watchPrPoller.resolveAck(chatId, signature, ok, error)
+        },
+        forgetWatch: (chatId) => {
+          watchPrPoller.forget(chatId)
+        }
+      }
     })
 
     registerClaudeAuthHandlers({
