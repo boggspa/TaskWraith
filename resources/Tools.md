@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 160 tools below are the full TaskWraith surface. 39 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 159 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -77,10 +77,11 @@ Rename a file or directory within its current parent directory inside the active
 
 ## read_file
 
-Read a UTF-8 text file inside the active TaskWraith workspace after tool policy allows it.
+Read a UTF-8 text file inside the active TaskWraith workspace after tool policy allows it. For large files, pass offset/limit to read a line window instead of shell tools like sed.
 
 - Access: read-only (no approval needed)
 - Required args: path
+- Optional args: offset, limit
 - Example: `{"taskwraith_tool":{"name":"read_file","arguments":{"path":"text"}}}`
 
 ## list_directory
@@ -779,7 +780,7 @@ In Ensemble Mode, send a visible participant-to-participant note into the main t
 
 ## ensemble_fanout
 
-In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn.
+In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn.
 
 - Access: read-only (no approval needed)
 - Required args: prompt
@@ -797,7 +798,7 @@ In Ensemble Mode, the configured Boss (or Captain while the Boss is unavailable)
 
 ## ensemble_bossman_control
 
-In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.
+In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Non-authority callers and stale round/run/participant ids are rejected and audited.
 
 - Access: governed by your run permission role
 - Required args: action
@@ -806,7 +807,7 @@ In Ensemble Mode, allows the assigned Boss participant, or Captain only after Bo
 
 ## ensemble_poll_response
 
-In Ensemble Mode, cast or update this participant’s response to an open Boss/Captain poll created by ensemble_bossman_control({ action: "create_poll" }). Active participant runs only. The choice must match one of the poll options.
+Vote/change an active Ensemble poll choice. Blackboard uses entry id as pollId and an exact option; Boss/Captain polls also work.
 
 - Access: governed by your run permission role
 - Required args: pollId, choice
@@ -824,7 +825,7 @@ In Ensemble Mode, propose completing the active goal by opening a BINDING goal-c
 
 ## ensemble_roster_edit
 
-Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS. Work Session is intentionally unsupported.
+Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS.
 
 - Access: governed by your run permission role
 - Required args: action
@@ -936,15 +937,6 @@ Spawn a fresh context-isolated sub-thread on a selectable provider (subject to c
 - Optional args: model, reasoningEffort, kimiThinking, returnResult, subThreadId
 - Example: `{"taskwraith_tool":{"name":"delegate_to_subthread","arguments":{"provider":"text","prompt":"text"}}}`
 
-## ensemble_continue
-
-In an active Ensemble Work Session, queue one follow-up round, mark the session complete, or pause it as blocked. Choose acceptanceStatus deliberately: use `complete` only when the task is fully done and verified — every required tool call (edits, run_task checks, tests) actually ran and succeeded. Use `blocked` only when you are genuinely stuck and need user input to proceed. Use `inProgress` (with nextPrompt) to queue another round and keep working. What is NOT blocked: a test you can fix is not a block — fix it and continue; a recoverable error (retryable failure, missing file you can create, tool you can call differently) is not a block — keep working. Does not bypass participant permissions; each queued round still uses the normal approval and permission path.
-
-- Access: read-only (no approval needed)
-- Required args: none
-- Optional args: summary, nextPrompt, target, reason, acceptanceStatus
-- Example: `{"taskwraith_tool":{"name":"ensemble_continue","arguments":{"summary":"text"}}}`
-
 ## scout_brief
 
 Emit a structured brief from a parallel fan-out lane. The next serial writer/synthesizer receives the collected briefs in its prompt. Returns an error outside an active fan-out lane.
@@ -956,11 +948,11 @@ Emit a structured brief from a parallel fan-out lane. The next serial writer/syn
 
 ## blackboard_post
 
-Post a durable shared-memory entry for the Ensemble. Use for agreed facts, decisions, risks, do-not-repeat notes, or concise session notes. Do not use this for conversational side messages; use ensemble_send instead.
+Post a durable Blackboard entry/poll. Poll: 2–6 plain-text pollOptions; value is the question; vote via ensemble_poll_response with returned id. Open until replaced or retired.
 
 - Access: read-only (no approval needed)
 - Required args: key, value
-- Optional args: category, scope
+- Optional args: pollOptions, category, scope
 - Example: `{"taskwraith_tool":{"name":"blackboard_post","arguments":{"key":"text","value":"text"}}}`
 
 ## blackboard_read
