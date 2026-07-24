@@ -228,11 +228,13 @@ baseline.
 - **Release Tooling**: Security, dependency, packaging, and signing hooks for
   reproducible local release work.
 
-Latest tagged public release: **v1.8.4**. See [CHANGELOG.md](CHANGELOG.md) for
-release notes. This checkout currently contains additional repository work;
-the changelog's **Unreleased — source-ahead** section describes those changes
-only. They are not shipped until a new tag and matching artifacts are
-published.
+Latest tagged public release: **v1.8.8**. Download installers from
+[GitHub Releases](https://github.com/boggspa/TaskWraith/releases/tag/v1.8.8)
+(see [Try a packaged build](#try-a-packaged-build)). See
+[CHANGELOG.md](CHANGELOG.md) for release notes. This checkout may contain
+additional repository work; the changelog's **Unreleased — source-ahead**
+section describes those changes only. They are not shipped until a new tag
+and matching artifacts are published.
 
 ## Managed Enterprise Boundary
 
@@ -269,7 +271,42 @@ macOS, packaged-app smoke tests, signing/notarization validation where
 credentials are available, and secret-bundle guards. Commits carry
 `Co-Authored-By` trailers for the agents that contributed.
 
+## Try a packaged build
+
+If you want to run TaskWraith without building from source, use the installers
+on the latest public release:
+[**v1.8.8 on GitHub Releases**](https://github.com/boggspa/TaskWraith/releases/tag/v1.8.8).
+
+Verified artifacts on that tag (names match the uploaded files exactly):
+
+| Platform | Artifact |
+| --- | --- |
+| macOS (Apple Silicon + Intel, universal) | `TaskWraith-1.8.8-universal-mac.dmg` (also `.zip`) |
+| Windows x64 | `TaskWraith-1.8.8-win-x64-setup.exe` |
+| Windows arm64 | `TaskWraith-1.8.8-win-arm64-setup.exe` |
+| Linux | `TaskWraith-1.8.8.AppImage` or `taskwraith_1.8.8_amd64.deb` |
+
+Checksums for those files are listed in `SHA256SUMS-1.8.8.txt` on the same
+release page. Prefer the checksum-listed filenames over similarly named CI or
+side-channel builds.
+
+**After install.** On first launch, TaskWraith opens a short **Welcome** sheet
+covering providers, adding a workspace, appearance, permission posture, usage,
+Ensemble basics, and power-user shortcuts. It shows once (dismissal is stored
+locally); reopen it anytime with the `?` help pill in the main pane. That sheet
+is onboarding only — the empty-chat starter cards are a separate surface.
+
+**Providers still need their own setup.** Packaged TaskWraith does not install
+provider CLIs or accounts for you. Claude can sign in from Settings; Codex,
+Cursor, Grok, and most other seats need the matching CLI installed and a
+terminal login first. Ollama is local (install Ollama, then `ollama pull` a
+model) and does not require a cloud account for local runs. Start with a
+scratch repo and a read-only posture — see [Trust, Safety, and First
+Runs](#trust-safety-and-first-runs) and [TRUST_AND_SAFETY.md](TRUST_AND_SAFETY.md).
+
 ## Development Setup
+
+For contributors building from this repository:
 
 1. Install Node.js 20 or newer.
 2. Install any provider CLI you intend to use separately.
