@@ -265,3 +265,127 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
     expect(discoverGeminiApi).not.toHaveBeenCalled()
   })
 })
+
+describe('Gemini API discovery outcome reporting', () => {
+  it('reports each discovery classification verbatim', async () => {
+    for (const status of [
+      'unauthorized',
+      'rateLimited',
+      'projectLimited',
+      'unavailable',
+      'invalidResponse',
+      'empty',
+      'keyUnavailable',
+      'disclosureRequired',
+      'sdkUnavailable',
+      'cancelled'
+    ] as const) {
+      const recordGeminiApiOutcome = vi.fn()
+      await discoverAuthenticatedAntigravityCombinedModels(
+        {},
+        {
+          discoverGeminiApi: async () => ({ status, models: [] as const }),
+          getSecretStore: () => store,
+          recordGeminiApiOutcome
+        }
+      )
+      expect(recordGeminiApiOutcome).toHaveBeenCalledWith({ status, modelCount: 0 })
+    }
+  })
+
+  it('reports the count of rows actually offered, not of raw list entries', async () => {
+    // Curation can drop or rename discovered entries, so reporting the raw
+    // `models.list` length would promise models the picker never shows.
+    const recordGeminiApiOutcome = vi.fn()
+    const rows = await discoverAuthenticatedAntigravityCombinedModels(
+      {},
+      {
+        discoverGeminiApi: async () => ({
+          status: 'ok' as const,
+          models: [
+            { id: 'gemini-api:gemini-one' as `gemini-api:${string}`, modelId: 'gemini-one' },
+            { id: 'gemini-api:gemini-two' as `gemini-api:${string}`, modelId: 'gemini-two' },
+            // Rejected by the id projection, so it must not be counted.
+            { id: 'not-a-gemini-api-id' as `gemini-api:${string}`, modelId: 'nope' }
+          ]
+        }),
+        getSecretStore: () => store,
+        recordGeminiApiOutcome
+      }
+    )
+    expect(recordGeminiApiOutcome).toHaveBeenCalledWith({ status: 'ok', modelCount: rows.length })
+    expect(rows.length).toBe(2)
+  })
+
+  it('distinguishes a lane that never answered from one that rejected', async () => {
+    // This function is the only place that can tell these apart: discovery
+    // itself cannot report a timeout it never returned from. A slow network
+    // must not be reported to the user as an unreachable API.
+    const timedOut = vi.fn()
+    await discoverAuthenticatedAntigravityCombinedModels(
+      {},
+      {
+        discoverGeminiApi: () => new Promise(() => {}),
+        getSecretStore: () => store,
+        recordGeminiApiOutcome: timedOut,
+        timeoutMs: 5
+      }
+    )
+    expect(timedOut).toHaveBeenCalledWith({ status: 'timedOut', modelCount: 0 })
+
+    const rejected = vi.fn()
+    await discoverAuthenticatedAntigravityCombinedModels(
+      {},
+      {
+        discoverGeminiApi: async () => {
+          throw new Error('private detail must not escape')
+        },
+        getSecretStore: () => store,
+        recordGeminiApiOutcome: rejected
+      }
+    )
+    expect(rejected).toHaveBeenCalledWith({ status: 'unavailable', modelCount: 0 })
+    expect(JSON.stringify(rejected.mock.calls)).not.toContain('private detail')
+  })
+
+  it('reports nothing when the lane was never admitted', async () => {
+    // Without a store we never asked Google, so there is no verdict to show.
+    const recordGeminiApiOutcome = vi.fn()
+    await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: async () => [{ id: 'agy-only', label: 'AGY Only' }],
+      getSecretStore: () => null,
+      recordGeminiApiOutcome
+    })
+    expect(recordGeminiApiOutcome).not.toHaveBeenCalled()
+  })
+
+  it('still reports when a full AGY catalogue short-circuits row assembly', async () => {
+    const recordGeminiApiOutcome = vi.fn()
+    await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: async () =>
+        Array.from({ length: 200 }, (_, index) => ({
+          id: `agy-${index}`,
+          label: `AGY ${index}`
+        })),
+      discoverGeminiApi: async () => ({ status: 'unauthorized' as const, models: [] as const }),
+      getSecretStore: () => store,
+      recordGeminiApiOutcome
+    })
+    expect(recordGeminiApiOutcome).toHaveBeenCalledWith({ status: 'unauthorized', modelCount: 0 })
+  })
+
+  it('never lets a throwing reporter suppress the rows the pass already resolved', async () => {
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(
+        {},
+        {
+          discoverGeminiApi: async () => ({ status: 'unauthorized' as const, models: [] as const }),
+          getSecretStore: () => store,
+          recordGeminiApiOutcome: () => {
+            throw new Error('reporter exploded')
+          }
+        }
+      )
+    ).resolves.toEqual(antigravityGeminiApiStaticModels())
+  })
+})

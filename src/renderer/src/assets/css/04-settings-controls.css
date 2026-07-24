@@ -1531,6 +1531,27 @@
   font-size: var(--font-size-sm);
 }
 
+/*
+ * The discovery reason is a full sentence, unlike the one- or two-word statuses
+ * the shared row was built for. Without this the wrapping row cannot shrink the
+ * text below its min-content width, so the whole sentence drops to a second line
+ * and strands the dot alone on the first.
+ */
+.settings-antigravity-gemini-api-discovery-status {
+  flex-wrap: nowrap;
+  align-items: flex-start;
+}
+
+.settings-antigravity-gemini-api-discovery-status > span:last-child {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+
+.settings-antigravity-gemini-api-discovery-status .settings-provider-auth-status-dot {
+  /* Optically centre the dot on the first line rather than the whole block. */
+  margin-top: 5px;
+}
+
 .settings-provider-auth-field {
   display: grid;
   gap: 5px;

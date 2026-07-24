@@ -6,10 +6,12 @@ import {
   type AntigravityGeminiApiDiscoveryResult,
   type AntigravityGeminiApiDiscoveryStatus
 } from './AntigravityGeminiApiModelDiscovery'
+import type { AntigravityGeminiApiDiscoveryOutcomeStatus } from './AntigravityGeminiApiDiscoveryOutcome'
 import {
   antigravityGeminiApiStaticModels,
   formatAntigravityGeminiApiLabel
 } from './AntigravityGeminiApiStaticModels'
+import { curateAntigravityGeminiApiModels } from './AntigravityGeminiApiModelNaming'
 import type { AntigravityGeminiApiSecretStore } from './AntigravityGeminiApiSecretStore'
 import {
   discoverAuthenticatedAgyModels,
@@ -32,6 +34,17 @@ export interface AntigravityCombinedModelCatalogDependencies {
     typeof discoverAuthenticatedAntigravityGeminiApiModels
   >[1]['loadSdk']
   readonly timeoutMs?: number
+  /**
+   * Receives the nonsecret reason this pass did or did not produce live Gemini
+   * API rows. This function is the only place that sees both discovery's own
+   * classification and its own lane timeout, so it is the only place that can
+   * report the timeout case at all. Recording must never change which rows are
+   * offered — a throwing sink is swallowed for exactly that reason.
+   */
+  readonly recordGeminiApiOutcome?: (outcome: {
+    readonly status: AntigravityGeminiApiDiscoveryOutcomeStatus
+    readonly modelCount: number
+  }) => void
 }
 
 const DEFAULT_LANE_TIMEOUT_MS = 900
@@ -132,6 +145,23 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
         })
   ])
 
+  const liveApiRows =
+    api.status === 'ok' && api.value.status === 'ok'
+      ? curateAntigravityGeminiApiModels(
+          api.value.models.map(projectGeminiApiModel).filter((row) => row !== null)
+        )
+      : null
+  // Recorded before any row assembly can return early, so the outcome is
+  // reported for every probed pass. The count is of curated rows actually
+  // offered, not of raw `models.list` entries, so "N models available" matches
+  // what the picker shows.
+  if (apiAdmitted) {
+    reportGeminiApiOutcome(deps.recordGeminiApiOutcome, {
+      status: geminiApiOutcomeStatus(api),
+      modelCount: liveApiRows?.length ?? 0
+    })
+  }
+
   const rows: AntigravityCombinedCatalogModel[] = []
   const seen = new Set<string>()
   for (const model of agy.status === 'ok' ? agy.value : []) {
@@ -141,11 +171,8 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     if (rows.length >= MAX_CATALOG_MODELS) return rows
   }
   const apiRows =
-    api.status === 'ok' && api.value.status === 'ok'
-      ? api.value.models.map(projectGeminiApiModel)
-      : offersUnverifiedKeyFallback(apiAdmitted, api)
-        ? antigravityGeminiApiStaticModels()
-        : []
+    liveApiRows ??
+    (offersUnverifiedKeyFallback(apiAdmitted, api) ? antigravityGeminiApiStaticModels() : [])
   for (const row of apiRows) {
     if (!row || seen.has(row.id)) continue
     seen.add(row.id)
@@ -162,11 +189,37 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
  */
 function offersUnverifiedKeyFallback(
   apiAdmitted: boolean,
-  api: { status: 'ok'; value: AntigravityGeminiApiDiscoveryResult } | { status: 'failed' }
+  api: LaneResult<AntigravityGeminiApiDiscoveryResult>
 ): boolean {
   if (!apiAdmitted) return false
   if (api.status === 'failed') return true
   return UNVERIFIED_KEY_STATUSES.has(api.value.status)
+}
+
+/**
+ * Collapses the lane result into one reportable reason. A timed-out lane is
+ * distinct from a rejected one: the key may be perfectly good and merely slow,
+ * because the lane's own timeout is nested inside the caller's shorter overall
+ * probe deadline.
+ */
+function geminiApiOutcomeStatus(
+  api: LaneResult<AntigravityGeminiApiDiscoveryResult>
+): AntigravityGeminiApiDiscoveryOutcomeStatus {
+  if (api.status === 'ok') return api.value.status
+  return api.reason === 'timeout' ? 'timedOut' : 'unavailable'
+}
+
+function reportGeminiApiOutcome(
+  record: AntigravityCombinedModelCatalogDependencies['recordGeminiApiOutcome'],
+  outcome: { status: AntigravityGeminiApiDiscoveryOutcomeStatus; modelCount: number }
+): void {
+  if (typeof record !== 'function') return
+  try {
+    record(outcome)
+  } catch {
+    // Reporting is a diagnostic side channel. It must never be able to
+    // suppress the rows this pass already resolved.
+  }
 }
 
 function projectGeminiApiModel(
@@ -199,16 +252,20 @@ function isSafeModelRow(value: unknown): value is AntigravityCombinedCatalogMode
   )
 }
 
-async function boundedLane<T>(
-  run: () => Promise<T>,
-  timeoutMs: number
-): Promise<{ status: 'ok'; value: T } | { status: 'failed' }> {
+/**
+ * `reason` separates "never answered in time" from "answered with a rejection".
+ * Both still fall back to static rows identically; only the reported reason
+ * differs, so the card can distinguish a slow network from a broken key.
+ */
+type LaneResult<T> = { status: 'ok'; value: T } | { status: 'failed'; reason: 'timeout' | 'error' }
+
+async function boundedLane<T>(run: () => Promise<T>, timeoutMs: number): Promise<LaneResult<T>> {
   return new Promise((resolve) => {
     let settled = false
     const timer = setTimeout(() => {
       if (settled) return
       settled = true
-      resolve({ status: 'failed' })
+      resolve({ status: 'failed', reason: 'timeout' })
     }, timeoutMs)
     timer.unref?.()
     void Promise.resolve()
@@ -224,7 +281,7 @@ async function boundedLane<T>(
           if (settled) return
           settled = true
           clearTimeout(timer)
-          resolve({ status: 'failed' })
+          resolve({ status: 'failed', reason: 'error' })
         }
       )
   })

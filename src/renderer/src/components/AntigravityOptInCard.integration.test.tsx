@@ -374,3 +374,132 @@ describe('AntigravityOptInCard header/status lane awareness', () => {
     expect(status?.textContent).toBe('Disabled — explicit consent required')
   })
 })
+
+describe('AntigravityOptInCard Gemini API discovery outcome line', () => {
+  async function renderWithOutcome(
+    outcome: unknown,
+    options: { configured?: boolean; omitBridge?: boolean } = {}
+  ): Promise<TestElement> {
+    const { document, container } = installDom()
+    document.body.appendChild(container)
+    const api: Record<string, unknown> = {
+      getAntigravityGeminiApiSecretStatus: async () => ({
+        configured: options.configured ?? true,
+        encryptionAvailable: true
+      }),
+      setAntigravityGeminiApiSecret: vi.fn(),
+      clearAntigravityGeminiApiSecret: vi.fn(),
+      getConfiguredProviderSnapshot: () =>
+        Promise.resolve({ ready: true, providerIds: [], modelsByProvider: {} })
+    }
+    if (!options.omitBridge) {
+      api.getAntigravityGeminiApiDiscoveryOutcome = async () => outcome
+    }
+    Object.assign(window, { api })
+
+    await act(async () => {
+      mountedRoot = createRoot(container as unknown as Element)
+      mountedRoot.render(
+        createElement(AntigravityOptInCard, {
+          enabled: false,
+          acceptedAt: null,
+          geminiApiDisclosureAcceptedAt: 2,
+          onChange: () => undefined
+        })
+      )
+      await new Promise((resolve) => setTimeout(resolve, 0))
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    })
+    return container
+  }
+
+  const at = '2026-07-24T12:00:00.000Z'
+
+  function discoveryTone(container: TestElement): string | undefined {
+    return container
+      .querySelector('[data-testid="antigravity-gemini-api-discovery"]')
+      ?.attributes.get('data-tone')
+  }
+
+  it.each([
+    [{ status: 'ok', modelCount: 12, checkedAt: at }, '12 Gemini API models available'],
+    [{ status: 'ok', modelCount: 1, checkedAt: at }, '1 Gemini API model available'],
+    [{ status: 'unauthorized', modelCount: 0, checkedAt: at }, 'Google rejected this API key'],
+    [{ status: 'rateLimited', modelCount: 0, checkedAt: at }, 'Rate limited — retrying'],
+    [
+      { status: 'timedOut', modelCount: 0, checkedAt: at },
+      'Discovery timed out within the 1s startup probe budget; showing the built-in model list'
+    ],
+    [
+      { status: 'unavailable', modelCount: 0, checkedAt: at },
+      'Could not reach the Gemini API; showing the built-in model list'
+    ],
+    [
+      { status: 'empty', modelCount: 0, checkedAt: at },
+      'This key returned no usable Gemini models'
+    ],
+    // A successful pass whose rows were all curated away is not "0 available".
+    [{ status: 'ok', modelCount: 0, checkedAt: at }, 'This key returned no usable Gemini models'],
+    [null, 'Checking this key against the Gemini API…']
+  ])('renders one honest line for %j', async (outcome, expected) => {
+    const container = await renderWithOutcome(outcome)
+    expect(
+      container.querySelector('[data-testid="antigravity-gemini-api-discovery"]')?.textContent
+    ).toBe(expected)
+  })
+
+  it('no longer lets a stored-but-rejected key read as simply working', async () => {
+    // The regression this closes: the envelope existing on disk drove a green
+    // "API key configured" with no other signal anywhere, so a key Google was
+    // rejecting on every probe looked healthy.
+    const container = await renderWithOutcome({
+      status: 'unauthorized',
+      modelCount: 0,
+      checkedAt: at
+    })
+    expect(container.textContent).toContain('API key configured')
+    expect(container.textContent).toContain('Google rejected this API key')
+    expect(discoveryTone(container)).toBe('not-available')
+  })
+
+  it('marks a verified catalogue connected and an unverified one as degraded', async () => {
+    const connected = await renderWithOutcome({ status: 'ok', modelCount: 4, checkedAt: at })
+    expect(discoveryTone(connected)).toBe('connected')
+
+    act(() => mountedRoot?.unmount())
+    mountedRoot = null
+
+    // A timeout is not a bad key, so it must not read as a hard failure.
+    const degraded = await renderWithOutcome({ status: 'timedOut', modelCount: 0, checkedAt: at })
+    expect(discoveryTone(degraded)).toBe('partial')
+  })
+
+  it('says nothing about discovery when no key is configured', async () => {
+    const container = await renderWithOutcome(
+      { status: 'unauthorized', modelCount: 0, checkedAt: at },
+      { configured: false }
+    )
+    expect(container.querySelector('[data-testid="antigravity-gemini-api-discovery"]')).toBeNull()
+    expect(container.textContent).toContain('No API key configured')
+  })
+
+  it('renders unchanged when the preload bridge does not expose the channel', async () => {
+    const container = await renderWithOutcome(null, { omitBridge: true })
+    expect(
+      container.querySelector('[data-testid="antigravity-gemini-api-discovery"]')?.textContent
+    ).toBe('Checking this key against the Gemini API…')
+  })
+
+  it('never renders provider error text, a project id, or the key itself', async () => {
+    const container = await renderWithOutcome({
+      status: 'unauthorized',
+      modelCount: 0,
+      checkedAt: at,
+      error: 'API key not valid. project=leaky-project',
+      apiKey: 'AIza-secret'
+    })
+    expect(container.textContent).not.toContain('AIza-secret')
+    expect(container.textContent).not.toContain('leaky-project')
+    expect(container.textContent).not.toContain('API key not valid')
+  })
+})

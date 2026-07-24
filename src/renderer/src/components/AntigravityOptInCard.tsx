@@ -5,6 +5,7 @@ import type {
   AntigravityGeminiApiSecretMutationResult,
   AntigravityGeminiApiSecretStatus
 } from '../../../main/antigravity/AntigravityGeminiApiSecretStore'
+import type { AntigravityGeminiApiDiscoveryOutcome } from '../../../main/antigravity/AntigravityGeminiApiDiscoveryOutcome'
 import { notifyAntigravityGeminiApiSecretMutation } from '../hooks/useConfiguredProviderSnapshot'
 
 export type AntigravityOptInPatch = {
@@ -33,6 +34,83 @@ interface AntigravityOptInCardProps {
 
 const GEMINI_API_ERROR_MESSAGE =
   'The Gemini API key could not be saved. Check the key and try again.'
+
+interface GeminiApiDiscoveryLine {
+  readonly tone: 'connected' | 'partial' | 'not-available'
+  readonly text: string
+}
+
+const GEMINI_API_DISCOVERY_PENDING: GeminiApiDiscoveryLine = {
+  tone: 'partial',
+  text: 'Checking this key against the Gemini API…'
+}
+
+/**
+ * Turns the last nonsecret discovery outcome into one honest line. A stored key
+ * is not a working key: the secret status only proves an envelope exists on
+ * disk, so without this the card reported a green "API key configured" even
+ * when Google was rejecting the key on every probe. Every branch here is fixed
+ * local copy — the main process deliberately never sends error text to quote.
+ */
+function describeGeminiApiDiscovery(
+  outcome: AntigravityGeminiApiDiscoveryOutcome | null
+): GeminiApiDiscoveryLine {
+  if (!outcome) return GEMINI_API_DISCOVERY_PENDING
+  switch (outcome.status) {
+    case 'ok':
+      // Curation can legitimately filter every discovered row; claiming "0
+      // models available" next to an empty picker would not be an answer.
+      return outcome.modelCount > 0
+        ? {
+            tone: 'connected',
+            text: `${outcome.modelCount} Gemini API model${
+              outcome.modelCount === 1 ? '' : 's'
+            } available`
+          }
+        : { tone: 'not-available', text: 'This key returned no usable Gemini models' }
+    case 'unauthorized':
+      return { tone: 'not-available', text: 'Google rejected this API key' }
+    case 'rateLimited':
+      return { tone: 'partial', text: 'Rate limited — retrying' }
+    case 'projectLimited':
+      return {
+        tone: 'not-available',
+        text: 'This key’s project is over its limit or has no billing enabled'
+      }
+    case 'timedOut':
+      // The lane's 900ms budget sits inside a 1s overall probe deadline, so a
+      // merely slow network lands here with a perfectly good key. Say so.
+      return {
+        tone: 'partial',
+        text: 'Discovery timed out within the 1s startup probe budget; showing the built-in model list'
+      }
+    case 'unavailable':
+      return {
+        tone: 'partial',
+        text: 'Could not reach the Gemini API; showing the built-in model list'
+      }
+    case 'invalidResponse':
+      return {
+        tone: 'partial',
+        text: 'The Gemini API returned an unexpected response; showing the built-in model list'
+      }
+    case 'empty':
+      return { tone: 'not-available', text: 'This key returned no usable Gemini models' }
+    case 'disclosureRequired':
+      return { tone: 'not-available', text: 'Accept the disclosure above to check this key' }
+    case 'keyUnavailable':
+      return {
+        tone: 'not-available',
+        text: 'The stored key could not be read — clear it and save it again'
+      }
+    case 'sdkUnavailable':
+      return { tone: 'not-available', text: 'The Gemini API client is unavailable in this build' }
+    case 'cancelled':
+      return { tone: 'partial', text: 'The last check was interrupted; it will retry' }
+    default:
+      return GEMINI_API_DISCOVERY_PENDING
+  }
+}
 
 function safeMutationMessage(result: AntigravityGeminiApiSecretMutationResult): string | null {
   if (result.ok) return null
@@ -69,11 +147,14 @@ export function AntigravityOptInCard({
   )
   const [geminiApiBusy, setGeminiApiBusy] = useState(false)
   const [geminiApiMessage, setGeminiApiMessage] = useState<string | null>(null)
+  const [geminiApiDiscovery, setGeminiApiDiscovery] =
+    useState<AntigravityGeminiApiDiscoveryOutcome | null>(null)
   const consentRecorded = enabled && typeof acceptedAt === 'number' && acceptedAt > 0
   // A configured Gemini API key is an independent, first-class admission lane
   // (A1). The card header/status must reflect that lane neutrally instead of
   // always describing the separate agy/CLI ban-risk consent state.
   const geminiApiConfigured = Boolean(geminiApiStatus?.configured)
+  const geminiApiDiscoveryLine = describeGeminiApiDiscovery(geminiApiDiscovery)
 
   useEffect(() => {
     let active = true
@@ -87,6 +168,30 @@ export function AntigravityOptInCard({
       })
     return () => {
       active = false
+    }
+  }, [])
+
+  // Polled rather than pushed: a discovery pass is kicked off by a key mutation
+  // or a settings generation change, both of which land a beat after the action
+  // that caused them. The loop stops with the card, which only exists while the
+  // provider settings tab is open.
+  useEffect(() => {
+    if (typeof window.api.getAntigravityGeminiApiDiscoveryOutcome !== 'function') return
+    let cancelled = false
+    let timer: number | null = null
+    const poll = async (): Promise<void> => {
+      try {
+        const outcome = await window.api.getAntigravityGeminiApiDiscoveryOutcome()
+        if (!cancelled) setGeminiApiDiscovery(outcome ?? null)
+      } catch {
+        if (!cancelled) setGeminiApiDiscovery(null)
+      }
+      if (!cancelled) timer = window.setTimeout(() => void poll(), 1_000)
+    }
+    void poll()
+    return () => {
+      cancelled = true
+      if (timer !== null) window.clearTimeout(timer)
     }
   }, [])
 
@@ -112,6 +217,9 @@ export function AntigravityOptInCard({
       const result = await window.api.setAntigravityGeminiApiSecret(geminiApiKey)
       if (result.ok) {
         setGeminiApiStatus(result.status)
+        // The previous key's verdict says nothing about this one; the poll
+        // refills it once the mutation's fresh discovery pass lands.
+        setGeminiApiDiscovery(null)
         notifyAntigravityGeminiApiSecretMutation()
         setGeminiApiMessage('Gemini API key saved securely in the desktop main process.')
       } else {
@@ -133,6 +241,7 @@ export function AntigravityOptInCard({
       const result = await window.api.clearAntigravityGeminiApiSecret()
       setGeminiApiStatus(result.status)
       if (result.ok) {
+        setGeminiApiDiscovery(null)
         notifyAntigravityGeminiApiSecretMutation()
       }
       setGeminiApiMessage(result.ok ? 'Gemini API key cleared.' : GEMINI_API_ERROR_MESSAGE)
@@ -287,6 +396,20 @@ export function AntigravityOptInCard({
             {geminiApiStatus?.configured ? 'API key configured' : 'No API key configured'}
           </span>
         </div>
+        {geminiApiStatus?.configured && (
+          <div className="settings-provider-auth-status settings-antigravity-gemini-api-discovery-status">
+            <span
+              className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${geminiApiDiscoveryLine.tone}`}
+              aria-hidden
+            />
+            <span
+              data-testid="antigravity-gemini-api-discovery"
+              data-tone={geminiApiDiscoveryLine.tone}
+            >
+              {geminiApiDiscoveryLine.text}
+            </span>
+          </div>
+        )}
         <label className="settings-provider-auth-field">
           <span>Google project API key</span>
           <input

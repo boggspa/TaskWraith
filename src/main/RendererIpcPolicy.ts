@@ -264,6 +264,9 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'antigravity-gemini-api:get-secret-status',
   'antigravity-gemini-api:set-secret',
   'antigravity-gemini-api:clear-secret',
+  // The discovery outcome describes that same credential's health, so it stays
+  // on the identical main-renderer-only footing even though it carries no key.
+  'antigravity-gemini-api:get-discovery-outcome',
 
   // Canvas WebContentsView state belongs to the primary window. Popouts and
   // other secondary renderers must not create or reposition an overlay over it.

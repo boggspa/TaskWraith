@@ -142,6 +142,7 @@ import type {
   AntigravityGeminiApiSecretMutationResult,
   AntigravityGeminiApiSecretStatus
 } from '../main/antigravity/AntigravityGeminiApiSecretStore'
+import type { AntigravityGeminiApiDiscoveryOutcome } from '../main/antigravity/AntigravityGeminiApiDiscoveryOutcome'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
@@ -1487,6 +1488,7 @@ declare global {
         apiKey: string
       ) => Promise<AntigravityGeminiApiSecretMutationResult>
       clearAntigravityGeminiApiSecret: () => Promise<AntigravityGeminiApiSecretMutationResult>
+      getAntigravityGeminiApiDiscoveryOutcome: () => Promise<AntigravityGeminiApiDiscoveryOutcome | null>
       getManagedPolicyStatus: () => Promise<Record<string, unknown> | null>
       getHandoffCards: (filter?: HandoffCardFilter) => Promise<HandoffCard[]>
       saveHandoffCard: (

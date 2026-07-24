@@ -1616,9 +1616,16 @@ import {
   registerAntigravityRateLimitHandler
 } from './antigravity/AntigravityRateLimitHandler'
 import { setAntigravityGeminiApiKeyConfiguredProbe } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/AntigravityGeminiApiDiscoveryOutcome'
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
+/**
+ * In-memory only and safe to construct eagerly here — unlike the secret store
+ * it touches neither safeStorage nor userData, so both the discovery deps below
+ * and the post-ready IPC registration can close over the same instance.
+ */
+const antigravityGeminiApiDiscoveryOutcomeStore = new AntigravityGeminiApiDiscoveryOutcomeStore()
 // Wires the shared, nonsecret "is a Gemini API key configured" signal that
 // MainSanitizers/ComposerService/ChatService read at run-dispatch chokepoints.
 // The closure captures the ref above lazily, so this is safe to register
@@ -13977,7 +13984,9 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
   },
   getAntigravityCombinedModels: (settings) =>
     discoverAuthenticatedAntigravityCombinedModels(settings, {
-      getSecretStore: () => antigravityGeminiApiSecretStoreRef
+      getSecretStore: () => antigravityGeminiApiSecretStoreRef,
+      recordGeminiApiOutcome: (outcome) =>
+        antigravityGeminiApiDiscoveryOutcomeStore.record(outcome.status, outcome.modelCount)
     }),
   getAntigravityGeminiApiKeyGeneration: () => {
     try {
@@ -31346,8 +31355,15 @@ if (isGeminiMcpBridgeProcess) {
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: antigravityGeminiApiSecretStore,
       isMainRendererSender,
+      getDiscoveryOutcome: () => antigravityGeminiApiDiscoveryOutcomeStore.getLastOutcome(),
       onSecretMutationSuccess: createAntigravityGeminiApiMutationSuccessHandler({
-        startDiscovery: () => managedRunConfiguredProviderDiscovery.start(AppStore.getSettings()),
+        startDiscovery: () => {
+          // The prior key's verdict cannot describe the new one; drop it so the
+          // card says "checking" rather than briefly re-asserting a stale
+          // rejection against a key the user just fixed.
+          antigravityGeminiApiDiscoveryOutcomeStore.clear()
+          managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        },
         broadcastPendingCatalog: () => remoteProviderModelsTrigger?.()
       })
     })

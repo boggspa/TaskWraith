@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import {
+  ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL,
   ANTIGRAVITY_GEMINI_API_SECRET_CLEAR_CHANNEL,
   ANTIGRAVITY_GEMINI_API_SECRET_SET_CHANNEL,
   ANTIGRAVITY_GEMINI_API_SECRET_STATUS_CHANNEL,
@@ -197,6 +198,124 @@ describe('antigravity Gemini API secret IPC', () => {
       ok: true,
       status: { configured: true, encryptionAvailable: true }
     })
+  })
+
+  it('projects the last discovery outcome and reports null before the first probe', () => {
+    let outcome: unknown = null
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: createStore(),
+      isMainRendererSender: () => true,
+      getDiscoveryOutcome: () => outcome as never
+    })
+    const event = { sender: { id: 1 } }
+    const invoke = (): unknown =>
+      handlers.get(ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL)?.(event)
+
+    expect(invoke()).toBeNull()
+
+    outcome = { status: 'ok', modelCount: 12, checkedAt: '2026-07-24T12:00:00.000Z' }
+    expect(invoke()).toEqual({
+      status: 'ok',
+      modelCount: 12,
+      checkedAt: '2026-07-24T12:00:00.000Z'
+    })
+
+    outcome = { status: 'timedOut', modelCount: 0, checkedAt: '2026-07-24T12:00:00.000Z' }
+    expect(invoke()).toEqual({
+      status: 'timedOut',
+      modelCount: 0,
+      checkedAt: '2026-07-24T12:00:00.000Z'
+    })
+  })
+
+  it('reports null when no discovery recorder is wired', () => {
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: createStore(),
+      isMainRendererSender: () => true
+    })
+    expect(
+      handlers.get(ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL)?.({ sender: { id: 1 } })
+    ).toBeNull()
+  })
+
+  it('drops secret-bearing, unknown-status and noncanonical fields from the outcome', () => {
+    const cases: Array<[unknown, unknown]> = [
+      // Extra fields, however plausible, never cross the boundary.
+      [
+        {
+          status: 'unauthorized',
+          modelCount: 0,
+          checkedAt: '2026-07-24T12:00:00.000Z',
+          apiKey: 'AIza-secret',
+          error: 'API key not valid. Please pass a valid API key. project=leaky-project',
+          endpoint: 'https://generativelanguage.googleapis.com/v1beta/models'
+        },
+        { status: 'unauthorized', modelCount: 0, checkedAt: '2026-07-24T12:00:00.000Z' }
+      ],
+      // A status outside the closed enum collapses to "nothing recorded".
+      [{ status: 'somethingNew', modelCount: 1, checkedAt: '2026-07-24T12:00:00.000Z' }, null],
+      // An impossible or noncanonical timestamp collapses the whole outcome.
+      [{ status: 'ok', modelCount: 1, checkedAt: '2026-02-30T12:00:00.000Z' }, null],
+      [{ status: 'ok', modelCount: 1, checkedAt: '2026-07-24T12:00:00Z' }, null],
+      [{ status: 'ok', modelCount: 1 }, null],
+      // A failure can never smuggle in a model count.
+      [
+        { status: 'unauthorized', modelCount: 99, checkedAt: '2026-07-24T12:00:00.000Z' },
+        { status: 'unauthorized', modelCount: 0, checkedAt: '2026-07-24T12:00:00.000Z' }
+      ],
+      // Counts are bounded integers.
+      [
+        { status: 'ok', modelCount: 10_000, checkedAt: '2026-07-24T12:00:00.000Z' },
+        { status: 'ok', modelCount: 1_024, checkedAt: '2026-07-24T12:00:00.000Z' }
+      ],
+      [
+        { status: 'ok', modelCount: '7', checkedAt: '2026-07-24T12:00:00.000Z' },
+        { status: 'ok', modelCount: 0, checkedAt: '2026-07-24T12:00:00.000Z' }
+      ],
+      ['not-an-object', null],
+      [null, null]
+    ]
+
+    for (const [stored, expected] of cases) {
+      handlers.clear()
+      registerAntigravityGeminiApiSecretHandlers({
+        secretStore: createStore(),
+        isMainRendererSender: () => true,
+        getDiscoveryOutcome: () => stored as never
+      })
+      const projected = handlers.get(ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL)?.({
+        sender: { id: 1 }
+      })
+      expect(projected).toEqual(expected)
+      expect(JSON.stringify(projected ?? null)).not.toContain('AIza-secret')
+      expect(JSON.stringify(projected ?? null)).not.toContain('leaky-project')
+      expect(JSON.stringify(projected ?? null)).not.toContain('googleapis.com')
+    }
+  })
+
+  it('keeps the discovery outcome behind main-renderer authority and survives a throwing source', () => {
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: createStore(),
+      isMainRendererSender: () => false,
+      getDiscoveryOutcome: () => {
+        throw new Error('should never be reached')
+      }
+    })
+    expect(() =>
+      handlers.get(ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL)?.({ sender: { id: 2 } })
+    ).toThrow('Only the main renderer can manage the Gemini API key.')
+
+    handlers.clear()
+    registerAntigravityGeminiApiSecretHandlers({
+      secretStore: createStore(),
+      isMainRendererSender: () => true,
+      getDiscoveryOutcome: () => {
+        throw new Error('reader exploded')
+      }
+    })
+    expect(
+      handlers.get(ANTIGRAVITY_GEMINI_API_DISCOVERY_OUTCOME_CHANNEL)?.({ sender: { id: 1 } })
+    ).toBeNull()
   })
 
   it('bounds API-key payloads at the validation boundary', () => {

@@ -265,6 +265,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'antigravity-gemini-api:get-secret-status': [],
   'antigravity-gemini-api:set-secret': ['antigravityGeminiApiKey'],
   'antigravity-gemini-api:clear-secret': [],
+  'antigravity-gemini-api:get-discovery-outcome': [],
   'get-managed-policy-status': [],
   // 1.0.6-CRUX42 — open a Terminal running a provider's interactive CLI login.
   'provider:open-login-terminal': ['provider'],
