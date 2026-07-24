@@ -256,6 +256,8 @@ import {
 import { createProductCrashRecord, filterProductCrashRecords } from '../ProductOperations'
 import { chatPathForId, isSafeChatId } from '../ChatPath'
 import { compactChatForPersist } from './ChatCompaction'
+import { persistThreadWorktreeBindingPatch } from './ThreadWorktreeBindingPersistence'
+import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import {
   acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
   claimPendingSubThreadMailboxEvents,
@@ -2523,6 +2525,47 @@ function normalizeHistoryDeletionIntent(value: unknown): HistoryDeletionIntent {
 function readHistoryDeletionIntent(): HistoryDeletionIntent | null {
   const value = readJsonStrictIfPresent(historyDeletionIntentPath)
   return value === null ? null : normalizeHistoryDeletionIntent(value)
+}
+
+async function readHistoryDeletionIntentAsync(): Promise<HistoryDeletionIntent | null> {
+  try {
+    const raw = await fs.promises.readFile(historyDeletionIntentPath, 'utf-8')
+    return normalizeHistoryDeletionIntent(JSON.parse(raw) as unknown)
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException | undefined)?.code === 'ENOENT') return null
+    throw error
+  }
+}
+
+function assertHistoryMutationAdmission(
+  input: HistoryMutationAdmissionInput,
+  intent: HistoryDeletionIntent
+): void {
+  const chatIds = new Set(
+    (input.chatIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+  )
+  const workspaceIds = new Set(
+    (input.workspaceIds || []).filter(
+      (value): value is string => typeof value === 'string' && Boolean(value)
+    )
+  )
+  const runIds = new Set(
+    (input.runIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
+  )
+  const blocked =
+    intent.kind === 'global' ||
+    (intent.kind === 'workspace' &&
+      Boolean(intent.workspaceId && workspaceIds.has(intent.workspaceId))) ||
+    intent.chatIds.some((chatId) => chatIds.has(chatId)) ||
+    intent.runIds.some((runId) => runIds.has(runId))
+
+  if (blocked) {
+    throw new HistoryDeletionMutationBlockedError(
+      intent.operationId,
+      intent.kind,
+      input.operation || 'History mutation'
+    )
+  }
 }
 
 function writeHistoryDeletionIntent(intent: HistoryDeletionIntent): void {
@@ -4903,6 +4946,10 @@ export class AppStore {
     string,
     { mtimeMs: number; size: number; record: ChatRecord }
   >()
+  /** Serializes only the async binding patch for one chat. Ordinary legacy
+   * saveChat callers remain independent, so this is a narrow race guard rather
+   * than a new whole-record persistence protocol. */
+  private static threadWorktreeBindingWriteTails = new Map<string, Promise<ChatRecord>>()
 
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
     let stat: fs.Stats
@@ -5063,6 +5110,61 @@ export class AppStore {
   static getChatRecordPath(chatId: string): string | null {
     if (!isSafeChatId(chatId)) return null
     return chatPathForId(chatsDir, chatId)
+  }
+
+  /**
+   * Persist only the worktree identity without routing a full chat record
+   * through saveChat's synchronous writeJson path. The allocator invokes this
+   * after Git has prepared a worktree, so an actionable write failure can be
+   * surfaced before the run starts.
+   */
+  static persistThreadWorktreeBinding(
+    chatId: string,
+    binding: ThreadWorktreeBinding
+  ): Promise<ChatRecord> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('An isolated worktree can only be bound to a saved chat.'))
+    }
+
+    const previous: Promise<ChatRecord | null> =
+      this.threadWorktreeBindingWriteTails.get(chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(async () => {
+        if (deletedChatIds.has(chatId)) {
+          throw new Error('This chat was deleted before its isolated worktree could be bound.')
+        }
+        const persisted = await persistThreadWorktreeBindingPatch({
+          chatsDir,
+          chatId,
+          binding,
+          admitMutation: async (chat) => {
+            await this.assertHistoryMutationAllowedAsync({
+              operation: 'Thread worktree binding persistence',
+              chatIds: [chat.appChatId],
+              workspaceIds: [chat.workspaceId]
+            })
+          }
+        })
+        // The patcher deliberately avoids synchronous stat/index maintenance.
+        // Let the normal cached read validate from disk on the next consumer.
+        this.chatRecordCache.delete(chatId)
+        return persisted
+      })
+    this.threadWorktreeBindingWriteTails.set(chatId, operation)
+    void operation.then(
+      () => {
+        if (this.threadWorktreeBindingWriteTails.get(chatId) === operation) {
+          this.threadWorktreeBindingWriteTails.delete(chatId)
+        }
+      },
+      () => {
+        if (this.threadWorktreeBindingWriteTails.get(chatId) === operation) {
+          this.threadWorktreeBindingWriteTails.delete(chatId)
+        }
+      }
+    )
+    return operation
   }
 
   private static readChatForFeedbackBaseline(chatId: string, chatPath: string): ChatRecord | null {
@@ -5745,32 +5847,16 @@ export class AppStore {
     if (this.historyDeletionRunning) return
     const intent = readHistoryDeletionIntent()
     if (!intent) return
+    assertHistoryMutationAdmission(input, intent)
+  }
 
-    const chatIds = new Set(
-      (input.chatIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
-    )
-    const workspaceIds = new Set(
-      (input.workspaceIds || []).filter(
-        (value): value is string => typeof value === 'string' && Boolean(value)
-      )
-    )
-    const runIds = new Set(
-      (input.runIds || []).filter((value): value is string => typeof value === 'string' && Boolean(value))
-    )
-    const blocked =
-      intent.kind === 'global' ||
-      (intent.kind === 'workspace' &&
-        Boolean(intent.workspaceId && workspaceIds.has(intent.workspaceId))) ||
-      intent.chatIds.some((chatId) => chatIds.has(chatId)) ||
-      intent.runIds.some((runId) => runIds.has(runId))
-
-    if (blocked) {
-      throw new HistoryDeletionMutationBlockedError(
-        intent.operationId,
-        intent.kind,
-        input.operation || 'History mutation'
-      )
-    }
+  private static async assertHistoryMutationAllowedAsync(
+    input: HistoryMutationAdmissionInput
+  ): Promise<void> {
+    if (this.historyDeletionRunning) return
+    const intent = await readHistoryDeletionIntentAsync()
+    if (!intent) return
+    assertHistoryMutationAdmission(input, intent)
   }
 
   private static allReadableChatsForDeletion(): ChatRecord[] {

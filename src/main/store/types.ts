@@ -1,4 +1,5 @@
 import type { TodoItem } from '../TodoList'
+import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { AppIconVariant } from '../../shared/iconVariants'
 import type { DiffStatColors } from '../../shared/diffStatColors'
 import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
@@ -3476,6 +3477,8 @@ export interface ChatRecord {
   title: string
   workspaceId?: string
   workspacePath?: string
+  /** Main-owned durable identity for a thread's isolated Git worktree. */
+  threadWorktreeBinding?: ThreadWorktreeBinding
   createdAt: number
   updatedAt: number
   /**
