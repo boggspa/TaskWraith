@@ -522,6 +522,34 @@ describe('decodeBridgeActionPayload', () => {
         })
       ).payload
       expect(emptyPatch).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
+
+      // Thread-wide Boss/Captain Auto Approvals: a boolean-only patch is a
+      // valid update (the device confirm dialog already gathered consent) …
+      const autoOnly = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings-auto',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          bossmanAutoApprovals: true
+        })
+      ).payload
+      expect(autoOnly.kind).toBe('ensembleSettingsUpdate')
+      if (autoOnly.kind === 'ensembleSettingsUpdate') {
+        expect(autoOnly.bossmanAutoApprovals).toBe(true)
+      }
+
+      // … while a non-boolean value rejects the whole payload.
+      const badAuto = decodeBridgeActionPayload(
+        encode({
+          kind: 'ensembleSettingsUpdate',
+          actionId: 'a-ensemble-settings-bad-auto',
+          workspaceId: 'ws-1',
+          threadId: 'thread-1',
+          bossmanAutoApprovals: 'yes'
+        })
+      ).payload
+      expect(badAuto).toMatchObject({ kind: 'unknown', rawKind: 'ensembleSettingsUpdate' })
     })
 
     it('decodes a threadSnapshotRequest and classifies it read-only', () => {

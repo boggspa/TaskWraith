@@ -186,6 +186,18 @@ struct TWPopoverFieldLabel: View {
 
 // MARK: - Shared fields cluster (authority + stage + role + brief)
 
+/// Thread-wide Boss/Captain Auto Approvals control state for the "Auto" pill
+/// (desktop `EnsembleParticipantAuthorityControls` parity). The value is
+/// THREAD-level — hosts read it off `RemoteEnsembleState` (with an optimistic
+/// draft overlay) and push toggles through `updateEnsembleSettings`.
+struct RosterAutoApprovalsConfig {
+    let isOn: Bool
+    /// A Boss or Captain is assigned (draft-aware). The pill is inert without
+    /// leadership — the Mac also rejects enabling in that state.
+    let hasLeadership: Bool
+    let onToggle: (Bool) -> Void
+}
+
 /// The desktop popover's field stack, shared verbatim between the participant
 /// editor popover and the add-participant popover (Electron shares
 /// `EnsembleParticipantAuthorityControls` / `StageControl` / role / brief the
@@ -196,8 +208,11 @@ struct RosterParticipantFieldsCluster: View {
     /// Fired after every tap-sized change (pills/segments/preset picks) —
     /// NOT after each keystroke; text flushes on close via the host.
     var onDiscreteChange: () -> Void = {}
+    /// Thread-wide Auto Approvals pill next to Enabled (nil hides it).
+    var autoApprovals: RosterAutoApprovalsConfig? = nil
 
     @State private var rolePresetId: String = twEnsembleRolePresetCustomId
+    @State private var showAutoApprovalsConsent = false
 
     private var authoritySelection: Binding<String> {
         Binding(
@@ -240,6 +255,29 @@ struct RosterParticipantFieldsCluster: View {
                 ) {
                     entry.enabled.toggle()
                     onDiscreteChange()
+                }
+                if let autoApprovals {
+                    // Thread-wide Boss/Captain Auto Approvals (desktop "Auto"
+                    // pill): needs leadership; enabling routes through the
+                    // consent alert below, disabling is immediate.
+                    TWCompactPillToggle(
+                        label: "Auto",
+                        isOn: autoApprovals.hasLeadership && autoApprovals.isOn,
+                        tint: TWTheme.statusAttention,
+                        disabled: !autoApprovals.hasLeadership
+                    ) {
+                        if autoApprovals.hasLeadership && autoApprovals.isOn {
+                            autoApprovals.onToggle(false)
+                        } else {
+                            showAutoApprovalsConsent = true
+                        }
+                    }
+                    .accessibilityLabel("Thread-wide Auto Approvals")
+                    .accessibilityHint(
+                        autoApprovals.hasLeadership
+                            ? "Boss/Captain one-shot approvals within each seat's permission preset."
+                            : "Assign a Boss or Captain before enabling Auto Approvals."
+                    )
                 }
                 Spacer(minLength: 0)
             }
@@ -391,6 +429,16 @@ struct RosterParticipantFieldsCluster: View {
         .onChange(of: entry.id) { _, _ in
             rolePresetId = twResolveRolePresetId(entry.role)
         }
+        // Desktop consent-dialog parity (setBossmanAutoApprovals): enabling is
+        // an explicit, scoped consent; the copy mirrors the Mac verbatim.
+        .alert("Allow Boss/Captain Auto Approvals?", isPresented: $showAutoApprovalsConsent) {
+            Button("Allow") { autoApprovals?.onToggle(true) }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text(
+                "Boss remains primary; Captain can only use this consent when Boss is unavailable. Approvals stay one-shot and limited to the selected participant permission preset and workspace policy. This will not grant session/workspace approval, YOLO, policy changes, external-path escapes, or unclassified requests."
+            )
+        }
     }
 }
 
@@ -404,6 +452,7 @@ struct RosterParticipantFieldsCluster: View {
 private struct RosterParticipantConfigFields: View {
     @Binding var entry: RemoteSessionModel.RosterDraftEntry
     var onDiscreteChange: () -> Void = {}
+    var autoApprovals: RosterAutoApprovalsConfig? = nil
     /// Present = editor mode; shows the Remove row.
     var onRemove: (() -> Void)? = nil
 
@@ -411,7 +460,8 @@ private struct RosterParticipantConfigFields: View {
         VStack(alignment: .leading, spacing: 0) {
             VStack(alignment: .leading, spacing: 9) {
                 RosterParticipantFieldsCluster(
-                    entry: $entry, onDiscreteChange: onDiscreteChange)
+                    entry: $entry, onDiscreteChange: onDiscreteChange,
+                    autoApprovals: autoApprovals)
 
                 if let onRemove {
                     Button(role: .destructive, action: onRemove) {
@@ -608,6 +658,8 @@ struct RosterParticipantEditorPopover: View {
     let onApply: (RemoteSessionModel.RosterDraftEntry) -> Void
     /// Remove this participant (host closes the popover).
     let onRemove: () -> Void
+    /// Thread-wide Auto Approvals pill state + toggle (nil hides the pill).
+    var autoApprovals: RosterAutoApprovalsConfig? = nil
     var onDismissRequest: () -> Void = {}
 
     @State private var entry: RemoteSessionModel.RosterDraftEntry
@@ -626,12 +678,14 @@ struct RosterParticipantEditorPopover: View {
         canRemove: Bool,
         onApply: @escaping (RemoteSessionModel.RosterDraftEntry) -> Void,
         onRemove: @escaping () -> Void,
+        autoApprovals: RosterAutoApprovalsConfig? = nil,
         onDismissRequest: @escaping () -> Void = {}
     ) {
         self.catalogs = catalogs
         self.canRemove = canRemove
         self.onApply = onApply
         self.onRemove = onRemove
+        self.autoApprovals = autoApprovals
         self.onDismissRequest = onDismissRequest
         self._entry = State(initialValue: entry)
         self._lastApplied = State(initialValue: entry)
@@ -661,6 +715,7 @@ struct RosterParticipantEditorPopover: View {
             RosterParticipantConfigFields(
                 entry: $entry,
                 onDiscreteChange: applyDiscrete,
+                autoApprovals: autoApprovals,
                 onRemove: canRemove ? onRemove : nil)
         }
         // The panel writes provider/model/reasoning/fast/thinking straight
@@ -705,10 +760,18 @@ struct RosterParticipantEditorPopover: View {
 struct RosterAddParticipantPopover: View {
     let catalogs: [ProviderModelCatalog]
     /// Append the configured seat to the roster (host closes the popover).
-    let onAdd: (RemoteSessionModel.RosterDraftEntry) -> Void
+    /// The second argument is a STAGED thread-wide Auto Approvals change —
+    /// nil = untouched; the host applies it right after the roster commit
+    /// (desktop parity: the add popover defers the toggle to Add).
+    let onAdd: (RemoteSessionModel.RosterDraftEntry, Bool?) -> Void
+    /// Current thread Auto Approvals state + leadership (for the pill).
+    var threadAutoApprovalsEnabled: Bool = false
+    var threadHasLeadership: Bool = false
     var onDismissRequest: () -> Void = {}
 
     @State private var entry: RemoteSessionModel.RosterDraftEntry
+    /// The consented-but-not-yet-applied Auto toggle (applies on Add).
+    @State private var stagedAutoApprovals: Bool? = nil
     #if os(iOS)
         @Environment(\.horizontalSizeClass) private var horizontalSizeClass
         private var compactWidth: Bool { horizontalSizeClass == .compact }
@@ -719,10 +782,14 @@ struct RosterAddParticipantPopover: View {
     init(
         catalogs: [ProviderModelCatalog],
         seedProvider: String? = nil,
-        onAdd: @escaping (RemoteSessionModel.RosterDraftEntry) -> Void,
+        threadAutoApprovalsEnabled: Bool = false,
+        threadHasLeadership: Bool = false,
+        onAdd: @escaping (RemoteSessionModel.RosterDraftEntry, Bool?) -> Void,
         onDismissRequest: @escaping () -> Void = {}
     ) {
         self.catalogs = catalogs
+        self.threadAutoApprovalsEnabled = threadAutoApprovalsEnabled
+        self.threadHasLeadership = threadHasLeadership
         self.onAdd = onAdd
         self.onDismissRequest = onDismissRequest
         let provider = seedProvider ?? catalogs.first?.provider ?? "claude"
@@ -759,12 +826,20 @@ struct RosterAddParticipantPopover: View {
                     permissionPresetId: $entry.permissionPresetId,
                     accent: TWTheme.providerAccent(entry.provider, modelId: entry.model))),
             confirmLabel: "Add",
-            onConfirm: { onAdd(entry) },
+            onConfirm: { onAdd(entry, stagedAutoApprovals) },
             onDismissRequest: onDismissRequest
         ) {
             // Same config column as the editor popover (minus Remove) so both
-            // surfaces read as one familiar place.
-            RosterParticipantConfigFields(entry: $entry)
+            // surfaces read as one familiar place. The Auto pill counts the
+            // DRAFTED seat's authority as leadership (desktop parity) and
+            // stages the toggle until Add commits the seat.
+            RosterParticipantConfigFields(
+                entry: $entry,
+                autoApprovals: RosterAutoApprovalsConfig(
+                    isOn: stagedAutoApprovals ?? threadAutoApprovalsEnabled,
+                    hasLeadership: threadHasLeadership || entry.isBossman
+                        || entry.isSecondInCommand,
+                    onToggle: { stagedAutoApprovals = $0 }))
         }
     }
 

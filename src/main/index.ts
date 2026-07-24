@@ -34414,6 +34414,34 @@ if (isGeminiMcpBridgeProcess) {
           const nextEnsembleContextChars = shouldUpdateContextChars
             ? Math.max(5_000, Math.min(256_000, Math.round(action.ensembleContextChars as number)))
             : chat.ensemble.ensembleContextChars
+          // Thread-wide Boss/Captain Auto Approvals (desktop
+          // setBossmanAutoApprovals parity): the device's confirm dialog is
+          // the consent; the host stamps the canonical shape and enforces
+          // the leadership precondition. Disabling always clears; enabling
+          // preserves an existing confirmedAt (re-toggles aren't re-consent).
+          const shouldUpdateAutoApprovals = typeof action.bossmanAutoApprovals === 'boolean'
+          const hasLeadershipForAutoApprovals = Boolean(
+            chat.ensemble.bossmanParticipantId || chat.ensemble.secondInCommandParticipantId
+          )
+          if (
+            shouldUpdateAutoApprovals &&
+            action.bossmanAutoApprovals === true &&
+            !hasLeadershipForAutoApprovals
+          ) {
+            return {
+              ok: false,
+              error: 'Assign a Boss or Captain before enabling Auto Approvals.'
+            }
+          }
+          const nextBossmanAutoApprovals =
+            action.bossmanAutoApprovals === true
+              ? {
+                  enabled: true as const,
+                  mode: 'permission_preset_once' as const,
+                  confirmedAt:
+                    chat.ensemble.bossmanAutoApprovals?.confirmedAt ?? new Date().toISOString()
+                }
+              : undefined
           const activeRound =
             shouldUpdateHops && chat.ensemble.activeRound
               ? {
@@ -34436,6 +34464,9 @@ if (isGeminiMcpBridgeProcess) {
               ...(shouldUpdateContextChars
                 ? { ensembleContextChars: nextEnsembleContextChars }
                 : {}),
+              ...(shouldUpdateAutoApprovals
+                ? { bossmanAutoApprovals: nextBossmanAutoApprovals }
+                : {}),
               ...(activeRound ? { activeRound } : {})
             },
             updatedAt: Date.now()
@@ -34451,7 +34482,8 @@ if (isGeminiMcpBridgeProcess) {
             orchestrationMode: updated.ensemble?.orchestrationMode,
             maxContinuationHops: updated.ensemble?.maxContinuationHops,
             fanoutPolicy: updated.ensemble?.fanoutPolicy,
-            ensembleContextChars: updated.ensemble?.ensembleContextChars
+            ensembleContextChars: updated.ensemble?.ensembleContextChars,
+            bossmanAutoApprovalsEnabled: updated.ensemble?.bossmanAutoApprovals?.enabled === true
           }
         },
         ensembleSteerFn: async (action) => {

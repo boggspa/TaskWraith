@@ -1215,6 +1215,12 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     /// Shared-transcript character budget. Wire key `ensembleContextChars`.
     /// Mac clamps to [5000, 500000]; desktop default is 24000.
     public let ensembleContextChars: Int?
+    /// Thread-wide Boss/Captain Auto Approvals consent. Wire key
+    /// `bossmanAutoApprovalsEnabled`; the Mac projects it only when TRUE —
+    /// absent ⇒ off (also covers older Mac builds). Toggled via
+    /// ensembleSettingsUpdate; the Mac requires an assigned Boss/Captain and
+    /// clears the consent whenever leadership is removed.
+    public let bossmanAutoApprovalsEnabled: Bool?
     public let participants: [Participant]?
     /// The CONFIGURED (editable) roster — present even when idle.
     public let roster: [RosterEntry]?
@@ -2209,6 +2215,7 @@ public enum BridgeAction {
         maxContinuationHops: Int? = nil,
         fanoutPolicy: String? = nil,
         ensembleContextChars: Int? = nil,
+        bossmanAutoApprovals: Bool? = nil,
         actionId: String = UUID().uuidString
     ) -> [String: Any] {
         var payload: [String: Any] = [
@@ -2229,6 +2236,9 @@ public enum BridgeAction {
         }
         if let ensembleContextChars {
             payload["ensembleContextChars"] = max(5_000, min(500_000, ensembleContextChars))
+        }
+        if let bossmanAutoApprovals {
+            payload["bossmanAutoApprovals"] = bossmanAutoApprovals
         }
         return encode(payload)
     }

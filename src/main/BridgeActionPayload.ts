@@ -715,6 +715,11 @@ export interface BridgeEnsembleSettingsUpdateAction extends BridgeActionMetadata
     | 'locked_writers_with_boss'
     | 'locked_writers_user_preflight'
   ensembleContextChars?: number
+  /** Thread-wide Boss/Captain Auto Approvals consent. true = the device
+   * showed the consent dialog and the user accepted (the handler stamps
+   * mode/confirmedAt and requires an assigned Boss or Captain); false =
+   * clear the consent. */
+  bossmanAutoApprovals?: boolean
 }
 
 export interface BridgeEnsembleSteerAction extends BridgeActionMetadata {
@@ -2097,7 +2102,11 @@ function isEnsembleSettingsUpdate(v: Record<string, unknown>): boolean {
   const fanoutPolicy = v.fanoutPolicy
   const hasFanoutPolicy = fanoutPolicy !== undefined
   const hasContextChars = v.ensembleContextChars !== undefined
-  if (!hasMode && !hasHops && !hasFanoutPolicy && !hasContextChars) return false
+  const hasAutoApprovals = v.bossmanAutoApprovals !== undefined
+  if (hasAutoApprovals && typeof v.bossmanAutoApprovals !== 'boolean') return false
+  if (!hasMode && !hasHops && !hasFanoutPolicy && !hasContextChars && !hasAutoApprovals) {
+    return false
+  }
   if (hasMode && mode !== 'turn_bound' && mode !== 'continuous') return false
   if (
     hasFanoutPolicy &&

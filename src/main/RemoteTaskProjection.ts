@@ -572,6 +572,10 @@ export interface RemoteEnsembleState {
   maxContinuationHops?: number
   fanoutPolicy?: string
   ensembleContextChars?: number
+  /** Thread-wide Boss/Captain Auto Approvals consent (bossmanAutoApprovals.
+   * enabled). Projected only when true so untouched chats stay byte-stable;
+   * absent ⇒ off. Devices toggle it via ensembleSettingsUpdate. */
+  bossmanAutoApprovalsEnabled?: boolean
   queuedPromptCount: number
   participantCount: number
   participants: RemoteEnsembleParticipantState[]
@@ -1513,6 +1517,9 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
     maxContinuationHops: activeRound?.maxContinuationHops ?? ensemble.maxContinuationHops,
     fanoutPolicy: activeRound?.fanoutPolicy ?? ensemble.fanoutPolicy,
     ensembleContextChars: ensemble.ensembleContextChars,
+    ...(ensemble.bossmanAutoApprovals?.enabled === true
+      ? { bossmanAutoApprovalsEnabled: true }
+      : {}),
     queuedPromptCount: queuedPrompts.length,
     ...(queuedPrompts.length > 0
       ? {

@@ -1919,7 +1919,7 @@ public final class RemoteSessionModel: ObservableObject {
         [{"toolCallId":"demo-appr-1","title":"Run the auth test suite","body":"npm test -- auth/TokenService","provider":"claude","actions":["accept","decline"],"workspaceId":"demo-ws","threadId":"demo-1","runId":"demo-run-1","requestedAt":"2026-06-19T10:43:00Z"}]
         """
         let ensembleJSON = """
-        {"threadId":"demo-2","status":"idle","activeParticipantId":"p-claude","participants":[{"participantId":"p-claude","provider":"claude","role":"Architect","order":1,"status":"done"},{"participantId":"p-codex","provider":"codex","role":"Implementer","order":2,"status":"done"},{"participantId":"p-kimi","provider":"kimi","role":"Reviewer","order":3,"status":"idle"}],"roster":[{"id":"p-claude","provider":"claude","role":"Architect","enabled":true,"order":1,"model":"claude-sonnet-5","reasoningEffort":"medium"},{"id":"p-codex","provider":"codex","role":"Implementer","enabled":true,"order":2,"model":"gpt-5.5","reasoningEffort":"high"},{"id":"p-kimi","provider":"kimi","role":"Reviewer","enabled":true,"order":3,"model":"kimi-k3","reasoningEffort":"low","thinkingEnabled":true}]}
+        {"threadId":"demo-2","status":"idle","activeParticipantId":"p-claude","bossmanParticipantId":"p-claude","participants":[{"participantId":"p-claude","provider":"claude","role":"Architect","order":1,"status":"done"},{"participantId":"p-codex","provider":"codex","role":"Implementer","order":2,"status":"done"},{"participantId":"p-kimi","provider":"kimi","role":"Reviewer","order":3,"status":"idle"}],"roster":[{"id":"p-claude","provider":"claude","role":"Architect","enabled":true,"order":1,"model":"claude-sonnet-5","reasoningEffort":"medium","isBossman":true},{"id":"p-codex","provider":"codex","role":"Implementer","enabled":true,"order":2,"model":"gpt-5.5","reasoningEffort":"high"},{"id":"p-kimi","provider":"kimi","role":"Reviewer","enabled":true,"order":3,"model":"kimi-k3","reasoningEffort":"low","thinkingEnabled":true}]}
         """
         if let appr = Self.decodeDemo([MobileApprovalCard].self, approvalsJSON) { approvals = appr }
         if let ens = Self.decodeDemo(RemoteEnsembleState.self, ensembleJSON) { ensembleStates["demo-2"] = ens }
@@ -4891,7 +4891,8 @@ public final class RemoteSessionModel: ObservableObject {
         orchestrationMode: String? = nil,
         maxContinuationHops: Int? = nil,
         fanoutPolicy: String? = nil,
-        ensembleContextChars: Int? = nil
+        ensembleContextChars: Int? = nil,
+        bossmanAutoApprovals: Bool? = nil
     ) {
         let mode =
             orchestrationMode == "continuous"
@@ -4904,7 +4905,10 @@ public final class RemoteSessionModel: ObservableObject {
             || fanoutPolicy == "locked_writers_user_preflight"
             ? fanoutPolicy : nil
         let chars = ensembleContextChars.map { max(5_000, min(500_000, $0)) }
-        guard mode != nil || hops != nil || fanout != nil || chars != nil else { return }
+        guard
+            mode != nil || hops != nil || fanout != nil || chars != nil
+                || bossmanAutoApprovals != nil
+        else { return }
         send(
             BridgeAction.ensembleSettingsUpdate(
                 workspaceId: workspaceId,
@@ -4912,7 +4916,8 @@ public final class RemoteSessionModel: ObservableObject {
                 orchestrationMode: mode,
                 maxContinuationHops: hops,
                 fanoutPolicy: fanout,
-                ensembleContextChars: chars),
+                ensembleContextChars: chars,
+                bossmanAutoApprovals: bossmanAutoApprovals),
             successLabel: "Ensemble settings updated.")
         scheduleThreadRefreshAfterUserAction(threadId)
     }

@@ -5990,6 +5990,8 @@ public struct EditableRosterStrip: View {
     /// Chip whose compact editor popover is open (Electron chip-popover parity).
     @State private var editingChipId: String? = nil
     @State private var addPopoverPresented = false
+    /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
+    @State private var autoApprovalsDraft: Bool? = nil
 
     public init(
         model: RemoteSessionModel, threadId: String, workspaceId: String,
@@ -6044,6 +6046,30 @@ public struct EditableRosterStrip: View {
     /// Round status per participant id (active speaker ring, status dot).
     private func roundStatus(for id: String) -> String? {
         state?.participants?.first { $0.participantId == id }?.status
+    }
+
+    // MARK: Thread-wide Boss/Captain Auto Approvals (Auto pill state)
+
+    private var selectedAutoApprovals: Bool {
+        autoApprovalsDraft ?? (state?.bossmanAutoApprovalsEnabled == true)
+    }
+
+    private var draftHasLeadership: Bool {
+        draft.contains { $0.isBossman || $0.isSecondInCommand }
+    }
+
+    private func toggleAutoApprovals(_ enabled: Bool) {
+        autoApprovalsDraft = enabled
+        model.updateEnsembleSettings(
+            workspaceId: workspaceId, threadId: threadId,
+            bossmanAutoApprovals: enabled)
+    }
+
+    private var autoApprovalsConfig: RosterAutoApprovalsConfig {
+        RosterAutoApprovalsConfig(
+            isOn: selectedAutoApprovals,
+            hasLeadership: draftHasLeadership,
+            onToggle: { toggleAutoApprovals($0) })
     }
 
     /// Attached-row mode: rendered INSIDE the composer shell (flat corners,
@@ -6130,6 +6156,11 @@ public struct EditableRosterStrip: View {
             }
             draft = fresh
         }
+        .onChange(of: state?.bossmanAutoApprovalsEnabled) { _, fresh in
+            if autoApprovalsDraft == (fresh == true) {
+                autoApprovalsDraft = nil
+            }
+        }
     }
 
     private func chip(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
@@ -6199,6 +6230,7 @@ public struct EditableRosterStrip: View {
                 canRemove: draft.count > 1,
                 onApply: { applyLiveEdit($0) },
                 onRemove: { removeChip(id: entry.id) },
+                autoApprovals: autoApprovalsConfig,
                 onDismissRequest: { editingChipId = nil }
             )
             .presentationCompactAdaptation(.popover)
@@ -6305,9 +6337,20 @@ public struct EditableRosterStrip: View {
         .popover(isPresented: $addPopoverPresented) {
             RosterAddParticipantPopover(
                 catalogs: catalogs,
-                onAdd: { entry in
+                threadAutoApprovalsEnabled: selectedAutoApprovals,
+                threadHasLeadership: draftHasLeadership,
+                onAdd: { entry, stagedAutoApprovals in
                     addPopoverPresented = false
                     appendParticipant(entry)
+                    // Staged Auto toggle applies AFTER the roster commit so a
+                    // drafted Boss/Captain exists Mac-side first (actions are
+                    // processed in send order).
+                    if let stagedAutoApprovals,
+                        draft.contains(where: { $0.isBossman || $0.isSecondInCommand })
+                            || !stagedAutoApprovals
+                    {
+                        toggleAutoApprovals(stagedAutoApprovals)
+                    }
                 },
                 onDismissRequest: { addPopoverPresented = false }
             )

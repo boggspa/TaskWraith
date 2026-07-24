@@ -839,6 +839,32 @@ describe('RemoteTaskProjection', () => {
       queuedPromptCount: 1,
       participantCount: 1
     })
+    // Auto Approvals consent absent → the flag is OMITTED, not false, so
+    // untouched chats' projections stay byte-stable.
+    expect(card.ensembleState).not.toHaveProperty('bossmanAutoApprovalsEnabled')
+  })
+
+  it('projects the Boss/Captain Auto Approvals consent only when enabled', () => {
+    const card = buildRemoteTaskCard(
+      chat({
+        chatKind: 'ensemble',
+        ensemble: {
+          enabled: true,
+          maxParticipants: 2,
+          participants: [],
+          bossmanParticipantId: 'p1',
+          bossmanAutoApprovals: {
+            enabled: true,
+            mode: 'permission_preset_once',
+            confirmedAt: ISO
+          }
+        }
+      })
+    )
+    expect(card.ensembleState).toMatchObject({
+      bossmanParticipantId: 'p1',
+      bossmanAutoApprovalsEnabled: true
+    })
   })
 
   it('projects a stale running ensemble snapshot as completed and hides dead queue entries', () => {

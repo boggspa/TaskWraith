@@ -42,6 +42,8 @@ public struct EnsembleRosterSheet: View {
     @State private var maxContinuationHopsDraft: Int? = nil
     @State private var fanoutPolicyDraft: String? = nil
     @State private var ensembleContextCharsDraft: Int? = nil
+    /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
+    @State private var autoApprovalsDraft: Bool? = nil
 
     public init(model: RemoteSessionModel, threadId: String, workspaceId: String) {
         self.model = model
@@ -163,6 +165,32 @@ public struct EnsembleRosterSheet: View {
         state?.participants?.first { $0.participantId == id }?.status
     }
 
+    // MARK: Thread-wide Boss/Captain Auto Approvals (Auto pill state)
+
+    private var selectedAutoApprovals: Bool {
+        autoApprovalsDraft ?? (state?.bossmanAutoApprovalsEnabled == true)
+    }
+
+    /// Draft-aware leadership: the pill reacts immediately to an authority
+    /// edit in the open popover, before the Mac echoes.
+    private var draftHasLeadership: Bool {
+        draft.contains { $0.isBossman || $0.isSecondInCommand }
+    }
+
+    private func toggleAutoApprovals(_ enabled: Bool) {
+        autoApprovalsDraft = enabled
+        model.updateEnsembleSettings(
+            workspaceId: workspaceId, threadId: threadId,
+            bossmanAutoApprovals: enabled)
+    }
+
+    private var autoApprovalsConfig: RosterAutoApprovalsConfig {
+        RosterAutoApprovalsConfig(
+            isOn: selectedAutoApprovals,
+            hasLeadership: draftHasLeadership,
+            onToggle: { toggleAutoApprovals($0) })
+    }
+
     private var threadTitle: String {
         model.taskCards.first { $0.id == threadId || $0.threadId == threadId }?.title
             ?? "Chat"
@@ -271,6 +299,11 @@ public struct EnsembleRosterSheet: View {
         .onChange(of: state?.ensembleContextChars) { _, fresh in
             if ensembleContextCharsDraft == clampEnsembleContextChars(fresh ?? 24_000) {
                 ensembleContextCharsDraft = nil
+            }
+        }
+        .onChange(of: state?.bossmanAutoApprovalsEnabled) { _, fresh in
+            if autoApprovalsDraft == (fresh == true) {
+                autoApprovalsDraft = nil
             }
         }
     }
@@ -397,6 +430,7 @@ public struct EnsembleRosterSheet: View {
                             canRemove: draft.count > 1,
                             onApply: { applyLiveEdit($0) },
                             onRemove: { removeParticipant(id: entry.id) },
+                            autoApprovals: autoApprovalsConfig,
                             onDismissRequest: { editingEntry = nil }
                         )
                         .presentationCompactAdaptation(.popover)
@@ -566,9 +600,21 @@ public struct EnsembleRosterSheet: View {
             .popover(isPresented: $addPopoverPresented) {
                 RosterAddParticipantPopover(
                     catalogs: catalogs,
-                    onAdd: { entry in
+                    threadAutoApprovalsEnabled: selectedAutoApprovals,
+                    threadHasLeadership: draftHasLeadership,
+                    onAdd: { entry, stagedAutoApprovals in
                         addPopoverPresented = false
                         appendParticipant(entry)
+                        // Apply the staged thread-wide Auto toggle AFTER the
+                        // roster commit so a drafted Boss/Captain seat exists
+                        // Mac-side before the leadership-gated settings update
+                        // lands (bridge actions are processed in send order).
+                        if let stagedAutoApprovals,
+                            draft.contains(where: { $0.isBossman || $0.isSecondInCommand })
+                                || !stagedAutoApprovals
+                        {
+                            toggleAutoApprovals(stagedAutoApprovals)
+                        }
                     },
                     onDismissRequest: { addPopoverPresented = false }
                 )
