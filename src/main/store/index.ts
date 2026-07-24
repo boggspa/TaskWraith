@@ -260,7 +260,9 @@ import {
   persistThreadWorktreeBindingPatch,
   readThreadWorktreeBinding
 } from './ThreadWorktreeBindingPersistence'
+import { persistWatchedPrPatch } from './WatchedPrPersistence'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
+import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import {
   acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
   claimPendingSubThreadMailboxEvents,
@@ -4954,6 +4956,11 @@ export class AppStore {
    * than a new whole-record persistence protocol. */
   private static threadWorktreeBindingWriteTails = new Map<string, Promise<ChatRecord>>()
 
+  /** Serializes only the async watched-PR patch for one chat. Ordinary legacy
+   * saveChat callers remain independent, so this is a narrow race guard rather
+   * than a new whole-record persistence protocol. */
+  private static watchedPrWriteTails = new Map<string, Promise<ChatRecord>>()
+
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
     let stat: fs.Stats
     try {
@@ -5170,6 +5177,60 @@ export class AppStore {
       () => {
         if (this.threadWorktreeBindingWriteTails.get(chatId) === operation) {
           this.threadWorktreeBindingWriteTails.delete(chatId)
+        }
+      }
+    )
+    return operation
+  }
+
+  /**
+   * Persist only the watched-PR opt-in without routing a full chat record
+   * through saveChat's synchronous writeJson path. The composer toggle invokes
+   * this before the watch is considered active, so an actionable write failure
+   * can be surfaced while the toggle state is still recoverable. Passing null
+   * clears the watch; the per-chat tails keep set/clear strictly ordered.
+   */
+  static persistWatchedPr(
+    chatId: string,
+    watchedPr: WatchedPrDescriptor | null
+  ): Promise<ChatRecord> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('A pull request can only be watched from a saved chat.'))
+    }
+
+    const previous: Promise<ChatRecord | null> =
+      this.watchedPrWriteTails.get(chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(async () => {
+        if (deletedChatIds.has(chatId)) {
+          throw new Error('This chat was deleted before its PR watch could be updated.')
+        }
+        const persisted = await persistWatchedPrPatch({
+          chatsDir,
+          chatId,
+          watchedPr,
+          admitMutation: async (chat) => {
+            await this.assertHistoryMutationAllowedAsync({
+              operation: 'Watched PR persistence',
+              chatIds: [chat.appChatId],
+              workspaceIds: [chat.workspaceId]
+            })
+          }
+        })
+        this.chatRecordCache.delete(chatId)
+        return persisted
+      })
+    this.watchedPrWriteTails.set(chatId, operation)
+    void operation.then(
+      () => {
+        if (this.watchedPrWriteTails.get(chatId) === operation) {
+          this.watchedPrWriteTails.delete(chatId)
+        }
+      },
+      () => {
+        if (this.watchedPrWriteTails.get(chatId) === operation) {
+          this.watchedPrWriteTails.delete(chatId)
         }
       }
     )
