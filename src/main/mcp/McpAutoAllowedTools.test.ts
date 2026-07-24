@@ -81,9 +81,14 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     }
   })
 
-  it('auto-allows the two ensemble participation tools (ratified read-only vote/propose)', () => {
+  it('auto-allows the ensemble participation tools (ratified read-only vote/propose/send)', () => {
     // The audited exception: prompt-free + read-only advertised, yet STILL an
     // app-state mutation (route/workspace-lineage guard input preserved).
+    // 2026-07 efficiency audit adds ensemble_send: visible chat-local notes are
+    // strictly weaker than the binding-quorum vote already ratified here.
+    expect((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has('ensemble_send')).toBe(
+      true
+    )
     for (const tool of MCP_ENSEMBLE_PARTICIPATION_TOOLS) {
       expect(autoAllowedTools.has(tool)).toBe(true)
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
@@ -179,6 +184,7 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
     for (const tool of [
       'ask_user_question',
       'ensemble_yield',
+      'ensemble_send',
       'read_file',
       'list_directory',
       'find_files',
@@ -225,7 +231,6 @@ describe('isReadOnlyAdvertisedTool (bridge scope guard)', () => {
       'git_create_pr',
       'run_task',
       'get_diagnostics',
-      'ensemble_send',
       'ensemble_fanout',
       'ensemble_bossman_control',
       'ensemble_roster_edit',

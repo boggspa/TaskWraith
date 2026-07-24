@@ -9,7 +9,8 @@ import {
  *
  * ⚠️ SAFETY INVARIANT — this set may contain ONLY host-safe non-mutating tools
  * plus explicit chat-local coordination updates (`todo_write`, goal lifecycle
- * updates, and `blackboard_post`).
+ * updates, `blackboard_post`, and the audited ensemble participation tools —
+ * poll vote/propose + `ensemble_send`).
  * Being a member makes a tool SKIP the host-side approval gate
  * (`requestAgenticServiceApproval`), so any mutating tool added here would
  * execute even under the `read_only` preset. Writes / shell / patch tools and
@@ -67,6 +68,18 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // guards still treat them as mutations. See MCP_ENSEMBLE_PARTICIPATION_TOOLS.
   'ensemble_poll_response',
   'ensemble_propose_goal_complete',
+  // Efficiency audit 2026-07 — ensemble_send joins the participation exception.
+  // The prompt and catalog schema have always advertised it as read-only visible
+  // coordination ("send a visible note into the main transcript"), but gating it
+  // as a generic app-state mutation meant read-only seats were hard-denied and
+  // write seats hit the approval modal — observed transcripts show denied sends
+  // followed by blackboard/yield detours that reach the SAME audience slower.
+  // It is strictly less powerful than the ratified poll tools above (a visible
+  // chat-local note vs a vote that can drive a BINDING goal-complete quorum):
+  // no workspace mutation, no egress, host-validated route/roster resolution,
+  // and the message renders inline for the user. Stays in
+  // MCP_APP_STATE_MUTATION_TOOLS so route/workspace-lineage guards are unchanged.
+  'ensemble_send',
   // QMOD (1.0.3): asking the user a question is the inverse of the
   // user prompting the agent — it's a focus-shift, not a state mutation.
   // The renderer modal IS the approval surface, so a second confirm
@@ -158,17 +171,21 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
 ])
 
 /**
- * 1.0.4-AN — the audited read-only PARTICIPATION exception: exactly the two
- * ensemble poll tools a read_only-preset seat may call WITHOUT an approval prompt
- * (the user's "all participants vote" spec). They are auto-allowed + read-only
- * advertised + orchestration-class, yet REMAIN in MCP_APP_STATE_MUTATION_TOOLS so
- * route/workspace-lineage guards still treat them as mutations.
- * isReadOnlyBlockedTool exempts ONLY this set; every filesystem / shell /
- * workspace-write / other app-state tool stays blocked under read-only.
+ * 1.0.4-AN — the audited read-only PARTICIPATION exception: the ensemble
+ * participation tools a read_only-preset seat may call WITHOUT an approval
+ * prompt — the two poll tools (the user's "all participants vote" spec) plus,
+ * per the 2026-07 efficiency audit, ensemble_send (visible chat-local
+ * coordination notes; see the rationale in MCP_AUTO_ALLOWED_TOOLS). They are
+ * auto-allowed + read-only advertised + orchestration-class, yet REMAIN in
+ * MCP_APP_STATE_MUTATION_TOOLS so route/workspace-lineage guards still treat
+ * them as mutations. isReadOnlyBlockedTool exempts ONLY this set; every
+ * filesystem / shell / workspace-write / other app-state tool stays blocked
+ * under read-only.
  */
 export const MCP_ENSEMBLE_PARTICIPATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'ensemble_poll_response',
-  'ensemble_propose_goal_complete'
+  'ensemble_propose_goal_complete',
+  'ensemble_send'
 ])
 
 /**
