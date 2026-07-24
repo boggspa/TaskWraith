@@ -297,4 +297,44 @@ describe('ProviderPreflightService', () => {
     expect(result.reason).toMatch(/unavailable/i)
     expect(result.fallbackAvailable).toBe(false)
   })
+
+  it('lets AntiGravity through the structural gate to its own availability verdict', () => {
+    // AntiGravity is conditionally live, not retired: lane admission is owned
+    // by getAntigravityProviderStatus and arrives here encoded in the
+    // contract's availability. Blocking it structurally rejected key-lane runs
+    // with retirement copy even though dispatch would have admitted them.
+    const ready = service.evaluate(
+      { provider: 'antigravity', workspacePath: '/repo' },
+      contract({
+        provider: 'antigravity',
+        label: 'AntiGravity',
+        availability: { available: true, authState: 'api-key' }
+      }),
+      defaultProviderDescriptor('antigravity')
+    )
+    expect(ready.state).toBe('ready')
+    expect(ready.reason).not.toMatch(/unavailable for new runs/i)
+
+    const blocked = service.evaluate(
+      { provider: 'antigravity', workspacePath: '/repo' },
+      contract({
+        provider: 'antigravity',
+        label: 'AntiGravity',
+        availability: {
+          available: false,
+          authState: 'consent-required',
+          error:
+            'AntiGravity is disabled until informed risk acceptance is recorded or a Gemini API key is configured in Settings → Providers.'
+        }
+      }),
+      defaultProviderDescriptor('antigravity')
+    )
+    expect(blocked.state).toBe('blocked')
+    // The lane-accurate setup reason, not the retired-provider copy.
+    expect(blocked.reason).toMatch(/risk acceptance .* or a Gemini API key/i)
+    expect(blocked.reason).not.toMatch(/Chat history is preserved/i)
+    // 'consent-required' routes through the shared /required/ auth-state
+    // heuristic; either repair action beats the old unrepairable hard block.
+    expect(blocked.repairAction).toBe('login_provider')
+  })
 })

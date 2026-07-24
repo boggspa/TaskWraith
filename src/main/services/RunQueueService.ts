@@ -26,7 +26,8 @@ import type {
   WorkspaceRecord
 } from '../store/types'
 import { parseProjectReferenceContextSelection } from '../../shared/projectReferenceContext'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { isAntigravityGeminiApiKeyConfigured } from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { isPersistedAttachmentRef } from './TranscriptMediaAssetStore'
 
 const RUN_QUEUE_STATUSES = new Set<RunQueueJobStatus>([
@@ -642,12 +643,21 @@ function assertProviderId(value: unknown): ProviderId {
   throw new Error('Provider is invalid.')
 }
 
+/**
+ * Queue admission mirrors ComposerService's interactive-dispatch stance: the
+ * Gemini API-key lane admits AntiGravity on a currently configured key alone
+ * (its queued sends drain through the same in-app Gemini kernel), while the
+ * separate agy/CLI ban-risk lane never queues interactive runs. Without this
+ * union a send on a busy AntiGravity chat was rejected at enqueue even though
+ * an immediate dispatch of the identical request would have been admitted.
+ */
 function assertRunnableProviderId(value: unknown): ProviderId {
   const provider = assertProviderId(value)
-  if (!isLiveSelectableProvider(provider)) {
-    throw new Error('Provider is unavailable for new runs.')
+  if (isLiveSelectableProvider(provider)) return provider
+  if (provider === ANTIGRAVITY_PROVIDER_ID && isAntigravityGeminiApiKeyConfigured()) {
+    return provider
   }
-  return provider
+  throw new Error('Provider is unavailable for new runs.')
 }
 
 function sanitizeRunQueueStatus(

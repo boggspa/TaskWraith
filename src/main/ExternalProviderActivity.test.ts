@@ -15,6 +15,7 @@ import {
   getExternalUsageCached,
   loadExternalProviderUsageRecords,
   resetExternalUsageFrontDoorForTests,
+  settleExternalScansForTests,
   setExternalScanDriver,
   setExternalUsageUpdateListener,
   type ExternalScanRequest
@@ -1115,7 +1116,11 @@ describe('getExternalUsageCached front door', () => {
       })
       expect(records).toEqual([])
     } finally {
-      await rm(homeDir, { recursive: true, force: true })
+      // The await above resolved at the partial commit; the fallback's
+      // full-window walk is still writing caches into homeDir. Settle it
+      // before removal, and retry the rm in case anything else races.
+      await settleExternalScansForTests()
+      await rm(homeDir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 })
     }
   })
 

@@ -1094,6 +1094,7 @@ function getProviderLabel(provider: ProviderId): string {
   if (provider === 'grok') return 'Grok'
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
+  if (provider === 'antigravity') return 'AntiGravity'
   return 'Gemini'
 }
 
@@ -1104,6 +1105,11 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
   if (provider === 'grok') return 'grok-4.5'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3:4b-instruct'
+  // A bare gemini token here would dodge the gemini-api candidate matcher and
+  // route a model-less AntiGravity run onto the ban-risk agy CLI lane. The
+  // wire-id default keeps it on the key lane (which fails visibly without a
+  // key) and is present in the static fallback catalogue.
+  if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
   return 'flash-lite'
 }
 

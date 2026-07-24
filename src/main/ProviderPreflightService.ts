@@ -7,7 +7,7 @@ import type {
   ProviderId
 } from './store/types'
 import { toolingControlRows } from './ProviderCapabilities'
-import { isLiveSelectableProvider } from '../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../shared/retiredProviders'
 import { codexModelRetiresAt, isCodexModelRetired } from '../shared/codexModelLifecycle'
 import {
   isPreviewModelPlaceholder,
@@ -70,7 +70,14 @@ export class ProviderPreflightService {
     const chips: ProviderCapabilityWarning[] = [...contract.warnings]
     const label = contract.label || input.provider
 
-    if (!isLiveSelectableProvider(input.provider)) {
+    // AntiGravity is conditionally live, not retired: its two admission lanes
+    // (agy ban-risk opt-in; configured Gemini API key) are the single authority
+    // of `getAntigravityProviderStatus`, which this contract's availability
+    // already encodes. Let it fall through to the availability check below so a
+    // key-only user is not blocked here with retirement copy, while a
+    // no-lane user still blocks with the status's lane-accurate reason.
+    // Retired providers (gemini) keep this hard structural block.
+    if (!isLiveSelectableProvider(input.provider) && input.provider !== ANTIGRAVITY_PROVIDER_ID) {
       const reason = `${label} is unavailable for new runs. Chat history is preserved; start a new chat with another provider to continue.`
       return {
         provider: input.provider,

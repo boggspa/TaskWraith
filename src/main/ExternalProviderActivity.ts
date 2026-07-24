@@ -387,6 +387,17 @@ function startExternalScan(
   return externalScanInFlight
 }
 
+/** Test seam: resolve once no external scan is in flight. Callers of
+ * getExternalUsageCached unblock at the FIRST committed result while the
+ * full-window walk keeps writing caches in the background — teardown that
+ * removes a scan fixture must wait here first, or those writers race the rm
+ * (ENOTEMPTY). Production never calls this. */
+export async function settleExternalScansForTests(): Promise<void> {
+  while (externalScanInFlight) {
+    await externalScanInFlight.complete.catch(() => {})
+  }
+}
+
 /** Test seam: clear the in-memory front-door state (result cache, in-flight
  * scan, injected driver/listeners). Production never calls this. */
 export function resetExternalUsageFrontDoorForTests(): void {

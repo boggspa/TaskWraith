@@ -1608,6 +1608,7 @@ import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
 import { createAntigravityGeminiApiMutationSuccessHandler } from './antigravity/AntigravityGeminiApiMutationLifecycle'
+import { mapAntigravityGeminiApiTurnStatusToMessage } from './antigravity/AntigravityGeminiApiMainRuntime'
 import {
   discoverAuthenticatedAntigravityCombinedModels
 } from './antigravity/AntigravityCombinedModelCatalog'
@@ -25944,21 +25945,140 @@ async function runGeminiProvider(
  * quarantined onto the reviewed Gemini API lifecycle adapter; every other
  * model stays on the unchanged official user-installed `agy` path.
  */
+/** Exact committed wire-id validator for the agentic Gemini API lane. */
+const ANTIGRAVITY_GEMINI_API_WIRE_MODEL = /^gemini-api:(gemini-[a-z0-9][a-z0-9._-]{0,127})$/
+
+/**
+ * AntiGravity flavour of `geminiApiProviderDeps()`: the SAME agentic runtime
+ * (tools via the host MCP executor, history replay, images, usage records),
+ * re-attributed to provider 'antigravity' end-to-end and keyed from the
+ * dedicated post-ready secret store instead of the gemini auth-profile system.
+ * Tool context deliberately has NO `prepareToolContext`: for non-gemini
+ * providers `getAgentToolContext` builds the context from the registered
+ * RunManager session itself (sender + posture state) — the same session-state
+ * pattern Kimi/Codex/Cursor use — which is why the dispatch registers the
+ * session with the payload's full posture before this runtime starts.
+ */
+function antigravityGeminiApiAgentDeps(wireModelId: string) {
+  const base = geminiApiProviderDeps()
+  return {
+    ...base,
+    providerTag: 'antigravity' as ProviderId,
+    runtimeLabel: 'gemini-api',
+    usageModelId: wireModelId,
+    resolveAuthOverride: (): { ok: true; apiKey: string } | { ok: false; error: string } => {
+      const store = antigravityGeminiApiSecretStoreRef
+      if (!store) {
+        return { ok: false, error: mapAntigravityGeminiApiTurnStatusToMessage('keyUnavailable') }
+      }
+      try {
+        const loaded = store.loadApiKey()
+        if (loaded.status === 'ok' && typeof loaded.value === 'string' && loaded.value) {
+          return { ok: true, apiKey: loaded.value }
+        }
+      } catch {
+        // Fall through to the fixed nonsecret failure copy below.
+      }
+      return { ok: false, error: mapAntigravityGeminiApiTurnStatusToMessage('keyUnavailable') }
+    },
+    executeMcpTool: async (toolName: string, args: unknown, route: AgentRunRoute | null) => {
+      const canonicalToolName = canonicalTaskWraithToolName(toolName)
+      if (!isTaskWraithMcpToolName(canonicalToolName)) {
+        return {
+          text: `Unknown TaskWraith MCP tool: ${toolName}`,
+          isError: true
+        }
+      }
+      const result = await executeGeminiMcpTool(canonicalToolName, args, route, 'antigravity')
+      return { text: result.text, isError: result.isError }
+    },
+    prepareToolContext: undefined
+  }
+}
+
 async function runAntigravityProvider(
   event: Electron.IpcMainInvokeEvent,
   payload: AgentRunPayload
 ) {
   await dispatchAntigravityCombinedMode(event, payload, {
-    getSettings: () => AppStore.getSettings(),
-    getSecretStore: () => antigravityGeminiApiSecretStoreRef,
-    getRunSession: (runId) => {
-      const session = runManager.get(runId)
-      return session ? { provider: session.provider, status: session.status } : undefined
+    // The SDK lane has no child process, so it must register its RunManager
+    // session itself — attach, compat-event authority, finish, and cancel all
+    // key on this exact session existing (see the dispatch dep's doc comment).
+    // Global runs pass undefined like every CLI transport: the global cwd is
+    // not a registered workspace, and resolving it would compute a null
+    // workspaceId that fails the history-clear authority comparison.
+    // The state object mirrors the CLI transports' stream state: it is what
+    // `getAgentToolContext` reads to give the agentic runtime's tool calls
+    // their approval mode, signed permissions, grants, and MCP profile.
+    registerRunSession: (route) => {
+      const state: CliProviderStreamState = {
+        provider: 'antigravity',
+        sender: event.sender,
+        startedAt: Date.now(),
+        model: typeof payload.model === 'string' ? payload.model : '',
+        fallback: false,
+        completed: false,
+        assistantText: '',
+        providerSessionId: payload.providerSessionId || null,
+        approvalMode: payload.approvalMode,
+        workflowMode: payload.workflowMode,
+        sessionTrust: Boolean(payload.sessionTrust),
+        externalPathGrants: payload.externalPathGrants,
+        runtimeProfileId: payload.runtimeProfileId,
+        taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+        taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+        taskWraithMcpProfileFence: payload.taskWraithMcpProfileFence,
+        taskWraithMcpSeenProviderSessionIds: new Set(
+          payload.providerSessionId ? [payload.providerSessionId] : []
+        ),
+        effectivePermissions: payload.effectivePermissions,
+        effectivePermissionsSignature: payload.effectivePermissionsSignature,
+        ensembleRun: payload.ensembleRun,
+        ...route
+      }
+      return registerRunSession(
+        'antigravity',
+        event.sender,
+        route,
+        payload.scope === 'global' ? undefined : payload.workspace,
+        state
+      )
     },
-    attachAbortController: (runId, controller) => {
-      runManager.attachAbortController(runId, controller)
+    runGeminiApiAgentTurn: async (turnEvent, turnPayload, route) => {
+      const wireModel = typeof turnPayload.model === 'string' ? turnPayload.model.trim() : ''
+      const bareModel = ANTIGRAVITY_GEMINI_API_WIRE_MODEL.exec(wireModel)?.[1]
+      const failVisible = (message: string): void => {
+        sendAgentCompatError(turnEvent.sender, 'antigravity', message, route)
+        sendAgentCompatExit(turnEvent.sender, 'antigravity', 1, route)
+        runManager.finish(route.appRunId, 'failed')
+      }
+      if (!bareModel) {
+        failVisible(mapAntigravityGeminiApiTurnStatusToMessage('invalidModel'))
+        return
+      }
+      // The shared runtime knows nothing about the Gemini-API data-use
+      // disclosure; re-check it per turn exactly like the retired kernel did.
+      const disclosureAcceptedAt = AppStore.getSettings().antigravityGeminiApiDisclosureAcceptedAt
+      if (
+        typeof disclosureAcceptedAt !== 'number' ||
+        !Number.isFinite(disclosureAcceptedAt) ||
+        disclosureAcceptedAt <= 0
+      ) {
+        failVisible(mapAntigravityGeminiApiTurnStatusToMessage('disclosureRequired'))
+        return
+      }
+      const handled = await tryRunGeminiApi(
+        turnEvent,
+        { ...turnPayload, model: bareModel },
+        route,
+        antigravityGeminiApiAgentDeps(wireModel)
+      )
+      if (!handled) {
+        // With the auth override in place the runtime only declines when the
+        // SDK itself is absent — surface that instead of stranding the session.
+        failVisible(mapAntigravityGeminiApiTurnStatusToMessage('sdkUnavailable'))
+      }
     },
-    sendAgentCompatLine,
     sendAgentCompatError,
     sendAgentCompatExit,
     finishRun: (runId, status) => {

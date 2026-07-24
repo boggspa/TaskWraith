@@ -325,7 +325,12 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   // Grok reaches the broker through its provider-native MCP registration.
   'grok',
   // Cursor ensemble seats stamp taskwraith-broker with parentProvider=cursor.
-  'cursor'
+  'cursor',
+  // AntiGravity's gemini-api lane runs the in-process agentic runtime whose
+  // tool calls resolve their parent from the run session; without this entry
+  // resolveBrokerParentProvider would coerce those calls back to 'gemini'
+  // and the session-keyed context/authority lookups would miss.
+  'antigravity'
 ])
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
 const BRIDGE_LOG_MAX_LINE_CHARS = 32_768

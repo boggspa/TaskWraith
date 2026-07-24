@@ -6,6 +6,10 @@ import {
   type RunQueueStore
 } from './RunQueueService'
 import type { RunSession } from '../RunManager'
+import {
+  resetAntigravityGeminiApiKeyConfiguredProbeForTests,
+  setAntigravityGeminiApiKeyConfiguredProbe
+} from '../antigravity/AntigravityGeminiApiKeyConfiguredSignal'
 import { MAX_DURABLE_ATTACHMENT_REFS } from '../ScheduledAttachmentDurability'
 import {
   signRunPermissionPosture,
@@ -910,6 +914,33 @@ describe('RunQueueService', () => {
     expect(() => service.requestJob({ provider: 'gemini' })).toThrow(
       'Provider is unavailable for new runs.'
     )
+    expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
+  })
+
+  it('admits AntiGravity queue jobs on the configured-key signal alone, failing closed without it', () => {
+    // A send on a busy AntiGravity chat queues instead of dispatching, so
+    // queue admission must mirror ComposerService's key-lane stance or the
+    // identical request is accepted when idle and rejected when busy.
+    const request = {
+      provider: 'antigravity',
+      chatId: 'chat-1',
+      workspaceId: 'workspace-1',
+      workspacePath: '/repo'
+    }
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const { deps, repository } = makeDeps()
+      const service = new RunQueueService(deps)
+      const job = service.requestJob(request)
+      expect(job.provider).toBe('antigravity')
+      expect(repository.saveRunQueueJob).toHaveBeenCalled()
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+
+    const { deps, repository } = makeDeps()
+    const service = new RunQueueService(deps)
+    expect(() => service.requestJob(request)).toThrow('Provider is unavailable for new runs.')
     expect(repository.saveRunQueueJob).not.toHaveBeenCalled()
   })
 
