@@ -1,6 +1,14 @@
 import type { ProviderId } from './store/types'
 
 export const MAX_EDITOR_FILE_BYTES = 1_500_000
+
+/**
+ * read_file MCP windowing (offset/limit). Whole-file reads stay byte-identical
+ * to the pre-windowing behavior; these bounds only apply once the caller asks
+ * for a line window. Default fires when offset is set without limit.
+ */
+export const MCP_READ_FILE_WINDOW_DEFAULT_LINES = 2_000
+export const MCP_READ_FILE_WINDOW_MAX_LINES = 5_000
 export const MAX_EDITOR_FILES = 900
 export const MAX_EDITOR_DEPTH = 6
 export const SKIP_EDITOR_DIRS = new Set([
