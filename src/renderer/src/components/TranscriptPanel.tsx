@@ -3013,10 +3013,13 @@ export const TranscriptPanel = memo(
     // commits instantly.
     const [foldTick, setFoldTick] = useState(0)
     const superFoldStateRef = useRef<{
-      chatId: string | null
+      /** `undefined` = no derive yet — the first pass is ALWAYS baseline,
+       * even when the resolved chat id is null (single-pass test renders,
+       * no-chat states), so first-render groups hide instantly. */
+      chatId: string | null | undefined
       seen: Set<string>
       committed: Set<string>
-    }>({ chatId: null, seen: new Set(), committed: new Set() })
+    }>({ chatId: undefined, seen: new Set(), committed: new Set() })
     const foldingSuperGroups = useMemo(() => {
       void foldTick // re-derives after the commit timer moves leads to committed
       if (superGroupByMessageId.size === 0) return EMPTY_FOLDING_SUPER_GROUPS
