@@ -290,11 +290,29 @@ describe('host compaction summarize prompt', () => {
 
 describe('host auto-compaction evidence policy', () => {
   it('never treats generic processed run usage as live occupancy', () => {
-    for (const provider of ['kimi', 'grok'] as const) {
+    for (const provider of ['kimi', 'grok', 'antigravity'] as const) {
       expect(
         shouldAutoCompactHostContext(provider, { kind: 'generic_run_usage', percent: 999 })
       ).toBe(false)
     }
+  })
+
+  it('accepts provider-semantic occupancy for antigravity (full-transcript replay lane)', () => {
+    expect(
+      shouldAutoCompactHostContext('antigravity', {
+        kind: 'provider_semantic_occupancy',
+        percent: 90
+      })
+    ).toBe(true)
+    expect(
+      shouldAutoCompactHostContext('antigravity', {
+        kind: 'provider_semantic_occupancy',
+        percent: 89
+      })
+    ).toBe(false)
+    expect(
+      shouldAutoCompactHostContext('antigravity', { kind: 'classified_context_overflow' })
+    ).toBe(true)
   })
 
   it('accepts verified occupancy or classified overflow for host providers', () => {

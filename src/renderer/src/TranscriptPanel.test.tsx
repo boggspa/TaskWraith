@@ -1619,3 +1619,117 @@ describe('collapsed one-liner super-groups', () => {
     expect(html).not.toContain('system notice')
   })
 })
+
+describe('context-compaction transcript rows', () => {
+  const compactionMessage = (id: string): ChatMessage =>
+    ({
+      id,
+      role: 'system',
+      content: 'Context compacted · 145k → 18k tokens · automatic · Claude',
+      timestamp: '2026-01-01T00:00:02.000Z',
+      metadata: {
+        kind: 'contextCompaction',
+        provider: 'claude',
+        contextCompaction: {
+          kind: 'completed',
+          telemetry: { provider: 'claude', trigger: 'auto', preTokens: 145000, postTokens: 18000 }
+        }
+      }
+    }) as ChatMessage
+
+  it('renders the full tool-call-style row while it is the transcript tail', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      compactionMessage('compaction-tail')
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    expect(html).toContain('context-compaction-row')
+    expect(html).toContain('Compacted context')
+    // Tail rows never fold — the record stays fully visible until passed.
+    expect(html).not.toContain('collapsed-activity-stack-summary')
+  })
+
+  it('folds a passed compaction record into a one-liner like other settled rows', () => {
+    const messages: ChatMessage[] = [
+      { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' },
+      compactionMessage('compaction-mid'),
+      {
+        id: 'final',
+        role: 'assistant',
+        content: 'FINAL_ANSWER_MARKER done.',
+        timestamp: '2026-01-01T00:00:04.000Z'
+      }
+    ]
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages, virtualize: false })} />
+    )
+    // One-liner label = the message's pre-formatted summary content, with the
+    // compaction glyph riding the summary and the frozen speaker meta prefix.
+    expect(html).toContain('collapsed-activity-stack-summary')
+    expect(html).toContain('Context compacted · 145k → 18k tokens · automatic · Claude')
+    expect(html).toContain('collapsed-context-compaction-glyph')
+    expect(html).toContain('Claude')
+    // The full row body only mounts when expanded.
+    expect(html).not.toContain('context-compaction-row')
+  })
+})
+
+describe('working-indicator context-pressure hint', () => {
+  const highPressureChat = (): ChatRecord =>
+    ({
+      appChatId: 'pressure-chat',
+      title: 'Pressure',
+      createdAt: 0,
+      updatedAt: 0,
+      archived: false,
+      messages: [
+        { id: 'u1', role: 'user', content: 'go', timestamp: '2026-01-01T00:00:00.000Z' }
+      ],
+      runs: [
+        {
+          runId: 'run-1',
+          status: 'completed',
+          startedAt: '2026-01-01T00:00:00.000Z',
+          stats: { input_tokens: 180_000, output_tokens: 6_000 }
+        }
+      ]
+    }) as unknown as ChatRecord
+
+  it('discloses occupancy on the working row at warn pressure', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: highPressureChat(),
+          currentProvider: 'claude'
+        })}
+      />
+    )
+    // 186k of claude's 200k fallback window = 93% → critical-tinted hint.
+    expect(html).toContain('working-context-pressure-hint')
+    expect(html).toContain('context 93%')
+    expect(html).toContain('is-critical')
+  })
+
+  it('stays silent below warn pressure', () => {
+    const chat = highPressureChat()
+    ;(chat.runs[0] as { stats: Record<string, number> }).stats = {
+      input_tokens: 40_000,
+      output_tokens: 2_000
+    }
+    const html = renderToStaticMarkup(
+      <TranscriptPanel
+        {...makeProps({
+          virtualize: false,
+          isThinking: true,
+          currentChat: chat,
+          currentProvider: 'claude'
+        })}
+      />
+    )
+    expect(html).not.toContain('working-context-pressure-hint')
+  })
+})

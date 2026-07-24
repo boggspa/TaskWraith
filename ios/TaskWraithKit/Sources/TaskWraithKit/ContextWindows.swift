@@ -16,6 +16,16 @@ public enum ContextWindows {
         "flash-lite": 200_000,
         "auto": 1_048_576,
         "cli-default": 1_048_576,
+        // Gemini wire model ids (antigravity gemini-api lane; both bare and
+        // catalog-prefixed spellings) — mirrors src/shared/contextWindows.ts.
+        "gemini-2.5-pro": 1_048_576,
+        "gemini-2.5-flash": 1_048_576,
+        "gemini-2.5-flash-lite": 1_048_576,
+        "gemini-2.0-flash": 1_048_576,
+        "gemini-api:gemini-2.5-pro": 1_048_576,
+        "gemini-api:gemini-2.5-flash": 1_048_576,
+        "gemini-api:gemini-2.5-flash-lite": 1_048_576,
+        "gemini-api:gemini-2.0-flash": 1_048_576,
         // Codex
         // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on
         // all three — mirrors src/shared/contextWindows.ts.
@@ -105,6 +115,7 @@ public enum ContextWindows {
         "grok": 500_000,
         "cursor": 200_000,
         "ollama": 262_144,
+        "antigravity": 1_048_576,
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's

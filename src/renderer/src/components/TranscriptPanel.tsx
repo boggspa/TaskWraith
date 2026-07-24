@@ -122,7 +122,22 @@ import { isSubThreadDelegationMessage } from './SubThreadDelegationCardModel'
 import { SubThreadReturnCard } from './SubThreadReturnCard'
 import { isSubThreadReturnMessage, subThreadReturnBody } from './SubThreadReturnCardModel'
 import { ParticipantHealthCard } from './ParticipantHealthCard'
-import { ContextCompactionCard } from './ContextCompactionCard'
+import {
+  ContextCompactionCard,
+  ContextCompactionGlyph,
+  contextCompactionMessageFailed,
+  contextCompactionMessageMetaLabel
+} from './ContextCompactionCard'
+import {
+  buildParticipantContextRows,
+  currentContextTokens
+} from '../lib/contextMeter'
+import {
+  contextPercent,
+  isContextWindowProviderId,
+  resolveContextWindow
+} from '../../../shared/contextWindows'
+import { CONTEXT_PRESSURE_WARN_PERCENT } from '../../../shared/contextCompaction'
 import type { ContextCompactionProgressEvent } from '../../../shared/contextCompaction'
 import { ProviderRunFailureCard } from './ProviderRunFailureCard'
 import { MarkdownMessage } from './MarkdownMessage'
@@ -181,6 +196,58 @@ function ContextCompactionProgressRow({
       </div>
       <ThinkingIndicator label="Compacting context" ariaLabel={`${label} compacting context`} />
     </div>
+  )
+}
+
+/** Token-growth stall window before a high-pressure working row is presumed
+ * to be compacting (providers that auto-compact without emitting any frame —
+ * the "participant goes quiet, then the record appears" report). */
+const WORKING_QUIET_COMPACTION_MS = 20_000
+
+/**
+ * Context-pressure hint riding the working indicator: at ≥80% occupancy the
+ * row discloses the percent ("context 87%"), and if token growth then stalls
+ * for 20s at that pressure it escalates to "likely compacting" — a TENTATIVE
+ * presumption for lanes whose native auto-compaction emits no start signal.
+ * Confirmed compaction (a real `started` event) flips the whole indicator to
+ * "Compacting context" upstream, which supersedes this hint.
+ */
+function WorkingContextPressureHint({
+  percent,
+  estimatedTokens
+}: {
+  percent: number
+  estimatedTokens: number
+}): ReactElement | null {
+  const [quiet, setQuiet] = useState(false)
+  const lastGrowthRef = useRef<{ tokens: number; atMs: number }>({
+    tokens: estimatedTokens,
+    atMs: Date.now()
+  })
+  if (estimatedTokens !== lastGrowthRef.current.tokens) {
+    lastGrowthRef.current = { tokens: estimatedTokens, atMs: Date.now() }
+  }
+  useEffect(() => {
+    const timer = window.setInterval(() => {
+      setQuiet(Date.now() - lastGrowthRef.current.atMs >= WORKING_QUIET_COMPACTION_MS)
+    }, 1000)
+    return () => window.clearInterval(timer)
+  }, [])
+  if (!(percent >= CONTEXT_PRESSURE_WARN_PERCENT)) return null
+  const rounded = Math.round(percent)
+  return (
+    <span
+      className={`working-context-pressure-hint${percent >= 90 ? ' is-critical' : ''}${
+        quiet ? ' is-quiet' : ''
+      }`}
+      title={
+        quiet
+          ? 'No token growth for 20s at high context pressure — the provider is likely auto-compacting its context.'
+          : 'Live context occupancy. Providers auto-compact near their window limit.'
+      }
+    >
+      {quiet ? `quiet at ${rounded}% context — likely compacting` : `context ${rounded}%`}
+    </span>
   )
 }
 
@@ -774,6 +841,16 @@ const EMPTY_TRANSCRIPT_HEIGHT_OFFSETS: number[] = [0]
 /** Stable empty rows array for the non-virtualised render path. */
 const EMPTY_VIRTUAL_ROWS: VirtualRow[] = []
 const EMPTY_HIDDEN_ROW_KEYS: ReadonlySet<string> = new Set()
+
+const EMPTY_FOLDING_SUPER_GROUPS: ReadonlySet<string> = new Set()
+
+/**
+ * How long a freshly settled super group keeps its member rows mounted in the
+ * `.is-super-folding` state before committing to the real hidden state. Must
+ * outlast the CSS height transition (260ms) so the commit lands on rows that
+ * are already 0px tall — the removal is then invisible.
+ */
+const SUPER_FOLD_COMMIT_MS = 300
 /** Stable empty expansion set so unopened tool rows share one reference. */
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
 
@@ -803,6 +880,11 @@ export function toolStackStateKey(message: ChatMessage): string {
  * highlight target) is applied by each caller.
  */
 function plainSystemNoticeMessage(msg: ChatMessage): boolean {
+  // NOTE: `contextCompaction` records deliberately QUALIFY as plain notices —
+  // they fold into settled one-liners / super-groups like every other
+  // transcript row (their `content` is the pre-formatted summary line). The
+  // per-row render special-cases them back to `ContextCompactionCard` when
+  // un-collapsed or expanded.
   return (
     msg.role === 'system' &&
     !isEnsembleRoundHeaderMessage(msg) &&
@@ -811,7 +893,6 @@ function plainSystemNoticeMessage(msg: ChatMessage): boolean {
     !isSubThreadReturnMessage(msg) &&
     !isEnsembleFanoutResultMessage(msg) &&
     msg.metadata?.kind !== 'ensembleParticipantHealth' &&
-    msg.metadata?.kind !== 'contextCompaction' &&
     msg.metadata?.kind !== 'providerRunFailure' &&
     msg.metadata?.kind !== TASKWRAITH_CLOSEOUT_KIND &&
     msg.metadata?.kind !== 'ensembleBossmanPoll' &&
@@ -2059,6 +2140,27 @@ export const TranscriptPanel = memo(
         ),
       [currentChat?.messages, currentChat?.runs, workingPresentations]
     )
+    // Working-row context pressure — self-derived from the chat record with
+    // the same meter lib the donut uses, so the indicator can disclose "before"
+    // (occupancy ≥ warn) and presume "whilst" (token-growth stall at pressure)
+    // without any new prop plumbing through the multiview panes.
+    const workingContextPressure = useMemo(() => {
+      const runs = currentChat?.runs || []
+      const latestRun = [...runs].reverse().find((run) => run?.stats)
+      const soloWindow = resolveContextWindow(
+        isContextWindowProviderId(currentProvider) ? currentProvider : undefined,
+        latestRun?.actualModel || latestRun?.requestedModel || ''
+      )
+      const soloUsed = currentContextTokens(runs, { liveOutputTokens: 0, isRunning: true })
+      const byParticipant = new Map<string, number>()
+      const participants = currentChat?.ensemble?.participants || []
+      if (participants.length > 0) {
+        for (const row of buildParticipantContextRows(runs, participants)) {
+          byParticipant.set(row.id, row.percent)
+        }
+      }
+      return { solo: contextPercent(soloUsed, soloWindow), byParticipant }
+    }, [currentChat?.runs, currentChat?.ensemble?.participants, currentProvider])
     const [messageContextMenu, setMessageContextMenu] =
       useState<TranscriptMessageContextMenuSelection | null>(null)
     const {
@@ -2899,6 +3001,62 @@ export const TranscriptPanel = memo(
       expandedRowIds,
       projectedRowLookup
     ])
+    // Fold-out phase for freshly settled super groups: for SUPER_FOLD_COMMIT_MS
+    // the member rows stay mounted with `.is-super-folding`, whose CSS
+    // transitions their height to 0, so a long tail folds up smoothly instead
+    // of teleporting into the one-liner. Derived during render (first-seen
+    // stamps live in a ref, mirroring rowElementCacheRef) because the class
+    // must land in the SAME render pass that first collapses the group — an
+    // intermediate hidden render would unmount the member DOM nodes and the
+    // height transition could never fire. Groups already collapsed when the
+    // chat mounts are baseline (no fold animation on open); reduced motion
+    // commits instantly.
+    const [foldTick, setFoldTick] = useState(0)
+    const superFoldFirstSeenRef = useRef<Map<string, number>>(new Map())
+    const superFoldBaselineChatRef = useRef<string | null>(null)
+    const foldingSuperGroups = useMemo(() => {
+      void foldTick // re-derives after the commit timer so folds expire
+      if (superGroupByMessageId.size === 0) {
+        superFoldFirstSeenRef.current.clear()
+        return EMPTY_FOLDING_SUPER_GROUPS
+      }
+      const firstSeen = superFoldFirstSeenRef.current
+      const isBaselinePass = superFoldBaselineChatRef.current !== chatId
+      if (isBaselinePass) {
+        superFoldBaselineChatRef.current = chatId
+        firstSeen.clear()
+      }
+      const reducedMotion =
+        typeof window.matchMedia === 'function' &&
+        window.matchMedia('(prefers-reduced-motion: reduce)').matches
+      const now = Date.now()
+      const liveLeads = new Set<string>()
+      const folding = new Set<string>()
+      for (const group of superGroupByMessageId.values()) {
+        if (liveLeads.has(group.leadId)) continue
+        liveLeads.add(group.leadId)
+        let seenAt = firstSeen.get(group.leadId)
+        if (seenAt === undefined) {
+          seenAt = isBaselinePass || reducedMotion ? 0 : now
+          firstSeen.set(group.leadId, seenAt)
+        }
+        if (now - seenAt < SUPER_FOLD_COMMIT_MS && !expandedSuperGroups.has(group.leadId)) {
+          folding.add(group.leadId)
+        }
+      }
+      for (const leadId of firstSeen.keys()) {
+        if (!liveLeads.has(leadId)) firstSeen.delete(leadId)
+      }
+      return folding.size > 0 ? folding : EMPTY_FOLDING_SUPER_GROUPS
+    }, [superGroupByMessageId, expandedSuperGroups, chatId, foldTick])
+    useEffect(() => {
+      if (foldingSuperGroups.size === 0) return
+      const timer = window.setTimeout(
+        () => setFoldTick((tick) => tick + 1),
+        SUPER_FOLD_COMMIT_MS + 40
+      )
+      return () => window.clearTimeout(timer)
+    }, [foldingSuperGroups])
     // Rows hidden inside a COLLAPSED super group render an empty block whose
     // CSS zeroes all spacing, so their real slot height is 0 — but a 0px slot
     // can never record a measurement (the measure pass skips non-positive
@@ -2913,6 +3071,9 @@ export const TranscriptPanel = memo(
         if (seenLeads.has(group.leadId)) continue
         seenLeads.add(group.leadId)
         if (expandedSuperGroups.has(group.leadId)) continue
+        // Folding members are mid-animation at nonzero heights — pinning them
+        // to 0 now would desync the height table; they join once committed.
+        if (foldingSuperGroups.has(group.leadId)) continue
         for (const memberId of group.memberIds) {
           if (memberId === group.leadId) continue
           const row =
@@ -2922,7 +3083,7 @@ export const TranscriptPanel = memo(
         }
       }
       return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
-    }, [superGroupByMessageId, expandedSuperGroups, projectedRowLookup])
+    }, [superGroupByMessageId, expandedSuperGroups, foldingSuperGroups, projectedRowLookup])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -3500,10 +3661,18 @@ export const TranscriptPanel = memo(
             const superGroupExpanded = Boolean(
               superGroup && expandedSuperGroups.has(superGroup.leadId)
             )
-            const superGroupHidden = Boolean(superGroup && !superGroupExpanded && !isSuperLead)
+            const superGroupFolding = Boolean(
+              superGroup &&
+                !superGroupExpanded &&
+                !isSuperLead &&
+                foldingSuperGroups.has(superGroup.leadId)
+            )
+            const superGroupHidden = Boolean(
+              superGroup && !superGroupExpanded && !isSuperLead && !superGroupFolding
+            )
             const superGroupKey = superGroup
               ? `${superGroup.leadId}:${superGroup.size}:${
-                  superGroupExpanded ? 'open' : 'closed'
+                  superGroupExpanded ? 'open' : superGroupFolding ? 'folding' : 'closed'
                 }:${isSuperLead ? 'lead' : 'member'}`
               : ''
             const superSummary =
@@ -3691,6 +3860,11 @@ export const TranscriptPanel = memo(
                   // "random gap below the merged one-liner" that scaled with
                   // member count. CSS zeroes it per rendering mode.
                   superGroupHidden ? ' is-super-hidden' : ''
+                }${
+                  // Fold-out phase: member stays mounted while CSS transitions
+                  // its height to 0; the hidden state commits ~300ms later on
+                  // an already-invisible row.
+                  superGroupFolding ? ' is-super-folding' : ''
                 }`}
                 data-vrow-id={rowKey}
                 data-message-id={msg.id}
@@ -3894,12 +4068,17 @@ export const TranscriptPanel = memo(
                     older transcripts / exports.
                   */
                   <ParticipantHealthCard key={msg.id} message={msg} />
-                ) : isContextCompaction ? (
+                ) : isContextCompaction && !systemAutoCollapsible ? (
                   /*
-                    Provider context compaction (auto or manual). Structured
-                    card with pre→post occupancy; `msg.content` carries the
-                    plain-text summary as the fallback for older transcripts,
-                    exports, and the iOS system-row projection.
+                    Provider context compaction (auto or manual), rendered in
+                    the tool-call row idiom. Reached only while the record is
+                    NOT fold-eligible (tail row, pinned, jump target) — once
+                    the conversation moves past it, the systemAutoCollapsible
+                    lane below folds it into a one-liner exactly like other
+                    settled rows, with this row as the expanded body.
+                    `msg.content` carries the plain-text summary as the
+                    fallback for older transcripts, exports, and the iOS
+                    system-row projection.
                   */
                   <ContextCompactionCard key={msg.id} message={msg} />
                 ) : isProviderRunFailure ? (
@@ -3920,24 +4099,45 @@ export const TranscriptPanel = memo(
                   <CollapsedTranscriptRow
                     key={msg.id}
                     header={null}
-                    metaLabel="System"
+                    metaLabel={
+                      isContextCompaction ? contextCompactionMessageMetaLabel(msg) : 'System'
+                    }
                     label={collapsedSystemNoticeLabel(msg.content)}
+                    icons={
+                      isContextCompaction ? (
+                        <span
+                          className={`collapsed-context-compaction-glyph ${
+                            contextCompactionMessageFailed(msg) ? 'is-failed' : 'is-completed'
+                          }`}
+                          aria-hidden
+                        >
+                          <ContextCompactionGlyph failed={contextCompactionMessageFailed(msg)} />
+                        </span>
+                      ) : undefined
+                    }
+                    errored={isContextCompaction && contextCompactionMessageFailed(msg)}
                     compact
                     expanded={collapsedSystemExpanded}
                     onToggle={(expanded) => setCollapsedStackExpanded(msg.id, expanded)}
-                    ariaTargetLabel="system notice"
+                    ariaTargetLabel={
+                      isContextCompaction ? 'context compaction record' : 'system notice'
+                    }
                   >
                     {collapsedSystemExpanded ? (
-                      <div className="message-group">
-                        <div
-                          className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
-                          onContextMenu={(event) =>
-                            openMessageContextMenu(event, msg, msg.content || '', 'system message')
-                          }
-                        >
-                          <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                      isContextCompaction ? (
+                        <ContextCompactionCard message={msg} />
+                      ) : (
+                        <div className="message-group">
+                          <div
+                            className={`message-bubble system${ensembleRoundStatusClass(msg)}`}
+                            onContextMenu={(event) =>
+                              openMessageContextMenu(event, msg, msg.content || '', 'system message')
+                            }
+                          >
+                            <MarkdownMessage content={msg.content} chat={currentChat || undefined} />
+                          </div>
                         </div>
-                      </div>
+                      )
                     ) : null}
                   </CollapsedTranscriptRow>
                 ) : (
@@ -4529,6 +4729,19 @@ export const TranscriptPanel = memo(
                         />
                       }
                     />
+                    {presentation.activity === 'working' && (
+                      <WorkingContextPressureHint
+                        key={`pressure-${presentation.participantId || presentation.runId || index}`}
+                        percent={
+                          presentation.participantId
+                            ? workingContextPressure.byParticipant.get(
+                                presentation.participantId
+                              ) ?? 0
+                            : workingContextPressure.solo
+                        }
+                        estimatedTokens={tokenTarget?.estimatedCurrentTurnTokens ?? 0}
+                      />
+                    )}
                   </div>
                 )
               })}

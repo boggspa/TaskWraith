@@ -11,6 +11,7 @@ export type ContextWindowProviderId =
   | 'grok'
   | 'cursor'
   | 'ollama'
+  | 'antigravity'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -19,6 +20,17 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'flash-lite': 200_000,
   auto: 1_048_576,
   'cli-default': 1_048_576,
+  // Gemini wire model ids (antigravity gemini-api lane resolves aliases to
+  // these; runs may report either the bare wire id or the catalog-prefixed
+  // `gemini-api:` form, so both spellings are registered).
+  'gemini-2.5-pro': 1_048_576,
+  'gemini-2.5-flash': 1_048_576,
+  'gemini-2.5-flash-lite': 1_048_576,
+  'gemini-2.0-flash': 1_048_576,
+  'gemini-api:gemini-2.5-pro': 1_048_576,
+  'gemini-api:gemini-2.5-flash': 1_048_576,
+  'gemini-api:gemini-2.5-flash-lite': 1_048_576,
+  'gemini-api:gemini-2.0-flash': 1_048_576,
   // Codex
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
@@ -107,7 +119,11 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   grok: 500_000,
   cursor: 200_000,
   // Ollama - local models vary by tag, so keep the fallback conservative.
-  ollama: 262_144
+  ollama: 262_144,
+  // Antigravity's gemini-api lane runs Gemini wire models (1M family window).
+  // Pre-fix this fell through to the generic 200k floor, so the meter showed a
+  // ~5x-inflated percent for antigravity chats.
+  antigravity: 1_048_576
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(
@@ -115,8 +131,8 @@ const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(
 )
 
 /** True for providers that have a static context-window fallback. Providers
- *  without a model catalog yet (e.g. opt-in antigravity pre-connect) are
- *  excluded; callers should pass `undefined` for them. */
+ *  without a known window are excluded; callers should pass `undefined` for
+ *  them. */
 export function isContextWindowProviderId(
   provider: string | null | undefined
 ): provider is ContextWindowProviderId {

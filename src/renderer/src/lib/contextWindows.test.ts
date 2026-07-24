@@ -60,7 +60,7 @@ describe('resolveContextWindow', () => {
     expect(resolveContextWindow('ollama', 'unknown-local', undefined, 65_536)).toBe(65_536)
   })
 
-  it('uses provider fallbacks for all seven providers when the model is unknown', () => {
+  it('uses provider fallbacks for all eight providers when the model is unknown', () => {
     const expected: Record<ContextWindowProviderId, number> = {
       gemini: 1_048_576,
       codex: 1_050_000,
@@ -68,7 +68,8 @@ describe('resolveContextWindow', () => {
       kimi: 256_000,
       grok: 500_000,
       cursor: 200_000,
-      ollama: 262_144
+      ollama: 262_144,
+      antigravity: 1_048_576
     }
 
     for (const [provider, limit] of Object.entries(expected) as Array<
@@ -106,5 +107,17 @@ describe('contextPercent', () => {
     expect(contextPercent(500_000, 200_000)).toBe(100)
     expect(contextPercent(-5, 200_000)).toBe(0)
     expect(contextPercent(50_000, 0)).toBe(0)
+  })
+})
+
+describe('antigravity gemini-api windows', () => {
+  it('resolves wire model ids in both bare and catalog-prefixed spellings', () => {
+    expect(resolveContextWindow('antigravity', 'gemini-2.5-flash')).toBe(1_048_576)
+    expect(resolveContextWindow('antigravity', 'gemini-api:gemini-2.5-pro')).toBe(1_048_576)
+    expect(resolveContextWindow('antigravity', 'gemini-2.0-flash')).toBe(1_048_576)
+  })
+
+  it('falls back to the 1M family window for unknown antigravity models', () => {
+    expect(resolveContextWindow('antigravity', 'gemini-9.9-experimental')).toBe(1_048_576)
   })
 })

@@ -438,3 +438,68 @@ describe('buildGeminiTurnContents', () => {
     expect(out[2].role).toBe('user')
   })
 })
+
+describe('buildGeminiTurnContents — host context compaction', () => {
+  const baseMessages = (): ChatMessage[] => [
+    msg('user', 'q1', { id: 'm1' }),
+    msg('assistant', 'a1', { id: 'm2' }),
+    msg('user', 'q2', { id: 'm3' }),
+    msg('assistant', 'a2', { id: 'm4' }),
+    msg('user', 'q3', { id: 'm5' })
+  ]
+
+  const summarized = (
+    overrides: Partial<NonNullable<ChatRecord['contextCompactionSummary']>> = {}
+  ): ChatRecord => ({
+    ...chat(baseMessages()),
+    contextCompactionSummary: {
+      text: 'SUMMARY: decisions + open tasks.',
+      createdAt: '2026-07-24T00:00:00.000Z',
+      provider: 'antigravity',
+      provenance: {
+        kind: 'contiguous_prompt_prefix',
+        throughMessageId: 'm3',
+        coveredMessageIds: ['m1', 'm2', 'm3']
+      },
+      ...overrides
+    }
+  })
+
+  it('prunes the covered prefix and injects the summary as the leading user turn', () => {
+    const out = buildGeminiTurnContents(summarized(), 'next step')
+    // m1..m3 pruned → replay is [summary(user), a2(model), q3(user)+prompt].
+    expect(out).toHaveLength(3)
+    expect(out[0].role).toBe('user')
+    expect(textOf(out[0])).toContain('Prior session summary')
+    expect(textOf(out[0])).toContain('SUMMARY: decisions + open tasks.')
+    expect(textOf(out[0])).not.toContain('q1')
+    expect(out[1].role).toBe('model')
+    expect(textOf(out[1])).toBe('a2')
+    expect(out[2].role).toBe('user')
+    expect(textOf(out[2])).toBe('q3\n\nnext step')
+  })
+
+  it('fails open on provenance mismatch — full replay, summary still injected', () => {
+    const out = buildGeminiTurnContents(
+      summarized({
+        provenance: {
+          kind: 'contiguous_prompt_prefix',
+          throughMessageId: 'm3',
+          // Gap: m2 missing → prune must refuse and replay everything.
+          coveredMessageIds: ['m1', 'm3']
+        }
+      }),
+      'next step'
+    )
+    // Summary merges into the first user turn (same-role merge), all rows kept.
+    expect(textOf(out[0])).toContain('Prior session summary')
+    expect(textOf(out[0])).toContain('q1')
+    expect(out.map((entry) => entry.role)).toEqual(['user', 'model', 'user', 'model', 'user'])
+  })
+
+  it('replays untouched when no summary is stored', () => {
+    const out = buildGeminiTurnContents(chat(baseMessages()), 'next step')
+    expect(out.map((entry) => entry.role)).toEqual(['user', 'model', 'user', 'model', 'user'])
+    expect(textOf(out[0])).toBe('q1')
+  })
+})

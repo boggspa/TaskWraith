@@ -5967,94 +5967,89 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   color: var(--provider-poolside-color, var(--text-primary));
 }
 
-/* Context-compaction card — the transcript record of a provider (or the
- * host) shrinking a session's live context (auto mid-run, or "compact now").
- * Same glass/rim vocabulary as .participant-health-card: teal-tinted rim on
- * success (a healthy maintenance event, not a warning), amber on failure. */
-.context-compaction-card {
-  --context-compaction-rim: color-mix(in srgb, var(--panel-border) 60%, transparent);
-  width: min(100%, 900px);
-  margin: 6px 0;
-  padding: 9px 12px;
-  border-radius: 12px;
-  border: 1px solid var(--context-compaction-rim);
-  background: color-mix(in srgb, var(--surface-elevated) 50%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--text-primary) 3%, transparent);
+/* Context-compaction transcript row — the durable record of a provider (or
+ * the host) shrinking a session's live context (auto mid-run, or "compact
+ * now"). Tool-call idiom, NOT a banner: one flowing line matching the
+ * settled-stack one-liner voice (.collapsed-activity-stack-summary) — glyph,
+ * speaker meta, title in the transcript typeface at demi-bold, tabular
+ * detail. Teal glyph on success (healthy maintenance, not a warning), amber
+ * on failure. No border, background, or shadow — it reads as transcript,
+ * not notification. */
+.context-compaction-row {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  font-size: var(--font-size-xs);
+  gap: 2px;
+  padding: 2px 0;
   color: var(--text-secondary);
 }
-.context-compaction-card.is-completed {
-  --context-compaction-rim: color-mix(in srgb, #2aa8a0 42%, var(--panel-border));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, #2aa8a0 9%, transparent),
-    0 0 0 1px color-mix(in srgb, #2aa8a0 8%, transparent);
-}
-.context-compaction-card.is-failed {
-  --context-compaction-rim: color-mix(in srgb, #f0a93f 50%, var(--panel-border));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in srgb, #f0a93f 10%, transparent),
-    0 0 0 1px color-mix(in srgb, #f0a93f 8%, transparent);
-}
-.context-compaction-card-header {
+.context-compaction-row-line {
   display: flex;
   align-items: center;
-  gap: 8px;
-  color: var(--text-primary);
-  flex-wrap: wrap;
+  gap: var(--space-sm);
+  min-width: 0;
+  font-family: var(--transcript-font-family);
+  font-size: var(--font-size-md);
 }
-.context-compaction-card-icon {
+.context-compaction-row-icon {
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  flex-shrink: 0;
 }
-.context-compaction-card.is-completed .context-compaction-card-icon {
+.context-compaction-row.is-completed .context-compaction-row-icon {
   color: #2aa8a0;
 }
-.context-compaction-card.is-failed .context-compaction-card-icon {
+.context-compaction-row.is-failed .context-compaction-row-icon {
   color: #f0a93f;
 }
-.context-compaction-card-title {
+.context-compaction-row-meta {
+  flex-shrink: 0;
+  font-size: 11px;
   font-weight: 600;
-  font-size: var(--font-size-sm);
+  color: var(--text-tertiary);
 }
-.context-compaction-card-detail {
+/* Provider tint on the meta prefix only — same vocabulary as message-meta. */
+.context-compaction-row.provider-claude .context-compaction-row-meta {
+  color: var(--provider-claude-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-codex .context-compaction-row-meta {
+  color: var(--provider-codex-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-kimi .context-compaction-row-meta {
+  color: var(--provider-kimi-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-grok .context-compaction-row-meta {
+  color: var(--provider-grok-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-cursor .context-compaction-row-meta {
+  color: var(--provider-cursor-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-ollama .context-compaction-row-meta {
+  color: var(--provider-ollama-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-gemini .context-compaction-row-meta {
+  color: var(--provider-gemini-color, var(--text-tertiary));
+}
+.context-compaction-row.provider-antigravity .context-compaction-row-meta {
+  color: var(--provider-antigravity-color, var(--text-tertiary));
+}
+.context-compaction-row-title {
+  flex-shrink: 0;
+  font-weight: 600;
   color: var(--text-secondary);
+}
+.context-compaction-row.is-failed .context-compaction-row-title {
+  color: var(--tool-warning);
+}
+.context-compaction-row-detail {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-tertiary);
   font-variant-numeric: tabular-nums;
 }
-.context-compaction-card-provider {
-  margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px 3px 6px;
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--surface-base) 55%, transparent);
-  border: 1px solid color-mix(in srgb, var(--panel-border) 50%, transparent);
-  font-size: var(--font-size-xs);
-  color: var(--text-primary);
-}
-.context-compaction-card-provider.provider-codex {
-  color: var(--provider-codex-color, var(--text-primary));
-}
-.context-compaction-card-provider.provider-claude {
-  color: var(--provider-claude-color, var(--text-primary));
-}
-.context-compaction-card-provider.provider-kimi {
-  color: var(--provider-kimi-color, var(--text-primary));
-}
-.context-compaction-card-provider.provider-grok {
-  color: var(--provider-grok-color, var(--text-primary));
-}
-.context-compaction-card-provider.provider-cursor {
-  color: var(--provider-cursor-color, var(--text-primary));
-}
-.context-compaction-card-provider.provider-ollama {
-  color: var(--provider-ollama-color, var(--text-primary));
-}
-.context-compaction-card-error {
+.context-compaction-row-error {
+  margin-left: calc(14px + var(--space-sm));
   font-family: var(--font-mono, monospace);
   font-size: var(--font-size-xs);
   color: color-mix(in srgb, #f0a93f 75%, var(--text-primary));
@@ -7553,5 +7548,36 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   .stream-reveal-token {
     animation: none;
     opacity: 1;
+  }
+}
+
+/* Freshly settled super-groups fold their member tail smoothly instead of
+ * teleporting into the one-liner: TranscriptPanel keeps members mounted for
+ * ~300ms with this class while height transitions to 0 (interpolate-size
+ * lets Chromium animate from the natural height), then commits the real
+ * hidden state on rows that are already 0px tall. Bottom-pinned readers ride
+ * the shrink via the existing repin-on-resize machinery. */
+.transcript-message-block.is-super-folding {
+  interpolate-size: allow-keywords;
+  height: 0;
+  min-height: 0;
+  opacity: 0.1;
+  overflow: hidden;
+  pointer-events: none;
+  transition:
+    height 260ms cubic-bezier(0.33, 0, 0.2, 1),
+    margin-bottom 260ms cubic-bezier(0.33, 0, 0.2, 1),
+    opacity 180ms ease-out;
+}
+
+/* Outranks the virtualized per-child margin rule (its two :not() classes give
+ * it (0,4,0)) so the slot's margin folds away with the row height. */
+.transcript-inner.transcript-virtualized > .transcript-message-block.is-super-folding {
+  margin-bottom: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .transcript-message-block.is-super-folding {
+    transition: none;
   }
 }

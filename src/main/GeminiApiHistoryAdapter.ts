@@ -42,6 +42,7 @@ import { wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
 import { isTaskWraithCloseoutMessage } from '../shared/taskWraithCloseout'
+import { pruneContiguousCompactionPrefix } from '../shared/contextCompaction'
 
 function isSubThreadReturnMessage(message: ChatMessage): boolean {
   return (
@@ -225,8 +226,44 @@ export function buildGeminiTurnContents(
   currentPrompt: string,
   options?: HistoryReplayOptions
 ): GeminiContent[] {
-  const messages = chat?.messages || []
-  const history = messages.length ? chatMessagesToGeminiContents(messages, options) : []
+  // Host context compaction: a stored summary with exact contiguous-prefix
+  // provenance prunes the replayed transcript prefix it covers (fail-open —
+  // any mismatch replays everything), and the summary text itself is
+  // re-injected as the leading user turn so the model keeps the compacted
+  // memory. This is what makes the stateless-replay lane's context actually
+  // SHRINK after a compaction instead of growing without bound.
+  const summary = chat?.contextCompactionSummary
+  const summaryText = typeof summary?.text === 'string' ? summary.text.trim() : ''
+  const messages = pruneContiguousCompactionPrefix(chat?.messages || [], summary?.provenance)
+  const history = messages.length
+    ? chatMessagesToGeminiContents(messages as ChatMessage[], options)
+    : []
+  if (summaryText) {
+    const summaryTurn: GeminiContent = {
+      role: 'user',
+      parts: [
+        {
+          text: `Prior session summary (context was compacted ${summary?.createdAt || 'earlier'}):\n${summaryText}`
+        }
+      ]
+    }
+    // Prepend, preserving strict alternation: a leading user entry followed
+    // by another user entry merges exactly like adjacent same-role history
+    // rows do in chatMessagesToGeminiContents.
+    if (history.length && history[0].role === 'user') {
+      const first = history[0]
+      const onlyTextParts = first.parts.length === 1 && 'text' in first.parts[0] && first.parts[0].text
+      if (onlyTextParts) {
+        first.parts[0] = {
+          text: `${(summaryTurn.parts[0] as { text: string }).text}\n\n${(first.parts[0] as { text: string }).text}`
+        }
+      } else {
+        first.parts.unshift(summaryTurn.parts[0])
+      }
+    } else {
+      history.unshift(summaryTurn)
+    }
+  }
   const currentTurn: GeminiContent = { role: 'user', parts: [{ text: currentPrompt }] }
   if (!history.length) {
     return [currentTurn]

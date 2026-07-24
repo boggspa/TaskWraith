@@ -22268,15 +22268,25 @@ async function compactProviderContextForReservedRequest(
       reservation
     })
   }
-  return compactCodexProviderContext({
-    chatId: payload.chatId,
-    providerSessionId,
-    participantId: payload.participantId,
-    model,
-    reasoningEffort,
-    cardMetadata,
-    reservation
-  })
+  if (payload.provider === 'codex') {
+    return compactCodexProviderContext({
+      chatId: payload.chatId,
+      providerSessionId,
+      participantId: payload.participantId,
+      model,
+      reasoningEffort,
+      cardMetadata,
+      reservation
+    })
+  }
+  // Explicit rejection beats the old implicit fall-through to the Codex path:
+  // an unrecognized provider (the request union is renderer-typed, but the
+  // preload boundary is a loose string) must never be driven through another
+  // provider's compaction lane.
+  return {
+    ok: false,
+    error: `Context compaction is not supported for provider "${String(payload.provider)}".`
+  }
 }
 
 /** Emit the current Multi-agent episode telemetry onto its synthesized anchor

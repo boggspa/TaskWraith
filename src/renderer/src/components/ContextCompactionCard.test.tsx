@@ -1,7 +1,11 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import type { ChatMessage } from '../../../main/store/types'
-import { ContextCompactionCard } from './ContextCompactionCard'
+import {
+  ContextCompactionCard,
+  contextCompactionMessageFailed,
+  contextCompactionMessageMetaLabel
+} from './ContextCompactionCard'
 
 function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
   return {
@@ -29,17 +33,20 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 }
 
 describe('ContextCompactionCard', () => {
-  it('renders a completed compaction with pre→post occupancy and trigger', () => {
+  it('renders a completed compaction as a tool-call-style row (no banner card)', () => {
     const html = renderToStaticMarkup(<ContextCompactionCard message={makeMessage()} />)
-    expect(html).toContain('context-compaction-card')
+    expect(html).toContain('context-compaction-row')
+    expect(html).not.toContain('context-compaction-card')
     expect(html).toContain('is-completed')
-    expect(html).toContain('Context compacted')
+    expect(html).toContain('Compacted context')
     expect(html).toContain('24k → 1k tokens')
     expect(html).toContain('manual')
     expect(html).toContain('12s')
-    expect(html).toContain('data-provider-logo="claude"')
-    expect(html).toContain('<img class="provider-brand-logo-image')
-    expect(html).not.toContain('provider-glyph-claude')
+    // Speaker meta rides the line as text (provider-tinted via row class),
+    // not as a logo pill — the row must read as transcript, not chrome.
+    expect(html).toContain('provider-claude')
+    expect(html).toContain('context-compaction-row-meta')
+    expect(html).not.toContain('provider-brand-logo-image')
   })
 
   it('renders a failed compaction with the provider error inline', () => {
@@ -63,28 +70,39 @@ describe('ContextCompactionCard', () => {
   })
 
   it('prefers the frozen participant label over the live provider name', () => {
-    const html = renderToStaticMarkup(
-      <ContextCompactionCard
-        message={makeMessage({
-          metadata: {
-            kind: 'contextCompaction',
+    const message = makeMessage({
+      metadata: {
+        kind: 'contextCompaction',
+        provider: 'codex',
+        displayParticipantLabel: 'Codex / Worker',
+        contextCompaction: {
+          kind: 'completed',
+          telemetry: {
             provider: 'codex',
-            displayParticipantLabel: 'Codex / Worker',
-            contextCompaction: {
-              kind: 'completed',
-              telemetry: {
-                provider: 'codex',
-                trigger: 'auto',
-                preTokens: 850000,
-                postTokens: 96000
-              }
-            }
+            trigger: 'auto',
+            preTokens: 850000,
+            postTokens: 96000
           }
-        })}
-      />
-    )
+        }
+      }
+    })
+    const html = renderToStaticMarkup(<ContextCompactionCard message={message} />)
     expect(html).toContain('Codex / Worker')
     expect(html).toContain('automatic')
+    expect(contextCompactionMessageMetaLabel(message)).toBe('Codex / Worker')
+  })
+
+  it('exposes the failed bit + meta label for the collapsed one-liner lane', () => {
+    const failed = makeMessage({
+      metadata: {
+        kind: 'contextCompaction',
+        provider: 'claude',
+        contextCompaction: { kind: 'failed', telemetry: { provider: 'claude' } }
+      }
+    })
+    expect(contextCompactionMessageFailed(failed)).toBe(true)
+    expect(contextCompactionMessageFailed(makeMessage())).toBe(false)
+    expect(contextCompactionMessageMetaLabel(makeMessage())).toBe('Claude')
   })
 
   it('returns null for non-compaction messages', () => {

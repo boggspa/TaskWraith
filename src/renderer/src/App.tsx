@@ -10410,7 +10410,7 @@ function App(): React.JSX.Element {
       string,
       {
         chatId: string
-        provider: 'kimi'
+        provider: 'kimi' | 'antigravity'
         trigger: 'manual' | 'auto'
         preTokens?: number
         startedAtMs: number
@@ -10517,7 +10517,13 @@ function App(): React.JSX.Element {
     const chat = chatByIdRef.current.get(chatId)
     if (!chat || isChatSummaryRecord(chat) || chat.chatKind === 'ensemble') return
     const provider = getChatProvider(chat)
-    if (provider !== 'kimi') return
+    // Antigravity qualifies on its gemini-api sub-lane only (`api://` synthetic
+    // session) — the agy CLI sub-lane owns its own context and must not be
+    // host-summarized.
+    const antigravityApiLane =
+      provider === 'antigravity' &&
+      Boolean(chat.linkedProviderSessionId?.startsWith('api://'))
+    if (provider !== 'kimi' && !antigravityApiLane) return
     // Never chain off an in-flight compaction, and respect the cooldown.
     if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chatId)) return
     const lastAttempt = lastHostCompactionAttemptAtByChatIdRef.current.get(chatId) || 0
@@ -10537,12 +10543,15 @@ function App(): React.JSX.Element {
       extractUsageLimits(latestRun?.stats).totalTokenLimit
     )
     const advisoryPercent = contextPercent(usedTokens, windowTokens)
-    if (
-      !shouldAutoCompactHostContext(provider, {
-        kind: 'generic_run_usage',
-        percent: advisoryPercent
-      })
-    ) {
+    // Antigravity's stateless lane replays the FULL transcript each request,
+    // so run input tokens ARE live occupancy — provider-semantic evidence.
+    // Kimi's generic run usage stays advisory (a no-op today by design).
+    const hostProvider = provider === 'kimi' ? ('kimi' as const) : ('antigravity' as const)
+    const evidence =
+      hostProvider === 'antigravity'
+        ? ({ kind: 'provider_semantic_occupancy', percent: advisoryPercent } as const)
+        : ({ kind: 'generic_run_usage', percent: advisoryPercent } as const)
+    if (!shouldAutoCompactHostContext(hostProvider, evidence)) {
       return
     }
     void compactChatContextRef.current?.(chatId, 'auto')
@@ -20953,6 +20962,72 @@ function App(): React.JSX.Element {
         })
         return
       }
+      if (provider === 'antigravity') {
+        // Antigravity gemini-api lane: stateless full-transcript replay, so the
+        // summarize turn already SEES the entire conversation (plus any prior
+        // stored summary, which the history adapter re-injects) — no material
+        // block needed. The captured summary + exact contiguous-prefix
+        // provenance then lets buildGeminiTurnContents prune the covered
+        // prefix on every later turn: the one lane where provenance can be
+        // id-exact because the host owns the replay.
+        if (!chat.linkedProviderSessionId?.startsWith('api://')) return
+        const transcript = chat.messages || []
+        if (!transcript.some((m) => m.role === 'assistant')) return
+        if ([...pendingHostCompactionsRef.current.values()].some((p) => p.chatId === chat.appChatId))
+          return
+        const preTokens = currentContextTokens(chat.runs || [], {
+          liveOutputTokens: 0,
+          isRunning: false
+        })
+        const coveredMessageIds = transcript.map((message) => message.id)
+        const throughMessageId = coveredMessageIds[coveredMessageIds.length - 1]
+        const previousSummary = chat.contextCompactionSummary
+        const previousProvenance = previousSummary?.provenance
+        const chainedFrom =
+          previousSummary?.createdAt &&
+          previousProvenance?.kind === 'contiguous_prompt_prefix' &&
+          coveredMessageIds.indexOf(previousProvenance.throughMessageId) >= 0 &&
+          coveredMessageIds.indexOf(previousProvenance.throughMessageId) <
+            coveredMessageIds.length - 1
+            ? {
+                throughMessageId: previousProvenance.throughMessageId,
+                summaryCreatedAt: previousSummary.createdAt
+              }
+            : undefined
+        const provenance: ContextCompactionProvenance = {
+          kind: 'contiguous_prompt_prefix',
+          throughMessageId,
+          coveredMessageIds,
+          ...(chainedFrom ? { chainedFrom } : {})
+        }
+        const request = buildRunRequestRef.current(undefined, undefined, {
+          chat,
+          prompt: buildHostCompactionSummaryPrompt({}),
+          displayPrompt: '/compact',
+          imageAttachments: []
+        })
+        const appRunId = request.appRunId || createAppRunId()
+        pendingHostCompactionsRef.current.set(appRunId, {
+          chatId: chat.appChatId,
+          provider,
+          trigger,
+          preTokens: preTokens > 0 ? preTokens : undefined,
+          startedAtMs: Date.now(),
+          provenance
+        })
+        lastHostCompactionAttemptAtByChatIdRef.current.set(chat.appChatId, Date.now())
+        void executeRunRef.current({
+          ...request,
+          appRunId,
+          // The summarize instruction must reach the lane bare — every prompt
+          // prepend (preamble, goal, recon) would pollute the summary turn.
+          verbatimPrompt: true,
+          discordContextSelection: undefined,
+          discordContextSnapshots: undefined,
+          preserveComposer: true
+        })
+        return
+      }
       if (provider === 'kimi') {
         // Host-side fallback: no native lever exists, so compaction is a REAL
         // summarize turn, captured on exit by finalizeHostCompactionRun. Legacy
@@ -21032,7 +21107,10 @@ function App(): React.JSX.Element {
           isKimiAcpProductionPosture(currentChat.providerMetadata?.kimiAcpPostureVersion)
           ? Boolean(currentChat.linkedProviderSessionId?.startsWith('session_'))
           : Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
-        : false)
+        : currentProvider === 'antigravity'
+          ? Boolean(currentChat?.linkedProviderSessionId?.startsWith('api://')) &&
+            Boolean(currentChat?.messages?.some((m) => m.role === 'assistant'))
+          : false)
   const onCompactContext = useMemo(
     () =>
       canCompactCurrentChatContext
@@ -25353,7 +25431,10 @@ function App(): React.JSX.Element {
       label: 'Compact context',
       description: isEnsembleChat
         ? 'Insert a context-summary request, or expand for ensemble-specific scopes.'
-        : provider === 'claude' || provider === 'codex' || provider === 'kimi'
+        : provider === 'claude' ||
+            provider === 'codex' ||
+            provider === 'kimi' ||
+            provider === 'antigravity'
           ? 'Compact this chat’s provider session (summarize + shrink live context).'
           : 'Insert a concise context-summary request for this chat.',
       group: 'Custom',
@@ -25361,10 +25442,11 @@ function App(): React.JSX.Element {
         // Provider-NATIVE compaction where a real lever exists: a solo
         // claude/codex chat with a linked session, while idle. Claude runs a
         // real `/compact` turn (the CLI/SDK execute the slash command with
-        // --resume); Codex drives thread/compact/start. Both produce the
-        // "Context compacted" transcript card. Everything else keeps the
-        // legacy prompt-template scaffold (incl. busy chats, where compacting
-        // would race the live turn).
+        // --resume); Codex drives thread/compact/start; antigravity's
+        // gemini-api lane runs a host summarize turn whose summary prunes the
+        // replayed transcript. All produce the "Context compacted" transcript
+        // record. Everything else keeps the legacy prompt-template scaffold
+        // (incl. busy chats, where compacting would race the live turn).
         const canNativelyCompact =
           !isEnsembleChat &&
           Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId)) &&
@@ -25372,7 +25454,10 @@ function App(): React.JSX.Element {
             ? Boolean(chat?.linkedProviderSessionId)
             : provider === 'kimi'
               ? Boolean(chat?.messages?.some((m) => m.role === 'assistant'))
-              : false)
+              : provider === 'antigravity'
+                ? Boolean(chat?.linkedProviderSessionId?.startsWith('api://')) &&
+                  Boolean(chat?.messages?.some((m) => m.role === 'assistant'))
+                : false)
         if (canNativelyCompact && chat) {
           ctx.consumeSlashToken()
           void compactChatContext(chat.appChatId)

@@ -12165,6 +12165,36 @@ button.diff-file-row {
 .collapsed-activity-stack.is-expanded .collapsed-activity-stack-summary {
   margin-bottom: 2px;
 }
+/* Folded context-compaction record: the compaction glyph rides the one-liner
+ * where tool-family icons ride stack summaries — teal for a completed
+ * maintenance event, amber for a failed one. */
+.collapsed-context-compaction-glyph {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+}
+.collapsed-context-compaction-glyph.is-completed {
+  color: #2aa8a0;
+}
+.collapsed-context-compaction-glyph.is-failed {
+  color: #f0a93f;
+}
+/* Context-pressure hint on the working indicator: quiet caption disclosing
+ * occupancy at ≥80%, escalating to the "likely compacting" presumption when
+ * token growth stalls at pressure. Amber at ≥90% (auto-compact territory). */
+.working-context-pressure-hint {
+  margin-left: var(--space-sm);
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+.working-context-pressure-hint.is-critical {
+  color: #f0a93f;
+}
+.working-context-pressure-hint.is-quiet {
+  font-style: italic;
+}
 
 .activity-row {
   /* Phase K-followup — collapsed past the L4 slice-4 base.

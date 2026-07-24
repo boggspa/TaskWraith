@@ -7,14 +7,17 @@ import type {
 import { CONTEXT_COMPACTION_MESSAGE_KIND } from '../../../shared/contextCompaction'
 import { formatContextTokens } from '../../../shared/contextWindows'
 import { getProviderName } from './Sidebar'
-import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 
 /**
- * Context-compaction card — the transcript record of a provider (or the host)
- * shrinking a session's live context. Follows the ParticipantHealthCard
- * conventions: inline glass card, provider-tinted chip, and FROZEN
- * presentation — participant labels are stamped on the message when the card
- * is written (`displayParticipantLabel`) and never re-derived from the live
+ * Context-compaction transcript row — the durable record of a provider (or the
+ * host) shrinking a session's live context.
+ *
+ * Rendered in the TOOL-CALL idiom (one flowing line: glyph · speaker meta ·
+ * title · tabular detail), NOT as a bordered banner card, so compaction reads
+ * as part of the transcript's activity language and participates in the
+ * settled-row collapse system like every other one-liner. Presentation stays
+ * FROZEN — participant labels are stamped on the message when the row is
+ * written (`displayParticipantLabel`) and never re-derived from the live
  * roster.
  *
  * Data contract: `message.metadata.kind === 'contextCompaction'` with
@@ -25,7 +28,46 @@ interface ContextCompactionCardProps {
   message: ChatMessage
 }
 
-function compactionIcon(failed: boolean): React.JSX.Element {
+interface ContextCompactionRecordShape {
+  kind: ContextCompactionSignalKind
+  telemetry: ContextCompactionTelemetry
+}
+
+function contextCompactionRecord(message: ChatMessage): ContextCompactionRecordShape | null {
+  const metadata = message.metadata
+  if (!metadata || metadata.kind !== CONTEXT_COMPACTION_MESSAGE_KIND) return null
+  const record =
+    metadata.contextCompaction && typeof metadata.contextCompaction === 'object'
+      ? (metadata.contextCompaction as {
+          kind?: ContextCompactionSignalKind
+          telemetry?: ContextCompactionTelemetry
+        })
+      : null
+  return {
+    kind: record?.kind === 'failed' ? 'failed' : 'completed',
+    telemetry: record?.telemetry || {}
+  }
+}
+
+/** True when a transcript message is a FAILED compaction record — drives the
+ * warning tint on both the full row and its collapsed one-liner. */
+export function contextCompactionMessageFailed(message: ChatMessage): boolean {
+  return contextCompactionRecord(message)?.kind === 'failed'
+}
+
+/** Collapsed one-liner meta prefix: the frozen participant label when the row
+ * belongs to an ensemble seat, else the provider name, else "System". */
+export function contextCompactionMessageMetaLabel(message: ChatMessage): string {
+  const metadata = message.metadata
+  if (typeof metadata?.displayParticipantLabel === 'string' && metadata.displayParticipantLabel) {
+    return metadata.displayParticipantLabel
+  }
+  const record = contextCompactionRecord(message)
+  const provider = (record?.telemetry.provider || metadata?.provider) as ProviderId | undefined
+  return provider ? getProviderName(provider) : 'System'
+}
+
+export function ContextCompactionGlyph({ failed }: { failed: boolean }): React.JSX.Element {
   if (failed) {
     return (
       <svg
@@ -73,22 +115,12 @@ function compactionIcon(failed: boolean): React.JSX.Element {
 export function ContextCompactionCard({
   message
 }: ContextCompactionCardProps): React.JSX.Element | null {
-  const metadata = message.metadata
-  if (!metadata || metadata.kind !== CONTEXT_COMPACTION_MESSAGE_KIND) return null
-  const record =
-    metadata.contextCompaction && typeof metadata.contextCompaction === 'object'
-      ? (metadata.contextCompaction as {
-          kind?: ContextCompactionSignalKind
-          telemetry?: ContextCompactionTelemetry
-        })
-      : null
-  const kind: ContextCompactionSignalKind = record?.kind === 'failed' ? 'failed' : 'completed'
-  const telemetry = record?.telemetry || {}
-  const failed = kind === 'failed'
-  const provider = (telemetry.provider || metadata.provider) as ProviderId | undefined
-  // Frozen at write time (ensemble cards) — never recomputed from the roster.
-  const participantLabel =
-    typeof metadata.displayParticipantLabel === 'string' ? metadata.displayParticipantLabel : ''
+  const record = contextCompactionRecord(message)
+  if (!record) return null
+  const { telemetry } = record
+  const failed = record.kind === 'failed'
+  const provider = (telemetry.provider || message.metadata?.provider) as ProviderId | undefined
+  const metaLabel = contextCompactionMessageMetaLabel(message)
 
   const detailParts: string[] = []
   if (telemetry.preTokens !== undefined && telemetry.postTokens !== undefined) {
@@ -105,34 +137,29 @@ export function ContextCompactionCard({
     detailParts.push(`${Math.round(telemetry.durationMs / 1000)}s`)
   }
 
-  const title = failed ? 'Context compaction failed' : 'Context compacted'
+  const title = failed ? 'Context compaction failed' : 'Compacted context'
   const ariaLabel = [title, detailParts.join(' · ')].filter(Boolean).join(' — ')
 
   return (
     <div
-      className={`context-compaction-card ${failed ? 'is-failed' : 'is-completed'}`}
+      className={`context-compaction-row ${failed ? 'is-failed' : 'is-completed'}${
+        provider ? ` provider-${provider}` : ''
+      }`}
       role="group"
       aria-label={ariaLabel}
     >
-      <div className="context-compaction-card-header">
-        <span className="context-compaction-card-icon" aria-hidden="true">
-          {compactionIcon(failed)}
+      <div className="context-compaction-row-line">
+        <span className="context-compaction-row-icon" aria-hidden="true">
+          <ContextCompactionGlyph failed={failed} />
         </span>
-        <span className="context-compaction-card-title">{title}</span>
+        <span className="context-compaction-row-meta">{metaLabel}</span>
+        <span className="context-compaction-row-title">{title}</span>
         {detailParts.length > 0 && (
-          <span className="context-compaction-card-detail">{detailParts.join(' · ')}</span>
-        )}
-        {provider && (
-          <span className={`context-compaction-card-provider provider-${provider}`}>
-            <ProviderBrandLogoIcon provider={provider} />
-            <span className="context-compaction-card-provider-label">
-              {participantLabel || getProviderName(provider)}
-            </span>
-          </span>
+          <span className="context-compaction-row-detail">{detailParts.join(' · ')}</span>
         )}
       </div>
       {failed && telemetry.error && (
-        <div className="context-compaction-card-error">{telemetry.error}</div>
+        <div className="context-compaction-row-error">{telemetry.error}</div>
       )}
     </div>
   )

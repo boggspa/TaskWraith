@@ -289,7 +289,7 @@ export function pruneContiguousCompactionPrefix<T extends MessageWithId>(
 
 // ── Host auto-compaction evidence ───────────────────────────────────────────────
 
-export type HostAutoCompactionProvider = 'kimi' | 'grok'
+export type HostAutoCompactionProvider = 'kimi' | 'grok' | 'antigravity'
 
 export type HostAutoCompactionEvidence =
   | { kind: 'generic_run_usage'; percent: number }
@@ -303,6 +303,10 @@ export type HostAutoCompactionEvidence =
  * occupancy signal or a classified context overflow. Kimi may additionally
  * refresh its non-destructive rolling summary when prompt projection proves
  * that specific transcript rows are uncovered.
+ *
+ * Antigravity's gemini-api lane replays the FULL persisted transcript into
+ * every request, so its run `input_tokens` IS live context occupancy —
+ * callers pass it as `provider_semantic_occupancy`, never as generic usage.
  */
 export function shouldAutoCompactHostContext(
   provider: HostAutoCompactionProvider,
