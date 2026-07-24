@@ -199,6 +199,18 @@ describe('streamAntigravityGeminiApiTurn', () => {
   it.each([
     [{ status: 401 }, 'unauthorized'],
     [{ status: 403 }, 'unauthorized'],
+    // Live-verified shape: Google rejects a bad key with 400 + API_KEY_INVALID,
+    // not 401. A plain 400 without that marker stays 'unavailable'.
+    [
+      {
+        name: 'ApiError',
+        status: 400,
+        message:
+          '{"error":{"code":400,"message":"API key not valid. Please pass a valid API key.","status":"INVALID_ARGUMENT"}}'
+      },
+      'unauthorized'
+    ],
+    [{ name: 'ApiError', status: 400, message: 'malformed contents' }, 'unavailable'],
     [{ status: 429 }, 'rateLimited'],
     [{ status: 402 }, 'projectLimited'],
     [{ code: 'BILLING_NOT_ENABLED' }, 'projectLimited'],

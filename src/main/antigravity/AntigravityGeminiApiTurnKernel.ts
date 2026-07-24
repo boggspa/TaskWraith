@@ -1,5 +1,6 @@
 import type { AppSettings } from '../store/types'
 import {
+  isApiKeyInvalidError,
   loadOfficialGeminiApiSdk,
   type AntigravityGeminiApiSdkModule
 } from './AntigravityGeminiApiModelDiscovery'
@@ -303,6 +304,9 @@ function classifyTurnFailure(
   if (name.value === 'AbortError') return 'cancelled'
 
   const status = readNumericCode(error, ['status', 'statusCode'])
+  // Google rejects a bad API key with 400 INVALID_ARGUMENT / API_KEY_INVALID,
+  // not 401 (verified live). Classification-only: the text never escapes.
+  if (status === 400 && isApiKeyInvalidError(error)) return 'unauthorized'
   if (status !== null) return classifyStatusCode(status)
   if (isRecord(error)) {
     const response = readProperty(error, 'response')

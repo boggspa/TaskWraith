@@ -113,4 +113,56 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(status).toMatchObject({ available: false, authState: 'consent-required' })
     expect(resolveBinary).not.toHaveBeenCalled()
   })
+
+  it('admits the key lane without opt-in and without any agy binary', async () => {
+    // The SDK lane needs neither consent to the separate ban-risk CLI lane nor
+    // the CLI itself. Reporting unavailable here was what blocked key-lane
+    // runs at preflight after the picker had happily offered the models.
+    const resolveBinary = vi.fn()
+    const status = await getAntigravityProviderStatus(
+      { settings: {} },
+      { resolveBinary, isGeminiApiKeyConfigured: () => true }
+    )
+
+    expect(status).toMatchObject({
+      available: true,
+      setupRequired: false,
+      authState: 'api-key',
+      binaryPath: null,
+      binarySource: 'gemini-api'
+    })
+    expect(status.error).toBeUndefined()
+    expect(resolveBinary).not.toHaveBeenCalled()
+  })
+
+  it('keeps the provider available on the key lane when the consented agy binary is missing', async () => {
+    const status = await getAntigravityProviderStatus(
+      { settings: OPTED_IN },
+      {
+        resolveBinary: async () => ({
+          binaryPath: null,
+          source: 'missing',
+          error: 'official agy is missing'
+        }),
+        isGeminiApiKeyConfigured: () => true
+      }
+    )
+
+    expect(status).toMatchObject({ available: true, authState: 'api-key', binaryPath: null })
+    expect(status.error).toBeUndefined()
+  })
+
+  it('fails closed when the key signal itself throws', async () => {
+    const status = await getAntigravityProviderStatus(
+      { settings: {} },
+      {
+        resolveBinary: vi.fn(),
+        isGeminiApiKeyConfigured: () => {
+          throw new Error('signal exploded')
+        }
+      }
+    )
+
+    expect(status).toMatchObject({ available: false, authState: 'consent-required' })
+  })
 })

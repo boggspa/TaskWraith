@@ -347,10 +347,7 @@ describe('chunkText — 1.0.4-AD thinking-bleed filter', () => {
       candidates: [
         {
           content: {
-            parts: [
-              { text: 'internal monologue ', thought: true },
-              { text: 'visible reply.' }
-            ]
+            parts: [{ text: 'internal monologue ', thought: true }, { text: 'visible reply.' }]
           }
         }
       ]
@@ -1717,5 +1714,157 @@ describe('GeminiApiProvider (Phase M1 Step 9 — migration banner)', () => {
     await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
     expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
     expect(errors).toEqual([])
+  })
+})
+
+describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () => {
+  beforeEach(() => {
+    fs.rmSync(userDataPath, { recursive: true, force: true })
+    fs.mkdirSync(userDataPath, { recursive: true })
+  })
+
+  function antigravityDeps(overrides: Parameters<typeof makeDeps>[0] = {}) {
+    const made = makeDeps(overrides)
+    Object.assign(made.deps, {
+      providerTag: 'antigravity',
+      runtimeLabel: 'gemini-api',
+      usageModelId: 'gemini-api:gemini-2.5-flash',
+      resolveAuthOverride: () => ({ ok: true as const, apiKey: 'antigravity-lane-key' }),
+      prepareToolContext: undefined
+    })
+    return made
+  }
+
+  it('attributes every event, terminal transition, and usage row to the tag', async () => {
+    const usage = { promptTokenCount: 3, candidatesTokenCount: 5, totalTokenCount: 8 }
+    const usageRecords: Array<Omit<UsageRecord, 'id' | 'timestamp'>> = []
+    const { deps, lines, exits, finishes } = antigravityDeps({
+      loadSdk: fakeSdk([{ text: 'agentic ' }, { text: 'answer', usageMetadata: usage }]),
+      recordUsage: (entry) => {
+        usageRecords.push(entry)
+      },
+      getChat: () => null
+    })
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+
+    // Channel + payload provider tags: nothing may say 'gemini' — the
+    // session-keyed event authority would drop mismatched sends, which was
+    // the zombie-run failure shape this lane just escaped.
+    for (const line of lines) {
+      expect(line.provider).toBe('antigravity')
+      if (line.payload && typeof line.payload === 'object' && 'provider' in line.payload) {
+        expect(line.payload.provider).toBe('antigravity')
+      }
+    }
+    for (const exit of exits) expect(exit.provider).toBe('antigravity')
+
+    const initEvent = lines[0]?.payload
+    expect(initEvent.type).toBe('init')
+    expect(initEvent.runtime).toBe('gemini-api')
+
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
+    expect(usageRecords).toHaveLength(1)
+    expect(usageRecords[0]).toMatchObject({
+      provider: 'antigravity',
+      model: 'gemini-api:gemini-2.5-flash',
+      inputTokens: 3,
+      outputTokens: 5,
+      totalTokens: 8
+    })
+  })
+
+  it('bypasses the gemini profile system and runtime gate under the auth override', async () => {
+    // geminiApiRuntime 'never' + zero profiles would make the legacy path
+    // return false; the AntiGravity lane must still run.
+    const { deps, lines, finishes } = antigravityDeps({
+      settings: { geminiApiRuntime: 'never' },
+      profiles: [],
+      defaultProfileId: null,
+      loadSdk: fakeSdk([{ text: 'ran anyway' }])
+    })
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(lines.some((line) => line.payload?.type === 'content')).toBe(true)
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
+  })
+
+  it('fails visibly with the override error and never falls back when auth is refused', async () => {
+    const { deps, errors, exits, finishes, lines } = antigravityDeps({
+      loadSdk: fakeSdk([{ text: 'must not stream' }])
+    })
+    Object.assign(deps, {
+      resolveAuthOverride: () => ({
+        ok: false as const,
+        error: 'Gemini API key is not configured or unavailable.'
+      })
+    })
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(errors).toEqual([
+      { provider: 'antigravity', error: 'Gemini API key is not configured or unavailable.' }
+    ])
+    expect(exits).toEqual([{ provider: 'antigravity', code: 1 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'failed' }])
+    expect(lines).toEqual([])
+  })
+
+  it('runs the tool loop under the tag and keeps executor routing intact', async () => {
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          candidates: [
+            {
+              content: {
+                parts: [{ functionCall: { name: 'read_file', args: { path: 'a.ts' } } }]
+              }
+            }
+          ]
+        }
+      ],
+      [{ text: 'done reading' }]
+    ])
+    const { deps, lines, finishes, toolCalls } = antigravityDeps({
+      loadSdk: loader,
+      mcpTools: [{ name: 'read_file', description: 'Read a file', inputSchema: {} }],
+      executeMcpTool: async () => ({ text: 'file contents', isError: false })
+    })
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(toolCalls).toEqual([{ toolName: 'read_file', args: { path: 'a.ts' }, route: baseRoute }])
+    // Two rounds hit the SDK; the tool response round carried the function
+    // response back under the same conversation.
+    expect(callsRef).toHaveLength(2)
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
+    const contents = lines.filter((line) => line.payload?.type === 'content')
+    expect(contents.map((line) => line.payload.text)).toEqual(['done reading'])
+  })
+
+  it('cancels under the tag with exit 130 when aborted mid-stream', async () => {
+    let abortController: { abort: () => void } | null = null
+    const { deps, exits, finishes } = antigravityDeps({
+      loadSdk: async () => ({
+        GoogleGenAI: class {
+          models = {
+            generateContentStream: async () =>
+              (async function* () {
+                yield { text: 'first' }
+                abortController?.abort()
+                yield { text: 'second' }
+              })()
+          }
+        }
+      })
+    })
+    const originalAttach = deps.runManager.attachAbortController
+    deps.runManager = {
+      ...deps.runManager,
+      attachAbortController: (runId, controller) => {
+        abortController = controller
+        return originalAttach(runId, controller)
+      }
+    }
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(exits).toEqual([{ provider: 'antigravity', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
   })
 })

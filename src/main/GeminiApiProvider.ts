@@ -84,6 +84,7 @@ import type {
   ChatMessage,
   ChatRecord,
   GeminiAuthProfile,
+  ProviderId,
   UsageRecord
 } from './store/types'
 import type { RunManager, RunSessionStatus } from './RunManager'
@@ -181,22 +182,48 @@ export async function loadOptionalGeminiSdk(): Promise<any | null> {
 export interface GeminiApiProviderDeps {
   sendAgentCompatLine: (
     sender: Electron.WebContents,
-    provider: 'gemini',
+    provider: ProviderId,
     payload: any,
     route?: AgentRunRoute | null
   ) => void
   sendAgentCompatError: (
     sender: Electron.WebContents,
-    provider: 'gemini',
+    provider: ProviderId,
     error: string,
     route?: AgentRunRoute | null
   ) => void
   sendAgentCompatExit: (
     sender: Electron.WebContents,
-    provider: 'gemini',
+    provider: ProviderId,
     code: number | null,
     route?: AgentRunRoute | null
   ) => void
+  /**
+   * Combined-mode AntiGravity reuse (2026-07): the provider identity this
+   * turn's events, terminal transitions, and usage rows are attributed to.
+   * Defaults to 'gemini' — the retired gemini path is byte-identical without
+   * it. The AntiGravity gemini-api lane passes 'antigravity' so the renderer
+   * lanes, session-keyed event authority, labels, and the API-spend meter all
+   * see the run under the provider the user actually picked.
+   */
+  providerTag?: ProviderId
+  /**
+   * Bypasses the gemini auth-profile system AND the `geminiApiRuntime`
+   * settings gate. The AntiGravity lane resolves its key from the dedicated
+   * post-ready secret store; a returned error is emitted verbatim as the
+   * run's failure (fixed nonsecret copy only — never raw provider detail).
+   * When absent, the legacy profile resolution runs unchanged.
+   */
+  resolveAuthOverride?: () => { ok: true; apiKey: string } | { ok: false; error: string }
+  /**
+   * Model id to write into usage rows (and nothing else). The AntiGravity
+   * lane records the full `gemini-api:<model>` wire id so the API-spend
+   * aggregation's rate-table keys match; the resolved bare model still goes
+   * to the SDK. Defaults to the resolved model.
+   */
+  usageModelId?: string
+  /** `runtime` field stamped on init/result events. Defaults to 'api-sdk'. */
+  runtimeLabel?: string
   runManager: Pick<RunManager<any>, 'attachAbortController' | 'finish'>
   getSettings: () => AppSettings
   getGeminiAuthProfiles: () => GeminiAuthProfile[]
@@ -657,28 +684,47 @@ export async function tryRunGeminiApi(
   deps: GeminiApiProviderDeps
 ): Promise<boolean> {
   const normalizedRoute: AgentRunRoute = route || {}
-  const gating = shouldAttemptGeminiApi(payload, deps)
-  if (!gating.attempt) return false
+  const tag: ProviderId = deps.providerTag ?? 'gemini'
+  const runtimeLabel = deps.runtimeLabel ?? 'api-sdk'
 
-  // Resolve auth: only api-key in Step 2.
-  const profile = selectGeminiAuthProfile(payload, deps)
-  if (!profile || profile.kind !== 'api-key') {
-    return false
-  }
-  const apiKey = deps.decryptApiKey(profile.encryptedApiKey)
-  if (!apiKey) {
-    // Profile exists but the key didn't decrypt (likely safeStorage
-    // unavailability). Surface a useful error instead of silently
-    // falling back so the user knows their profile is misconfigured.
-    deps.sendAgentCompatError(
-      event.sender,
-      'gemini',
-      `Gemini API profile "${profile.label}" has no usable API key; check Settings.`,
-      normalizedRoute
-    )
-    deps.sendAgentCompatExit(event.sender, 'gemini', 1, normalizedRoute)
-    deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
-    return true
+  let apiKey: string
+  if (deps.resolveAuthOverride) {
+    // Combined-mode AntiGravity lane: its admission (disclosure + dedicated
+    // secret store) was already applied by the caller; the gemini profile
+    // system and geminiApiRuntime gate deliberately do not participate.
+    const auth = deps.resolveAuthOverride()
+    if (!auth.ok) {
+      deps.sendAgentCompatError(event.sender, tag, auth.error, normalizedRoute)
+      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
+      deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
+      return true
+    }
+    apiKey = auth.apiKey
+  } else {
+    const gating = shouldAttemptGeminiApi(payload, deps)
+    if (!gating.attempt) return false
+
+    // Resolve auth: only api-key in Step 2.
+    const profile = selectGeminiAuthProfile(payload, deps)
+    if (!profile || profile.kind !== 'api-key') {
+      return false
+    }
+    const decrypted = deps.decryptApiKey(profile.encryptedApiKey)
+    if (!decrypted) {
+      // Profile exists but the key didn't decrypt (likely safeStorage
+      // unavailability). Surface a useful error instead of silently
+      // falling back so the user knows their profile is misconfigured.
+      deps.sendAgentCompatError(
+        event.sender,
+        tag,
+        `Gemini API profile "${profile.label}" has no usable API key; check Settings.`,
+        normalizedRoute
+      )
+      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
+      deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
+      return true
+    }
+    apiKey = decrypted
   }
 
   // Load SDK (allow test override).
@@ -700,17 +746,17 @@ export async function tryRunGeminiApi(
   const model = resolveGeminiApiModel(payload.model)
   const sessionId = syntheticApiSessionId(normalizedRoute)
 
-  // Emit `init` so the renderer's GeminiAdapter starts the run.
+  // Emit `init` so the renderer's stream adapter starts the run.
   deps.sendAgentCompatLine(
     event.sender,
-    'gemini',
+    tag,
     {
       type: 'init',
       session_id: sessionId,
       model,
       timestamp: new Date().toISOString(),
-      provider: 'gemini',
-      runtime: 'api-sdk',
+      provider: tag,
+      runtime: runtimeLabel,
       fallback: false
     },
     normalizedRoute
@@ -721,8 +767,8 @@ export async function tryRunGeminiApi(
     client = new GoogleGenAI({ apiKey })
   } catch (error) {
     const message = `Failed to initialise Gemini API client: ${error instanceof Error ? error.message : String(error)}`
-    deps.sendAgentCompatError(event.sender, 'gemini', message, normalizedRoute)
-    deps.sendAgentCompatExit(event.sender, 'gemini', 1, normalizedRoute)
+    deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+    deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
     deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
     return true
   }
@@ -735,8 +781,8 @@ export async function tryRunGeminiApi(
       }
     } catch (error) {
       const message = `Failed to prepare Gemini API tool context: ${error instanceof Error ? error.message : String(error)}`
-      deps.sendAgentCompatError(event.sender, 'gemini', message, normalizedRoute)
-      deps.sendAgentCompatExit(event.sender, 'gemini', 1, normalizedRoute)
+      deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
       deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
       return true
     }
@@ -829,14 +875,14 @@ export async function tryRunGeminiApi(
           if (!roundThinkingEmitted) {
             deps.sendAgentCompatLine(
               event.sender,
-              'gemini',
+              tag,
               {
                 type: 'tool_use',
                 tool_id: roundThinkingId,
                 tool_name: 'gemini_thinking',
                 kind: 'think',
                 parameters: { title: 'Thinking' },
-                provider: 'gemini'
+                provider: tag
               },
               normalizedRoute
             )
@@ -845,14 +891,14 @@ export async function tryRunGeminiApi(
           roundThinking += thought
           deps.sendAgentCompatLine(
             event.sender,
-            'gemini',
+            tag,
             {
               type: 'tool_result',
               tool_id: roundThinkingId,
               tool_name: 'gemini_thinking',
               status: 'success',
               output: roundThinking,
-              provider: 'gemini'
+              provider: tag
             },
             normalizedRoute
           )
@@ -861,8 +907,8 @@ export async function tryRunGeminiApi(
         if (text) {
           deps.sendAgentCompatLine(
             event.sender,
-            'gemini',
-            { type: 'content', text, provider: 'gemini' },
+            tag,
+            { type: 'content', text, provider: tag },
             normalizedRoute
           )
         }
@@ -878,8 +924,8 @@ export async function tryRunGeminiApi(
         aborted = true
       } else {
         const message = `Gemini API stream failed: ${error instanceof Error ? error.message : String(error)}`
-        deps.sendAgentCompatError(event.sender, 'gemini', message, normalizedRoute)
-        deps.sendAgentCompatExit(event.sender, 'gemini', 1, normalizedRoute)
+        deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+        deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
         deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
         return true
       }
@@ -963,7 +1009,7 @@ export async function tryRunGeminiApi(
   if (aborted) {
     // 130 = 128 + SIGINT; matches the convention CLI-killed runs use
     // so the renderer's "Stopped" treatment kicks in.
-    deps.sendAgentCompatExit(event.sender, 'gemini', 130, normalizedRoute)
+    deps.sendAgentCompatExit(event.sender, tag, 130, normalizedRoute)
     deps.runManager.finish(normalizedRoute.appRunId, 'cancelled' as RunSessionStatus)
     return true
   }
@@ -975,8 +1021,8 @@ export async function tryRunGeminiApi(
   // message in the error stream.
   if (round >= MAX_TOOL_ROUNDS) {
     const message = `Gemini API: model exceeded ${MAX_TOOL_ROUNDS} tool-use rounds without producing a final answer (possible loop).`
-    deps.sendAgentCompatError(event.sender, 'gemini', message, normalizedRoute)
-    deps.sendAgentCompatExit(event.sender, 'gemini', 1, normalizedRoute)
+    deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+    deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
     deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
     return true
   }
@@ -1032,12 +1078,14 @@ export async function tryRunGeminiApi(
         (priorChat?.scope === 'global' ? '__taskwraith_global_chats__' : '') ||
         ''
       recordUsage({
-        provider: 'gemini',
+        provider: tag,
         workspaceId,
         chatId: appChatId,
         runId: appRunId,
         usageKind: 'run',
-        model,
+        // The AntiGravity lane records the full wire id so API-spend
+        // aggregation's rate-table keys match; gemini keeps the bare model.
+        model: deps.usageModelId ?? model,
         inputTokens,
         outputTokens,
         totalTokens,
@@ -1093,7 +1141,7 @@ export async function tryRunGeminiApi(
   // by a few ms — small, but easy to avoid).
   deps.sendAgentCompatLine(
     event.sender,
-    'gemini',
+    tag,
     {
       type: 'result',
       status: 'success',
@@ -1102,14 +1150,14 @@ export async function tryRunGeminiApi(
           alreadyRecorded: usageAlreadyRecorded
         })
       },
-      provider: 'gemini',
-      runtime: 'api-sdk',
+      provider: tag,
+      runtime: runtimeLabel,
       providerThreadId: sessionId,
       fallback: false
     },
     normalizedRoute
   )
-  deps.sendAgentCompatExit(event.sender, 'gemini', 0, normalizedRoute)
+  deps.sendAgentCompatExit(event.sender, tag, 0, normalizedRoute)
   deps.runManager.finish(normalizedRoute.appRunId, 'completed' as RunSessionStatus)
   return true
 }

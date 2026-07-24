@@ -7,6 +7,7 @@
 
 import type { AppSettings, EffectiveRunPermissions } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
+import { isAntigravityGeminiApiKeyConfigured } from './AntigravityGeminiApiKeyConfiguredSignal'
 import {
   AGY_BINARY_NAME,
   buildAgyReadOnlyPrintArgs,
@@ -46,6 +47,8 @@ export interface AntigravityProviderStatusInput {
 
 export interface AntigravityProviderStatusDependencies {
   resolveBinary?: () => Promise<ResolvedAgyCliBinary>
+  /** Test seam; production reads the shared nonsecret configured-key signal. */
+  isGeminiApiKeyConfigured?: () => boolean
 }
 
 function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
@@ -106,16 +109,50 @@ export async function prepareAntigravityProviderLaunch(
 }
 
 /**
- * Status is deliberately non-invasive: it checks the explicit consent gate and
- * official binary presence only. Authentication/model discovery is deferred to
- * S4's post-opt-in configured-provider snapshot, so this helper never starts
- * `agy`, opens a browser, reads a keyring, or probes account state.
+ * Status is deliberately non-invasive: it checks the explicit consent gate,
+ * official binary presence, and the nonsecret configured-key boolean only.
+ * Authentication/model discovery is deferred to S4's post-opt-in
+ * configured-provider snapshot, so this helper never starts `agy`, opens a
+ * browser, reads a keyring, decrypts the stored key, or probes account state.
+ *
+ * Availability is a lane union, mirroring every other AntiGravity chokepoint
+ * (`selectableProviderIds`, `assertLiveProviderId`, ComposerService): the
+ * ban-risk agy opt-in admits the CLI lane, and a configured Gemini API key
+ * admits the SDK lane. The key lane never needs the agy binary — its turns
+ * run through the official SDK — so a key-only install with no CLI is
+ * available, and this status saying "not available" was what blocked key-lane
+ * runs at preflight even after dispatch admission was wired.
  */
 export async function getAntigravityProviderStatus(
   input: AntigravityProviderStatusInput,
   deps: AntigravityProviderStatusDependencies = {}
 ): Promise<Record<string, unknown>> {
+  let geminiApiKeyConfigured = false
+  try {
+    geminiApiKeyConfigured =
+      (deps.isGeminiApiKeyConfigured ?? isAntigravityGeminiApiKeyConfigured)() === true
+  } catch {
+    geminiApiKeyConfigured = false
+  }
+
   if (!isAntigravityOptInEnabled(input.settings)) {
+    if (geminiApiKeyConfigured) {
+      // Key lane only: available without consent to the separate agy ban-risk
+      // lane and without any CLI on the machine.
+      return {
+        provider: 'antigravity',
+        label: 'AntiGravity',
+        available: true,
+        setupRequired: false,
+        authState: 'api-key',
+        binaryPath: null,
+        binarySource: 'gemini-api',
+        supportsSessions: false,
+        supportsApprovals: false,
+        supportsQuota: false,
+        supportsMcpStatus: false
+      }
+    }
     return {
       provider: 'antigravity',
       label: 'AntiGravity',
@@ -128,12 +165,30 @@ export async function getAntigravityProviderStatus(
       supportsApprovals: false,
       supportsQuota: false,
       supportsMcpStatus: false,
-      error: 'AntiGravity is disabled until informed risk acceptance is recorded in Settings → Providers.'
+      error:
+        'AntiGravity is disabled until informed risk acceptance is recorded or a Gemini API key is configured in Settings → Providers.'
     }
   }
 
   const binary = await (deps.resolveBinary ?? resolveAgyCliBinary)()
   if (!binary.binaryPath) {
+    if (geminiApiKeyConfigured) {
+      // The agy lane is consented but its CLI is missing; the key lane still
+      // runs. Dispatch reports the binary error if an agy model is chosen.
+      return {
+        provider: 'antigravity',
+        label: 'AntiGravity',
+        available: true,
+        setupRequired: false,
+        authState: 'api-key',
+        binaryPath: null,
+        binarySource: binary.source,
+        supportsSessions: false,
+        supportsApprovals: false,
+        supportsQuota: false,
+        supportsMcpStatus: false
+      }
+    }
     return {
       provider: 'antigravity',
       label: 'AntiGravity',
@@ -155,7 +210,7 @@ export async function getAntigravityProviderStatus(
     label: 'AntiGravity',
     available: true,
     setupRequired: false,
-    authState: 'unknown',
+    authState: geminiApiKeyConfigured ? 'api-key' : 'unknown',
     binaryPath: binary.binaryPath,
     binarySource: binary.source,
     supportsSessions: false,

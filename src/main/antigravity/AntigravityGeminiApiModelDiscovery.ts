@@ -234,6 +234,10 @@ function classifyDiscoveryFailure(
     readNumericErrorCode(error, ['status', 'statusCode']) ??
     (isRecord(error) ? readNumericErrorCode(error.response, ['status', 'statusCode']) : null)
   if (status === 401 || status === 403) return 'unauthorized'
+  // Google rejects a bad API key with 400 INVALID_ARGUMENT / API_KEY_INVALID,
+  // not 401 (verified against the live endpoint). Only the classification
+  // reads the message; the raw text never leaves this function.
+  if (status === 400 && isApiKeyInvalidError(error)) return 'unauthorized'
   if (status === 429) return 'rateLimited'
   if (status === 402) return 'projectLimited'
 
@@ -242,6 +246,13 @@ function classifyDiscoveryFailure(
   if (code === 'RESOURCE_EXHAUSTED') return 'rateLimited'
   if (code === 'PROJECT_LIMIT_EXCEEDED' || code === 'BILLING_NOT_ENABLED') return 'projectLimited'
   return 'unavailable'
+}
+
+/** Detects Google's key-rejection shape without ever surfacing the text. */
+export function isApiKeyInvalidError(error: unknown): boolean {
+  if (!isRecord(error)) return false
+  const message = typeof error.message === 'string' ? error.message : ''
+  return /API_KEY_INVALID|API key not valid/i.test(message)
 }
 
 function readNumericErrorCode(value: unknown, keys: readonly string[]): number | null {

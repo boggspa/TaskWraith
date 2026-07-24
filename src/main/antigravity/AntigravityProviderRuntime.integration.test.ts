@@ -19,9 +19,14 @@ describe('AntiGravity S3 runtime integration', () => {
       'async function runAntigravityAgyProvider('
     )
     expect(dispatch).toContain('dispatchAntigravityCombinedMode(event, payload, {')
-    expect(dispatch).toContain('getSecretStore: () => antigravityGeminiApiSecretStoreRef')
+    // The gemini-api lane registers its own RunManager session (no child
+    // process registers one for it) and delegates the run to the agentic
+    // Gemini API runtime under provider 'antigravity'.
+    expect(dispatch).toContain("registerRunSession(\n        'antigravity',")
+    expect(dispatch).toContain('runGeminiApiAgentTurn:')
+    expect(dispatch).toContain('tryRunGeminiApi(')
+    expect(dispatch).toContain('antigravityGeminiApiAgentDeps(wireModel)')
     expect(dispatch).toContain('runAgyProvider: runAntigravityAgyProvider')
-    expect(dispatch).not.toContain('routeWithRunId')
     expect(dispatch).not.toContain('prepareAntigravityProviderLaunch')
 
     const agy = between(

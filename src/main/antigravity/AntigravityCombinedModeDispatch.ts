@@ -1,16 +1,9 @@
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
-import type { RunSessionStatus } from '../RunManager'
-import { canStartRunTransport } from '../RunManager'
-import type { AppSettings, ProviderId } from '../store/types'
+import type { ProviderId } from '../store/types'
 import {
   mapAntigravityGeminiApiTurnStatusToMessage,
-  runAntigravityGeminiApiMainTurn,
-  type AntigravityGeminiApiContentPayload,
-  type AntigravityGeminiApiInitPayload,
-  type AntigravityGeminiApiResultPayload,
   type AntigravityGeminiApiTerminalFinishStatus
 } from './AntigravityGeminiApiMainRuntime'
-import type { AntigravityGeminiApiSecretStore } from './AntigravityGeminiApiSecretStore'
 
 export const ANTIGRAVITY_COMBINED_MODE_PROVIDER: ProviderId = 'antigravity'
 
@@ -24,7 +17,7 @@ const GEMINI_API_TOKEN = 'gemini-api'
  * (`:`, whitespace, other non [a-z0-9-] chars). Do **not** reserve an
  * ASCII alphanumeric or hyphen continuation — e.g. `gemini-apix` stays on
  * ordinary `agy`. The original model string is preserved and re-validated
- * by the kernel before any secret load.
+ * by the agent turn before any secret load.
  */
 export function isAntigravityGeminiApiModelCandidate(model: unknown): boolean {
   if (typeof model !== 'string') return false
@@ -36,26 +29,32 @@ export function isAntigravityGeminiApiModelCandidate(model: unknown): boolean {
   return !/[a-z0-9-]/.test(continuation)
 }
 
-export interface AntigravityCombinedModeRunSession {
-  readonly provider: ProviderId
-  readonly status: RunSessionStatus
-}
-
 export interface AntigravityCombinedModeDispatchDependencies {
-  readonly getSettings: () => Pick<
-    AppSettings,
-    'antigravityEnabled' | 'antigravityOptInAcceptedAt' | 'antigravityGeminiApiDisclosureAcceptedAt'
-  > | null
-  /** Post-ready dedicated store only. Null/undefined fails closed without key load. */
-  readonly getSecretStore: () => Pick<AntigravityGeminiApiSecretStore, 'loadApiKey'> | null
-  readonly getRunSession: (runId: string) => AntigravityCombinedModeRunSession | undefined
-  readonly attachAbortController: (runId: string, controller: AbortController) => void
-  readonly sendAgentCompatLine: (
-    sender: Electron.WebContents,
-    provider: ProviderId,
-    payload: unknown,
-    route?: AgentRunRoute | null
-  ) => void
+  /**
+   * Registers the RunManager session this lane's whole lifecycle keys on.
+   * The gemini-api lane has no child process, so unlike the CLI transports
+   * nothing else ever creates its session — and without one, the abort
+   * attach fails, every compat emission is dropped by the session-keyed
+   * persistence-authority gate, `finishRun` is a no-op, and cancel returns
+   * false: the renderer shows an unkillable "Working" run with zero events.
+   * Returns undefined when registration is refused (e.g. the history-clear
+   * admission fence), in which case dispatch must fail the invoke visibly.
+   */
+  readonly registerRunSession: (route: AgentRunRoute) => unknown
+  /**
+   * The full agentic Gemini API turn (tools, history replay, usage — the
+   * parameterized `tryRunGeminiApi` with AntiGravity deps). It OWNS the run
+   * lifecycle end-to-end once invoked: init/content/tool events, terminal
+   * error/exit projections, and the RunManager finish. Admission that the
+   * shared runtime does not know about (Gemini-API disclosure, exact model
+   * route validation, dedicated secret-store key load) lives inside the
+   * wiring of this dependency, not here.
+   */
+  readonly runGeminiApiAgentTurn: (
+    event: Electron.IpcMainInvokeEvent,
+    payload: AgentRunPayload,
+    route: AgentRunRoute
+  ) => Promise<void>
   readonly sendAgentCompatError: (
     sender: Electron.WebContents,
     provider: ProviderId,
@@ -77,15 +76,13 @@ export interface AntigravityCombinedModeDispatchDependencies {
     event: Electron.IpcMainInvokeEvent,
     payload: AgentRunPayload
   ) => Promise<void>
-  readonly runGeminiApiMainTurn?: typeof runAntigravityGeminiApiMainTurn
-  readonly canStartTransport?: typeof canStartRunTransport
 }
 
 /**
  * Combined-mode AntiGravity production dispatch bridge.
  *
- * - Exact `gemini-api:gemini-*` (and broader namespace candidates) → reviewed
- *   Gemini API lifecycle adapter + dedicated post-ready secret store.
+ * - Exact `gemini-api:gemini-*` (and broader namespace candidates) → the
+ *   in-process agentic Gemini API runtime under provider 'antigravity'.
  * - Every other model → unchanged official user-installed `agy` path.
  * - Never falls through between lanes. Never invents run/chat IDs.
  */
@@ -108,132 +105,31 @@ async function runAntigravityGeminiApiDispatchLane(
 ): Promise<void> {
   const route = exactIncomingRoute(payload)
 
-  let secretStore: Pick<AntigravityGeminiApiSecretStore, 'loadApiKey'> | null
+  // Register BEFORE any terminal projection can fire: the projections
+  // themselves are dropped without an active session, so a failure emitted
+  // earlier than this point would be invisible and the run unkillable.
+  // A refusal is thrown so the run-agent invoke rejects and the renderer
+  // paints an honest "Failed to start" instead of an eternal Working row —
+  // the same visibility the CLI transports get from their registration throw.
+  let registeredSession: unknown
   try {
-    secretStore = deps.getSecretStore()
-  } catch {
-    terminalizeBridgeFailure(event.sender, route, deps, 'unavailable')
-    return
+    registeredSession = deps.registerRunSession(route)
+  } catch (error) {
+    throw error instanceof Error ? error : new Error('AntiGravity run session registration failed.')
   }
-  if (!secretStore) {
-    terminalizeBridgeFailure(event.sender, route, deps, 'keyUnavailable')
-    return
-  }
-
-  // Per-projection attempted/completed state. Mark attempted *before*
-  // invoking the callback so a side-effect-then-throw never retries that
-  // same projection; recovery may still attempt the other untouched one once.
-  let exitAttempted = false
-  let exitCompleted = false
-  let finishAttempted = false
-  let finishCompleted = false
-  const finishOnce = createBridgeTerminalOwner(event.sender, route, deps)
-
-  try {
-    await (deps.runGeminiApiMainTurn ?? runAntigravityGeminiApiMainTurn)(
-      deps.getSettings(),
-      {
-        model: typeof payload.model === 'string' ? payload.model : '',
-        prompt: typeof payload.prompt === 'string' ? payload.prompt : '',
-        route
-      },
-      {
-        secretStore,
-        attachAbortController: (runId, controller) => {
-          requireExactActiveAntigravitySession(runId, deps)
-          deps.attachAbortController(runId as string, controller)
-        },
-        emitInit: (initPayload: AntigravityGeminiApiInitPayload) => {
-          deps.sendAgentCompatLine(
-            event.sender,
-            ANTIGRAVITY_COMBINED_MODE_PROVIDER,
-            initPayload,
-            route
-          )
-        },
-        emitContent: (contentPayload: AntigravityGeminiApiContentPayload) => {
-          deps.sendAgentCompatLine(
-            event.sender,
-            ANTIGRAVITY_COMBINED_MODE_PROVIDER,
-            contentPayload,
-            route
-          )
-        },
-        emitResult: (resultPayload: AntigravityGeminiApiResultPayload) => {
-          deps.sendAgentCompatLine(
-            event.sender,
-            ANTIGRAVITY_COMBINED_MODE_PROVIDER,
-            resultPayload,
-            route
-          )
-        },
-        emitError: (message: string) => {
-          deps.sendAgentCompatError(
-            event.sender,
-            ANTIGRAVITY_COMBINED_MODE_PROVIDER,
-            message,
-            route
-          )
-        },
-        emitExit: (code: number | null) => {
-          if (exitAttempted) return
-          exitAttempted = true
-          deps.sendAgentCompatExit(event.sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, code, route)
-          exitCompleted = true
-        },
-        finishRun: (status: AntigravityGeminiApiTerminalFinishStatus) => {
-          if (finishAttempted) return
-          finishAttempted = true
-          deps.finishRun(route.appRunId, status)
-          finishCompleted = true
-        }
-      }
+  if (!registeredSession) {
+    throw new Error(
+      'AntiGravity run session could not be registered; the run cannot start right now.'
     )
-  } catch {
-    if (!exitAttempted && !finishAttempted) {
-      finishOnce('unavailable')
-      return
-    }
-    if (!exitAttempted) {
-      try {
-        exitAttempted = true
-        deps.sendAgentCompatExit(event.sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, 1, route)
-        exitCompleted = true
-      } catch {
-        // Lifecycle callbacks are fallible; remaining projections still run.
-      }
-    } else if (!exitCompleted) {
-      // Side-effect-then-throw already marked attempted; never retry exit.
-    }
-    if (!finishAttempted) {
-      try {
-        finishAttempted = true
-        deps.finishRun(route.appRunId, 'failed')
-        finishCompleted = true
-      } catch {
-        // Lifecycle callbacks are fallible; terminalization must still attempt.
-      }
-    } else if (!finishCompleted) {
-      // Side-effect-then-throw already marked attempted; never retry finish.
-    }
   }
-}
 
-function requireExactActiveAntigravitySession(
-  runId: string | undefined,
-  deps: AntigravityCombinedModeDispatchDependencies
-): void {
-  if (typeof runId !== 'string' || runId.length === 0 || runId.trim().length === 0) {
-    throw new Error('antigravity-gemini-api-session-unavailable')
-  }
-  const session = deps.getRunSession(runId)
-  const canStart = deps.canStartTransport ?? canStartRunTransport
-  if (
-    !session ||
-    session.provider !== ANTIGRAVITY_COMBINED_MODE_PROVIDER ||
-    !canStart(session.status, true)
-  ) {
-    throw new Error('antigravity-gemini-api-session-unavailable')
+  try {
+    await deps.runGeminiApiAgentTurn(event, payload, route)
+  } catch {
+    // The agent turn owns its terminal projections; reaching here means it
+    // died without completing them. Recover a visible fixed-copy terminal
+    // exactly once so the registered session cannot strand as Working.
+    terminalizeBridgeFailure(event.sender, route, deps, 'unavailable')
   }
 }
 
@@ -256,39 +152,26 @@ function exactIncomingRoute(payload: AgentRunPayload): AgentRunRoute {
   return route
 }
 
-function createBridgeTerminalOwner(
-  sender: Electron.WebContents,
-  route: AgentRunRoute,
-  deps: AntigravityCombinedModeDispatchDependencies
-): (status: 'unavailable' | 'keyUnavailable') => void {
-  let terminalized = false
-  return (status) => {
-    if (terminalized) return
-    terminalized = true
-    const message = mapAntigravityGeminiApiTurnStatusToMessage(status)
-    try {
-      deps.sendAgentCompatError(sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, message, route)
-    } catch {
-      // Lifecycle callbacks are fallible; terminalization must still complete.
-    }
-    try {
-      deps.sendAgentCompatExit(sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, 1, route)
-    } catch {
-      // Lifecycle callbacks are fallible; terminalization must still complete.
-    }
-    try {
-      deps.finishRun(route.appRunId, 'failed')
-    } catch {
-      // Lifecycle callbacks are fallible; terminalization must still complete.
-    }
-  }
-}
-
 function terminalizeBridgeFailure(
   sender: Electron.WebContents,
   route: AgentRunRoute,
   deps: AntigravityCombinedModeDispatchDependencies,
   status: 'unavailable' | 'keyUnavailable'
 ): void {
-  createBridgeTerminalOwner(sender, route, deps)(status)
+  const message = mapAntigravityGeminiApiTurnStatusToMessage(status)
+  try {
+    deps.sendAgentCompatError(sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, message, route)
+  } catch {
+    // Lifecycle callbacks are fallible; terminalization must still complete.
+  }
+  try {
+    deps.sendAgentCompatExit(sender, ANTIGRAVITY_COMBINED_MODE_PROVIDER, 1, route)
+  } catch {
+    // Lifecycle callbacks are fallible; terminalization must still complete.
+  }
+  try {
+    deps.finishRun(route.appRunId, 'failed')
+  } catch {
+    // Lifecycle callbacks are fallible; terminalization must still complete.
+  }
 }
