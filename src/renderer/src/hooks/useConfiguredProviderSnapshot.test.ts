@@ -2,6 +2,7 @@ import { act, createElement } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { afterEach, describe, expect, it } from 'vitest'
 import {
+  antigravityGeminiApiSecretIdentityIsConfigured,
   antigravityGeminiApiSecretRefreshIdentity,
   ANTIGRAVITY_GEMINI_API_SECRET_MUTATION_EVENT,
   notifyAntigravityGeminiApiSecretMutation,
@@ -201,6 +202,19 @@ describe('antigravityGeminiApiSecretRefreshIdentity', () => {
       configured: false,
       ciphertext: 'secret'
     })).toBe('unconfigured:')
+  })
+
+  // App.tsx admits AntiGravity when EITHER lane is consented; reading only the
+  // agy opt-in used to strip the provider out of every renderer surface for
+  // key-only users.
+  it('reports key-lane admission from the polled identity, failing closed', () => {
+    expect(
+      antigravityGeminiApiSecretIdentityIsConfigured('configured:2026-07-23T15:00:00.000Z:mutation-0')
+    ).toBe(true)
+    expect(antigravityGeminiApiSecretIdentityIsConfigured('configured::mutation-3')).toBe(true)
+    for (const identity of ['unconfigured::mutation-0', 'unavailable:mutation-1', ':mutation-0', '']) {
+      expect(antigravityGeminiApiSecretIdentityIsConfigured(identity)).toBe(false)
+    }
   })
 })
 

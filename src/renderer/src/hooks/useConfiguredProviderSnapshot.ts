@@ -30,6 +30,17 @@ export function antigravityGeminiApiSecretRefreshIdentity(value: unknown): strin
   return `${configured}:${updatedAt}`
 }
 
+/**
+ * Reads the configured/unconfigured half of the refresh identity above. The
+ * identity is already polled for cache-busting, so this reuses it rather than
+ * adding a second poll of the same status channel. Anything unrecognised —
+ * including the empty pre-first-poll value and the `'unavailable'` error
+ * sentinel — reads as not configured, so admission fails closed.
+ */
+export function antigravityGeminiApiSecretIdentityIsConfigured(identity: string): boolean {
+  return typeof identity === 'string' && identity.startsWith('configured:')
+}
+
 export function useAntigravityGeminiApiSecretRefreshIdentity(): string {
   const [identity, setIdentity] = useState('')
   const [mutationGeneration, setMutationGeneration] = useState(0)

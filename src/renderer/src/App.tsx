@@ -28,6 +28,7 @@ import { resolveComposerRunDmTarget } from './lib/runPromptDmScope'
 import {
   useConfiguredProviderSnapshot,
   useAntigravityGeminiApiSecretRefreshIdentity,
+  antigravityGeminiApiSecretIdentityIsConfigured,
   type ConfiguredProviderSnapshot
 } from './hooks/useConfiguredProviderSnapshot'
 import { buildHumanCollaborationInvitePayload } from './lib/humanCollaborationInvitePayload'
@@ -1887,6 +1888,13 @@ function App(): React.JSX.Element {
   const antigravityOptInActive =
     settings?.antigravityEnabled === true && Boolean(settings?.antigravityOptInAcceptedAt)
   const antigravityGeminiApiSecretIdentity = useAntigravityGeminiApiSecretRefreshIdentity()
+  // AntiGravity has two independently consented lanes, so admission is a union:
+  // the ban-risk agy CLI opt-in, OR a configured Gemini API key. Checking only
+  // the opt-in stripped the whole provider — models included — out of every
+  // renderer surface for key-only users, no matter what discovery had admitted.
+  const antigravityAdmissible =
+    antigravityOptInActive ||
+    antigravityGeminiApiSecretIdentityIsConfigured(antigravityGeminiApiSecretIdentity)
   const rawConfiguredProviderSnapshot = useConfiguredProviderSnapshot(
     `${settings?.antigravityEnabled === true}:${settings?.antigravityOptInAcceptedAt || ''}:` +
       `${settings?.antigravityGeminiApiDisclosureAcceptedAt || ''}:` +
@@ -1894,10 +1902,10 @@ function App(): React.JSX.Element {
   )
   // The main process starts a fresh cache generation after a settings change,
   // but do not render a prior successful AntiGravity snapshot for even one
-  // renderer frame after consent is withdrawn.
+  // renderer frame after BOTH lanes' consent is withdrawn.
   const configuredProviderSnapshot = useMemo<ConfiguredProviderSnapshot>(
     () =>
-      antigravityOptInActive
+      antigravityAdmissible
         ? rawConfiguredProviderSnapshot
         : {
             ready: rawConfiguredProviderSnapshot.ready,
@@ -1905,7 +1913,7 @@ function App(): React.JSX.Element {
               (provider) => provider !== 'antigravity'
             )
           },
-    [antigravityOptInActive, rawConfiguredProviderSnapshot]
+    [antigravityAdmissible, rawConfiguredProviderSnapshot]
   )
   const configuredAntigravityModels =
     configuredProviderSnapshot.modelsByProvider?.antigravity || []
