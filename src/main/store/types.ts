@@ -6,6 +6,7 @@ import type { ClaudeWorkflowTelemetry } from '../../shared/claudeWorkflow'
 import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
+import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type {
   TaskWraithPluginResourceProvenance,
@@ -3479,6 +3480,13 @@ export interface ChatRecord {
   workspacePath?: string
   /** Main-owned durable identity for a thread's isolated Git worktree. */
   threadWorktreeBinding?: ThreadWorktreeBinding
+  /**
+   * Slice-6 "watch PR" opt-in — the per-chat toggle IS the entire authorization
+   * for the host poller (which has no permission posture). Present ⇒ this chat's
+   * PR is watched for CI auto-notify; absent/cleared ⇒ not watched. Persisted via
+   * an async atomic patch (A1b-persist), never saveChat's sync whole-record writer.
+   */
+  watchedPr?: WatchedPrDescriptor
   createdAt: number
   updatedAt: number
   /**
