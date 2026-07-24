@@ -4261,6 +4261,29 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   pointer-events: none;
 }
 
+/*
+ * Super-group fold: member rows hidden behind the merged one-liner render an
+ * EMPTY block that stays mounted (row ordinals, gutter markers and the
+ * virtualizer's element map all key on it) — but it must contribute ZERO
+ * layout space. Each empty block was otherwise donating one --space-lg of
+ * container gap / per-child margin, and N members stacked into the "random
+ * gap below the collapsed one-liner" that scaled with member count.
+ *
+ * Mode split matters: the virtualised path measures slots via offsetTop
+ * deltas, so hidden blocks must stay IN-FLOW at 0px (display:none has no
+ * layout box — offsetTop reads 0 and the neighbouring rows' measurements
+ * would corrupt); zeroing the per-child margin is sufficient there. The
+ * non-virtualised path spaces children with the container's flex gap, which
+ * an in-flow zero-height child still occupies — display:none removes it from
+ * gap accounting, and that path performs no measurement.
+ */
+.transcript-inner:not(.transcript-virtualized) > .transcript-message-block.is-super-hidden {
+  display: none;
+}
+.transcript-inner.transcript-virtualized > .transcript-message-block.is-super-hidden {
+  margin-bottom: 0;
+}
+
 .gemini-terminal-split {
   position: absolute;
   left: calc(var(--space-lg) * 2);

@@ -1591,6 +1591,21 @@ describe('collapsed one-liner super-groups', () => {
     expect(html.match(/collapsed-activity-stack-summary/g)?.length).toBe(1)
   })
 
+  it('tags hidden member blocks is-super-hidden (zero-space), never the lead', () => {
+    const html = renderToStaticMarkup(
+      <TranscriptPanel {...makeProps({ messages: superGroupMessages, virtualize: false })} />
+    )
+    // Two members fold behind the lead (sys-1, stack-2). Their blocks stay
+    // mounted for ordinal/measurement stability but are tagged so CSS strips
+    // their flex-gap/margin contribution — each untagged empty block used to
+    // donate one --space-lg to the phantom gap below the merged one-liner.
+    expect(html.match(/is-super-hidden/g)?.length).toBe(2)
+    // Both tagged blocks are EMPTY wrappers (class + data attrs, no children).
+    expect(html.match(/is-super-hidden"[^>]*><\/div>/g)?.length).toBe(2)
+    // The lead keeps normal flow: its block carries the summary, not the tag.
+    expect(html).toContain('collapsed-activity-stack-summary')
+  })
+
   it('leaves a lone settled stack as an ordinary one-liner', () => {
     const loneStack = [
       superGroupMessages[0],

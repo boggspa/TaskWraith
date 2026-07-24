@@ -773,6 +773,7 @@ const EMPTY_TRANSCRIPT_HEIGHTS: number[] = []
 const EMPTY_TRANSCRIPT_HEIGHT_OFFSETS: number[] = [0]
 /** Stable empty rows array for the non-virtualised render path. */
 const EMPTY_VIRTUAL_ROWS: VirtualRow[] = []
+const EMPTY_HIDDEN_ROW_KEYS: ReadonlySet<string> = new Set()
 /** Stable empty expansion set so unopened tool rows share one reference. */
 const EMPTY_ACTIVITY_EXPANSION: Set<string> = new Set()
 
@@ -1324,6 +1325,14 @@ function useTranscriptVirtualization(params: {
    * the live height lookup so toggling re-flows the spacers.
    */
   expandedRowIds?: ReadonlySet<string>
+  /**
+   * RowKeys rendering as EMPTY zero-space blocks (collapsed super-group
+   * members). Their height is pinned to 0 here because the measure pass
+   * cannot learn it: a non-positive offsetTop delta is skipped by design,
+   * so these rows would otherwise sit on their type estimates forever and
+   * desync the spacers from real layout.
+   */
+  hiddenRowKeys?: ReadonlySet<string>
 }): {
   window: VirtualWindow
   blockRef: (el: HTMLDivElement | null) => void
@@ -1358,7 +1367,8 @@ function useTranscriptVirtualization(params: {
     compactDensity,
     forcedRowIndex,
     activeLiveRowKey,
-    expandedRowIds
+    expandedRowIds,
+    hiddenRowKeys
   } = params
 
   const measurementsRef = useRef<Map<string, number>>(new Map())
@@ -1466,17 +1476,19 @@ function useTranscriptVirtualization(params: {
     const m = measurementsRef.current
     const bucket = bucketRef.current
     return rows.map((row) =>
-      getRowHeight(
-        row,
-        m,
-        bucket,
-        expandedRowIds?.has(row.rowKey) ?? false,
-        measurementContentVersion(row, activeLiveRowKey),
-        geometryHeightsRef.current
-      )
+      hiddenRowKeys?.has(row.rowKey)
+        ? 0
+        : getRowHeight(
+            row,
+            m,
+            bucket,
+            expandedRowIds?.has(row.rowKey) ?? false,
+            measurementContentVersion(row, activeLiveRowKey),
+            geometryHeightsRef.current
+          )
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKey])
+  }, [enabled, rows, measureTick, expandedRowIds, activeLiveRowKey, hiddenRowKeys])
   heightsRef.current = heights
   const heightOffsets = useMemo(
     () => (enabled ? buildHeightOffsets(heights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -2887,6 +2899,30 @@ export const TranscriptPanel = memo(
       expandedRowIds,
       projectedRowLookup
     ])
+    // Rows hidden inside a COLLAPSED super group render an empty block whose
+    // CSS zeroes all spacing, so their real slot height is 0 — but a 0px slot
+    // can never record a measurement (the measure pass skips non-positive
+    // deltas), which would leave the virtualizer on per-type ESTIMATES for
+    // every hidden row (phantom spacer height, scroll-position drift across
+    // groups). Resolve their rowKeys so the height table can pin them to 0.
+    const superHiddenRowKeys = useMemo(() => {
+      if (superGroupByMessageId.size === 0) return EMPTY_HIDDEN_ROW_KEYS
+      const keys = new Set<string>()
+      const seenLeads = new Set<string>()
+      for (const group of superGroupByMessageId.values()) {
+        if (seenLeads.has(group.leadId)) continue
+        seenLeads.add(group.leadId)
+        if (expandedSuperGroups.has(group.leadId)) continue
+        for (const memberId of group.memberIds) {
+          if (memberId === group.leadId) continue
+          const row =
+            projectedRowLookup.byMessageId.get(memberId) ||
+            projectedRowLookup.byConstituentId.get(memberId)
+          if (row) keys.add(row.rowKey)
+        }
+      }
+      return keys.size > 0 ? keys : EMPTY_HIDDEN_ROW_KEYS
+    }, [superGroupByMessageId, expandedSuperGroups, projectedRowLookup])
     const [pendingFocusTarget, setPendingFocusTarget] = useState<{
       messageId: string
       rowKey?: string
@@ -2940,7 +2976,8 @@ export const TranscriptPanel = memo(
       compactDensity,
       forcedRowIndex: pendingFocusRowIndex ?? externalRestoreAnchorRowIndex,
       activeLiveRowKey: liveMeasurementRowKey,
-      expandedRowIds: expandedRowIdsWithLiveViewports
+      expandedRowIds: expandedRowIdsWithLiveViewports,
+      hiddenRowKeys: superHiddenRowKeys
     })
     const virtualHeightOffsets = useMemo(
       () => (virtualizeEnabled ? buildHeightOffsets(virtualHeights) : EMPTY_TRANSCRIPT_HEIGHT_OFFSETS),
@@ -3646,7 +3683,15 @@ export const TranscriptPanel = memo(
                 key={`message-block-${rowKey}`}
                 className={`transcript-message-block${
                   isSideChatSeedMessage ? ' is-side-chat-seed' : ''
-                }${isPinnedMessageTarget ? ' is-pinned-message-target' : ''}`}
+                }${isPinnedMessageTarget ? ' is-pinned-message-target' : ''}${
+                  // Hidden super-group members keep their block mounted (row
+                  // ordinals + measurement stability) but must contribute ZERO
+                  // layout space — without this class each empty block donated
+                  // one --space-lg of flex-gap/margin, stacking into the
+                  // "random gap below the merged one-liner" that scaled with
+                  // member count. CSS zeroes it per rendering mode.
+                  superGroupHidden ? ' is-super-hidden' : ''
+                }`}
                 data-vrow-id={rowKey}
                 data-message-id={msg.id}
                 // Selecting the side-chat seed on pointer hover made this full-row

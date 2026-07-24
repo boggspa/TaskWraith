@@ -12125,6 +12125,12 @@ button.diff-file-row {
   background: none;
   cursor: pointer;
   font: inherit;
+  /* The summary IS the message for a folded stack — set it in the app's
+   * configured transcript typeface (Avenir Next by default; button chrome
+   * otherwise inherits the body's SF Pro stack) at demi-bold so the line
+   * reads as a deliberate summary, not leftover tool chrome. */
+  font-family: var(--transcript-font-family);
+  font-weight: 600;
   /* Body-text size (assistant-message parity) — the summary IS the message
    * for a folded stack, not a caption under one. */
   font-size: var(--font-size-md);
