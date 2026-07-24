@@ -2236,13 +2236,14 @@ private struct ProviderModelPickerSheet: View {
     var onConfirm: (() -> Void)? = nil
     @Environment(\.dismiss) private var dismiss
     @Environment(\.twGlassSheetHosted) private var glassSheetHosted
-    @State private var expandedProvider: String?
+    /// The combined picker requires Fast/Kimi-thinking bindings; side-chat
+    /// creation doesn't persist either yet, so they live as local state (same
+    /// non-offer this sheet always had, now just visible in the ladder panel).
+    @State private var localFastModeEnabled = false
+    @State private var localKimiThinkingEnabled = true
 
     private var currentCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
-    }
-    private var reasoningOptions: [ReasoningEffortOption] {
-        twReasoningOptions(in: currentCatalog, modelId: modelId)
     }
 
     private var canvasFill: Color {
@@ -2252,24 +2253,22 @@ private struct ProviderModelPickerSheet: View {
     var body: some View {
         NavigationStack {
             List {
-                if allowsProviderChange {
-                    Section("Provider") {
-                        ForEach(catalogs) { catalog in
-                            providerTree(catalog)
-                        }
-                    }
-                    .twGlassSheetRowBackground()
-                } else {
-                    Section(TWTheme.providerLabel(provider)) {
-                        ForEach(currentCatalog?.models ?? []) { option in
-                            modelRow(option, catalog: currentCatalog)
-                        }
-                        ForEach(reasoningOptions) { option in
-                            reasoningRow(option)
-                        }
-                    }
-                    .twGlassSheetRowBackground()
+                // Converged on the combined picker: one row opening the same
+                // glass panel the composer + roster editor use (provider
+                // sections, model rows with Fast lightning, reasoning ladder)
+                // — replaces this sheet's bespoke DisclosureGroup tree and
+                // plain checkmark reasoning rows.
+                Section("Provider · model") {
+                    ProviderModelPicker(
+                        catalogs: catalogs,
+                        provider: $provider,
+                        modelId: $modelId,
+                        reasoningEffort: $reasoningEffort,
+                        fastModeEnabled: $localFastModeEnabled,
+                        kimiThinkingEnabled: $localKimiThinkingEnabled,
+                        allowsProviderChange: allowsProviderChange)
                 }
+                .twGlassSheetRowBackground()
             }
             .twGlassSheetListCanvas()
             .scrollContentBackground(.hidden)
@@ -2283,14 +2282,8 @@ private struct ProviderModelPickerSheet: View {
                     }
                 }
             }
-            .onAppear {
-                expandedProvider = provider.lowercased()
-                normalizeReasoningSelection()
-            }
-            .onChange(of: provider) { _, newProvider in
-                expandedProvider = newProvider.lowercased()
-                normalizeReasoningSelection()
-            }
+            .onAppear { normalizeReasoningSelection() }
+            .onChange(of: provider) { _, _ in normalizeReasoningSelection() }
             .onChange(of: modelId) { _, _ in normalizeReasoningSelection() }
         }
         .background(canvasFill)
@@ -2300,126 +2293,6 @@ private struct ProviderModelPickerSheet: View {
             .presentationDetents([.medium, .large])
             .presentationDragIndicator(.visible)
         #endif
-    }
-
-    private func providerTree(_ catalog: ProviderModelCatalog) -> some View {
-        let selected = catalog.provider.lowercased() == provider.lowercased()
-        let accent = TWTheme.providerAccent(catalog.provider)
-        return DisclosureGroup(
-            isExpanded: Binding(
-                get: { expandedProvider == catalog.provider.lowercased() },
-                set: { expandedProvider = $0 ? catalog.provider.lowercased() : nil }
-            )
-        ) {
-            ForEach(catalog.models) { option in
-                modelRow(option, catalog: catalog, indented: true)
-            }
-            if selected, !reasoningOptions.isEmpty {
-                ForEach(reasoningOptions) { option in
-                    reasoningRow(option, indented: true)
-                }
-            }
-        } label: {
-            HStack(spacing: 10) {
-                ProviderLogoIcon(provider: catalog.provider, size: 16)
-                Text(TWTheme.providerLabel(catalog.provider))
-                    .foregroundStyle(selected ? accent : TWTheme.textPrimary)
-                    .fontWeight(selected ? .semibold : .regular)
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(accent)
-                }
-            }
-            .contentShape(Rectangle())
-        }
-        .tint(accent)
-    }
-
-    private func modelRow(
-        _ option: ModelOption, catalog: ProviderModelCatalog?, indented: Bool = false
-    ) -> some View {
-        // A nil modelId selects the provider's concrete isDefault model (the
-        // synthetic "Default" row was removed).
-        let selected =
-            catalog?.provider.lowercased() == provider.lowercased()
-            && (modelId == option.id || (modelId == nil && option.isDefault == true))
-        let disabled = option.disabled == true
-        return Button {
-            guard !disabled else { return }
-            if let catalog, allowsProviderChange {
-                provider = catalog.provider
-            }
-            modelId = option.id
-            normalizeReasoningSelection(catalog: catalog, selectedModelId: option.id)
-            let hasReasoning = !(option.supportedReasoningEfforts ?? []).isEmpty
-            if dismissesOnSelection && !hasReasoning { dismiss() }
-        } label: {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(option.label ?? option.id)
-                        .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
-                    if option.isDefault == true {
-                        Text("Provider default")
-                            .font(.caption)
-                            .foregroundStyle(TWTheme.textSecondary)
-                    }
-                    if disabled, let reason = option.disabledReason, !reason.isEmpty {
-                        Text(reason)
-                            .font(.caption)
-                            .foregroundStyle(TWTheme.textSecondary)
-                    }
-                }
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(TWTheme.providerAccent(catalog?.provider ?? provider))
-                }
-            }
-            .padding(.leading, indented ? 18 : 0)
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.55 : 1)
-    }
-
-    private func reasoningRow(
-        _ option: ReasoningEffortOption, indented: Bool = false
-    ) -> some View {
-        let selected = reasoningEffort == option.reasoningEffort
-        let disabled = option.disabled == true
-        return Button {
-            guard !disabled else { return }
-            reasoningEffort = option.reasoningEffort
-            if dismissesOnSelection { dismiss() }
-        } label: {
-            HStack(spacing: 10) {
-                VStack(alignment: .leading, spacing: 2) {
-                    Text(twReasoningDisplayLabel(option.reasoningEffort, provider: provider))
-                        .foregroundStyle(disabled ? TWTheme.textSecondary : TWTheme.textPrimary)
-                    let sublabel = disabled
-                        ? option.disabledReason ?? option.description
-                        : option.description
-                    if let sublabel, !sublabel.isEmpty {
-                        Text(sublabel)
-                            .font(.caption)
-                            .foregroundStyle(TWTheme.textSecondary)
-                    }
-                }
-                Spacer()
-                if selected {
-                    Image(systemName: "checkmark")
-                        .font(.caption.weight(.bold))
-                        .foregroundStyle(TWTheme.providerAccent(provider))
-                }
-            }
-            .padding(.leading, indented ? 18 : 0)
-        }
-        .buttonStyle(.plain)
-        .disabled(disabled)
-        .opacity(disabled ? 0.55 : 1)
     }
 
     private func normalizeReasoningSelection() {
@@ -6176,18 +6049,24 @@ public struct EditableRosterStrip: View {
             ForEach(catalogs.map(\.provider), id: \.self) { provider in
                 Button {
                     guard draft.count < editableRosterMaxParticipants else { return }
-                    draft.append(
-                        RemoteSessionModel.RosterDraftEntry(
-                            id: "draft-\(UUID().uuidString.prefix(8))",
-                            provider: provider,
-                            model: nil,
-                            role: TWTheme.providerLabel(provider),
-                            brief: "",
-                            enabled: true,
-                            reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
-                            thinkingEnabled: provider.lowercased() == "kimi"
-                        ))
+                    let entry = RemoteSessionModel.RosterDraftEntry(
+                        id: "draft-\(UUID().uuidString.prefix(8))",
+                        provider: provider,
+                        model: nil,
+                        role: TWTheme.providerLabel(provider),
+                        brief: "",
+                        enabled: true,
+                        reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
+                        thinkingEnabled: provider.lowercased() == "kimi"
+                    )
+                    draft.append(entry)
                     commit()
+                    // Electron add-participant parity (same as the roster
+                    // sheet's add flow): deep-link straight into the seeded
+                    // seat's editor, whose combined picker is the model /
+                    // reasoning selection surface.
+                    model.rosterFocusParticipantId = entry.id
+                    model.rosterPresented = true
                 } label: {
                     Label {
                             Text(TWTheme.providerLabel(provider))
