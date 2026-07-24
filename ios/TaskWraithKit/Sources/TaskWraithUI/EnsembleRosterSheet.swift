@@ -177,8 +177,16 @@ public struct EnsembleRosterSheet: View {
                     addSection
                 }
                 .twGlassSheetRowBackground()
+                // Compact-picker density: the sheet reads as chrome, not a
+                // settings form — tighter rows + section gaps to match the
+                // combined picker / Electron orchestration row.
+                .listRowInsets(EdgeInsets(top: 5, leading: 16, bottom: 5, trailing: 16))
             }
             .twGlassSheetListCanvas()
+            .environment(\.defaultMinListRowHeight, 34)
+            #if os(iOS)
+                .listSectionSpacing(.compact)
+            #endif
             #if os(iOS)
                 .navigationBarTitleDisplayMode(.inline)
             #endif
@@ -327,6 +335,7 @@ public struct EnsembleRosterSheet: View {
                 Text("Continuous").tag("continuous")
             }
             .pickerStyle(.segmented)
+            .controlSize(.small)
 
             Picker(
                 "Fan-Out",
@@ -348,6 +357,7 @@ public struct EnsembleRosterSheet: View {
                 Text("Write").tag("write")
             }
             .pickerStyle(.segmented)
+            .controlSize(.small)
 
             Stepper(
                 value: Binding(
@@ -388,15 +398,12 @@ public struct EnsembleRosterSheet: View {
                     HStack {
                         Label("Hops", systemImage: "arrow.triangle.2.circlepath")
                         Spacer()
-                        Text("\(selectedMaxContinuationHops)")
+                        // Electron orchestration-row parity: used/max in one
+                        // glance ("TURNS 10/128") — the separate Used row is gone.
+                        Text("\(continuationHops)/\(selectedMaxContinuationHops)")
+                            .monospacedDigit()
                             .foregroundStyle(TWTheme.textSecondary)
                     }
-                }
-                HStack {
-                    Label("Used", systemImage: "point.3.connected.trianglepath.dotted")
-                    Spacer()
-                    Text("\(continuationHops)/\(selectedMaxContinuationHops)")
-                        .foregroundStyle(TWTheme.textSecondary)
                 }
             }
         } header: {
@@ -449,9 +456,10 @@ public struct EnsembleRosterSheet: View {
         let title = entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         let subtitle = "\(TWTheme.providerLabel(entry.provider)) · \(entry.model ?? "CLI Default")"
         return HStack(spacing: 10) {
-            Circle()
-                .fill(accent.opacity(entry.enabled ? 1 : 0.35))
-                .frame(width: 8, height: 8)
+            // Combined-picker parity: the provider logo anchors the row (the
+            // enabled state dims it), matching the picker rows + strip chips.
+            ProviderLogoIcon(provider: entry.provider, modelId: entry.model, size: 15)
+                .opacity(entry.enabled && !unavailable ? 1 : 0.35)
             VStack(alignment: .leading, spacing: 1) {
                 Text(title)
                     .font(.subheadline.weight(.semibold))
@@ -495,7 +503,6 @@ public struct EnsembleRosterSheet: View {
                 .font(.caption2.weight(.semibold))
                 .foregroundStyle(TWTheme.textMuted)
         }
-        .padding(.vertical, 2)
         .contentShape(Rectangle())
     }
 
