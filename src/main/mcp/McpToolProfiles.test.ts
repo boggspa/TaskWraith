@@ -40,10 +40,12 @@ describe('immutable v1 MCP profile snapshots', () => {
     }
   })
 
-  it('pins full-v1 to the exact historical 156-tool surface', () => {
-    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(156)
+  it('pins full-v1 to the exact historical 155-tool surface', () => {
+    // 2026-07-24: ensemble_continue removed with the Work Session surface
+    // (fb88667b1) — 156 → 155.
+    expect(FULL_MCP_ADVERTISE_TOOLS).toHaveLength(155)
     expect(nameHash(FULL_MCP_ADVERTISE_TOOLS)).toBe(
-      '88f3a823f09087de4889580ba9d0bf049f92a514ced982935b18318da7f73360'
+      'eec0885ba65addda9da1861a580fbb76795177d604bbd3e6a8bab26a3f5a27e2'
     )
     for (const tool of FULL_MCP_ADVERTISE_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-full-v1')).toBe(
@@ -51,10 +53,11 @@ describe('immutable v1 MCP profile snapshots', () => {
     )
   })
 
-  it('pins core-v1 to the exact historical 60-tool surface', () => {
-    expect(CORE_MCP_ADVERTISE_TOOLS).toHaveLength(60)
+  it('pins core-v1 to the exact historical 59-tool surface', () => {
+    // 2026-07-24: ensemble_continue removed with the Work Session surface — 60 → 59.
+    expect(CORE_MCP_ADVERTISE_TOOLS).toHaveLength(59)
     expect(nameHash(CORE_MCP_ADVERTISE_TOOLS)).toBe(
-      'ba91357b3c1c8097a94527777c5f6e8a71de953da828486c2acd15484d15acac'
+      '6d79f189158dcfe01de46bcd127f4fcfc00aaae8dd10ad087b9a44e32bc2951d'
     )
     expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-core-v1')).toBe(
       CORE_MCP_ADVERTISE_TOOLS
@@ -63,12 +66,13 @@ describe('immutable v1 MCP profile snapshots', () => {
 })
 
 describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
-  it('exposes 39 common tools plus only the two virtual gateway tools', () => {
-    expect(GATEWAY_MCP_DIRECT_TOOLS).toHaveLength(39)
+  it('exposes 38 common tools plus only the two virtual gateway tools', () => {
+    // 2026-07-24: ensemble_continue removed with the Work Session surface — 39 → 38.
+    expect(GATEWAY_MCP_DIRECT_TOOLS).toHaveLength(38)
     expect(nameHash(GATEWAY_MCP_DIRECT_TOOLS)).toBe(
-      '9fcc14ad8ec46f80eb041e0be0383f00b5894336a349bc9bb6dc4742ea53bcb9'
+      'fcef130fd16ef9a7ad8080acae866c9ab8fa2b1b20ce8425f9a6ca534dfbbd2d'
     )
-    expect(GATEWAY_MCP_ADVERTISE_TOOLS).toHaveLength(41)
+    expect(GATEWAY_MCP_ADVERTISE_TOOLS).toHaveLength(40)
     expect(new Set(GATEWAY_MCP_ADVERTISE_TOOLS).size).toBe(GATEWAY_MCP_ADVERTISE_TOOLS.length)
     for (const tool of GATEWAY_MCP_DIRECT_TOOLS) expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
     expect(GATEWAY_MCP_ADVERTISE_TOOLS.slice(-2)).toEqual(CAPABILITY_GATEWAY_TOOL_NAMES)
@@ -189,8 +193,10 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // the transport contract.
     // Measured after Path-B Cursor re-entry into live selectable / delegate enums,
     // then the bounded Blackboard poll schema and lifecycle guidance.
-    expect(fullChars).toBe(132_236)
-    expect(gatewayChars).toBe(39_782)
+    // Re-measured 2026-07-24 after the Work Session removal dropped the
+    // ensemble_continue schema from both catalogues.
+    expect(fullChars).toBe(131_178)
+    expect(gatewayChars).toBe(38_724)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })

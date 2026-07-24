@@ -126,7 +126,9 @@ describe('canonical global broker allow rules', () => {
   })
 
   it('derives scoped lists from the gateway ceiling plus permission overlays', () => {
-    expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toHaveLength(41)
+    // 41 → 40 on 2026-07-24: ensemble_continue left the gateway ceiling with
+    // the Work Session removal.
+    expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toHaveLength(40)
     expect(CURSOR_GATEWAY_MCP_TOOL_NAMES).toContain('ensemble_propose_goal_complete')
     for (const tool of CURSOR_GATEWAY_READONLY_MCP_TOOL_NAMES) {
       expect(isCapabilityGatewayToolName(tool) || isReadOnlyAdvertisedTool(tool)).toBe(true)

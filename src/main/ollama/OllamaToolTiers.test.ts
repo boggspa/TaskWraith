@@ -14,7 +14,8 @@ import {
 describe('Ollama tool surface governance', () => {
   it('uses the exact immutable gateway-v1 direct membership', () => {
     expect(OLLAMA_ADVERTISED_TOOL_NAMES).toBe(GATEWAY_MCP_DIRECT_TOOLS)
-    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(39)
+    // 39 → 38 on 2026-07-24: ensemble_continue removed with Work Session.
+    expect(OLLAMA_ADVERTISED_TOOL_NAMES).toHaveLength(38)
     expect(ollamaAdvertisedToolNames()).toEqual([...GATEWAY_MCP_DIRECT_TOOLS])
     for (const name of GATEWAY_MCP_DIRECT_TOOLS) {
       expect(isOllamaAdvertisedTool(name)).toBe(true)

@@ -14,9 +14,11 @@ describe('unified composer picker shell spacing', () => {
     )
   })
 
-  it('releases the legacy model-only width cap for Gemini and Cursor', () => {
+  it('releases the legacy model-only width cap for Gemini, Cursor, and the ChatGPT shell', () => {
+    // The ChatGPT shell joined the width release with its "wider model"
+    // refinement (4d7a45900); the flat three-member :is() is the pinned shape.
     expect(css).toMatch(
-      /:is\(\[data-composer-style="gemini"\], \[data-composer-style="cursor"\]\)[\s\S]*?\[data-composer-control="model"\]\s*\{[\s\S]*?width:\s*max-content;[\s\S]*?max-width:\s*min\(260px, calc\(100% - 96px\)\);/
+      /:is\(\[data-composer-style="gemini"\], \[data-composer-style="cursor"\], \[data-composer-style="chatgpt"\]\)[\s\S]*?\[data-composer-control="model"\]\s*\{[\s\S]*?width:\s*max-content;[\s\S]*?max-width:\s*min\(260px, calc\(100% - 96px\)\);/
     )
   })
 })

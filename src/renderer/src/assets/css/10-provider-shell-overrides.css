@@ -3785,13 +3785,13 @@
   margin-right: 6px;
 }
 
-:is([data-composer-style="gemini"], :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]))
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   [data-composer-control="model"] {
   width: max-content;
   max-width: min(260px, calc(100% - 96px));
 }
 
-:is([data-composer-style="gemini"], :is([data-composer-style="cursor"], [data-composer-style="chatgpt"]))
+:is([data-composer-style="gemini"], [data-composer-style="cursor"], [data-composer-style="chatgpt"])
   [data-composer-control="model"]
   .composer-combined-picker-trigger-provider {
   flex: 0 0 auto;

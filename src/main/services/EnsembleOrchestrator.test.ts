@@ -17330,7 +17330,10 @@ describe('background stage routing', () => {
     ).toBe(true)
   })
 
-  it('launches a user-mentioned BG seat asynchronously with a read-only cap', async () => {
+  it('launches a user-mentioned BG seat asynchronously under its own seat posture', async () => {
+    // 1e429e182: a composer @BG mention honors the seat's own permissions
+    // (workspace_write here) instead of the old unconditional read-only clamp;
+    // peer/yield-directed BG lanes keep the clamp (EnsembleBackgroundPosture.test.ts).
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [
       {
@@ -17360,7 +17363,7 @@ describe('background stage routing', () => {
     expect(backgroundIndex).toBeGreaterThanOrEqual(0)
     expect(leadIndex).toBeGreaterThanOrEqual(0)
     expect(harness.dispatched[backgroundIndex].ensembleRun?.laneId).toBeTruthy()
-    expect(harness.dispatched[backgroundIndex].effectivePermissions?.readOnly).toBe(true)
+    expect(harness.dispatched[backgroundIndex].effectivePermissions?.readOnly).toBe(false)
     expect(harness.dispatched[backgroundIndex].prompt).toContain('Stage role: background')
 
     completeDispatchedRun(harness, leadIndex)
@@ -17385,7 +17388,7 @@ describe('background stage routing', () => {
     expect(result?.metadata).toMatchObject({
       ensembleParticipantId: 'background-shell',
       ensembleStageRole: 'background',
-      ensembleLaneIntent: 'read'
+      ensembleLaneIntent: 'write'
     })
   })
 
