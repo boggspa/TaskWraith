@@ -1,3 +1,4 @@
+import { delimiter, join, resolve } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import {
   AGY_READ_ONLY_PRINT_TIMEOUT,
@@ -12,32 +13,38 @@ import {
 } from './AntigravityCli'
 
 describe('resolveAgyCliBinary', () => {
+  // Fixture paths are platform-canonical: the resolver join()s candidates and
+  // splits PATH with path.delimiter, so POSIX literals never match on Windows.
+  const customBin = resolve('/custom/bin')
+  const usrBin = resolve('/usr/bin')
+  const localBin = resolve('/Users/test/.local/bin')
+
   it('prefers the user PATH before common local locations', async () => {
     const resolved = await resolveAgyCliBinary({
-      env: { PATH: '/custom/bin:/usr/bin' },
-      getSearchDirs: () => ['/custom/bin', '/Users/test/.local/bin'],
+      env: { PATH: [customBin, usrBin].join(delimiter) },
+      getSearchDirs: () => [customBin, localBin],
       getBinaryCandidates: () => ['agy'],
-      fileExists: vi.fn(async (candidate: string) => candidate === '/custom/bin/agy')
+      fileExists: vi.fn(async (candidate: string) => candidate === join(customBin, 'agy'))
     })
 
-    expect(resolved).toEqual({ binaryPath: '/custom/bin/agy', source: 'path' })
+    expect(resolved).toEqual({ binaryPath: join(customBin, 'agy'), source: 'path' })
   })
 
   it('finds a common local installation when PATH does not contain the binary', async () => {
     const resolved = await resolveAgyCliBinary({
-      env: { PATH: '/usr/bin' },
-      getSearchDirs: () => ['/usr/bin', '/Users/test/.local/bin'],
+      env: { PATH: usrBin },
+      getSearchDirs: () => [usrBin, localBin],
       getBinaryCandidates: () => ['agy'],
-      fileExists: vi.fn(async (candidate: string) => candidate === '/Users/test/.local/bin/agy')
+      fileExists: vi.fn(async (candidate: string) => candidate === join(localBin, 'agy'))
     })
 
-    expect(resolved).toEqual({ binaryPath: '/Users/test/.local/bin/agy', source: 'common' })
+    expect(resolved).toEqual({ binaryPath: join(localBin, 'agy'), source: 'common' })
   })
 
   it('fails with an actionable missing result rather than downloading or configuring a binary', async () => {
     const resolved = await resolveAgyCliBinary({
-      env: { PATH: '/usr/bin' },
-      getSearchDirs: () => ['/usr/bin'],
+      env: { PATH: usrBin },
+      getSearchDirs: () => [usrBin],
       getBinaryCandidates: () => ['agy'],
       fileExists: vi.fn(async () => false)
     })

@@ -77,8 +77,18 @@ afterEach(() => {
   }
 })
 
+// POSIX emulation atop a REAL Windows filesystem is unsound: the emulated
+// darwin branch runs chmod + directory-fsync, and Windows rejects directory
+// fsync with EPERM (FlushFileBuffers), so setApiKey correctly fails
+// 'writeFailed' there — a property of the runner, not the store. The win32
+// branch is exercised natively on the Windows CI leg; darwin/linux emulation
+// runs everywhere else.
+const ROUND_TRIP_PLATFORMS = (['darwin', 'win32'] as const).filter(
+  (platform) => platform === 'win32' || process.platform !== 'win32'
+)
+
 describe('AntigravityGeminiApiSecretStore', () => {
-  it.each(['darwin', 'win32'] as const)(
+  it.each(ROUND_TRIP_PLATFORMS)(
     'round-trips one encrypted key on %s without exposing it in status or storage',
     (platform) => {
       emulateProcessPlatform(platform)
