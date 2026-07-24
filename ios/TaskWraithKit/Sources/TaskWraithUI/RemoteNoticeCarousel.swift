@@ -134,9 +134,13 @@ struct RemoteNoticeCard: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: 10) {
-            Image(systemName: iconName)
-                .font(.headline)
-                .foregroundStyle(accentColor)
+            if usesEnsembleGlyph {
+                ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 20)
+            } else {
+                Image(systemName: iconName)
+                    .font(.headline)
+                    .foregroundStyle(accentColor)
+            }
             VStack(alignment: .leading, spacing: 3) {
                 Text(notice.title)
                     .font(.footnote.weight(.semibold))
@@ -197,9 +201,12 @@ struct RemoteNoticeCard: View {
         accentKey == "claude" || accentKey == "ensemble"
     }
 
+    private var usesEnsembleGlyph: Bool {
+        notice.tone != "danger" && (iconKey == "ensemble" || accentKey == "ensemble")
+    }
+
     private var iconName: String {
         if notice.tone == "danger" { return "exclamationmark.circle" }
-        if iconKey == "ensemble" || accentKey == "ensemble" { return "person.3.fill" }
         return "info.circle"
     }
 

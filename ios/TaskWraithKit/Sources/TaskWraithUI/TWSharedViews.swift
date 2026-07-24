@@ -183,6 +183,7 @@ public struct TaskWraithMonolineBrandView: View {
 struct GlassPillHeader: View {
     let title: String
     var systemImage: String? = nil
+    var usesEnsembleGlyph = false
     var count: Int? = nil
     var collapsed: Bool = false
     var onToggle: (() -> Void)? = nil
@@ -198,7 +199,9 @@ struct GlassPillHeader: View {
                 Image(systemName: collapsed ? "chevron.right" : "chevron.down")
                     .font(.caption2.weight(.bold))
                     .foregroundStyle(TWTheme.textTertiary)
-                if let systemImage {
+                if usesEnsembleGlyph {
+                    ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 13)
+                } else if let systemImage {
                     Image(systemName: systemImage)
                         .font(.caption)
                 }
@@ -309,18 +312,28 @@ extension View {
 
 struct ToolbarIconPillLabel: View {
     let title: String
-    let systemImage: String
+    let systemImage: String?
     var isActive: Bool = false
+    var usesEnsembleGlyph: Bool = false
 
-    init(_ title: String, systemImage: String, isActive: Bool = false) {
+    init(
+        _ title: String, systemImage: String? = nil, isActive: Bool = false,
+        usesEnsembleGlyph: Bool = false
+    ) {
         self.title = title
         self.systemImage = systemImage
         self.isActive = isActive
+        self.usesEnsembleGlyph = usesEnsembleGlyph
     }
 
     var body: some View {
-        Label(title, systemImage: systemImage)
-            .labelStyle(.iconOnly)
+        Group {
+            if usesEnsembleGlyph {
+                ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 15)
+            } else if let systemImage {
+                Image(systemName: systemImage)
+            }
+        }
             .toolbarIconPillChrome(isActive: isActive)
             .accessibilityLabel(Text(title))
             .accessibilityAddTraits(isActive ? .isSelected : [])
@@ -3640,12 +3653,12 @@ func twParticipantsSignature(_ participants: [RemoteEnsembleState.Participant]) 
 // AttributedString and @mentions tinted by participant provider accent.
 // Deliberately dependency-free and bounded (preview text is ≤ a few KB).
 
-/// Monoline mnemonic glyph — fallback when no first-party logo exists
+/// Provider mnemonic glyph — fallback when no first-party logo exists
 /// (Ensemble, unknown providers). Prefer ``ProviderLogoIcon`` for ordinary
-/// provider identity. Loads a white-on-alpha template PNG from the app asset
-/// catalog or package resources and paints a black contrast silhouette behind
-/// the provider accent. One master still serves every theme; providers without
-/// a baked glyph keep a colored dot.
+/// provider identity. Ordinary glyphs load a white-on-alpha template PNG and
+/// receive a provider tint plus black contrast at runtime. Ensemble preserves
+/// its full-colour Confluence Loom PNG as original artwork; its black silhouette
+/// and dual-ink sparkles are already safe on light and dark surfaces.
 public struct ProviderGlyphIcon: View {
     let provider: String?
     let modelId: String?
@@ -3675,8 +3688,7 @@ public struct ProviderGlyphIcon: View {
             if let ui = UIImage(named: "provider-glyph-\(provider)") {
                 return Image(uiImage: ui)
             }
-            if let url = Bundle.module.url(
-                forResource: "provider-glyph-\(provider)", withExtension: "png"),
+            if let url = bundledResourceURL(for: provider),
                 let data = try? Data(contentsOf: url),
                 let ui = UIImage(data: data)
             {
@@ -3684,6 +3696,20 @@ public struct ProviderGlyphIcon: View {
             }
         #endif
         return nil
+    }
+
+    static func bundledResourceURL(for provider: String?) -> URL? {
+        guard let provider = provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased(),
+            !provider.isEmpty
+        else { return nil }
+        return Bundle.module.url(
+            forResource: "provider-glyph-\(provider)", withExtension: "png")
+    }
+
+    static func usesOriginalArtwork(provider: String?, isEnsemble: Bool) -> Bool {
+        isEnsemble
+            || provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+                == "ensemble"
     }
 
     private var contrastOffset: CGFloat {
@@ -3716,10 +3742,19 @@ public struct ProviderGlyphIcon: View {
         .frame(width: size, height: size)
     }
 
+    private func fullColourGlyph(_ glyph: Image) -> some View {
+        glyph
+            .renderingMode(.original)
+            .resizable()
+            .interpolation(.high)
+            .scaledToFit()
+            .frame(width: size, height: size)
+    }
+
     public var body: some View {
-        if isEnsemble {
+        if Self.usesOriginalArtwork(provider: provider, isEnsemble: isEnsemble) {
             if let glyph = Self.glyphImage(for: "ensemble") {
-                glyphWithContrast(glyph, accent: TWTheme.providerAccent("ensemble"))
+                fullColourGlyph(glyph)
             } else {
                 Image(systemName: "star.fill")
                     .font(.system(size: size * 0.72, weight: .semibold))
@@ -3769,7 +3804,7 @@ enum ProviderLogoAssetResolver {
 /// Original-colour first-party provider mark (design-assets provider-logos,
 /// vendored under package Resources). Prefer this over ``ProviderGlyphIcon``
 /// for provider identity anywhere beside a label or in list chrome. Ensemble
-/// and unknown providers fall back to the monoline glyph.
+/// and unknown providers fall back to TaskWraith's provider glyph.
 public struct ProviderLogoIcon: View {
     @Environment(\.colorScheme) private var colorScheme
 
@@ -5371,9 +5406,8 @@ private struct ComposerEnsembleToggleControl: View {
                 Label("Ensemble off", systemImage: enabled ? "" : "checkmark")
             }
         } label: {
-            Image(systemName: enabled ? "person.3.fill" : "person.3")
-                .font(.system(size: 11, weight: .semibold))
-                .foregroundStyle(enabled ? TWTheme.chroma2 : TWTheme.textTertiary)
+            ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 14)
+                .opacity(enabled ? 1 : 0.55)
                 .padding(.horizontal, 6)
                 .padding(.vertical, 4)
                 .background(
@@ -7379,7 +7413,7 @@ public struct AppSettingsSheet: View {
                     detail: "See quota and activity snapshots broadcast by the desktop."
                 )
                 SettingsInfoRow(
-                    icon: "person.3.sequence",
+                    icon: "ensemble",
                     title: "Ensemble basics",
                     detail: "Learn turn-bound and continuous multi-provider workflows from the remote view."
                 )
@@ -7849,10 +7883,17 @@ private struct SettingsInfoRow: View {
 
     var body: some View {
         HStack(alignment: .top, spacing: appScale.scaled(10)) {
-            Image(systemName: icon)
-                .foregroundStyle(TWTheme.chroma1)
-                .frame(width: appScale.scaled(22))
-                .padding(.top, 1)
+            Group {
+                if icon == "ensemble" {
+                    ProviderGlyphIcon(
+                        provider: "ensemble", isEnsemble: true, size: appScale.scaled(18))
+                } else {
+                    Image(systemName: icon)
+                        .foregroundStyle(TWTheme.chroma1)
+                }
+            }
+            .frame(width: appScale.scaled(22))
+            .padding(.top, 1)
             VStack(alignment: .leading, spacing: 2) {
                 Text(title)
                     .font(.body.weight(.semibold))

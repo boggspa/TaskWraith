@@ -361,7 +361,9 @@ struct FirstLaunchSheetView: View {
     }
 
     private var ensembleSection: some View {
-        FirstLaunchSection(title: "Ensemble Basics", systemImage: "person.3.sequence") {
+        FirstLaunchSection(
+            title: "Ensemble Basics", usesEnsembleGlyph: true
+        ) {
             VStack(alignment: .leading, spacing: 12) {
                 HStack(spacing: 8) {
                     ForEach(ensembleRoster.prefix(4)) { entry in
@@ -466,25 +468,35 @@ struct FirstLaunchSheetView: View {
 
 private struct FirstLaunchSection<Content: View>: View {
     let title: String
-    let systemImage: String
+    let systemImage: String?
     var accent: Bool
+    var usesEnsembleGlyph: Bool
     private let content: Content
 
     init(
-        title: String, systemImage: String, accent: Bool = false,
+        title: String, systemImage: String? = nil, accent: Bool = false,
+        usesEnsembleGlyph: Bool = false,
         @ViewBuilder content: () -> Content
     ) {
         self.title = title
         self.systemImage = systemImage
         self.accent = accent
+        self.usesEnsembleGlyph = usesEnsembleGlyph
         self.content = content()
     }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            Label(title, systemImage: systemImage)
-                .font(.headline.weight(.semibold))
-                .foregroundStyle(TWTheme.textPrimary)
+            HStack(spacing: 8) {
+                if usesEnsembleGlyph {
+                    ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 18)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                }
+                Text(title)
+            }
+            .font(.headline.weight(.semibold))
+            .foregroundStyle(TWTheme.textPrimary)
             content
         }
         .padding(14)

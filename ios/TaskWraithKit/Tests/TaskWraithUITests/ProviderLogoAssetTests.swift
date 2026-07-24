@@ -1,10 +1,80 @@
 import Foundation
 import Testing
 
+#if canImport(CoreGraphics) && canImport(ImageIO)
+import CoreGraphics
+import ImageIO
+#endif
+
 @testable import TaskWraithUI
 
 @Suite("Provider logo assets")
 struct ProviderLogoAssetTests {
+    private struct PixelStats {
+        var transparent = 0
+        var chromatic = 0
+        var black = 0
+        var light = 0
+        var opaqueColours = Set<UInt32>()
+    }
+
+    private func decodedPixelStats(at url: URL) throws -> PixelStats {
+        #if canImport(CoreGraphics) && canImport(ImageIO)
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+            let image = CGImageSourceCreateImageAtIndex(source, 0, nil)
+        else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        let bytesPerRow = image.width * 4
+        guard
+            let context = CGContext(
+                data: nil,
+                width: image.width,
+                height: image.height,
+                bitsPerComponent: 8,
+                bytesPerRow: bytesPerRow,
+                space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue
+                    | CGBitmapInfo.byteOrder32Big.rawValue),
+            let data = context.data
+        else {
+            throw CocoaError(.fileReadCorruptFile)
+        }
+        context.draw(
+            image,
+            in: CGRect(x: 0, y: 0, width: image.width, height: image.height))
+
+        let pixels = data.assumingMemoryBound(to: UInt8.self)
+        var stats = PixelStats()
+        for offset in stride(from: 0, to: bytesPerRow * image.height, by: 4) {
+            let red = pixels[offset]
+            let green = pixels[offset + 1]
+            let blue = pixels[offset + 2]
+            let alpha = pixels[offset + 3]
+            if alpha == 0 {
+                stats.transparent += 1
+            }
+            guard alpha > 220 else { continue }
+            let high = max(red, max(green, blue))
+            let low = min(red, min(green, blue))
+            if Int(high) - Int(low) > 30 {
+                stats.chromatic += 1
+            }
+            if high < 24 {
+                stats.black += 1
+            }
+            if low > 230 {
+                stats.light += 1
+            }
+            stats.opaqueColours.insert(
+                UInt32(red) << 16 | UInt32(green) << 8 | UInt32(blue))
+        }
+        return stats
+        #else
+        throw CocoaError(.featureUnsupported)
+        #endif
+    }
+
     @Test func fullColourProvidersUseOneAssetAcrossAppearances() {
         for provider in ["gemini", "codex", "claude", "kimi", "antigravity"] {
             let expected = "provider-logo-\(provider)"
@@ -66,5 +136,41 @@ struct ProviderLogoAssetTests {
             let data = try Data(contentsOf: url)
             #expect(data.prefix(pngSignature.count) == pngSignature)
         }
+    }
+
+    @MainActor
+    @Test func ensembleGlyphPreservesItsBundledFullColourArtwork() throws {
+        #expect(ProviderGlyphIcon.usesOriginalArtwork(provider: nil, isEnsemble: true))
+        #expect(ProviderGlyphIcon.usesOriginalArtwork(provider: " EnSeMbLe ", isEnsemble: false))
+        #expect(!ProviderGlyphIcon.usesOriginalArtwork(provider: "codex", isEnsemble: false))
+
+        let url = try #require(ProviderGlyphIcon.bundledResourceURL(for: "ensemble"))
+        let data = try Data(contentsOf: url)
+        let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+        #expect(data.prefix(pngSignature.count) == pngSignature)
+
+        let stats = try decodedPixelStats(at: url)
+        #expect(stats.transparent > 0)
+        #expect(stats.chromatic > 0)
+        #expect(stats.black > 0)
+        #expect(stats.light > 0)
+        #expect(stats.opaqueColours.count > 100)
+
+        var iosRoot = URL(fileURLWithPath: #filePath)
+        for _ in 0..<4 {
+            iosRoot.deleteLastPathComponent()
+        }
+        let appAssetDirectory = iosRoot.appendingPathComponent(
+            "TaskWraithApp/Assets.xcassets/provider-glyph-ensemble.imageset")
+        let appAssetData = try Data(
+            contentsOf: appAssetDirectory.appendingPathComponent("provider-glyph-ensemble.png"))
+        #expect(appAssetData == data)
+
+        let contentsData = try Data(
+            contentsOf: appAssetDirectory.appendingPathComponent("Contents.json"))
+        let contents = try #require(
+            JSONSerialization.jsonObject(with: contentsData) as? [String: Any])
+        let properties = try #require(contents["properties"] as? [String: Any])
+        #expect(properties["template-rendering-intent"] as? String == "original")
     }
 }

@@ -445,7 +445,7 @@ struct HomeView: View {
                     // write-capable, workspace-scoped variant (the phone's
                     // only chat-creation surface, so it's kept here).
                     // Ensemble is NOT created exclusively — turn it on from the
-                    // person.3 glyph in the composer bottom row (desktop parity).
+                    // Ensemble glyph in the composer bottom row (desktop parity).
                     Button("New chat") { openCanvas(.global) }
                     // Workspace-scoped + ensemble creation need a workspace;
                     // a General chat ("New chat") does not, so it stays
@@ -710,7 +710,7 @@ struct HomeView: View {
                 }
             } header: {
                 GlassPillHeader(
-                    title: "Ensembles", systemImage: "star",
+                    title: "Ensembles", usesEnsembleGlyph: true,
                     count: ensembleCards.count,
                     collapsed: collapsedSections.contains("ensembles")
                 ) { toggleSection("ensembles") }
@@ -1340,8 +1340,8 @@ struct TaskRow: View {
                     .padding(.top, 4)
             }
             // First-party provider logo from design-assets (vendored package
-            // resources). Ensemble / unknown providers fall back to the monoline
-            // glyph. Sub-agents with a character identity get their identicon.
+            // resources). Ensemble / unknown providers fall back to TaskWraith's
+            // provider glyph. Sub-agents with a character identity get their identicon.
             if let agentName = card.agentName {
                 AgentIdentityBadge(
                     name: agentName, accentHex: card.agentAccent,

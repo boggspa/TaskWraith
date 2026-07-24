@@ -2316,7 +2316,7 @@ struct ThreadDetailView: View {
                     Button {
                         model.rosterPresented = true
                     } label: {
-                        ToolbarIconPillLabel("Roster", systemImage: "person.3.fill")
+                        ToolbarIconPillLabel("Roster", usesEnsembleGlyph: true)
                     }
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open Roster")

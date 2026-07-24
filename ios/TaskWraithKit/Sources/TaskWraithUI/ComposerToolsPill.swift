@@ -83,9 +83,10 @@ public struct ComposerToolsPill: View {
             // the focused telemetry rail — rather than a generic "Tools" label.
             HStack(spacing: 8) {
                 if ensembleToggleVisible {
-                    Image(systemName: isEnsemble ? "person.3.fill" : "person.3")
-                        .font(.system(size: 11, weight: .semibold))
-                        .foregroundStyle(isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary)
+                    ProviderGlyphIcon(
+                        provider: "ensemble", isEnsemble: true, size: 14
+                    )
+                        .opacity(isEnsemble ? 1 : 0.55)
                         .frame(width: 16, height: 16)
                 }
 
@@ -209,8 +210,8 @@ private struct ComposerToolsPickerSheet: View {
                             rootRow(
                                 title: "Ensemble",
                                 subtitle: isEnsemble ? "On" : "Off",
-                                systemImage: isEnsemble ? "person.3.fill" : "person.3",
-                                accent: isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary)
+                                accent: isEnsemble ? TWTheme.chroma2 : TWTheme.textTertiary,
+                                usesEnsembleGlyph: true)
                         }
                     }
                     NavigationLink(value: ComposerToolsRoute.goal) {
@@ -318,12 +319,22 @@ private struct ComposerToolsPickerSheet: View {
 
     @ViewBuilder
     private func rootRow(
-        title: String, subtitle: String, systemImage: String, accent: Color
+        title: String, subtitle: String, systemImage: String? = nil, accent: Color,
+        usesEnsembleGlyph: Bool = false
     ) -> some View {
         HStack(spacing: 12) {
-            Image(systemName: systemImage)
-                .font(.body.weight(.semibold))
-                .foregroundStyle(accent)
+            Group {
+                if usesEnsembleGlyph {
+                    ProviderGlyphIcon(
+                        provider: "ensemble", isEnsemble: true, size: 18
+                    )
+                    .opacity(isEnsemble ? 1 : 0.55)
+                } else if let systemImage {
+                    Image(systemName: systemImage)
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(accent)
+                }
+            }
                 .frame(width: 28, height: 28)
                 .background(accent.opacity(0.12), in: RoundedRectangle(cornerRadius: 7))
             VStack(alignment: .leading, spacing: 2) {

@@ -12,9 +12,12 @@ Design constraints:
 
 - `24x24` SVG viewBox.
 - No container baked into the glyph.
-- Provider-accented linework via `--provider-accent`.
+- Provider-accented linework via `--provider-accent`, except Ensemble's
+  fixed-palette Confluence Loom.
 - A 1-unit black contrast pass behind the linework in every theme. Each
-  provider still has one catalogue entry.
+  provider still has one catalogue entry. Ensemble bakes that silhouette into
+  its full-colour artwork and adds dual-ink sparkles that remain legible on
+  light and dark surfaces.
 - No official raster assets.
 - No exact provider logo geometry.
 
@@ -36,12 +39,14 @@ Bake template PNGs (after changing any glyph):
 npx electron design-assets/provider-glyphs/render-glyph-pngs.cjs
 ```
 
-Renders each glyph white-on-transparent at 512px via Chromium (the SVGs
-lean on `<style>` + `var(--provider-accent)`, which qlmanage/NSImage
-flatten onto a white card). Writes masters to `png/` and copies into the
-iOS package resources, where `ProviderGlyphIcon` tints them with the
-provider accent and adds the black contrast pass at runtime
-(`renderingMode(.template)`). The baker intentionally strips the SVG contrast
-copy so the template mask can be tinted independently.
+Renders each glyph on transparency at 512px via Chromium (the SVGs lean on
+`<style>` + paint servers, which qlmanage/NSImage may flatten onto a white
+card). Ordinary providers are written as white template masters, copied into
+the iOS package resources, tinted by `ProviderGlyphIcon`, and given a runtime
+black contrast pass. Ensemble is written as
+`png/provider-glyph-ensemble.png`, preserving its full palette and baked
+contrast; the baker synchronizes both the SwiftPM resource and the app asset
+catalog because the latter wins `UIImage(named:)` lookup.
+Pass `--provider=ensemble` to refresh only the full-colour Ensemble copies.
 After changing glyph geometry, also sync any inline desktop copy in
 `src/renderer/src/components/icons/ProviderGlyph.tsx`.

@@ -1,8 +1,9 @@
 /*
- * Bake the provider glyphs into white-on-transparent template PNGs
- * for platforms that can't consume the SVGs directly. The iOS package tints
- * them at runtime (`renderingMode(.template)` + provider accent), so ONE
- * white master per provider replaces per-color exports.
+ * Bake provider glyphs into transparent PNGs for platforms that cannot consume
+ * the SVGs directly. Ordinary providers remain white template masks that iOS
+ * tints at runtime. Ensemble is the deliberate full-colour exception: its
+ * provider spectrum, pooled blue hub, black contrast, and pearl sparkles are
+ * preserved exactly and iOS renders that PNG as original artwork.
  *
  * Chromium does the rasterizing — the glyphs lean on `<style>` blocks and
  * `var(--provider-accent)`, which macOS-native rasterizers (qlmanage, NSImage)
@@ -12,11 +13,13 @@
  *   npx electron design-assets/provider-glyphs/render-glyph-pngs.cjs
  *
  * Outputs:
- *   design-assets/provider-glyphs/png/provider-glyph-<id>-white.png  (masters)
+ *   design-assets/provider-glyphs/png/provider-glyph-<id>-white.png  (templates)
+ *   design-assets/provider-glyphs/png/provider-glyph-ensemble.png    (full colour)
  *   ios/TaskWraithKit/Sources/TaskWraithUI/Resources/provider-glyph-<id>.png
+ *   ios/TaskWraithApp/Assets.xcassets/provider-glyph-ensemble.imageset/
  */
 const { app, BrowserWindow } = require('electron')
-const { readFileSync, writeFileSync, readdirSync, mkdirSync } = require('fs')
+const { readFileSync, writeFileSync, readdirSync, mkdirSync, rmSync } = require('fs')
 const { join, basename } = require('path')
 
 const GLYPH_DIR = join(__dirname, 'glyphs')
@@ -30,6 +33,24 @@ const IOS_RESOURCES = join(
   'Sources',
   'TaskWraithUI',
   'Resources'
+)
+const IOS_ENSEMBLE_ASSET = join(
+  __dirname,
+  '..',
+  '..',
+  'ios',
+  'TaskWraithApp',
+  'Assets.xcassets',
+  'provider-glyph-ensemble.imageset',
+  'provider-glyph-ensemble.png'
+)
+const FULL_COLOUR_GLYPHS = new Set(['ensemble'])
+const requestedProviders = new Set(
+  process.argv
+    .filter((arg) => arg.startsWith('--provider='))
+    .flatMap((arg) => arg.slice('--provider='.length).split(','))
+    .map((id) => id.trim().toLowerCase())
+    .filter(Boolean)
 )
 // 512px masters: home rows render at ~16-20pt, so this stays crisp at @3x
 // even if a future surface shows the glyph at 10x the row size.
@@ -88,14 +109,31 @@ async function main() {
   await win.loadURL('data:text/html,<body></body>')
 
   mkdirSync(MASTER_DIR, { recursive: true })
-  const glyphs = readdirSync(GLYPH_DIR).filter((file) => file.endsWith('.svg'))
+  const glyphs = readdirSync(GLYPH_DIR).filter((file) => {
+    if (!file.endsWith('.svg')) return false
+    return requestedProviders.size === 0 || requestedProviders.has(basename(file, '.svg'))
+  })
+  if (glyphs.length === 0) {
+    throw new Error(
+      `No provider glyphs matched: ${Array.from(requestedProviders).join(', ') || '(all)'}`
+    )
+  }
   for (const file of glyphs.sort()) {
     const id = basename(file, '.svg')
-    const svg = whitened(readFileSync(join(GLYPH_DIR, file), 'utf8'))
+    const source = readFileSync(join(GLYPH_DIR, file), 'utf8')
+    const isFullColour = FULL_COLOUR_GLYPHS.has(id)
+    const svg = isFullColour ? source : whitened(source)
     const png = await renderGlyph(win, svg)
-    writeFileSync(join(MASTER_DIR, `provider-glyph-${id}-white.png`), png)
+    const masterName = isFullColour ? `provider-glyph-${id}.png` : `provider-glyph-${id}-white.png`
+    writeFileSync(join(MASTER_DIR, masterName), png)
     writeFileSync(join(IOS_RESOURCES, `provider-glyph-${id}.png`), png)
-    console.log(`rendered ${id} (${png.length} bytes)`)
+    if (id === 'ensemble') {
+      rmSync(join(MASTER_DIR, 'provider-glyph-ensemble-white.png'), { force: true })
+      writeFileSync(IOS_ENSEMBLE_ASSET, png)
+    }
+    console.log(
+      `rendered ${id} (${png.length} bytes, ${isFullColour ? 'full colour' : 'template'})`
+    )
   }
   app.exit(0)
 }
