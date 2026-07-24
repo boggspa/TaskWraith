@@ -186,14 +186,47 @@ describe('useTranscriptScrollState', () => {
     // The browser can apply a native scrollbar move before it has delivered
     // the matching scroll event. A streaming render must see that live DOM
     // position and decline its layout-effect snap instead of teleporting the
-    // reader to the tail.
+    // reader to the tail. Content and viewport heights are STABLE here —
+    // that stability is what attributes the movement to the reader (an
+    // unstable pair is indistinguishable from a fold clamp and keeps app
+    // ownership instead; see the participant-boundary test below).
     hookHarness.effectFactories[0]?.()
     ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 620
-    ;(hookHarness.scroller as unknown as { scrollHeight: number }).scrollHeight = 1_240
     hookHarness.layoutEffectFactories[2]?.()
 
     expect(hookHarness.stateSetters[0]).toHaveBeenLastCalledWith(false)
     expect((hookHarness.scroller as unknown as { scrollTop: number }).scrollTop).toBe(620)
+  })
+
+  it('keeps follow and completes the snap across a participant-boundary fold + mount', () => {
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 800
+    vi.stubGlobal(
+      'requestAnimationFrame',
+      vi.fn(() => 1)
+    )
+    vi.stubGlobal('cancelAnimationFrame', vi.fn())
+    useTranscriptScrollState({
+      chatId: 'chat-1',
+      messages: [{ id: 'm1' }],
+      runCompleteNotice: null,
+      streamingActive: true
+    })
+
+    // Ensemble hand-off: the settling participant's stack folds to a
+    // one-liner (content shrinks, the browser clamps scrollTop 800 → 500 and
+    // only QUEUES the scroll event), then the next participant's rows mount
+    // in an adjacent commit (scrollHeight 1000 → 1100) before any of that is
+    // sampled. The layout effect must read this as app-owned churn — keep
+    // follow, complete the snap — not as a reader drag (the pre-stability
+    // guard released follow here and stranded the transcript mid-air at
+    // every participant boundary).
+    hookHarness.effectFactories[0]?.()
+    ;(hookHarness.scroller as unknown as { scrollTop: number }).scrollTop = 500
+    ;(hookHarness.scroller as unknown as { scrollHeight: number }).scrollHeight = 1_100
+    hookHarness.layoutEffectFactories[2]?.()
+
+    expect(hookHarness.stateSetters[0]).not.toHaveBeenCalled()
+    expect((hookHarness.scroller as unknown as { scrollTop: number }).scrollTop).toBe(1_100)
   })
 
   it('publishes follow changes after a shared consumer pre-mutates the decision ref', () => {

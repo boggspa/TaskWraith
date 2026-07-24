@@ -865,7 +865,16 @@ describe('TranscriptScroll', () => {
       ).toBe(true)
     })
 
-    it('still recognises reader scroll-away while new transcript content grows', () => {
+    it('keeps app ownership when the sample pair straddles content growth', () => {
+      // The ensemble participant-boundary composite: the settling stack
+      // folds (shrink → browser clamps scrollTop down) and the next
+      // participant's rows mount in an adjacent commit (growth) before this
+      // pair is evaluated. Net signature — scrollTop dropped while content
+      // grew — is identical to a phantom scrollbar drag during streaming,
+      // but a drag cannot change content height, so an unstable pair is
+      // unattributable and must not release follow (this exact input
+      // previously returned true and lost the tail at every hand-off). A
+      // real untracked drag re-qualifies on its next stable event pair.
       expect(
         shouldTreatUnclassifiedNativeScrollAsUserScrollAway({
           ...atLiveEdge,
@@ -873,7 +882,7 @@ describe('TranscriptScroll', () => {
           nextScrollHeight: 1_240,
           nextClientHeight: 200
         })
-      ).toBe(true)
+      ).toBe(false)
     })
 
     it('does not mistake a shrink clamp or viewport growth for reader intent', () => {

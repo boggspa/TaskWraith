@@ -579,8 +579,32 @@ export function shouldTreatScrollAsUserScrollAway(input: {
  * Chromium's native scrollbar can move a scroll container without delivering
  * a usable wheel or pointer gesture to its content element. Treat that
  * unclassified upward movement as reader intent only when its geometry rules
- * out the two browser-owned clamps that look identical in a bare `scroll`
- * event: content shrinking, or the viewport growing.
+ * out every browser-owned write that looks identical in a bare `scroll`
+ * event — which in practice means the content and viewport heights must be
+ * STABLE between the two samples:
+ *
+ *   - Content SHRINK: a tail collapse clamps a pinned scrollTop downward
+ *     with no gesture (the original ActivityStack case).
+ *   - Viewport growth: same clamp, different cause.
+ *   - Content GROWTH: a scrollbar drag cannot change content height, so a
+ *     height change means the samples STRADDLE app-owned layout and the
+ *     movement is unattributable. The killer composite is the ensemble
+ *     participant boundary: the settling participant's stack folds to a
+ *     one-liner (shrink → browser clamps scrollTop down, scroll event
+ *     queued), and the next participant's rows mount in an adjacent commit
+ *     (growth) before this evaluation runs. Sampled across both commits the
+ *     pair reads "scrollTop dropped while content grew — far from bottom",
+ *     which the pre-stability guard scored as a reader drag: follow
+ *     disengaged, the layout snap aborted, and the transcript silently lost
+ *     its tail at every participant hand-off.
+ *
+ * Ambiguous churn frames therefore keep APP ownership: the layout-effect
+ * snap and resize re-pin proceed, and a real-but-untracked drag defers its
+ * disengage to the next event pair with stable geometry (native drags emit a
+ * stream of events, so that pair arrives within a frame or two). This cannot
+ * reintroduce the fight-the-reader glitch for ordinary gestures: wheel,
+ * touch, key, and gutter-tracked scrollbar drags disengage through the
+ * explicit intent paths, which do not consult geometry at all.
  *
  * This is deliberately narrower than `shouldTreatScrollAsUserScrollAway`.
  * The regular wheel/touch/key and tracked-scrollbar paths still own the
@@ -605,10 +629,12 @@ export function shouldTreatUnclassifiedNativeScrollAsUserScrollAway(input: {
   ]
   if (geometry.some((value) => !Number.isFinite(value))) return false
 
-  // A tail shrink or a taller viewport can clamp a previously pinned
-  // scrollTop downward without any user gesture. Keep app ownership in those
-  // cases; the normal resize re-pin path will restore the live edge.
+  // Geometry stability requirement — see the doc comment above. Shrink and
+  // viewport growth are browser clamps; content growth means the sample pair
+  // straddles an app-owned layout change (participant-boundary fold +
+  // next-participant mount) and attribution is impossible.
   if (input.nextScrollHeight < input.previousScrollHeight - 0.5) return false
+  if (input.nextScrollHeight > input.previousScrollHeight + 0.5) return false
   if (input.nextClientHeight > input.previousClientHeight + 0.5) return false
 
   return shouldTreatScrollAsUserScrollAway({
