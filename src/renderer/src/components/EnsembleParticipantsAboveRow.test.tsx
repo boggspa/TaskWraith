@@ -737,7 +737,7 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('status-answered')
   })
 
-  it('shows a Skip reads action for active read fan-out lanes without an active speaker', () => {
+  it('shows a Skip action for active read fan-out lanes without an active speaker', () => {
     const chat = makeChat([
       makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Explorer', order: 1 }),
       makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Worker', order: 2 })
@@ -783,10 +783,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         onSkipReadFanout={() => undefined}
       />
     )
-    expect(html).toContain('Skip reads')
+    expect(html).toContain('>Skip</button>')
+    expect(html).not.toContain('Skip reads')
   })
 
-  it('prioritizes the contextual Skip reads action in the stacked six-participant rail', () => {
+  it('prioritizes the contextual Skip action in the stacked six-participant rail', () => {
     const participants = Array.from({ length: 6 }, (_, index) =>
       makeParticipant({
         id: `ensemble-participant-${index + 1}`,
@@ -834,8 +835,8 @@ describe('EnsembleParticipantsAboveRow', () => {
 
     expect(html).toContain('ensemble-above-row-chips is-wrapped')
     expect(html).toContain('ensemble-above-row-controls is-stacked')
-    expect(html).not.toContain('>Skip</button>')
-    expect(html).toContain('>Skip reads</button>')
+    expect(html).toContain('>Skip</button>')
+    expect(html).not.toContain('Skip reads')
 
     const fallbackHtml = renderToStaticMarkup(
       <EnsembleParticipantsAboveRow
@@ -847,7 +848,7 @@ describe('EnsembleParticipantsAboveRow', () => {
       />
     )
     expect(fallbackHtml).toContain('>Skip</button>')
-    expect(fallbackHtml).not.toContain('>Skip reads</button>')
+    expect(fallbackHtml).not.toContain('Skip reads')
 
     const css = readFileSync(
       new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),

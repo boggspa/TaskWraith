@@ -1589,7 +1589,7 @@ export function EnsembleParticipantsAboveRow({
         The control rail keeps transient round actions from changing
         the chip grid's width. With 1–5 participants it remains the
         existing inline add / remove / Skip sequence. At 6+ (the first
-        wrapped roster), Skip / Skip reads occupy a reserved row above
+        wrapped roster), Skip actions occupy a reserved row above
         add/remove, so mounting or unmounting an action cannot make the
         participant columns jump.
       */}
@@ -1677,7 +1677,7 @@ export function EnsembleParticipantsAboveRow({
               onClick={onSkipReadFanout}
               title="Stop the active read-only fan-out lanes and continue the round with the remaining serial step. Parallel writer lanes cannot be skipped here."
             >
-              Skip reads
+              Skip
             </PillButton>
           )}
         </div>

@@ -1118,7 +1118,7 @@
  * add / remove / transient-action sequence on one line. Once the chip
  * grid wraps (6+ participants), the rail becomes two fixed rows: round
  * actions above and add/remove below. Its fixed 72px inline size is
- * reserved even when no round action is mounted, so Skip / Skip reads
+ * reserved even when no round action is mounted, so Skip actions
  * cannot resize the participant grid as orchestration phases change. */
 .ensemble-above-row-controls {
   display: flex;
