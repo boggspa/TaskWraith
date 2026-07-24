@@ -950,7 +950,11 @@ struct Composer: View {
         if isRunActive {
             return canCancelRun ? TWTheme.statusFailed : TWTheme.textMuted
         }
-        return sendDisabled ? TWTheme.textMuted : accent
+        // Neutral, theme-driven send affordance (white in dark themes, near-
+        // black in light) instead of the provider accent / Ensemble violet —
+        // the send action reads the same in every chat kind, with contrast
+        // carried by the theme's primary text token.
+        return sendDisabled ? TWTheme.textMuted : TWTheme.textPrimary
     }
 
     private var sendDisabled: Bool {
