@@ -1,0 +1,25 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-confluence-knot-title ensemble-confluence-knot-desc" style="color:#E8DDE3;--ensemble-accent:#E8DDE3">
+  <title id="ensemble-confluence-knot-title">Ensemble Confluence Knot draft</title>
+  <desc id="ensemble-confluence-knot-desc">Three equal collaborators weave around a shared triangular negative space.</desc>
+  <style>
+    .line,.accent{fill:none;stroke:var(--ensemble-accent,currentColor);stroke-linecap:round;stroke-linejoin:round}
+    .line{stroke-width:1.7}
+    .accent{stroke-width:1.85}
+    .contrast{pointer-events:none}
+    .contrast .line{stroke:#000;stroke-width:2.7}
+    .contrast .accent{stroke:#000;stroke-width:2.85}
+  </style>
+  <defs>
+    <path id="confluence-arm" class="accent" d="M12 3.4c3.35 0 6.1 2.7 6.1 6.05 0 2.45-1.45 4.55-3.55 5.5"/>
+  </defs>
+  <g class="contrast" aria-hidden="true">
+    <use href="#confluence-arm"/>
+    <use href="#confluence-arm" transform="rotate(120 12 12)"/>
+    <use href="#confluence-arm" transform="rotate(240 12 12)"/>
+  </g>
+  <g>
+    <use href="#confluence-arm"/>
+    <use href="#confluence-arm" transform="rotate(120 12 12)"/>
+    <use href="#confluence-arm" transform="rotate(240 12 12)"/>
+  </g>
+</svg>

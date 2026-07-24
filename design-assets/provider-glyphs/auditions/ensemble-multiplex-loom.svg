@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-multiplex-loom-title ensemble-multiplex-loom-desc" style="color:#E8DDE3;--ensemble-accent:#E8DDE3">
+  <title id="ensemble-multiplex-loom-title">Ensemble Multiplex Loom draft</title>
+  <desc id="ensemble-multiplex-loom-desc">Three channels from each side enter a shared diamond switch fabric and emerge as distinct routes.</desc>
+  <style>
+    .line,.accent{fill:none;stroke:var(--ensemble-accent,currentColor);stroke-linecap:round;stroke-linejoin:round}
+    .line{stroke-width:1.7}
+    .accent{stroke-width:1.85}
+    .contrast{pointer-events:none}
+    .contrast .line{stroke:#000;stroke-width:2.7}
+    .contrast .accent{stroke:#000;stroke-width:2.85}
+  </style>
+  <g class="contrast" aria-hidden="true">
+    <path class="accent" d="m12 8.8 3.2 3.2-3.2 3.2L8.8 12Z"/>
+    <path class="line" d="M3 5.25h2.25c2.15 0 2.85 2.45 4.4 4.4M3 12h5.8M3 18.75h2.25c2.15 0 2.85-2.45 4.4-4.4"/>
+    <path class="line" d="M21 5.25h-2.25c-2.15 0-2.85 2.45-4.4 4.4M21 12h-5.8M21 18.75h-2.25c-2.15 0-2.85-2.45-4.4-4.4"/>
+  </g>
+  <g>
+    <path class="accent" d="m12 8.8 3.2 3.2-3.2 3.2L8.8 12Z"/>
+    <path class="line" d="M3 5.25h2.25c2.15 0 2.85 2.45 4.4 4.4M3 12h5.8M3 18.75h2.25c2.15 0 2.85-2.45 4.4-4.4"/>
+    <path class="line" d="M21 5.25h-2.25c-2.15 0-2.85 2.45-4.4 4.4M21 12h-5.8M21 18.75h-2.25c-2.15 0-2.85-2.45-4.4-4.4"/>
+  </g>
+</svg>

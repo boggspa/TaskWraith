@@ -215,6 +215,38 @@ function classPrefixForAsset(key: string): string {
   return `agent-pool-icon-${stem}-`
 }
 
+function namespaceInlineSvgIds(raw: string, key: string, instanceId: string): string {
+  const prefix = classPrefixForAsset(`${key}-${instanceId}`)
+  const idMap = new Map<string, string>()
+  for (const match of raw.matchAll(/\sid="([^"]+)"/g)) {
+    idMap.set(match[1], `${prefix}${match[1]}`)
+  }
+  if (idMap.size === 0) return raw
+
+  let namespaced = raw.replace(/\sid="([^"]+)"/g, (match, id: string) => {
+    const replacement = idMap.get(id)
+    return replacement ? ` id="${replacement}"` : match
+  })
+  namespaced = namespaced.replace(
+    /\b(href|xlink:href)="#([^"]+)"/g,
+    (match, attribute: string, id: string) => {
+      const replacement = idMap.get(id)
+      return replacement ? `${attribute}="#${replacement}"` : match
+    }
+  )
+  namespaced = namespaced.replace(/url\(#([^)]+)\)/g, (match, id: string) => {
+    const replacement = idMap.get(id)
+    return replacement ? `url(#${replacement})` : match
+  })
+  return namespaced.replace(/\saria-labelledby="([^"]+)"/g, (_match, ids: string) => {
+    const replacements = ids
+      .split(/\s+/)
+      .map((id) => idMap.get(id) ?? id)
+      .join(' ')
+    return ` aria-labelledby="${replacements}"`
+  })
+}
+
 function namespaceInlineSvgClasses(raw: string, key: string): string {
   const prefix = classPrefixForAsset(key)
   const classNames = new Set<string>()
@@ -316,10 +348,22 @@ function mergeRootSvgStyle(existing: string, accent: string): string {
  * `currentColor` + `--agent-accent` to `accent`. Fixed-palette icons (provider
  * brand glyphs, full-colour ghost art) render natively, accent ignored.
  */
-export function preparePoolIconSvg(asset: PoolIconAsset, size: number, accent?: string): string {
+export function preparePoolIconSvg(
+  asset: PoolIconAsset,
+  size: number,
+  accent: string | undefined,
+  instanceId: string
+): string {
   const raw =
-    asset.group === 'Providers' ? normalizeProviderGlyphStroke(asset.raw) : asset.raw
-  let svg = namespaceInlineSvgClasses(raw, asset.key).replace(
+    asset.group === 'Providers' && asset.key !== 'provider:ensemble'
+      ? normalizeProviderGlyphStroke(asset.raw)
+      : asset.raw
+  const namespaceKey = `${asset.key}-${instanceId}`
+  let svg = namespaceInlineSvgIds(
+    namespaceInlineSvgClasses(raw, namespaceKey),
+    asset.key,
+    instanceId
+  ).replace(
     /^<svg\s+/,
     `<svg class="agent-pool-asset-svg" width="${size}" height="${size}" aria-hidden="true" focusable="false" `
   )

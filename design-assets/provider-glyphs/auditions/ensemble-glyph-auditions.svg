@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1400 920" role="img" aria-labelledby="ensemble-auditions-title ensemble-auditions-desc">
+  <title id="ensemble-auditions-title">Ensemble monoline glyph auditions</title>
+  <desc id="ensemble-auditions-desc">Four draft Ensemble glyphs inspired by matrix, multiplex, and collaboration.</desc>
+  <defs>
+    <style>
+      .sheet{fill:#0d0b10}
+      .card{fill:#17131b;stroke:#352b3a;stroke-width:2}
+      .chip{fill:#241d29;stroke:#44374a;stroke-width:1}
+      .eyebrow{font:600 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:2px;fill:#986781}
+      .title{font:700 30px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f6eef3}
+      .body{font:400 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#a99eaa}
+      .size{font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#867b88}
+      .glyph-line{fill:none;stroke:#e8dde3;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+      .glyph-accent{fill:none;stroke:#f7eef4;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}
+    </style>
+    <symbol id="tensor" viewBox="0 0 24 24">
+      <path class="glyph-line" d="M12 2.8 20.2 7.4v9.2L12 21.2l-8.2-4.6V7.4Z"/>
+      <path class="glyph-accent" d="m12 8.75 3.25 3.25L12 15.25 8.75 12Z"/>
+      <path class="glyph-line" d="M12 2.8v5.95M3.8 16.6 8.75 12M20.2 16.6 15.25 12"/>
+    </symbol>
+    <symbol id="loom" viewBox="0 0 24 24">
+      <path class="glyph-accent" d="m12 8.8 3.2 3.2-3.2 3.2L8.8 12Z"/>
+      <path class="glyph-line" d="M3 5.25h2.25c2.15 0 2.85 2.45 4.4 4.4M3 12h5.8M3 18.75h2.25c2.15 0 2.85-2.45 4.4-4.4"/>
+      <path class="glyph-line" d="M21 5.25h-2.25c-2.15 0-2.85 2.45-4.4 4.4M21 12h-5.8M21 18.75h-2.25c-2.15 0-2.85-2.45-4.4-4.4"/>
+    </symbol>
+    <path id="confluence-arm-sheet" class="glyph-accent" d="M12 3.4c3.35 0 6.1 2.7 6.1 6.05 0 2.45-1.45 4.55-3.55 5.5"/>
+    <symbol id="confluence" viewBox="0 0 24 24">
+      <use href="#confluence-arm-sheet"/>
+      <use href="#confluence-arm-sheet" transform="rotate(120 12 12)"/>
+      <use href="#confluence-arm-sheet" transform="rotate(240 12 12)"/>
+    </symbol>
+    <symbol id="braid" viewBox="0 0 24 24">
+      <path class="glyph-accent" d="M3 12h18"/>
+      <path class="glyph-line" d="M3 5.5h2.1c2.7 0 4.2 2.3 5.8 5.3M13.1 13.2c1.6 3 3.1 5.3 5.8 5.3H21"/>
+      <path class="glyph-line" d="M3 18.5h2.1c2.7 0 4.2-2.3 5.8-5.3M13.1 10.8c1.6-3 3.1-5.3 5.8-5.3H21"/>
+    </symbol>
+  </defs>
+
+  <rect class="sheet" width="1400" height="920"/>
+  <text class="eyebrow" x="70" y="68">ENSEMBLE · MONOLINE EXPLORATION</text>
+  <text class="title" x="70" y="112">Matrix, Multiplex &amp; Collaboration</text>
+  <text class="body" x="70" y="145">Draft geometry only · transparent 24×24 masters · no production integration</text>
+
+  <g transform="translate(70 185)">
+    <rect class="card" width="605" height="300" rx="30"/>
+    <text class="eyebrow" x="34" y="42">MATRIX</text>
+    <text class="title" x="34" y="82">Tensor Junction</text>
+    <text class="body" x="34" y="112">Three routes feed one shared aperture.</text>
+    <use href="#tensor" x="48" y="136" width="126" height="126"/>
+    <g transform="translate(235 154)">
+      <rect class="chip" width="330" height="84" rx="18"/>
+      <text class="size" x="22" y="28">14</text><use href="#tensor" x="18" y="38" width="14" height="14"/>
+      <text class="size" x="77" y="28">16</text><use href="#tensor" x="74" y="36" width="16" height="16"/>
+      <text class="size" x="142" y="28">24</text><use href="#tensor" x="138" y="32" width="24" height="24"/>
+      <text class="size" x="222" y="28">32</text><use href="#tensor" x="217" y="28" width="32" height="32"/>
+    </g>
+  </g>
+
+  <g transform="translate(725 185)">
+    <rect class="card" width="605" height="300" rx="30"/>
+    <text class="eyebrow" x="34" y="42">MULTIPLEX</text>
+    <text class="title" x="34" y="82">Multiplex Loom</text>
+    <text class="body" x="34" y="112">Distinct lanes share a switch fabric.</text>
+    <use href="#loom" x="48" y="136" width="126" height="126"/>
+    <g transform="translate(235 154)">
+      <rect class="chip" width="330" height="84" rx="18"/>
+      <text class="size" x="22" y="28">14</text><use href="#loom" x="18" y="38" width="14" height="14"/>
+      <text class="size" x="77" y="28">16</text><use href="#loom" x="74" y="36" width="16" height="16"/>
+      <text class="size" x="142" y="28">24</text><use href="#loom" x="138" y="32" width="24" height="24"/>
+      <text class="size" x="222" y="28">32</text><use href="#loom" x="217" y="28" width="32" height="32"/>
+    </g>
+  </g>
+
+  <g transform="translate(70 535)">
+    <rect class="card" width="605" height="300" rx="30"/>
+    <text class="eyebrow" x="34" y="42">COLLABORATION</text>
+    <text class="title" x="34" y="82">Confluence Knot</text>
+    <text class="body" x="34" y="112">Three equal voices weave around a shared center.</text>
+    <use href="#confluence" x="48" y="136" width="126" height="126"/>
+    <g transform="translate(235 154)">
+      <rect class="chip" width="330" height="84" rx="18"/>
+      <text class="size" x="22" y="28">14</text><use href="#confluence" x="18" y="38" width="14" height="14"/>
+      <text class="size" x="77" y="28">16</text><use href="#confluence" x="74" y="36" width="16" height="16"/>
+      <text class="size" x="142" y="28">24</text><use href="#confluence" x="138" y="32" width="24" height="24"/>
+      <text class="size" x="222" y="28">32</text><use href="#confluence" x="217" y="28" width="32" height="32"/>
+    </g>
+  </g>
+
+  <g transform="translate(725 535)">
+    <rect class="card" width="605" height="300" rx="30"/>
+    <text class="eyebrow" x="34" y="42">WILD CARD</text>
+    <text class="title" x="34" y="82">Braided Carrier</text>
+    <text class="body" x="34" y="112">Three channels exchange position in flight.</text>
+    <use href="#braid" x="48" y="136" width="126" height="126"/>
+    <g transform="translate(235 154)">
+      <rect class="chip" width="330" height="84" rx="18"/>
+      <text class="size" x="22" y="28">14</text><use href="#braid" x="18" y="38" width="14" height="14"/>
+      <text class="size" x="77" y="28">16</text><use href="#braid" x="74" y="36" width="16" height="16"/>
+      <text class="size" x="142" y="28">24</text><use href="#braid" x="138" y="32" width="24" height="24"/>
+      <text class="size" x="222" y="28">32</text><use href="#braid" x="217" y="28" width="32" height="32"/>
+    </g>
+  </g>
+
+  <text class="size" x="70" y="882">DRAFT A · 2026-07-24 · foreground preview; production contrast pass remains separate</text>
+</svg>

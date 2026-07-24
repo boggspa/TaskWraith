@@ -1,4 +1,4 @@
-import { useEffect, useState, type KeyboardEvent, type JSX } from 'react'
+import { useEffect, useId, useState, type KeyboardEvent, type JSX } from 'react'
 import {
   accentFromHue,
   DEFAULT_POOL_ICON_BRIGHTNESS,
@@ -53,13 +53,16 @@ function PoolAssetSwatch({
   size: number
   accent?: string
 }): JSX.Element {
+  const instanceId = useId().replace(/:/g, '')
   const swatchAccent = accent ?? asset.accent ?? '#9AA0AA'
   return (
     <span
       className="agent-pool-asset-icon"
       style={{ width: size, height: size, display: 'inline-flex', color: swatchAccent }}
       aria-hidden
-      dangerouslySetInnerHTML={{ __html: preparePoolIconSvg(asset, size, swatchAccent) }}
+      dangerouslySetInnerHTML={{
+        __html: preparePoolIconSvg(asset, size, swatchAccent, instanceId)
+      }}
     />
   )
 }

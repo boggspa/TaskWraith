@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1500 760" role="img" aria-labelledby="confluence-loom-comparison-title confluence-loom-comparison-desc">
+  <title id="confluence-loom-comparison-title">Confluence Knot and Multiplex Loom hybrid</title>
+  <desc id="confluence-loom-comparison-desc">The two parent concepts shown beside the new Confluence Loom hybrid.</desc>
+  <defs>
+    <style>
+      .sheet{fill:#0d0b10}
+      .card{fill:#17131b;stroke:#352b3a;stroke-width:2}
+      .result{fill:#1d1621;stroke:#68485c;stroke-width:3}
+      .chip{fill:#241d29;stroke:#44374a;stroke-width:1}
+      .eyebrow{font:600 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:2px;fill:#986781}
+      .title{font:700 30px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#f6eef3}
+      .hero{font:750 42px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#fff7fb}
+      .body{font:400 16px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#a99eaa}
+      .size{font:600 13px ui-monospace,SFMono-Regular,Menlo,monospace;fill:#867b88}
+      .operator{font:400 44px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;fill:#785b6d}
+      .glyph-line{fill:none;stroke:#e8dde3;stroke-width:1.7;stroke-linecap:round;stroke-linejoin:round}
+      .glyph-accent{fill:none;stroke:#fff7fb;stroke-width:1.85;stroke-linecap:round;stroke-linejoin:round}
+      .hybrid-spectrum{fill:none;stroke-linecap:round;stroke-linejoin:round}
+      .hybrid-line{stroke:url(#hybrid-provider-spectrum);stroke-width:1.7}
+      .hybrid-accent{stroke:url(#hybrid-hub-blue-pool);stroke-width:1.85}
+      .hybrid-tail-outline{fill:none;stroke:#030204;stroke-width:3.1;stroke-linecap:round;stroke-linejoin:round}
+      .hybrid-sparkle-outline{fill:#030204}
+      .hybrid-sparkle{fill:#f8faff}
+    </style>
+    <path id="knot-arm" class="glyph-accent" d="M12 3.4c3.35 0 6.1 2.7 6.1 6.05 0 2.45-1.45 4.55-3.55 5.5"/>
+    <symbol id="knot" viewBox="0 0 24 24">
+      <use href="#knot-arm"/>
+      <use href="#knot-arm" transform="rotate(120 12 12)"/>
+      <use href="#knot-arm" transform="rotate(240 12 12)"/>
+    </symbol>
+    <symbol id="loom" viewBox="0 0 24 24">
+      <path class="glyph-accent" d="m12 8.8 3.2 3.2-3.2 3.2L8.8 12Z"/>
+      <path class="glyph-line" d="M3 5.25h2.25c2.15 0 2.85 2.45 4.4 4.4M3 12h5.8M3 18.75h2.25c2.15 0 2.85-2.45 4.4-4.4"/>
+      <path class="glyph-line" d="M21 5.25h-2.25c-2.15 0-2.85 2.45-4.4 4.4M21 12h-5.8M21 18.75h-2.25c-2.15 0-2.85-2.45-4.4-4.4"/>
+    </symbol>
+    <linearGradient id="hybrid-provider-spectrum" gradientUnits="userSpaceOnUse" x1="7.5" y1="7.5" x2="18.2" y2="18.2" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#986781"/>
+      <stop offset=".067" stop-color="#705AFF"/>
+      <stop offset=".133" stop-color="#8C52EF"/>
+      <stop offset=".20" stop-color="#D72D82"/>
+      <stop offset=".267" stop-color="#E22B17"/>
+      <stop offset=".333" stop-color="#B16105"/>
+      <stop offset=".40" stop-color="#BE5809"/>
+      <stop offset=".467" stop-color="#8D7312"/>
+      <stop offset=".533" stop-color="#538200"/>
+      <stop offset=".60" stop-color="#308713"/>
+      <stop offset=".667" stop-color="#1A8562"/>
+      <stop offset=".733" stop-color="#0C8194"/>
+      <stop offset=".80" stop-color="#0073E6"/>
+      <stop offset=".867" stop-color="#346EEC"/>
+      <stop offset=".933" stop-color="#3079BC"/>
+      <stop offset="1" stop-color="#757575"/>
+    </linearGradient>
+    <linearGradient id="hybrid-hub-blue-pool" gradientUnits="userSpaceOnUse" x1="9.15" y1="12" x2="14.85" y2="12" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#0C8194"/>
+      <stop offset=".34" stop-color="#0073E6"/>
+      <stop offset=".68" stop-color="#346EEC"/>
+      <stop offset="1" stop-color="#3079BC"/>
+    </linearGradient>
+    <path id="hybrid-channel" d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4"/>
+    <path id="hybrid-sparkle" d="m0-1.15.25.9.9.25-.9.25-.25.9-.25-.9-.9-.25.9-.25Z"/>
+    <symbol id="hybrid" viewBox="0 0 24 24">
+      <use class="hybrid-tail-outline" href="#hybrid-channel"/>
+      <use class="hybrid-tail-outline" href="#hybrid-channel" transform="rotate(120 12 12)"/>
+      <use class="hybrid-tail-outline" href="#hybrid-channel" transform="rotate(240 12 12)"/>
+      <use class="hybrid-sparkle-outline" href="#hybrid-sparkle" transform="translate(19.3 4.6) scale(1.28)"/>
+      <use class="hybrid-sparkle-outline" href="#hybrid-sparkle" transform="translate(4.35 7) rotate(45) scale(.94)"/>
+      <use class="hybrid-sparkle-outline" href="#hybrid-sparkle" transform="translate(12 20.35) scale(.84)"/>
+      <use class="hybrid-spectrum hybrid-line" href="#hybrid-channel"/>
+      <use class="hybrid-spectrum hybrid-line" href="#hybrid-channel" transform="rotate(120 12 12)"/>
+      <use class="hybrid-spectrum hybrid-line" href="#hybrid-channel" transform="rotate(240 12 12)"/>
+      <path class="hybrid-spectrum hybrid-accent" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+      <use class="hybrid-sparkle" href="#hybrid-sparkle" transform="translate(19.3 4.6)"/>
+      <use class="hybrid-sparkle" href="#hybrid-sparkle" transform="translate(4.35 7) rotate(45) scale(.7)"/>
+      <use class="hybrid-sparkle" href="#hybrid-sparkle" transform="translate(12 20.35) scale(.62)"/>
+    </symbol>
+  </defs>
+
+  <rect class="sheet" width="1500" height="760"/>
+  <text class="eyebrow" x="70" y="66">ENSEMBLE · HYBRID DRAFT</text>
+  <text class="title" x="70" y="108">Confluence Knot × Multiplex Loom</text>
+  <text class="body" x="70" y="140">Rotational collaboration crossed by one shared provider-spectrum carrier.</text>
+
+  <g transform="translate(70 190)">
+    <rect class="card" width="350" height="420" rx="30"/>
+    <text class="eyebrow" x="30" y="44">PARENT A</text>
+    <text class="title" x="30" y="84">Confluence Knot</text>
+    <use href="#knot" x="85" y="125" width="180" height="180"/>
+    <text class="body" x="30" y="350">Threefold motion</text>
+    <text class="body" x="30" y="378">Equal voices · shared void</text>
+  </g>
+
+  <text class="operator" x="454" y="418">+</text>
+
+  <g transform="translate(510 190)">
+    <rect class="card" width="350" height="420" rx="30"/>
+    <text class="eyebrow" x="30" y="44">PARENT B</text>
+    <text class="title" x="30" y="84">Multiplex Loom</text>
+    <use href="#loom" x="85" y="125" width="180" height="180"/>
+    <text class="body" x="30" y="350">Distinct channels</text>
+    <text class="body" x="30" y="378">Shared matrix aperture</text>
+  </g>
+
+  <text class="operator" x="891" y="418">→</text>
+
+  <g transform="translate(960 168)">
+    <rect class="result" width="470" height="464" rx="34"/>
+    <text class="eyebrow" x="34" y="48">HYBRID B6</text>
+    <text class="hero" x="34" y="98">Confluence Loom</text>
+    <text class="body" x="34" y="132">Every provider hue crosses three equal lanes</text>
+    <text class="body" x="34" y="156">into a pooled blue cell with contrast-safe sparks.</text>
+    <use href="#hybrid" x="42" y="190" width="188" height="188"/>
+    <g transform="translate(250 220)">
+      <rect class="chip" width="184" height="128" rx="18"/>
+      <text class="size" x="18" y="28">NATIVE SIZE</text>
+      <text class="size" x="20" y="64">14</text><use href="#hybrid" x="18" y="76" width="14" height="14"/>
+      <text class="size" x="62" y="64">16</text><use href="#hybrid" x="60" y="74" width="16" height="16"/>
+      <text class="size" x="106" y="64">24</text><use href="#hybrid" x="102" y="70" width="24" height="24"/>
+      <text class="size" x="152" y="64">32</text><use href="#hybrid" x="146" y="66" width="32" height="32"/>
+    </g>
+  </g>
+
+  <text class="size" x="70" y="700">DRAFT B6 · 2026-07-24 · smoothed spectrum + dual-ink sparks · production glyph untouched</text>
+</svg>

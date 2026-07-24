@@ -84,7 +84,7 @@ describe('agent pool icon assets', () => {
 
   it('preparePoolIconSvg sizes every icon and tints recolourable ones', () => {
     const recolorable = POOL_ICON_ASSETS.find((a) => a.recolor)!
-    const sized = preparePoolIconSvg(recolorable, 26, '#123456')
+    const sized = preparePoolIconSvg(recolorable, 26, '#123456', 'recolourable-test')
     expect(sized).toContain('width="26"')
     expect(sized).toContain('height="26"')
     expect(sized.toLowerCase()).toContain('#123456')
@@ -92,21 +92,23 @@ describe('agent pool icon assets', () => {
     // A fixed-palette icon is sized but not forcibly tinted.
     const fixed = POOL_ICON_ASSETS.find((a) => !a.recolor)
     if (fixed) {
-      const out = preparePoolIconSvg(fixed, 26, '#123456')
+      const out = preparePoolIconSvg(fixed, 26, '#123456', 'fixed-test')
       expect(out).toContain('width="26"')
     }
   })
 
   it('preparePoolIconSvg scopes embedded classes and slims provider strokes', () => {
     const pool = getPoolIconAsset('pool:neon-node')!
-    const poolOut = preparePoolIconSvg(pool, 24, '#ABCDEF')
-    expect(poolOut).toContain('.agent-pool-icon-pool-neon-node-line')
+    const poolOut = preparePoolIconSvg(pool, 24, '#ABCDEF', 'pool-test')
+    expect(poolOut).toContain('.agent-pool-icon-pool-neon-node-pool-test-line')
     expect(poolOut).not.toContain('class="line')
 
     const provider = getPoolIconAsset('provider:codex')!
-    const providerOut = preparePoolIconSvg(provider, 24)
-    expect(providerOut).toContain('.agent-pool-icon-provider-codex-line')
-    expect(providerOut).toContain('.agent-pool-icon-provider-codex-contrast-outline')
+    const providerOut = preparePoolIconSvg(provider, 24, undefined, 'provider-test')
+    expect(providerOut).toContain('.agent-pool-icon-provider-codex-provider-test-line')
+    expect(providerOut).toContain(
+      '.agent-pool-icon-provider-codex-provider-test-contrast-outline'
+    )
     expect(providerOut).toContain('data-provider-glyph="true"')
     expect(providerOut).toContain('stroke-width: 1.05')
     expect(providerOut).toContain('stroke-width: 2.05')
@@ -118,11 +120,36 @@ describe('agent pool icon assets', () => {
     expect(providerOut).not.toContain('stroke-width: 2.75')
   })
 
+  it('preserves the fixed-palette Ensemble artwork and namespaces its paint servers', () => {
+    const ensemble = getPoolIconAsset('provider:ensemble')!
+    expect(ensemble.recolor).toBe(false)
+
+    const first = preparePoolIconSvg(ensemble, 24, '#123456', 'first')
+    const second = preparePoolIconSvg(ensemble, 24, '#123456', 'second')
+
+    expect(first).toContain('agent-pool-icon-provider-ensemble-first-')
+    expect(second).toContain('agent-pool-icon-provider-ensemble-second-')
+    expect(first).toContain(
+      'class="agent-pool-icon-provider-ensemble-first-ensemble-line"'
+    )
+    expect(second).toContain(
+      'class="agent-pool-icon-provider-ensemble-second-ensemble-line"'
+    )
+    expect(first).not.toContain('agent-pool-icon-provider-ensemble-second-')
+    expect(second).not.toContain('agent-pool-icon-provider-ensemble-first-')
+    expect(first).toContain('stroke-width: 1.85')
+    expect(first).toContain('stroke-width: 2.85')
+    expect(first).toContain('#F8FAFF')
+    expect(first).not.toContain('#123456')
+    expect(first).not.toMatch(/url\(#provider-glyph-ensemble-/)
+    expect(first).not.toMatch(/href="#provider-glyph-ensemble-/)
+  })
+
   it('preparePoolIconSvg keeps workflow action icons visible when tinted', () => {
     const action = getPoolIconAsset('action:action-run-now')!
     expect(action.group).toBe('Actions')
 
-    const out = preparePoolIconSvg(action, 24, '#06D6A0')
+    const out = preparePoolIconSvg(action, 24, '#06D6A0', 'action-test')
     expect(out).toContain('stroke="var(--workflow-accent)"')
     expect(out).toContain('--workflow-accent: #06D6A0')
   })

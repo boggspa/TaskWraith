@@ -1,0 +1,16 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 360" role="img" aria-labelledby="confluence-loom-proof-title confluence-loom-proof-desc">
+  <title id="confluence-loom-proof-title">Confluence Loom light and dark mode proof</title>
+  <desc id="confluence-loom-proof-desc">The same transparent Confluence Loom SVG rendered on dark and light surfaces.</desc>
+  <style>
+    .label{font:700 18px -apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;letter-spacing:2px}
+    .note{font:500 13px ui-monospace,SFMono-Regular,Menlo,monospace}
+  </style>
+  <rect width="400" height="360" fill="#0D0B10"/>
+  <rect x="400" width="400" height="360" fill="#F5F3F6"/>
+  <text class="label" x="38" y="46" fill="#F8FAFF">DARK MODE</text>
+  <text class="label" x="438" y="46" fill="#161218">LIGHT MODE</text>
+  <image href="ensemble-confluence-loom.svg" x="80" y="62" width="240" height="240"/>
+  <image href="ensemble-confluence-loom.svg" x="480" y="62" width="240" height="240"/>
+  <text class="note" x="38" y="330" fill="#A99EAA">pearl core carries the glint</text>
+  <text class="note" x="438" y="330" fill="#5C555E">black silhouette carries the glint</text>
+</svg>

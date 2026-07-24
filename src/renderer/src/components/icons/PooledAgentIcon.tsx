@@ -1,4 +1,4 @@
-import type { CSSProperties, ReactElement } from 'react'
+import { useId, type CSSProperties, type ReactElement } from 'react'
 import {
   accentFromHue,
   pooledAgentIconProps,
@@ -54,6 +54,7 @@ export function PooledAgentIcon({
   style,
   title
 }: PooledAgentIconProps): ReactElement {
+  const instanceId = useId().replace(/:/g, '')
   const identity = agent?.identity ?? snapshotIdentity
   const agentId = agent?.agentId ?? snapshotIdentity?.agentId ?? 'pooled-agent'
   if (!identity) {
@@ -80,7 +81,9 @@ export function PooledAgentIcon({
         role={title ? 'img' : undefined}
         aria-label={title}
         aria-hidden={title ? undefined : true}
-        dangerouslySetInnerHTML={{ __html: preparePoolIconSvg(asset, size, accent) }}
+        dangerouslySetInnerHTML={{
+          __html: preparePoolIconSvg(asset, size, accent, instanceId)
+        }}
       />
     )
   }

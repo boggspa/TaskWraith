@@ -117,22 +117,76 @@ const providers = [
   {
     id: 'ensemble',
     label: 'Ensemble',
-    accent: '#E8DDE3',
-    hint: 'staggered three-agent roster with identicon visor',
-    body: `
-      <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-      <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-      <circle class="accent" cx="12" cy="6.5" r="2.7" />
-      <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-      <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-      <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-      <path class="line fine" d="M5.55 7.35h2.3" />
-      <path class="line fine" d="M16.15 7.35h2.3" />
-      <path class="line" d="M9.8 6.55h4.4" />
-      <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
-    `
+    accent: '#986781',
+    hint: 'Confluence Loom with provider-spectrum lanes and pooled blue hub',
+    description:
+      'Original multicolour Confluence Loom mnemonic for Ensemble. Not an official logo.',
+    customArtwork: 'confluence-loom',
+    body: ''
   }
 ]
+
+const ensembleSpectrumStops = [
+  ['0', '#986781', 'ensemble'],
+  ['.067', '#705AFF', 'codex-openai'],
+  ['.133', '#8C52EF', 'alibaba-qwen'],
+  ['.20', '#D72D82', 'liquid'],
+  ['.267', '#E22B17', 'openbmb'],
+  ['.333', '#B16105', 'claude'],
+  ['.40', '#BE5809', 'deep-reinforce-ornith'],
+  ['.467', '#8D7312', 'cursor'],
+  ['.533', '#538200', 'nvidia'],
+  ['.60', '#308713', 'antigravity'],
+  ['.667', '#1A8562', 'ollama'],
+  ['.733', '#0C8194', 'poolside'],
+  ['.80', '#0073E6', 'kimi'],
+  ['.867', '#346EEC', 'gemini-google'],
+  ['.933', '#3079BC', 'ibm'],
+  ['1', '#757575', 'grok']
+]
+
+const ensembleArtworkStyle = `
+  .ensemble-line,
+  .ensemble-accent {
+    fill: none;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .ensemble-line {
+    stroke: url(#provider-glyph-ensemble-spectrum);
+    stroke-width: 1.7;
+  }
+
+  .ensemble-accent {
+    stroke: url(#provider-glyph-ensemble-hub-blue-pool);
+    stroke-width: 1.85;
+  }
+
+  .ensemble-tail-outline,
+  .ensemble-center-outline {
+    fill: none;
+    stroke: #000000;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+  }
+
+  .ensemble-tail-outline {
+    stroke-width: 3.1;
+  }
+
+  .ensemble-center-outline {
+    stroke-width: 2.85;
+  }
+
+  .ensemble-sparkle-outline {
+    fill: #000000;
+  }
+
+  .ensemble-sparkle {
+    fill: #F8FAFF;
+  }
+`
 
 const style = `
   .line {
@@ -221,6 +275,55 @@ ${paths}
 ${indent}</g>`
 }
 
+function buildEnsembleDefinitions(indent = '  ') {
+  const stops = ensembleSpectrumStops
+    .map(
+      ([offset, color, brand]) =>
+        `${indent}    <stop offset="${offset}" stop-color="${color}" data-brand="${brand}"/>`
+    )
+    .join('\n')
+  return `${indent}<defs>
+${indent}  <linearGradient id="provider-glyph-ensemble-spectrum" gradientUnits="userSpaceOnUse" x1="7.5" y1="7.5" x2="18.2" y2="18.2" color-interpolation="linearRGB">
+${stops}
+${indent}  </linearGradient>
+${indent}  <linearGradient id="provider-glyph-ensemble-hub-blue-pool" gradientUnits="userSpaceOnUse" x1="9.15" y1="12" x2="14.85" y2="12" color-interpolation="linearRGB">
+${indent}    <stop offset="0" stop-color="#0C8194" data-brand="poolside"/>
+${indent}    <stop offset=".34" stop-color="#0073E6" data-brand="kimi"/>
+${indent}    <stop offset=".68" stop-color="#346EEC" data-brand="gemini-google"/>
+${indent}    <stop offset="1" stop-color="#3079BC" data-brand="ibm"/>
+${indent}  </linearGradient>
+${indent}  <path id="provider-glyph-ensemble-channel" d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4"/>
+${indent}  <path id="provider-glyph-ensemble-sparkle" d="m0-1.15.25.9.9.25-.9.25-.25.9-.25-.9-.9-.25.9-.25Z"/>
+${indent}</defs>`
+}
+
+function buildEnsembleArtwork(indent = '  ') {
+  return `${indent}<g class="ensemble-contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+${indent}  <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel"/>
+${indent}  <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel" transform="rotate(120 12 12)"/>
+${indent}  <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel" transform="rotate(240 12 12)"/>
+${indent}  <path class="ensemble-center-outline" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+${indent}  <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(19.3 4.6) scale(1.28)"/>
+${indent}  <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(4.35 7) rotate(45) scale(.94)"/>
+${indent}  <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(12 20.35) scale(.84)"/>
+${indent}</g>
+${indent}<g class="ensemble-foreground">
+${indent}  <use class="ensemble-line" href="#provider-glyph-ensemble-channel"/>
+${indent}  <use class="ensemble-line" href="#provider-glyph-ensemble-channel" transform="rotate(120 12 12)"/>
+${indent}  <use class="ensemble-line" href="#provider-glyph-ensemble-channel" transform="rotate(240 12 12)"/>
+${indent}  <path class="ensemble-accent" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+${indent}  <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(19.3 4.6)"/>
+${indent}  <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(4.35 7) rotate(45) scale(.7)"/>
+${indent}  <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(12 20.35) scale(.62)"/>
+${indent}</g>`
+}
+
+function buildProviderArtwork(provider, indent = '  ') {
+  return provider.customArtwork === 'confluence-loom'
+    ? buildEnsembleArtwork(indent)
+    : buildLayeredBody(provider.body, indent)
+}
+
 function escapeXml(value) {
   return value
     .replace(/&/g, '&amp;')
@@ -239,13 +342,16 @@ function buildGlyph(provider) {
   const description =
     provider.description ??
     `Original monoline ${provider.hint} mnemonic for ${provider.label}. Not an official logo.`
+  const customArtwork = provider.customArtwork === 'confluence-loom'
+  const glyphStyle = customArtwork ? ensembleArtworkStyle : style
+  const definitions = customArtwork ? `${buildEnsembleDefinitions()}\n` : ''
   return stripTrailingWhitespace(`<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="${id}-title ${id}-desc" data-provider="${provider.id}" data-provider-glyph="true" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
   <title id="${id}-title">${escapeXml(provider.label)} provider glyph</title>
   <desc id="${id}-desc">${escapeXml(description)}</desc>
   <style>
-${style}
+${glyphStyle}
   </style>
-${buildLayeredBody(provider.body)}
+${definitions}${buildProviderArtwork(provider)}
 </svg>
 `)
 }
@@ -262,10 +368,10 @@ function buildCatalog() {
       const y = Math.floor(index / columns) * cellHeight
       return `  <g transform="translate(${x} ${y})">
     <g transform="translate(40 24) scale(2.65)" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
-${buildLayeredBody(provider.body, '      ')}
+${buildProviderArtwork(provider, '      ')}
     </g>
     <g transform="translate(61 112) scale(0.9)" style="color: ${provider.accent}; --provider-accent: ${provider.accent};">
-${buildLayeredBody(provider.body, '      ')}
+${buildProviderArtwork(provider, '      ')}
     </g>
     <text class="label" x="72" y="168">${escapeXml(provider.label)}</text>
     <text class="accent-label" x="72" y="188">${provider.accent}</text>
@@ -280,6 +386,7 @@ ${buildLayeredBody(provider.body, '      ')}
   <rect class="catalog-background" width="${width}" height="${height}" rx="18" />
   <style>
 ${style}
+${ensembleArtworkStyle}
 
     [data-provider-glyph-catalog] {
       --catalog-background: #F8FAFC;
@@ -322,6 +429,7 @@ ${style}
       letter-spacing: 0;
     }
   </style>
+${buildEnsembleDefinitions()}
 ${items}
 </svg>
 `)
@@ -336,7 +444,7 @@ function main() {
   fs.writeFileSync(
     manifestPath,
     `${JSON.stringify(
-      providers.map(({ body: _body, ...provider }) => provider),
+      providers.map(({ body: _body, customArtwork: _customArtwork, ...provider }) => provider),
       null,
       2
     )}\n`,

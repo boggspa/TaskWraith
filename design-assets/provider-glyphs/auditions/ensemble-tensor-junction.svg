@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-tensor-junction-title ensemble-tensor-junction-desc" style="color:#E8DDE3;--ensemble-accent:#E8DDE3">
+  <title id="ensemble-tensor-junction-title">Ensemble Tensor Junction draft</title>
+  <desc id="ensemble-tensor-junction-desc">A monoline hexagonal matrix cell with three routes feeding a shared diamond aperture.</desc>
+  <style>
+    .line,.accent{fill:none;stroke:var(--ensemble-accent,currentColor);stroke-linecap:round;stroke-linejoin:round}
+    .line{stroke-width:1.7}
+    .accent{stroke-width:1.85}
+    .contrast{pointer-events:none}
+    .contrast .line{stroke:#000;stroke-width:2.7}
+    .contrast .accent{stroke:#000;stroke-width:2.85}
+  </style>
+  <g class="contrast" aria-hidden="true">
+    <path class="line" d="M12 2.8 20.2 7.4v9.2L12 21.2l-8.2-4.6V7.4Z"/>
+    <path class="accent" d="m12 8.75 3.25 3.25L12 15.25 8.75 12Z"/>
+    <path class="line" d="M12 2.8v5.95M3.8 16.6 8.75 12M20.2 16.6 15.25 12"/>
+  </g>
+  <g>
+    <path class="line" d="M12 2.8 20.2 7.4v9.2L12 21.2l-8.2-4.6V7.4Z"/>
+    <path class="accent" d="m12 8.75 3.25 3.25L12 15.25 8.75 12Z"/>
+    <path class="line" d="M12 2.8v5.95M3.8 16.6 8.75 12M20.2 16.6 15.25 12"/>
+  </g>
+</svg>

@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-confluence-loom-title ensemble-confluence-loom-desc">
+  <title id="ensemble-confluence-loom-title">Ensemble Confluence Loom draft</title>
+  <desc id="ensemble-confluence-loom-desc">Three equal curved provider-spectrum channels dock at alternating ports of a shared blue matrix cell, surrounded by three contrast-safe sparkles.</desc>
+  <style>
+    .line,.accent{fill:none;stroke-linecap:round;stroke-linejoin:round}
+    .line{stroke:url(#provider-spectrum);stroke-width:1.7}
+    .accent{stroke:url(#hub-blue-pool);stroke-width:1.85}
+    .tail-outline,.center-outline{fill:none;stroke:#000;stroke-linecap:round;stroke-linejoin:round}
+    .tail-outline{stroke-width:3.1}
+    .center-outline{stroke-width:2.85}
+    .sparkle-outline{fill:#000}
+    .sparkle{fill:#F8FAFF}
+  </style>
+  <defs>
+    <!-- Canonical desktop/iOS provider accents, ordered as one continuous
+         diagonal multiplex sweep. Aliases share one stop with their canonical
+         provider so they do not create flat bands in the fade. -->
+    <linearGradient id="provider-spectrum" gradientUnits="userSpaceOnUse" x1="7.5" y1="7.5" x2="18.2" y2="18.2" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#986781" data-brand="ensemble"/>
+      <stop offset=".067" stop-color="#705AFF" data-brand="codex-openai"/>
+      <stop offset=".133" stop-color="#8C52EF" data-brand="alibaba-qwen"/>
+      <stop offset=".20" stop-color="#D72D82" data-brand="liquid"/>
+      <stop offset=".267" stop-color="#E22B17" data-brand="openbmb"/>
+      <stop offset=".333" stop-color="#B16105" data-brand="claude"/>
+      <stop offset=".40" stop-color="#BE5809" data-brand="deep-reinforce-ornith"/>
+      <stop offset=".467" stop-color="#8D7312" data-brand="cursor"/>
+      <stop offset=".533" stop-color="#538200" data-brand="nvidia"/>
+      <stop offset=".60" stop-color="#308713" data-brand="antigravity"/>
+      <stop offset=".667" stop-color="#1A8562" data-brand="ollama"/>
+      <stop offset=".733" stop-color="#0C8194" data-brand="poolside"/>
+      <stop offset=".80" stop-color="#0073E6" data-brand="kimi"/>
+      <stop offset=".867" stop-color="#346EEC" data-brand="gemini-google"/>
+      <stop offset=".933" stop-color="#3079BC" data-brand="ibm"/>
+      <stop offset="1" stop-color="#757575" data-brand="grok"/>
+    </linearGradient>
+    <linearGradient id="hub-blue-pool" gradientUnits="userSpaceOnUse" x1="9.15" y1="12" x2="14.85" y2="12" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#0C8194" data-brand="poolside"/>
+      <stop offset=".34" stop-color="#0073E6" data-brand="kimi"/>
+      <stop offset=".68" stop-color="#346EEC" data-brand="gemini-google"/>
+      <stop offset="1" stop-color="#3079BC" data-brand="ibm"/>
+    </linearGradient>
+    <path id="confluence-loom-channel" d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4"/>
+    <path id="confluence-loom-sparkle" d="m0-1.15.25.9.9.25-.9.25-.25.9-.25-.9-.9-.25.9-.25Z"/>
+  </defs>
+  <g aria-hidden="true">
+    <use class="tail-outline" href="#confluence-loom-channel"/>
+    <use class="tail-outline" href="#confluence-loom-channel" transform="rotate(120 12 12)"/>
+    <use class="tail-outline" href="#confluence-loom-channel" transform="rotate(240 12 12)"/>
+    <path class="center-outline" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+    <use class="sparkle-outline" href="#confluence-loom-sparkle" transform="translate(19.3 4.6) scale(1.28)"/>
+    <use class="sparkle-outline" href="#confluence-loom-sparkle" transform="translate(4.35 7) rotate(45) scale(.94)"/>
+    <use class="sparkle-outline" href="#confluence-loom-sparkle" transform="translate(12 20.35) scale(.84)"/>
+  </g>
+  <g>
+    <use class="line" href="#confluence-loom-channel"/>
+    <use class="line" href="#confluence-loom-channel" transform="rotate(120 12 12)"/>
+    <use class="line" href="#confluence-loom-channel" transform="rotate(240 12 12)"/>
+    <path class="accent" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+    <use class="sparkle" href="#confluence-loom-sparkle" transform="translate(19.3 4.6)"/>
+    <use class="sparkle" href="#confluence-loom-sparkle" transform="translate(4.35 7) rotate(45) scale(.7)"/>
+    <use class="sparkle" href="#confluence-loom-sparkle" transform="translate(12 20.35) scale(.62)"/>
+  </g>
+</svg>

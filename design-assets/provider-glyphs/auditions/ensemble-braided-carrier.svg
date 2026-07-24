@@ -1,0 +1,22 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="ensemble-braided-carrier-title ensemble-braided-carrier-desc" style="color:#E8DDE3;--ensemble-accent:#E8DDE3">
+  <title id="ensemble-braided-carrier-title">Ensemble Braided Carrier draft</title>
+  <desc id="ensemble-braided-carrier-desc">Three multiplexed routes exchange position through a deliberate open crossover.</desc>
+  <style>
+    .line,.accent{fill:none;stroke:var(--ensemble-accent,currentColor);stroke-linecap:round;stroke-linejoin:round}
+    .line{stroke-width:1.7}
+    .accent{stroke-width:1.85}
+    .contrast{pointer-events:none}
+    .contrast .line{stroke:#000;stroke-width:2.7}
+    .contrast .accent{stroke:#000;stroke-width:2.85}
+  </style>
+  <g class="contrast" aria-hidden="true">
+    <path class="accent" d="M3 12h18"/>
+    <path class="line" d="M3 5.5h2.1c2.7 0 4.2 2.3 5.8 5.3M13.1 13.2c1.6 3 3.1 5.3 5.8 5.3H21"/>
+    <path class="line" d="M3 18.5h2.1c2.7 0 4.2-2.3 5.8-5.3M13.1 10.8c1.6-3 3.1-5.3 5.8-5.3H21"/>
+  </g>
+  <g>
+    <path class="accent" d="M3 12h18"/>
+    <path class="line" d="M3 5.5h2.1c2.7 0 4.2 2.3 5.8 5.3M13.1 13.2c1.6 3 3.1 5.3 5.8 5.3H21"/>
+    <path class="line" d="M3 18.5h2.1c2.7 0 4.2-2.3 5.8-5.3M13.1 10.8c1.6-3 3.1-5.3 5.8-5.3H21"/>
+  </g>
+</svg>

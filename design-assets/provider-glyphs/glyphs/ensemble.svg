@@ -1,98 +1,94 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-ensemble-title provider-glyph-ensemble-desc" data-provider="ensemble" data-provider-glyph="true" style="color: #E8DDE3; --provider-accent: #E8DDE3;">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="provider-glyph-ensemble-title provider-glyph-ensemble-desc" data-provider="ensemble" data-provider-glyph="true" style="color: #986781; --provider-accent: #986781;">
   <title id="provider-glyph-ensemble-title">Ensemble provider glyph</title>
-  <desc id="provider-glyph-ensemble-desc">Original monoline staggered three-agent roster with identicon visor mnemonic for Ensemble. Not an official logo.</desc>
+  <desc id="provider-glyph-ensemble-desc">Original multicolour Confluence Loom mnemonic for Ensemble. Not an official logo.</desc>
   <style>
 
-  .line {
+  .ensemble-line,
+  .ensemble-accent {
     fill: none;
-    stroke: var(--provider-accent);
-    stroke-width: 1.75;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
-  .accent {
-    fill: none;
-    stroke: var(--provider-accent);
+  .ensemble-line {
+    stroke: url(#provider-glyph-ensemble-spectrum);
+    stroke-width: 1.7;
+  }
+
+  .ensemble-accent {
+    stroke: url(#provider-glyph-ensemble-hub-blue-pool);
     stroke-width: 1.85;
+  }
+
+  .ensemble-tail-outline,
+  .ensemble-center-outline {
+    fill: none;
+    stroke: #000000;
     stroke-linecap: round;
     stroke-linejoin: round;
   }
 
-  .fine {
-    stroke-width: 1.3;
-    opacity: 0.76;
+  .ensemble-tail-outline {
+    stroke-width: 3.1;
   }
 
-  .soft {
-    fill: var(--provider-accent);
-    opacity: 0.12;
-    stroke: none;
-  }
-
-  .dot {
-    fill: var(--provider-accent);
-    stroke: none;
-  }
-
-  .contrast-outline {
-    pointer-events: none;
-  }
-
-  .contrast-outline .line {
-    stroke: #000000;
-    stroke-width: 2.75;
-    opacity: 1;
-  }
-
-  .contrast-outline .accent {
-    stroke: #000000;
+  .ensemble-center-outline {
     stroke-width: 2.85;
-    opacity: 1;
   }
 
-  .contrast-outline .fine {
-    stroke-width: 2.3;
-    opacity: 1;
-  }
-
-  .contrast-outline .soft {
-    fill: none;
-    stroke: #000000;
-    stroke-width: 1;
-    opacity: 1;
-  }
-
-  .contrast-outline .dot {
+  .ensemble-sparkle-outline {
     fill: #000000;
-    stroke: #000000;
-    stroke-width: 1;
-    opacity: 1;
+  }
+
+  .ensemble-sparkle {
+    fill: #F8FAFF;
   }
 
   </style>
-  <g class="contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
-    <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-    <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-    <circle class="accent" cx="12" cy="6.5" r="2.7" />
-    <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-    <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-    <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-    <path class="line fine" d="M5.55 7.35h2.3" />
-    <path class="line fine" d="M16.15 7.35h2.3" />
-    <path class="line" d="M9.8 6.55h4.4" />
-    <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+  <defs>
+    <linearGradient id="provider-glyph-ensemble-spectrum" gradientUnits="userSpaceOnUse" x1="7.5" y1="7.5" x2="18.2" y2="18.2" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#986781" data-brand="ensemble"/>
+      <stop offset=".067" stop-color="#705AFF" data-brand="codex-openai"/>
+      <stop offset=".133" stop-color="#8C52EF" data-brand="alibaba-qwen"/>
+      <stop offset=".20" stop-color="#D72D82" data-brand="liquid"/>
+      <stop offset=".267" stop-color="#E22B17" data-brand="openbmb"/>
+      <stop offset=".333" stop-color="#B16105" data-brand="claude"/>
+      <stop offset=".40" stop-color="#BE5809" data-brand="deep-reinforce-ornith"/>
+      <stop offset=".467" stop-color="#8D7312" data-brand="cursor"/>
+      <stop offset=".533" stop-color="#538200" data-brand="nvidia"/>
+      <stop offset=".60" stop-color="#308713" data-brand="antigravity"/>
+      <stop offset=".667" stop-color="#1A8562" data-brand="ollama"/>
+      <stop offset=".733" stop-color="#0C8194" data-brand="poolside"/>
+      <stop offset=".80" stop-color="#0073E6" data-brand="kimi"/>
+      <stop offset=".867" stop-color="#346EEC" data-brand="gemini-google"/>
+      <stop offset=".933" stop-color="#3079BC" data-brand="ibm"/>
+      <stop offset="1" stop-color="#757575" data-brand="grok"/>
+    </linearGradient>
+    <linearGradient id="provider-glyph-ensemble-hub-blue-pool" gradientUnits="userSpaceOnUse" x1="9.15" y1="12" x2="14.85" y2="12" color-interpolation="linearRGB">
+      <stop offset="0" stop-color="#0C8194" data-brand="poolside"/>
+      <stop offset=".34" stop-color="#0073E6" data-brand="kimi"/>
+      <stop offset=".68" stop-color="#346EEC" data-brand="gemini-google"/>
+      <stop offset="1" stop-color="#3079BC" data-brand="ibm"/>
+    </linearGradient>
+    <path id="provider-glyph-ensemble-channel" d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4"/>
+    <path id="provider-glyph-ensemble-sparkle" d="m0-1.15.25.9.9.25-.9.25-.25.9-.25-.9-.9-.25.9-.25Z"/>
+  </defs>
+  <g class="ensemble-contrast-outline" data-provider-glyph-contrast="true" aria-hidden="true">
+    <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel"/>
+    <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel" transform="rotate(120 12 12)"/>
+    <use class="ensemble-tail-outline" href="#provider-glyph-ensemble-channel" transform="rotate(240 12 12)"/>
+    <path class="ensemble-center-outline" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+    <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(19.3 4.6) scale(1.28)"/>
+    <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(4.35 7) rotate(45) scale(.94)"/>
+    <use class="ensemble-sparkle-outline" href="#provider-glyph-ensemble-sparkle" transform="translate(12 20.35) scale(.84)"/>
   </g>
-  <g class="foreground">
-    <circle class="line fine" cx="6.7" cy="7.3" r="2.35" />
-    <circle class="line fine" cx="17.3" cy="7.3" r="2.35" />
-    <circle class="accent" cx="12" cy="6.5" r="2.7" />
-    <path class="line fine" d="M2.8 18.4c.35-2.9 2.65-4.7 5.45-4.7 1.15 0 2.25.3 3.15.85" />
-    <path class="line fine" d="M21.2 18.4c-.35-2.9-2.65-4.7-5.45-4.7-1.15 0-2.25.3-3.15.85" />
-    <path class="accent" d="M6.6 19.8c.25-3.45 2.55-5.65 5.4-5.65s5.15 2.2 5.4 5.65" />
-    <path class="line fine" d="M5.55 7.35h2.3" />
-    <path class="line fine" d="M16.15 7.35h2.3" />
-    <path class="line" d="M9.8 6.55h4.4" />
-    <path class="line fine" d="m9.7 12.25 2.3 1.9 2.3-1.9" />
+  <g class="ensemble-foreground">
+    <use class="ensemble-line" href="#provider-glyph-ensemble-channel"/>
+    <use class="ensemble-line" href="#provider-glyph-ensemble-channel" transform="rotate(120 12 12)"/>
+    <use class="ensemble-line" href="#provider-glyph-ensemble-channel" transform="rotate(240 12 12)"/>
+    <path class="ensemble-accent" d="m12 8.7 2.85 1.65v3.3L12 15.3l-2.85-1.65v-3.3Z"/>
+    <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(19.3 4.6)"/>
+    <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(4.35 7) rotate(45) scale(.7)"/>
+    <use class="ensemble-sparkle" href="#provider-glyph-ensemble-sparkle" transform="translate(12 20.35) scale(.62)"/>
   </g>
 </svg>
