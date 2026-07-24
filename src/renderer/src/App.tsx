@@ -14341,6 +14341,38 @@ function App(): React.JSX.Element {
             request,
             dispatchResult.dispatched ? 'accepted' : 'rejected'
           )
+          // Main preflight may allocate or reuse an isolated worktree for a
+          // selection-required runtime profile; the dispatch result then
+          // carries the effective path. Retarget the per-turn diff spine to
+          // the worktree the provider actually edits, and re-capture the
+          // pre-run snapshot there — a fresh worktree excludes the base
+          // checkout's uncommitted state, so the base snapshot would corrupt
+          // the per-turn diff.
+          const allocatedWorkspacePath =
+            dispatchResult.dispatched &&
+            typeof dispatchResult.effectiveWorkspacePath === 'string' &&
+            dispatchResult.effectiveWorkspacePath.length > 0 &&
+            dispatchResult.effectiveWorkspacePath !== runDiffWorkspacePath
+              ? dispatchResult.effectiveWorkspacePath
+              : null
+          if (allocatedWorkspacePath) {
+            runDiffWorkspacePath = allocatedWorkspacePath
+            activeRunWorkspacePathRef.current = allocatedWorkspacePath
+            let allocatedPreSnapshot: any = null
+            try {
+              allocatedPreSnapshot = await window.api.captureSnapshot(allocatedWorkspacePath)
+            } catch {
+              allocatedPreSnapshot = null
+            }
+            preSnapshot = allocatedPreSnapshot
+            preSnapshotRef.current = allocatedPreSnapshot
+            runContext.preSnapshot = allocatedPreSnapshot
+            runContext.workspacePath = allocatedWorkspacePath
+            appendThreadRawLog(runChatId, {
+              type: 'info',
+              content: `Isolated worktree ready: ${allocatedWorkspacePath}`
+            })
+          }
         }
       } catch (error) {
         settleProjectReferenceContextForRequest(request, 'rejected')
