@@ -734,7 +734,7 @@ struct Composer: View {
                     }
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 7)
+                .padding(.vertical, shell.style == .chatgpt ? 4 : 7)
             } else {
                 HStack(spacing: 8) {
                     // Idle/unfocused: the collapsed control row is gone, so surface a
@@ -765,11 +765,15 @@ struct Composer: View {
                     primaryActionButton
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, 8)
+                // CS14 chatgpt: tighter row inset — the flat pill reads capsule,
+                // not sausage; every other shell keeps the shipped 8pt.
+                .padding(.vertical, shell.style == .chatgpt ? 4 : 8)
             }
         }
         .padding(.horizontal, foldsControlsIntoInput ? 10 : 12)
-        .padding(.vertical, foldsControlsIntoInput ? 7 : 9)
+        .padding(
+            .vertical,
+            shell.style == .chatgpt ? 4 : (foldsControlsIntoInput ? 7 : 9))
         .background(composerBodyBackground)
         // CS12: input-owning shells (claude bubble / gemini-cursor capsule /
         // obsidian-alabaster rect) frame ONLY the input here; the footer is bare.
