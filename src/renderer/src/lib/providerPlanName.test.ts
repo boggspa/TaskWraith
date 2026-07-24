@@ -9,7 +9,11 @@ describe('providerPlanName', () => {
     ['claude', 'max', 'Max'],
     ['kimi', 'LEVEL_BASIC', 'Moderato'],
     ['kimi', 'LEVEL_BALANCE_ACCOUNT', 'Moderato'],
+    ['kimi', 'Beginner', 'Moderato'],
     ['kimi', 'LEVEL_PRO', 'Allegretto'],
+    ['kimi', 'Intermediate', 'Allegretto'],
+    ['kimi', 'Advanced', 'Allegro'],
+    ['kimi', 'Maximum', 'Vivace'],
     ['cursor', 'pro_plus', 'Pro +'],
     ['grok', 'Free credits with SuperGrok', 'SuperGrok'],
     ['grok', 'SuperGrok Heavy', 'SuperGrok Heavy']

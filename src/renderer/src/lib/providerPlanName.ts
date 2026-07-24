@@ -39,10 +39,26 @@ export function providerPlanName(provider: ProviderId, rawValue: unknown): strin
   if (provider === 'kimi') {
     const membership = normalized.replace(/^level_/, '')
     if (membership === 'free' || membership.startsWith('fr')) return 'Adagio'
-    if (membership === 'basic' || membership.startsWith('bal')) return 'Moderato'
-    if (membership === 'pro' || membership.startsWith('pr')) return 'Allegretto'
-    if (membership === 'max' || membership.startsWith('ma')) return 'Allegro'
-    if (membership === 'ultra' || membership.startsWith('ul')) return 'Vivace'
+    if (
+      membership === 'basic' ||
+      membership === 'beginner' ||
+      membership.startsWith('bal')
+    ) {
+      return 'Moderato'
+    }
+    if (
+      membership === 'pro' ||
+      membership === 'intermediate' ||
+      membership.startsWith('pr')
+    ) {
+      return 'Allegretto'
+    }
+    if (membership === 'maximum' || membership === 'ultra' || membership.startsWith('ul')) {
+      return 'Vivace'
+    }
+    if (membership === 'advanced' || membership === 'max' || membership.startsWith('ma')) {
+      return 'Allegro'
+    }
     return humaniseRawPlan(raw, ['LEVEL_', 'TYPE_']) || undefined
   }
 
