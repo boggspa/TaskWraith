@@ -507,12 +507,10 @@ describe('buildEscalationChips', () => {
 
   it('marks failure-shaped signals as attention tone', () => {
     const chips = buildEscalationChips(
-      chatWithSignals([
-        sig({ id: 's1', kind: 'tool-error-cluster', recommendedAction: 'pause-for-user' })
-      ])
+      chatWithSignals([sig({ id: 's1', kind: 'stuck', recommendedAction: 'pause-for-user' })])
     )
     expect(chips[0].tone).toBe('attention')
-    expect(chips[0].label).toBe('Tool errors clustered')
+    expect(chips[0].label).toBe('Round stalled')
   })
 
   it('only surfaces signals for the active round and de-dups by kind', () => {
@@ -534,6 +532,18 @@ describe('buildEscalationChips', () => {
       ])
     )
     expect(chips).toEqual([])
+  })
+
+  // Named a failure with no next step the user could take, so it read as
+  // distrust in the model/harness rather than advice.
+  it('hides tool-error-cluster', () => {
+    const chips = buildEscalationChips(
+      chatWithSignals([
+        sig({ id: '1', kind: 'tool-error-cluster', recommendedAction: 'pause-for-user' }),
+        sig({ id: '2', kind: 'stuck', recommendedAction: 'extend-rounds' })
+      ])
+    )
+    expect(chips.map((chip) => chip.id)).toEqual(['2'])
   })
 
   it('renders the looping chip with the live continuation limit counters', () => {

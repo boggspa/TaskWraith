@@ -638,7 +638,8 @@ export const buildEnsembleRoundSummaryRows = (
  * user decides; it must never frame a multi-seat panel as waste. Note the
  * recommended action for `disagreement-unresolved` used to be to add a
  * synthesizer, but that signal now stays hidden in the transcript summary:
- * it was persistently noisy and ambiguous in practice.
+ * it was persistently noisy and ambiguous in practice. See
+ * HIDDEN_ESCALATION_KINDS for the rest of the hidden set.
  */
 export type EscalationChipModel = {
   id: string
@@ -663,6 +664,21 @@ const ESCALATION_KIND_TONE: Record<ComplexityEscalationKind, EscalationChipModel
   'disagreement-unresolved': 'info',
   'tool-error-cluster': 'attention'
 }
+
+/**
+ * Signal kinds the orchestrator still records + persists, but which the chip
+ * strip deliberately does NOT render. Both were accusations the user could not
+ * act on:
+ *  - `disagreement-unresolved` — persistently noisy and ambiguous in practice.
+ *  - `tool-error-cluster` — "Tool errors clustered / your input would help
+ *    unblock this" named a failure with no next step attached, so it read as
+ *    distrust in the model or the harness rather than as advice. The failures
+ *    themselves are already visible in the transcript where they happened.
+ */
+const HIDDEN_ESCALATION_KINDS: ReadonlySet<ComplexityEscalationKind> = new Set([
+  'disagreement-unresolved',
+  'tool-error-cluster'
+])
 
 const ESCALATION_ACTION_COPY: Record<ComplexityEscalationAction, string> = {
   // Lean into the panel — never frame more seats as waste.
@@ -705,7 +721,7 @@ export const buildEscalationChips = (chat: ChatRecord | null): EscalationChipMod
   const chips: EscalationChipModel[] = []
   for (const signal of signals as ComplexityEscalationSignal[]) {
     if (signal.roundId !== round.roundId) continue
-    if (signal.kind === 'disagreement-unresolved') continue
+    if (HIDDEN_ESCALATION_KINDS.has(signal.kind)) continue
     if (seenKinds.has(signal.kind)) continue
     seenKinds.add(signal.kind)
     chips.push({
