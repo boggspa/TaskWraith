@@ -1,4 +1,5 @@
 import type { ProviderId } from '../../../main/store/types'
+import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 
 /**
  * 1.0.5-EW50 — Shared model-id → human-readable display name
@@ -306,6 +307,13 @@ export function humaniseModelId(
   // and keeps the flat-map "Grok 4.5".
   if (provider === 'grok' && key === 'grok-4.5') {
     return 'Grok 4.5 Fast'
+  }
+  // AntiGravity key-lane ids derive their catalog label (`gemini-api:
+  // gemini-2.5-flash` → `2.5 Flash`) instead of surfacing the raw wire id;
+  // agy-lane ids fall through to the shared table like any other provider.
+  if (provider === 'antigravity') {
+    const apiLabel = antigravityGeminiApiModelDisplayLabel(key)
+    if (apiLabel) return apiLabel
   }
   return KNOWN_MODEL_LABELS[key] || canonical
 }

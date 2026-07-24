@@ -12,6 +12,7 @@
  */
 
 import type { ProviderId, ComposerStyle } from '../../../main/store/types'
+import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
 import {
   isCursorGrok45ModelId,
   isGrok45ReasoningModelId
@@ -123,6 +124,13 @@ export function shortModelName(provider: ProviderId, modelLabel: string, modelId
         .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
         .join(' ')
     }
+  }
+
+  if (provider === 'antigravity') {
+    // Key-lane ids (`gemini-api:gemini-2.5-flash`) → the exact catalog label
+    // (`2.5 Flash`); agy-lane ids fall through to the label like any provider.
+    const apiLabel = antigravityGeminiApiModelDisplayLabel(id)
+    if (apiLabel) return apiLabel
   }
 
   if (provider === 'cursor') {

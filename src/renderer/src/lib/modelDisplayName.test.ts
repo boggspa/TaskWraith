@@ -106,6 +106,20 @@ describe('humaniseModelId', () => {
     })
   })
 
+  describe('AntiGravity', () => {
+    it('derives key-lane ids to the catalog label instead of the raw wire id', () => {
+      expect(humaniseModelId('antigravity', 'gemini-api:gemini-2.5-flash')).toBe('2.5 Flash')
+      expect(humaniseModelId('antigravity', 'gemini-api:gemini-2.5-flash-lite')).toBe(
+        '2.5 Flash-Lite'
+      )
+      expect(humaniseModelId('antigravity', 'gemini-api:gemini-3.1-pro-preview')).toBe(
+        '3.1 Pro Preview'
+      )
+      // agy-lane ids keep the shared-table fallback behaviour.
+      expect(humaniseModelId('antigravity', 'agy-model')).toBe('agy-model')
+    })
+  })
+
   describe('Cursor', () => {
     it('maps Composer CLI ids to human-readable names', () => {
       expect(humaniseModelId('cursor', 'composer-2.5')).toBe('Composer 2.5')

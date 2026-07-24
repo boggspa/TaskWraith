@@ -84,6 +84,20 @@ describe('shortModelName', () => {
     expect(shortModelName('ollama', '', 'nemotron3:33b')).toBe('Nemotron 3 Nano Omni (33B Param)')
   })
 
+  it('derives AntiGravity key-lane ids to their catalog label', () => {
+    // The chip must match the picker rows exactly ("2.5 Flash-Lite", not the
+    // raw wire id `gemini-api:gemini-2.5-flash-lite`).
+    expect(shortModelName('antigravity', '', 'gemini-api:gemini-2.5-flash')).toBe('2.5 Flash')
+    expect(shortModelName('antigravity', '', 'gemini-api:gemini-2.5-flash-lite')).toBe(
+      '2.5 Flash-Lite'
+    )
+    expect(shortModelName('antigravity', '', 'gemini-api:gemini-3.1-flash-tts')).toBe(
+      '3.1 Flash TTS'
+    )
+    // agy-lane ids fall back to the provided label like any other provider.
+    expect(shortModelName('antigravity', 'AGY Model', 'agy-model')).toBe('AGY Model')
+  })
+
   it("resolves the cli-default sentinel to each provider's real default", () => {
     expect(shortModelName('codex', '', 'cli-default')).toBe('5.5')
     expect(shortModelName('claude', '', 'cli-default')).toBe('Sonnet 4.6')
