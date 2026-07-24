@@ -82,6 +82,39 @@ describe('AppStore chat record cache', () => {
     expect(onDisk.persistenceRevision).toBe(3)
   })
 
+  it('keeps main-owned worktree and PR-watch fields through a stale renderer save', async () => {
+    const staleRendererChat = AppStore.createChat('ws-1', '/repo')
+    const binding = {
+      schemaVersion: 1 as const,
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: '/repo/.taskwraith/worktrees/thread-1',
+      branch: 'taskwraith/thread-thread-1'
+    }
+    const watchedPr = {
+      chatId: staleRendererChat.appChatId,
+      workspacePath: '/repo',
+      owner: 'taskwraith',
+      repo: 'app',
+      prNumber: 42
+    }
+
+    await AppStore.persistThreadWorktreeBinding(staleRendererChat.appChatId, binding)
+    const durable = JSON.parse(fs.readFileSync(diskPath(staleRendererChat.appChatId), 'utf-8'))
+    fs.writeFileSync(
+      diskPath(staleRendererChat.appChatId),
+      JSON.stringify({ ...durable, watchedPr })
+    )
+
+    AppStore.saveChat({ ...staleRendererChat, title: 'Renderer title update' } as ChatRecord)
+
+    const saved = AppStore.getChat(staleRendererChat.appChatId)
+    expect(saved).toMatchObject({
+      title: 'Renderer title update',
+      threadWorktreeBinding: binding,
+      watchedPr
+    })
+  })
+
   it('an out-of-band file change invalidates via mtime/size and re-parses', () => {
     const chat = AppStore.createChat('ws-1', '/repo')
     const cached = AppStore.getChat(chat.appChatId)

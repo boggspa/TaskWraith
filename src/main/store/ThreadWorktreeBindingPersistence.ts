@@ -57,7 +57,12 @@ export async function readThreadWorktreeBinding(
   }
 }
 
-async function readStoredChat(chatPath: string, chatId: string): Promise<ChatRecord> {
+/**
+ * Shared async read primitive for small main-owned chat patches. Callers must
+ * keep their own per-chat serialization; this helper deliberately has no
+ * cache or whole-record save behavior.
+ */
+export async function readStoredChat(chatPath: string, chatId: string): Promise<ChatRecord> {
   let raw: string
   try {
     raw = await fs.promises.readFile(chatPath, 'utf-8')
@@ -115,7 +120,11 @@ function persistenceRevision(chat: Pick<ChatRecord, 'persistenceRevision'>): num
   return Number.isSafeInteger(revision) && (revision ?? -1) >= 0 ? (revision as number) : 0
 }
 
-async function writeJsonAtomically(filePath: string, data: unknown): Promise<void> {
+/**
+ * Shared async atomic write primitive for small main-owned chat patches.
+ * Keeps these patches off saveChat's synchronous whole-record writer.
+ */
+export async function writeJsonAtomically(filePath: string, data: unknown): Promise<void> {
   const tempPath = `${filePath}.${process.pid}.${Date.now()}.tmp`
   let handle: fs.promises.FileHandle | null = null
   try {

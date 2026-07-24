@@ -5779,17 +5779,36 @@ export class AppStore {
       throw new Error('Cannot save a summary-only chat record; hydrate the chat first.')
     }
 
+    const chatPath = chatPathForId(chatsDir, chat.appChatId)
+    const previousChatForFeedback = this.readChatForFeedbackBaseline(
+      chat.appChatId,
+      chatPath
+    )
+    // These fields are written only by main-owned async patchers. Renderer
+    // chat records can lag those writes, so a later whole-record save must not
+    // erase either a durable isolated-worktree binding or an explicit PR watch.
+    // The persisted record is authoritative even when a field is absent.
+    const {
+      threadWorktreeBinding: _rendererThreadWorktreeBinding,
+      watchedPr: _rendererWatchedPr,
+      ...rendererOwnedChat
+    } = chat
+    const chatWithMainOwnedFields: ChatRecord = {
+      ...rendererOwnedChat,
+      ...(previousChatForFeedback?.threadWorktreeBinding
+        ? { threadWorktreeBinding: { ...previousChatForFeedback.threadWorktreeBinding } }
+        : {}),
+      ...(previousChatForFeedback?.watchedPr
+        ? { watchedPr: { ...previousChatForFeedback.watchedPr } }
+        : {})
+    }
+
     // Persisted-chat compaction (Step 4): historical runs shed raw tool
     // events (inline screenshots become thumbnails, text raw drops) so chat
     // files stay parse-fast and save-cheap. The latest/running runs keep
     // full fidelity for live debugging.
-    const normalizedChat = this.normalizeChatRecord(compactChatForPersist(chat))
+    const normalizedChat = this.normalizeChatRecord(compactChatForPersist(chatWithMainOwnedFields))
     normalizedChat.updatedAt = Date.now()
-    const chatPath = chatPathForId(chatsDir, normalizedChat.appChatId)
-    const previousChatForFeedback = this.readChatForFeedbackBaseline(
-      normalizedChat.appChatId,
-      chatPath
-    )
     normalizedChat.persistenceRevision = chatPersistenceRevision(previousChatForFeedback) + 1
     if (deletedChatIds.has(normalizedChat.appChatId) && !fs.existsSync(chatPath)) {
       return previousChatForFeedback || normalizedChat
