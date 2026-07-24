@@ -158,18 +158,6 @@ public struct EnsembleRosterSheet: View {
         value >= 1_000 ? "\(value / 1_000)K" : "\(value)"
     }
 
-    private func workSessionStatusLabel(_ status: String?) -> String {
-        guard let status, !status.isEmpty, status != "idle" else { return "Idle" }
-        switch status {
-        case "active": return "Active"
-        case "paused": return "Paused"
-        case "completed": return "Completed"
-        case "cancelled": return "Cancelled"
-        case "limit_reached": return "Limit reached"
-        default: return status
-        }
-    }
-
     private func roundStatus(for id: String) -> String? {
         state?.participants?.first { $0.participantId == id }?.status
     }
@@ -410,13 +398,6 @@ public struct EnsembleRosterSheet: View {
                     Text("\(continuationHops)/\(selectedMaxContinuationHops)")
                         .foregroundStyle(TWTheme.textSecondary)
                 }
-            }
-
-            HStack {
-                Label("Work Session", systemImage: "target")
-                Spacer()
-                Text(workSessionStatusLabel(state?.workSessionStatus))
-                    .foregroundStyle(TWTheme.textSecondary)
             }
         } header: {
             Text("Orchestration")

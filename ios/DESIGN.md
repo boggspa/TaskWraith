@@ -498,7 +498,7 @@ lifecycle modifiers landed.)
 - **Queued/steered visibility**: how it works — phone ensemble sends go
   through ensembleSteer (starts a round when idle, injects steering when
   active); mid-round prompts the orchestrator can't inject yet sit in
-  the work-session queue. NEW: the roster row shows an amber
+  the round's follow-up queue. NEW: the roster row shows an amber
   "N queued" chip (tray icon) from ensembleState.queuedPromptCount, so
   queued prompts are no longer invisible on the phone. Steered text
   appears as normal user rows once injected (Mac writes them to the

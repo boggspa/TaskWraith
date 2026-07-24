@@ -1198,8 +1198,7 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     public let secondInCommandParticipantId: String?
     /// Ensemble orchestration mode. Wire key `orchestrationMode`; values are
     /// `"turn_bound"` | `"continuous"` (UNDERSCORE — not "turn-bound"). Absent
-    /// on older Mac builds ⇒ treat as turn_bound. NOTE: "Work Session" is a
-    /// SEPARATE concept (see `workSessionStatus`), NOT a value of this field.
+    /// on older Mac builds ⇒ treat as turn_bound.
     public let orchestrationMode: String?
     /// Current inter-participant handoff count in the active round (continuous
     /// mode only). Wire key `continuationHops`.
@@ -1223,9 +1222,6 @@ public struct RemoteEnsembleState: Codable, Sendable, Equatable {
     public let queuedPromptCount: Int?
     /// Queued prompt texts in injection order (index addresses actions).
     public let queuedPrompts: [QueuedPrompt]?
-    /// Work-session supervisor status (idle | running | paused | …), projected
-    /// by the Mac but previously dropped on decode. Optional for old builds.
-    public let workSessionStatus: String?
 
     /// Roster-order comparator: `order` ascending, then `participantId` tie-break.
     /// Nil `order` sorts last (matches WelcomeViews.sortedParticipants).
@@ -2054,7 +2050,7 @@ public enum BridgeAction {
     /// Queue a user turn on an ensemble chat (requires `steer` capability).
     /// Steer the ensemble: starts a round when idle, injects steering when
     /// one is active. This is the correct send primitive for phone prompts —
-    /// ensembleQueuePrompt only queues WORK-SESSION continuations and
+    /// ensembleQueuePrompt only queues a follow-up behind a running round and
     /// silently no-ops on an idle panel.
     /// Replace the ensemble's configured roster. Array order is the
     /// speaking order; entries with a known id update in place (the Mac
