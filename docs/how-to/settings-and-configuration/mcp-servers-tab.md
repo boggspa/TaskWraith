@@ -9,14 +9,12 @@ endpoints, or SSE endpoints. Enabled stdio and HTTP servers attach to Codex and
 Claude launches; SSE servers attach to Claude only. These are separate from TaskWraith's own built-in MCP
 bridge and tool catalog, which live on the Provider Tools tab.
 
-Path-B Cursor does not receive TaskWraith-injected host MCP from this tab.
-Importing or exporting Cursor JSON here remains useful configuration
-interchange (including for Cursor outside TaskWraith). Path-B may still load
-account or project MCP under own-account trust and the OS sandbox — do not treat
-Read-only as proof that every Cursor-native server is mediated by TaskWraith.
-Disable untrusted project-local servers or use a disposable workspace outside
-`$HOME` when that risk matters. This Path-B product posture is newer than
-v1.8.4.
+Managed Cursor's built-in TaskWraith tool gateway is separate from the
+user-defined servers on this tab. Cursor JSON import/export remains useful for
+configuration interchange, and Cursor may load account or project MCP under
+its own provider trust. Do not treat Read-only as proof that every
+provider-native server is mediated by TaskWraith; disable untrusted
+project-local servers or use a disposable workspace when that risk matters.
 
 ## Where to find it
 **Settings → Integrations → MCP Servers**
@@ -34,6 +32,6 @@ v1.8.4.
 
 ## Tips & related
 - [Provider Tools tab](provider-tools-tab.md) — TaskWraith's own built-in MCP bridge status and tool catalog, separate from your user-managed servers here.
-- [Providers tab](providers-tab.md) — sign in and configure providers; Path-B Cursor uses native tools under the OS sandbox rather than TaskWraith-injected MCP from this tab.
+- [Providers tab](providers-tab.md) — sign in and configure providers, including managed Cursor.
 - [Local servers tab](local-servers-tab.md) — manage dev servers and watchers running under your workspaces, a different kind of "server" from MCP definitions.
 - [Plugins tab](plugins-tab.md) — another integrations surface for extending TaskWraith's capabilities.

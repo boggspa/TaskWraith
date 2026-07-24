@@ -3,7 +3,7 @@
 **Platform:** Electron
 
 ## What it is
-These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session). The selectable architecture includes Codex, Claude, Kimi, Cursor, Grok, and local Ollama. Packaged source-ahead Kimi has no commissioned runtime tuple and is unavailable until its qualification roster is populated. Managed Cursor uses Path-B contained sandbox argv (native tools; no TaskWraith host MCP injection).
+These are the three chips on the composer's controls row that decide how your next message runs: which selectable, currently admitted **provider** handles it, which **model** and **reasoning effort** it uses, and what **permission preset** it's allowed (Plan, Read-Only/Recon, Default Approval, Workspace Write, or Trusted Session). The selectable architecture includes Codex, Claude, AntiGravity, Kimi, Cursor, Grok, and local Ollama. Packaged source-ahead Kimi has no commissioned runtime tuple and is unavailable until its qualification roster is populated. Managed Cursor can use its native tools alongside TaskWraith's governed tools.
 
 In a normal top-level chat, these pickers stay usable even after the thread has
 history. If the chat is idle, changes apply immediately. If a turn is already
@@ -28,9 +28,9 @@ In the **composer's inline pickers row**, just below the prompt input. Each cont
    the current linked session; a genuine provider switch resets provider-linked
    session state before the next turn.
 
-Path-B Cursor is selectable and launches under contained sandbox argv. Higher
-permission presets still only shape the seat argv (read-only vs write under
-`--sandbox enabled`); they do not add TaskWraith per-tool grant UX for Cursor.
+Managed Cursor is selectable with the same permission presets and workspace
+Tool Grants shown for other brokered providers. Those controls govern
+TaskWraith-mediated calls; Cursor-native actions remain provider-owned.
 
 Tool Grants pre-authorise only their named service; they cannot override a
 service that is globally blocked in Settings. A grant updated for an active

@@ -100,13 +100,17 @@ false`, and a narrow preload bridge.
   exact original bytes afterward and fail closed on unsafe config targets.
 - Managed Cursor (Path-B) is always-enabled with containment on the argv:
   hard-pinned `--sandbox enabled`, seat-routed read-only vs write shapes, and
-  never sandbox-disabled / force / yolo / resume-token from the production
-  entry. Path B accepts own-account trust (real `~/.cursor` login; account
-  skills/plugins/MCP may load but are sandbox-bounded). The sandbox is an
-  honest partial backstop — it blocks many `$HOME`-root sensitive writes for a
-  normal project workspace, but a workspace under `$HOME` can leave `$HOME`
-  writable, and network egress is not proven blocked. Prefer project workspaces
-  outside `$HOME` when untrusted repos matter.
+  never sandbox-disabled / yolo / approve-all-MCP / resume-token from the
+  production entry. `--force` is bridge-gated: it appears only after the
+  TaskWraith-owned broker is registered and enabled, while broker calls still
+  pass through host policy and the approval ledger. Path B accepts own-account
+  trust (real `~/.cursor` login; account skills/plugins/MCP may load but are
+  sandbox-bounded), and Cursor-native actions are not promoted into the
+  broker's per-tool guarantee. The sandbox is an honest partial backstop — it
+  blocks many `$HOME`-root sensitive writes for a normal project workspace, but
+  a workspace under `$HOME` can leave `$HOME` writable, and network egress is
+  not proven blocked. Prefer project workspaces outside `$HOME` when untrusted
+  repos matter.
 - External links and file paths should route through the safe shell-open policy;
   do not call `shell.openExternal` directly for untrusted renderer input.
 

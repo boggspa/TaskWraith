@@ -19,9 +19,10 @@ Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread
 6. An agent can continue the same child by passing its `subThreadId` again. An idle child resumes its linked native provider session; if the child is already starting or running, TaskWraith durably queues the follow-up behind the live turn instead of starting a concurrent run.
 7. Sub-threads can't be delegated from again — delegation depth is limited to one level, so return to the parent chat to spawn another sub-thread.
 
-Tool-capable parents can delegate **to** a Path-B Cursor child. Cursor cannot
-act as a TaskWraith MCP parent (`delegate_to_subthread` is not injected).
-Historical Cursor sub-thread records remain readable.
+Managed Cursor can be either the delegated child or, when its TaskWraith tool
+gateway is active, the parent calling `delegate_to_subthread`. If gateway setup
+visibly falls back for a turn, another tool-capable parent can still delegate
+to Cursor.
 
 For a solo parent, returned mailbox data enters provider context exactly once
 through an auto-wake or the next ordinary turn. An Ensemble parent currently

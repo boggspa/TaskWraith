@@ -183,19 +183,21 @@ weaponized payloads to this file or its verification artifacts.
     runtime path (see Path-B re-entry below). The gate module remains as
     qualification/coarse-sync infrastructure and must not be confused with the
     production `runCursorProvider` entry.
-- **2026-07-20 Path-B re-entry (current source-ahead product posture):**
+- **2026-07-20 Path-B re-entry (initial posture; broker details superseded by
+  the 2026-07-22 update below):**
   - Managed Cursor is live again in
     [`LIVE_SELECTABLE_PROVIDER_IDS`](src/shared/retiredProviders.ts).
   - Production `runCursorProvider` is **always-enabled** (no brittle per-build
     fingerprint gate on the spawn path). Containment lives on the argv:
     `buildContainedCursorReadOnlyArgv` / `buildContainedCursorWriteArgv` both
     hard-pin `--sandbox enabled`, seat-route read-only vs write, guard the
-    prompt behind `--`, and never emit force / yolo / sandbox-disabled /
-    resume-token flags from the production entry.
+    prompt behind `--`, and initially emitted no force / yolo /
+    sandbox-disabled / resume-token flags from the production entry.
   - Path B uses the user's real `~/.cursor` login (own-account trust). Account
-    skills/plugins/MCP may load but are sandbox-bounded. TaskWraith does **not**
-    inject host MCP tools or mediate Cursor per-tool approvals
-    (`taskWraithMcpAdvertised = false`).
+    skills/plugins/MCP may load but are sandbox-bounded. The initial re-entry
+    was native-only (`taskWraithMcpAdvertised = false`); the 2026-07-22 update
+    below adds the governed TaskWraith broker without claiming mediation for
+    Cursor-native actions.
   - Honest residual risk (accepted, not denied): sandbox is validated primarily
     as a FILE WRITE impact bound for normal project workspaces; a workspace
     placed directly under `$HOME` can leave `$HOME` writable; network egress is
@@ -211,8 +213,9 @@ weaponized payloads to this file or its verification artifacts.
 - **Release disposition:** Source-ahead may ship Path-B Cursor as a selectable
   managed provider with the residual partial-backstop risks disclosed above.
   Do not reintroduce bare uncontained `cursor-agent` argv or claim TaskWraith
-  per-tool mediation for Path-B Cursor. Prefer project workspaces outside
-  `$HOME` when untrusted repos matter.
+  per-tool mediation for Cursor-native actions. Brokered gateway calls do use
+  TaskWraith policy, approval records, and workspace grants. Prefer project
+  workspaces outside `$HOME` when untrusted repos matter.
 - **2026-07-22 residual-risk update (WS-A MCP un-wall).** `runCursorProvider`
   now wires the "B"-mode TaskWraith broker bridge so Cursor seats can actually
   execute governed MCP tools headlessly (pass-1 finding: policy was

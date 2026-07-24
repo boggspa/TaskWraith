@@ -21,9 +21,9 @@ Appears automatically over the current chat when you raise the **permissions chi
 4. Click the confirm button (**Continue**, **Enable Workspace Write**, or **Start Trusted Session**) to apply the change, or **Cancel** (or press Esc) to stay at the current, safer preset. Nothing changes until you confirm — the chip keeps its old value while the sheet is open.
 5. You can lower the preset again at any time from the same chip — no warning is shown when lowering.
 
-For Path-B Cursor, permission elevation still routes through seat-shaped
-contained argv (read-only vs write under `--sandbox enabled`). TaskWraith does
-not inject host MCP tools or per-tool grant cards for Cursor.
+For managed Cursor, the selected permission posture shapes both the native seat
+and its TaskWraith tool gateway. TaskWraith-mediated calls use approval cards
+and workspace Tool Grants; Cursor-native actions remain provider-owned.
 
 ## Tips & related
 - The once-per-workspace memory applies only to the Default Approval notice; Workspace Write and Trusted Session ask every time by design.

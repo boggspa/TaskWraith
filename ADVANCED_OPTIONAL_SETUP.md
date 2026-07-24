@@ -20,7 +20,7 @@ tool-capable providers.
 | Ollama local models | Install Ollama and pull at least one supported model. | Supported optional path |
 | Kimi | Use `kimi login` (device-code OAuth) or configure a provider key directly in `~/.kimi-code/config.toml`. The key saved in TaskWraith Settings is usage-query-only and is not supplied to ACP. Credentials do not qualify the runtime, and there is no non-ACP fallback. | Setup supported; packaged source-ahead runtime blocked until an exact tuple is commissioned |
 | Claude API-key mode | Paste an Anthropic API key instead of using Claude Code login. | Supported optional auth mode |
-| Cursor | Install `cursor-agent` and run `cursor-agent login`. Path-B uses your real `~/.cursor` login under `--sandbox enabled`. | Supported managed path (native tools under OS sandbox; no TaskWraith host MCP injection) |
+| Cursor | Install `cursor-agent` and run `cursor-agent login`. | Supported managed provider with native and TaskWraith tools |
 | Image generation | Enable the tool and paste an OpenAI or xAI image API key. | Optional, off by default |
 | iOS Remote | Install the companion app, pair it with the Mac, optionally add Tailscale for off-LAN access. | Working beta / TestFlight phased |
 | Screen Watch | Grant macOS window/screen capture permission when attaching a window. | Optional advanced surface |
@@ -110,8 +110,8 @@ Important limits:
 - **Claude Code, runtime-admitted Kimi, and Grok** are **Best effort** opaque
   transports. TaskWraith records cache stats only when emitted and cannot force
   provider-side caching.
-- **Cursor** (Path-B) is **Best effort** opaque CLI: record cache stats only
-  when emitted. Same classification as v1.8.4's then-runnable Cursor path.
+- **Cursor** is a **Best effort** opaque CLI: record cache stats only when
+  emitted.
 - A **Guaranteed** badge is reserved for a transport where TaskWraith actually
   owns and controls the API request; the current Claude/Kimi paths do not meet
   that boundary.
@@ -227,10 +227,9 @@ exact workflow on disposable media and understand the approval prompts.
 
 TaskWraith's own tool parity does not require users to install custom MCP
 servers manually. Qualified provider runtimes receive the TaskWraith-owned tool
-surface through the app's brokered integration, and Grok write-mode runs
-auto-inject a scoped broker when needed. Path-B Cursor deliberately does **not**
-receive TaskWraith host MCP injection; it uses native Cursor tools under the OS
-sandbox.
+surface through the app's brokered integration. Managed Cursor can use this
+built-in gateway alongside its native tools; no manual TaskWraith MCP install is
+required.
 
 Custom external MCP servers are managed in the app at **Settings -> Integrations
 -> MCP Servers**. You can add stdio, HTTP, or SSE servers; import Claude/Cursor
@@ -253,14 +252,13 @@ access:
 4. Keep provider config changes reviewable.
 5. Remove servers you no longer use.
 
-Provider configuration is not itself a TaskWraith approval boundary. Path-B
-Cursor accepts own-account trust and may load account/project skills, plugins,
-or MCP that are then sandbox-bounded — do not assume TaskWraith mediates every
-Cursor-native MCP action merely because the seat is labelled Read-only.
-Disable untrusted project servers or use a disposable workspace outside
-`$HOME` when that risk matters. Import/export support for Cursor JSON in
-Settings remains useful for configuration interchange with Cursor outside
-TaskWraith as well.
+Provider configuration is not itself a TaskWraith approval boundary. Cursor may
+load account/project skills, plugins, or MCP under its own account trust — do
+not assume TaskWraith mediates every provider-native action merely because the
+seat is labelled Read-only. Disable untrusted project servers or use a
+disposable workspace outside `$HOME` when that risk matters. Cursor JSON
+import/export remains useful for configuration interchange outside TaskWraith
+as well.
 
 ## Recommended Order
 

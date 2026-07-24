@@ -33,12 +33,15 @@ Responsible for the UI:
    (including paused-provider failover and retired-provider fallback), applies
    active goal context, and starts the selected provider command, SDK,
    app-server, or Ollama harness. Architecturally supported selectable provider
-   ids are Codex, Claude, Kimi, Cursor, Grok, and local Ollama, but a run still
-   requires provider-specific admission. Gemini is retained for historical
-   chats/configuration and decode paths only. Managed Cursor uses Path-B: the
-   shared CLI transport always-enables `cursor-agent` with hard-pinned
-   `--sandbox enabled` argv (read-only vs write by seat); containment lives on
-   the run argv, not a brittle per-build fingerprint gate. Kimi
+   ids are Codex, Claude, AntiGravity, Kimi, Cursor, Grok, and local Ollama, but
+   a run still requires provider-specific admission. The older standalone
+   Gemini provider id is retained for historical chats/configuration and decode
+   paths only; AntiGravity is the live Gemini API/CLI integration. Managed
+   Cursor uses Path-B: the shared CLI transport always-enables `cursor-agent`
+   with hard-pinned `--sandbox enabled` argv (read-only vs write by seat) and
+   registers a TaskWraith-owned MCP broker before enabling headless gateway
+   calls. Brokered calls use host policy and grants; native Cursor actions
+   remain provider-owned. Kimi
    Code, when admitted, runs over its `kimi acp` (Agent Client Protocol)
    transport inside a seat-isolated `KIMI_CODE_HOME`. Chats,
    delegated sub-threads, and ensemble participants use durable seat homes and

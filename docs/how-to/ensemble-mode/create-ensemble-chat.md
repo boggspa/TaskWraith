@@ -6,12 +6,11 @@
 An Ensemble chat is a single thread where multiple admitted provider agents
 take part in the same conversation and respond in turn, instead of you running
 separate single-provider chats. The selectable architecture includes Claude,
-Codex, Kimi, Grok, and local Ollama models, but every seat still passes its
-runtime admission. Packaged source-ahead Kimi currently has no commissioned
-runtime tuple and cannot launch until the qualification roster is populated.
-Path-B Cursor can be added as an ensemble participant; it uses native tools
-under the OS sandbox and cannot call TaskWraith MCP tools such as
-`ensemble_yield`.
+Codex, AntiGravity, Kimi, Cursor, Grok, and local Ollama models, but every seat
+still passes its runtime admission. Packaged source-ahead Kimi currently has no
+commissioned runtime tuple and cannot launch until the qualification roster is
+populated. Managed Cursor participates like any other admitted seat and can use
+`ensemble_yield` when its TaskWraith tool gateway is active.
 
 ## Where to find it
 Open a new draft and turn on the **Ensemble** button in the composer's bottom row before your first send, click the **+** button in the sidebar's **Ensembles** section header, or use the same **Ensemble** button in an existing top-level idle chat to convert that thread in place.

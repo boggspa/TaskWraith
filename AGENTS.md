@@ -218,10 +218,11 @@ do not loop or retry; continue the parent turn and tell the user what was
 declined.
 
 This MCP route is available only to tool-capable parent seats (Codex, Claude,
-Kimi, Grok, Ollama when admitted). Managed Cursor is live again under Path-B,
-but it is **not** a TaskWraith MCP seat: it runs native tools under the OS
-sandbox and cannot call `delegate_to_subthread`. A tool-capable parent **can**
-still spawn or recall a Cursor child sub-thread.
+Kimi, Cursor, Grok, Ollama when admitted). A Path-B Cursor turn receives the
+gateway when its TaskWraith-owned broker starts successfully and can then call
+`delegate_to_subthread`; if broker setup fails, TaskWraith posts a visible
+warning and that turn degrades to native-only operation. Any tool-capable parent
+can still spawn or recall a Cursor child sub-thread.
 
 `model`, `reasoningEffort`, and `kimiThinking` configure a **fresh** delegated
 seat. They are spawn-only: recalls inherit the existing seat controls and reject
@@ -280,10 +281,10 @@ target:
 If `target` doesn't resolve, the round falls through to default
 ordering. `reason` is included in the audit trail.
 
-This explicit call requires a tool-capable seat. Managed Cursor seats are
-runnable ensemble participants under Path-B, but they are not TaskWraith MCP
-seats and cannot call `ensemble_yield`; use @-mention routing from a
-tool-capable peer or ordinary turn order instead.
+This explicit call requires a tool-capable seat. Broker-active managed Cursor
+seats are tool-capable and can call `ensemble_yield`; a Cursor turn that visibly
+degraded to native-only operation must instead use @-mention routing from a
+tool-capable peer or ordinary turn order.
 
 ### 3. You can call another participant in-line via @-mention
 
@@ -377,9 +378,9 @@ your turn (other participants don't get bumped forward), and the
 answer comes back as your tool result. If the user dismisses, treat
 it as "skip" and continue rather than retrying.
 
-Managed Cursor seats can participate in new ensemble runs under Path-B, but
-they cannot call this TaskWraith MCP tool (native tools only). Use a
-tool-capable seat when you need `ask_user_question`.
+Broker-active managed Cursor seats can call this tool under the same host
+policy as other gateway seats. A Cursor turn that visibly degraded to
+native-only operation cannot, so use another tool-capable seat in that case.
 
 ---
 
@@ -394,10 +395,10 @@ outside the workspace, MCP elicitations):
 2. An auto-deny timer arms in parallel. Current defaults are Codex 30s,
    Kimi 60s, Claude/Grok/Ollama 120s, and main-authority actions 60s, with
    special action-kind overrides such as 90s/180s. Cursor retains a 120s
-   decode/settings compatibility value, but Path-B Cursor does not use
-   TaskWraith per-tool approval cards — containment is the OS sandbox argv.
-   Retired Gemini keeps historical decode values only. User-visible policy
-   remains tunable in Settings.
+   decode/settings compatibility value: brokered Cursor calls use TaskWraith
+   policy, approval cards, and grants, while Cursor-native actions remain
+   provider-owned and OS-sandbox-bounded. Retired Gemini keeps historical
+   decode values only. User-visible policy remains tunable in Settings.
 3. The first responder wins — desktop modal or timer.
 4. A decision is written to the durable Approval Ledger (Settings →
    Automation → Approvals & Grants) including `decisionSource` (`'user'` vs
@@ -439,17 +440,19 @@ User-facing detail: `SESSION_AND_WORKSPACE.md`.
 
 TaskWraith exposes a bundled MCP server (`TaskWraith`) to provider runtimes that
 support brokered tools. Current tool-capable run providers are Codex, Claude,
-Kimi, Grok, and local Ollama when their runtime-specific admission succeeds.
+Kimi, Cursor, Grok, and local Ollama when their runtime-specific admission and
+broker setup succeeds.
 The current embedded Kimi qualification roster is empty, so Kimi admission
 runs in explicitly labelled `unattested-development` mode — structural
 identity/probe/posture checks, always enabled, packaged builds included — and
 that labelling cannot qualify a release; only a reviewed roster tuple can. Gemini is
 historical/retired for new runs. **Managed Cursor is live again (Path-B):**
 TaskWraith starts a contained `cursor-agent` process with hard-pinned
-`--sandbox enabled` and seat-routed read-only vs write argv. Path-B uses native
-Cursor tools under the OS sandbox and does **not** inject TaskWraith host MCP
-tools or per-tool grant UX. Cursor is therefore selectable and runnable, but not
-in the TaskWraith MCP catalogue. The canonical MCP list lives in
+`--sandbox enabled` and seat-routed read-only vs write argv. Path-B keeps native
+Cursor tools under the OS sandbox and also registers a TaskWraith-owned gateway
+broker. Brokered calls use TaskWraith policy, approval cards, and workspace
+grants; native actions remain provider-owned. If registration/approval fails,
+TaskWraith visibly warns and runs that turn native-only. The canonical MCP list lives in
 `src/main/TaskWraithMcpTools.ts` (`TASKWRAITH_MCP_TOOLS`); the most
 relevant tools an agent reaches for during day-to-day work:
 
@@ -592,9 +595,9 @@ demands):**
       native session keeps the exact MCP profile it observed at birth; legacy
       Claude sessions may retain the full profile for compatibility. Grok
       receives a brokered `taskwraith` surface alongside its native shell/file
-      tooling. Path-B Cursor is intentionally outside this gateway: it uses
-      native Cursor tools under the OS sandbox only (no TaskWraith host MCP
-      injection).
+      tooling. Path-B Cursor likewise receives the gateway when its broker
+      setup succeeds, alongside sandbox-bounded native tools; visible
+      native-only degradation is possible when setup fails.
     - On the Kimi Code (ACP) transport, Electron main serves a per-run localhost
       HTTP MCP bridge. The native Kimi session files—not the bridge server—live
       in a durable, seat-isolated `KIMI_CODE_HOME`. Solo chats, delegated
@@ -614,8 +617,8 @@ demands):**
   to explicitly pass the current participant's turn to the next
   participant. `target` names a participant by id / provider /
   role / model alias. Round continues; user input is not required.
-  Universal within the tool-capable MCP catalogue. Path-B Cursor is a runnable
-  seat but has no TaskWraith MCP catalogue, so it cannot call this tool.
+  Universal within the tool-capable MCP catalogue, including broker-active
+  Path-B Cursor seats.
 
 - `ask_user_question(question, options?, context?)` — **current
   critical surface.** Pauses the agent's turn and surfaces a modal
@@ -775,11 +778,13 @@ unshipped until it appears in the next release notes:
   Cursor (no brittle per-build fingerprint gate on the production spawn path)
   and contains it with hard-pinned `--sandbox enabled` argv builders:
   read-only vs write-capable shapes are routed by seat permission. Production
-  never emits bare uncontained `cursor-agent`, sandbox-disabled, force, yolo,
-  or resume-token argv. Path B uses the user's real `~/.cursor` login; account
+  never emits bare uncontained `cursor-agent`, sandbox-disabled, yolo,
+  approve-all-MCP, or resume-token argv; `--force` is emitted only after the
+  TaskWraith-owned broker is registered and enabled so its calls work
+  headlessly. Path B uses the user's real `~/.cursor` login; account
   skills/plugins/MCP may load but are sandbox-bounded (own-account trust).
-  TaskWraith does not inject host MCP tools or mediate Cursor per-tool
-  approvals. Honest partial backstop: sandbox blocks many `$HOME`-root
+  TaskWraith mediates brokered gateway calls and their workspace grants, not
+  Cursor-native actions. Honest partial backstop: sandbox blocks many `$HOME`-root
   sensitive writes for a normal project workspace, but a workspace placed
   directly under `$HOME` can leave `$HOME` writable, and network egress is not
   proven blocked. See `CHANGELOG.md`, `src/main/cursor/CursorCliArgs.ts`, and

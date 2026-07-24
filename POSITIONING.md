@@ -23,12 +23,10 @@ size of the feature list.
   loading vary, so their containment claims require version-pinned live
   canaries. A Read-only label is not, by itself, proof that a hostile native MCP
   server cannot start.
-  Managed Cursor uses Path-B: always-enabled contained `cursor-agent` with
-  hard-pinned `--sandbox enabled` and seat-routed read-only vs write argv.
-  Own-account skills/plugins/MCP may load but are sandbox-bounded; TaskWraith
-  does not mediate Cursor per-tool approvals. Treat the sandbox as an honest
-  partial backstop (file-write impact bound for normal project workspaces, not
-  a full egress seal).
+  Managed Cursor participates as a normal solo, Ensemble, or delegated seat:
+  TaskWraith-mediated calls follow the selected policies and grants, while
+  Cursor-native actions remain provider-owned and sandbox-bounded. Treat that
+  native sandbox as a partial backstop, not a full egress seal.
 - **Honesty is part of the product:** Cache behaviour is labelled Guaranteed
   only where TaskWraith controls the API request, Automatic where a provider
   reports observed implicit caching, and Best-effort on opaque CLI paths.
@@ -52,8 +50,9 @@ Start with **Boss + Captain + one Specialist**. Add a second Specialist only
 when the task crosses domains, and add one **Outsider** when independent dissent
 is worth the extra turn. Keep one write-capable seat by default; give review and
 outsider seats Read-only posture until the task requires more. Cursor seats run
-under Path-B native-sandbox containment without TaskWraith per-tool approvals,
-so keep Cursor on Read-only posture where approval-mediated review matters.
+with the same TaskWraith policy and grant controls for mediated tools; start
+outsider Cursor seats Read-only for the same least-authority reason as any other
+provider.
 
 - **Delivery (3–4):** Boss, Captain/writer, test Specialist, optional Outsider.
 - **Risky change (4–5):** Boss, Captain/writer, security Specialist, test
@@ -65,7 +64,7 @@ Twenty participants is a capacity ceiling, not a recommended starting panel.
 
 ## Release boundary
 
-The latest tagged public baseline is **v1.8.5**. This checkout is source-ahead;
+The latest tagged public baseline is **v1.8.8**. This checkout is source-ahead;
 its compact default panels and any other Unreleased entries are implementation
 evidence, not shipped capability, until a new tag and matching artifacts are
 published. Public claims should name the release or commit they were verified
