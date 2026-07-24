@@ -11,7 +11,8 @@ const PROVIDER_IDS: ReadonlySet<string> = new Set([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity'
 ])
 
 const ROOT_OWNERS: ReadonlySet<string> = new Set([

@@ -166,6 +166,7 @@ interface InspectorProps {
   onRollbackCodexThread?: (threadId: string) => void
   onImportCodexUsageCredential?: () => void
   onClearCodexUsageCredential?: () => void
+  onCodexLogin?: () => void
   onInstallGeminiMcpBridge?: () => void
   onRefreshGeminiMcpBridgeStatus?: () => void
   /** Current chat — used by the Live Invocations tab to list active provider-native invocations. */
@@ -1521,7 +1522,10 @@ function formatParticipantProviderList(participants: EnsembleParticipant[]): str
 // without another edit here.
 const INFERRABLE_PROVIDER_IDS: ReadonlySet<string> = new Set<string>([
   ...LIVE_SELECTABLE_PROVIDER_IDS,
-  ...RETIRED_PROVIDER_IDS
+  ...RETIRED_PROVIDER_IDS,
+  // Dynamically-admitted providers (not in the static live set) whose raw
+  // logs must still attribute correctly.
+  'antigravity'
 ])
 
 const RAW_LOG_PROVIDER_PATTERN = new RegExp(
@@ -2622,6 +2626,7 @@ function SafetyTab(props: InspectorProps) {
     currentWorkspace,
     onImportCodexUsageCredential,
     onClearCodexUsageCredential,
+    onCodexLogin,
     externalPathGrants = []
   } = props
   const { copiedId, copy } = useCopyFeedback()
@@ -2724,7 +2729,7 @@ function SafetyTab(props: InspectorProps) {
           </div>
         )}
         <div className="safety-card">
-          <h4>Codex usage import</h4>
+          <h4>Codex usage</h4>
           <p
             style={{
               fontSize: 'var(--font-size-sm)',
@@ -2732,10 +2737,9 @@ function SafetyTab(props: InspectorProps) {
               margin: '0 0 var(--space-md) 0'
             }}
           >
-            For accurate 5h, weekly, and Spark meters, explicitly import your Codex session from{' '}
-            <span style={{ fontFamily: 'var(--font-mono)' }}>~/.codex/auth.json</span>. The token is
-            encrypted with Electron safeStorage when available and is only used to call ChatGPT
-            usage limits.
+            TaskWraith reads quota data from its private Codex home after sign-in. An explicitly
+            imported session is encrypted with Electron safeStorage when available and powers
+            meters only; it does not authenticate TaskWraith Codex runs.
           </p>
           {codexStatus?.codexUsage?.error && (
             <p
@@ -2775,31 +2779,17 @@ function SafetyTab(props: InspectorProps) {
               margin: '0 0 var(--space-md) 0'
             }}
           >
-            If Codex reports missing auth in Raw Events, use this scoped terminal and run{' '}
-            <span style={{ fontFamily: 'var(--font-mono)' }}>codex login</span>. Credentials are
-            handled by the Codex CLI.
+            Sign in once to the private Codex home used by TaskWraith. This is separate from the
+            Codex app, keeping TaskWraith native sessions out of its history.
           </p>
-          {currentWorkspace && !showTerminal && (
-            <PillButton
-              variant="primary"
-              style={{ width: '100%' }}
-              onClick={() => setShowTerminal(true)}
-            >
-              Open Codex login terminal...
-            </PillButton>
-          )}
-          {currentWorkspace && showTerminal && (
-            <div className="trust-assistant-panel">
-              <div className="trust-assistant-copy">
-                <strong>Codex login terminal</strong>
-                <span>Run codex login here if the app-server reports missing authentication.</span>
-              </div>
-              <TerminalPanel
-                workspacePath={currentWorkspace.path}
-                onClose={() => setShowTerminal(false)}
-              />
-            </div>
-          )}
+          <PillButton
+            variant="primary"
+            style={{ width: '100%' }}
+            onClick={onCodexLogin}
+            disabled={!onCodexLogin}
+          >
+            Open TaskWraith Codex sign-in...
+          </PillButton>
         </div>
       </div>
     )

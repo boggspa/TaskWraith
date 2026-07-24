@@ -189,6 +189,17 @@ const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
   { id: CURSOR_GROK_45_BASE_MODEL_ID, label: 'Grok 4.5' }
 ]
 
+/** AntiGravity gemini-api lane seats. The `gemini-api:` prefix is
+ * load-bearing (dispatch + discovery both key on it); the live discovery
+ * snapshot may extend this list, but these four wire models are the
+ * deterministic floor. Mirrors the contextWindows registrations. */
+const ANTIGRAVITY_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'gemini-api:gemini-2.5-pro', label: 'Gemini 2.5 Pro (API)' },
+  { id: 'gemini-api:gemini-2.5-flash', label: 'Gemini 2.5 Flash (API)' },
+  { id: 'gemini-api:gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite (API)' },
+  { id: 'gemini-api:gemini-2.0-flash', label: 'Gemini 2.0 Flash (API)' }
+]
+
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
@@ -390,6 +401,14 @@ export function getDefaultEnsembleParticipantConfig(
         model: 'qwen3.5:9b',
         permissionPresetId: 'default'
       }
+    case 'antigravity':
+      // Gemini-api lane model id — the `gemini-api:` prefix is load-bearing
+      // (dispatch routes on it); the discovery snapshot may widen the option
+      // list, but the seed stays deterministic.
+      return {
+        model: 'gemini-api:gemini-2.5-flash',
+        permissionPresetId: 'default'
+      }
     default:
       return {
         model: 'gpt-5.5',
@@ -419,6 +438,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'Cursor'
     case 'ollama':
       return 'Local'
+    case 'antigravity':
+      return 'AntiGravity'
     default:
       return 'Gemini'
   }
@@ -775,6 +796,14 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'qwen3.5:9b'
+      }
+    case 'antigravity':
+      return {
+        modelOptions: ANTIGRAVITY_MODELS,
+        reasoningOptions: [],
+        defaultReasoning: '',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: 'gemini-api:gemini-2.5-flash'
       }
     default:
       return {

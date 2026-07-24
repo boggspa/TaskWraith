@@ -1025,6 +1025,44 @@ describe('GeminiApiProvider (Phase M1 Step 5 — history replay & session pinnin
     expect(contents[0].parts[0].text).toBe('Hello Gemini')
   })
 
+  it('never replays chat history for ensemble seat turns (composed prompt owns context)', async () => {
+    const chat = makeChat({
+      messages: [makeChatMessage('user', "what's 2+2?"), makeChatMessage('assistant', '4')]
+    })
+    const { loader, callsRef } = scriptedSdk([[{ text: 'seat answer' }]])
+    const { deps } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      getChat: () => chat
+    })
+    await tryRunGeminiApi(
+      stubEvent,
+      {
+        ...basePayload,
+        prompt: 'TAGGED_TRANSCRIPT_PROMPT with seat instructions',
+        ensembleRun: {
+          roundId: 'round-1',
+          participantId: 'seat-1',
+          provider: 'antigravity',
+          role: 'Builder',
+          order: 1
+        }
+      },
+      baseRoute,
+      deps
+    )
+    const contents = callsRef[0].contents
+    // The orchestrator-composed prompt already embeds the tagged shared
+    // transcript — replaying chat.messages here would double-inject the
+    // whole conversation. Ensemble seats run single-turn.
+    expect(contents).toHaveLength(1)
+    expect(contents[0].role).toBe('user')
+    expect(contents[0].parts[0].text).toBe('TAGGED_TRANSCRIPT_PROMPT with seat instructions')
+    const flat = JSON.stringify(contents)
+    expect(flat).not.toMatch(/2\+2/)
+  })
+
   it('falls back to a single-turn request when getChat is not provided (back-compat)', async () => {
     const { loader, callsRef } = scriptedSdk([[{ text: 'ok' }]])
     const { deps } = makeDeps({

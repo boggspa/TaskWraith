@@ -797,7 +797,19 @@ export async function tryRunGeminiApi(
   // chat record), or when the payload has no `appChatId` (global
   // ad-hoc run, etc.), we degrade gracefully to a single-turn request
   // — the same behaviour Steps 2–4 had.
-  const priorChat = deps.getChat && payload.appChatId ? deps.getChat(payload.appChatId) : null
+  //
+  // ENSEMBLE SEAT TURNS NEVER REPLAY: the orchestrator's composed prompt
+  // already embeds the tagged shared transcript (plus any seat compaction
+  // summary), so replaying `chat.messages` on top would double-inject the
+  // entire conversation — once as peer-tagged material, once as raw
+  // user/model turns claiming the seat itself said everything. Seats run
+  // single-turn on the composed prompt, exactly like the other
+  // injected-context seats (kimi/grok).
+  const isEnsembleSeatTurn = Boolean(payload.ensembleRun)
+  const priorChat =
+    deps.getChat && payload.appChatId && !isEnsembleSeatTurn
+      ? deps.getChat(payload.appChatId)
+      : null
   const contents: any[] = buildGeminiTurnContents(priorChat, payload.prompt)
 
   // Phase M1 Step 7: image input. Load + classify each path into a
@@ -1035,7 +1047,11 @@ export async function tryRunGeminiApi(
   // failed first turn doesn't leave a stale "session linked" marker.
   // Idempotency rules + the cli://-overwrite case live in the dep
   // implementation; see `geminiApiProviderDeps()` in index.ts.
-  if (deps.saveChatLinkedSessionId && normalizedRoute.appChatId) {
+  // Ensemble seat turns skip it: the chat-level linkedProviderSessionId is
+  // SOLO continuity state — a seat writing `api://<chatId>` there would
+  // clobber the ensemble chat's own identity (per-seat continuity lives on
+  // EnsembleParticipant.linkedProviderSessionId via the orchestrator).
+  if (deps.saveChatLinkedSessionId && normalizedRoute.appChatId && !isEnsembleSeatTurn) {
     try {
       deps.saveChatLinkedSessionId(normalizedRoute.appChatId, sessionId)
     } catch {

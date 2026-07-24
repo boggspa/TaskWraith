@@ -193,7 +193,7 @@ import {
   type RosterEditRequest
 } from '../EnsembleRosterMutation'
 import { selectableProviderIds } from '../settings/MainSanitizers'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { isEnsembleSeatProvider } from '../../shared/retiredProviders'
 import { buildRunQueueDispatchReceipt } from '../RunQueueDispatchReceipt'
 import { isCodexAppServerThreadId } from '../CodexSessionIdentity'
 import {
@@ -9458,7 +9458,7 @@ export class EnsembleOrchestrator {
     }
     const isDispatchable = (participant: EnsembleParticipant): boolean => {
       if (!participant.enabled) return false
-      if (!isLiveSelectableProvider(participant.provider)) return false
+      if (!isEnsembleSeatProvider(participant.provider)) return false
       if (participant.id === run.participant.id) return false
       if (activeParticipantIds.has(participant.id)) return false
       if (this.participantFanoutDispatchState(runtime, participant.id) === 'active') return false
@@ -9490,7 +9490,7 @@ export class EnsembleOrchestrator {
           error: 'invalid_target'
         }
       }
-      if (!isLiveSelectableProvider(participant.provider)) {
+      if (!isEnsembleSeatProvider(participant.provider)) {
         return {
           ok: false,
           message: `ensemble_fanout_all: target "${rawTarget}" uses a provider that is unavailable for new runs.`,
@@ -10344,7 +10344,9 @@ export class EnsembleOrchestrator {
       rosterPresetImportAllowed: rosterPresetAuthorityRole !== undefined,
       ...(rosterPresetAuthorityRole ? { rosterPresetAuthorityRole } : {}),
       availableProviders: buildEnsembleParticipantProviderCatalog(
-        this.deps.getProviderUsageSnapshot
+        this.deps.getProviderUsageSnapshot,
+        undefined,
+        this.deps.getSettings()
       ),
       participants: (chat.ensemble.participants || []).map((participant) => {
         const participantContext = latestRunContextUsage(chat.runs ?? [], participant.id)
@@ -13108,7 +13110,7 @@ export class EnsembleOrchestrator {
     }
     const isEligible = (participant: EnsembleParticipant): boolean => {
       if (!participant.enabled) return false
-      if (!isLiveSelectableProvider(participant.provider)) return false
+      if (!isEnsembleSeatProvider(participant.provider)) return false
       if (participant.id === run.participant.id) return false
       if (activeParticipantIds.has(participant.id)) return false
       // A target can be reserved for a concurrent ensemble_fanout call whose
@@ -13146,7 +13148,7 @@ export class EnsembleOrchestrator {
           error: 'invalid_target'
         }
       }
-      if (!isLiveSelectableProvider(participant.provider)) {
+      if (!isEnsembleSeatProvider(participant.provider)) {
         return {
           ok: false,
           message: `ensemble_fanout: target "${rawTarget}" uses a provider that is unavailable for new runs.`,

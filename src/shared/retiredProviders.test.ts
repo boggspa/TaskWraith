@@ -3,6 +3,7 @@ import {
   DEFAULT_PROVIDER,
   RETIRED_PROVIDER_IDS,
   coerceLiveProvider,
+  isEnsembleSeatProvider,
   isLiveSelectableProvider,
   LIVE_SELECTABLE_PROVIDER_IDS,
   isRetiredProvider,
@@ -91,5 +92,24 @@ describe('AntiGravity opt-in gate (isAntigravityOptInEnabled)', () => {
     expect(
       isAntigravityOptInEnabled({ antigravityEnabled: true, antigravityOptInAcceptedAt: 1_700_000_000_000 })
     ).toBe(true)
+  })
+})
+
+describe('isEnsembleSeatProvider', () => {
+  it('admits every static live provider', () => {
+    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
+      expect(isEnsembleSeatProvider(provider)).toBe(true)
+    }
+  })
+
+  it('admits dynamically-gated antigravity seats', () => {
+    expect(isEnsembleSeatProvider('antigravity')).toBe(true)
+  })
+
+  it('still rejects retired and unknown providers', () => {
+    expect(isEnsembleSeatProvider('gemini')).toBe(false)
+    expect(isEnsembleSeatProvider('made-up')).toBe(false)
+    expect(isEnsembleSeatProvider(null)).toBe(false)
+    expect(isEnsembleSeatProvider(undefined)).toBe(false)
   })
 })

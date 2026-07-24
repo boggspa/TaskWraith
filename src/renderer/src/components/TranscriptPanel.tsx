@@ -260,6 +260,7 @@ function providerIdFromUnknown(value: unknown): ProviderId | undefined {
     case 'grok':
     case 'cursor':
     case 'ollama':
+    case 'antigravity':
       return value
     default:
       return undefined

@@ -1280,7 +1280,12 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
-import { dispatchAntigravityCombinedMode } from './antigravity/AntigravityCombinedModeDispatch'
+import {
+  dispatchAntigravityCombinedMode,
+  isAntigravityGeminiApiModelCandidate
+} from './antigravity/AntigravityCombinedModeDispatch'
+import { isAntigravityGeminiApiKeyConfigured } from './antigravity/AntigravityGeminiApiKeyConfiguredSignal'
+import { resolveAgyCliBinary } from './antigravity/AntigravityCli'
 import {
   AGY_USAGE_FRESH_TTL_MS,
   fetchAuthenticatedAgyQuotaSnapshot,
@@ -18947,7 +18952,60 @@ async function probeEnsembleParticipant(
       : null
     return probeCodexParticipant(runtimeProfile)
   }
+  if (participant.provider === 'antigravity') {
+    return probeAntigravityParticipant(participant)
+  }
   return probeCliParticipant(participant)
+}
+
+/**
+ * AntiGravity seats never resolve through the generic CLI probe: the generic
+ * path looks for a binary literally named `antigravity` (which does not
+ * exist), so every seat read as unreachable and serial rounds silently
+ * dropped it. The real split is per sub-lane:
+ *   - gemini-api models (`gemini-api:*`, and the seat default when no model
+ *     is set) need NO binary — reachable iff the BYO key is configured and
+ *     the data-use disclosure was accepted (the same two gates the turn
+ *     itself re-checks).
+ *   - official agy-CLI models resolve the real `agy` binary.
+ */
+async function probeAntigravityParticipant(
+  participant: EnsembleParticipant
+): Promise<ParticipantProbeResult> {
+  const model = typeof participant.model === 'string' ? participant.model.trim() : ''
+  if (!model || isAntigravityGeminiApiModelCandidate(model)) {
+    if (!isAntigravityGeminiApiKeyConfigured()) {
+      return {
+        reachable: false,
+        reason:
+          'AntiGravity Gemini API key is not configured — add it in Settings → Providers to run this seat.',
+        underlyingCode: 'EACCES'
+      }
+    }
+    const disclosureAcceptedAt = AppStore.getSettings().antigravityGeminiApiDisclosureAcceptedAt
+    if (
+      typeof disclosureAcceptedAt !== 'number' ||
+      !Number.isFinite(disclosureAcceptedAt) ||
+      disclosureAcceptedAt <= 0
+    ) {
+      return {
+        reachable: false,
+        reason:
+          'AntiGravity Gemini API data-use disclosure has not been accepted yet — open the AntiGravity provider settings to review it.',
+        underlyingCode: 'EACCES'
+      }
+    }
+    return { reachable: true }
+  }
+  const resolved = await resolveAgyCliBinary()
+  if (resolved.binaryPath) {
+    return { reachable: true }
+  }
+  return {
+    reachable: false,
+    reason: 'AntiGravity agy CLI binary not found on PATH',
+    underlyingCode: 'ENOENT'
+  }
 }
 
 async function probeCodexParticipant(
@@ -28860,7 +28918,8 @@ async function executeGeminiMcpTool(
               rosterPresetAuthorityRole: 'solo_inherited_boss' as const,
               availableProviders: buildEnsembleParticipantProviderCatalog(
                 (provider) => AppStore.getProviderUsageSnapshot(provider),
-                configuredProviders
+                configuredProviders,
+                AppStore.getSettings()
               ),
               participants: callingChat.provider
                 ? [

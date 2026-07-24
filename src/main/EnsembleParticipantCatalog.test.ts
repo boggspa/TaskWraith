@@ -55,3 +55,17 @@ describe('EnsembleParticipantCatalog', () => {
     })
   })
 })
+
+describe('antigravity gemini-api seat models', () => {
+  it('exposes the static gemini-api floor so admitted seats are never model-less', () => {
+    const models = buildEnsembleParticipantModelCatalog('antigravity')
+    expect(models.length).toBeGreaterThanOrEqual(4)
+    const ids = models.map((model) => model.id)
+    expect(ids).toContain('gemini-api:gemini-2.5-flash')
+    expect(ids).toContain('gemini-api:gemini-2.5-pro')
+    // The prefix is load-bearing (dispatch routes on it) — every row keeps it.
+    for (const id of ids) {
+      expect(id.startsWith('gemini-api:')).toBe(true)
+    }
+  })
+})

@@ -152,8 +152,19 @@ describe('getStaticProviderModels (provider-specific catalogs)', () => {
     const gemini = getStaticProviderModels('gemini').map((m) => m.id)
     const grok = getStaticProviderModels('grok').map((m) => m.id)
     const cursor = getStaticProviderModels('cursor').map((m) => m.id)
-    expect(antigravity).toEqual([])
+    // AntiGravity owns a gemini-api: prefixed BYO-key floor (ensemble seats
+    // must never be model-less) — but it still borrows NO retired-Gemini
+    // alias rows (`pro`/`flash`/`cli-default`), and agy-CLI rows stay
+    // discovery-owned.
+    expect(antigravity).toEqual([
+      'gemini-api:gemini-2.5-pro',
+      'gemini-api:gemini-2.5-flash',
+      'gemini-api:gemini-2.5-flash-lite',
+      'gemini-api:gemini-2.0-flash'
+    ])
+    expect(antigravity.every((id) => id.startsWith('gemini-api:'))).toBe(true)
     expect(gemini).toContain('flash')
+    expect(antigravity).not.toEqual(expect.arrayContaining(['flash', 'pro', 'cli-default']))
     expect(grok).toEqual(['grok-4.5', 'grok-composer-2.5-fast'])
     expect(cursor).toEqual(['composer-2.5-fast', 'composer-2.5', 'grok-4.5'])
   })

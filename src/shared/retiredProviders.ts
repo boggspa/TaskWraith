@@ -57,6 +57,20 @@ export function isLiveSelectableProvider(
 }
 
 /**
+ * True for providers an ENSEMBLE seat may carry and be dispatched/targeted
+ * with. Superset of the static live set: AntiGravity is admitted dynamically
+ * (BYO gemini-api key or agy opt-in — enforced at admission time by
+ * `selectableProviderIds`/the renderer snapshot), so seat-level gates that
+ * filtered on `isLiveSelectableProvider` alone silently excluded valid,
+ * already-admitted AntiGravity seats from fan-out targeting and per-seat
+ * affordances. Use THIS predicate for seat gates; keep
+ * `isLiveSelectableProvider` for static offer surfaces.
+ */
+export function isEnsembleSeatProvider(provider: string | null | undefined): boolean {
+  return isLiveSelectableProvider(provider) || provider === 'antigravity'
+}
+
+/**
  * Coerce a possibly missing or unavailable provider to a live one: returns the
  * input unchanged only when it belongs to the canonical live-selectable set,
  * otherwise `DEFAULT_PROVIDER`. Use this on READ wherever a runnable default is

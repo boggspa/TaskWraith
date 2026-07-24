@@ -102,9 +102,13 @@ export function buildEnsembleParticipantProviderCatalog(
   getProviderUsageSnapshot?: (
     provider: ProviderId
   ) => NormalizedProviderUsageSnapshot | null | undefined,
-  configuredProviders?: ReadonlySet<ProviderId>
+  configuredProviders?: ReadonlySet<ProviderId>,
+  /** Live settings for admission of dynamically-gated providers (the
+   * AntiGravity agy opt-in lane; the BYO-key lane is settings-less). Without
+   * this, opt-in-only installs never see antigravity in the seat catalog. */
+  settings?: Parameters<typeof selectableProviderIds>[0]
 ): EnsembleParticipantProviderCatalogEntry[] {
-  return selectableProviderIds().map((provider) => {
+  return selectableProviderIds(settings).map((provider) => {
     const usage = summarizeProviderUsage(provider, getProviderUsageSnapshot?.(provider))
     return {
       provider,

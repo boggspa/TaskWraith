@@ -54,6 +54,7 @@ import {
 import {
   coerceLiveProvider,
   DEFAULT_PROVIDER,
+  isEnsembleSeatProvider,
   isLiveSelectableProvider,
   isRetiredProvider
 } from '../../shared/retiredProviders'
@@ -21118,7 +21119,7 @@ function App(): React.JSX.Element {
     const ids = (currentChat?.ensemble?.participants || [])
       .filter(
         (participant) =>
-          participant.enabled !== false && isLiveSelectableProvider(participant.provider)
+          participant.enabled !== false && isEnsembleSeatProvider(participant.provider)
       )
       .map((participant) => participant.id)
     return ids.length > 0 ? ids : undefined

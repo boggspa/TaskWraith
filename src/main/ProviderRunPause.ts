@@ -20,7 +20,8 @@ const PROVIDER_IDS: readonly ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity'
 ]
 const PROVIDER_SET = new Set<ProviderId>(PROVIDER_IDS)
 

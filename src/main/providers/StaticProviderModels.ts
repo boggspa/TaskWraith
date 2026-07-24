@@ -535,6 +535,33 @@ const KIMI_STATIC_MODELS = [
     defaultReasoningEffort: 'max'
   }
 ]
+/** AntiGravity gemini-api (BYO-key) lane floor — mirrors the renderer's
+ * ANTIGRAVITY_MODELS defaults and the contextWindows registrations. Live
+ * discovery may widen this; it must never shrink below these rows. */
+const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = [
+  {
+    id: 'gemini-api:gemini-2.5-pro',
+    label: 'Gemini 2.5 Pro (API)',
+    description: 'Gemini API key lane · 1M context'
+  },
+  {
+    id: 'gemini-api:gemini-2.5-flash',
+    label: 'Gemini 2.5 Flash (API)',
+    description: 'Gemini API key lane · 1M context',
+    isDefault: true
+  },
+  {
+    id: 'gemini-api:gemini-2.5-flash-lite',
+    label: 'Gemini 2.5 Flash Lite (API)',
+    description: 'Gemini API key lane · 1M context'
+  },
+  {
+    id: 'gemini-api:gemini-2.0-flash',
+    label: 'Gemini 2.0 Flash (API)',
+    description: 'Gemini API key lane · 1M context'
+  }
+]
+
 const OLLAMA_STATIC_MODELS = [
   {
     id: 'qwen3:4b-instruct',
@@ -736,9 +763,12 @@ export function getStaticProviderModels(
                 : provider === 'cursor'
                   ? CURSOR_STATIC_MODELS
                   : provider === 'antigravity'
-                    // S3 deliberately has no static AntiGravity rows. S4 owns
-                    // authenticated official-CLI model discovery and exposure.
-                    ? []
+                    // Official agy-CLI rows stay discovery-owned (S4), but the
+                    // BYO-key gemini-api sub-lane gets a deterministic static
+                    // floor so ensemble catalogs and fallbacks are never
+                    // model-less. The `gemini-api:` prefix is load-bearing —
+                    // dispatch routes on it.
+                    ? ANTIGRAVITY_GEMINI_API_STATIC_MODELS
                     : GEMINI_STATIC_MODELS
   if (!options.includePreviewModels) return models
   const previews = previewModelsForProvider(provider)
