@@ -123,6 +123,24 @@ describe('RunCoordinator', () => {
     expect(spies.sendError).not.toHaveBeenCalled()
   })
 
+  it('returns the workspace resolved by main preflight on successful dispatch', async () => {
+    const { deps, spies } = makeDeps()
+    spies.ensureProviderRunPreflight.mockImplementation(async (_sender, payload) => {
+      payload.workspace = '/tmp/ws/.taskwraith/worktrees/chat-1'
+      return true
+    })
+
+    const result = await new RunCoordinator(deps).dispatch(
+      { ...samplePayload },
+      makeFakeEvent()
+    )
+
+    expect(result).toMatchObject({
+      dispatched: true,
+      effectiveWorkspacePath: '/tmp/ws/.taskwraith/worktrees/chat-1'
+    })
+  })
+
   it('returns dispatched=false when preflight rejects', async () => {
     const { deps, adapter, spies } = makeDeps()
     spies.ensureProviderRunPreflight.mockResolvedValueOnce(false)
@@ -316,7 +334,11 @@ describe('RunCoordinator', () => {
 
     await expect(
       new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent(), outerReservation)
-    ).resolves.toEqual({ dispatched: true, appRunId: 'run-fixed' })
+    ).resolves.toEqual({
+      dispatched: true,
+      appRunId: 'run-fixed',
+      effectiveWorkspacePath: '/tmp/ws'
+    })
     expect(reserveDispatch).not.toHaveBeenCalled()
     expect(authorizeBeforeAdapterRun).toHaveBeenCalledWith(
       expect.objectContaining({ appRunId: 'run-fixed' }),

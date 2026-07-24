@@ -113,6 +113,10 @@ export interface DispatchResult {
   /** The resolved appRunId. Empty string when normalization didn't
    * produce one (edge case — payload didn't carry an appChatId). */
   appRunId: string
+  /** The workspace selected by main preflight for a successfully dispatched
+   * run. This is authoritative when a runtime profile allocates a per-thread
+   * worktree, so renderer-owned diff capture can follow the provider cwd. */
+  effectiveWorkspacePath?: string
 }
 
 /**
@@ -247,7 +251,11 @@ export class RunCoordinator {
       } else {
         await adapter.run({ event, payload: normalizedPayload })
       }
-      return { dispatched: true, appRunId: normalizedPayload.appRunId ?? '' }
+      return {
+        dispatched: true,
+        appRunId: normalizedPayload.appRunId ?? '',
+        effectiveWorkspacePath: normalizedPayload.workspace
+      }
     } finally {
       if (ownsDispatchReservation && dispatchReservation) {
         this.deps.releaseDispatchReservation?.(dispatchReservation)
