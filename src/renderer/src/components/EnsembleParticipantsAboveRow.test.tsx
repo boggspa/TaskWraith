@@ -933,6 +933,33 @@ describe('EnsembleParticipantsAboveRow', () => {
     expect(html).toContain('is-dimmed')
   })
 
+  it('tints AntiGravity participant names with the provider theme token', () => {
+    const chat = makeChat([
+      makeParticipant({
+        id: 'ensemble-antigravity',
+        provider: 'antigravity',
+        role: 'SolomanBG'
+      })
+    ])
+    const html = renderToStaticMarkup(
+      <EnsembleParticipantsAboveRow
+        chat={chat}
+        selectedParticipantId={null}
+        onSelectParticipant={() => undefined}
+        onChatChange={() => undefined}
+      />
+    )
+    const css = readFileSync(
+      new URL('../assets/css/09-ensemble-work-session.css', import.meta.url),
+      'utf8'
+    )
+
+    expect(html).toContain('ensemble-above-chip provider-antigravity')
+    expect(css).toMatch(
+      /\.ensemble-above-chip\.provider-antigravity \.ensemble-above-chip-role\s*\{\s*color: var\(--provider-antigravity-color\);/
+    )
+  })
+
   // Slice F v2 (1.0.3) — clicking a chip selects it; the parent
   // (App.tsx) passes selectedParticipantId in and the component
   // applies an `.is-selected` class for the visual treatment.

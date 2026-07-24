@@ -1585,6 +1585,9 @@
 .ensemble-above-chip.provider-gemini .ensemble-above-chip-role {
   color: var(--provider-gemini-color);
 }
+.ensemble-above-chip.provider-antigravity .ensemble-above-chip-role {
+  color: var(--provider-antigravity-color);
+}
 .ensemble-above-chip.provider-kimi .ensemble-above-chip-role {
   color: var(--provider-kimi-color);
 }
