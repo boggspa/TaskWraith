@@ -2345,8 +2345,8 @@ function isPlainAssistantTextMessage(
 /**
  * Collapse runs of CONSECUTIVE byte-identical assistant restatements from the
  * SAME speaker into a single row (keeping the first). An ensemble participant
- * stuck in a continuation loop — e.g. repeatedly calling `ensemble_continue`
- * with no new work — persists the same reply as N separate messages (one per
+ * stuck in a continuation loop — repeatedly queueing follow-up rounds with
+ * no new work — persists the same reply as N separate messages (one per
  * round), which the remote projection would otherwise fan out into N identical
  * bubbles. The desktop concatenates these into one bubble; this gives every
  * remote client the same hygiene. Deliberately conservative: only adjacent,

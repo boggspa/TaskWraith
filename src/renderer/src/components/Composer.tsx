@@ -340,7 +340,6 @@ export interface ComposerProps {
   handleBlackboardQueuedMessage: any
   handleSteer: any
   handleSteerToQueuedMessage: any
-  handleStopWorkSession: any
   handleToggleWelcomeEnsemble: any
   handleTrustWorkspaceClick: any
   imageAttachments: any
@@ -469,7 +468,6 @@ export interface ComposerProps {
   setRawLogs: any
   setSelectedModelType: any
   setSessionTrust: any
-  setShowWorkSessionSheet: any
   setWorkflowDraft: any
   settings: any
   shouldShowGhostCompanion: any
@@ -680,7 +678,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleSetAgenticWorkspaceGrant,
     handleBlackboardQueuedMessage,
     handleSteerToQueuedMessage,
-    handleStopWorkSession,
     handleToggleWelcomeEnsemble,
     handleTrustWorkspaceClick,
     hasProjectReferenceContext = false,
@@ -789,7 +786,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     setRawLogs,
     setSelectedModelType,
     setSessionTrust,
-    setShowWorkSessionSheet,
     setWorkflowDraft,
     settings,
     shouldShowGhostCompanion,
@@ -1009,13 +1005,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         }
         activeFanoutPolicy={activeEnsembleFanoutPolicy}
         isRoundRunning={isCurrentEnsembleRoundRunning}
-        workSessionActive={
-          currentChat.ensemble.workSession?.status === 'active' ||
-          currentChat.ensemble.workSession?.status === 'paused'
-        }
         composerStyle={appearance.composerStyle}
         onSelectMode={(nextMode) => updateCurrentEnsembleOrchestrationMode(nextMode)}
-        onOpenWorkSession={() => setShowWorkSessionSheet(true)}
         fanoutPolicy={currentEnsembleFanoutPolicy}
         writerFanoutPolicy={writerFanoutPolicy}
         onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
@@ -2020,7 +2011,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
               stack so the participant chip strip renders. Before:
               `!isCurrentGlobalChat && currentWorkspace && ...` blocked
               global ensemble chats entirely, leaving them with no
-              way to edit roster / orchestration mode / Work Session.
+              way to edit roster / orchestration mode.
               Now: workspace-bound chats keep their existing rules
               (the inner sections still gate on `!isWelcomeChat` so
               Create PR / file-changes / external-path rows don't
@@ -2372,7 +2363,6 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       if (!currentChat) return
                       void window.api.skipEnsembleReadFanout(currentChat.appChatId)
                     }}
-                    onStopWorkSession={() => void handleStopWorkSession()}
                     onRetryParticipant={(participantId) => {
                       // 1.0.4-AT7 — re-dispatch the named participant
                       // as a DM with the chat's last user prompt.
@@ -2946,7 +2936,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 {/*
                   1.0.6-EW68 — Two-container composer split (Obsidian +
                   Alabaster only). The control-footer (send row + Row A:
-                  Turn/Continuous/Work-Session + provider + model +
+                  Turn/Continuous + provider + model +
                   approval) and the telemetry-row (Row B: timecode +
                   workspace + token tally) are wrapped here so those two
                   shells can render them as a SECOND lit rect below the

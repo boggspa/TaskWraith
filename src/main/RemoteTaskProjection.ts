@@ -580,7 +580,6 @@ export interface RemoteEnsembleState {
   /** Queued prompt texts (combined legacy single + array, in injection
    * order) — `index` addresses items for steerNow/remove actions. */
   queuedPrompts?: Array<{ index: number; text: string }>
-  workSessionStatus?: string
 }
 
 export type RemoteShellColorScheme = 'system' | 'light' | 'dark'
@@ -1559,8 +1558,7 @@ export function buildRemoteEnsembleState(chat: ChatRecord): RemoteEnsembleState 
           ...(participant.thinkingEnabled ? { thinkingEnabled: true } : {}),
           ...(participant.stageRole ? { stageRole: participant.stageRole } : {})
         }
-      }),
-    workSessionStatus: ensemble.workSession?.status
+      })
   }
 }
 

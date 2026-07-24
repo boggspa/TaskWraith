@@ -412,12 +412,6 @@ function cleanOptionalText(value: unknown): string | undefined {
 
 function extractOpenTasks(chat: ChatRecord, round: EnsembleRoundState): string[] {
   const out: string[] = []
-  const workSession = chat.ensemble?.workSession
-  if (workSession?.enabled && workSession.status !== 'idle') {
-    pushTask(out, `Objective: ${workSession.objective}`)
-    pushTask(out, `Acceptance: ${workSession.acceptanceCriteria}`)
-    pushTask(out, `Session status: ${workSession.status}`)
-  }
   for (const prompt of round.queuedPrompts || []) {
     pushTask(out, `Queued: ${truncateOneLine(prompt, 220)}`)
   }

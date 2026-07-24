@@ -995,9 +995,9 @@
   flex-direction: row;
   flex-wrap: nowrap;
   align-items: center;
-  /* Reclaim the full row width (especially on the wrapped line below a
-   * work-session band). `min-width: 0` lets the slot shrink when the row
-   * is tight; chip children use `flex: 0 0 auto` so they never overlap. */
+  /* Reclaim the full row width. `min-width: 0` lets the slot shrink when
+   * the row is tight; chip children use `flex: 0 0 auto` so they never
+   * overlap. */
   flex: 1 1 0;
   min-width: 0;
   gap: 6px;
@@ -3155,17 +3155,10 @@
   /* Was `overflow: hidden` for the gradient ::before mask. That clipped
    * participant chips when the flex slot for `.ensemble-above-row-chips`
    * ran tight — only the status dot survived as a vertical sliver.
-   * `flex-wrap: wrap` lets the work-session band (`flex-basis: 100%`)
-   * sit on its own row above the chip strip instead of crushing it
-   * horizontally. */
+   * `flex-wrap: wrap` lets a full-width band sit on its own row above
+   * the chip strip instead of crushing it horizontally. */
   overflow: visible;
   flex-wrap: wrap;
-}
-/* After a full-width work-session band, the chip strip + +/- controls
- * share the next row and the strip reclaims all remaining width. */
-.ensemble-above-row:has(.work-session-strip) .ensemble-above-row-chips {
-  flex: 1 1 0;
-  min-width: 0;
 }
 .ensemble-above-row::before {
   content: '';

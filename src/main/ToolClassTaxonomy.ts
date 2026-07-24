@@ -205,7 +205,6 @@ const ORCHESTRATION_TOOLS = new Set<string>([
   // ensemble coordination artifacts (non-workspace-mutating)
   'create_handoff_card',
   'agent_delegation_role',
-  'ensemble_continue',
   'ensemble_bossman_control',
   'ensemble_roster_edit',
   'ensemble_brief_update',
@@ -302,11 +301,13 @@ export function isReadOnlyBlockedTool(
   toolArgs?: unknown
 ): boolean {
   if (!effectivePermissions?.readOnly) return false
-  // 1.0.4-AN — the audited read-only PARTICIPATION exception: the two ensemble
-  // poll tools are read-only-callable (the "all participants vote" ratification).
-  // They remain app-state mutations for route/workspace-lineage guards, but are
-  // exempt from the read-only mutation deny. Every other app-state / workspace-
-  // write / fs / shell tool stays blocked — the read-only floor is unchanged.
+  // 1.0.4-AN — the audited read-only PARTICIPATION exception: the ensemble
+  // participation tools (poll vote/propose per the "all participants vote"
+  // ratification, plus ensemble_send visible notes per the 2026-07 efficiency
+  // audit) are read-only-callable. They remain app-state mutations for
+  // route/workspace-lineage guards, but are exempt from the read-only mutation
+  // deny. Every other app-state / workspace-write / fs / shell tool stays
+  // blocked — the read-only floor is unchanged.
   if ((MCP_ENSEMBLE_PARTICIPATION_TOOLS as ReadonlySet<string>).has(toolName)) return false
   // C2-v4 — the audited read-only REVIEWER-VERDICT exception (argument-scoped). The
   // security-critical distinction from the whole-tool participation set above: this

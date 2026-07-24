@@ -140,27 +140,6 @@ describe('Ensemble prompt composition', () => {
     expect(ordered.map((participant) => participant.id)).toEqual(['codex', 'gemini', 'claude'])
   })
 
-  it('scopes active Work Session rosters to allowed participants and leads with the configured lead', () => {
-    const ordered = getOrderedEnsembleParticipants({
-      ...ensemble,
-      workSession: {
-        enabled: true,
-        status: 'active',
-        objective: 'Implement the plan.',
-        acceptanceCriteria: 'All checks pass.',
-        allowedParticipantIds: ['codex', 'gemini'],
-        leadParticipantId: 'gemini',
-        permissionPresetId: 'workspace_write',
-        maxRoundsPerProvider: 3,
-        maxDurationMs: 60 * 60 * 1000,
-        enableScoutPass: false,
-        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-        totalRoundsUsed: 0
-      }
-    })
-    expect(ordered.map((participant) => participant.id)).toEqual(['gemini', 'codex'])
-  })
-
   // 1.0.4-AR2 — pre-AR2 the prompt-builder treated any
   // `maxParticipants <= 4` as legacy data and fell back to the
   // global ceiling. AR2 honored the per-chat value as long as it's
@@ -422,54 +401,6 @@ describe('Ensemble prompt composition', () => {
 
     expect(prompt).not.toContain('Role boundary contract:')
     expect(prompt).not.toContain('Other enabled role scopes')
-  })
-
-  it('surfaces active Work Session objective and authority in participant prompts', () => {
-    const workSessionConfig: EnsembleConfig = {
-      ...ensemble,
-      bossmanParticipantId: 'claude',
-      workSession: {
-        enabled: true,
-        status: 'active',
-        objective: 'Decompose App.tsx without behavior changes.',
-        acceptanceCriteria: 'Typecheck passes and each slice is independently reviewable.',
-        allowedParticipantIds: ['claude', 'codex'],
-        leadParticipantId: 'claude',
-        managerParticipantId: 'claude',
-        linkedActiveGoalId: 'goal-1',
-        permissionPresetId: 'workspace_write',
-        maxRoundsPerProvider: 6,
-        maxDurationMs: 60_000,
-        enableScoutPass: true,
-        roundsUsed: {
-          gemini: 0,
-          codex: 0,
-          claude: 0,
-          kimi: 0,
-          grok: 0,
-          cursor: 0,
-          ollama: 0,
-          antigravity: 0
-        },
-        totalRoundsUsed: 0
-      }
-    }
-    const prompt = buildEnsembleParticipantPrompt({
-      chat: chat(),
-      config: workSessionConfig,
-      participant: workSessionConfig.participants[1],
-      currentPrompt: 'Continue the session.',
-      roundId: 'round-1'
-    })
-
-    expect(prompt).toContain('Active Work Session:')
-    expect(prompt).toContain('Objective: Decompose App.tsx without behavior changes.')
-    expect(prompt).toContain(
-      'Acceptance criteria: Typecheck passes and each slice is independently reviewable.'
-    )
-    expect(prompt).toContain('Lead: Claude / Reviewer.')
-    expect(prompt).toContain('Manager/Boss: Claude / Reviewer.')
-    expect(prompt).toContain('Authority rule: configured Lead/Boss/manager seat(s) are Claude / Reviewer')
   })
 
   it('injects TaskWraith active goals into ensemble participant prompts', () => {
@@ -1411,42 +1342,6 @@ describe('Ensemble prompt composition', () => {
     expect(prompt).toContain('Gemini / Researcher is responsible')
     expect(prompt).toContain('Designated participant: Gemini / Researcher.')
     expect(prompt).not.toContain('you are the designated plan synthesizer')
-  })
-
-  it('chooses a plan owner from the stable effective Work Session roster', () => {
-    const workSession = {
-      enabled: true,
-      status: 'active' as const,
-      objective: 'Plan the safe implementation.',
-      acceptanceCriteria: 'A reviewed plan is ready.',
-      allowedParticipantIds: ['claude', 'codex'],
-      // The lead moves to the front, making Claude the canonical last/effective
-      // owner. Gemini is deliberately excluded even though it is last in the
-      // global enabled roster and is configured as Boss.
-      leadParticipantId: 'codex',
-      permissionPresetId: 'workspace_write' as const,
-      maxRoundsPerProvider: 4,
-      maxDurationMs: 60_000,
-      enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    const config: EnsembleConfig = {
-      ...ensemble,
-      bossmanParticipantId: 'gemini',
-      workSession
-    }
-    const planChat = { ...chat(), workflowMode: 'plan' as const, ensemble: config }
-    const prompt = buildEnsembleParticipantPrompt({
-      chat: planChat,
-      config,
-      participant: config.participants[1],
-      currentPrompt: '@codex please plan this safely.',
-      roundId: 'round-plan-session'
-    })
-    expect(prompt).toContain('Claude / Reviewer is responsible')
-    expect(prompt).toContain('Designated participant: Claude / Reviewer.')
-    expect(prompt).not.toContain('Gemini / Researcher is responsible')
   })
 
   it('1.0.4-AF: inverts the deictic rule and rewrites the workspace stanza in selfReflective mode', () => {
@@ -2563,7 +2458,7 @@ describe('computeEnsemblePromptShellStamp', () => {
     expect(computeEnsemblePromptShellStamp(staged)).not.toBe(stamp)
   })
 
-  it('review F2: order, work session, self-reflective, and fan-out policy all change the stamp', () => {
+  it('review F2: order, self-reflective, and fan-out policy all change the stamp', () => {
     const base = { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
     const stamp = computeEnsemblePromptShellStamp(base)
     // Speaking-order VALUES changing (not just array position) → new stamp:
@@ -2576,34 +2471,6 @@ describe('computeEnsemblePromptShellStamp', () => {
       }))
     }
     expect(computeEnsemblePromptShellStamp(reordered)).not.toBe(stamp)
-    const withWorkSession = {
-      ...base,
-      workSession: {
-        enabled: true,
-        status: 'active' as const,
-        objective: 'Ship the feature',
-        acceptanceCriteria: 'It works.',
-        allowedParticipantIds: null,
-        permissionPresetId: 'workspace_write' as const,
-        maxRoundsPerProvider: 5,
-        maxDurationMs: 1000,
-        enableScoutPass: false,
-        roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-        totalRoundsUsed: 0
-      }
-    }
-    const workSessionStamp = computeEnsemblePromptShellStamp(withWorkSession)
-    expect(workSessionStamp).not.toBe(stamp)
-    // Round-usage counters churn every round and must NOT change the stamp.
-    const usedWorkSession = {
-      ...withWorkSession,
-      workSession: {
-        ...withWorkSession.workSession,
-        totalRoundsUsed: 3,
-        roundsUsed: { ...withWorkSession.workSession.roundsUsed, codex: 3 }
-      }
-    }
-    expect(computeEnsemblePromptShellStamp(usedWorkSession)).toBe(workSessionStamp)
     expect(
       computeEnsemblePromptShellStamp({ ...base, selfReflective: true })
     ).not.toBe(stamp)
@@ -2614,11 +2481,10 @@ describe('computeEnsemblePromptShellStamp', () => {
 })
 
 describe('dynamic ensemble-state snapshots', () => {
-  it('is deterministic over the full enabled stable roster and carries all six tombstones', () => {
+  it('is deterministic over the full enabled stable roster and carries all five tombstones', () => {
     const base = chat()
     const snapshot = buildEnsembleDynamicStateSnapshot(base, ensemble)
     expect(snapshot.block).toContain('Active goal: <none>')
-    expect(snapshot.block).toContain('Work Session: <none>')
     expect(snapshot.block).toContain('Boss/Captain control state: <none>')
     expect(snapshot.block).toContain('Recent session events: <none>')
     expect(snapshot.block).toContain('Prior round summary: <none>')
@@ -2653,38 +2519,6 @@ describe('dynamic ensemble-state snapshots', () => {
     expect(after.version).not.toBe(before.version)
     expect(after.block).toContain('12:34Z')
     expect(after.block).toContain('Carry the verification finding')
-  })
-
-  it('keeps Work Session routing in the shell while objective detail stays dynamic', () => {
-    const workSession = {
-      enabled: true,
-      status: 'active' as const,
-      objective: 'Ship the first safe slice.',
-      acceptanceCriteria: 'Focused checks pass.',
-      allowedParticipantIds: ['codex'],
-      leadParticipantId: 'codex',
-      permissionPresetId: 'workspace_write' as const,
-      maxRoundsPerProvider: 4,
-      maxDurationMs: 60_000,
-      enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    const initial: EnsembleConfig = { ...ensemble, workSession }
-    const revised: EnsembleConfig = {
-      ...initial,
-      workSession: {
-        ...workSession,
-        objective: 'Ship the next safe slice.',
-        acceptanceCriteria: 'Focused checks and a smoke run pass.'
-      }
-    }
-    expect(computeEnsemblePromptShellStamp(revised)).toBe(
-      computeEnsemblePromptShellStamp(initial)
-    )
-    expect(buildEnsembleDynamicStateSnapshot(chat(), revised).version).not.toBe(
-      buildEnsembleDynamicStateSnapshot(chat(), initial).version
-    )
   })
 
   it('changes version for active-goal, Boss-state, and plan-workflow slots', () => {

@@ -415,32 +415,6 @@ describe('EnsembleRosterPresetApply', () => {
     expect(rejected).toMatchObject({ ok: false, error: 'permission_ceiling' })
   })
 
-  it('does not let an agent replace the roster of a live Work Session', () => {
-    const chat = ensembleChat()
-    chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Ship the current task',
-      acceptanceCriteria: 'All checks pass',
-      allowedParticipantIds: null,
-      permissionPresetId: 'default',
-      maxRoundsPerProvider: 4,
-      maxDurationMs: 60_000,
-      enableScoutPass: false,
-      roundsUsed: {} as Record<EnsembleParticipant['provider'], number>,
-      totalRoundsUsed: 0
-    }
-    const result = buildEnsembleRosterPresetApply({
-      chat,
-      preset: preset(),
-      callerParticipantId: 'boss-id',
-      queuedAt: '2026-07-12T12:00:00.000Z',
-      makeParticipantId: idFactory('unused')
-    })
-
-    expect(result).toMatchObject({ ok: false, error: 'work_session_active' })
-  })
-
   it('requires exactly one enabled Boss and clamps portable settings', () => {
     const source = preset({
       maxParticipants: 2,

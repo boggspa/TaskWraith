@@ -308,7 +308,7 @@ export function FirstLaunchSheet({
   // keyboard users land inside the modal, then wrap Tab around the
   // dialog's focusable elements so focus can't escape to the page
   // behind the backdrop. Mirrors the autofocus-on-open idiom in
-  // BugReportSheet / WorkSessionSetupSheet.
+  // BugReportSheet.
   useEffect(() => {
     if (!open) return
     const dialog = dialogRef.current
@@ -770,10 +770,7 @@ export function FirstLaunchSheet({
             preserving its transcript. Turn mode keeps one active speaker at a time; Continuous mode
             keeps going while actual work remains, but returns control instead of burning hops on a
             no-work, all-yielded consensus. Queued provider/model changes close the current pass
-            before the next one starts. Hit the <strong>Work Session</strong> button in the composer
-            to run a supervised multi-round autonomy session with one of five presets (One-shot
-            review · Architecture panel · Scout pass · Implementation review · Long-running work
-            session).
+            before the next one starts.
           </p>
           <p className="first-launch-sheet-prose">
             Stage roles shape the hand-off: Scouts investigate in parallel first, Workers take

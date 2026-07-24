@@ -154,13 +154,6 @@ export const TASKWRAITH_MCP_TOOLS = [
   // card (and pins the current step in the live activity viewport).
   'todo_write',
   'delegate_to_subthread',
-  // 1.0.4-AK — Ensemble Work Session control tool. Lets a participant
-  // queue exactly one follow-up round in the active Work Session
-  // (`acceptanceStatus: 'inProgress'`), report completion to end the
-  // session cleanly (`'complete'`), or pause for user input
-  // (`'blocked'`). No-op when no Work Session is active. Validated +
-  // dispatched in `src/main/EnsembleContinue.ts`.
-  'ensemble_continue',
   // 1.0.4-AK6 — structured brief emitted by a participant at the
   // end of their parallel fan-out lane. Threaded into the
   // serial writer's prompt context so the writer can synthesize

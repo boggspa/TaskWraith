@@ -792,8 +792,6 @@ export type EnsembleBossmanControlAction =
   | 'replace_participant'
   | 'reorder_remaining'
   | 'queue_followup'
-  | 'pause_work_session'
-  | 'complete_work_session'
   | 'assign_work'
   | 'set_round_plan'
   | 'request_status'
@@ -922,7 +920,6 @@ export interface EnsembleBossmanControlResult {
     | 'not_gate_reviewer'
     | 'invalid_verdict'
     | 'queue_failed'
-    | 'no_active_work_session'
     | 'baseline_exceeded'
     | 'no_active_goal'
     | 'binding_poll_unavailable'
@@ -2515,47 +2512,6 @@ function mergeToolDiffSummaries(
   return normalizedExisting
 }
 
-/**
- * How many consecutive failed edits to the SAME file (with no successful
- * write in between) end a Work Session. Small, like the other reliability
- * guards: a participant that keeps failing the same file is stuck, and the
- * coarse per-provider round budget would let it keep trying for dozens of
- * rounds before giving up.
- */
-export const MAX_CONSECUTIVE_FILE_EDIT_FAILURES = 3
-
-/**
- * Work-session supervisor guard. Walks a single run's file-write tool
- * activities in order and tracks the CURRENT consecutive-failure streak per
- * file — a successful write to a file resets that file's streak, so a run that
- * recovered after a couple of bad patches is NOT flagged. Returns the file
- * left with the largest unresolved failure streak (or null). Pure; exported
- * for the regression suite.
- */
-export function worstConsecutiveFileEditFailure(
-  toolActivities: ToolActivity[] | undefined
-): { filePath: string; failures: number } | null {
-  const streak = new Map<string, number>()
-  for (const activity of toolActivities ?? []) {
-    const filePath = activity.filePath
-    if (!filePath) continue
-    if (!FILE_WRITE_TOOL_NAMES.has(stripToolNamespace(activity.toolName))) continue
-    if (activity.status === 'error') {
-      streak.set(filePath, (streak.get(filePath) ?? 0) + 1)
-    } else if (activity.status === 'success') {
-      streak.set(filePath, 0)
-    }
-    // 'running' / 'pending' (unpaired) outcomes don't move the streak.
-  }
-  let worst: { filePath: string; failures: number } | null = null
-  for (const [filePath, failures] of streak) {
-    if (failures > 0 && (!worst || failures > worst.failures)) {
-      worst = { filePath, failures }
-    }
-  }
-  return worst
-}
-
 function buildEnsembleToolActivity(
   event: any,
   startedAt: string,
@@ -2898,6 +2854,20 @@ interface ActiveRoundRuntime {
    * continuation pass or a fresh `assign_work` (genuine net-new work).
    */
   administrativeIdleEscalated?: boolean
+  /**
+   * Snapshot of the active goal's identity/terminality when this runtime was
+   * built. The serial-loop terminal-goal pre-emption
+   * (`preemptRemainingForTerminalGoal`) may only fire when the goal went
+   * terminal DURING this round — a stale completed/blocked goal carried in
+   * from a prior round must not pre-empt pass 1 of a fresh round (agents are
+   * prompted to set_goal/reactivate at round start instead). A goal that is
+   * reactivated and re-completed within one round keeps its id and start
+   * snapshot, so it conservatively does NOT pre-empt — rare and harmless.
+   */
+  roundStartGoalId?: string
+  roundStartGoalWasTerminal?: boolean
+  /** Fire-once guard for the terminal-goal pre-emption round-status note. */
+  goalTerminalPreemptionNoted?: boolean
   bossmanSummonCountsByParticipantId?: Map<string, number>
   /**
    * Canonical yield-routing outcome planned during `markYielded` and
@@ -4598,9 +4568,8 @@ export class EnsembleOrchestrator {
 
   /**
    * 1.0.4-AK — public lookup for which participant owns a given
-   * runId. The `ensemble_continue` MCP dispatcher in `index.ts`
-   * uses this to populate `EnsembleContinueDeps.callingParticipantId`
-   * for the allowed-participants gate. Returns `null` when no
+   * runId. The `scout_brief` MCP dispatcher in `index.ts` uses this
+   * to attribute a brief to its lane participant. Returns `null` when no
    * actionable orchestrator-tracked run matches (e.g. the call came
    * from a non-ensemble single-participant or terminal run).
    */
@@ -4610,20 +4579,19 @@ export class EnsembleOrchestrator {
   }
 
   /**
-   * 1.0.4-AK — public enqueue for autonomous follow-up prompts from
-   * `ensemble_continue`. Mirrors the user-driven `enqueuePrompt`
-   * flow but skips the steer/cancel paths since an in-flight
-   * participant is calling this. Returns `false` when no active
+   * Public enqueue for programmatic follow-up prompts (Boss
+   * `queue_followup`, iOS remote queue). Mirrors the user-driven
+   * `enqueuePrompt` flow but skips the steer/cancel paths since the
+   * caller is not the composer. Returns `false` when no active
    * round runtime exists for the chat (the call is a no-op).
    */
-  enqueueWorkSessionContinuation(chatId: string, prompt: string): boolean {
+  enqueueFollowUpPrompt(chatId: string, prompt: string): boolean {
     const trimmed = (prompt || '').trim()
     if (!trimmed) return false
     const runtime = this.roundsByChatId.get(chatId)
     if (!runtime || runtime.cancelled) return false
-    // 1.0.5-EW43a — autonomous follow-ups don't carry attachments
-    // (the `ensemble_continue` MCP tool schema doesn't accept
-    // them), so the entry's `imageAttachments` is always empty.
+    // 1.0.5-EW43a — programmatic follow-ups don't carry attachments,
+    // so the entry's `imageAttachments` is always empty.
     // Persist both the renderer string view and restart-safe structured view.
     runtime.queuedPrompts.push({
       id: this.nextQueuedPromptId(chatId),
@@ -4838,7 +4806,7 @@ export class EnsembleOrchestrator {
           error: 'missing_prompt'
         }
       }
-      const ok = this.enqueueWorkSessionContinuation(runtime.chatId, prompt)
+      const ok = this.enqueueFollowUpPrompt(runtime.chatId, prompt)
       if (ok) {
         this.appendRoundStatus(runtime.chatId, runtime.roundId, 'Boss queued a follow-up round.')
       }
@@ -4852,10 +4820,6 @@ export class EnsembleOrchestrator {
           : 'Boss queue_followup failed: no active runtime queue.',
         ...(ok ? {} : { error: 'queue_failed' as const })
       }
-    }
-
-    if (action === 'pause_work_session' || action === 'complete_work_session') {
-      return this.transitionWorkSessionByBossman(runtime, action, input.reason)
     }
 
     if (
@@ -8481,90 +8445,6 @@ export class EnsembleOrchestrator {
     }
   }
 
-  private transitionWorkSessionByBossman(
-    runtime: ActiveRoundRuntime,
-    action: Extract<EnsembleBossmanControlAction, 'pause_work_session' | 'complete_work_session'>,
-    reasonInput?: string
-  ): EnsembleBossmanControlResult {
-    const chat = this.deps.getChat(runtime.chatId)
-    const session = chat?.ensemble?.workSession
-    if (!chat?.ensemble || !session || !session.enabled || session.status !== 'active') {
-      return {
-        ok: false,
-        tool: 'ensemble_bossman_control',
-        action,
-        roundId: runtime.roundId,
-        message: 'Boss Work Session control rejected: no active Work Session.',
-        error: 'no_active_work_session'
-      }
-    }
-    const reason =
-      reasonInput ||
-      (action === 'complete_work_session'
-        ? 'Boss marked the Work Session complete.'
-        : 'Boss paused the Work Session.')
-    const nowIso = this.deps.nowIso()
-    const status = action === 'complete_work_session' ? 'completed' : 'paused'
-    if (status === 'completed') {
-      const blockingGates = this.activeBossmanReviewGateBlocks(chat)
-      if (blockingGates.length > 0) {
-        const message = `Boss Work Session completion blocked by review gate(s): ${blockingGates.join('; ')}.`
-        this.appendRoundStatus(runtime.chatId, runtime.roundId, message)
-        return {
-          ok: false,
-          tool: 'ensemble_bossman_control',
-          action,
-          roundId: runtime.roundId,
-          message,
-          error: 'review_gate_blocked'
-        }
-      }
-    }
-    // If this session was started from a linked active Goal and that goal is
-    // STILL the chat's current active goal, completing the session completes
-    // the goal too. A different/absent active goal (the user moved on) is left
-    // untouched — "unrelated goals are not affected".
-    const linkedGoalId = session.linkedActiveGoalId
-    const completesLinkedGoal =
-      status === 'completed' &&
-      Boolean(linkedGoalId) &&
-      chat.activeGoal?.id === linkedGoalId &&
-      chat.activeGoal?.status !== 'completed'
-    const nextActiveGoal = completesLinkedGoal
-      ? updateActiveGoalLifecycle(chat.activeGoal!, 'completed', reason, new Date(nowIso))
-      : chat.activeGoal
-    this.deps.saveChat({
-      ...chat,
-      ...(nextActiveGoal !== chat.activeGoal ? { activeGoal: nextActiveGoal } : {}),
-      ensemble: {
-        ...chat.ensemble,
-        workSession: {
-          ...session,
-          status,
-          endedReason: reason,
-          ...(status === 'completed' ? { endedAt: nowIso } : {})
-        },
-        updatedAt: nowIso
-      },
-      updatedAt: this.deps.now()
-    })
-    this.appendRoundStatus(runtime.chatId, runtime.roundId, `Boss ${status === 'completed' ? 'completed' : 'paused'} the Work Session. ${reason}`)
-    if (completesLinkedGoal) {
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `Boss completed the linked goal "${chat.activeGoal?.objective || linkedGoalId}".`
-      )
-    }
-    return {
-      ok: true,
-      tool: 'ensemble_bossman_control',
-      action,
-      roundId: runtime.roundId,
-      message: `Boss ${status === 'completed' ? 'completed' : 'paused'} the Work Session.`
-    }
-  }
-
   private async replaceParticipantByBossman(
     runtime: ActiveRoundRuntime,
     input: EnsembleBossmanControlInput,
@@ -8916,8 +8796,8 @@ export class EnsembleOrchestrator {
     // A composer-directed round is a user-owned one-seat boundary. Agent
     // routing already prevents @mentions, yields, and continuous handoffs from
     // widening it; explicit fan-out must obey the same boundary. In
-    // particular, do not let a live roster policy (or Work Session scout-pass
-    // override) turn an apparent 1/1 round into hidden peer dispatches.
+    // particular, do not let a live roster policy turn an apparent 1/1
+    // round into hidden peer dispatches.
     if (runtime.dmTargetParticipantId) {
       return {
         ok: false,
@@ -8930,11 +8810,7 @@ export class EnsembleOrchestrator {
       }
     }
     const fanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
-    const workSessionScoutPass =
-      chat.ensemble.workSession?.enabled &&
-      chat.ensemble.workSession.status === 'active' &&
-      chat.ensemble.workSession.enableScoutPass
-    if (fanoutPolicy === 'off' && !workSessionScoutPass) {
+    if (fanoutPolicy === 'off') {
       return {
         ok: false,
         tool: 'ensemble_fanout',
@@ -8943,7 +8819,7 @@ export class EnsembleOrchestrator {
         error: 'not_authorized'
       }
     }
-    if (mode === 'read_only' && !fanoutPolicyAllowsRead(fanoutPolicy) && !workSessionScoutPass) {
+    if (mode === 'read_only' && !fanoutPolicyAllowsRead(fanoutPolicy)) {
       return {
         ok: false,
         tool: 'ensemble_fanout',
@@ -9002,7 +8878,7 @@ export class EnsembleOrchestrator {
         mode,
         ...(targetStage ? { targetStage } : {}),
         message:
-          'ensemble_fanout: broad fan-out requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Use explicit targets for a narrow peer handoff.',
+          'ensemble_fanout: broad fan-out requires the configured Boss (or standby Captain). Use explicit targets for a narrow peer handoff.',
         error: 'not_authorized'
       }
     }
@@ -10602,6 +10478,12 @@ export class EnsembleOrchestrator {
         round.maxContinuationHops ||
         chat.ensemble.maxContinuationHops ||
         DEFAULT_CONTINUATION_HOP_LIMIT,
+      ...(chat.activeGoal
+        ? {
+            roundStartGoalId: chat.activeGoal.id,
+            roundStartGoalWasTerminal: chat.activeGoal.status !== 'active'
+          }
+        : {}),
       pendingWakeups: new Map(
         Object.values(chat.ensemble.wakeups || {})
           .filter((entry) => entry.status === 'pending' && entry.roundId === wakeup.roundId)
@@ -11300,7 +11182,6 @@ export class EnsembleOrchestrator {
         return true
       }
       this.finalizeRun(run, failed ? 'failed' : run.content.trim() ? 'answered' : 'skipped')
-      this.haltWorkSessionOnRepeatedFileFailures(run)
       return true
     }
     return true
@@ -11537,6 +11418,12 @@ export class EnsembleOrchestrator {
       ...(secondInCommandParticipantId ? { secondInCommandParticipantId } : {}),
       bossmanBaselineParticipantIds: roundParticipants.map((participant) => participant.id),
       bossmanBaselineParticipantCount: roundParticipants.length,
+      ...(chat.activeGoal
+        ? {
+            roundStartGoalId: chat.activeGoal.id,
+            roundStartGoalWasTerminal: chat.activeGoal.status !== 'active'
+          }
+        : {}),
       orchestrationMode,
       fanoutPolicy: effectiveFanoutPolicy,
       ...(effectiveConcurrentMode ? { concurrentMode: true } : {}),
@@ -11564,9 +11451,7 @@ export class EnsembleOrchestrator {
       const backgroundAuthorityAssignments = [
         ['Boss', chat.ensemble.bossmanParticipantId],
         ['Captain', chat.ensemble.secondInCommandParticipantId],
-        ['synthesizer', chat.ensemble.synthesizerParticipantId],
-        ['Work Session lead', chat.ensemble.workSession?.leadParticipantId],
-        ['Work Session manager', chat.ensemble.workSession?.managerParticipantId]
+        ['synthesizer', chat.ensemble.synthesizerParticipantId]
       ]
         .filter((entry): entry is [string, string] => Boolean(entry[1]))
         .filter(([, participantId]) =>
@@ -11761,18 +11646,10 @@ export class EnsembleOrchestrator {
     // after either Boss authorization via ensemble_fanout or, when no
     // Boss is assigned, a host-owned user-preflight claim + ack pass.
     const chatForFanout = this.deps.getChat(runtime.chatId)
-    const workSessionForFanout = chatForFanout?.ensemble?.workSession
     const roundFanoutPolicy = runtime.fanoutPolicy ?? (runtime.concurrentMode ? 'read_only' : 'off')
     const readFanoutRequested = fanoutPolicyAllowsRead(roundFanoutPolicy)
     const writerFanoutRequested = fanoutPolicyAllowsWriters(roundFanoutPolicy)
-    const workSessionScoutPass =
-      workSessionForFanout?.enabled &&
-      workSessionForFanout.status === 'active' &&
-      workSessionForFanout.enableScoutPass
-    // Work Session scout pass is its own explicit Work Session setting. Preserve
-    // its existing read-only scout behavior even when the chat fan-out policy is off.
-    const shouldRunReadOnlyFanout =
-      readFanoutRequested || Boolean(workSessionScoutPass)
+    const shouldRunReadOnlyFanout = readFanoutRequested
     if (
       !options.skipPreamble &&
       (shouldRunReadOnlyFanout || writerFanoutRequested) &&
@@ -11934,6 +11811,11 @@ export class EnsembleOrchestrator {
       if (runtime.cancelled) break
       const chat = this.deps.getChat(runtime.chatId)
       if (!chat?.ensemble) break
+      // Terminal-goal pre-emption: once the goal leaves 'active' mid-round,
+      // undispatched ordinary serial seats are confirmation ceremony — sweep
+      // them out (marked 'skipped') instead of dispatching each in turn.
+      this.preemptRemainingForTerminalGoal(runtime, chat, remaining, stageGateExemptIds)
+      if (remaining.length === 0) break
       const nextParticipant = remaining[0]
       const quarantine = this.activeBossmanQuarantine(chat, runtime.roundId, nextParticipant.id)
       if (quarantine) {
@@ -12738,67 +12620,7 @@ export class EnsembleOrchestrator {
       }
     }
 
-    // 1.0.4-AK3 — Work Session hard-stop check at round end.
-    //
-    // Before honouring a queued continuation, re-read the chat's
-    // current Work Session state. AK1's `ensemble_continue` may
-    // have transitioned the session to `'completed'` / `'paused'` /
-    // `'limit_reached'` from within the just-finished round; the
-    // user may have flipped status to `'cancelled'` via the
-    // session-strip Stop button. In any of those cases we must NOT
-    // dispatch the queued prompt — the session has ended and the
-    // queue should drain to the user as if the round closed
-    // normally.
-    //
-    // Also check: even if the session is still `'active'`, has the
-    // duration budget elapsed? Round-budget checks happen inside
-    // `ensemble_continue` BEFORE queueing (so a queued prompt that
-    // got past that gate is still valid for rounds), but the
-    // duration cap can lapse asynchronously while the round is
-    // running. We check it here so a long-running participant
-    // doesn't accidentally extend the session past its time cap.
-    const chatNow = this.deps.getChat(runtime.chatId)
-    const workSessionAtEnd = chatNow?.ensemble?.workSession
-    const sessionStillActive = workSessionAtEnd?.enabled && workSessionAtEnd.status === 'active'
-
-    let workSessionEnded: 'duration_exhausted' | null = null
-    if (sessionStillActive && workSessionAtEnd?.startedAt && workSessionAtEnd.maxDurationMs > 0) {
-      const started = new Date(workSessionAtEnd.startedAt).getTime()
-      if (Number.isFinite(started) && Date.now() - started >= workSessionAtEnd.maxDurationMs) {
-        workSessionEnded = 'duration_exhausted'
-      }
-    }
-
-    if (workSessionEnded === 'duration_exhausted' && chatNow && workSessionAtEnd) {
-      const elapsedHours = (workSessionAtEnd.maxDurationMs / (1000 * 60 * 60)).toFixed(1)
-      const reason = `Duration budget reached (${elapsedHours}h).`
-      this.saveChatWithCheckpoint({
-        ...chatNow,
-        ensemble: {
-          ...chatNow.ensemble!,
-          workSession: {
-            ...workSessionAtEnd,
-            status: 'limit_reached',
-            endedAt: new Date().toISOString(),
-            endedReason: reason
-          }
-        }
-      }, 'round-updated')
-      this.appendRoundStatus(
-        runtime.chatId,
-        runtime.roundId,
-        `⏱ Work Session ended: ${reason} Queued continuations dropped.`
-      )
-    }
-
-    // Re-derive after possible duration-exhaustion transition.
     const chatAfterCheck = this.deps.getChat(runtime.chatId)
-    const finalSessionStatus = chatAfterCheck?.ensemble?.workSession?.status
-    const sessionTerminal =
-      finalSessionStatus === 'completed' ||
-      finalSessionStatus === 'paused' ||
-      finalSessionStatus === 'cancelled' ||
-      finalSessionStatus === 'limit_reached'
 
     // Continuous-mode autonomous continuation. When the serial loop drained with
     // NO explicit yield/@-mention handoff, a 'continuous' round must not silently
@@ -12814,7 +12636,6 @@ export class EnsembleOrchestrator {
       !runtime.cancelled &&
       !runtime.returnedControlToUser &&
       runtime.queuedPrompts.length === 0 &&
-      !sessionTerminal &&
       chatAfterCheck
     ) {
       const continuationRoster = this.tryAutoContinueRound(runtime, chatAfterCheck)
@@ -12965,24 +12786,14 @@ export class EnsembleOrchestrator {
    * round, release the runtime, and chain into the follow-up round.
    * Extracted from `runRound` so a drain deferred behind active fan-out
    * lanes replays the exact same tail when the last lane goes terminal.
-   * The Work Session terminal state is re-derived here (not captured at
-   * drain time) because a lane can outlive the serial loop by minutes and
-   * the session may have ended in between.
    */
   private finalizeDrainedRound(runtime: ActiveRoundRuntime): void {
     const chat = this.deps.getChat(runtime.chatId)
-    const sessionStatus = chat?.ensemble?.workSession?.status
-    const sessionTerminal =
-      sessionStatus === 'completed' ||
-      sessionStatus === 'paused' ||
-      sessionStatus === 'cancelled' ||
-      sessionStatus === 'limit_reached'
     const continuationLimitStillOwnsClose =
       runtime.continuationLimitPending === true &&
       !runtime.cancelled &&
       !runtime.returnedControlToUser &&
       runtime.queuedPrompts.length === 0 &&
-      !sessionTerminal &&
       (!chat?.activeGoal || chat.activeGoal.status === 'active')
     runtime.continuationLimitPending = false
     if (continuationLimitStillOwnsClose) {
@@ -12991,10 +12802,7 @@ export class EnsembleOrchestrator {
     // Dequeue the next prompt (FIFO) for the follow-up round. Anything
     // remaining stays in `runtime.queuedPrompts` and gets transferred
     // to the new runtime in `beginRound` so the chain continues
-    // through every queued message until the queue drains. When a
-    // Work Session terminal state is in effect we drop the queue
-    // entirely — the session is over, queued prompts would re-arm
-    // it.
+    // through every queued message until the queue drains.
     //
     // 1.0.5-EW43a — `runtime.queuedPrompts` is now structured
     // `QueuedRoundEntry[]` so the per-entry image attachments
@@ -13003,22 +12811,17 @@ export class EnsembleOrchestrator {
     // with `imageAttachments: []` — meaning a user who sent a
     // message with attachments DURING a running round saw the
     // attachments dropped silently when the queue drained.
-    const [nextEntry, ...remainingQueue] = sessionTerminal
-      ? ([] as QueuedRoundEntry[])
-      : runtime.queuedPrompts
-    const quarantinedLegacyPrompts =
-      !runtime.cancelled && !sessionTerminal
-        ? runtime.quarantinedLegacyQueuedPrompts || []
-        : []
+    const [nextEntry, ...remainingQueue] = runtime.queuedPrompts
+    const quarantinedLegacyPrompts = !runtime.cancelled
+      ? runtime.quarantinedLegacyQueuedPrompts || []
+      : []
     const targetError =
       nextEntry && quarantinedLegacyPrompts.length === 0
         ? nextEntry.restartRecoveryBlockedReason ||
           this.queuedTargetUnavailableReason(runtime.chatId, nextEntry)
         : null
     const queuedEntriesForFinishedRound =
-      nextEntry && !runtime.cancelled && !sessionTerminal
-        ? runtime.queuedPrompts
-        : []
+      nextEntry && !runtime.cancelled ? runtime.queuedPrompts : []
     this.finishRound(runtime.chatId, runtime.roundId, runtime.cancelled ? 'cancelled' : 'completed', {
       queuedPromptEntries: queuedEntriesForFinishedRound,
       quarantinedLegacyPrompts
@@ -13029,7 +12832,7 @@ export class EnsembleOrchestrator {
       return
     }
     if (quarantinedLegacyPrompts.length > 0) return
-    if (nextEntry && !runtime.cancelled && !sessionTerminal) {
+    if (nextEntry && !runtime.cancelled) {
       this.beginRound(
         runtime.chatId,
         nextEntry.prompt,
@@ -13045,45 +12848,6 @@ export class EnsembleOrchestrator {
         nextEntry.discordContextSnapshots
       )
     }
-  }
-
-  /**
-   * Work-session supervisor guard: after a participant run completes, if it
-   * left a file with MAX_CONSECUTIVE_FILE_EDIT_FAILURES or more consecutive
-   * failed edits (no successful write in between), halt the Work Session
-   * instead of letting it keep queueing rounds at an unfixable file. Mirrors
-   * the duration / round budget halt — transition to `limit_reached` + a status
-   * row; the round-end logic then drops queued continuations. No-op outside an
-   * active Work Session.
-   */
-  private haltWorkSessionOnRepeatedFileFailures(run: ActiveParticipantRun): void {
-    const worst = worstConsecutiveFileEditFailure(run.toolActivities)
-    if (!worst || worst.failures < MAX_CONSECUTIVE_FILE_EDIT_FAILURES) return
-    const chat = this.deps.getChat(run.chatId)
-    const workSession = chat?.ensemble?.workSession
-    if (!chat?.ensemble || !workSession?.enabled || workSession.status !== 'active') return
-    const who = run.participant.role || run.participant.provider
-    const reason = `${who} failed to edit ${worst.filePath} ${worst.failures} times in a row with no successful write.`
-    this.saveChatWithCheckpoint(
-      {
-        ...chat,
-        ensemble: {
-          ...chat.ensemble,
-          workSession: {
-            ...workSession,
-            status: 'limit_reached',
-            endedAt: this.deps.nowIso(),
-            endedReason: reason
-          }
-        }
-      },
-      'round-updated'
-    )
-    this.appendRoundStatus(
-      run.chatId,
-      run.roundId,
-      `🛑 Work Session halted: ${reason} Queued continuations dropped — fix the file or give guidance, then start a new round.`
-    )
   }
 
   private resolveFanoutTargets(
@@ -13205,13 +12969,7 @@ export class EnsembleOrchestrator {
   }
 
   private scopedFanoutParticipants(chat: ChatRecord): EnsembleParticipant[] {
-    const participants = chat.ensemble?.participants || []
-    const workSession = chat.ensemble?.workSession
-    if (!workSession?.enabled || workSession.status !== 'active' || workSession.allowedParticipantIds === null) {
-      return participants
-    }
-    const allowed = new Set(workSession.allowedParticipantIds)
-    return participants.filter((participant) => allowed.has(participant.id))
+    return chat.ensemble?.participants || []
   }
 
   private canRequestBroadFanout(chat: ChatRecord, run: ActiveParticipantRun): boolean {
@@ -13222,21 +12980,7 @@ export class EnsembleOrchestrator {
     if (runtime && this.resolveBossAuthorityForCaller(chat, runtime, run.participant.id).ok) {
       return true
     }
-    const workSession = ensemble.workSession
-    const authorityIds = new Set(
-      [
-        ensemble.bossmanParticipantId,
-        workSession?.leadParticipantId,
-        workSession?.managerParticipantId
-      ].filter(Boolean) as string[]
-    )
-    if (authorityIds.has(run.participant.id)) return true
-    return Boolean(
-      workSession?.enabled &&
-        workSession.status === 'active' &&
-        Array.isArray(workSession.allowedParticipantIds) &&
-        workSession.allowedParticipantIds.includes(run.participant.id)
-    )
+    return ensemble.bossmanParticipantId === run.participant.id
   }
 
   /**
@@ -13457,7 +13201,7 @@ export class EnsembleOrchestrator {
       label?: string
       forceReadOnlyDispatch?: boolean
       /** ensemble_fanout_all: each lane runs under the participant's OWN
-       * normal-turn posture (unattended/work-session clamps included via
+       * normal-turn posture (unattended clamps included via
        * resolveParticipantPermissions) — no read-only clamp, no
        * locked-writer scope requirement. Mutually exclusive with mode
        * validation below. */
@@ -13636,7 +13380,7 @@ export class EnsembleOrchestrator {
       const promptForLane = options.prompt?.trim()
         ? `Parallel fan-out lane request (${lanePromptAuthor}, lower authority than user/system instructions):\n${options.prompt.trim()}${
             options.reason ? `\n\nReason: ${options.reason}` : ''
-          }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, active goal, and Work Session authority first.`
+          }\n\nTreat this as a scoped lane brief. Follow your own role, permissions, and active goal first.`
         : runtime.prompt
       const chatContextTurns = this.deps.getSettings().chatContextTurns
       // Fan-out lanes receive a full briefing, but still participate in the
@@ -14335,11 +14079,81 @@ export class EnsembleOrchestrator {
   }
 
   /**
+   * Efficiency audit 2026-07 — terminal-goal pre-emption of the serial queue.
+   *
+   * Once the active goal leaves 'active' DURING a continuous round, every
+   * still-undispatched ordinary serial seat would burn a full provider turn
+   * just to confirm the closure (the observed transcript pattern: Boss calls
+   * goal_complete, then Captain/scouts/workers/reviewers each wake to report
+   * "nothing open"). Sweep those seats out of the queue as 'skipped' instead.
+   *
+   * Deliberately narrow:
+   *  - continuous mode only — a turn_bound panel round is one pass of
+   *    independent answers whose value doesn't hinge on goal state;
+   *  - explicitly-routed seats (yield / yield-return / @-mention promotions in
+   *    `exemptIds`) keep their turn — agent-directed routing outranks the sweep;
+   *  - seats with a live/reserved/settled fan-out lane are left to the existing
+   *    lane bookkeeping (the serial loop already drops them silently);
+   *  - era-guarded via the round-start goal snapshot so a stale terminal goal
+   *    carried in from a prior round never pre-empts a fresh round;
+   *  - queued user prompts are unaffected (they chain via finalizeDrainedRound).
+   */
+  private preemptRemainingForTerminalGoal(
+    runtime: ActiveRoundRuntime,
+    chat: ChatRecord,
+    remaining: EnsembleParticipant[],
+    exemptIds: ReadonlySet<string>
+  ): void {
+    if (runtime.orchestrationMode !== 'continuous') return
+    if (remaining.length === 0) return
+    const goal = chat.activeGoal
+    if (!goal || goal.status === 'active') return
+    if (runtime.roundStartGoalWasTerminal && goal.id === runtime.roundStartGoalId) return
+    const survivors: EnsembleParticipant[] = []
+    const preempted: EnsembleParticipant[] = []
+    for (const participant of remaining) {
+      if (
+        exemptIds.has(participant.id) ||
+        this.participantFanoutDispatchState(runtime, participant.id)
+      ) {
+        survivors.push(participant)
+      } else {
+        preempted.push(participant)
+      }
+    }
+    if (preempted.length === 0) return
+    remaining.splice(0, remaining.length, ...survivors)
+    for (const participant of preempted) {
+      this.updateParticipantState(
+        runtime.chatId,
+        runtime.roundId,
+        participant.id,
+        'skipped',
+        `Goal ${goal.status} — remaining turn pre-empted.`
+      )
+    }
+    if (!runtime.goalTerminalPreemptionNoted) {
+      runtime.goalTerminalPreemptionNoted = true
+      this.appendRoundStatus(
+        runtime.chatId,
+        runtime.roundId,
+        `Goal ${goal.status} — pre-empted ${preempted.length} remaining serial turn(s): ${preempted
+          .map((participant) => participantDisplayName(participant))
+          .join(
+            ', '
+          )}. Live fan-out/background lanes settle per policy; queued user messages still run.`
+      )
+    }
+  }
+
+  /**
    * Continuous-mode AUTONOMOUS continuation. When the serial loop drains with no
    * explicit yield/@-mention handoff, a `'continuous'` round must not silently
-   * end at the round boundary (`finishRound`) — it keeps re-dispatching the full
-   * roster for another pass until a stop condition fires. Returns the roster to
-   * run next (each participant costs one continuation hop), or `null` to stop.
+   * end at the round boundary (`finishRound`) — it keeps re-dispatching the
+   * roster for another pass until a stop condition fires (assignment-aware once
+   * assign_work is in play — see `narrowContinuationRosterToOpenWork`). Returns
+   * the roster to run next (each participant costs one continuation hop), or
+   * `null` to stop.
    *
    * Stop conditions:
    *  - not continuous mode / user cancelled;
@@ -14361,7 +14175,7 @@ export class EnsembleOrchestrator {
    *
    * A permission-elevation stall needs no check here (it blocks `await completion`
    * upstream, so this drain point is unreachable while a run is paused for
-   * approval); work-session-terminal + queued-prompt + pending-wakeup priority are
+   * approval); queued-prompt + pending-wakeup priority are
    * enforced by the caller before this is invoked.
    *
    * Unlike `tryAppendContinuationTurn`, this does NOT apply
@@ -14424,12 +14238,12 @@ export class EnsembleOrchestrator {
       // The serial queue is exhausted, but detached BG lanes or a reservation
       // window may still own live work. Record the terminal reason now and let
       // finalizeDrainedRound publish it only after the true drain tail, unless
-      // cancel/steer/user-yield/goal/work-session closure supersedes it.
+      // cancel/steer/user-yield/goal closure supersedes it.
       runtime.continuationLimitPending = true
       return null
     }
     if (!chat.ensemble) return null
-    const roster = getOrderedEnsembleParticipants(chat.ensemble, runtime.prompt).filter(
+    const fullRoster = getOrderedEnsembleParticipants(chat.ensemble, runtime.prompt).filter(
       (participant) =>
         participant.enabled &&
         !isBackgroundParticipant(participant) &&
@@ -14437,7 +14251,8 @@ export class EnsembleOrchestrator {
         !this.activeBossmanQuarantine(chat, runtime.roundId, participant.id) &&
         !this.bossmanBudgetBlock(runtime, participant.id, 'extra_turn')
     )
-    if (roster.length === 0) return null
+    if (fullRoster.length === 0) return null
+    const roster = this.narrowContinuationRosterToOpenWork(chat, fullRoster)
     const fresh: EnsembleParticipant[] = []
     for (const participant of roster) {
       if (runtime.continuationHops >= runtime.maxContinuationHops) {
@@ -14467,12 +14282,79 @@ export class EnsembleOrchestrator {
           }
         : round
     )
+    const narrowingNote =
+      roster.length < fullRoster.length
+        ? ` Assignment-aware pass: ${fresh.length} of ${fullRoster.length} seats have open work, a pending gate, or authority.`
+        : ''
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
-      `Continuous mode: no explicit handoff — auto-continuing for another pass (${runtime.continuationHops}/${runtime.maxContinuationHops} hops). Mark the goal complete to stop.`
+      `Continuous mode: no explicit handoff — auto-continuing for another pass (${runtime.continuationHops}/${runtime.maxContinuationHops} hops).${narrowingNote} Mark the goal complete to stop.`
     )
     return fresh
+  }
+
+  /**
+   * Efficiency audit 2026-07 — assignment-aware continuation rosters.
+   *
+   * Structured Boss assignments used to affect ordering only: the next
+   * continuous pass still re-dispatched EVERY enabled foreground seat, so
+   * completed workers reported "standby", idle scouts re-probed an unchanged
+   * tree, and reviewers woke with nothing to review. Once assign_work is in
+   * play for this chat, a continuation pass admits only seats with a live
+   * reason to speak:
+   *
+   *  - owners of 'open' / 'in_progress' assignments;
+   *  - reviewers of 'required' gates that block the ACTIVE goal (the same
+   *    ReviewGateScope predicate the goal_complete gate check uses);
+   *  - targets of open TARGETED status requests (untargeted requests never
+   *    auto-close — see reconcileBossmanControlAfterRun — so they must not pin
+   *    the full roster forever);
+   *  - the Boss (decision/closure authority runs every pass), or the Captain
+   *    only when the Boss is absent from the eligible roster (standby Captain
+   *    confirmation turns were a measured waste pattern).
+   *
+   * Fail-open: rounds that never used assign_work keep full-roster passes; an
+   * open poll keeps the full roster (voting is the whole roster's job, and
+   * polls always close/expire so this cannot pin forever); a narrowing that
+   * would admit nobody falls back to the full roster instead of stranding the
+   * goal.
+   */
+  private narrowContinuationRosterToOpenWork(
+    chat: ChatRecord,
+    fullRoster: EnsembleParticipant[]
+  ): EnsembleParticipant[] {
+    const control = chat.ensemble?.bossmanControlState
+    const assignments = control?.assignments || []
+    if (assignments.length === 0) return fullRoster
+    if ((control?.polls || []).some((poll) => poll.status === 'open')) return fullRoster
+    const admitted = new Set<string>()
+    for (const assignment of assignments) {
+      if (assignment.status === 'open' || assignment.status === 'in_progress') {
+        admitted.add(assignment.participantId)
+      }
+    }
+    for (const gate of control?.reviewGates || []) {
+      if (gate.status === 'required' && gateBlocksActiveGoal(gate, chat.activeGoal)) {
+        admitted.add(gate.reviewerParticipantId)
+      }
+    }
+    for (const request of control?.statusRequests || []) {
+      if (request.status !== 'open') continue
+      for (const participantId of request.targetParticipantIds || []) {
+        admitted.add(participantId)
+      }
+    }
+    const bossId = chat.ensemble?.bossmanParticipantId
+    const bossEligible = Boolean(
+      bossId && fullRoster.some((participant) => participant.id === bossId)
+    )
+    if (bossId && bossEligible) admitted.add(bossId)
+    const captainId = chat.ensemble?.secondInCommandParticipantId
+    if (captainId && !bossEligible) admitted.add(captainId)
+    const narrowed = fullRoster.filter((participant) => admitted.has(participant.id))
+    if (narrowed.length === 0) return fullRoster
+    return narrowed
   }
 
   private async probeParticipantsForRound(
@@ -15853,31 +15735,21 @@ export class EnsembleOrchestrator {
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
     participant: EnsembleParticipant,
-    mode: EnsembleFanoutMode
+    _mode: EnsembleFanoutMode
   ): EffectiveRunPermissions {
     return this.resolveParticipantPermissions(
       chat,
       participant,
       runtime.externalPathGrants,
-      mode === 'read_only'
-        ? {
-            ignoreWorkSessionOverride: true,
-            ...(isBackgroundParticipant(participant)
-              ? { disallowTrustedSession: true }
-              : {})
-          }
-        : isBackgroundParticipant(participant)
-          ? { disallowTrustedSession: true }
-          : {}
+      isBackgroundParticipant(participant) ? { disallowTrustedSession: true } : {}
     )
   }
 
   /** ensemble_fanout_all dispatch posture: the participant's OWN normal-turn
    * permissions, exactly as a serial rotation turn would resolve them — no
    * read-only clamp, no eligibility filtering. All safety clamps inside
-   * resolveParticipantPermissions (unattended-round HMAC clamp, Work-Session
-   * preset clamp) still apply; background seats still never inherit a
-   * Trusted Session. */
+   * resolveParticipantPermissions (unattended-round HMAC clamp) still
+   * apply; background seats still never inherit a Trusted Session. */
   private resolveFanoutOwnDispatchPermissions(
     chat: ChatRecord,
     runtime: ActiveRoundRuntime,
@@ -15905,7 +15777,6 @@ export class EnsembleOrchestrator {
       mode === 'read_only'
         ? {
             presetId: 'read_only',
-            ignoreWorkSessionOverride: true,
             ignoreOverrides: true,
             disallowTrustedSession: true
           }
@@ -15941,7 +15812,6 @@ export class EnsembleOrchestrator {
     participant: EnsembleParticipant,
     explicitExternalPathGrants?: ExternalPathGrant[],
     options: {
-      ignoreWorkSessionOverride?: boolean
       ignoreOverrides?: boolean
       presetId?: string | null
       ensembleLaneId?: string | null
@@ -15953,7 +15823,7 @@ export class EnsembleOrchestrator {
     // write-capable participant preset (or a workspace-write session
     // override) would silently auto-accept edits. Force the safe
     // read-only posture for EVERY participant of an unattended round,
-    // regardless of preset / overrides / work-session config. This is
+    // regardless of preset / overrides. This is
     // the single chokepoint for both the serial writer and every
     // fan-out lane, and the read_only preset resolves to approvalMode
     // 'plan' + readOnly:true, so both signing sites sign the safe
@@ -15983,32 +15853,7 @@ export class EnsembleOrchestrator {
         // round must not widen file access via composer-supplied grants.
       })
     }
-    // 1.0.4-AK3 — Work Session permission clamp. When an active
-    // Work Session is in flight, the session-wide
-    // `permissionPresetId` overrides per-participant presets for
-    // the duration of the session. This lets the user clamp the
-    // entire panel's authority via one knob (e.g. "no writes for
-    // this whole session" → `read_only`) without editing each
-    // participant individually.
-    //
-    // CRITICAL — the override is fed INTO
-    // `resolveEffectiveRunPermissions`, NOT a bypass of it. The
-    // workspace-grant + overrides + EffectiveRunPermissions
-    // resolution still happens normally; we're just substituting
-    // the input `presetId`. Approval gates still fire.
-    //
-    // Skipped when the session is not 'active' — paused / completed
-    // / cancelled / limit_reached sessions revert to participant
-    // presets so the user can resume an interactive round without
-    // the session config lingering.
-    const workSession = chat.ensemble?.workSession
-    const sessionActive =
-      workSession?.enabled &&
-      workSession?.status === 'active' &&
-      !options.ignoreWorkSessionOverride &&
-      !options.presetId
-    const requestedPresetId =
-      options.presetId || (sessionActive ? workSession.permissionPresetId : participant.permissionPresetId)
+    const requestedPresetId = options.presetId || participant.permissionPresetId
     const trustedSessionGranted =
       options.disallowTrustedSession !== true &&
       requestedPresetId === 'full_access' &&

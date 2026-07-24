@@ -5791,7 +5791,7 @@
 
 /*
  * 1.0.5-AR12d (tester report) — Light-mode overrides for the
- * Turn / Continuous / Work Session ensemble-mode toggle row
+ * Turn / Continuous ensemble-mode toggle row
  * across the four themed shells (codex / claude / gemini /
  * kimi). The base rules at lines ~17944 / 18264 / 19436 / 19643
  * hardcode `color: color-mix(in srgb, #ffffff ...)` for the
@@ -6466,7 +6466,7 @@
 }
 
 /* Satellite picker chrome — the boss-brief wants the Model /
- * Reasoning / Approval / Turn-Continuous-Work Session controls
+ * Reasoning / Approval / Turn-Continuous controls
  * to read as floating text, NOT pill chrome.
  *
  * 1.0.5-EW57 — Use the universal `[data-composer-control]`
@@ -6520,7 +6520,7 @@
   background: transparent !important;
 }
 /* The active state in the ensemble-mode segmented control
- * (Turn / Continuous / Work Session) needs SOME way to show
+ * (Turn / Continuous) needs SOME way to show
  * which mode is selected. Use a 1px bottom underline rather
  * than reintroducing a pill — keeps the satellite read. */
 [data-composer-style="obsidian"][data-composer-style="obsidian"] [data-composer-control="ensemble-mode"] .composer-ensemble-mode-button.is-active {

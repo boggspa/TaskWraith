@@ -2477,7 +2477,6 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'ensemble_roster_edit',
     'ensemble_brief_update',
     'list_ensemble_participants',
-    'ensemble_continue',
     'scout_brief',
     'blackboard_post',
     'blackboard_read',

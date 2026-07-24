@@ -10,13 +10,13 @@
  * provider/model/permission pickers for footer space. Now the row has
  * a full line of real estate and each control gets an explicit label:
  *
- *   Mode:          [Turn/Continuous/Work Session picker]
+ *   Mode:          [Turn/Continuous picker]
  *   Fan-Out:       [Off/Read/Write/All picker]
  *   Chars:         [slider] 24K
  *   Turns:         [n/m hop meter]           (continuous mode only)
  *
  * The shared-history slider moved OUT of the EnsembleModePicker
- * popover onto this row (the picker now holds only the three
+ * popover onto this row (the picker now holds only the
  * orchestration choices). The Fan-Out picker keeps the existing
  * `.composer-ensemble-mode` capsule + `data-composer-control="ensemble-mode"`
  * hook so every per-shell picker/capsule override keeps applying. The
@@ -66,10 +66,8 @@ export function EnsembleOrchestrationRow({
   activeOrchestrationMode,
   activeFanoutPolicy,
   isRoundRunning,
-  workSessionActive,
   composerStyle,
   onSelectMode,
-  onOpenWorkSession,
   fanoutPolicy,
   writerFanoutPolicy,
   onFanoutPolicyChange,
@@ -91,10 +89,8 @@ export function EnsembleOrchestrationRow({
   activeOrchestrationMode: EnsembleOrchestrationMode
   activeFanoutPolicy: EnsembleFanoutPolicy
   isRoundRunning: boolean
-  workSessionActive: boolean
   composerStyle: ComposerStyle
   onSelectMode: (mode: EnsembleOrchestrationMode) => void
-  onOpenWorkSession: () => void
   fanoutPolicy: EnsembleFanoutPolicy
   /** Which locked-writers policy the Write button selects (boss-mediated
    * vs user-preflight) — resolved upstream from bossmanParticipantId. */
@@ -192,10 +188,8 @@ export function EnsembleOrchestrationRow({
         </span>
         <EnsembleModePicker
           mode={orchestrationMode}
-          workSessionActive={workSessionActive}
           composerStyle={composerStyle}
           onSelectMode={onSelectMode}
-          onOpenWorkSession={onOpenWorkSession}
         />
       </span>
       <span className="composer-orchestration-cell">

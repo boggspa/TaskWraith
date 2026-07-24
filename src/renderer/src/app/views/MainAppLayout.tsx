@@ -1075,8 +1075,6 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         updateCurrentGoalStatus: noSideComposerAction,
         markCurrentGoalBlocked: noSideComposerAction,
         clearCurrentGoal: noSideComposerAction,
-        handleStopWorkSession: noSideComposerAction,
-        setShowWorkSessionSheet: noSideComposerAction,
         applyEnsembleRosterPreset: applySideRosterPreset,
         setActiveEnsembleRosterPresetId: (presetId: string | null) =>
           patchSideEnsemble({ activeRosterPresetId: presetId || undefined }),

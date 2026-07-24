@@ -48,19 +48,6 @@ function makeCheckpointChat(): ChatRecord {
           permissionPresetId: 'workspace_write'
         }
       ],
-      workSession: {
-        enabled: true,
-        status: 'active',
-        objective: 'Ship M7 checkpoints',
-        acceptanceCriteria: 'Recovery asks before resuming.',
-        allowedParticipantIds: null,
-        permissionPresetId: 'default',
-        maxRoundsPerProvider: 4,
-        maxDurationMs: 60 * 60 * 1000,
-        enableScoutPass: false,
-        roundsUsed: { gemini: 0, codex: 1, claude: 1, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-        totalRoundsUsed: 2
-      },
       lastRoundSummary:
         'Decisions: keep this safe.\nNext action: restore the active queue after restart.',
       blackboard: [
@@ -135,7 +122,6 @@ describe('SessionCheckpoint', () => {
       }
     })
     expect(checkpoint?.snapshot.blackboard).toHaveLength(1)
-    expect(checkpoint?.snapshot.openTasks).toContain('Objective: Ship M7 checkpoints')
     expect(checkpoint?.snapshot.openTasks).toContain(
       'Next action: restore the active queue after restart.'
     )

@@ -22,7 +22,6 @@ describe('agent-authored Ensemble roster MCP schema', () => {
     expect(properties?.apply?.type).toBe('boolean')
     expect(rosterEdit?.description).toMatch(/single-provider chat/i)
     expect(rosterEdit?.description).toMatch(/do not call shell, file, or time tools/i)
-    expect(rosterEdit?.description).toMatch(/Work Session is intentionally unsupported/i)
   })
 
   it('makes the discovery tool usable as the setup and quota-selection preflight', () => {

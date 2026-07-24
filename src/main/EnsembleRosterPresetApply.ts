@@ -132,7 +132,6 @@ export type BuildEnsembleRosterPresetApplyResult =
         | 'bossman_not_configured'
         | 'not_authorized'
         | 'captain_assignment_forbidden'
-        | 'work_session_active'
       message: string
     }
 
@@ -337,16 +336,6 @@ export function buildEnsembleRosterPresetApply(
 
   const isExistingEnsemble = input.chat.chatKind === 'ensemble'
   const currentEnsemble = input.chat.ensemble
-  if (
-    isExistingEnsemble &&
-    (currentEnsemble?.workSession?.status === 'active' ||
-      currentEnsemble?.workSession?.status === 'paused')
-  ) {
-    return fail(
-      'work_session_active',
-      'Roster preset import rejected: stop the active Work Session before replacing its roster. Agents may configure Turn or Continuous mode, but cannot alter Work Session state.'
-    )
-  }
   let authority: PendingEnsembleRosterPresetApply['authority']
   let bossmanParticipantId: string
   let preservedCaptainParticipantId: string | undefined
@@ -663,7 +652,6 @@ export function agentRosterPresetContractGuide(activeProvider?: ProviderId): Rec
     },
     settings: {
       orchestrationMode: ['turn_bound', 'continuous'],
-      workSessionSupported: false,
       fanoutPolicy: {
         Off: 'off',
         Read: 'read_only',

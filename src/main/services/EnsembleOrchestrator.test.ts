@@ -3,8 +3,6 @@ import {
   EnsembleOrchestrator,
   parseSelfReflectivePrefix,
   resolveYieldTargetIndex,
-  worstConsecutiveFileEditFailure,
-  MAX_CONSECUTIVE_FILE_EDIT_FAILURES,
   type EnsembleOrchestratorDeps,
   type ParticipantProbeResult
 } from './EnsembleOrchestrator'
@@ -25,8 +23,7 @@ import type {
   ProviderId,
   RunQueueJobStatus,
   TranscriptMediaRef,
-  UsageRecord,
-  WorkSessionConfig
+  UsageRecord
 } from '../store/types'
 import type { RunPermissionPostureContext } from '../RunPermissionPosture'
 import { MAX_ENSEMBLE_PARTICIPANTS } from '../EnsembleRosterMutation'
@@ -95,23 +92,6 @@ function makeChat(): ChatRecord {
     messages: [],
     runs: [],
     ensemble: { ...ensemble, participants: ensemble.participants.map((p) => ({ ...p })) }
-  }
-}
-
-function buildWorkSession(over: Partial<WorkSessionConfig> = {}): WorkSessionConfig {
-  return {
-    enabled: true,
-    status: 'active',
-    objective: 'Ship the feature',
-    acceptanceCriteria: 'It works.',
-    allowedParticipantIds: null,
-    permissionPresetId: 'workspace_write',
-    maxRoundsPerProvider: 38,
-    maxDurationMs: 6 * 60 * 60 * 1000,
-    enableScoutPass: false,
-    roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-    totalRoundsUsed: 0,
-    ...over
   }
 }
 
@@ -6711,60 +6691,6 @@ Next action:
     expect(all.providers?.codex?.worstBand).toBe('critical')
   })
 
-  it('blocks Boss Work Session completion while review gates are still required', async () => {
-    const initialChat = makeChat()
-    initialChat.ensemble!.bossmanParticipantId = 'claude'
-    initialChat.ensemble!.workSession = buildWorkSession()
-    // C2 — review gates are goal-scoped: set_review_gate stamps the active goal id,
-    // and completion is blocked only by gates bound to that goal.
-    initialChat.activeGoal = buildActiveGoal('goal-ws')
-    const harness = makeHarness({ initialChat })
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Plan and execute.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-
-    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'set_review_gate',
-      roundId: harness.chat.ensemble?.activeRound?.roundId,
-      gateId: 'gate-final-review',
-      targetParticipantId: 'codex',
-      scope: 'final diff',
-      acceptanceCriteria: 'Reviewer must approve before completion.'
-    })
-    const blocked = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'complete_work_session',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        reason: 'Looks done.'
-      }
-    )
-    expect(blocked.ok).toBe(false)
-    expect(blocked.error).toBe('review_gate_blocked')
-
-    await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'set_review_gate',
-      roundId: harness.chat.ensemble?.activeRound?.roundId,
-      gateId: 'gate-final-review',
-      targetParticipantId: 'codex',
-      scope: 'final diff',
-      reviewStatus: 'passed'
-    })
-    const completed = await harness.orchestrator.bossmanControlForRun(
-      harness.dispatched[0].appRunId,
-      {
-        action: 'complete_work_session',
-        roundId: harness.chat.ensemble?.activeRound?.roundId,
-        reason: 'Review passed.'
-      }
-    )
-    expect(completed.ok).toBe(true)
-    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
-  })
-
   it('blocks Boss goal completion while review gates are still required', async () => {
     const initialChat = makeChat()
     initialChat.ensemble!.bossmanParticipantId = 'claude'
@@ -9111,55 +9037,6 @@ Next action:
     })
     expect(second.ok).toBe(false)
     expect(second.error).toBe('reorder_cooldown')
-  })
-
-  it('completes a linked active goal when Boss completes the managed Work Session', async () => {
-    const initialChat = makeChat()
-    initialChat.ensemble!.bossmanParticipantId = 'claude'
-    initialChat.ensemble!.workSession = buildWorkSession({
-      managerParticipantId: 'claude',
-      linkedActiveGoalId: 'goal-1'
-    })
-    initialChat.activeGoal = buildActiveGoal('goal-1')
-    const harness = makeHarness({ initialChat })
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Drive the session.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'complete_work_session'
-    })
-    expect(result.ok).toBe(true)
-    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
-    expect(harness.chat.activeGoal?.status).toBe('completed')
-    expect(harness.chat.activeGoal?.completedAt).toBeTruthy()
-  })
-
-  it('leaves an unrelated active goal untouched on Work Session completion', async () => {
-    const initialChat = makeChat()
-    initialChat.ensemble!.bossmanParticipantId = 'claude'
-    initialChat.ensemble!.workSession = buildWorkSession({
-      managerParticipantId: 'claude',
-      linkedActiveGoalId: 'goal-1'
-    })
-    // The chat's CURRENT active goal is a different one — the session's linked
-    // goal is no longer active, so completion must not touch it.
-    initialChat.activeGoal = buildActiveGoal('goal-2')
-    const harness = makeHarness({ initialChat })
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Drive the session.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    const result = await harness.orchestrator.bossmanControlForRun(harness.dispatched[0].appRunId, {
-      action: 'complete_work_session'
-    })
-    expect(result.ok).toBe(true)
-    expect(harness.chat.ensemble?.workSession?.status).toBe('completed')
-    expect(harness.chat.activeGoal?.status).toBe('active')
   })
 
   it('classifies ECONNREFUSED dispatch errors and continues to the next participant', async () => {
@@ -13407,14 +13284,13 @@ Next action:
   it('does not let explicit fan-out widen a user-targeted round', async () => {
     const harness = makeHarness()
     harness.chat.ensemble!.fanoutPolicy = 'read_only'
-    harness.chat.ensemble!.workSession = buildWorkSession({ enableScoutPass: true })
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'DM Codex only.',
       event: { sender: {} as Electron.WebContents },
       dmTargetParticipantId: 'codex',
-      // A targeted round itself stays fan-out-off, but the Work Session scout
-      // pass used to override that and authorize an explicit read lane.
+      // A targeted round itself stays fan-out-off regardless of the
+      // chat-level fan-out policy.
       fanoutPolicy: 'off'
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
@@ -13996,333 +13872,12 @@ Next action:
     expect(prompt).toContain('NOT to TaskWraith')
   })
 
-  // 1.0.4-AK3 — Work Session hard-stops + permission enforcement.
-  //
-  // These cover the safety surfaces between AK1 (the data shape +
-  // ensemble_continue tool) and AK4-AK6 (the parallel substrate).
-  // The orchestrator must:
-  //   1. Apply the Work Session permission preset over the per-
-  //      participant preset when the session is active (not bypass
-  //      EffectiveRunPermissions, just feed the new preset in).
-  //   2. Drop queued continuations when the session has transitioned
-  //      to a terminal status (completed / paused / cancelled /
-  //      limit_reached) between rounds.
-  //   3. Detect duration-budget exhaustion at round-end and emit
-  //      the appropriate transcript note + status transition.
-
-  it('1.0.4-AK3: overrides per-participant permission preset with workSession preset when active', async () => {
-    const harness = makeHarness()
-    // Claude participant is read_only, Codex is workspace_write.
-    // Setting workSession to full_access without a live Trusted Session receipt
-    // must not become hidden host access; it downgrades to workspace_write.
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test override',
-      acceptanceCriteria: 'Permissions correct',
-      allowedParticipantIds: null,
-      permissionPresetId: 'full_access',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Start work.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('workspace_write')
-  })
-
-  it('1.0.4-AK3: honors full_access workSession only with a scoped Trusted Session receipt', async () => {
-    const isTrustedSessionGranted = vi.fn(() => true)
-    const harness = makeHarness({ isTrustedSessionGranted })
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test override',
-      acceptanceCriteria: 'Permissions correct',
-      allowedParticipantIds: null,
-      permissionPresetId: 'full_access',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Start work.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('full_access')
-    expect(isTrustedSessionGranted).toHaveBeenCalledWith(
-      expect.objectContaining({
-        chatId: 'ensemble-chat',
-        provider: 'claude',
-        workspacePath: '/repo',
-        ensembleParticipantId: 'claude'
-      })
-    )
-  })
-
-  it('1.0.4-AK3: reverts to per-participant preset when workSession is not active', async () => {
-    const harness = makeHarness()
-    // workSession exists but is in `paused` status — the override
-    // should NOT apply. This guarantees pausing + resuming
-    // doesn't accidentally re-clamp on the resume side.
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'paused',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'read_only',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Start work.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // Claude is read_only natively — same result either way for
-    // Claude, but the SECOND dispatched payload (Codex) should
-    // have its native workspace_write preset, NOT the paused
-    // session's read_only override.
-    expect(harness.dispatched[0].effectivePermissions?.presetId).toBe('read_only')
-  })
-
-  it('1.0.4-AK3: scopes active Work Session rounds to allowed participants and leads with the configured lead', async () => {
-    const harness = makeHarness()
-    harness.chat.ensemble!.participants = [
-      {
-        id: 'claude',
-        provider: 'claude',
-        enabled: true,
-        role: 'Reviewer',
-        instructions: 'Review.',
-        order: 1,
-        permissionPresetId: 'read_only'
-      },
-      {
-        id: 'codex',
-        provider: 'codex',
-        enabled: true,
-        role: 'Worker',
-        instructions: 'Work.',
-        order: 2,
-        permissionPresetId: 'workspace_write'
-      },
-      {
-        id: 'gemini',
-        provider: 'gemini',
-        enabled: true,
-        role: 'Researcher',
-        instructions: 'Research.',
-        order: 3,
-        permissionPresetId: 'read_only'
-      }
-    ]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test scoped roster',
-      acceptanceCriteria: 'Only allowed participants speak.',
-      allowedParticipantIds: ['codex', 'gemini'],
-      leadParticipantId: 'gemini',
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Start scoped work.',
-      event: { sender: {} as Electron.WebContents }
-    })
-
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    expect(harness.chat.ensemble?.activeRound?.participants.map((p) => p.participantId)).toEqual([
-      'gemini',
-      'codex'
-    ])
-    expect(harness.dispatched[0].provider).toBe('gemini')
-
-    harness.orchestrator.handleProviderOutput(
-      'gemini',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].provider).toBe('codex')
-    expect(harness.dispatched.map((payload) => payload.provider)).not.toContain('claude')
-  })
-
-  it('1.0.4-AK3: drops queued prompts when workSession transitions to completed mid-round', async () => {
-    const harness = makeHarness()
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Round 1.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // Claude finishes the round.
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: 'Done!' }
-    )
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
-    )
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    // Codex's turn — simulate that ensemble_continue queues a
-    // prompt BUT then transitions the session to completed.
-    harness.orchestrator.enqueueWorkSessionContinuation(
-      'ensemble-chat',
-      'queued-but-should-be-dropped'
-    )
-    // Externally transition the session — same as
-    // ensemble_continue(acceptanceStatus: 'complete') would do.
-    harness.chat.ensemble!.workSession = {
-      ...harness.chat.ensemble!.workSession!,
-      status: 'completed',
-      endedAt: new Date().toISOString(),
-      endedReason: 'Acceptance criteria met.'
-    }
-    // Codex finishes.
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'content', text: 'Codex done.' }
-    )
-    harness.orchestrator.handleProviderOutput(
-      'codex',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
-    )
-    // Give the orchestrator a tick to drain the queue + dispatch
-    // (which it should refuse to do because session is terminal).
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    // Only the original two dispatches should have happened — the
-    // queued continuation was dropped on the terminal-status check.
-    expect(harness.dispatched).toHaveLength(2)
-    expect(harness.chat.ensemble?.activeRound?.status).toBe('completed')
-    expect(harness.chat.ensemble?.activeRound?.queuedPrompt).toBeUndefined()
-    expect(harness.chat.ensemble?.activeRound?.queuedPrompts).toEqual([])
-  })
-
-  it('1.0.4-AK3: drops queued prompts when workSession duration cap elapses at round-end', async () => {
-    const harness = makeHarness()
-    // startedAt 7 hours ago + 6h cap means we should hit the
-    // duration cap at the first round-end check. Single-participant
-    // ensemble so the round closes after one dispatch — matches the
-    // pattern used by "queues a fresh round" so we don't have to
-    // chase two providers through the full lifecycle in a test that
-    // is really about the round-end terminal-status drain.
-    harness.chat.ensemble!.participants = [harness.chat.ensemble!.participants[0]]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date(Date.now() - 7 * 60 * 60 * 1000).toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Start.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-    // Queue a continuation before round end.
-    harness.orchestrator.enqueueWorkSessionContinuation(
-      'ensemble-chat',
-      'should-be-dropped-by-duration'
-    )
-    // Close Claude's turn → triggers round-end check.
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[0].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
-    )
-    await new Promise((resolve) => setTimeout(resolve, 50))
-    // The duration-exhausted check should have transitioned the
-    // session to limit_reached + dropped the queued continuation.
-    expect(harness.chat.ensemble?.workSession?.status).toBe('limit_reached')
-    expect(harness.chat.ensemble?.workSession?.endedReason).toContain('Duration budget reached')
-    // Single dispatch — no fresh round fired from the queue.
-    expect(harness.dispatched).toHaveLength(1)
-    // Transcript status row should explain the end.
-    const durationNote = harness.chat.messages.find(
-      (m) =>
-        m.role === 'system' &&
-        typeof m.content === 'string' &&
-        m.content.includes('Work Session ended') &&
-        m.content.includes('Duration budget reached')
-    )
-    expect(durationNote).toBeDefined()
-  })
-
-  it('1.0.4-AK3: honours queued continuation when workSession stays active', async () => {
-    // Mirror of the above tests — verify the happy path still
-    // dispatches when the session is healthy. Guards against
-    // a bug where the hard-stop check accidentally drops queues
-    // for active sessions. Single-participant ensemble keeps the
-    // test focused on the queue-drain → fresh-round path.
+  it('honours a queued programmatic follow-up prompt at round end', async () => {
+    // Verify the queue-drain → fresh-round path for follow-ups queued
+    // via enqueueFollowUpPrompt (Boss queue_followup / iOS remote).
+    // Single-participant ensemble keeps the test focused.
     const harness = makeHarness()
     harness.chat.ensemble!.participants = [harness.chat.ensemble!.participants[0]]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Round 1.',
@@ -14330,7 +13885,7 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     // Queue a follow-up while Claude is mid-turn.
-    harness.orchestrator.enqueueWorkSessionContinuation('ensemble-chat', 'continue-please')
+    harness.orchestrator.enqueueFollowUpPrompt('ensemble-chat', 'continue-please')
     // Close Claude's turn — round-end check fires + queued prompt
     // dispatches as a fresh round.
     harness.orchestrator.handleProviderOutput(
@@ -14346,10 +13901,9 @@ Next action:
   })
 
   // 1.0.4-AK5 — Parallel fan-out.
-  // Gated behind workSession.enableScoutPass + 2+ read-only
-  // participants. When triggered, the orchestrator dispatches all
-  // read-only scouts concurrently via Promise.all BEFORE the
-  // serial writer step begins.
+  // Gated behind a read fan-out policy + 2+ read-only participants.
+  // When triggered, the orchestrator dispatches all read-only scouts
+  // concurrently via Promise.all BEFORE the serial writer step begins.
 
   it('1.0.4-AK5: dispatches all read-only participants concurrently when fan-out is enabled', async () => {
     const harness = makeHarness()
@@ -14388,20 +13942,7 @@ Next action:
         permissionPresetId: 'workspace_write'
       }
     ]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Fan-out demo',
-      acceptanceCriteria: 'Scouts ran in parallel.',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: true,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Investigate then implement.',
@@ -14501,10 +14042,7 @@ Next action:
         permissionPresetId: 'workspace_write'
       }
     ]
-    harness.chat.ensemble!.workSession = buildWorkSession({
-      enableScoutPass: true,
-      startedAt: new Date().toISOString()
-    })
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
 
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
@@ -14582,21 +14120,6 @@ Next action:
         permissionPresetId: 'read_only'
       }
     ]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'read_only',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      // Fan-out OFF — serial dispatch should run.
-      enableScoutPass: false,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Serial please.',
@@ -15243,61 +14766,6 @@ Next action:
       prompt: 'Inspect in parallel.'
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    harness.orchestrator.handleProviderOutput(
-      'claude',
-      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
-      { type: 'result', status: 'success' }
-    )
-    await expect(fanout).resolves.toMatchObject({ ok: true, participantIds: ['claude'] })
-  })
-
-  it('1.0.8: ensemble_fanout broad targets stay inside active Work Session scope', async () => {
-    const harness = makeHarness()
-    harness.chat.ensemble!.fanoutPolicy = 'read_only'
-    harness.chat.ensemble!.workSession = buildWorkSession({
-      allowedParticipantIds: ['codex', 'claude']
-    })
-    harness.chat.ensemble!.participants = [
-      {
-        id: 'codex',
-        provider: 'codex',
-        enabled: true,
-        role: 'Worker',
-        instructions: 'Work.',
-        order: 1,
-        permissionPresetId: 'workspace_write'
-      },
-      {
-        id: 'claude',
-        provider: 'claude',
-        enabled: true,
-        role: 'Reviewer',
-        instructions: 'Review.',
-        order: 2,
-        permissionPresetId: 'read_only'
-      },
-      {
-        id: 'gemini',
-        provider: 'gemini',
-        enabled: true,
-        role: 'Researcher',
-        instructions: 'Research.',
-        order: 3,
-        permissionPresetId: 'workspace_write'
-      }
-    ]
-    harness.orchestrator.startRound({
-      chatId: 'ensemble-chat',
-      prompt: 'Scoped session.',
-      event: { sender: {} as Electron.WebContents }
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
-
-    const fanout = harness.orchestrator.fanoutForRun(harness.dispatched[0].appRunId, {
-      prompt: 'Inspect scoped files.'
-    })
-    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
-    expect(harness.dispatched[1].provider).toBe('claude')
     harness.orchestrator.handleProviderOutput(
       'claude',
       { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
@@ -16601,7 +16069,7 @@ Next action:
     }
   })
 
-  it('1.0.8: fans out read-only participants in concurrent mode without a Work Session', async () => {
+  it('1.0.8: fans out read-only participants in concurrent mode', async () => {
     const previous = process.env.TASKWRAITH_CONCURRENT_LANES
     process.env.TASKWRAITH_CONCURRENT_LANES = '1'
     try {
@@ -17258,20 +16726,7 @@ Next action:
         permissionPresetId: 'workspace_write'
       }
     ]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Brief threading test',
-      acceptanceCriteria: 'Codex sees both briefs.',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: true,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Investigate then implement.',
@@ -17348,7 +16803,7 @@ Next action:
     })
     await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
     const runId = harness.dispatched[0].appRunId!
-    // No Work Session, no fan-out pass — must be false.
+    // No fan-out pass ran — must be false.
     expect(harness.orchestrator.isParticipantInScoutPass(runId)).toBe(false)
   })
 
@@ -17377,20 +16832,7 @@ Next action:
         permissionPresetId: 'workspace_write'
       }
     ]
-    harness.chat.ensemble!.workSession = {
-      enabled: true,
-      status: 'active',
-      objective: 'Test',
-      acceptanceCriteria: 'Test',
-      allowedParticipantIds: null,
-      permissionPresetId: 'workspace_write',
-      maxRoundsPerProvider: 38,
-      maxDurationMs: 6 * 60 * 60 * 1000,
-      enableScoutPass: true,
-      startedAt: new Date().toISOString(),
-      roundsUsed: { codex: 0, claude: 0, gemini: 0, kimi: 0, grok: 0, cursor: 0, ollama: 0, antigravity: 0 },
-      totalRoundsUsed: 0
-    }
+    harness.chat.ensemble!.fanoutPolicy = 'read_only'
     harness.orchestrator.startRound({
       chatId: 'ensemble-chat',
       prompt: 'Solo scout.',
@@ -17612,69 +17054,6 @@ describe('parseSelfReflectivePrefix', () => {
       prompt: 'plain prompt',
       selfReflective: false
     })
-  })
-})
-
-describe('worstConsecutiveFileEditFailure (work-session supervisor guard)', () => {
-  const act = (toolName: string, filePath: string | undefined, status: string): any => ({
-    id: 't',
-    toolName,
-    filePath,
-    status
-  })
-
-  it('returns null when there are no file-write failures', () => {
-    expect(worstConsecutiveFileEditFailure(undefined)).toBeNull()
-    expect(worstConsecutiveFileEditFailure([])).toBeNull()
-    expect(worstConsecutiveFileEditFailure([act('edit_file', 'a.ts', 'success')])).toBeNull()
-  })
-
-  it('ignores failures from non-file-write tools (e.g. a failed read)', () => {
-    expect(
-      worstConsecutiveFileEditFailure([
-        act('read_file', 'a.ts', 'error'),
-        act('read_file', 'a.ts', 'error'),
-        act('read_file', 'a.ts', 'error')
-      ])
-    ).toBeNull()
-  })
-
-  it('counts consecutive failures on the same file up to the HALT threshold', () => {
-    const r = worstConsecutiveFileEditFailure([
-      act('edit_file', 'a.ts', 'error'),
-      act('edit_file', 'a.ts', 'error'),
-      act('edit_file', 'a.ts', 'error')
-    ])
-    expect(r).toEqual({ filePath: 'a.ts', failures: MAX_CONSECUTIVE_FILE_EDIT_FAILURES })
-  })
-
-  it('resets a file streak after a successful write (a recovered run is not flagged)', () => {
-    expect(
-      worstConsecutiveFileEditFailure([
-        act('edit_file', 'a.ts', 'error'),
-        act('edit_file', 'a.ts', 'error'),
-        act('edit_file', 'a.ts', 'success')
-      ])
-    ).toBeNull()
-  })
-
-  it('tracks streaks per file and returns the worst unresolved one', () => {
-    const r = worstConsecutiveFileEditFailure([
-      act('edit_file', 'a.ts', 'error'),
-      act('write_file', 'b.ts', 'error'),
-      act('write_file', 'b.ts', 'error'),
-      act('edit_file', 'a.ts', 'success') // a.ts recovered; b.ts still failing x2
-    ])
-    expect(r).toEqual({ filePath: 'b.ts', failures: 2 })
-  })
-
-  it('strips tool namespaces and ignores unpaired (running) activities', () => {
-    const r = worstConsecutiveFileEditFailure([
-      act('mcp__taskwraith__edit_file', 'a.ts', 'error'),
-      act('edit_file', 'a.ts', 'running'), // unpaired → ignored
-      act('mcp__taskwraith__edit_file', 'a.ts', 'error')
-    ])
-    expect(r).toEqual({ filePath: 'a.ts', failures: 2 })
   })
 })
 
@@ -19860,5 +19239,360 @@ describe('ensemble_fanout_all (Boss full-roster fan-out)', () => {
       ok: true,
       participantIds: ['kimi']
     })
+  })
+})
+
+// Efficiency audit 2026-07 — terminal-goal pre-emption + assignment-aware
+// continuation rosters. Both reach the private functions directly (the C4
+// pattern above) so the exact predicates are exercised without racing the
+// async serial loop.
+describe('terminal-goal pre-emption of the serial queue', () => {
+  const internals = (orchestrator: EnsembleOrchestrator) =>
+    orchestrator as unknown as {
+      roundsByChatId: Map<
+        string,
+        {
+          remainingParticipants?: EnsembleParticipant[]
+          roundStartGoalId?: string
+          roundStartGoalWasTerminal?: boolean
+          goalTerminalPreemptionNoted?: boolean
+          fannedOutParticipantIds?: Set<string>
+          orchestrationMode: string
+        }
+      >
+      preemptRemainingForTerminalGoal: (
+        runtime: object,
+        chat: ChatRecord,
+        remaining: EnsembleParticipant[],
+        exemptIds: ReadonlySet<string>
+      ) => void
+    }
+
+  const makePreemptionRound = async (options: { goalAtStart?: ActiveGoal } = {}) => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    if (options.goalAtStart) harness.chat.activeGoal = options.goalAtStart
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Work the goal.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    // claude (order 1) dispatches; codex stays queued in remainingParticipants.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    expect(runtime).toBeTruthy()
+    const preempt = io.preemptRemainingForTerminalGoal.bind(harness.orchestrator)
+    const roundParticipant = (participantId: string) =>
+      harness.chat.ensemble!.activeRound!.participants.find(
+        (entry) => entry.participantId === participantId
+      )
+    const preemptionAnnounced = (): boolean =>
+      harness.chat.messages.some((message) => /pre-empted/i.test(message.content || ''))
+    return { harness, runtime, preempt, roundParticipant, preemptionAnnounced }
+  }
+
+  it('sweeps undispatched seats once the goal completes mid-round (continuous mode)', async () => {
+    const { harness, runtime, preempt, roundParticipant, preemptionAnnounced } =
+      await makePreemptionRound({ goalAtStart: buildActiveGoal('goal-live') })
+    // Goal snapshot: active at round start.
+    expect(runtime.roundStartGoalId).toBe('goal-live')
+    expect(runtime.roundStartGoalWasTerminal).toBe(false)
+    // Boss completes the goal mid-round.
+    harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
+    preempt(runtime, harness.chat, runtime.remainingParticipants!, new Set())
+    expect(runtime.remainingParticipants).toHaveLength(0)
+    expect(roundParticipant('codex')?.status).toBe('skipped')
+    expect(preemptionAnnounced()).toBe(true)
+    // Fire-once: a second sweep on an already-empty queue adds nothing.
+    const messageCount = harness.chat.messages.length
+    preempt(runtime, harness.chat, runtime.remainingParticipants!, new Set())
+    expect(harness.chat.messages.length).toBe(messageCount)
+  })
+
+  it('era guard: a goal already terminal at round start never pre-empts pass 1', async () => {
+    const { harness, runtime, preempt, roundParticipant } = await makePreemptionRound({
+      goalAtStart: { ...buildActiveGoal('goal-stale'), status: 'completed' }
+    })
+    expect(runtime.roundStartGoalWasTerminal).toBe(true)
+    const before = runtime.remainingParticipants!.length
+    preempt(runtime, harness.chat, runtime.remainingParticipants!, new Set())
+    expect(runtime.remainingParticipants).toHaveLength(before)
+    expect(roundParticipant('codex')?.status).not.toBe('skipped')
+  })
+
+  it('a goal minted and completed within the round pre-empts despite a stale start snapshot', async () => {
+    const { harness, runtime, preempt } = await makePreemptionRound({
+      goalAtStart: { ...buildActiveGoal('goal-old'), status: 'completed' }
+    })
+    // set_goal minted a fresh goal mid-round, then the Boss completed it.
+    harness.chat.activeGoal = { ...buildActiveGoal('goal-new'), status: 'completed' }
+    preempt(runtime, harness.chat, runtime.remainingParticipants!, new Set())
+    expect(runtime.remainingParticipants).toHaveLength(0)
+  })
+
+  it('turn_bound rounds are never swept (panel answers keep independent value)', async () => {
+    const harness = makeHarness()
+    harness.chat.activeGoal = buildActiveGoal('goal-tb')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Panel question.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
+    const before = runtime.remainingParticipants!.length
+    io.preemptRemainingForTerminalGoal.call(
+      harness.orchestrator,
+      runtime,
+      harness.chat,
+      runtime.remainingParticipants!,
+      new Set()
+    )
+    expect(runtime.remainingParticipants).toHaveLength(before)
+  })
+
+  it('explicitly-routed and fan-out-lane seats survive the sweep', async () => {
+    const { harness, runtime, preempt, roundParticipant } = await makePreemptionRound({
+      goalAtStart: buildActiveGoal('goal-exempt')
+    })
+    // Add a third seat so the queue holds two undispatched participants.
+    harness.chat.ensemble!.participants.push({
+      id: 'kimi',
+      provider: 'kimi',
+      enabled: true,
+      role: 'Scout',
+      instructions: 'Scout.',
+      order: 3,
+      model: 'kimi-model',
+      permissionPresetId: 'read_only'
+    })
+    const kimiSeat = harness.chat.ensemble!.participants.find((entry) => entry.id === 'kimi')!
+    runtime.remainingParticipants!.push(kimiSeat as EnsembleParticipant)
+    harness.chat.activeGoal = { ...harness.chat.activeGoal!, status: 'completed' }
+    // codex was yield-promoted (exempt); kimi is an ordinary queued seat.
+    preempt(runtime, harness.chat, runtime.remainingParticipants!, new Set(['codex']))
+    expect(runtime.remainingParticipants!.map((entry) => entry.id)).toEqual(['codex'])
+    expect(roundParticipant('codex')?.status).not.toBe('skipped')
+  })
+})
+
+describe('assignment-aware continuation roster narrowing', () => {
+  const internals = (orchestrator: EnsembleOrchestrator) =>
+    orchestrator as unknown as {
+      roundsByChatId: Map<string, object>
+      narrowContinuationRosterToOpenWork: (
+        chat: ChatRecord,
+        fullRoster: EnsembleParticipant[]
+      ) => EnsembleParticipant[]
+      tryAutoContinueRound: (runtime: object, chat: ChatRecord) => EnsembleParticipant[] | null
+    }
+
+  const seat = (id: string, order: number): EnsembleParticipant =>
+    ({
+      id,
+      provider: 'claude',
+      enabled: true,
+      role: id,
+      instructions: 'Do.',
+      order,
+      model: 'claude-model',
+      permissionPresetId: 'workspace_write'
+    }) as EnsembleParticipant
+
+  const fullRoster = [seat('boss', 1), seat('captain', 2), seat('worker1', 3), seat('reviewer1', 4), seat('scout1', 5)]
+
+  const makeNarrowingChat = (): ChatRecord => {
+    const chat = makeChat()
+    chat.activeGoal = buildActiveGoal('goal-n')
+    chat.ensemble!.bossmanParticipantId = 'boss'
+    chat.ensemble!.secondInCommandParticipantId = 'captain'
+    return chat
+  }
+
+  const narrow = () => {
+    const harness = makeHarness()
+    return internals(harness.orchestrator).narrowContinuationRosterToOpenWork.bind(
+      harness.orchestrator
+    )
+  }
+
+  const stamp = { createdAt: '2026-05-24T00:00:00.000Z', updatedAt: '2026-05-24T00:00:00.000Z' }
+
+  it('keeps the full roster when assign_work was never used', () => {
+    const chat = makeNarrowingChat()
+    expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
+  })
+
+  it('admits open-assignment owners plus the Boss; idle scouts/reviewers/captain are dropped', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'open', ...stamp },
+        { id: 'a2', participantId: 'scout1', objective: 'done bit', status: 'done', ...stamp }
+      ]
+    }
+    const narrowed = narrow()(chat, fullRoster)
+    expect(narrowed.map((entry) => entry.id)).toEqual(['boss', 'worker1'])
+  })
+
+  it('admits reviewers of required gates bound to the active goal', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'done', ...stamp }
+      ],
+      reviewGates: [
+        {
+          id: 'g1',
+          reviewerParticipantId: 'reviewer1',
+          scope: 'the slice',
+          status: 'required',
+          goalId: 'goal-n',
+          ...stamp
+        },
+        {
+          id: 'g-old',
+          reviewerParticipantId: 'scout1',
+          scope: 'a prior goal',
+          status: 'required',
+          goalId: 'goal-prior',
+          ...stamp
+        }
+      ]
+    }
+    const narrowed = narrow()(chat, fullRoster)
+    expect(narrowed.map((entry) => entry.id)).toEqual(['boss', 'reviewer1'])
+  })
+
+  it('all work closed → the Boss gets a solo closure pass', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'done', ...stamp },
+        { id: 'a2', participantId: 'scout1', objective: 'recon', status: 'cancelled', ...stamp }
+      ]
+    }
+    expect(narrow()(chat, fullRoster).map((entry) => entry.id)).toEqual(['boss'])
+  })
+
+  it('an open poll pins the full roster (voting is everyone\'s job)', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'done', ...stamp }
+      ],
+      polls: [
+        {
+          id: 'p1',
+          question: 'Ship it?',
+          options: ['yes', 'no'],
+          status: 'open',
+          createdAt: '2026-05-24T00:00:00.000Z'
+        } as never
+      ]
+    }
+    expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
+  })
+
+  it('the Captain substitutes only when the Boss is outside the eligible roster', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'in_progress', ...stamp }
+      ]
+    }
+    const rosterWithoutBoss = fullRoster.filter((entry) => entry.id !== 'boss')
+    expect(narrow()(chat, rosterWithoutBoss).map((entry) => entry.id)).toEqual([
+      'captain',
+      'worker1'
+    ])
+  })
+
+  it('targeted open status requests admit their targets; untargeted ones never pin the roster', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'open', ...stamp }
+      ],
+      statusRequests: [
+        {
+          id: 's1',
+          targetParticipantIds: ['scout1'],
+          prompt: 'Scout report?',
+          status: 'open',
+          createdAt: '2026-05-24T00:00:00.000Z'
+        },
+        {
+          id: 's2',
+          prompt: 'Everyone check in',
+          status: 'open',
+          createdAt: '2026-05-24T00:00:00.000Z'
+        }
+      ]
+    }
+    const narrowed = narrow()(chat, fullRoster)
+    expect(narrowed.map((entry) => entry.id)).toEqual(['boss', 'worker1', 'scout1'])
+  })
+
+  it('a narrowing that would admit nobody falls back to the full roster', () => {
+    const chat = makeNarrowingChat()
+    chat.ensemble!.bossmanParticipantId = undefined
+    chat.ensemble!.secondInCommandParticipantId = undefined
+    chat.ensemble!.bossmanControlState = {
+      assignments: [
+        { id: 'a1', participantId: 'worker1', objective: 'slice', status: 'done', ...stamp }
+      ]
+    }
+    expect(narrow()(chat, fullRoster)).toHaveLength(fullRoster.length)
+  })
+
+  it('tryAutoContinueRound wires the narrowing into the next pass and says so', async () => {
+    const harness = makeHarness()
+    harness.chat.ensemble!.orchestrationMode = 'continuous'
+    harness.chat.ensemble!.maxContinuationHops = 50
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.activeGoal = buildActiveGoal('goal-wire')
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Keep going.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    const io = internals(harness.orchestrator)
+    const runtime = io.roundsByChatId.get('ensemble-chat')!
+    harness.chat.ensemble!.bossmanControlState = {
+      assignments: [
+        {
+          id: 'a1',
+          participantId: 'codex',
+          objective: 'finish the slice',
+          status: 'in_progress',
+          createdAt: '2026-05-24T00:00:00.000Z',
+          updatedAt: '2026-05-24T00:00:00.000Z'
+        }
+      ]
+    }
+    // A productive pass: both seats answered.
+    const round = harness.chat.ensemble!.activeRound!
+    harness.chat.ensemble!.activeRound = {
+      ...round,
+      participants: round.participants.map((participant) => ({
+        ...participant,
+        status: 'answered' as const
+      }))
+    }
+    const fresh = io.tryAutoContinueRound.call(harness.orchestrator, runtime, harness.chat)
+    expect(fresh).not.toBeNull()
+    // codex is Boss AND assignment owner; claude (no open work) is narrowed out.
+    expect(fresh!.map((entry) => entry.id)).toEqual(['codex'])
+    expect(
+      harness.chat.messages.some((message) =>
+        /Assignment-aware pass: 1 of 2 seats/.test(message.content || '')
+      )
+    ).toBe(true)
   })
 })

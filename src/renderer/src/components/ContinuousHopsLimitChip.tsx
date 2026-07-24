@@ -1,8 +1,8 @@
 /*
  * ContinuousHopsLimitChip — 1.0.6 follow-up.
  *
- * The "n/m" handoff-turns meter that appears next to the Turn/Continuous/
- * Work-Session toggle when Continuous mode is active. Pre-1.0.6 the
+ * The "n/m" handoff-turns meter that appears next to the Turn/Continuous
+ * toggle when Continuous mode is active. Pre-1.0.6 the
  * denominator was a hardcoded `6`, which was easy to miss as a setting at
  * all. Now the chip is a button: click to open a tiny popover, type a new
  * limit, Set → writes `chat.ensemble.maxContinuationHops` (and propagates to

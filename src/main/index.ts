@@ -171,6 +171,7 @@ import {
   GEMINI_MCP_ALLOWED_TOOL_NAMES,
   GEMINI_MCP_READ_ONLY_TOOL_NAMES
 } from './geminiMcpConstants'
+import { windowReadFileText } from './mcp/ReadFileWindow'
 import {
   MAX_EDITOR_FILE_BYTES,
   MAX_SCHEDULE_TIMER_DELAY_MS,
@@ -1606,7 +1607,6 @@ import {
   type ClaudeTaskWraithMcpInput
 } from './ClaudeTaskWraithMcp'
 import { tryRunGeminiApi } from './GeminiApiProvider'
-import { handleEnsembleContinue } from './EnsembleContinue'
 import { evaluateBossmanAutoApproval } from './BossmanAutoApproval'
 import { resolveRosterUpdateBossmanAssignment } from './EnsembleRosterUpdate'
 import { buildEnsembleYieldToolResult } from './EnsembleYieldToolResult'
@@ -28963,8 +28963,6 @@ async function executeGeminiMcpTool(
           args.action === 'replace_participant' ||
           args.action === 'reorder_remaining' ||
           args.action === 'queue_followup' ||
-          args.action === 'pause_work_session' ||
-          args.action === 'complete_work_session' ||
           args.action === 'assign_work' ||
           args.action === 'set_round_plan' ||
           args.action === 'request_status' ||
@@ -29330,61 +29328,6 @@ async function executeGeminiMcpTool(
       text = mcpJson({
         ...result,
         tool: 'cancel_wakeup'
-      })
-    } else if (toolName === 'ensemble_continue') {
-      // 1.0.4-AK1 — Work Session multi-round autonomy control. The
-      // participant calls this when they want the ensemble to
-      // continue (or end) without waiting for the user. Three
-      // acceptanceStatus modes: 'inProgress' queues exactly ONE
-      // follow-up prompt for a fresh round; 'complete' finalises
-      // the Work Session; 'blocked' pauses pending user input.
-      //
-      // We MUST resolve `callingParticipantId` from the
-      // orchestrator's run registry — without that the
-      // allowed-participants gate can't enforce who's allowed to
-      // drive the session forward. When the call originates outside
-      // an active ensemble run we treat it as a no-op error
-      // ('no_active_work_session') rather than letting it succeed
-      // with empty attribution.
-      const chatId = context.appChatId || ''
-      const callingParticipantId =
-        ensembleOrchestratorRef?.getParticipantIdForRun(context.appRunId) || ''
-      const continuation = handleEnsembleContinue(
-        chatId,
-        {
-          summary: optionalString(args.summary),
-          nextPrompt: optionalString(args.nextPrompt),
-          target: optionalString(args.target),
-          reason: optionalString(args.reason),
-          acceptanceStatus: args.acceptanceStatus as
-            | 'inProgress'
-            | 'complete'
-            | 'blocked'
-            | undefined
-        },
-        {
-          getChat: (id: string) => AppStore.getChat(id),
-          saveChat: (chat) => AppStore.saveChat(chat),
-          queueFollowUpPrompt: (id: string, prompt: string) =>
-            ensembleOrchestratorRef?.enqueueWorkSessionContinuation(id, prompt) ?? false,
-          callingProvider: parentProvider,
-          callingParticipantId
-        }
-      )
-      // Surface the result message as a transcript status row so
-      // the user sees the session lifecycle without diving into
-      // logs. The orchestrator already drains queuedPrompts on
-      // round end — no extra dispatch trigger needed here.
-      if (continuation.message) {
-        ensembleOrchestratorRef?.appendStatusForRun(context.appRunId || '', continuation.message)
-      }
-      text = mcpJson({
-        ok: continuation.ok,
-        tool: 'ensemble_continue',
-        status: continuation.status,
-        queued: continuation.queued,
-        message: continuation.message,
-        ...(continuation.error ? { error: continuation.error } : {})
       })
     } else if (toolName === 'scout_brief') {
       // 1.0.4-AK6 — Parallel fan-out brief tool. Validated +
@@ -29931,7 +29874,7 @@ async function executeGeminiMcpTool(
         sizeLimitErrorMessage: 'File is too large to read through the MCP bridge.'
       })
       assertTextBuffer(buffer)
-      text = buffer.toString('utf8')
+      text = windowReadFileText(buffer.toString('utf8'), args)
     } else if (toolName === 'list_directory') {
       const authority = resolveGeminiMcpGrantAwarePathAuthority(
         context,
@@ -33892,7 +33835,7 @@ if (isGeminiMcpBridgeProcess) {
             return { ok: false, error: 'Round id is no longer active' }
           }
           const ok = Boolean(
-            ensembleOrchestratorRef?.enqueueWorkSessionContinuation(action.threadId, text)
+            ensembleOrchestratorRef?.enqueueFollowUpPrompt(action.threadId, text)
           )
           if (ok) {
             broadcastThreadUpdate(action.threadId, { remoteProjectionSnapshot: false })

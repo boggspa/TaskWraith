@@ -165,7 +165,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'read_file',
       description:
-        'Read a UTF-8 text file inside the active TaskWraith workspace after tool policy allows it.',
+        'Read a UTF-8 text file inside the active TaskWraith workspace after tool policy allows it. For large files, pass offset/limit to read a line window instead of shell tools like sed.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -175,7 +175,17 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
       inputSchema: {
         type: 'object',
         properties: {
-          path: { type: 'string' }
+          path: { type: 'string' },
+          offset: {
+            type: 'number',
+            description:
+              '1-based line number to start reading from. When offset or limit is set the result is a line window prefixed with "[read_file: lines X-Y of N]".'
+          },
+          limit: {
+            type: 'number',
+            description:
+              'Maximum number of lines to return. Defaults to 2000 (capped at 5000) when only offset is set. Omit both offset and limit to read the whole file.'
+          }
         },
         required: ['path']
       }
@@ -2217,7 +2227,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout',
       description:
-        'In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager, or an active Work Session with an explicit participant scope. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn.',
+        'In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2302,7 +2312,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_bossman_control',
       description:
-        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, queue a follow-up, or pause/complete a managed Work Session. Non-authority callers and stale round/run/participant ids are rejected and audited.',
+        'In Ensemble Mode, allows the assigned Boss participant, or Captain only after Boss is unavailable, to make bounded event-bound orchestration decisions: assign work, set the round plan, request status, declare decisions, set review gates, quarantine noisy/unavailable participants, allocate budgets, create polls, set/update/clear the TaskWraith goal, adjust hops, schedule wakeups, check quota reset status, skip/stop participants, explicitly re-summon an already-answered participant in Continuous mode, replace a participant after provider health checks, reorder the remaining queue with cooldown, or queue a follow-up. Non-authority callers and stale round/run/participant ids are rejected and audited.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2321,8 +2331,6 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
               'replace_participant',
               'reorder_remaining',
               'queue_followup',
-              'pause_work_session',
-              'complete_work_session',
               'assign_work',
               'set_round_plan',
               'request_status',
@@ -2505,7 +2513,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_roster_edit',
       description:
-        'Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS. Work Session is intentionally unsupported.',
+        'Manage an Ensemble roster. add/remove/edit remain Boss-authorized and gated. On an active manual/remote turn explicitly requesting Ensemble creation, only import_preset is request-scoped auto-allowed; scheduled/system/read-only/live edits stay gated. Call list_ensemble_participants first, then import_preset once with compact preset (preferred), workspace path, or inline json. The host supplies ids/timestamps; do not call shell, file, or time tools for metadata. A single-provider chat import makes the current seat Boss; Ensemble import needs Boss/Captain. Supports seat configuration, orchestration, fan-out, hops, capacity, and CHARS.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3112,42 +3120,6 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           }
         },
         required: ['provider', 'prompt']
-      }
-    },
-    {
-      name: 'ensemble_continue',
-      description:
-        'In an active Ensemble Work Session, queue one follow-up round, mark the session complete, or pause it as blocked. ' +
-        'Choose acceptanceStatus deliberately: use `complete` only when the task is fully done and verified — every required tool call (edits, run_task checks, tests) actually ran and succeeded. ' +
-        'Use `blocked` only when you are genuinely stuck and need user input to proceed. ' +
-        'Use `inProgress` (with nextPrompt) to queue another round and keep working. ' +
-        'What is NOT blocked: a test you can fix is not a block — fix it and continue; a recoverable error (retryable failure, missing file you can create, tool you can call differently) is not a block — keep working. ' +
-        'Does not bypass participant permissions; each queued round still uses the normal approval and permission path.',
-      annotations: {
-        readOnlyHint: true,
-        destructiveHint: false,
-        idempotentHint: false,
-        openWorldHint: false
-      },
-      inputSchema: {
-        type: 'object',
-        properties: {
-          summary: { type: 'string' },
-          nextPrompt: {
-            type: 'string',
-            description: 'Required when acceptanceStatus is inProgress.'
-          },
-          target: {
-            type: 'string',
-            description:
-              'Optional participant alias to include in the follow-up prompt for normal @mention routing.'
-          },
-          reason: { type: 'string' },
-          acceptanceStatus: {
-            type: 'string',
-            enum: ['inProgress', 'complete', 'blocked']
-          }
-        }
       }
     },
     {

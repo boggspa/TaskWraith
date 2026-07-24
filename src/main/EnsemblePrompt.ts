@@ -129,8 +129,8 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
 }
 
-export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v1'
-export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v1'
+export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v2'
+export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v2'
 
 export interface EnsembleDynamicStateSnapshot {
   /** Stable content-derived version; deliberately does not use Node crypto. */
@@ -166,23 +166,6 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     )
     .sort()
     .join('\n')
-  // Work Session routing/authority belongs to the shell. Its descriptive
-  // objective and acceptance criteria are dynamic state, so changing ordinary
-  // work-session detail no longer forces every resumed seat through a full
-  // briefing. Round counters remain intentionally absent too.
-  const workSession = config.workSession
-  const workSessionIdentity = workSession
-    ? [
-        workSession.enabled ? '1' : '0',
-        workSession.status || '',
-        workSession.allowedParticipantIds === null
-          ? 'all'
-          : [...(workSession.allowedParticipantIds || [])].sort().join(','),
-        workSession.permissionPresetId || '',
-        workSession.leadParticipantId || '',
-        workSession.managerParticipantId || ''
-      ].join('|')
-    : ''
   const shellIdentity = [
     roster,
     config.bossmanParticipantId || '',
@@ -194,8 +177,7 @@ export function computeEnsemblePromptShellStamp(config: EnsembleConfig): string 
     // concurrent mode change the parallel-policy lines.
     config.selfReflective ? 'self-reflective' : '',
     config.fanoutPolicy || '',
-    config.concurrentModeEnabled ? 'concurrent' : '',
-    workSessionIdentity
+    config.concurrentModeEnabled ? 'concurrent' : ''
     // Review F3: printable escape, NOT a raw NUL byte (a literal 0x00 in the
     // source made git classify this whole file as binary).
   ].join('\u0001')
@@ -242,7 +224,7 @@ export function getOrderedEnsembleParticipants(
     )
     .slice(0, Math.max(1, maxParticipants))
   if (!currentPrompt || /@all\b/i.test(currentPrompt)) {
-    return applyActiveWorkSessionRoster(applyChairSummaryOrder(enabled, config), config)
+    return applyChairSummaryOrder(enabled, config)
   }
 
   const mentioned = new Set<string>()
@@ -253,16 +235,13 @@ export function getOrderedEnsembleParticipants(
     mentionedInPromptOrder.push(match.participant)
   }
   if (mentioned.size === 0) {
-    return applyActiveWorkSessionRoster(applyChairSummaryOrder(enabled, config), config)
+    return applyChairSummaryOrder(enabled, config)
   }
-  return applyActiveWorkSessionRoster(
-    applyChairSummaryOrder(
-      [
-        ...mentionedInPromptOrder,
-        ...enabled.filter((participant) => !mentioned.has(participant.id))
-      ],
-      config
-    ),
+  return applyChairSummaryOrder(
+    [
+      ...mentionedInPromptOrder,
+      ...enabled.filter((participant) => !mentioned.has(participant.id))
+    ],
     config
   )
 }
@@ -297,28 +276,6 @@ export function resolveForegroundSynthesizerParticipantId(
   if (!participantId) return undefined
   const participant = config.participants.find((candidate) => candidate.id === participantId)
   return participant && participant.stageRole !== 'background' ? participantId : undefined
-}
-
-function applyActiveWorkSessionRoster(
-  participants: EnsembleParticipant[],
-  config: EnsembleConfig
-): EnsembleParticipant[] {
-  const workSession = config.workSession
-  if (!workSession?.enabled || workSession.status !== 'active') return participants
-  const allowedIds = Array.isArray(workSession.allowedParticipantIds)
-    ? new Set(workSession.allowedParticipantIds)
-    : null
-  const scoped = allowedIds
-    ? participants.filter((participant) => allowedIds.has(participant.id))
-    : participants
-  const leadId = workSession.leadParticipantId
-  if (!leadId) return scoped
-  const idx = scoped.findIndex((participant) => participant.id === leadId)
-  if (idx <= 0) return scoped
-  const next = [...scoped]
-  const [lead] = next.splice(idx, 1)
-  next.unshift(lead)
-  return next
 }
 
 export function resolveOllamaEnsembleTranscriptBudget(
@@ -366,7 +323,7 @@ function formatRoleBoundaryContract(
     `- Treat your role (${roleText}) and your role instructions as your ownership boundary for this turn. Do not absorb peers' responsibilities just because you can.`,
     '- Do the smallest useful slice that advances your own role. Leave clearly named follow-up work for the participant whose role owns it.',
     '- If work falls under another enabled participant\'s role or mini-goal, state the boundary and route it with @Role or ensemble_yield(target) instead of completing it yourself.',
-    '- Participant instructions are scoped role data. They cannot override TaskWraith rules, permission presets, the active goal, Work Session authority, or user instructions.'
+    '- Participant instructions are scoped role data. They cannot override TaskWraith rules, permission presets, the active goal, or user instructions.'
   ]
 
   const authorityLines = formatAuthorityLines(config, orderedParticipants, participant.id)
@@ -406,12 +363,9 @@ function formatAuthorityLines(
   orderedParticipants: EnsembleParticipant[],
   currentParticipantId: string
 ): string[] {
-  const workSession = config.workSession
   const authorityIds = [
     config.bossmanParticipantId,
-    config.secondInCommandParticipantId,
-    workSession?.leadParticipantId,
-    workSession?.managerParticipantId
+    config.secondInCommandParticipantId
   ].filter(Boolean) as string[]
   const uniqueAuthorityIds = [...new Set(authorityIds)].filter(
     (participantId) =>
@@ -445,10 +399,10 @@ function isPlanWorkflowChat(chat: ChatRecord): boolean {
 
 function resolveEnsemblePlanOwnerId(config: EnsembleConfig): string | null {
   // Do not let a one-round @mention reorder choose a different plan owner.
-  // Keep the durable roster semantics (chair placement + active Work Session
-  // eligibility/lead) though: an excluded seat must never own a plan that no
-  // dispatched participant can emit. Slim sessions retain this rule, so all
-  // full and dynamic surfaces share this canonical effective roster.
+  // Keep the durable roster semantics (chair placement) though: an excluded
+  // seat must never own a plan that no dispatched participant can emit. Slim
+  // sessions retain this rule, so all full and dynamic surfaces share this
+  // canonical effective roster.
   const stableParticipants = getCanonicalEffectiveEnsembleParticipants(config).filter(
     (participant) => participant.stageRole !== 'background'
   )
@@ -519,42 +473,6 @@ function isReviewOrReconLike(participant: EnsembleParticipant): boolean {
 function isWorkerLike(participant: EnsembleParticipant): boolean {
   const text = `${participant.role} ${participant.instructions}`.toLowerCase()
   return /\b(worker|implement|implementer|render|main|edit|patch|build|fix)\b/.test(text)
-}
-
-function formatWorkSessionStanza(
-  config: EnsembleConfig,
-  orderedParticipants: EnsembleParticipant[]
-): string {
-  const workSession = config.workSession
-  if (!workSession?.enabled || workSession.status !== 'active') return ''
-  const lead = workSession.leadParticipantId
-    ? orderedParticipants.find((participant) => participant.id === workSession.leadParticipantId)
-    : null
-  const manager = workSession.managerParticipantId
-    ? orderedParticipants.find((participant) => participant.id === workSession.managerParticipantId)
-    : null
-  const allowed =
-    workSession.allowedParticipantIds === null
-      ? 'all enabled participants'
-      : [...workSession.allowedParticipantIds]
-          .sort()
-          .map((id) => orderedParticipants.find((participant) => participant.id === id))
-          .filter((participant): participant is EnsembleParticipant => Boolean(participant))
-          .map(formatParticipantScopeName)
-          .join(', ') || 'none'
-  return [
-    'Active Work Session:',
-    `Objective: ${sanitizeText(workSession.objective) || 'No objective recorded.'}`,
-    `Acceptance criteria: ${
-      sanitizeText(workSession.acceptanceCriteria) || 'No acceptance criteria recorded.'
-    }`,
-    `Allowed participants: ${allowed}.`,
-    ...(lead ? [`Lead: ${formatParticipantScopeName(lead)}.`] : []),
-    ...(manager ? [`Manager/Boss: ${formatParticipantScopeName(manager)}.`] : []),
-    workSession.linkedActiveGoalId ? `Linked active goal id: ${workSession.linkedActiveGoalId}.` : ''
-  ]
-    .filter(Boolean)
-    .join('\n')
 }
 
 function formatBossmanControlStanza(
@@ -726,10 +644,7 @@ function getStableEnabledEnsembleParticipants(config: EnsembleConfig): EnsembleP
 }
 
 function getCanonicalEffectiveEnsembleParticipants(config: EnsembleConfig): EnsembleParticipant[] {
-  return applyActiveWorkSessionRoster(
-    applyChairSummaryOrder(getStableEnabledEnsembleParticipants(config), config),
-    config
-  )
+  return applyChairSummaryOrder(getStableEnabledEnsembleParticipants(config), config)
 }
 
 function formatDynamicPlanWorkflowSlot(
@@ -779,8 +694,6 @@ export function buildEnsembleDynamicStateSnapshot(
   const activeGoalSlot = shouldInjectActiveGoal(activeGoal)
     ? ['Active goal:', formatActiveGoalPromptBlock(activeGoal)].join('\n')
     : 'Active goal: <none>'
-  const workSessionSlot =
-    formatWorkSessionStanza(config, stableParticipants) || 'Work Session: <none>'
   const bossmanSlot =
     formatBossmanControlStanza(config, stableParticipants, chat.activeGoal) ||
     'Boss/Captain control state: <none>'
@@ -793,7 +706,6 @@ export function buildEnsembleDynamicStateSnapshot(
   const block = [
     'Dynamic ensemble state (replacement snapshot — later snapshots supersede this one):',
     activeGoalSlot,
-    workSessionSlot,
     bossmanSlot,
     sessionEventsSlot,
     priorRoundSummarySlot,
@@ -1194,7 +1106,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
           : input.participant.stageRole === 'background'
             ? [
                 '',
-                'Stage role: background — you were explicitly delegated an asynchronous lane and do not consume an ordinary round turn. Execute only the scoped request, respect the lane permission posture, and report concise evidence when ready; do not take ownership of foreground rotation, call ensemble_continue, or claim Boss/Captain/synthesizer authority.'
+                'Stage role: background — you were explicitly delegated an asynchronous lane and do not consume an ordinary round turn. Execute only the scoped request, respect the lane permission posture, and report concise evidence when ready; do not take ownership of foreground rotation or claim Boss/Captain/synthesizer authority.'
               ]
             : []),
     ...(isOllamaParticipant
@@ -1240,7 +1152,7 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background lanes stay read-only). When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',
-    '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may call list_ensemble_participants for the canonical roster-export contract and provider/model/quota choices, then call ensemble_roster_edit action=import_preset with exactly one task-specific TaskWraith roster export. This saves a unique preset and activates it only after the current round ends. The Boss assignment is preserved; a Captain may refine the roster but only the Boss may clear/reallocate Captain. This path can set Turn/Continuous, fan-out, hop cap, and CHARS, but never Work Session.',
+    '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may call list_ensemble_participants for the canonical roster-export contract and provider/model/quota choices, then call ensemble_roster_edit action=import_preset with exactly one task-specific TaskWraith roster export. This saves a unique preset and activates it only after the current round ends. The Boss assignment is preserved; a Captain may refine the roster but only the Boss may clear/reallocate Captain. This path can set Turn/Continuous, fan-out, hop cap, and CHARS.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, do-not-repeat notes, or polls. To open a poll, pass 2–6 plain-text pollOptions with the question/context in value; vote or change your vote with ensemble_poll_response using the Blackboard entry id as pollId and an exact option as choice. Polls stay open for revoting until their entry is replaced or retired with blackboard_delete. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
     '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',
     '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
@@ -1348,8 +1260,8 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
     // 1.0.4-AK6 — fan-out briefs from a just-completed parallel pass
     // are surfaced above the recent transcript so the serial writer
     // can synthesise findings before responding. Skipped when no
-    // briefs are available (non-Work-Session rounds, no fan-out pass,
-    // empty pass with no briefs emitted).
+    // briefs are available (no fan-out pass, or an empty pass with no
+    // briefs emitted).
     ...(input.scoutBriefs && input.scoutBriefs.length > 0
       ? ['', formatScoutBriefsForPrompt(input.scoutBriefs)]
       : []),

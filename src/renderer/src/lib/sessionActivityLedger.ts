@@ -173,18 +173,6 @@ function collectSessionActivityEntries(
     })
   }
 
-  const oldWorkSessionStatus = previous.ensemble!.workSession?.status || 'idle'
-  const newWorkSessionStatus = next.ensemble!.workSession?.status || 'idle'
-  if (oldWorkSessionStatus !== newWorkSessionStatus) {
-    add({
-      scope: 'session',
-      target: 'work session',
-      oldValue: oldWorkSessionStatus,
-      newValue: newWorkSessionStatus,
-      reason: 'Work Session status changed.'
-    })
-  }
-
   return entries
 }
 

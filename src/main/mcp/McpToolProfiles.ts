@@ -125,7 +125,6 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
   'goal_blocked',
   'todo_write',
   'delegate_to_subthread',
-  'ensemble_continue',
   'scout_brief',
   'blackboard_post',
   'blackboard_read',
@@ -263,7 +262,6 @@ export const CORE_MCP_ADVERTISE_TOOLS = Object.freeze([
   'schedule_wakeup',
   'cancel_wakeup',
   'list_ensemble_participants',
-  'ensemble_continue',
   'scout_brief',
   'blackboard_post',
   'blackboard_read',
@@ -326,7 +324,6 @@ export const GATEWAY_MCP_DIRECT_TOOLS = Object.freeze([
   'list_ensemble_participants',
   'schedule_wakeup',
   'cancel_wakeup',
-  'ensemble_continue',
   'blackboard_post',
   'blackboard_read',
   'blackboard_delete'

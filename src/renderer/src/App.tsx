@@ -142,7 +142,6 @@ import {
   AuditRunRecord,
   ActiveGoal,
   ActiveGoalStatus,
-  WorkSessionConfig,
   TranscriptMediaRef
 } from '../../main/store/types'
 import {
@@ -400,10 +399,6 @@ import { ChangelogSheet } from './components/ChangelogSheet'
 import { ComposerScheduleButton } from './components/ComposerScheduleButton'
 import { AppBootMask } from './components/AppBootMask'
 import { MainAppLayout } from './app/views/MainAppLayout'
-import {
-  WorkSessionSetupSheet,
-  type WorkSessionSetupConfirmInput
-} from './components/WorkSessionSetupSheet'
 import { IncomingPairingPrompt } from './components/IncomingPairingPrompt'
 import {
   AppleTerminalIcon,
@@ -470,7 +465,6 @@ import {
 } from './lib/ensembleProviderDefaults'
 import { shouldApplyFocusedWorkspaceRebind } from './lib/ensembleWelcomeWorkspace'
 import { withSessionActivityLedger } from './lib/sessionActivityLedger'
-import { applyWorkSessionConfirmation, cancelWorkSessionOnChat } from './lib/workSessionChat'
 // EnsembleSetupSheet retired in 1.0.3 — the bottom-pinned modal had a
 // z-index race with the picker popovers and the form felt foreign. All
 // per-participant config now lives inline in the composer above-row
@@ -2226,13 +2220,6 @@ function App(): React.JSX.Element {
     handleDismissChangelogSheet,
     handleSidebarQuickUpdate
   } = useChangelog(appVersion, updateStatus)
-  /** 1.0.4-AK2 — Work Session setup sheet open/closed state.
-   * Opened by the composer's "Work Session" button (alongside
-   * Turn/Continuous). On confirm, persists the WorkSessionConfig
-   * onto chat.ensemble + pre-fills the composer with the first-round
-   * prompt so the user clicks Send to launch (avoids re-implementing
-   * the full send-message payload composition here). */
-  const [showWorkSessionSheet, setShowWorkSessionSheet] = useState(false)
   const handleSubmitBugReport = useCallback(
     async (submission: BugReportSubmission): Promise<void> => {
       const api = window.api as typeof window.api & {
@@ -4544,12 +4531,6 @@ function App(): React.JSX.Element {
       setComposerDraftForChat(chatId, value)
     },
     [setComposerDraftForChat]
-  )
-  const setPrompt = useCallback(
-    (value: string) => {
-      setChatPromptDraft(currentChatIdRef.current || currentComposerChatId, value)
-    },
-    [currentComposerChatId, setChatPromptDraft]
   )
   const handleAddMessageToPrompt = useCallback(
     (chatId: string | null | undefined, content: string) => {
@@ -19943,81 +19924,6 @@ function App(): React.JSX.Element {
     ]
   )
 
-  // 1.0.4-AK2 — Work Session lifecycle callbacks wired to the setup
-  // sheet + session strip. The sheet's confirm handler persists the
-  // WorkSessionConfig onto the chat ensemble AND pre-fills the
-  // composer textarea with the first-round prompt so the user
-  // clicks Send to launch (avoids re-implementing send-message
-  // payload composition). Stop calls cancelEnsembleRound which
-  // already clears queuedPrompts; we then flip the session status
-  // to 'cancelled' so the round-end check finalises cleanly.
-  const handleConfirmWorkSession = useCallback(
-    ({
-      config,
-      initialPrompt,
-      roundMode,
-      synthesizerParticipantId
-    }: WorkSessionSetupConfirmInput) => {
-      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
-      const bossmanParticipantId = currentChat.ensemble.bossmanParticipantId
-      const bossmanIsSessionParticipant =
-        Boolean(bossmanParticipantId) &&
-        currentChat.ensemble.participants.some((participant) => participant.id === bossmanParticipantId) &&
-        (config.allowedParticipantIds === null ||
-          config.allowedParticipantIds.includes(bossmanParticipantId as string))
-      // Link the goal that is active at session start (if any). When the
-      // Boss later completes the session and this is still the chat's active
-      // goal, that goal is completed too. Unrelated goals are untouched.
-      const linkedActiveGoalId =
-        currentChat.activeGoal && currentChat.activeGoal.status !== 'completed'
-          ? currentChat.activeGoal.id
-          : undefined
-      const managedConfig: WorkSessionConfig = {
-        ...config,
-        managerParticipantId: bossmanIsSessionParticipant ? bossmanParticipantId : undefined,
-        ...(linkedActiveGoalId ? { linkedActiveGoalId } : {})
-      }
-      updateChatById(currentChat.appChatId, (source) => {
-        return applyWorkSessionConfirmation(source, {
-          config: managedConfig,
-          roundMode,
-          synthesizerParticipantId
-        })
-      })
-      setShowWorkSessionSheet(false)
-      // Pre-fill the composer with the initial prompt so the user
-      // can scan it once before launching. Setting via setPrompt
-      // keeps the textarea reactive (the change handler picks up
-      // mention overlay updates etc.).
-      setPrompt(initialPrompt)
-    },
-    [
-      isCurrentEnsembleChat,
-      currentChat?.appChatId,
-      currentChat?.ensemble,
-      setPrompt,
-      updateChatById
-    ]
-  )
-  const handleStopWorkSession = useCallback(async () => {
-    if (!isCurrentEnsembleChat || !currentChat?.ensemble?.workSession) return
-    // First cancel any in-flight round + clear queued continuations.
-    try {
-      await window.api.cancelEnsembleRound(currentChat.appChatId)
-    } catch {
-      // cancelEnsembleRound surfaces its own errors via toast; we
-      // proceed to mark the session cancelled regardless so the UI
-      // doesn't show a stale active strip after a failed cancel.
-    }
-    updateChatById(currentChat.appChatId, (source) => {
-      return cancelWorkSessionOnChat(source)
-    })
-  }, [
-    isCurrentEnsembleChat,
-    currentChat?.appChatId,
-    currentChat?.ensemble?.workSession,
-    updateChatById
-  ])
   // Ensemble round-complete notice — fires once when the round
   // transitions to `completed` (or `cancelled`). Solo chats use the
   // per-run-exit notice path; for ensemble we suppress that and
@@ -24644,11 +24550,6 @@ function App(): React.JSX.Element {
         ])
       })
   }
-  const stopScopedWorkSessionFromSlash = (chat: ChatRecord): void => {
-    if (chat.chatKind !== 'ensemble' || !chat.ensemble?.workSession) return
-    void window.api.cancelEnsembleRound(chat.appChatId).catch(() => {})
-    updateChatById(chat.appChatId, (source) => cancelWorkSessionOnChat(source))
-  }
   const pluginSlashTokenSegment = (value: string): string =>
     value
       .trim()
@@ -25105,49 +25006,6 @@ function App(): React.JSX.Element {
                 return
               }
               runScopedEnsembleRoundFromSlash(chat, steerPrompt, '/ensemble-steer')
-            }
-          },
-          {
-            kind: 'action' as const,
-            id: 'taskwraith-ensemble-work-session',
-            command: '/ensemble-work-session',
-            label: 'Manage ensemble work session',
-            description: 'Open Work Session setup, or stop the active session with /ensemble-work-session stop.',
-            group: 'Custom' as const,
-            run: (ctx: SlashCommandRunContext) => {
-              if (!chat || chat.chatKind !== 'ensemble' || !chat.ensemble) {
-                rejectSlashCommandWithDraft(
-                  ctx,
-                  'Open an ensemble chat to use /ensemble-work-session.'
-                )
-                return
-              }
-              const arg = slashActionRemainder(ctx, /^\/ensemble-work-session\b/i)
-              const token = firstSlashArgToken(arg)
-              if (token === 'stop') {
-                if (!chat.ensemble.workSession) {
-                  rejectSlashCommandWithDraft(ctx, 'No active ensemble work session to stop.')
-                  return
-                }
-                stopScopedWorkSessionFromSlash(chat)
-                return
-              }
-              if (token) {
-                rejectSlashCommandWithDraft(
-                  ctx,
-                  'Usage: /ensemble-work-session or /ensemble-work-session stop.'
-                )
-                return
-              }
-              if (focusPaneForFocusedFlow) {
-                preserveSlashDraftForFocusedFlow(
-                  ctx,
-                  focusPaneForFocusedFlow,
-                  'Work Session setup opens in the focused pane. This pane is now focused; run /ensemble-work-session again.'
-                )
-                return
-              }
-              setShowWorkSessionSheet(true)
             }
           }
         ]
@@ -27242,8 +27100,6 @@ function App(): React.JSX.Element {
       isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
       isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
       steerIndicatorMessage: paneSteerIndicatorMessage,
-      setShowWorkSessionSheet: focusPaneForGoalControl,
-      handleStopWorkSession: async () => focusPaneForGoalControl(),
       composerSlashCommands: buildPaneComposerSlashCommands(
         viewerPaneIndex,
         viewerChat,
@@ -27818,7 +27674,6 @@ function App(): React.JSX.Element {
       handleSelectMultiviewLayout,
       handleSelectParticipant,
       handleSteerToQueuedMessage,
-      handleStopWorkSession,
       intentNote,
       interfaceStyle,
       isCurrentChatBusyForSteer,
@@ -27858,7 +27713,6 @@ function App(): React.JSX.Element {
       setPrimaryGitSnapshot,
       setRawLogs,
       setSessionTrust,
-      setShowWorkSessionSheet,
       setWorkflowDraft,
       settings,
       showComposerChips,
@@ -27945,7 +27799,6 @@ function App(): React.JSX.Element {
       handleSelectMultiviewLayout,
       handleSelectParticipant,
       handleSteerToQueuedMessage,
-      handleStopWorkSession,
       intentNote,
       interfaceStyle,
       isCurrentChatBusyForSteer,
@@ -27982,7 +27835,6 @@ function App(): React.JSX.Element {
       setPrimaryGitSnapshot,
       setRawLogs,
       setSessionTrust,
-      setShowWorkSessionSheet,
       setWorkflowDraft,
       settings,
       showComposerChips,
@@ -28447,8 +28299,6 @@ function App(): React.JSX.Element {
         isCurrentChatBusyForSteer: paneIsChatBusyForSteer,
         isSteerBusyForCurrentChat: paneIsSteerBusyForCurrentChat,
         steerIndicatorMessage: paneSteerIndicatorMessage,
-        setShowWorkSessionSheet: focusPaneForGoalControl,
-        handleStopWorkSession: async () => focusPaneForGoalControl(),
         composerSlashCommands: buildPaneComposerSlashCommands(
           viewerPaneIndex,
           viewerChat,
@@ -29656,30 +29506,6 @@ function App(): React.JSX.Element {
         onSelect={handleSelectDiscordContext}
         onClose={() => setDiscordContextPickerOpen(false)}
       />
-      {/* 1.0.4-AK2 — Work Session setup sheet. z-index 9130 sits
-          above BugReportSheet (9120) since opening a Work Session
-          is a deliberate intent action and shouldn't be obscured
-          by a tester's bug-report draft. Below the approval modal
-          (10000) so an in-flight approval still wins focus. */}
-      {isCurrentEnsembleChat && currentChat?.ensemble && (
-        <WorkSessionSetupSheet
-          isOpen={showWorkSessionSheet}
-          participants={currentChat.ensemble.participants}
-          providerLabel={getProviderLabel}
-          initial={
-            currentChat.ensemble.workSession
-              ? {
-                  ...currentChat.ensemble.workSession,
-                  initialPrompt: ''
-                }
-              : undefined
-          }
-          initialRoundMode={currentChat.ensemble.roundMode || 'roundtable'}
-          initialSynthesizerParticipantId={currentChat.ensemble.synthesizerParticipantId}
-          onConfirm={handleConfirmWorkSession}
-          onCancel={() => setShowWorkSessionSheet(false)}
-        />
-      )}
       {subThreadCreatorParent && (
         <SubThreadCreator
           parentChat={subThreadCreatorParent}

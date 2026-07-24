@@ -2770,7 +2770,7 @@
 }
 
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-participant-filter-rail,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .work-session-setup-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
   .transcript-participant-filter-rail {
   display: none !important;
 }
@@ -2970,7 +2970,7 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
    hide condition. Keep this selector list in sync with the participant-filter-rail rule
    above. */
 html:has(.chat-split-region.chat-split-hidden-for-settings) .transcript-user-gutter,
-html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .work-session-setup-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
+html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelog-sheet-backdrop, .sub-thread-creator-backdrop, .discord-context-picker-backdrop, .creative-approval-backdrop, .chat-media-preview-backdrop))
   .transcript-user-gutter {
   display: none !important;
 }

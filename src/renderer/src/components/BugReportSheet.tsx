@@ -118,7 +118,6 @@ const SURFACE_OPTIONS = [
   // 1.0.4 — new surfaces shipped this release. Splitting them
   // out of the generic 'Ensemble' bucket so testers can target
   // bug reports at the specific subsurface they were using.
-  'Work Session',
   'Parallel fan-out',
   'Screen Watch',
   'Inspector',

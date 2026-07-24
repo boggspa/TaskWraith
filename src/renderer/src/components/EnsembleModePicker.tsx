@@ -1,10 +1,9 @@
 /*
  * EnsembleModePicker — the composer's ensemble orchestration-mode control as a
  * body-portaled picker (matching the Model/Reasoning + Permissions pickers)
- * instead of a segmented toggle. Holds the three orchestration choices:
+ * instead of a segmented toggle. Holds the two orchestration choices:
  *   - Turn        → turn-bound rounds (each agent speaks once)
  *   - Continuous  → agents hand work back and forth within a round
- *   - Work Session→ opens the Work Session setup sheet (composes on top)
  *
  * Fan-out (parallel read-only lanes) is deliberately NOT in here — it's a
  * composable on/off toggle that layers on either mode, so it stays a separate
@@ -26,10 +25,9 @@ import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 
 export type EnsembleOrchestrationMode = 'turn_bound' | 'continuous'
-type EnsembleModeRowKey = EnsembleOrchestrationMode | 'work_session'
 
 interface EnsembleModeRow {
-  key: EnsembleModeRowKey
+  key: EnsembleOrchestrationMode
   label: string
   description: string
 }
@@ -40,27 +38,18 @@ const MODE_ROWS: EnsembleModeRow[] = [
     key: 'continuous',
     label: 'Continuous',
     description: 'Agents can hand work back and forth within a round.'
-  },
-  {
-    key: 'work_session',
-    label: 'Work Session',
-    description: 'Supervised multi-round autonomy — objective, acceptance criteria + budget.'
   }
 ]
 
 export function EnsembleModePicker({
   mode,
-  workSessionActive,
   composerStyle,
   onSelectMode,
-  onOpenWorkSession,
   disabled
 }: {
   mode: EnsembleOrchestrationMode
-  workSessionActive: boolean
   composerStyle: ComposerStyle
   onSelectMode: (mode: EnsembleOrchestrationMode) => void
-  onOpenWorkSession: () => void
   disabled?: boolean
 }): React.JSX.Element {
   const triggerRef = useRef<HTMLButtonElement | null>(null)
@@ -112,21 +101,12 @@ export function EnsembleModePicker({
     }
   }, [open])
 
-  const triggerLabel = workSessionActive
-    ? 'Work Session'
-    : mode === 'continuous'
-      ? 'Continuous'
-      : 'Turn'
+  const triggerLabel = mode === 'continuous' ? 'Continuous' : 'Turn'
 
-  const isRowActive = (key: EnsembleModeRowKey): boolean =>
-    key === 'work_session' ? workSessionActive : mode === key
+  const isRowActive = (key: EnsembleOrchestrationMode): boolean => mode === key
 
-  const handleSelect = (key: EnsembleModeRowKey): void => {
-    if (key === 'work_session') {
-      onOpenWorkSession()
-    } else {
-      onSelectMode(key)
-    }
+  const handleSelect = (key: EnsembleOrchestrationMode): void => {
+    onSelectMode(key)
     setOpen(false)
   }
 
@@ -182,7 +162,7 @@ export function EnsembleModePicker({
         ref={triggerRef}
         type="button"
         className="composer-picker-label composer-ensemble-mode-trigger"
-        title="Ensemble orchestration mode — Turn, Continuous, or Work Session"
+        title="Ensemble orchestration mode — Turn or Continuous"
         aria-label="Ensemble orchestration mode"
         aria-haspopup="dialog"
         aria-expanded={open}

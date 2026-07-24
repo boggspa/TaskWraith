@@ -8,7 +8,7 @@
  * via the system prompt so the writer has a coherent picture of
  * the panel's read-only findings before acting.
  *
- * Like `EnsembleContinue`, this module is side-effect-free at the
+ * The module is side-effect-free at the
  * surface — it takes a `deps` interface, validates the args, and
  * the orchestrator caller persists the brief into runtime state.
  * Keeping the handler pure makes the regression suite trivially
