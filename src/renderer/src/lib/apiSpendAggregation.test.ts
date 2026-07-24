@@ -3,6 +3,7 @@ import type { UsageRecord } from '../../../main/store/types'
 import {
   API_SPEND_WINDOW_MS,
   buildApiSpendByProvider,
+  buildProviderCalendarMonthSpend,
   type ApiSpendCurrencyOptions
 } from './apiSpendAggregation'
 import { getFxRatesPerUsd, setFxRatesPerUsd } from './formatCost'
@@ -46,9 +47,7 @@ describe('buildApiSpendByProvider — empty / zero', () => {
   })
 
   it('omits ollama from the token/cost roster (handled via RAM aggregation)', () => {
-    const records = [
-      makeRecord({ provider: 'ollama', timestamp: NOW - 1000, inputTokens: 1000 })
-    ]
+    const records = [makeRecord({ provider: 'ollama', timestamp: NOW - 1000, inputTokens: 1000 })]
     expect(buildApiSpendByProvider(records, RATES, USD, NOW)).toEqual([])
   })
 
@@ -321,3 +320,109 @@ function ONE_HOUR(n: number): number {
 function ONE_DAY(n: number): number {
   return n * 24 * 60 * 60 * 1000
 }
+
+describe('antigravity in the spend roster', () => {
+  it('prices key-lane records via gemini-api rate rows', () => {
+    const rates: RendererProviderRates = {
+      antigravity: [
+        {
+          modelId: 'gemini-api:gemini-2.5-flash',
+          inputUsdPerMillion: 0.3,
+          outputUsdPerMillion: 2.5
+        }
+      ]
+    }
+    const records = [
+      makeRecord({
+        provider: 'antigravity',
+        model: 'gemini-api:gemini-2.5-flash',
+        timestamp: NOW - ONE_HOUR(1),
+        inputTokens: 1_000_000,
+        outputTokens: 1_000_000
+      })
+    ]
+    const result = buildApiSpendByProvider(records, rates, USD, NOW)
+    const antigravity = result.find((r) => r.provider === 'antigravity')!
+    expect(antigravity.day.runs).toBe(1)
+    expect(antigravity.day.costUsd).toBeCloseTo(2.8, 6) // $0.30 in + $2.50 out
+  })
+})
+
+describe('buildProviderCalendarMonthSpend — budget meter', () => {
+  const rates: RendererProviderRates = {
+    antigravity: [
+      { modelId: 'gemini-api:gemini-2.5-flash', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }
+    ]
+  }
+  const inMonth = (overrides: Partial<UsageRecord> = {}): UsageRecord =>
+    makeRecord({
+      provider: 'antigravity',
+      model: 'gemini-api:gemini-2.5-flash',
+      timestamp: NOW - ONE_HOUR(1),
+      inputTokens: 1_000_000, // $1 at the test rate
+      ...overrides
+    })
+
+  it('counts calendar month-to-date, not the rolling 30-day window', () => {
+    // NOW is 13 June — a record from 30 May is inside the rolling 30d window
+    // but OUTSIDE the calendar month, so the meter must exclude it.
+    const lastMonth = inMonth({ timestamp: new Date('2026-05-30T12:00:00.000Z').getTime() })
+    const meter = buildProviderCalendarMonthSpend(
+      [inMonth(), lastMonth],
+      rates,
+      'antigravity',
+      20,
+      USD,
+      NOW
+    )
+    expect(meter.runs).toBe(1)
+    expect(meter.spentUsd).toBeCloseTo(1, 6)
+    expect(meter.capUsd).toBe(20)
+    expect(meter.fraction).toBeCloseTo(1 / 20, 6)
+    expect(meter.resetLabel).toContain('1')
+    expect(meter.resetLabel.toLowerCase()).toContain('jul')
+  })
+
+  it('clamps the fraction at 1 when spend exceeds the cap and treats bad caps as uncapped', () => {
+    const over = buildProviderCalendarMonthSpend(
+      [inMonth(), inMonth(), inMonth()],
+      rates,
+      'antigravity',
+      2,
+      USD,
+      NOW
+    )
+    expect(over.fraction).toBe(1)
+
+    for (const cap of [null, undefined, 0, -5, Number.NaN]) {
+      const meter = buildProviderCalendarMonthSpend(
+        [inMonth()],
+        rates,
+        'antigravity',
+        cap,
+        USD,
+        NOW
+      )
+      expect(meter.capUsd).toBeNull()
+      expect(meter.fraction).toBe(0)
+      expect(meter.capDisplay).toBe('')
+    }
+  })
+
+  it('ignores other providers, reset hints, and future-dated records', () => {
+    const meter = buildProviderCalendarMonthSpend(
+      [
+        inMonth({ provider: 'codex', model: 'gpt-5.5' }),
+        inMonth({ usageKind: 'reset_hint' }),
+        inMonth({ timestamp: NOW + ONE_HOUR(1) })
+      ],
+      rates,
+      'antigravity',
+      20,
+      USD,
+      NOW
+    )
+    expect(meter.runs).toBe(0)
+    expect(meter.spentUsd).toBe(0)
+  })
+})

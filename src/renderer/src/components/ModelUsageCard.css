@@ -764,6 +764,29 @@
   text-align: right;
 }
 
+/* Calendar-month budget meter (AntiGravity Gemini API lane): the label row
+ * reuses the spend grid; the bar sits under it, indented past the window
+ * column so it aligns with the values it summarises. Its cost cell shows a
+ * spent-of-cap phrase, so it must wrap rather than force one line. */
+.model-usage-spend-cap-meter {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 3px;
+}
+
+.model-usage-spend-cap-meter .model-usage-spend-row {
+  grid-template-columns: 34px 1fr;
+}
+
+.model-usage-spend-cap-meter .model-usage-spend-cost {
+  white-space: normal;
+}
+
+.model-usage-spend-cap-meter .quota-progress-bar {
+  margin-left: 42px;
+}
+
 .model-usage-spend-empty {
   padding: 10px 2px;
   font-size: 12px;

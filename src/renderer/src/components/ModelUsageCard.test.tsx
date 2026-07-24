@@ -7,7 +7,10 @@ import {
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
-import { buildApiSpendByProvider } from '../lib/apiSpendAggregation'
+import {
+  buildApiSpendByProvider,
+  buildProviderCalendarMonthSpend
+} from '../lib/apiSpendAggregation'
 import type { RendererProviderRates } from '../lib/providerRateEstimate'
 import type { UsageRecord } from '../../../main/store/types'
 import { parseGrokUsage } from '../../../main/grok/GrokUsage'
@@ -421,5 +424,58 @@ describe('ApiSpendProviderBlock (View B populated render)', () => {
     // Token chip (compact) + projected cost in USD ($2 in + $5 out = $7.00).
     expect(html).toContain('tok')
     expect(html).toContain('$7.00')
+  })
+})
+
+describe('AntiGravity budget meter (spend view)', () => {
+  const rates: RendererProviderRates = {
+    antigravity: [
+      { modelId: 'gemini-api:gemini-2.5-flash', inputUsdPerMillion: 1, outputUsdPerMillion: 10 }
+    ]
+  }
+  const now = new Date('2026-06-13T12:00:00.000Z').getTime()
+  const records: UsageRecord[] = [
+    {
+      id: 'ag-1',
+      workspaceId: 'ws-1',
+      chatId: 'chat-1',
+      runId: 'run-1',
+      provider: 'antigravity',
+      model: 'gemini-api:gemini-2.5-flash',
+      inputTokens: 1_000_000,
+      outputTokens: 0,
+      totalTokens: 1_000_000,
+      durationMs: 1000,
+      timestamp: now - 60_000
+    } as UsageRecord
+  ]
+
+  it('renders the capped meter with spend, cap, reset date, and a progress bar', () => {
+    const [entry] = buildApiSpendByProvider(records, rates, { currency: 'USD' }, now)
+    const meter = buildProviderCalendarMonthSpend(
+      records,
+      rates,
+      'antigravity',
+      20,
+      { currency: 'USD' },
+      now
+    )
+    const html = renderToStaticMarkup(<ApiSpendProviderBlock entry={entry} capMeter={meter} />)
+    expect(html).toContain('Antigravity')
+    expect(html).toContain('Budget')
+    expect(html).toContain('$1.00')
+    expect(html).toContain('$20.00')
+    expect(html).toContain('resets')
+    expect(html).toContain('quota-progress-bar')
+    // Advisory framing must survive on the row itself.
+    expect(html).toContain('never blocks a run')
+  })
+
+  it('renders no meter row when no cap is configured', () => {
+    const [entry] = buildApiSpendByProvider(records, rates, { currency: 'USD' }, now)
+    const html = renderToStaticMarkup(<ApiSpendProviderBlock entry={entry} capMeter={null} />)
+    expect(html).toContain('Antigravity')
+    expect(html).not.toContain('Budget')
+    expect(html).not.toContain('quota-progress-bar')
   })
 })

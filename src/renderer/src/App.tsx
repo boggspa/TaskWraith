@@ -6735,6 +6735,10 @@ function App(): React.JSX.Element {
       settingsPatch.antigravityGeminiApiDisclosureAcceptedAt =
         next.antigravityGeminiApiDisclosureAcceptedAt
     }
+    if (next.antigravityGeminiApiMonthlySpendCapUsd !== undefined) {
+      settingsPatch.antigravityGeminiApiMonthlySpendCapUsd =
+        next.antigravityGeminiApiMonthlySpendCapUsd
+    }
 
     if (next.mode !== undefined) {
       settingsPatch.appearanceMode = next.mode

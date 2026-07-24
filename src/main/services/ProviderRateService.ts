@@ -699,12 +699,68 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       }
     ]
   },
-  // Opt-in provider. No baked-in rate table yet (a later slice sources rates
-  // from an official surface); empty keeps the exhaustive Record complete.
+  // AntiGravity. Rows are keyed by the persisted `gemini-api:` wire ids the
+  // key lane writes into usage records. Unlike the subscription seats above,
+  // the key lane genuinely bills per token, so these are the user's ACTUAL
+  // billing basis (Gemini API paid tier, ≤200K-prompt rate where tiered) —
+  // still surfaced as an estimate because TaskWraith never sees the invoice.
+  // agy-lane records (non-prefixed ids) fall back to the first row as a
+  // projected API-equivalent, same as the other subscription providers.
+  // Row order matters twice: unknown ids fall back to the FIRST row, and
+  // prefix matches scan in order (exact ids always win first).
   antigravity: {
     provider: 'antigravity',
-    pricingUrl: '',
-    models: []
+    pricingUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+    models: [
+      {
+        modelId: 'gemini-api:gemini-2.5-flash',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 2.5,
+        cachedInputUsdPerMillion: 0.03,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Gemini API paid tier via the AntiGravity BYO-key lane. First row = fallback rate for unknown/agy ids.'
+      },
+      {
+        modelId: 'gemini-api:gemini-2.5-flash-lite',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.4,
+        cachedInputUsdPerMillion: 0.01,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
+      },
+      {
+        modelId: 'gemini-api:gemini-2.5-pro',
+        inputUsdPerMillion: 1.25,
+        outputUsdPerMillion: 10.0,
+        cachedInputUsdPerMillion: 0.125,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Gemini API paid tier, ≤200K-prompt rate; >200K prompts bill higher (not modelled — long-prompt estimates undercount).'
+      },
+      {
+        modelId: 'gemini-api:gemini-3.1-pro',
+        inputUsdPerMillion: 2.0,
+        outputUsdPerMillion: 12.0,
+        cachedInputUsdPerMillion: 0.2,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Gemini API paid tier via the AntiGravity BYO-key lane. Covers the -preview alias by prefix.'
+      },
+      {
+        modelId: 'gemini-api:gemini-3.1-flash-lite',
+        inputUsdPerMillion: 0.25,
+        outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.025,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
+      }
+    ]
   }
 }
 
@@ -854,7 +910,11 @@ const providerIds = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  // Without this, a persisted probe containing the (now probed) AntiGravity
+  // table would fail parsing wholesale — parsePersistedProviderRateProbe
+  // returns null for the ENTIRE cache on any unknown provider id.
+  'antigravity'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

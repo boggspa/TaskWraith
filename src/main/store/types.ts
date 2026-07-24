@@ -2183,6 +2183,11 @@ export interface AppSettings {
   antigravityOptInAcceptedAt?: number | null
   /** Epoch-ms timestamp for the separate Gemini API disclosure acknowledgement. */
   antigravityGeminiApiDisclosureAcceptedAt?: number | null
+  /** User-set SOFT monthly budget (USD) for the separately billed Gemini API
+   * key lane. Advisory only: drives the Model Usage spend meter's fill/warning
+   * and never blocks a run — TaskWraith cannot see actual billing, so the hard
+   * cap belongs in the user's Google Cloud billing budget. null/absent = no cap. */
+  antigravityGeminiApiMonthlySpendCapUsd?: number | null
   defaultGeminiAuthProfileId?: string | null
   geminiAuthProfiles?: GeminiAuthProfile[]
   /** Phase M1 — Gemini API runtime selection. See {@link GeminiApiRuntimeMode}

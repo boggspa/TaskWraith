@@ -1008,6 +1008,28 @@ describe('MainSanitizers settings patches', () => {
     }
   })
 
+  it('clamps the Gemini API monthly spend cap to a bounded positive USD amount', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(
+      sanitizeSettingsPatch({ antigravityGeminiApiMonthlySpendCapUsd: 20 })
+        .antigravityGeminiApiMonthlySpendCapUsd
+    ).toBe(20)
+    expect(
+      sanitizeSettingsPatch({ antigravityGeminiApiMonthlySpendCapUsd: null })
+        .antigravityGeminiApiMonthlySpendCapUsd
+    ).toBe(null)
+    // Zero, negatives, non-numbers, infinities and absurd values all clear the
+    // cap rather than persisting a meter that lies or never fills.
+    for (const value of [0, -5, Infinity, NaN, 'lots', 1_000_001] as unknown[]) {
+      expect(
+        sanitizeSettingsPatch({
+          antigravityGeminiApiMonthlySpendCapUsd: value as number
+        }).antigravityGeminiApiMonthlySpendCapUsd
+      ).toBe(null)
+    }
+  })
+
   it('accepts a boolean modelUsageExternalUsage and drops non-boolean values', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

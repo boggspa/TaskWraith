@@ -1192,7 +1192,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     handleSettingsChange({ modelUsagePanelView: nextView }),
                   refreshKey: usageRefreshTick,
                   onRefreshUsage: handleManualUsageRefresh,
-                  refreshing: manualUsageRefreshInFlight
+                  refreshing: manualUsageRefreshInFlight,
+                  antigravityMonthlyCapUsd:
+                    settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
                 }}
                 runningChatIds={runningChatIdsArray}
                 pluginWorkflowTemplates={pluginWorkflowTemplates}
@@ -1379,6 +1381,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
               antigravityOptInAcceptedAt={settings?.antigravityOptInAcceptedAt ?? null}
               antigravityGeminiApiDisclosureAcceptedAt={
                 settings?.antigravityGeminiApiDisclosureAcceptedAt ?? null
+              }
+              antigravityGeminiApiMonthlySpendCapUsd={
+                settings?.antigravityGeminiApiMonthlySpendCapUsd ?? null
               }
               userName={settings?.userName ?? ''}
               claudeBinaryPath={claudeBinaryPath}

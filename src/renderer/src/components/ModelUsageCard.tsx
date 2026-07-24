@@ -33,9 +33,11 @@ import type { ModelUsageAggregate, UsageWindowAggregate } from '../lib/usageAggr
 import {
   API_SPEND_WINDOW_ORDER,
   buildApiSpendByProvider,
+  buildProviderCalendarMonthSpend,
   type ApiSpendCurrencyOptions,
   type ApiSpendProviderTotals,
-  type ApiSpendWindowKey
+  type ApiSpendWindowKey,
+  type CalendarMonthSpendMeter
 } from '../lib/apiSpendAggregation'
 import {
   buildOllamaMemorySpend,
@@ -89,6 +91,12 @@ export interface ModelUsageApiSpendOptions extends ApiSpendCurrencyOptions {
   onRefreshUsage?: () => void | Promise<void>
   /** True while a caller-owned refresh is already in progress. */
   refreshing?: boolean
+  /**
+   * User-set soft monthly budget (USD) for the AntiGravity Gemini API key
+   * lane (`settings.antigravityGeminiApiMonthlySpendCapUsd`). Renders a
+   * calendar-month spend meter on the Antigravity block — advisory only.
+   */
+  antigravityMonthlyCapUsd?: number | null
 }
 
 interface ModelUsageCardProps {
@@ -115,7 +123,8 @@ const API_SPEND_RENDER_ORDER: ProviderId[] = [
   'claude',
   'kimi',
   'grok',
-  'cursor'
+  'cursor',
+  'antigravity'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520
@@ -618,9 +627,48 @@ function ApiSpendRow({
   )
 }
 
+/**
+ * Calendar-month budget meter row (AntiGravity Gemini API key lane). Distinct
+ * from the rolling 30d row above it: a budget resets with the billing month,
+ * so this counts from the 1st and says when it resets. Exported for SSR tests.
+ */
+export function ApiSpendCapMeterRow({ meter }: { meter: CalendarMonthSpendMeter }) {
+  const spent = meter.spentDisplay ? `~${meter.spentDisplay}` : '—'
+  const label =
+    meter.capUsd === null
+      ? `${spent} this month`
+      : `${spent} of ${meter.capDisplay} · resets ${meter.resetLabel}`
+  return (
+    <div
+      className="model-usage-spend-cap-meter"
+      title="Estimated month-to-date spend vs your soft budget — advisory only, never blocks a run. Set a hard limit in your Google Cloud billing console."
+    >
+      <div className="model-usage-spend-row">
+        <span className="model-usage-spend-window">Budget</span>
+        <span className="model-usage-spend-cost" data-testid="antigravity-cap-meter-label">
+          {label}
+        </span>
+      </div>
+      {meter.capUsd !== null && (
+        <QuotaProgressBar
+          fraction={meter.fraction}
+          accent="var(--provider-antigravity-color, var(--accent))"
+        />
+      )}
+    </div>
+  )
+}
+
 /** One provider's API-spend section (heading + three window rows).
  * Exported for SSR render tests — pure given its `entry`. */
-export function ApiSpendProviderBlock({ entry }: { entry: ApiSpendProviderTotals }) {
+export function ApiSpendProviderBlock({
+  entry,
+  capMeter
+}: {
+  entry: ApiSpendProviderTotals
+  /** Present only on the Antigravity block when a spend/budget exists. */
+  capMeter?: CalendarMonthSpendMeter | null
+}) {
   return (
     <div className={`model-usage-item provider-${entry.provider} spend-only`}>
       <div className="model-usage-provider-heading">
@@ -633,6 +681,7 @@ export function ApiSpendProviderBlock({ entry }: { entry: ApiSpendProviderTotals
         {API_SPEND_WINDOW_ORDER.map((windowKey) => (
           <ApiSpendRow key={windowKey} windowKey={windowKey} totals={entry[windowKey]} />
         ))}
+        {capMeter ? <ApiSpendCapMeterRow meter={capMeter} /> : null}
       </div>
     </div>
   )
@@ -794,6 +843,32 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     [records, chats]
   )
 
+  // Calendar month-to-date budget meter for the AntiGravity key lane. Only
+  // materialised when a cap is configured — without one the rolling rows
+  // already tell the whole story.
+  const antigravityCapMeter = useMemo<CalendarMonthSpendMeter | null>(() => {
+    const capUsd = options?.antigravityMonthlyCapUsd
+    if (!Number.isFinite(capUsd) || (capUsd as number) <= 0) return null
+    return buildProviderCalendarMonthSpend(
+      records,
+      options?.providerRates ?? {},
+      'antigravity',
+      capUsd,
+      {
+        currency: options?.currency,
+        overestimatePercent: options?.overestimatePercent,
+        locale: options?.locale
+      }
+    )
+  }, [
+    records,
+    options?.providerRates,
+    options?.antigravityMonthlyCapUsd,
+    options?.currency,
+    options?.overestimatePercent,
+    options?.locale
+  ])
+
   if (spend.length === 0 && !ollamaMemory) {
     return (
       <div className="model-usage-spend-empty">
@@ -814,7 +889,13 @@ function ApiSpendView({ options }: { options: ModelUsageApiSpendOptions | undefi
     <div className="model-usage-list model-usage-spend-list">
       {API_SPEND_RENDER_ORDER.map((provider) => {
         const entry = spendByProvider.get(provider)
-        return entry ? <ApiSpendProviderBlock key={provider} entry={entry} /> : null
+        return entry ? (
+          <ApiSpendProviderBlock
+            key={provider}
+            entry={entry}
+            capMeter={provider === 'antigravity' ? antigravityCapMeter : null}
+          />
+        ) : null
       })}
       {ollamaMemory ? <OllamaMemorySpendBlock entry={ollamaMemory} /> : null}
       <p className="model-usage-spend-footnote">

@@ -61,7 +61,12 @@ export const API_SPEND_PROVIDER_ORDER: ProviderId[] = [
   'claude',
   'kimi',
   'grok',
-  'cursor'
+  'cursor',
+  // The AntiGravity Gemini API key lane genuinely bills per token, so this is
+  // the one provider whose spend view reflects an actual billing basis rather
+  // than a projected API-equivalent (still an estimate — we never see the
+  // invoice). agy-lane records price as projected-equivalent like the rest.
+  'antigravity'
 ]
 
 /** Aggregated token + cost totals for one provider over one window. */
@@ -247,4 +252,73 @@ export function buildApiSpendByProvider(
     })
   }
   return result
+}
+
+/**
+ * Calendar month-to-date spend meter for a user-set monthly budget cap.
+ *
+ * Deliberately NOT the rolling 30-day window above: a budget resets when the
+ * provider's billing month does, so the meter counts from the 1st of the
+ * current LOCAL month and labels when it resets. Soft/advisory by design —
+ * TaskWraith never sees the real invoice, so the meter warns and the actual
+ * hard stop belongs in the provider's own billing console (for the AntiGravity
+ * Gemini API lane: a Google Cloud billing budget).
+ */
+export interface CalendarMonthSpendMeter {
+  /** Estimated month-to-date spend in USD (pre-bias, pre-conversion). */
+  spentUsd: number
+  /** Month-to-date spend in display currency (bias applied); '' when ~0. */
+  spentDisplay: string
+  /** The user's cap in USD, or null when no cap is configured. */
+  capUsd: number | null
+  /** Cap in display currency (no bias — the cap is user-authored). */
+  capDisplay: string
+  /** spentUsd / capUsd clamped to 0..1; 0 when no cap. */
+  fraction: number
+  /** e.g. "1 Aug" — first day of the next calendar month. */
+  resetLabel: string
+  /** Runs contributing to the month-to-date figure. */
+  runs: number
+}
+
+export function buildProviderCalendarMonthSpend(
+  records: UsageRecord[],
+  rates: RendererProviderRates,
+  provider: ProviderId,
+  capUsd: number | null | undefined,
+  options: ApiSpendCurrencyOptions = {},
+  now: number = Date.now()
+): CalendarMonthSpendMeter {
+  const currency: DisplayCurrency = options.currency ?? 'USD'
+  const overestimatePercent = Number.isFinite(options.overestimatePercent)
+    ? (options.overestimatePercent as number)
+    : 0
+  const locale = options.locale
+
+  const reference = new Date(now)
+  const monthStart = new Date(reference.getFullYear(), reference.getMonth(), 1).getTime()
+  const nextMonthFirst = new Date(reference.getFullYear(), reference.getMonth() + 1, 1)
+
+  let spentUsd = 0
+  let runs = 0
+  for (const record of records) {
+    if (!record || record.usageKind === 'reset_hint') continue
+    if (record.provider !== provider) continue
+    const timestamp = Number(record.timestamp)
+    if (!Number.isFinite(timestamp) || timestamp > now || timestamp < monthStart) continue
+    const costUsd = recordCostUsd(record, rates)
+    if (costUsd > 0) spentUsd += costUsd
+    runs += 1
+  }
+
+  const cap = Number.isFinite(capUsd) && (capUsd as number) > 0 ? (capUsd as number) : null
+  return {
+    spentUsd,
+    spentDisplay: formatCost(spentUsd, currency, locale, overestimatePercent),
+    capUsd: cap,
+    capDisplay: cap === null ? '' : formatCost(cap, currency, locale, 0),
+    fraction: cap === null ? 0 : Math.min(1, Math.max(0, spentUsd / cap)),
+    resetLabel: nextMonthFirst.toLocaleDateString(locale, { day: 'numeric', month: 'short' }),
+    runs
+  }
 }

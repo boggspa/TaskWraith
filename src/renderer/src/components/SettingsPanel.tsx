@@ -304,6 +304,7 @@ interface SettingsPanelProps {
   antigravityEnabled?: boolean
   antigravityOptInAcceptedAt?: number | null
   antigravityGeminiApiDisclosureAcceptedAt?: number | null
+  antigravityGeminiApiMonthlySpendCapUsd?: number | null
   userName?: string
   claudeBinaryPath: string
   kimiBinaryPath: string
@@ -426,6 +427,7 @@ interface SettingsPanelProps {
     antigravityEnabled?: boolean
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
+    antigravityGeminiApiMonthlySpendCapUsd?: number | null
     userName?: string
     claudeBinaryPath?: string
     kimiBinaryPath?: string
@@ -3749,6 +3751,7 @@ export function SettingsPanel({
   antigravityEnabled = false,
   antigravityOptInAcceptedAt = null,
   antigravityGeminiApiDisclosureAcceptedAt = null,
+  antigravityGeminiApiMonthlySpendCapUsd = null,
   userName = '',
   claudeBinaryPath,
   kimiBinaryPath,
@@ -7129,6 +7132,7 @@ export function SettingsPanel({
                     enabled={antigravityEnabled}
                     acceptedAt={antigravityOptInAcceptedAt}
                     geminiApiDisclosureAcceptedAt={antigravityGeminiApiDisclosureAcceptedAt}
+                    geminiApiMonthlySpendCapUsd={antigravityGeminiApiMonthlySpendCapUsd}
                     onChange={onChange}
                     onOpenLogin={
                       onProviderLogin ? () => onProviderLogin('antigravity') : undefined

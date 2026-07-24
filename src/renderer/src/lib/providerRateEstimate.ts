@@ -57,7 +57,8 @@ const DEFAULT_RATE_MODEL_BY_PROVIDER: Partial<Record<ProviderId, string>> = {
   kimi: 'kimi-k2.7-code',
   grok: 'grok-4.5',
   cursor: 'composer-2.5-fast',
-  ollama: 'qwen3:4b-instruct'
+  ollama: 'qwen3:4b-instruct',
+  antigravity: 'gemini-api:gemini-2.5-flash'
 }
 
 const DEFAULT_MODEL_SENTINELS = new Set(['', 'default', 'cli-default', 'custom', 'best'])

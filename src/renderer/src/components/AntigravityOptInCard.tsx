@@ -27,9 +27,12 @@ interface AntigravityOptInCardProps {
     antigravityEnabled?: boolean
     antigravityOptInAcceptedAt?: number | null
     antigravityGeminiApiDisclosureAcceptedAt?: number | null
+    antigravityGeminiApiMonthlySpendCapUsd?: number | null
   }) => void
   onOpenLogin?: () => void
   geminiApiDisclosureAcceptedAt?: number | null
+  /** Soft monthly budget (USD) for the key lane's Model Usage spend meter. */
+  geminiApiMonthlySpendCapUsd?: number | null
 }
 
 const GEMINI_API_ERROR_MESSAGE =
@@ -135,7 +138,8 @@ export function AntigravityOptInCard({
   acceptedAt,
   onChange,
   onOpenLogin,
-  geminiApiDisclosureAcceptedAt = null
+  geminiApiDisclosureAcceptedAt = null,
+  geminiApiMonthlySpendCapUsd = null
 }: AntigravityOptInCardProps): React.JSX.Element {
   const [riskAcknowledged, setRiskAcknowledged] = useState(false)
   const [geminiApiAcknowledged, setGeminiApiAcknowledged] = useState(
@@ -207,6 +211,41 @@ export function AntigravityOptInCard({
     onChange({
       antigravityGeminiApiDisclosureAcceptedAt: checked ? Date.now() : null
     })
+  }
+
+  const [spendCapInput, setSpendCapInput] = useState(
+    typeof geminiApiMonthlySpendCapUsd === 'number' && geminiApiMonthlySpendCapUsd > 0
+      ? String(geminiApiMonthlySpendCapUsd)
+      : ''
+  )
+  useEffect(() => {
+    setSpendCapInput(
+      typeof geminiApiMonthlySpendCapUsd === 'number' && geminiApiMonthlySpendCapUsd > 0
+        ? String(geminiApiMonthlySpendCapUsd)
+        : ''
+    )
+  }, [geminiApiMonthlySpendCapUsd])
+
+  // Commit-on-blur/Enter so half-typed numbers never hit settings. Empty
+  // clears the cap; anything unparseable reverts to the persisted value.
+  const commitSpendCap = () => {
+    const trimmed = spendCapInput.trim()
+    if (!trimmed) {
+      if (geminiApiMonthlySpendCapUsd !== null) {
+        onChange({ antigravityGeminiApiMonthlySpendCapUsd: null })
+      }
+      return
+    }
+    const value = Number(trimmed)
+    if (Number.isFinite(value) && value > 0) {
+      onChange({ antigravityGeminiApiMonthlySpendCapUsd: Math.min(value, 1_000_000) })
+      return
+    }
+    setSpendCapInput(
+      typeof geminiApiMonthlySpendCapUsd === 'number' && geminiApiMonthlySpendCapUsd > 0
+        ? String(geminiApiMonthlySpendCapUsd)
+        : ''
+    )
   }
 
   const saveGeminiApiKey = async () => {
@@ -444,6 +483,33 @@ export function AntigravityOptInCard({
           </PillButton>
         </div>
         {geminiApiMessage && <p className="settings-provider-auth-footnote">{geminiApiMessage}</p>}
+        {geminiApiConfigured && (
+          <>
+            <label className="settings-provider-auth-field">
+              <span>Monthly budget — soft cap, USD</span>
+              <input
+                data-testid="antigravity-gemini-api-spend-cap"
+                type="number"
+                min={0}
+                step="1"
+                inputMode="decimal"
+                value={spendCapInput}
+                onChange={(event) => setSpendCapInput(event.target.value)}
+                onBlur={commitSpendCap}
+                onKeyDown={(event) => {
+                  if (event.key === 'Enter') commitSpendCap()
+                }}
+                placeholder="e.g. 20 — leave empty for no cap"
+                aria-label="Monthly Gemini API budget in US dollars (soft cap)"
+              />
+            </label>
+            <p className="settings-provider-auth-footnote">
+              Advisory only: fills the Model Usage spend meter and warns as estimated spend
+              approaches it — never blocks a run. For a hard limit, set a budget in your Google
+              Cloud billing console.
+            </p>
+          </>
+        )}
       </section>
     </article>
   )

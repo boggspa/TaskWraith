@@ -67,6 +67,7 @@ export type SettingsPanelUpdate = {
   antigravityEnabled?: AppSettings['antigravityEnabled']
   antigravityOptInAcceptedAt?: AppSettings['antigravityOptInAcceptedAt']
   antigravityGeminiApiDisclosureAcceptedAt?: AppSettings['antigravityGeminiApiDisclosureAcceptedAt']
+  antigravityGeminiApiMonthlySpendCapUsd?: AppSettings['antigravityGeminiApiMonthlySpendCapUsd']
   claudeBinaryPath?: string
   kimiBinaryPath?: string
   ollamaBaseUrl?: string

@@ -112,6 +112,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'antigravityEnabled',
   'antigravityOptInAcceptedAt',
   'antigravityGeminiApiDisclosureAcceptedAt',
+  'antigravityGeminiApiMonthlySpendCapUsd',
   'codexUsageCredential',
   'storeLocalChatHistory',
   'storeRawEvents',
@@ -1847,6 +1848,15 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       const value = sanitized.antigravityGeminiApiDisclosureAcceptedAt
       sanitized.antigravityGeminiApiDisclosureAcceptedAt =
         typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : null
+    }
+    if ('antigravityGeminiApiMonthlySpendCapUsd' in sanitized) {
+      // Soft advisory budget: positive finite USD, bounded so a typo cannot
+      // produce a meter that never fills; anything else clears the cap.
+      const value = sanitized.antigravityGeminiApiMonthlySpendCapUsd
+      sanitized.antigravityGeminiApiMonthlySpendCapUsd =
+        typeof value === 'number' && Number.isFinite(value) && value > 0 && value <= 1_000_000
+          ? value
+          : null
     }
     return sanitized as Partial<AppSettings>
   }
