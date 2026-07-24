@@ -34,25 +34,21 @@ enum ProviderModelPickerPreviewData {
         ProviderModelCatalog(
             provider: "claude",
             models: [
+                // Labels omit the "Claude " prefix; Legacy cluster below the
+                // current models (mirrors CLAUDE_STATIC_MODELS).
                 .init(
                     id: "claude-opus-5",
-                    label: "Claude Opus 5",
+                    label: "Opus 5",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "medium"),
                 .init(
-                    id: "claude-opus-4-8-1m",
-                    label: "Claude Opus 4.8 1M",
-                    isDefault: true,
-                    supportedReasoningEfforts: claudeEfforts,
-                    defaultReasoningEffort: "high"),
-                .init(
                     id: "claude-fable-5",
-                    label: "Claude Fable 5",
+                    label: "Fable 5",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "high"),
                 .init(
                     id: "claude-sonnet-5",
-                    label: "Claude Sonnet 5",
+                    label: "Sonnet 5",
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),
@@ -62,7 +58,7 @@ enum ProviderModelPickerPreviewData {
                     defaultReasoningEffort: "medium"),
                 .init(
                     id: "claude-sonnet-4-6",
-                    label: "Claude Sonnet 4.6 Legacy",
+                    label: "Sonnet 4.6 Legacy",
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),
@@ -71,13 +67,19 @@ enum ProviderModelPickerPreviewData {
                     ],
                     defaultReasoningEffort: "medium"),
                 .init(
+                    id: "claude-opus-4-8-1m",
+                    label: "Opus 4.8 1M Legacy",
+                    isDefault: true,
+                    supportedReasoningEfforts: claudeEfforts,
+                    defaultReasoningEffort: "high"),
+                .init(
                     id: "claude-opus-4-7-1m",
-                    label: "Claude Opus 4.7 1M Legacy",
+                    label: "Opus 4.7 1M Legacy",
                     supportedReasoningEfforts: claudeEfforts,
                     defaultReasoningEffort: "high"),
                 .init(
                     id: "claude-haiku-4-5",
-                    label: "Claude Haiku 4.5",
+                    label: "Haiku 4.5",
                     supportedReasoningEfforts: [
                         .init(reasoningEffort: "low"),
                         .init(reasoningEffort: "medium"),

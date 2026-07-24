@@ -311,7 +311,7 @@ struct Composer: View {
                         $0, models: liveByProvider[$0]?.models ?? [])
             }
             .map { liveByProvider[$0] ?? ProviderModelCatalog(provider: $0, models: []) }
-            .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+            .sorted(by: twProviderPickerOrder)
     }
 
     private var dynamicallySelectableProviderIds: Set<String> {

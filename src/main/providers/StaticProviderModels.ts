@@ -463,33 +463,29 @@ export function claudeModelSupportsFastMode(modelId?: string | null): boolean {
 // fallback list — so a stale entry here is what the composer/welcome picker
 // actually shows. `additionalSpeedTiers` must be carried through so the
 // renderer knows which models offer the paid Fast tier.
+// Labels intentionally OMIT the "Claude " prefix: the picker groups these
+// under a CLAUDE section header and the composer chip prepends the provider
+// name, so a prefixed label rendered as "Claude Claude Opus 5". Current
+// models lead; the Legacy cluster (… Legacy) sits below them.
 const CLAUDE_STATIC_MODELS = [
   {
     id: 'claude-opus-5',
-    label: 'Claude Opus 5',
+    label: 'Opus 5',
     description: '1M context window — adaptive thinking',
-    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
-    defaultReasoningEffort: 'medium',
-    additionalSpeedTiers: ['fast']
-  },
-  {
-    id: 'claude-opus-4-8-1m',
-    label: 'Claude Opus 4.8 1M',
-    description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
     additionalSpeedTiers: ['fast']
   },
   {
     id: 'claude-fable-5',
-    label: 'Claude Fable 5',
+    label: 'Fable 5',
     description: '1M context window — adaptive thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
     id: CLAUDE_DEFAULT_MODEL,
-    label: 'Claude Sonnet 5',
+    label: 'Sonnet 5',
     description: '1M context window — extended thinking',
     isDefault: true,
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
@@ -497,14 +493,22 @@ const CLAUDE_STATIC_MODELS = [
   },
   {
     id: 'claude-sonnet-4-6',
-    label: 'Claude Sonnet 4.6 Legacy',
+    label: 'Sonnet 4.6 Legacy',
     description: '200K context window — legacy Sonnet',
     supportedReasoningEfforts: CLAUDE_SONNET_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium'
   },
   {
+    id: 'claude-opus-4-8-1m',
+    label: 'Opus 4.8 1M Legacy',
+    description: '1M context window — extended thinking',
+    supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
+    defaultReasoningEffort: 'medium',
+    additionalSpeedTiers: ['fast']
+  },
+  {
     id: 'claude-opus-4-7-1m',
-    label: 'Claude Opus 4.7 1M Legacy',
+    label: 'Opus 4.7 1M Legacy',
     description: '1M context window — extended thinking',
     supportedReasoningEfforts: CLAUDE_OPUS_REASONING_EFFORTS,
     defaultReasoningEffort: 'medium',
@@ -512,7 +516,7 @@ const CLAUDE_STATIC_MODELS = [
   },
   {
     id: 'claude-haiku-4-5',
-    label: 'Claude Haiku 4.5',
+    label: 'Haiku 4.5',
     description: 'Fast & efficient',
     supportedReasoningEfforts: CLAUDE_HAIKU_REASONING_EFFORTS
   },

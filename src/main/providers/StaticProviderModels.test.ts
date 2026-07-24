@@ -630,7 +630,9 @@ describe('getStaticProviderModels (claude)', () => {
       description: '1M context window — extended thinking'
     })
     expect(byId.get('claude-sonnet-4-6')).toMatchObject({
-      label: 'Claude Sonnet 4.6 Legacy',
+      // Prefix-free label: the picker's CLAUDE header / chip provider span
+      // already carries "Claude".
+      label: 'Sonnet 4.6 Legacy',
       description: '200K context window — legacy Sonnet'
     })
   })

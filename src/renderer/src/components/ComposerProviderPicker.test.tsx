@@ -144,11 +144,12 @@ describe('resolveProviderRows (gated visibility + option order)', () => {
 
   it('offers AntiGravity only when the configured snapshot has admitted it', () => {
     // AntiGravity is the sole discovery-gated row; live providers show alongside it.
+    // AntiGravity ranks above local Ollama (and below the CLI lanes).
     expect(
       resolveProviderRows(false, false, undefined, {
         snapshot: { ready: true, providerIds: ['codex', 'antigravity'] }
       }).map((row) => row.id)
-    ).toEqual(['codex', 'claude', 'kimi', 'ollama', 'antigravity'])
+    ).toEqual(['codex', 'claude', 'kimi', 'antigravity', 'ollama'])
 
     expect(
       resolveProviderRows(false, false, undefined, {

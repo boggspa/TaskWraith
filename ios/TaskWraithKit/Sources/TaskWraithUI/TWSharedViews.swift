@@ -1860,6 +1860,25 @@ func twModelUsesFastToggle(_ modelId: String?) -> Bool {
         modelId.trimmingCharacters(in: .whitespacesAndNewlines).lowercased())
 }
 
+/// Picker-wide provider ordering: alphabetical by display label, EXCEPT the
+/// non-CLI lanes pin to the tail — AntiGravity (the API-key lane) just above
+/// local Ollama. Mirrors the desktop `resolveProviderRows` order rule; shared
+/// by every catalog sort site so the surfaces can't drift.
+@MainActor
+func twProviderPickerOrder(_ lhs: ProviderModelCatalog, _ rhs: ProviderModelCatalog) -> Bool {
+    func rank(_ provider: String) -> Int {
+        switch provider.lowercased() {
+        case "antigravity": return 1
+        case "ollama": return 2
+        default: return 0
+        }
+    }
+    let lhsRank = rank(lhs.provider)
+    let rhsRank = rank(rhs.provider)
+    if lhsRank != rhsRank { return lhsRank < rhsRank }
+    return TWTheme.providerLabel(lhs.provider) < TWTheme.providerLabel(rhs.provider)
+}
+
 private let twReasoningStops: [TWReasoningStop] = [
     TWReasoningStop(index: 0, effort: "off", label: "Off"),
     TWReasoningStop(index: 1, effort: "low", label: "Light"),
@@ -6045,7 +6064,7 @@ public struct EditableRosterStrip: View {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
             .filter { TWTheme.isProviderOfferedByModelCatalog($0.provider, models: $0.models) }
-            .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+            .sorted(by: twProviderPickerOrder)
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {
@@ -9504,7 +9523,7 @@ struct SideChatsPanel: View {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
             .filter { TWTheme.isLiveSelectableProvider($0.provider) }
-            .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+            .sorted(by: twProviderPickerOrder)
     }
     private var createCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == createProvider.lowercased() }

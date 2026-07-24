@@ -142,16 +142,17 @@ describe('ParticipantPickerCluster', () => {
       'claude'
     )
 
-    // Live providers still show; AntiGravity carries its snapshot-authenticated models.
+    // Live providers still show; AntiGravity carries its snapshot-authenticated
+    // models and ranks above local Ollama (below the CLI lanes).
     expect(groups).toMatchObject([
       { provider: 'codex' },
       { provider: 'claude' },
       { provider: 'kimi' },
-      { provider: 'ollama' },
       {
         provider: 'antigravity',
         modelOptions: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
-      }
+      },
+      { provider: 'ollama' }
     ])
   })
 
@@ -216,7 +217,10 @@ describe('ParticipantPickerCluster', () => {
     expect(html).toContain('data-composer-control="model"')
     expect(html).toContain('composer-combined-picker-trigger-provider')
     expect(html).toContain('Claude')
-    expect(html).toContain('Claude Opus 4.8 1M')
+    // The model label is prefix-free ("Opus 4.8 1M Legacy") — the provider
+    // span supplies "Claude", so the chip no longer reads "Claude Claude …".
+    expect(html).toContain('Opus 4.8 1M Legacy')
+    expect(html).not.toContain('Claude Opus 4.8 1M')
     expect(html).not.toContain('data-composer-control="provider"')
     expect(html).toContain('data-composer-control="permission"')
   })

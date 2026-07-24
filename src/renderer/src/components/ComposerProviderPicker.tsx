@@ -153,10 +153,11 @@ export function resolveProviderRows(
     'kimi',
     ...(grokAvailable ? (['grok'] as ProviderId[]) : []),
     ...(cursorAvailable ? (['cursor'] as ProviderId[]) : []),
-    'ollama',
+    // AntiGravity ranks below the CLI lanes but above local Ollama.
     // Not a static offer: survives only when the strict, post-connection
     // main-process discovery snapshot has admitted it.
-    ...(antigravityAdmitted ? (['antigravity'] as ProviderId[]) : [])
+    ...(antigravityAdmitted ? (['antigravity'] as ProviderId[]) : []),
+    'ollama'
   ] as ProviderId[]).filter((id) =>
     id === 'antigravity' ? antigravityAdmitted : isLiveSelectableProvider(id)
   )

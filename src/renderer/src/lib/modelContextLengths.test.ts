@@ -20,12 +20,12 @@ describe('buildModelContextLengthGroups', () => {
     const sonnet5 = claudeGroup!.models.find((m) => m.modelId === 'claude-sonnet-5')
     const legacySonnet = claudeGroup!.models.find((m) => m.modelId === 'claude-sonnet-4-6')
     expect(sonnet5).toMatchObject({
-      label: 'Claude Sonnet 5',
+      label: 'Sonnet 5',
       contextWindow: 1_000_000,
       formatted: '1.0M'
     })
     expect(legacySonnet).toMatchObject({
-      label: 'Claude Sonnet 4.6 Legacy',
+      label: 'Sonnet 4.6 Legacy',
       contextWindow: 200_000,
       formatted: '200k'
     })
@@ -42,7 +42,7 @@ describe('buildModelContextLengthGroups', () => {
     // Opus 5 is 1M on its base id, so it IS a picker row.
     const opus5 = claudeGroup!.models.find((m) => m.modelId === 'claude-opus-5')
     expect(opus5).toMatchObject({
-      label: 'Claude Opus 5',
+      label: 'Opus 5',
       contextWindow: 1_000_000,
       formatted: '1.0M'
     })

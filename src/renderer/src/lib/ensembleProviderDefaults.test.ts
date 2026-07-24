@@ -517,12 +517,13 @@ describe('getEnsembleModelDefaults (existing helper)', () => {
     expect(
       claude.modelOptions.find((option) => option.id === 'claude-fable-5')?.disabled
     ).toBeFalsy()
+    // Current models first, the Legacy cluster (4.8 1M now among them) below.
     expect(claude.modelOptions.map((option) => option.id)).toEqual([
       'claude-opus-5',
-      'claude-opus-4-8-1m',
       'claude-fable-5',
       'claude-sonnet-5',
       'claude-sonnet-4-6',
+      'claude-opus-4-8-1m',
       'claude-opus-4-7-1m',
       'claude-haiku-4-5'
     ])

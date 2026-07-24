@@ -57,7 +57,7 @@ public struct EnsembleRosterSheet: View {
         model.providerModels
             .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
             .filter { TWTheme.isProviderOfferedByModelCatalog($0.provider, models: $0.models) }
-            .sorted { TWTheme.providerLabel($0.provider) < TWTheme.providerLabel($1.provider) }
+            .sorted(by: twProviderPickerOrder)
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {

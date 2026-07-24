@@ -68,7 +68,7 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-fable-5" }
         #expect(row != nil)
-        #expect(row?.label == "Claude Fable 5")
+        #expect(row?.label == "Fable 5")
         #expect(row?.contextWindow == 1_000_000)
         #expect(row?.formatted == "1.0M")
     }
@@ -79,7 +79,7 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-sonnet-5" }
         #expect(row != nil)
-        #expect(row?.label == "Claude Sonnet 5")
+        #expect(row?.label == "Sonnet 5")
         #expect(row?.contextWindow == 1_000_000)
         #expect(row?.formatted == "1.0M")
     }
@@ -90,7 +90,7 @@ struct ModelContextLengthsTests {
         let row = groups.first { $0.provider == "claude" }?
             .models.first { $0.modelId == "claude-sonnet-4-6" }
         #expect(row != nil)
-        #expect(row?.label == "Claude Sonnet 4.6 Legacy")
+        #expect(row?.label == "Sonnet 4.6 Legacy")
         #expect(row?.contextWindow == 200_000)
         #expect(row?.formatted == "200k")
     }
@@ -99,12 +99,13 @@ struct ModelContextLengthsTests {
     func claudeGroupMirrorsPickerRows() {
         let groups = ModelContextLengths.buildGroups()
         let claudeModels = groups.first { $0.provider == "claude" }?.models ?? []
+        // Current models first, the Legacy cluster (4.8 1M among them) below.
         #expect(claudeModels.map(\.modelId) == [
             "claude-opus-5",
-            "claude-opus-4-8-1m",
             "claude-fable-5",
             "claude-sonnet-5",
             "claude-sonnet-4-6",
+            "claude-opus-4-8-1m",
             "claude-opus-4-7-1m",
             "claude-haiku-4-5",
         ])

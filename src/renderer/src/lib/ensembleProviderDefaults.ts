@@ -137,13 +137,15 @@ const CODEX_MODELS: CombinedModelPickerModelOption[] = [
 ]
 
 const CLAUDE_MODELS: CombinedModelPickerModelOption[] = [
-  { id: 'claude-opus-5', label: 'Claude Opus 5' },
-  { id: 'claude-opus-4-8-1m', label: 'Claude Opus 4.8 1M' },
-  { id: 'claude-fable-5', label: 'Claude Fable 5' },
-  { id: 'claude-sonnet-5', label: 'Claude Sonnet 5' },
-  { id: 'claude-sonnet-4-6', label: 'Claude Sonnet 4.6 Legacy' },
-  { id: 'claude-opus-4-7-1m', label: 'Claude Opus 4.7 1M' },
-  { id: 'claude-haiku-4-5', label: 'Claude Haiku 4.5' }
+  // Labels omit the "Claude " prefix (provider header/chip already carries
+  // it); Legacy cluster below the current models — mirrors the main catalog.
+  { id: 'claude-opus-5', label: 'Opus 5' },
+  { id: 'claude-fable-5', label: 'Fable 5' },
+  { id: 'claude-sonnet-5', label: 'Sonnet 5' },
+  { id: 'claude-sonnet-4-6', label: 'Sonnet 4.6 Legacy' },
+  { id: 'claude-opus-4-8-1m', label: 'Opus 4.8 1M Legacy' },
+  { id: 'claude-opus-4-7-1m', label: 'Opus 4.7 1M Legacy' },
+  { id: 'claude-haiku-4-5', label: 'Haiku 4.5' }
 ]
 
 const GEMINI_MODELS: CombinedModelPickerModelOption[] = [

@@ -62,13 +62,13 @@ not the monoline glyph set.
 
 | Model                                               | Reasoning                                       | Fast   | Notes                                                  |
 | --------------------------------------------------- | ----------------------------------------------- | ------ | ------------------------------------------------------ |
-| **Claude Opus 5** `claude-opus-5`                   | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, adaptive thinking.              |
-| **Claude Opus 4.8 1M** `claude-opus-4-8-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context, extended thinking.                         |
-| **Claude Fable 5** `claude-fable-5`                 | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking.                         |
-| **Claude Sonnet 5** `claude-sonnet-5` **(Default)** | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, extended thinking.                         |
-| **Claude Sonnet 4.6 Legacy** `claude-sonnet-4-6`    | Light · Medium · High · Max                     | —      | 200K context legacy Sonnet.                            |
-| **Claude Opus 4.7 1M Legacy** `claude-opus-4-7-1m`  | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus.                                |
-| **Claude Haiku 4.5** `claude-haiku-4-5`             | —                                               | —      | Fast and efficient; no configurable reasoning control. |
+| **Opus 5** `claude-opus-5`                          | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context by default, adaptive thinking.              |
+| **Fable 5** `claude-fable-5`                        | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, adaptive thinking.                         |
+| **Sonnet 5** `claude-sonnet-5` **(Default)**        | Light · Medium · High · Extra · Max · Ultracode | —      | 1M context, extended thinking.                         |
+| **Sonnet 4.6 Legacy** `claude-sonnet-4-6`           | Light · Medium · High · Max                     | —      | 200K context legacy Sonnet.                            |
+| **Opus 4.8 1M Legacy** `claude-opus-4-8-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus, extended thinking.             |
+| **Opus 4.7 1M Legacy** `claude-opus-4-7-1m`         | Light · Medium · High · Extra · Max · Ultracode | Toggle | 1M context legacy Opus.                                |
+| **Haiku 4.5** `claude-haiku-4-5`                    | —                                               | —      | Fast and efficient; no configurable reasoning control. |
 
 <table>
   <tr>
