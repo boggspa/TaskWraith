@@ -40,7 +40,7 @@ export interface HostSeatContextSummary {
 
 export interface HostSeatCompactionIdentity {
   participantId: string
-  provider: 'cursor' | 'kimi' | 'grok'
+  provider: 'cursor' | 'kimi' | 'grok' | 'antigravity'
   model?: string
   linkedProviderSessionId?: string | null
   workspace: string
@@ -119,7 +119,7 @@ export function hostSeatCompactionRequestSucceeded(
 }
 
 export interface ConvergeHostSeatCompactionInput {
-  provider: 'kimi' | 'grok'
+  provider: 'kimi' | 'grok' | 'antigravity'
   snapshotMessages: readonly ChatMessage[]
   initialSummary?: HostSeatContextSummary
   preTokens?: number

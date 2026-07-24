@@ -21963,7 +21963,11 @@ function persistHostSeatCompactionCheckpoint(input: {
 async function compactCliSeatContext(payload: {
   chatId: string
   participantId: string
-  provider: 'grok'
+  /** grok = plan-mode CLI summarize + live-seat dispose; antigravity =
+   * sender-free gemini-api SDK summarize (no binary, seat session kept — the
+   * seat's context is the re-injected tagged transcript, so the summary
+   * upgrades the lossy window exactly like kimi's). */
+  provider: 'grok' | 'antigravity'
   providerSessionId?: string | null
   model?: string
   cardMetadata?: Record<string, unknown>
@@ -22017,14 +22021,35 @@ async function compactCliSeatContext(payload: {
         ? { hueClass: payload.cardMetadata.displayHueClass }
         : {})
     }
-    const resolved = await resolveCliProviderBinary(payload.provider, undefined)
-    if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
-      return { ok: false, error: 'Compaction was cancelled for history deletion.' }
-    }
-    if (!resolved.binaryPath) {
-      return {
-        ok: false,
-        error: resolved.error || `${providerLabel(payload.provider)} CLI was not found.`
+    let grokBinaryPath: string | null = null
+    if (payload.provider === 'grok') {
+      const resolved = await resolveCliProviderBinary(payload.provider, undefined)
+      if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        return { ok: false, error: 'Compaction was cancelled for history deletion.' }
+      }
+      if (!resolved.binaryPath) {
+        return {
+          ok: false,
+          error: resolved.error || `${providerLabel(payload.provider)} CLI was not found.`
+        }
+      }
+      grokBinaryPath = resolved.binaryPath
+    } else {
+      // Antigravity gemini-api seats need no binary — the BYO key and the
+      // data-use disclosure gate the lane (same gates every turn re-checks).
+      if (!isAntigravityGeminiApiKeyConfigured()) {
+        return { ok: false, error: 'AntiGravity Gemini API key is not configured.' }
+      }
+      const disclosureAcceptedAt = AppStore.getSettings().antigravityGeminiApiDisclosureAcceptedAt
+      if (
+        typeof disclosureAcceptedAt !== 'number' ||
+        !Number.isFinite(disclosureAcceptedAt) ||
+        disclosureAcceptedAt <= 0
+      ) {
+        return { ok: false, error: 'AntiGravity Gemini API disclosure has not been accepted.' }
+      }
+      if (!maintenanceCompactionRegistry.canWrite(payload.reservation)) {
+        return { ok: false, error: 'Compaction was cancelled for history deletion.' }
       }
     }
     broadcastContextCompactionProgress({ ...progressBase, status: 'started' })
@@ -22050,6 +22075,13 @@ async function compactCliSeatContext(payload: {
             error: 'Compaction was cancelled for history deletion.'
           }
         }
+        if (payload.provider === 'antigravity') {
+          return runAntigravityGeminiApiSeatSummary({
+            prompt,
+            model: identity.model,
+            timeoutMs
+          })
+        }
         const args = buildGrokCliArgs({
           prompt,
           workspace,
@@ -22058,7 +22090,7 @@ async function compactCliSeatContext(payload: {
         })
         return runHostSeatSummaryProcess({
           provider: payload.provider,
-          binaryPath: resolved.binaryPath!,
+          binaryPath: grokBinaryPath!,
           args,
           timeoutMs,
           reservation: payload.reservation
@@ -22083,10 +22115,12 @@ async function compactCliSeatContext(payload: {
     succeeded = hostSeatCompactionRequestSucceeded(convergence)
     if (!succeeded) failureError = convergence.error || 'The seat summary made no durable progress.'
 
-    if (coverageComplete && finalSummary) {
+    if (payload.provider === 'grok' && coverageComplete && finalSummary) {
       // Re-read after the controller returns. No await occurs between this
       // exact-current-coverage fence and registry disposal, so a new eligible
       // row, seat relink, or summary replacement blocks destructive reset.
+      // (Antigravity seats have nothing to dispose — the lane is stateless
+      // and the summary simply upgrades the injected-transcript window.)
       const fresh = maintenanceCompactionRegistry.canWrite(payload.reservation)
         ? AppStore.getChat(payload.chatId)
         : null
@@ -22168,7 +22202,7 @@ async function compactCliSeatContext(payload: {
  */
 async function compactProviderContextForRequest(payload: {
   chatId: string
-  provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok'
+  provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok' | 'antigravity'
   providerSessionId?: string
   participantId?: string
   /** 'auto' only from the orchestrator's post-round trigger; IPC = manual. */
@@ -22212,7 +22246,7 @@ async function compactProviderContextForRequest(payload: {
 async function compactProviderContextForReservedRequest(
   payload: {
     chatId: string
-    provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok'
+    provider: 'claude' | 'codex' | 'cursor' | 'kimi' | 'grok' | 'antigravity'
     providerSessionId?: string
     participantId?: string
     trigger?: 'auto' | 'manual'
@@ -22231,7 +22265,10 @@ async function compactProviderContextForReservedRequest(
   let reasoningEffort: string | null | undefined
   let cardMetadata: Record<string, unknown> | undefined
   let kimiNativeSession = false
-  const isHostSeatProvider = payload.provider === 'kimi' || payload.provider === 'grok'
+  const isHostSeatProvider =
+    payload.provider === 'kimi' ||
+    payload.provider === 'grok' ||
+    payload.provider === 'antigravity'
   // Kimi/Grok host seats compact only as ENSEMBLE seats here. Cursor remains in
   // the request union for historical decoding but is rejected above. Solo Kimi
   // compacts through the renderer's summarize-run lane (wave 2);
@@ -22324,7 +22361,7 @@ async function compactProviderContextForReservedRequest(
         'This Kimi seat does not have an exact admitted native ACP session eligible for compaction; host-summary Kimi execution is retired.'
     }
   }
-  if (payload.provider === 'grok') {
+  if (payload.provider === 'grok' || payload.provider === 'antigravity') {
     return compactCliSeatContext({
       chatId: payload.chatId,
       participantId: payload.participantId!,
@@ -26029,6 +26066,74 @@ function antigravityGeminiApiAgentDeps(wireModelId: string) {
       return { text: result.text, isError: result.isError }
     },
     prepareToolContext: undefined
+  }
+}
+
+/**
+ * Sender-free one-shot gemini-api summarize for the ensemble seat-compaction
+ * maintenance lane. Deliberately NOT tryRunGeminiApi: maintenance turns have
+ * no renderer sender, must not register run sessions, and must not touch the
+ * transcript — this is a bare SDK text call with the seat-compaction
+ * controller's prompt, mirroring the grok/kimi plan-mode summarize spawns.
+ * Thought parts are dropped exactly like the streaming lane does.
+ */
+async function runAntigravityGeminiApiSeatSummary(input: {
+  prompt: string
+  model?: string
+  timeoutMs: number
+}): Promise<{ ok: boolean; text: string; error?: string }> {
+  const wireModel =
+    typeof input.model === 'string' && input.model.trim()
+      ? input.model.trim()
+      : 'gemini-api:gemini-2.5-flash'
+  const bareModel = ANTIGRAVITY_GEMINI_API_WIRE_MODEL.exec(wireModel)?.[1] || 'gemini-2.5-flash'
+  const deps = antigravityGeminiApiAgentDeps(wireModel) as unknown as {
+    loadSdk?: () => Promise<{ GoogleGenAI: new (opts: { apiKey: string }) => any } | null>
+    resolveAuthOverride: () => { ok: true; apiKey: string } | { ok: false; error: string }
+  }
+  const auth = deps.resolveAuthOverride()
+  if (!auth.ok) return { ok: false, text: '', error: auth.error }
+  const sdk = deps.loadSdk ? await deps.loadSdk() : null
+  if (!sdk) {
+    return { ok: false, text: '', error: 'Gemini API SDK is unavailable.' }
+  }
+  const work = (async (): Promise<{ ok: boolean; text: string; error?: string }> => {
+    const client = new sdk.GoogleGenAI({ apiKey: auth.apiKey })
+    const stream = await client.models.generateContentStream({
+      model: bareModel,
+      contents: [{ role: 'user', parts: [{ text: input.prompt }] }]
+    })
+    let text = ''
+    for await (const chunk of stream) {
+      const parts = chunk?.candidates?.[0]?.content?.parts
+      if (Array.isArray(parts)) {
+        for (const part of parts) {
+          if (part && part.thought !== true && typeof part.text === 'string') text += part.text
+        }
+      } else if (typeof chunk?.text === 'string') {
+        text += chunk.text
+      }
+    }
+    const trimmed = text.trim()
+    return trimmed
+      ? { ok: true, text: trimmed }
+      : { ok: false, text: '', error: 'Summarize turn returned no text.' }
+  })()
+  const timeout = new Promise<{ ok: boolean; text: string; error?: string }>((resolve) =>
+    setTimeout(
+      () =>
+        resolve({
+          ok: false,
+          text: '',
+          error: `Summarize turn timed out after ${Math.round(input.timeoutMs / 1000)}s.`
+        }),
+      input.timeoutMs
+    )
+  )
+  try {
+    return await Promise.race([work, timeout])
+  } catch (error) {
+    return { ok: false, text: '', error: error instanceof Error ? error.message : String(error) }
   }
 }
 

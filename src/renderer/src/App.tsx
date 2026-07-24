@@ -25483,7 +25483,7 @@ function App(): React.JSX.Element {
                 }`
               : 'Selected participant context',
             description:
-              'Compact the selected seat’s provider session (claude/codex/kimi/grok), or insert a scoped summary request.',
+              'Compact the selected seat’s provider session (claude/codex/kimi/grok/antigravity), or insert a scoped summary request.',
             group: 'Custom' as const,
             run: (ctx: SlashCommandRunContext) => {
               // Seat compaction where a real lever exists: a seat that has
@@ -25494,14 +25494,17 @@ function App(): React.JSX.Element {
               const seat = slashSelectedParticipant
               const seatSessionOk =
                 Boolean(seat?.linkedProviderSessionId) ||
-                ((seat?.provider === 'kimi' || seat?.provider === 'grok') &&
+                ((seat?.provider === 'kimi' ||
+                  seat?.provider === 'grok' ||
+                  seat?.provider === 'antigravity') &&
                   (seat?.tokenTotals?.total_tokens || 0) > 0)
               const canNativelyCompactSeat =
                 Boolean(seat) &&
                 (seat!.provider === 'claude' ||
                   seat!.provider === 'codex' ||
                   seat!.provider === 'kimi' ||
-                  seat!.provider === 'grok') &&
+                  seat!.provider === 'grok' ||
+                  seat!.provider === 'antigravity') &&
                 seatSessionOk &&
                 Boolean(chat?.appChatId && !runningChatIds.has(chat.appChatId))
               if (canNativelyCompactSeat && chat && seat) {
