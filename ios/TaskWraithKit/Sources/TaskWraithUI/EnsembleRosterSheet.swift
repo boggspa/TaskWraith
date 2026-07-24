@@ -1,11 +1,11 @@
 // EnsembleRosterSheet — the dedicated, full-page ensemble roster editor.
 //
-// Reached from the transcript's "Roster" toolbar icon AND (slice A2) from
-// tapping a participant chip in the composer's above-row. Supersedes the
-// cramped per-chip sheet: one comfortable page listing every participant with
-// reorder / add / remove, per-participant detail editing (reusing
-// `RosterChipEditor`), and — once bridged (slices B1–B3) — load / save / delete
-// of reusable roster presets.
+// Reached from the transcript's "Roster" toolbar icon. One comfortable page
+// listing every participant with reorder / add / remove; tapping a row opens
+// the compact anchored `RosterParticipantEditorPopover` (the Electron chip
+// popover twin — the old full-height RosterChipEditor sheet is retired), the
+// Add row opens the combined add-participant popover, and (slices B1–B3)
+// reusable roster presets load / save / delete over the preset bridge.
 //
 // Live-roster editing reuses the EXISTING bridge end-to-end: it builds a
 // `[RosterDraftEntry]` from `model.ensembleStates[threadId].roster`, edits it,
@@ -27,6 +27,7 @@ public struct EnsembleRosterSheet: View {
     @Environment(\.dismiss) private var dismiss
     @State private var draft: [RemoteSessionModel.RosterDraftEntry] = []
     @State private var editingEntry: RemoteSessionModel.RosterDraftEntry? = nil
+    @State private var addPopoverPresented = false
     /// Id-order we last committed; suppress reconcile until the Mac echoes a
     /// matching order so an in-flight snapshot can't snap a reorder back.
     @State private var pendingOrderIds: [String]? = nil
@@ -202,48 +203,6 @@ public struct EnsembleRosterSheet: View {
                         EditButton()
                     }
                 #endif
-            }
-            .sheet(item: $editingEntry) { entry in
-                RosterChipEditor(
-                    entry: entry,
-                    catalogs: catalogs,
-                    canRemove: draft.count > 1,
-                    onApply: { updated in
-                        var updated = updated
-                        if updated.isBossman { updated.isSecondInCommand = false }
-                        if updated.isSecondInCommand { updated.isBossman = false }
-                        if let index = draft.firstIndex(where: { $0.id == updated.id }) {
-                            if updated.isBossman {
-                                for i in draft.indices {
-                                    draft[i].isBossman = draft[i].id == updated.id
-                                }
-                            }
-                            if updated.isSecondInCommand {
-                                for i in draft.indices {
-                                    draft[i].isSecondInCommand = draft[i].id == updated.id
-                                }
-                            }
-                            draft[index] = updated
-                        }
-                        editingEntry = nil
-                        commit()
-                    },
-                    onMove: { direction in
-                        guard let index = draft.firstIndex(where: { $0.id == entry.id }) else {
-                            return
-                        }
-                        let target = index + direction
-                        guard target >= 0, target < draft.count else { return }
-                        draft.swapAt(index, target)
-                        commit()
-                    },
-                    onRemove: {
-                        draft.removeAll { $0.id == entry.id }
-                        editingEntry = nil
-                        commit()
-                    }
-                )
-                .twSheetLiquidGlass(detents: [.medium, .large])
             }
             .confirmationDialog(
                 "Replace the current roster?",
@@ -429,6 +388,22 @@ public struct EnsembleRosterSheet: View {
                     .accessibilityElement(children: .ignore)
                     .accessibilityLabel(participantAccessibilityLabel(entry))
                     .accessibilityValue(participantAccessibilityValue(entry))
+                    // Compact anchored editor (Electron chip-popover parity) —
+                    // replaces the old full-height RosterChipEditor sheet.
+                    .popover(isPresented: editorPresentedBinding(for: entry.id)) {
+                        RosterParticipantEditorPopover(
+                            entry: editingEntry ?? entry,
+                            catalogs: catalogs,
+                            canRemove: draft.count > 1,
+                            onApply: { applyLiveEdit($0) },
+                            onRemove: { removeParticipant(id: entry.id) },
+                            onDismissRequest: { editingEntry = nil }
+                        )
+                        .presentationCompactAdaptation(.popover)
+                        // Clear the system popover chrome so the panel's glass
+                        // blurs the real content behind it (picker parity).
+                        .presentationBackground(.clear)
+                    }
                 }
                 .onMove { indices, newOffset in
                     draft.move(fromOffsets: indices, toOffset: newOffset)
@@ -447,6 +422,43 @@ public struct EnsembleRosterSheet: View {
         } footer: {
             Text("Drag to reorder turn order. Tap a participant to edit its model, reasoning, permissions, role and brief.")
         }
+    }
+
+    private func editorPresentedBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { editingEntry?.id == id },
+            set: { presented in
+                if !presented, editingEntry?.id == id { editingEntry = nil }
+            }
+        )
+    }
+
+    /// Live-apply from the editor popover: boss/captain stay singular across
+    /// the roster, the entry is swapped in place, and the roster commits —
+    /// WITHOUT closing the popover (discrete edits keep flowing).
+    private func applyLiveEdit(_ updated: RemoteSessionModel.RosterDraftEntry) {
+        var updated = updated
+        if updated.isBossman { updated.isSecondInCommand = false }
+        if updated.isSecondInCommand { updated.isBossman = false }
+        guard let index = draft.firstIndex(where: { $0.id == updated.id }) else { return }
+        if updated.isBossman {
+            for i in draft.indices {
+                draft[i].isBossman = draft[i].id == updated.id
+            }
+        }
+        if updated.isSecondInCommand {
+            for i in draft.indices {
+                draft[i].isSecondInCommand = draft[i].id == updated.id
+            }
+        }
+        draft[index] = updated
+        commit()
+    }
+
+    private func removeParticipant(id: String) {
+        draft.removeAll { $0.id == id }
+        editingEntry = nil
+        commit()
     }
 
     private func participantRow(_ entry: RemoteSessionModel.RosterDraftEntry) -> some View {
@@ -541,22 +553,28 @@ public struct EnsembleRosterSheet: View {
 
     private var addSection: some View {
         Section {
-            Menu {
-                ForEach(catalogs.map(\.provider), id: \.self) { provider in
-                    Button {
-                        addParticipant(provider)
-                    } label: {
-                        Label {
-                            Text(TWTheme.providerLabel(provider))
-                        } icon: {
-                            ProviderLogoIcon(provider: provider, modelId: nil, size: 14)
-                        }
-                    }
-                }
+            // Electron add-participant parity: ONE anchored popover carrying
+            // the participant fields above the combined model list + reasoning
+            // ladder, confirmed by its `Add` button — replaces the old
+            // provider-menu → seeded-editor two-step.
+            Button {
+                addPopoverPresented = true
             } label: {
                 Label("Add participant", systemImage: "plus")
             }
             .disabled(draft.count >= maxEnsembleRosterParticipants)
+            .popover(isPresented: $addPopoverPresented) {
+                RosterAddParticipantPopover(
+                    catalogs: catalogs,
+                    onAdd: { entry in
+                        addPopoverPresented = false
+                        appendParticipant(entry)
+                    },
+                    onDismissRequest: { addPopoverPresented = false }
+                )
+                .presentationCompactAdaptation(.popover)
+                .presentationBackground(.clear)
+            }
         }
         footer: {
             if draft.count >= maxEnsembleRosterParticipants {
@@ -565,24 +583,19 @@ public struct EnsembleRosterSheet: View {
         }
     }
 
-    private func addParticipant(_ provider: String) {
+    private func appendParticipant(_ entry: RemoteSessionModel.RosterDraftEntry) {
         guard draft.count < maxEnsembleRosterParticipants else { return }
-        let entry = RemoteSessionModel.RosterDraftEntry(
-            id: "draft-\(UUID().uuidString.prefix(8))",
-            provider: provider,
-            model: nil,
-            role: TWTheme.providerLabel(provider),
-            brief: "",
-            enabled: true,
-            reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
-            thinkingEnabled: provider.lowercased() == "kimi"
-        )
+        // A newly-added Boss/Captain takes the singular flag over from any
+        // existing owner BEFORE the append, so normalizeAuthorityMarkers (which
+        // keeps the FIRST match) can't strip it off the new seat.
+        if entry.isBossman {
+            for i in draft.indices { draft[i].isBossman = false }
+        }
+        if entry.isSecondInCommand {
+            for i in draft.indices { draft[i].isSecondInCommand = false }
+        }
         draft.append(entry)
         commit()
-        // Electron add-participant parity: the seeded seat opens straight into
-        // the editor, whose combined picker (provider sections + reasoning
-        // ladder) is the model-selection surface — no blind "cpu menu" seat.
-        editingEntry = entry
     }
 
     @ViewBuilder

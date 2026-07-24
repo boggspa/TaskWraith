@@ -1168,7 +1168,6 @@ struct ProviderModelPicker: View {
     /// popover it opens is identical.
     var compact: Bool = false
     @State private var isPresented = false
-    @State private var dragOffset: CGFloat = 0
 
     private var currentCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == provider.lowercased() }
@@ -1316,11 +1315,162 @@ struct ProviderModelPicker: View {
 
     // Compact anchored glass popover replacing the native Menu. Selecting a
     // MODEL keeps the popover open (so the user can pick reasoning without
-    // re-summoning); selecting a REASONING level — usually the last, confirming
-    // choice — dismisses. Tapping outside dismisses natively; a swipe-down
-    // grabber is layered on in a follow-up slice.
+    // re-summoning); tapping outside dismisses natively and the grabber's
+    // swipe-down dismisses. The open panel itself is the shared
+    // ProviderModelPickerPanel (also composed by the Ensemble add-participant
+    // popover with fields stacked on top, Electron CombinedModelPicker-style).
     @ViewBuilder
     private var pickerPopover: some View {
+        ProviderModelPickerPanel(
+            catalogs: catalogs,
+            provider: $provider,
+            modelId: $modelId,
+            reasoningEffort: $reasoningEffort,
+            fastModeEnabled: $fastModeEnabled,
+            kimiThinkingEnabled: $kimiThinkingEnabled,
+            allowsProviderChange: allowsProviderChange,
+            onDismissRequest: { isPresented = false })
+    }
+
+    private var isKimiProvider: Bool { provider.lowercased() == "kimi" }
+
+    private func normalizeFastModeSelection(
+        catalog: ProviderModelCatalog?, modelId: String?
+    ) {
+        twNormalizeFastModeSelection(
+            catalog: catalog, modelId: modelId, fastModeEnabled: &fastModeEnabled)
+    }
+
+    private func shortModelLabel(_ id: String) -> String {
+        if let catalog = currentCatalog,
+            let match = catalog.models.first(where: { $0.id == id })
+        {
+            return match.label ?? id
+        }
+        if id.count > 22 { return String(id.prefix(20)) + "…" }
+        return id
+    }
+
+    #if DEBUG
+    /// Canvas-only surface: the open glass panel without popover presentation
+    /// chrome. Used by `ProviderModelPicker+Previews.swift` so phone vs pad
+    /// spacing can be tuned in Xcode without Simulator/device.
+    var twCanvasOpenPanel: some View { pickerPopover }
+    #endif
+}
+
+/// Shared "resolve to the catalog default, then drop Fast off non-capable
+/// models" normalization — one implementation for the picker trigger and the
+/// open panel so they can't drift.
+private func twNormalizeFastModeSelection(
+    catalog: ProviderModelCatalog?, modelId: String?, fastModeEnabled: inout Bool
+) {
+    let resolvedModelId = modelId
+        ?? catalog?.models.first(where: { $0.isDefault == true })?.id
+        ?? catalog?.models.first?.id
+    if !twModelUsesFastToggle(resolvedModelId) {
+        fastModeEnabled = false
+    }
+}
+
+/// The OPEN glass panel of the combined provider/model/reasoning picker —
+/// provider-grouped model rows on the left, the reasoning ladder + Fast pill
+/// sidecar on the right, a swipe-down grabber on top.
+///
+/// Hosted two ways (Electron `CombinedModelPicker` parity):
+/// - by `ProviderModelPicker`'s anchored popover (the composer picker), and
+/// - by the Ensemble add-participant popover, which stacks the participant
+///   fields cluster above the model rows (`topContent`) and confirms with an
+///   `Add` button under the sidecar (`confirmLabel`/`onConfirm`).
+///
+/// Selecting a model NEVER dismisses (reasoning usually comes next — the
+/// standing picker landmine); dismissal is tap-away or the grabber, routed
+/// through `onDismissRequest` so each host closes its own presentation.
+struct ProviderModelPickerPanel<TopContent: View>: View {
+    let catalogs: [ProviderModelCatalog]
+    @Binding var provider: String
+    @Binding var modelId: String?
+    @Binding var reasoningEffort: String?
+    @Binding var fastModeEnabled: Bool
+    @Binding var kimiThinkingEnabled: Bool
+    var allowsProviderChange: Bool = true
+    /// List-column width override (nil = the composer picker's compact 200/208).
+    var listWidth: CGFloat? = nil
+    /// Fixed body height when the sidecar shows / overall cap. Defaults match
+    /// the composer picker; the add-participant popover passes taller values
+    /// to fit its fields cluster.
+    var bodyHeight: CGFloat = 276
+    var bodyMaxHeight: CGFloat = 308
+    /// Keep the reasoning/Fast sidecar mounted even when the current model has
+    /// neither (a dimmed, disabled rail) — the participant popovers use this so
+    /// the effort ladder is a constant fixture of the surface, not a column
+    /// that pops in and out per model.
+    var alwaysShowsSidecar: Bool = false
+    /// Render the Fast pill greyed-out + inert (instead of hidden) when the
+    /// current model has no Fast tier — with `alwaysShowsSidecar` this keeps
+    /// the sidecar's control set stable across model taps.
+    var showsDisabledFastPill: Bool = false
+    /// Extra sidecar control under the Fast pill (the participant popovers'
+    /// compact permission picker). Type-erased — it's one small slot.
+    var sidecarAccessory: AnyView? = nil
+    /// Confirm slot pinned under the sidecar (the add popover's Add button).
+    var confirmLabel: String? = nil
+    var onConfirm: (() -> Void)? = nil
+    var onDismissRequest: () -> Void = {}
+    let topContent: TopContent
+    @State private var dragOffset: CGFloat = 0
+
+    init(
+        catalogs: [ProviderModelCatalog],
+        provider: Binding<String>,
+        modelId: Binding<String?>,
+        reasoningEffort: Binding<String?>,
+        fastModeEnabled: Binding<Bool>,
+        kimiThinkingEnabled: Binding<Bool>,
+        allowsProviderChange: Bool = true,
+        listWidth: CGFloat? = nil,
+        bodyHeight: CGFloat = 276,
+        bodyMaxHeight: CGFloat = 308,
+        alwaysShowsSidecar: Bool = false,
+        showsDisabledFastPill: Bool = false,
+        sidecarAccessory: AnyView? = nil,
+        confirmLabel: String? = nil,
+        onConfirm: (() -> Void)? = nil,
+        onDismissRequest: @escaping () -> Void = {},
+        @ViewBuilder topContent: () -> TopContent = { EmptyView() }
+    ) {
+        self.catalogs = catalogs
+        self._provider = provider
+        self._modelId = modelId
+        self._reasoningEffort = reasoningEffort
+        self._fastModeEnabled = fastModeEnabled
+        self._kimiThinkingEnabled = kimiThinkingEnabled
+        self.allowsProviderChange = allowsProviderChange
+        self.listWidth = listWidth
+        self.bodyHeight = bodyHeight
+        self.bodyMaxHeight = bodyMaxHeight
+        self.alwaysShowsSidecar = alwaysShowsSidecar
+        self.showsDisabledFastPill = showsDisabledFastPill
+        self.sidecarAccessory = sidecarAccessory
+        self.confirmLabel = confirmLabel
+        self.onConfirm = onConfirm
+        self.onDismissRequest = onDismissRequest
+        self.topContent = topContent()
+    }
+
+    private var currentCatalog: ProviderModelCatalog? {
+        catalogs.first { $0.provider.lowercased() == provider.lowercased() }
+    }
+    private var isKimiProvider: Bool { provider.lowercased() == "kimi" }
+    private var resolvedDefaultModel: ModelOption? {
+        currentCatalog?.models.first(where: { $0.isDefault == true })
+            ?? currentCatalog?.models.first
+    }
+    private var resolvedListWidth: CGFloat {
+        listWidth ?? (showsSidecar ? 200 : 208)
+    }
+
+    var body: some View {
         // Compact density: tighter list + sidecar so the glass panel sits
         // smaller on phone without losing the ladder / Fast controls.
         VStack(spacing: 0) {
@@ -1328,6 +1478,7 @@ struct ProviderModelPicker: View {
             HStack(alignment: .top, spacing: 0) {
                 ScrollView {
                     VStack(alignment: .leading, spacing: 1) {
+                        topContent
                         if allowsProviderChange {
                             ForEach(catalogs) { catalog in
                                 providerSection(catalog)
@@ -1339,20 +1490,28 @@ struct ProviderModelPicker: View {
                     .padding(.top, 1)
                     .padding(.bottom, 6)
                 }
-                .frame(width: showsReasoningSidecar ? 200 : 208)
+                .frame(width: resolvedListWidth)
                 .frame(maxHeight: .infinity)
-                if showsReasoningSidecar {
+                if showsSidecar {
                     reasoningSidecar
                         .frame(maxHeight: .infinity)
                 }
             }
-            .frame(height: showsReasoningSidecar ? 276 : nil)
-            .frame(maxHeight: 308)
+            .frame(height: showsSidecar ? bodyHeight : nil)
+            .frame(maxHeight: bodyMaxHeight)
         }
-        .frame(width: showsReasoningSidecar ? 268 : 208)
+        .frame(width: resolvedListWidth + (showsSidecar ? 68 : 0))
         .twPickerGlassSurface(cornerRadius: 14)
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
+        .onAppear {
+            // Standalone hosts (the add popover) have no trigger-side
+            // normalization pass — run it here; idempotent for the composer.
+            twNormalizeReasoningSelection(
+                catalog: currentCatalog, modelId: modelId, reasoningEffort: &reasoningEffort)
+            twNormalizeFastModeSelection(
+                catalog: currentCatalog, modelId: modelId, fastModeEnabled: &fastModeEnabled)
+        }
     }
 
     // Swipe-down grabber: dragging the handle down past ~70pt dismisses (parity
@@ -1374,7 +1533,7 @@ struct ProviderModelPicker: View {
                     }
                     .onEnded { value in
                         if value.translation.height > 70 {
-                            isPresented = false
+                            onDismissRequest()
                         }
                         withAnimation(.spring(response: 0.3, dampingFraction: 0.85)) {
                             dragOffset = 0
@@ -1423,11 +1582,9 @@ struct ProviderModelPicker: View {
     }
 
     // MARK: - Reasoning ladder sidecar
-    // Reasoning moved out of the model list into a vertical gradient "ladder"
-    // slider on the picker's right edge (see ReasoningLadder). It reflects the
-    // CURRENTLY selected model and updates live as the user taps models.
-
-    private var isKimiProvider: Bool { provider.lowercased() == "kimi" }
+    // Reasoning lives in a vertical gradient "ladder" slider on the panel's
+    // right edge (see ReasoningLadder). It reflects the CURRENTLY selected
+    // model and updates live as the user taps models.
 
     private var ladderEffortBinding: Binding<String?> {
         return $reasoningEffort
@@ -1441,8 +1598,11 @@ struct ProviderModelPicker: View {
         }
         return indices
     }
-    private var showsReasoningSidecar: Bool {
-        !enabledLadderIndices.isEmpty || fastControlState != nil
+    private var showsSidecar: Bool {
+        // The confirm slot rides the sidecar, so a pending confirm keeps the
+        // column even for a model with neither reasoning nor Fast.
+        alwaysShowsSidecar || !enabledLadderIndices.isEmpty || fastControlState != nil
+            || onConfirm != nil
     }
     private var currentLadderLabel: String {
         guard !enabledLadderIndices.isEmpty else { return "—" }
@@ -1469,11 +1629,60 @@ struct ProviderModelPicker: View {
                     accent: TWTheme.providerAccent(provider),
                     provider: provider
                 )
+            } else if alwaysShowsSidecar {
+                // No reasoning axis on this model: keep the rail as a dimmed,
+                // inert fixture so the surface doesn't reflow per model.
+                Text("—")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TWTheme.textMuted)
+                    .frame(maxWidth: .infinity)
+                ReasoningLadder(
+                    enabledIndices: [],
+                    reasoningEffort: .constant(nil),
+                    accent: TWTheme.textMuted,
+                    provider: provider
+                )
+                .opacity(0.3)
+                .allowsHitTesting(false)
+                .accessibilityHidden(true)
             } else {
                 Spacer(minLength: 0)
             }
             if let fast = fastControlState {
                 fastPill(for: fast)
+            } else if showsDisabledFastPill {
+                // Model has no Fast tier: keep the pill as a greyed, inert
+                // fixture so the sidecar's control set never reflows.
+                HStack(spacing: 2) {
+                    Image(systemName: "bolt.fill").font(.system(size: 7, weight: .bold))
+                    Text("Fast").font(.system(size: 10, weight: .semibold))
+                }
+                .foregroundStyle(TWTheme.textMuted)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 3)
+                .frame(maxWidth: .infinity)
+                .overlay(
+                    Capsule().strokeBorder(
+                        TWTheme.border.opacity(0.6), lineWidth: 0.5))
+                .opacity(0.45)
+                .accessibilityLabel("Fast mode")
+                .accessibilityValue("Unavailable for this model")
+            }
+            if let sidecarAccessory {
+                sidecarAccessory
+            }
+            if let confirmLabel, let onConfirm {
+                Button(action: onConfirm) {
+                    Text(confirmLabel)
+                        .font(.system(size: 11, weight: .semibold))
+                        .foregroundStyle(Color.white)
+                        .padding(.horizontal, 6)
+                        .padding(.vertical, 4)
+                        .frame(maxWidth: .infinity)
+                        .background(
+                            Capsule().fill(TWTheme.providerAccent(provider)))
+                }
+                .buttonStyle(.plain)
             }
         }
         .padding(.top, 8)
@@ -1593,36 +1802,12 @@ struct ProviderModelPicker: View {
         modelId = option.id
         twNormalizeReasoningSelection(
             catalog: catalog, modelId: option.id, reasoningEffort: &reasoningEffort)
-        normalizeFastModeSelection(catalog: catalog, modelId: option.id)
+        // Kimi's thinking Bool re-arms with every (re)selection — the trigger
+        // host mirrors this in its own onChange; standalone hosts rely on it.
+        if catalog.provider.lowercased() == "kimi" { kimiThinkingEnabled = true }
+        twNormalizeFastModeSelection(
+            catalog: catalog, modelId: option.id, fastModeEnabled: &fastModeEnabled)
     }
-
-    private func normalizeFastModeSelection(
-        catalog: ProviderModelCatalog?, modelId: String?
-    ) {
-        let resolvedModelId = modelId
-            ?? catalog?.models.first(where: { $0.isDefault == true })?.id
-            ?? catalog?.models.first?.id
-        if !twModelUsesFastToggle(resolvedModelId) {
-            fastModeEnabled = false
-        }
-    }
-
-    private func shortModelLabel(_ id: String) -> String {
-        if let catalog = currentCatalog,
-            let match = catalog.models.first(where: { $0.id == id })
-        {
-            return match.label ?? id
-        }
-        if id.count > 22 { return String(id.prefix(20)) + "…" }
-        return id
-    }
-
-    #if DEBUG
-    /// Canvas-only surface: the open glass panel without popover presentation
-    /// chrome. Used by `ProviderModelPicker+Previews.swift` so phone vs pad
-    /// spacing can be tuned in Xcode without Simulator/device.
-    var twCanvasOpenPanel: some View { pickerPopover }
-    #endif
 }
 
 // MARK: - Reasoning ladder (sidecar slider)
@@ -5802,6 +5987,9 @@ public struct EditableRosterStrip: View {
     /// Id-order we last committed; suppress reconcile until the Mac echoes a
     /// matching order so an in-flight snapshot can't snap a reorder back.
     @State private var pendingOrderIds: [String]? = nil
+    /// Chip whose compact editor popover is open (Electron chip-popover parity).
+    @State private var editingChipId: String? = nil
+    @State private var addPopoverPresented = false
 
     public init(
         model: RemoteSessionModel, threadId: String, workspaceId: String,
@@ -5926,8 +6114,8 @@ public struct EditableRosterStrip: View {
         .padding(.horizontal, attached ? 0 : 12)
         .onAppear { if draft.isEmpty { draft = remoteRoster } }
         .onChange(of: remoteRoster) { _, fresh in
-            // Reconcile from the Mac unless mid-drag. (Per-participant editing
-            // now happens in the dedicated Roster page, not a strip sheet.)
+            // Reconcile from the Mac unless mid-drag. (The chip editor popover
+            // keeps its own working copy, so reconciling under it is safe.)
             guard draggingId == nil else { return }
             // Don't let an in-flight snapshot clobber a just-committed reorder:
             // hold the optimistic order until the Mac echoes a matching id-order
@@ -5957,10 +6145,9 @@ public struct EditableRosterStrip: View {
         let title =
             entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
         return Button {
-            // Open the dedicated Roster page focused on this participant —
-            // supersedes the old cramped per-chip editor sheet.
-            model.rosterFocusParticipantId = entry.id
-            model.rosterPresented = true
+            // Compact anchored editor right on the chip (Electron chip-popover
+            // parity) — supersedes the roster-page deep link.
+            editingChipId = entry.id
         } label: {
             HStack(spacing: 5) {
                 if unavailable {
@@ -6005,10 +6192,62 @@ public struct EditableRosterStrip: View {
             .opacity(draggingId == entry.id ? 0.4 : 1)
         }
         .buttonStyle(.plain)
+        .popover(isPresented: chipEditorPresentedBinding(for: entry.id)) {
+            RosterParticipantEditorPopover(
+                entry: draft.first { $0.id == entry.id } ?? entry,
+                catalogs: catalogs,
+                canRemove: draft.count > 1,
+                onApply: { applyLiveEdit($0) },
+                onRemove: { removeChip(id: entry.id) },
+                onDismissRequest: { editingChipId = nil }
+            )
+            .presentationCompactAdaptation(.popover)
+            // Clear the system popover chrome so the panel's glass blurs the
+            // real content behind it (composer-picker parity).
+            .presentationBackground(.clear)
+        }
         .accessibilityLabel(chipAccessibilityLabel(entry, status: status))
-        .accessibilityHint("Opens roster editor. Use actions to reorder.")
+        .accessibilityHint("Opens participant editor. Use actions to reorder.")
         .accessibilityAction(named: Text("Move earlier")) { moveChip(entry, direction: -1) }
         .accessibilityAction(named: Text("Move later")) { moveChip(entry, direction: 1) }
+    }
+
+    private func chipEditorPresentedBinding(for id: String) -> Binding<Bool> {
+        Binding(
+            get: { editingChipId == id },
+            set: { presented in
+                if !presented, editingChipId == id { editingChipId = nil }
+            }
+        )
+    }
+
+    /// Live-apply from the chip editor popover: boss/captain stay singular,
+    /// the entry is swapped in place, and the roster commits without closing
+    /// the popover (mirrors EnsembleRosterSheet.applyLiveEdit).
+    private func applyLiveEdit(_ updated: RemoteSessionModel.RosterDraftEntry) {
+        var updated = updated
+        if updated.isBossman { updated.isSecondInCommand = false }
+        if updated.isSecondInCommand { updated.isBossman = false }
+        guard let index = draft.firstIndex(where: { $0.id == updated.id }) else { return }
+        if updated.isBossman {
+            for i in draft.indices {
+                draft[i].isBossman = draft[i].id == updated.id
+            }
+        }
+        if updated.isSecondInCommand {
+            for i in draft.indices {
+                draft[i].isSecondInCommand = draft[i].id == updated.id
+            }
+        }
+        draft[index] = updated
+        commit()
+    }
+
+    private func removeChip(id: String) {
+        guard draft.count > 1 else { return }
+        draft.removeAll { $0.id == id }
+        editingChipId = nil
+        commit()
     }
 
     private func chipAccessibilityLabel(
@@ -6046,36 +6285,11 @@ public struct EditableRosterStrip: View {
     }
 
     private var addMenu: some View {
-        Menu {
-            ForEach(catalogs.map(\.provider), id: \.self) { provider in
-                Button {
-                    guard draft.count < editableRosterMaxParticipants else { return }
-                    let entry = RemoteSessionModel.RosterDraftEntry(
-                        id: "draft-\(UUID().uuidString.prefix(8))",
-                        provider: provider,
-                        model: nil,
-                        role: TWTheme.providerLabel(provider),
-                        brief: "",
-                        enabled: true,
-                        reasoningEffort: provider.lowercased() == "kimi" ? "on" : nil,
-                        thinkingEnabled: provider.lowercased() == "kimi"
-                    )
-                    draft.append(entry)
-                    commit()
-                    // Electron add-participant parity (same as the roster
-                    // sheet's add flow): deep-link straight into the seeded
-                    // seat's editor, whose combined picker is the model /
-                    // reasoning selection surface.
-                    model.rosterFocusParticipantId = entry.id
-                    model.rosterPresented = true
-                } label: {
-                    Label {
-                            Text(TWTheme.providerLabel(provider))
-                        } icon: {
-                            ProviderLogoIcon(provider: provider, modelId: nil, size: 14)
-                        }
-                }
-            }
+        // Electron add-participant parity: the "+" anchors ONE popover with
+        // the participant fields above the combined model list + reasoning
+        // ladder, confirmed by its `Add` button — no provider-menu two-step.
+        Button {
+            addPopoverPresented = true
         } label: {
             Image(systemName: "plus")
                 .font(.caption.weight(.semibold))
@@ -6086,12 +6300,41 @@ public struct EditableRosterStrip: View {
                 .frame(width: 24, height: 24)
                 .background(TWTheme.surface3, in: Circle())
         }
+        .buttonStyle(.plain)
         .disabled(draft.count >= editableRosterMaxParticipants)
+        .popover(isPresented: $addPopoverPresented) {
+            RosterAddParticipantPopover(
+                catalogs: catalogs,
+                onAdd: { entry in
+                    addPopoverPresented = false
+                    appendParticipant(entry)
+                },
+                onDismissRequest: { addPopoverPresented = false }
+            )
+            .presentationCompactAdaptation(.popover)
+            .presentationBackground(.clear)
+        }
+        .accessibilityLabel("Add participant")
         .accessibilityHint(
             draft.count >= editableRosterMaxParticipants
                 ? "Ensembles support up to \(editableRosterMaxParticipants) participants."
                 : "Add another participant."
         )
+    }
+
+    private func appendParticipant(_ entry: RemoteSessionModel.RosterDraftEntry) {
+        guard draft.count < editableRosterMaxParticipants else { return }
+        // A newly-added Boss/Captain takes the singular flag over from any
+        // existing owner BEFORE the append (normalizeAuthorityMarkers keeps
+        // the FIRST match, which would otherwise strip the new seat).
+        if entry.isBossman {
+            for i in draft.indices { draft[i].isBossman = false }
+        }
+        if entry.isSecondInCommand {
+            for i in draft.indices { draft[i].isSecondInCommand = false }
+        }
+        draft.append(entry)
+        commit()
     }
 
     private func commit() {
@@ -6148,239 +6391,10 @@ struct RosterReorderDelegate: DropDelegate {
     }
 }
 
-/// Per-chip editor — enable, role, goal/brief, provider/model, move, remove.
-struct RosterChipEditor: View {
-    @State var entry: RemoteSessionModel.RosterDraftEntry
-    let catalogs: [ProviderModelCatalog]
-    let canRemove: Bool
-    let onApply: (RemoteSessionModel.RosterDraftEntry) -> Void
-    let onMove: (Int) -> Void
-    let onRemove: () -> Void
-    @Environment(\.dismiss) private var dismiss
-
-    private var participantCatalog: ProviderModelCatalog? {
-        catalogs.first { $0.provider.lowercased() == entry.provider.lowercased() }
-    }
-    private var reasoningEfforts: [String] {
-        twReasoningModelOption(in: participantCatalog, modelId: entry.model)?
-            .supportedReasoningEfforts?.filter { $0.disabled != true }.map(\.reasoningEffort) ?? []
-    }
-    private var permissionBinding: Binding<String> {
-        Binding(
-            get: { entry.permissionPresetId ?? "default" },
-            set: { entry.permissionPresetId = $0 }
-        )
-    }
-    /// Combined-picker adapter bindings: same side-effects the old native
-    /// Menus applied (default reasoning per model, Kimi thinking re-arm,
-    /// Fast reset off non-fast-capable models), expressed once here.
-    private var providerPickerBinding: Binding<String> {
-        Binding(
-            get: { entry.provider },
-            set: { provider in
-                guard provider.lowercased() != entry.provider.lowercased() else { return }
-                entry.provider = provider
-                entry.model = nil
-                let nextCatalog = catalogs.first {
-                    $0.provider.lowercased() == provider.lowercased()
-                }
-                entry.reasoningEffort = twDefaultReasoningEffort(
-                    for: twReasoningModelOption(in: nextCatalog, modelId: nil))
-                if provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
-                entry.fastModeEnabled = false
-            }
-        )
-    }
-    private var modelPickerBinding: Binding<String?> {
-        Binding(
-            get: { entry.model },
-            set: { modelId in
-                entry.model = modelId
-                entry.reasoningEffort = twDefaultReasoningEffort(
-                    for: twReasoningModelOption(in: participantCatalog, modelId: modelId))
-                if entry.provider.lowercased() == "kimi" { entry.thinkingEnabled = true }
-                if modelId == nil || !twModelUsesFastToggle(modelId!) {
-                    entry.fastModeEnabled = false
-                }
-            }
-        )
-    }
-    private var thinkingPickerBinding: Binding<Bool> {
-        Binding(
-            get: { entry.thinkingEnabled },
-            set: { entry.thinkingEnabled = $0 }
-        )
-    }
-    /// "" = no stage (permission-inferred scheduling); mapped to nil on the
-    /// draft so the bridge sends the explicit "" clear.
-    private var stageBinding: Binding<String> {
-        Binding(
-            get: { entry.stageRole ?? "" },
-            set: { value in
-                entry.stageRole = value.isEmpty ? nil : value
-                if value == "background" {
-                    entry.isBossman = false
-                    entry.isSecondInCommand = false
-                }
-            }
-        )
-    }
-    private var bossmanBinding: Binding<Bool> {
-        Binding(
-            get: { entry.isBossman },
-            set: { enabled in
-                entry.isBossman = enabled
-                if enabled { entry.isSecondInCommand = false }
-            }
-        )
-    }
-    private var secondInCommandBinding: Binding<Bool> {
-        Binding(
-            get: { entry.isSecondInCommand },
-            set: { enabled in
-                entry.isSecondInCommand = enabled
-                if enabled { entry.isBossman = false }
-            }
-        )
-    }
-    private var selectedModelSupportsFastMode: Bool {
-        let catalog = catalogs.first {
-            $0.provider.lowercased() == entry.provider.lowercased()
-        }
-        let selectedModel = entry.model
-            ?? catalog?.models.first(where: { $0.isDefault == true })?.id
-        return twModelUsesFastToggle(selectedModel)
-    }
-
-    var body: some View {
-        NavigationStack {
-            Form {
-                Section {
-                    Toggle("Enabled in ensemble rounds", isOn: $entry.enabled)
-                        .tint(TWTheme.providerAccent(entry.provider))
-                    Toggle(isOn: bossmanBinding) {
-                        Label("Boss", systemImage: entry.isBossman ? "crown.fill" : "crown")
-                    }
-                    .tint(.yellow)
-                    .disabled(entry.stageRole == "background")
-                    Toggle(isOn: secondInCommandBinding) {
-                        Label(
-                            "Captain",
-                            systemImage: entry.isSecondInCommand ? "shield.fill" : "shield")
-                    }
-                    .tint(TWTheme.chroma3)
-                    .disabled(entry.stageRole == "background")
-                }
-                .twGlassSheetRowBackground()
-                Section("Role") {
-                    TextField("Role name", text: $entry.role)
-                }
-                .twGlassSheetRowBackground()
-                Section("Goal / brief") {
-                    TextEditor(text: $entry.brief)
-                        .frame(minHeight: 88)
-                        .font(.footnote)
-                }
-                .twGlassSheetRowBackground()
-                Section("Provider · model") {
-                    // Composer-parity combined picker: provider sections + model
-                    // rows + the reasoning ladder + Fast pill in ONE glass
-                    // popover — replaces the two native Menus and the separate
-                    // Reasoning section this editor used to carry. Adapter
-                    // bindings reproduce the exact side-effects the Menus had
-                    // (default reasoning per model, Kimi thinking re-arm, Fast
-                    // reset on non-fast-capable models).
-                    ProviderModelPicker(
-                        catalogs: catalogs,
-                        provider: providerPickerBinding,
-                        modelId: modelPickerBinding,
-                        reasoningEffort: $entry.reasoningEffort,
-                        fastModeEnabled: $entry.fastModeEnabled,
-                        kimiThinkingEnabled: thinkingPickerBinding)
-                }
-                .twGlassSheetRowBackground()
-                Section("Permission") {
-                    Picker("Approval", selection: permissionBinding) {
-                        Text("Read-Only/Recon").tag("read_only")
-                        Text("Plan workflow").tag("plan")
-                        Text("Default approval").tag("default")
-                        Text("Full access").tag("full_access")
-                        // 'Workspace write' (contained auto-edit) was coalesced into
-                        // Full access on iOS. A participant already stored on it keeps
-                        // showing its real value — never silently escalated to Full
-                        // access — and can switch to a tier above. New selections use
-                        // the four tiers above only.
-                        if entry.permissionPresetId == "workspace_write" {
-                            Text("Workspace write (legacy)").tag("workspace_write")
-                        }
-                    }
-                    .pickerStyle(.menu)
-                }
-                .twGlassSheetRowBackground()
-                Section {
-                    Picker("Fan-out stage", selection: stageBinding) {
-                        Text("Any (by permissions)").tag("")
-                        Text("Scout — investigates first").tag("scout")
-                        Text("Worker — serial turn").tag("worker")
-                        Text("Reviewer — runs after the others").tag("reviewer")
-                        Text("BG — async when delegated").tag("background")
-                    }
-                    .pickerStyle(.menu)
-                } header: {
-                    Text("Stage")
-                } footer: {
-                    Text(
-                        "Scouts investigate at round start, workers take serial implementation turns, reviewers verify last, and BG seats run asynchronously only when explicitly delegated."
-                    )
-                }
-                .twGlassSheetRowBackground()
-                Section {
-                    HStack {
-                        Button {
-                            onMove(-1)
-                        } label: {
-                            Label("Earlier", systemImage: "arrow.left")
-                        }
-                        Spacer()
-                        Button {
-                            onMove(1)
-                        } label: {
-                            Label("Later", systemImage: "arrow.right")
-                        }
-                    }
-                    if canRemove {
-                        Button(role: .destructive) {
-                            onRemove()
-                            dismiss()
-                        } label: {
-                            Label("Remove participant", systemImage: "trash")
-                        }
-                    }
-                }
-                .twGlassSheetRowBackground()
-            }
-            .twGlassSheetListCanvas()
-            .navigationTitle(
-                entry.role.isEmpty ? TWTheme.providerLabel(entry.provider) : entry.role
-            )
-            #if os(iOS)
-                .navigationBarTitleDisplayMode(.inline)
-            #endif
-            .toolbar {
-                ToolbarItem(placement: .confirmationAction) {
-                    Button("Done") {
-                        onApply(entry)
-                        dismiss()
-                    }
-                }
-                ToolbarItem(placement: .cancellationAction) {
-                    Button("Cancel") { dismiss() }
-                }
-            }
-        }
-        .twColorScheme()
-    }
-}
+// (RosterChipEditor — the full-height per-participant editor sheet — was
+// retired in favor of the compact anchored RosterParticipantEditorPopover /
+// RosterAddParticipantPopover in RosterParticipantPopover.swift, the Electron
+// chip-popover twins.)
 
 // ── Agent identity badge (sub-agent identicon parity, minimal form) ────────
 // The desktop renders full hand-drawn catalog characters; the phone's
