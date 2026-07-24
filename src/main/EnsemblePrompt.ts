@@ -129,7 +129,11 @@ export interface BuildEnsemblePromptInput {
   effectiveApprovalMode?: string | null
 }
 
-export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v2'
+// v3 (efficiency audit 2026-07): the vague "respect your permission preset"
+// rule became a concrete per-posture tool-surface sentence — bumped so resumed
+// seats get one full re-briefing with the new rule instead of keeping the old
+// shell forever via the slim-turn path.
+export const ENSEMBLE_PROMPT_SHELL_VERSION = 'ensemble-shell-v3'
 export const ENSEMBLE_DYNAMIC_STATE_VERSION = 'ensemble-dynamic-v2'
 
 export interface EnsembleDynamicStateSnapshot {
@@ -717,6 +721,40 @@ export function buildEnsembleDynamicStateSnapshot(
   }
 }
 
+/**
+ * Efficiency audit 2026-07 — one concrete sentence per seat about its tool
+ * surface. Transcripts showed seats burning full turns DISCOVERING their
+ * posture ("Bash denied → retry via workspace shell → denied again") because
+ * the old rule ("respect your permission preset") never said what the preset
+ * actually allows. Preset truth is host-authoritative at prompt-build time;
+ * per-call clamps (BG lanes, unattended, preview models) only narrow further,
+ * so the sentence states the ceiling and the denial expectation — never a
+ * guarantee of auto-run.
+ */
+function permissionSurfaceRule(
+  participant: EnsembleParticipant,
+  effectiveApprovalMode?: string | null
+): string {
+  const presetId = participant.permissionPresetId
+  const denialPosture =
+    presetId === 'read_only' || presetId === 'plan' || effectiveApprovalMode === 'plan'
+  if (denialPosture) {
+    const grokRecon =
+      participant.provider === 'grok'
+        ? ' (exception: Grok seats may run the fixed read-only shell recon commands)'
+        : ''
+    const planInstruments =
+      presetId === 'plan' ? ' Approval-gated canvas/media instruments may prompt the user.' : ''
+    return `- Your permission role is ${presetId || 'plan-clamped'}: file writes and shell commands are DENIED this run${grokRecon} — do not spend a turn discovering that. Recon with the TaskWraith read/search tools instead: workspace_search, find_files, git_status, and read_file (which takes offset/limit line windows for large files).${planInstruments} Coordination stays open to you: ensemble_send, blackboard_post/read, and poll votes run without approval.`
+  }
+  if (presetId === 'workspace_write' || presetId === 'full_access') {
+    return `- Your permission role is ${presetId}: shell and file tools are available for in-workspace work${
+      presetId === 'full_access' ? ' and beyond the workspace per your grants' : ''
+    }; individual calls may still pause for user approval depending on this run's approval mode. Respect a denial — do not retry it through an alternate tool.`
+  }
+  return '- Your permission role: read/search tools run freely; file and shell mutations prompt for user approval. Respect a denial — do not retry it through an alternate tool.'
+}
+
 export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput): string {
   const orderedParticipants = getOrderedEnsembleParticipants(input.config, input.currentPrompt)
   const isOllamaParticipant = input.participant.provider === 'ollama'
@@ -1150,12 +1188,12 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
         ]
       : []),
     '- Use ensemble_fanout when multiple peers should work in parallel. Default read_only fan-out only targets read-only participants; locked_writers fan-out is feature-gated, requires the assigned Boss (or active Captain after Boss unavailability) as caller with explicit writeScopes for writer targets, and relies on workspace write locks. Set targetStage to all, scouts, workers, reviewers, or backgrounds for selective stage fan-out; targetStage=all excludes untyped Any roles. A unique `@BG` / `@Background` mention launches the background-stage seat asynchronously without consuming foreground rotation, running that lane under its own configured permissions (peer-delegated background lanes stay read-only). When no Boss is assigned, automatic writer fan-out is host-mediated by user-enabled write-scope claim + matrix-ack preflight rather than peer tool calls.',
-    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch.',
+    '- If you are the assigned Boss, or the Captain after Boss is unavailable, use ensemble_bossman_control for bounded orchestration state: assign_work, set_round_plan, request_status, declare_decision, set_review_gate, quarantine_participant, allocate_budget, create_poll, set_goal, update_goal, clear_goal, adjust_hops, ensemble_scheduled_wakeup, check_quota_resets, and summon_participant. Do not merely narrate that @Worker still has work and wait for the rotation; use ensemble_fanout for parallel work, summon_participant or ensemble_yield for direct continuation, and roster/seat changes for provider/model mismatch. When you have just created two or more independent assignments with non-overlapping file scopes, launch their owners in the same turn with ONE ensemble_fanout call (explicit targets; writeScopes per writer) instead of letting them run serially. Keep assignment statuses current (assign_work with the same assignmentId moves it to in_progress/done/cancelled): once assignments exist, continuation passes re-dispatch ONLY open-assignment owners, pending gate reviewers, and you — and when every assignment is closed, complete the goal instead of scheduling confirmation passes.',
     '- If you are the assigned Boss, or the Captain after Boss is unavailable, and Boss/Captain Auto Approvals are enabled, use list_ensemble_participants before ensemble_roster_edit to inspect participant ids, available providers/models, model context windows, and coarse provider quota bands; then you may swap a non-active participant seat provider/model/reasoning/permissions when quota walls, weak output, or agreed role changes warrant it. Use ensemble_brief_update for another participant\'s Brief / Goal changes; you cannot change your own brief.',
     '- If the user asks to set up, redesign, or save the whole Ensemble, the assigned Boss OR Captain may call list_ensemble_participants for the canonical roster-export contract and provider/model/quota choices, then call ensemble_roster_edit action=import_preset with exactly one task-specific TaskWraith roster export. This saves a unique preset and activates it only after the current round ends. The Boss assignment is preserved; a Captain may refine the roster but only the Boss may clear/reallocate Captain. This path can set Turn/Continuous, fan-out, hop cap, and CHARS.',
     '- Use blackboard_post only for durable shared facts, decisions, risks, do-not-repeat notes, or polls. To open a poll, pass 2–6 plain-text pollOptions with the question/context in value; vote or change your vote with ensemble_poll_response using the Blackboard entry id as pollId and an exact option as choice. Polls stay open for revoting until their entry is replaced or retired with blackboard_delete. Do not use the blackboard for conversational side messages. Read the board on demand with blackboard_read (bounded: pass keys/category/first/last — a bare call returns the newest entries, so small-context seats can read specific posts a peer points them at). Retire stale or superseded entries with blackboard_delete so the board stays current.',
     '- In Continuous mode the round auto-continues each pass until the goal/tasks are marked complete or the hop budget runs out — when the work is genuinely finished, mark the active goal/tasks complete (e.g. call goal_complete) instead of restating "done", and use @mention/ensemble_yield only to route a specific next actor.',
-    '- Respect your permission preset. Read-only roles should not attempt file or shell mutations.',
+    permissionSurfaceRule(input.participant, input.effectiveApprovalMode),
     '- Respond as yourself only. Do not impersonate other participants.',
     // 1.0.4-AF / Adv-1 — Plan/Ensemble precedence note. Ensemble
     // Mode is an orchestration mode; Plan-authoring mode is where plan

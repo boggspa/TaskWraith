@@ -3091,3 +3091,52 @@ describe('Kimi prompt-projection compaction evidence', () => {
     ).toEqual([])
   })
 })
+
+// Efficiency audit 2026-07 — the permission-surface rule must stay CONCRETE.
+// The old "respect your permission preset" line cost seats a full discovery
+// turn ("Bash denied → workspace shell → denied again"); these pin the
+// per-posture sentences so the rule cannot silently regress to vagueness.
+describe('permission-surface rule', () => {
+  it('read_only seats are told shell/file are denied and pointed at read tools', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[0], // claude, read_only
+      currentPrompt: 'Recon this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('Your permission role is read_only')
+    expect(prompt).toContain('file writes and shell commands are DENIED')
+    expect(prompt).toContain('offset/limit line windows')
+    expect(prompt).toContain('ensemble_send, blackboard_post/read, and poll votes run without approval')
+  })
+
+  it('workspace_write seats are told shell/file are available but approval may pause calls', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1], // codex, workspace_write
+      currentPrompt: 'Implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4
+    })
+    expect(prompt).toContain('Your permission role is workspace_write')
+    expect(prompt).toContain('shell and file tools are available')
+    expect(prompt).toContain('Respect a denial')
+    expect(prompt).not.toContain('DENIED this run')
+  })
+
+  it('a plan-clamped approval mode forces the denial sentence even for write presets', () => {
+    const prompt = buildEnsembleParticipantPrompt({
+      chat: chat(),
+      config: ensemble,
+      participant: ensemble.participants[1], // codex, workspace_write
+      currentPrompt: 'Implement this.',
+      roundId: 'round-1',
+      chatContextTurns: 4,
+      effectiveApprovalMode: 'plan'
+    })
+    expect(prompt).toContain('file writes and shell commands are DENIED')
+  })
+})
