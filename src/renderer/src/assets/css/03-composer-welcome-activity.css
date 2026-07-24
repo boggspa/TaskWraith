@@ -4918,32 +4918,16 @@
   }
 }
 
-/* 1.0.5-EW9 — When a task is active in the TaskWraith native shell, the
- * Queue + Steer + Stop buttons sit alongside the pickers row
- * (Plan/Read-only badge, model picker, etc.) and crowd it enough
- * that the Plan badge truncates. Bump the three-button cluster to
- * its own row ABOVE the pickers row when it's actively running
- * (detected by the presence of the Stop button inside
- * `.composer-inline-actions`). Buttons stay in the same logical
- * bottom-right spot of the composer; the pickers row regains its
- * full width.
- *
- * Scope: only `[data-composer-style="default"]` — themed shells
- * (codex/claude/gemini/kimi) have their own bottom-row layouts
- * that don't hit this truncation.
- */
-[data-composer-style="default"]
-  .composer-inline-pickers:has(.composer-inline-actions .stop-btn) {
-  flex-wrap: wrap;
-  row-gap: 4px;
+/* Native-shell active-round stability. Run swaps to Stop in-place, so the
+ * context meter, voice controls, and send/stop button must remain on the same
+ * footer baseline in idle and running states. The left picker strip already
+ * owns horizontal overflow; never key footer geometry off `.stop-btn`. */
+[data-composer-style="default"] .composer-inline-pickers {
+  flex-wrap: nowrap;
 }
-[data-composer-style="default"]
-  .composer-inline-pickers:has(.composer-inline-actions .stop-btn)
-  .composer-inline-actions {
-  width: 100%;
-  order: -1;
-  justify-content: flex-end;
-  margin: 0;
+[data-composer-style="default"] .composer-inline-actions {
+  width: auto;
+  order: 0;
 }
 
 .composer-telemetry-row {
