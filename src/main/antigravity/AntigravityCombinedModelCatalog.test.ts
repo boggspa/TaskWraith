@@ -5,6 +5,7 @@ import {
   isAuthenticatedAgyRateLimitConnection
 } from './AntigravityCombinedModelCatalog'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
+import { antigravityGeminiApiStaticModels } from './AntigravityGeminiApiStaticModels'
 
 const optedIn = {
   antigravityEnabled: true,
@@ -63,15 +64,19 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
   })
 
   it('keeps either admitted lane when the other rejects or times out', async () => {
-    await expect(
-      discoverAuthenticatedAntigravityCombinedModels(optedIn, {
-        discoverAgy: async () => [{ id: 'agy-only', label: 'AGY Only' }],
-        discoverGeminiApi: async () => {
-          throw new Error('private detail must not escape')
-        },
-        getSecretStore: () => store
-      })
-    ).resolves.toEqual([{ id: 'agy-only', label: 'AGY Only' }])
+    // The API lane failing outright still yields the configured key's static
+    // rows — an unverified catalogue must not delete the provider — and the
+    // agy lane is untouched.
+    const rejected = await discoverAuthenticatedAntigravityCombinedModels(optedIn, {
+      discoverAgy: async () => [{ id: 'agy-only', label: 'AGY Only' }],
+      discoverGeminiApi: async () => {
+        throw new Error('private detail must not escape')
+      },
+      getSecretStore: () => store
+    })
+    expect(rejected[0]).toEqual({ id: 'agy-only', label: 'AGY Only' })
+    expect(rejected.slice(1)).toEqual(antigravityGeminiApiStaticModels())
+    expect(JSON.stringify(rejected)).not.toContain('private detail')
 
     await expect(
       discoverAuthenticatedAntigravityCombinedModels(optedIn, {
@@ -90,6 +95,88 @@ describe('discoverAuthenticatedAntigravityCombinedModels', () => {
       })
     ).resolves.toEqual([
       { id: 'gemini-api:gemini-fast', label: 'Gemini API · gemini-fast · separate billing' }
+    ])
+  })
+
+  it('offers the configured key its static rows when the live catalogue cannot be verified', async () => {
+    // Every one of these used to erase AntiGravity from the picker, roster and
+    // paired device with no message anywhere — a configured key must survive an
+    // unverifiable probe the way every other provider survives a failed auth check.
+    for (const status of [
+      'unauthorized',
+      'rateLimited',
+      'projectLimited',
+      'unavailable',
+      'invalidResponse',
+      'empty'
+    ] as const) {
+      await expect(
+        discoverAuthenticatedAntigravityCombinedModels(
+          {},
+          {
+            discoverGeminiApi: async () => ({ status, models: [] as const }),
+            getSecretStore: () => store
+          }
+        )
+      ).resolves.toEqual(antigravityGeminiApiStaticModels())
+    }
+  })
+
+  it('never lets static key-lane rows imply an authenticated agy connection', async () => {
+    // The agy quota probe SPAWNS the ban-risk CLI, so it keys off "is there a
+    // non-`gemini-api:` row". Static fallback rows must stay invisible to it.
+    const fallback = await discoverAuthenticatedAntigravityCombinedModels(
+      {},
+      {
+        discoverGeminiApi: async () => ({ status: 'unauthorized' as const, models: [] as const }),
+        getSecretStore: () => store
+      }
+    )
+    expect(fallback.length).toBeGreaterThan(0)
+    expect(hasAuthenticatedAgyCatalogRow(fallback)).toBe(false)
+    expect(
+      isAuthenticatedAgyRateLimitConnection(
+        { ready: true, configuredProviders: new Set(['antigravity']) },
+        fallback
+      )
+    ).toBe(false)
+  })
+
+  it('offers nothing when the lane has no key, no disclosure, or no SDK', async () => {
+    for (const status of [
+      'keyUnavailable',
+      'disclosureRequired',
+      'sdkUnavailable',
+      'cancelled'
+    ] as const) {
+      await expect(
+        discoverAuthenticatedAntigravityCombinedModels(
+          {},
+          {
+            discoverGeminiApi: async () => ({ status, models: [] as const }),
+            getSecretStore: () => store
+          }
+        )
+      ).resolves.toEqual([])
+    }
+  })
+
+  it('prefers the live catalogue over the static rows', async () => {
+    await expect(
+      discoverAuthenticatedAntigravityCombinedModels(
+        {},
+        {
+          discoverGeminiApi: async () => ({
+            status: 'ok' as const,
+            models: [
+              { id: 'gemini-api:gemini-live' as `gemini-api:${string}`, modelId: 'gemini-live' }
+            ]
+          }),
+          getSecretStore: () => store
+        }
+      )
+    ).resolves.toEqual([
+      { id: 'gemini-api:gemini-live', label: 'Gemini API · gemini-live · separate billing' }
     ])
   })
 

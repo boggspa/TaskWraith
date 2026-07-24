@@ -2,8 +2,14 @@ import type { AppSettings, ProviderId } from '../store/types'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import {
   discoverAuthenticatedAntigravityGeminiApiModels,
-  type AntigravityGeminiApiDiscoveredModel
+  type AntigravityGeminiApiDiscoveredModel,
+  type AntigravityGeminiApiDiscoveryResult,
+  type AntigravityGeminiApiDiscoveryStatus
 } from './AntigravityGeminiApiModelDiscovery'
+import {
+  antigravityGeminiApiStaticModels,
+  formatAntigravityGeminiApiLabel
+} from './AntigravityGeminiApiStaticModels'
 import type { AntigravityGeminiApiSecretStore } from './AntigravityGeminiApiSecretStore'
 import {
   discoverAuthenticatedAgyModels,
@@ -30,7 +36,22 @@ export interface AntigravityCombinedModelCatalogDependencies {
 
 const DEFAULT_LANE_TIMEOUT_MS = 900
 const MAX_CATALOG_MODELS = 128
-const API_LABEL_PREFIX = 'Gemini API'
+
+/**
+ * Discovery outcomes that mean "a key is configured, we asked, and could not
+ * confirm the catalogue" — the case the static fallback covers. Statuses that
+ * mean there is nothing to offer at all (`keyUnavailable`, `disclosureRequired`,
+ * `sdkUnavailable`) or that the caller withdrew (`cancelled`) are excluded, so
+ * an unconfigured lane still contributes no rows.
+ */
+const UNVERIFIED_KEY_STATUSES: ReadonlySet<AntigravityGeminiApiDiscoveryStatus> = new Set([
+  'unauthorized',
+  'rateLimited',
+  'projectLimited',
+  'unavailable',
+  'invalidResponse',
+  'empty'
+])
 
 export function isAntigravityGeminiApiModelId(value: unknown): value is string {
   return typeof value === 'string' && /^gemini-api:gemini-[a-z0-9][a-z0-9._-]{0,127}$/.test(value)
@@ -119,16 +140,33 @@ export async function discoverAuthenticatedAntigravityCombinedModels(
     rows.push({ id: model.id, label: model.label })
     if (rows.length >= MAX_CATALOG_MODELS) return rows
   }
-  if (api.status === 'ok' && api.value.status === 'ok') {
-    for (const model of api.value.models) {
-      const row = projectGeminiApiModel(model)
-      if (!row || seen.has(row.id)) continue
-      seen.add(row.id)
-      rows.push(row)
-      if (rows.length >= MAX_CATALOG_MODELS) break
-    }
+  const apiRows =
+    api.status === 'ok' && api.value.status === 'ok'
+      ? api.value.models.map(projectGeminiApiModel)
+      : offersUnverifiedKeyFallback(apiAdmitted, api)
+        ? antigravityGeminiApiStaticModels()
+        : []
+  for (const row of apiRows) {
+    if (!row || seen.has(row.id)) continue
+    seen.add(row.id)
+    rows.push(row)
+    if (rows.length >= MAX_CATALOG_MODELS) break
   }
   return rows
+}
+
+/**
+ * A configured key whose catalogue we could not verify still offers the static
+ * rows, so one failed probe cannot make the provider vanish everywhere. A
+ * timed-out lane counts: the key was there and we simply never heard back.
+ */
+function offersUnverifiedKeyFallback(
+  apiAdmitted: boolean,
+  api: { status: 'ok'; value: AntigravityGeminiApiDiscoveryResult } | { status: 'failed' }
+): boolean {
+  if (!apiAdmitted) return false
+  if (api.status === 'failed') return true
+  return UNVERIFIED_KEY_STATUSES.has(api.value.status)
 }
 
 function projectGeminiApiModel(
@@ -144,7 +182,7 @@ function projectGeminiApiModel(
   }
   return {
     id: model.id,
-    label: `${API_LABEL_PREFIX} · ${model.modelId} · separate billing`
+    label: formatAntigravityGeminiApiLabel(model.modelId)
   }
 }
 
