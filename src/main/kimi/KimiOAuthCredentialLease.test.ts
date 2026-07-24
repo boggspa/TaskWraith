@@ -452,6 +452,10 @@ describe('KimiOAuthCredentialAuthority', () => {
     )
   })
 
+  // 20s budget: this real-fs crash-recovery flow (fixture home trees + many
+  // small file ops, no timers to fake) blew the 5s default on a Windows CI
+  // runner under 3-way job contention (2026-07-24 run 30081752978); it passes
+  // in well under 1s uncontended.
   it('recovers a same-seat crash before prepareKimiIsolatedHome scrubs or reseeds it', async () => {
     const f = await fixture()
     await privateFile(
@@ -522,5 +526,5 @@ describe('KimiOAuthCredentialAuthority', () => {
     )
     expect(await fs.readFile(join(f.homeA, 'credentials', 'kimi-code.json'), 'utf8')).toBe(rotated)
     await restarted.cleanup()
-  })
+  }, 20_000)
 })

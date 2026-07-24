@@ -513,6 +513,9 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
     ).toThrow(/does not belong to this workspace and chat/i)
   })
 
+  // 20s budget: synchronous but long (many coordinator transitions + deep
+  // matchers), starved past the 5s default on a Windows CI runner under 3-way
+  // job contention (2026-07-24 run 30083371364); sub-second uncontended.
   it('holds appended successors until their real predecessor succeeds', () => {
     const h = harness()
     const first = h.coordinator.appendStackStep(h.input())
@@ -563,7 +566,7 @@ describe('ExecutionGraphCoordinator linear Stack scheduling', () => {
       terminalReceipt(h, secondRunId, 'completed')
     )
     expect(h.coordinator.getExecution(first.executionId)?.state).toBe('succeeded')
-  })
+  }, 20_000)
 
   it('attention-gates terminal evidence until the exact structured result is committed', () => {
     const h = harness()
