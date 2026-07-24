@@ -106,20 +106,48 @@ not the monoline glyph set.
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-cursor-on-light.png" alt="Cursor logo" width="34" />
     </td>
-    <td valign="middle"><strong>Cursor</strong><br /><sub>Mustard provider hue · Path-B managed runs (native tools under OS sandbox)</sub></td>
+    <td valign="middle"><strong>Cursor</strong><br /><sub>Mustard provider hue · managed runs with native and TaskWraith tools</sub></td>
   </tr>
 </table>
 
-Managed Cursor is live again under Path-B: TaskWraith starts a contained
-`cursor-agent` with hard-pinned `--sandbox enabled` and seat-routed read-only
-vs write argv. Models below are selectable for new runs. Path-B uses native
-Cursor tools under the OS sandbox and does not inject TaskWraith host MCP tools.
+Managed Cursor is selectable for new runs and supports both Cursor's native
+tools and TaskWraith's governed tool gateway. The selected permission posture
+and workspace Tool Grants apply to TaskWraith-mediated calls; see
+[Trust & Safety](TRUST_AND_SAFETY.md) for provider-native boundaries.
 
 | Model                                                   | Reasoning           | Fast     | Notes                                                 |
 | ------------------------------------------------------- | ------------------- | -------- | ----------------------------------------------------- |
 | **Composer 2.5 Fast** `composer-2.5-fast` **(Default)** | —                   | Included | Fast route is encoded in the selected model row.      |
 | **Composer 2.5** `composer-2.5`                         | —                   | Pair     | Select this normal row or its Fast counterpart above. |
 | **Cursor Grok 4.5** `grok-4.5`                          | Low · Medium · High | Toggle   | First-party Cursor model pool with 500K context.      |
+
+<table>
+  <tr>
+    <td width="10" bgcolor="#308713"></td>
+    <td width="54" align="center" valign="middle">
+      <img src="design-assets/provider-logos/png/provider-logo-antigravity.png" alt="AntiGravity logo" width="34" />
+    </td>
+    <td valign="middle"><strong>AntiGravity / Google</strong><br /><sub>Green provider hue · opt-in, separately billed Gemini API-key lane</sub></td>
+  </tr>
+</table>
+
+AntiGravity's ordinary bring-your-own-key lane curates the authenticated Gemini
+API `models.list` response, so the live picker—not a frozen documentation
+table—is authoritative. The current GA highlights are:
+
+| Model                                                               | Reasoning | Fast | Notes                                                       |
+| ------------------------------------------------------------------- | --------- | ---- | ----------------------------------------------------------- |
+| **Gemini 3.6 Flash** `gemini-api:gemini-3.6-flash`                  | —         | —    | Latest balanced model for agentic and multimodal work.      |
+| **Gemini 3.5 Flash** `gemini-api:gemini-3.5-flash`                  | —         | —    | Sustained frontier performance for agentic and coding work. |
+| **Gemini 3.5 Flash-Lite** `gemini-api:gemini-3.5-flash-lite`        | —         | —    | Lowest-cost 3.5 model for high-throughput execution.        |
+
+When live discovery cannot be verified, TaskWraith can retain bounded fallback
+rows from the 3.1 and 2.5 families so the configured provider does not vanish;
+dispatch still reports an ordinary API error if a stale row is no longer
+accepted. The separately consented `agy` CLI lane is intentionally absent from
+this fixed table and appears only after its own authenticated discovery. See
+Google's [Gemini API model catalogue](https://ai.google.dev/gemini-api/docs/models)
+for the upstream lifecycle.
 
 <table>
   <tr>
@@ -153,7 +181,7 @@ capabilities remain model-specific.
 | Nemotron 3 Nano Omni (33B) | `nemotron3:33b`      | 131K; vision, tools, thinking.                  |
 | Custom model ID            | `custom`             | Enter a compatible locally installed model tag. |
 
-## Historical provider
+## Historical standalone provider
 
 <table>
   <tr>
@@ -161,13 +189,15 @@ capabilities remain model-specific.
     <td width="54" align="center" valign="middle">
       <img src="design-assets/provider-logos/png/provider-logo-gemini.png" alt="Gemini logo" width="34" />
     </td>
-    <td valign="middle"><strong>Gemini / Google</strong><br /><sub>Blue provider hue · historical chats remain readable; new runs are retired</sub></td>
+    <td valign="middle"><strong>Gemini / Google (legacy provider id)</strong><br /><sub>Blue provider hue · historical chats remain readable; new runs are retired</sub></td>
   </tr>
 </table>
 
-Historical records can contain **Auto** (`auto`), **Pro** (`pro`), **Flash**
-(`flash`), and **Flash Lite** (`flash-lite`, the previous default). They are
-shown for history and usage continuity only, not as new-run choices.
+Historical records under the older standalone `gemini` provider id can contain
+**Auto** (`auto`), **Pro** (`pro`), **Flash** (`flash`), and **Flash Lite**
+(`flash-lite`, the previous default). They are shown for history and usage
+continuity only, not as new-run choices; the live AntiGravity integration above
+is a separate provider path.
 
 ## Keeping this page current
 

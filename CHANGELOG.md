@@ -6,6 +6,84 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## Unreleased — source-ahead
+
+This entry tracks the checkout currently ahead of the latest tagged release. It
+describes the source tree only; it does not assign a release version or imply
+that artifacts have been built or published.
+
+Snapshot at preliminary launch-doc pass (2026-07-24): HEAD `fed3424cd`, **56
+commits** after `v1.8.8` (`65213b233`). Package remains **1.8.8**; iOS remains
+**0.1.0 (83)**. Target candidate name for the next ship is **1.8.9** until a
+different version is chosen at bump time. Re-snapshot immediately before any
+version bump.
+
+### Added
+- **Claude Opus 5 is selectable across desktop and iOS.** The single
+  `claude-opus-5` row carries its default 1M context, the full reasoning ladder
+  through Ultracode, optional Fast mode, rate metadata, and matching picker,
+  preview, catalogue, and New Additions coverage.
+- **Pull requests can be watched per chat.** The GitHub composer popover gains
+  an explicit **Watch this PR** opt-in. Main-owned polling revalidates the PR
+  number and current head before posting a status change, deduplicates repeated
+  CI states, and surfaces GitHub CLI authentication or missing-PR failures
+  instead of silently dropping them.
+- **Selection-required runs can allocate an isolated worktree before
+  dispatch.** Per-thread bindings are created and persisted asynchronously,
+  reused on later turns, returned as the effective workspace, and followed by
+  Diff Studio so review reflects the tree the provider actually edited rather
+  than the base checkout.
+- **Blackboard entries can carry rich polls.** Chats gain validated poll
+  creation and voting across host, renderer, and MCP surfaces, with a larger
+  board quota for longer-running collaborative work.
+- **AntiGravity is a first-class Ensemble participant.** The Gemini API-key
+  lane now has lane-aware reachability, isolated seat prompting, serial and
+  fan-out routing, compaction, usage telemetry, grants, and the ordinary
+  participant affordances instead of being silently skipped before dispatch.
+
+### Changed
+- **Ensemble rounds spend fewer turns discovering how to collaborate.** Every
+  seat receives a concrete statement of what its selected posture permits;
+  Boss guidance favors one explicit-target fan-out for independent assignments,
+  keeps assignment status current, and closes completed goals without
+  confirmation laps. Audited chat-local `ensemble_send` participation no longer
+  presents a generic mutation approval. The dedicated Work Session mode is
+  removed in favor of Turn/Continuous rounds, stage roles, and explicit fan-out.
+- **iOS uses the combined provider/model picker throughout Ensemble and side
+  chat creation.** Roster editing, both add-participant paths, and new side
+  chats now share the same provider sections, reasoning ladder, Fast controls,
+  logos, and compact roster density as the composer.
+- **Settled transcript activity folds rather than jumping.** Desktop and iOS
+  animate stable super-group and one-line-summary transitions, keep hidden
+  member rows out of layout, preserve auto-follow at participant boundaries,
+  and count real messages in the jump-to-latest pill.
+- **Launch-model signposting is current.** The New Additions card now leads
+  with Opus 5 plus the exact Gemini 3.6 Flash, 3.5 Flash, and 3.5 Flash-Lite
+  rows; Electron and iOS share the same payload. AntiGravity ensemble chips
+  use their green provider accent, and ChatGPT shell is available from quick
+  settings as well as the full preview surfaces.
+- **Tool Grants are manageable for every brokered live provider.** Cursor and
+  AntiGravity now expose the same workspace-grant controls as their actual
+  broker routes, closing the earlier gap where grants could be honored or
+  minted but not consistently inspected.
+
+### Fixed
+- **Agent approval requests float above the composer.** The full approval card
+  is no longer clipped inside the shell or inserted between textarea and footer
+  controls; it overlays the composer with bounded preview scrolling, responsive
+  width, and reduced-motion support.
+- **ChatGPT shell drops the active-run aura rectangle.** The shell keeps its
+  native capsule chrome without the unrelated outer running-state frame.
+- **Usage history no longer reintroduces launch stalls.** External activity
+  records are time-bucketed before aggregation, and intermediate APNs task
+  notifications are culled so paired clients receive the meaningful state
+  transitions.
+- **Main-owned chat state survives stale renderer saves.** Worktree bindings
+  and other authoritative fields are preserved instead of being overwritten by
+  an older renderer snapshot.
+- **Codex runtime state is seat-local.** TaskWraith isolates the Codex runtime
+  home so its own session state does not collide with unrelated host state.
+
 ## 1.8.8 - 2026-07-24
 
 ### Added

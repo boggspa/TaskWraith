@@ -35,8 +35,8 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
 of living in separate tabs. A thread can include up to twenty named participants
-across Codex, Claude, Kimi, Grok, and local Ollama, each with its own
-model, role, order, and permission posture.
+across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, and local Ollama, each
+with its own model, role, order, and permission posture.
 
 Kimi seats additionally require runtime admission: structural checks (stable
 binary identity, bounded probes, the ACP-only posture) that are always
@@ -44,12 +44,11 @@ enabled, packaged builds included. While the reviewed qualification roster is
 empty, admitted runs are labelled `unattested-development`; that labelling
 cannot qualify a release.
 
-Managed **Cursor** is live again under **Path-B**: TaskWraith starts a
-contained `cursor-agent` with hard-pinned `--sandbox enabled`, seat-routed
-read-only vs write argv, and the user's real `~/.cursor` login. Native Cursor
-tools run under the OS sandbox; TaskWraith does not inject host MCP tools or
-per-tool grant UX. Containment is an honest partial backstop (not a full
-egress or arbitrary-workspace seal).
+Managed **Cursor** is live: sign in with `cursor-agent`, then use it in solo
+chats, Ensembles, and delegated work. Cursor can use its native tools alongside
+TaskWraith tools, with the selected permission posture and workspace Tool Grants
+applying wherever TaskWraith mediates. The provider-native boundary is explained
+in [Trust & Safety](TRUST_AND_SAFETY.md).
 
 This is not just provider switching. Ensemble participants see the same
 transcript, can build on each other's work, hand off deliberately, run
@@ -150,21 +149,26 @@ baseline.
 
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
-- **Provider Runs**: Integrated run surfaces for Codex, Claude, Kimi, Cursor,
-  Grok, and **local Ollama** (curated Qwen, Gemma, GPT-OSS, and Poolside
-  presets).
+- **Provider Runs**: Integrated run surfaces for Codex, Claude, AntiGravity
+  (bring-your-own Gemini API key), Kimi, Cursor, Grok, and **local Ollama**
+  (curated Qwen, Gemma, GPT-OSS, and Poolside presets).
   Kimi's integrated surface is admission-dependent: the current source-ahead
   packaged roster contains no commissioned runtime tuple, so credentials or a
   visible picker row alone cannot make it runnable.
-  Managed Cursor uses Path-B contained `--sandbox` argv (native tools under the
-  OS sandbox; no TaskWraith host MCP injection). Historical Gemini remains
-  readable but retired for new runs.
+  Managed Cursor signs in normally and works in solo chats, Ensembles, and
+  delegated runs with native tools plus TaskWraith tools. The historical
+  standalone Gemini provider remains readable but retired for new runs; it is
+  distinct from the live, opt-in AntiGravity integration.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.
 - **Multiview and Workflows**: Split the workbench into live panes, and run
   Workflows as first-class chat/run objects with scheduled recovery, dedicated
   sidebar space, and optional ensemble execution where enabled.
+- **Thread-isolated Worktrees**: Selection-required runtime profiles allocate
+  and persist a per-thread worktree before dispatch, then route the run and
+  Diff Studio review through that effective workspace instead of the base
+  checkout.
 - **Chat / Code / Work navigation**: Use **Chat** for general conversations,
   **Code** for workspace-scoped threads, workflows, boards, and local servers,
   and **Work** for Projects. Projects build cross-workspace folder trees with
@@ -177,8 +181,9 @@ baseline.
   exposes it; qualified tool-capable providers get a TaskWraith-managed fallback
   with explicit complete/blocked lifecycle tools.
 - **Composer Shells**: Provider-aware and task-oriented composer variants give
-  each working mode its own affordances without changing the safety model. See
-  [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md) for the Electron shell gallery.
+  each working mode its own affordances—including the ChatGPT shell—without
+  changing the safety model. See [COMPOSER_VARIANTS.md](COMPOSER_VARIANTS.md)
+  for the Electron shell gallery.
 - **Plan Workflow**: Plan runs keep the provider in a read-only execution
   posture while allowing a product-managed markdown plan file to be written under
   validated workspace paths. Read-only/Recon runs do not get that artifact-write
@@ -186,9 +191,9 @@ baseline.
 - **Ensemble Threads**: Multi-agent shared work sessions with named provider
   participants, role/order control, turn-bound or continuous orchestration,
   optional parallel fan-out, cross-provider handoffs, a shared Blackboard for
-  cross-agent notes (composer quick-access popover plus full add/delete in the
-  Notes pane), and TaskWraith MCP tools shared among qualified tool-capable seats
-  under one auditable workspace policy.
+  cross-agent notes and rich polls (composer quick-access popover plus full
+  management in the Notes pane), and TaskWraith MCP tools shared among qualified
+  tool-capable seats under one auditable workspace policy.
 - **Agent Pool**: Save reusable agents in Settings, each with a linked
   provider/model/reasoning configuration and running contribution stats (runs,
   threads, tokens, tool calls, work time), then drag them into ensemble rosters.
@@ -202,9 +207,9 @@ baseline.
 - **Custom MCP Servers**: User-defined MCP servers can be managed, validated,
   imported, exported, and attached to compatible provider runtimes with
   provider-specific JSON/TOML snippets and readiness checks. Cursor JSON
-  import/export remains useful for configuration interchange; Path-B managed
-  Cursor runs use native tools under the OS sandbox rather than TaskWraith-injected
-  host MCP.
+  import/export remains useful for configuration interchange. Managed Cursor
+  can use both its native tools and TaskWraith's governed tools; provider- or
+  account-owned MCP remains a separate trust boundary.
 - **Activity Review**: Live activity viewport for in-flight tools and thinking,
   compact timelines, durations, and raw event inspection.
 - **AI Close-Out Summaries**: Run and ensemble-round close-out cards show
@@ -216,8 +221,10 @@ baseline.
   current workspace changes, including previews for newly created text files.
 - **GitHub PR & CI Awareness**: When the workspace has a GitHub remote, an icon
   row above the composer shows live PR lifecycle and CI status; hovering opens a
-  popover with fuller detail (including failing-check logs), and a "Notify
-  thread" action can post the status into the Blackboard or transcript.
+  popover with fuller detail (including failing-check logs). A per-chat
+  **Watch this PR** opt-in can post deduplicated status transitions after
+  revalidating the current PR head, while **Notify thread** remains available
+  for an immediate Blackboard or transcript post.
 - **Local History and Usage**: Local-only chat, run, usage, approval-ledger, and
   audit state for repeat work without a hosted backend.
 - **iOS Companion**: TestFlight companion surfaces Demo Mode, Workflows,
