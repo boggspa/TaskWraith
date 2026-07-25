@@ -77,6 +77,22 @@ function stallingFetch(): typeof globalThis.fetch {
   })) as unknown as typeof globalThis.fetch
 }
 
+/** A body stream that resolves forever with zero-length chunks. */
+function emptyChunkFetch(): typeof globalThis.fetch {
+  return (async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: {
+      getReader: () => ({
+        read: async () => ({ done: false, value: new Uint8Array(0) }),
+        cancel: async () => {}
+      })
+    },
+    json: async () => ({})
+  })) as unknown as typeof globalThis.fetch
+}
+
 /** A response body stream that emits more bytes than the ceiling allows. */
 function oversizedFetch(): typeof globalThis.fetch {
   let emitted = 0
@@ -453,5 +469,48 @@ describe('response reading', () => {
     })
     const result = await service.listMessages({})
     expect(result).toMatchObject({ ok: false, error: 'graph-error' })
+  })
+})
+
+describe('pathological response bodies', () => {
+  it('terminates on a stream of zero-length chunks', async () => {
+    // The byte ceiling alone cannot stop this: `total` never advances and the
+    // loop never yields, so the abort timer would never get to run.
+    const { store } = stubStore(CREDENTIALS)
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl: emptyChunkFetch(),
+      nowMs: () => NOW,
+      sleep: async () => {}
+    })
+    const result = await service.listMessages({})
+    expect(result).toMatchObject({ ok: false, error: 'graph-error' })
+  })
+
+  it('warns that a POST may have succeeded when its response will not read', async () => {
+    // Graph already returned 2xx — the draft can exist. Reporting a flat
+    // failure invites a retry that creates a second one.
+    const { store } = stubStore({ ...CREDENTIALS, scopeMode: 'write' })
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl: oversizedFetch(),
+      nowMs: () => NOW,
+      sleep: async () => {}
+    })
+    const result = await service.createDraft({ subject: 'S', body: 'B', to: [] })
+    expect(result).toMatchObject({ ok: false, error: 'graph-error' })
+    expect((result as { message: string }).message).toContain('MAY have been created')
+  })
+
+  it('keeps a failed GET body plainly a failure', async () => {
+    const { store } = stubStore(CREDENTIALS)
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl: oversizedFetch(),
+      nowMs: () => NOW,
+      sleep: async () => {}
+    })
+    const result = await service.listMessages({})
+    expect((result as { message: string }).message).not.toContain('MAY have been created')
   })
 })

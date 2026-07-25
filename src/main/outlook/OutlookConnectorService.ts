@@ -7,8 +7,9 @@
  * path by accident.
  *
  * Graph throttles aggressively, so 429/503 with Retry-After is honored with
- * a bounded number of retries; 401 triggers exactly one refresh attempt
- * before the connection is reported as needing re-authentication.
+ * a bounded number of retries. Refresh is PRE-EMPTIVE only (see accessToken):
+ * a 401 coming back from Graph is reported as needing re-authentication and
+ * is never retried, so a revoked grant cannot spin.
  *
  * Everything returned here is UNTRUSTED REMOTE CONTENT. Mapping happens in
  * the shared graphMappers module, which clamps and flattens; callers passing
@@ -41,6 +42,8 @@ const MAX_PAGE_SIZE = 50
  * be buffered into the main process whole.
  */
 const MAX_RESPONSE_BYTES = 8_000_000
+/** Companion bound to MAX_RESPONSE_BYTES; see readBoundedJson. */
+const MAX_RESPONSE_CHUNKS = 100_000
 
 export type OutlookConnectorError =
   | 'not-connected'
@@ -89,10 +92,14 @@ async function readBoundedJson(response: Response): Promise<unknown> {
   const reader = stream.getReader()
   const chunks: Uint8Array[] = []
   let total = 0
-  for (;;) {
+  // Chunks are bounded as well as bytes: a stream that resolves immediately
+  // with zero-length chunks never advances `total`, never yields to the
+  // macrotask queue, and so never lets the abort timer fire — the byte
+  // ceiling alone does not stop it.
+  for (let reads = 0; reads < MAX_RESPONSE_CHUNKS; reads += 1) {
     const { done, value } = await reader.read()
-    if (done) break
-    if (!value) continue
+    if (done) return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+    if (!value || value.byteLength === 0) continue
     total += value.byteLength
     if (total > MAX_RESPONSE_BYTES) {
       await reader.cancel()
@@ -100,7 +107,8 @@ async function readBoundedJson(response: Response): Promise<unknown> {
     }
     chunks.push(value)
   }
-  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+  await reader.cancel()
+  throw new Error('Microsoft Graph response did not terminate.')
 }
 
 type GraphAttempt =
@@ -214,9 +222,18 @@ export class OutlookConnectorService {
       try {
         return { kind: 'ok', body: await readBoundedJson(response) }
       } catch {
+        // The status line already said the write succeeded, so a body that
+        // will not read is ambiguous, not a clean failure — say so rather
+        // than let the agent believe nothing happened and try again.
+        const created = init.method === 'POST'
         return {
           kind: 'failure',
-          failure: failure('graph-error', 'Microsoft Graph returned an unreadable response.')
+          failure: failure(
+            'graph-error',
+            created
+              ? 'Microsoft Graph accepted the request but its response could not be read. The item MAY have been created — check Outlook before retrying.'
+              : 'Microsoft Graph returned an unreadable response.'
+          )
         }
       }
     } finally {
