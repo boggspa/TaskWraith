@@ -678,6 +678,16 @@ export type EnsembleFanoutPolicy =
   | 'locked_writers_user_preflight'
 
 /**
+ * Per-chat isolation preference for write-intent fan-out lanes. `'worktree'`
+ * gives every write-capable lane its own linked git worktree (branched from
+ * the workspace HEAD) so parallel writers cannot stomp each other; read-only
+ * lanes always keep the shared checkout, since they need to see current state
+ * and cannot mutate it. Undefined reads as `'off'` so existing chats keep
+ * their shared-checkout behavior.
+ */
+export type EnsembleFanoutIsolation = 'off' | 'worktree'
+
+/**
  * Staged fan-out (docs/ensemble-posture-fanout-preamble-design.md, spike 4) —
  * optional per-participant dispatch stage:
  *
@@ -711,6 +721,7 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-gateway-v1'
   | 'taskwraith-gateway-v2'
   | 'taskwraith-gateway-v3'
+  | 'taskwraith-gateway-v4'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born
@@ -1531,6 +1542,13 @@ export interface EnsembleConfig {
    * explicit `ensemble_fanout` scopes or host-owned no-Boss preflight.
    */
   fanoutPolicy?: EnsembleFanoutPolicy
+  /**
+   * Per-chat worktree isolation for write-intent fan-out lanes. Read live at
+   * dispatch time (not captured into the round) — it is a mechanical
+   * preference, not an authority decision, so a mid-round toggle simply
+   * applies from the next fan-out pass onward.
+   */
+  fanoutIsolation?: EnsembleFanoutIsolation
   /** 1.0.4-AR13 — see `EnsembleRoundMode` for semantics. Undefined
    * reads as `'roundtable'` so all pre-AR13 chats keep their
    * existing structure. */
@@ -3377,6 +3395,45 @@ export interface StoredOllamaSessionMemory {
   }>
 }
 
+/**
+ * One fan-out lane's isolated-worktree candidate, durable on the chat until
+ * the user (or Boss) promotes or discards it. Written ONLY by main-owned
+ * async patchers (FanoutCandidatePersistence) — never by saveChat's
+ * whole-record writer, which strips and re-merges this field exactly like
+ * `threadWorktreeBinding`.
+ *
+ * Lifecycle: `active` (lane running) → `settled` (lane terminal; diff stat
+ * captured best-effort) → `promoted` (patch applied onto the base workspace's
+ * working tree; worktree + branch removed) or `discarded` (worktree + branch
+ * removed, changes dropped).
+ */
+export interface FanoutWorktreeCandidate {
+  schemaVersion: 1
+  /** Stable id — equals the lane id that produced this candidate. */
+  candidateId: string
+  roundId: string
+  laneId: string
+  runId: string
+  participantId: string
+  /** Seat display label snapshot (role/name at dispatch time). */
+  participantLabel?: string
+  provider: ProviderId
+  model?: string
+  baseWorkspacePath: string
+  worktreePath: string
+  branch: string
+  createdAt: string
+  status: 'active' | 'settled' | 'promoted' | 'discarded'
+  /** Terminal outcome of the producing run, once known. */
+  runStatus?: 'completed' | 'failed' | 'cancelled'
+  settledAt?: string
+  resolvedAt?: string
+  /** Best-effort change summary captured at settle time. */
+  diffStat?: { files: number; insertions: number; deletions: number }
+  /** Last promote/discard failure, surfaced in the adjudication UI. */
+  reason?: string
+}
+
 export interface ChatRecord {
   appChatId: string
   scope?: ChatScope
@@ -3387,6 +3444,12 @@ export interface ChatRecord {
   workspacePath?: string
   /** Main-owned durable identity for a thread's isolated Git worktree. */
   threadWorktreeBinding?: ThreadWorktreeBinding
+  /**
+   * Main-owned fan-out worktree candidates awaiting adjudication (compare N
+   * isolated lanes, promote the winner). Persisted via async atomic patches
+   * only; survives renderer whole-record saves via saveChat strip-and-remerge.
+   */
+  fanoutWorktreeCandidates?: FanoutWorktreeCandidate[]
   /**
    * Slice-6 "watch PR" opt-in — the per-chat toggle IS the entire authorization
    * for the host poller (which has no permission posture). Present ⇒ this chat's

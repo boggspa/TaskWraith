@@ -38,6 +38,7 @@ import {
   ChatRecord,
   ChatRun,
   ChatWorkflowMode,
+  FanoutWorktreeCandidate,
   ChatListItem,
   ChatListRunSummary,
   PooledAgentStatsSummary,
@@ -260,6 +261,11 @@ import {
   persistThreadWorktreeBindingPatch,
   readThreadWorktreeBinding
 } from './ThreadWorktreeBindingPersistence'
+import {
+  patchFanoutWorktreeCandidate as patchFanoutWorktreeCandidateRecord,
+  readFanoutWorktreeCandidates,
+  upsertFanoutWorktreeCandidatePatch
+} from './FanoutCandidatePersistence'
 import { persistWatchedPrPatch } from './WatchedPrPersistence'
 import { persistChatGitWorkflowPatch } from './ChatGitWorkflowPersistence'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
@@ -4957,6 +4963,7 @@ export class AppStore {
    * saveChat callers remain independent, so this is a narrow race guard rather
    * than a new whole-record persistence protocol. */
   private static threadWorktreeBindingWriteTails = new Map<string, Promise<ChatRecord>>()
+  private static fanoutCandidateWriteTails = new Map<string, Promise<ChatRecord | null>>()
 
   /** Serializes only the async watched-PR patch for one chat. Ordinary legacy
    * saveChat callers remain independent, so this is a narrow race guard rather
@@ -5183,6 +5190,93 @@ export class AppStore {
       () => {
         if (this.threadWorktreeBindingWriteTails.get(chatId) === operation) {
           this.threadWorktreeBindingWriteTails.delete(chatId)
+        }
+      }
+    )
+    return operation
+  }
+
+  static async getFanoutWorktreeCandidates(chatId: string): Promise<FanoutWorktreeCandidate[]> {
+    return readFanoutWorktreeCandidates({ chatsDir, chatId })
+  }
+
+  /**
+   * Record or replace one fan-out worktree candidate via the async atomic
+   * patcher — the ONLY writer for this main-owned field (saveChat strips and
+   * re-merges it). Per-chat tails keep upserts and patches strictly ordered.
+   */
+  static upsertFanoutWorktreeCandidate(
+    chatId: string,
+    candidate: FanoutWorktreeCandidate
+  ): Promise<ChatRecord> {
+    return this.enqueueFanoutCandidateWrite(chatId, () =>
+      upsertFanoutWorktreeCandidatePatch({
+        chatsDir,
+        chatId,
+        candidate,
+        admitMutation: async (chat) => {
+          await this.assertHistoryMutationAllowedAsync({
+            operation: 'Fan-out candidate persistence',
+            chatIds: [chat.appChatId],
+            workspaceIds: [chat.workspaceId]
+          })
+        }
+      })
+    ) as Promise<ChatRecord>
+  }
+
+  /** Merge a partial update into one candidate; resolves null when absent. */
+  static patchFanoutWorktreeCandidate(
+    chatId: string,
+    candidateId: string,
+    patch: Partial<Omit<FanoutWorktreeCandidate, 'schemaVersion' | 'candidateId'>>
+  ): Promise<ChatRecord | null> {
+    return this.enqueueFanoutCandidateWrite(chatId, () =>
+      patchFanoutWorktreeCandidateRecord({
+        chatsDir,
+        chatId,
+        candidateId,
+        patch,
+        admitMutation: async (chat) => {
+          await this.assertHistoryMutationAllowedAsync({
+            operation: 'Fan-out candidate persistence',
+            chatIds: [chat.appChatId],
+            workspaceIds: [chat.workspaceId]
+          })
+        }
+      })
+    )
+  }
+
+  private static enqueueFanoutCandidateWrite(
+    chatId: string,
+    write: () => Promise<ChatRecord | null>
+  ): Promise<ChatRecord | null> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('A fan-out candidate can only be recorded on a saved chat.'))
+    }
+    const previous: Promise<ChatRecord | null> =
+      this.fanoutCandidateWriteTails.get(chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(async () => {
+        if (deletedChatIds.has(chatId)) {
+          throw new Error('This chat was deleted before its fan-out candidate could be recorded.')
+        }
+        const persisted = await write()
+        this.chatRecordCache.delete(chatId)
+        return persisted
+      })
+    this.fanoutCandidateWriteTails.set(chatId, operation)
+    void operation.then(
+      () => {
+        if (this.fanoutCandidateWriteTails.get(chatId) === operation) {
+          this.fanoutCandidateWriteTails.delete(chatId)
+        }
+      },
+      () => {
+        if (this.fanoutCandidateWriteTails.get(chatId) === operation) {
+          this.fanoutCandidateWriteTails.delete(chatId)
         }
       }
     )
@@ -5914,6 +6008,7 @@ export class AppStore {
       threadWorktreeBinding: _rendererThreadWorktreeBinding,
       watchedPr: _rendererWatchedPr,
       gitWorkflow: _rendererGitWorkflow,
+      fanoutWorktreeCandidates: _rendererFanoutWorktreeCandidates,
       ...rendererOwnedChat
     } = chat
     const chatWithMainOwnedFields: ChatRecord = {
@@ -5926,6 +6021,13 @@ export class AppStore {
         : {}),
       ...(previousChatForFeedback?.gitWorkflow
         ? { gitWorkflow: { ...previousChatForFeedback.gitWorkflow } }
+        : {}),
+      ...(previousChatForFeedback?.fanoutWorktreeCandidates?.length
+        ? {
+            fanoutWorktreeCandidates: previousChatForFeedback.fanoutWorktreeCandidates.map(
+              (candidate) => ({ ...candidate })
+            )
+          }
         : {})
     }
 
