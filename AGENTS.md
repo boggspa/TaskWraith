@@ -215,8 +215,13 @@ governed result-return path cross that boundary.
 ### Phase F1 invariants (still in force)
 
 - **Max depth = 1.** A sub-thread cannot itself spawn a sub-thread.
-  The UI affordance is hidden and the store rejects attempts. Future
-  revs will lift this with ladder semantics.
+  Enforced twice, independently: `AppStore.createSubThread` throws when the
+  parent is itself a sub-thread (`src/main/store/index.ts`), and the
+  `delegate_to_subthread` tool rejects the same case before it gets there
+  (`src/main/index.ts`). Note the UI affordance is **not** hidden — the
+  sidebar "Delegate to a sub-thread" menu item is offered on sub-threads
+  too, so a user who picks it gets the store's error rather than an absent
+  option. Future revs will lift the depth limit with ladder semantics.
 - **Workspace inheritance.** Sub-threads default to the parent's
   workspace. Users can override per-spawn (future UI), but the data
   model already supports it via the optional `workspaceId` /

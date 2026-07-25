@@ -82,7 +82,9 @@ async function countUnformatted() {
         2
       )}\n`
     )
-    console.log(`[format-ratchet] baseline written: ${count} unformatted of ${considered} considered`)
+    console.log(
+      `[format-ratchet] baseline written: ${count} unformatted of ${considered} considered`
+    )
     return
   }
 

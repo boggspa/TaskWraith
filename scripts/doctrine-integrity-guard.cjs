@@ -102,4 +102,6 @@ if (findings.length > 0) {
   process.exit(1)
 }
 
-console.log(`[doctrine-integrity-guard] ok — ${files.length} agent-read files, no invisible/bidi characters`)
+console.log(
+  `[doctrine-integrity-guard] ok — ${files.length} agent-read files, no invisible/bidi characters`
+)
