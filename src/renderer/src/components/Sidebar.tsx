@@ -5480,7 +5480,6 @@ export function Sidebar({
 
           {wrapHierarchySection(
             'git',
-            gitWorkflowGroups.length > 0 ? (
             <div className="sidebar-git-section">
               <div className="sidebar-section-header">
                 <button
@@ -5492,7 +5491,9 @@ export function Sidebar({
                 >
                   <ChevronSymbolIcon isExpanded={!isSectionCollapsed('git')} />
                   <h4 className="sidebar-section-title">Git</h4>
-                  <span className="sidebar-section-count">{visibleGitWorkflowChats.length}</span>
+                  {visibleGitWorkflowChats.length > 0 && (
+                    <span className="sidebar-section-count">{visibleGitWorkflowChats.length}</span>
+                  )}
                 </button>
               </div>
               {!isSectionCollapsed('git') && (
@@ -5532,11 +5533,22 @@ export function Sidebar({
                       {renderSidebarShowMore(`git:${group.group}`, group.chats.length)}
                     </div>
                   ))}
+                  {gitWorkflowGroups.length === 0 && !isSidebarSearchActive && (
+                    <div className="sidebar-empty-state">
+                      <strong>No git workflows yet</strong>
+                      <span>Threads land here when they push or open a PR.</span>
+                    </div>
+                  )}
+                  {gitWorkflowGroups.length === 0 && isSidebarSearchActive && (
+                    <div className="sidebar-empty-state">
+                      <strong>No matches</strong>
+                      <span>No git workflow threads match.</span>
+                    </div>
+                  )}
                 </div>
               )}
-            </div>
-            ) : null,
-            gitWorkflowGroups.length > 0
+            </div>,
+            true
           )}
 
           {wrapHierarchySection(

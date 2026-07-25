@@ -1966,14 +1966,24 @@ describe('git workflow markers', () => {
     expect(gitSection).not.toContain('Plain thread')
   })
 
-  it('renders no Git section when no chat carries a marker', () => {
+  it('keeps the Git header pill present with an empty state when nothing is tagged', () => {
     stubSidebarStorage({
       [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents', 'git')
     })
 
     const html = renderSidebar([makeChat({ appChatId: 'plain-thread', title: 'Plain thread' })])
 
-    expect(html).not.toContain('sidebar-git-section')
+    const gitSection = html.slice(
+      html.indexOf('sidebar-git-section'),
+      html.indexOf('sidebar-recents-section')
+    )
+    // The header pill is a permanent resident (same chrome as the others)…
+    expect(gitSection).toContain('sidebar-section-header-toggle')
+    expect(gitSection).toContain('>Git<')
+    // …with no zero badge, no state groups, and the expanded empty state.
+    expect(gitSection).not.toContain('sidebar-section-count')
+    expect(gitSection).not.toContain('sidebar-git-subheader')
+    expect(gitSection).toContain('No git workflows yet')
   })
 
   it('hiddenFromMainList drops a chat from Recents but keeps its Git entry', () => {
