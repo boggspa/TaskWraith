@@ -704,13 +704,18 @@ struct RosterParticipantEditorPopover: View {
             listWidth: compactWidth ? 208 : 252,
             bodyHeight: 420,
             bodyMaxHeight: 420,
-            // 0.85 of everything — chrome, layout and the panel's literal font
+            // Scale of everything — chrome, layout and the panel's literal font
             // sizes. The editor stacks the participant fields ABOVE the model
             // rows and keeps the reasoning sidecar, which at full size could not
             // fit the space left once the keyboard was up; the panel clamps its
-            // own height too (see `resolvedBodyHeight`), so the two together are
-            // what make the top row and the sidecar edges reachable again.
-            contentScale: 0.85,
+            // own height too (see `resolvedBodyHeight`).
+            //
+            // Phones get 0.70 rather than 0.85. A popover has to fit entirely on
+            // one side of its anchor, and a roster row sits mid-screen: at 0.85
+            // the panel is ~366pt against roughly 357pt of room below the row on
+            // a 6.3" phone, so the sidecar's Fast/Ask controls fell off the
+            // bottom edge. 0.70 brings it to ~300pt with margin to spare.
+            contentScale: compactWidth ? 0.70 : 0.85,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(
@@ -826,13 +831,18 @@ struct RosterAddParticipantPopover: View {
             listWidth: compactWidth ? 208 : 252,
             bodyHeight: 420,
             bodyMaxHeight: 420,
-            // 0.85 of everything — chrome, layout and the panel's literal font
+            // Scale of everything — chrome, layout and the panel's literal font
             // sizes. The editor stacks the participant fields ABOVE the model
             // rows and keeps the reasoning sidecar, which at full size could not
             // fit the space left once the keyboard was up; the panel clamps its
-            // own height too (see `resolvedBodyHeight`), so the two together are
-            // what make the top row and the sidecar edges reachable again.
-            contentScale: 0.85,
+            // own height too (see `resolvedBodyHeight`).
+            //
+            // Phones get 0.70 rather than 0.85. A popover has to fit entirely on
+            // one side of its anchor, and a roster row sits mid-screen: at 0.85
+            // the panel is ~366pt against roughly 357pt of room below the row on
+            // a 6.3" phone, so the sidecar's Fast/Ask controls fell off the
+            // bottom edge. 0.70 brings it to ~300pt with margin to spare.
+            contentScale: compactWidth ? 0.70 : 0.85,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(

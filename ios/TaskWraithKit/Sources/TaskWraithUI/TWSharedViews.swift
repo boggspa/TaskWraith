@@ -6234,6 +6234,14 @@ public struct EditableRosterStrip: View {
     /// matching order so an in-flight snapshot can't snap a reorder back.
     @State private var pendingOrderIds: [String]? = nil
     /// Chip whose compact editor popover is open (Electron chip-popover parity).
+    @Environment(\.horizontalSizeClass) private var editorSizeClass
+    /// Side-anchoring the participant editor only pays off where there is
+    /// lateral room. On a compact width the sheet/composer spans the screen,
+    /// a leading arrow pushes the panel off the trailing edge, and it comes
+    /// back CLIPPED ON BOTH SIDES — verified on iPhone, and worse than the
+    /// default. Regular width only; compact keeps the vertical placement.
+    private var editorArrowEdge: Edge { editorSizeClass == .regular ? .leading : .top }
+
     @State private var editingChipId: String? = nil
     @State private var addPopoverPresented = false
     /// Optimistic thread-wide Auto Approvals overlay (cleared on Mac echo).
@@ -6483,7 +6491,7 @@ public struct EditableRosterStrip: View {
         .popover(
             isPresented: chipEditorPresentedBinding(for: entry.id),
             attachmentAnchor: .rect(.bounds),
-            arrowEdge: .leading
+            arrowEdge: editorArrowEdge
         ) {
             RosterParticipantEditorPopover(
                 entry: draft.first { $0.id == entry.id } ?? entry,

@@ -25,6 +25,16 @@ public struct EnsembleRosterSheet: View {
     let workspaceId: String
 
     @Environment(\.dismiss) private var dismiss
+    @Environment(\.horizontalSizeClass) private var sizeClass
+
+    /// Side-anchoring the participant editor only pays off where there is
+    /// lateral room. On a compact width this sheet spans the screen, a leading
+    /// arrow shoves the panel off the trailing edge, and it comes back CLIPPED
+    /// ON BOTH SIDES — verified on iPhone, and materially worse than the
+    /// default. Regular width only; compact keeps the vertical placement, where
+    /// the 0.85 panel scale is what buys the fit.
+    private var editorArrowEdge: Edge { sizeClass == .regular ? .leading : .top }
+
     @State private var draft: [RemoteSessionModel.RosterDraftEntry] = []
     @State private var editingEntry: RemoteSessionModel.RosterDraftEntry? = nil
     @State private var addPopoverPresented = false
@@ -442,7 +452,7 @@ public struct EnsembleRosterSheet: View {
                     .popover(
                         isPresented: editorPresentedBinding(for: entry.id),
                         attachmentAnchor: .rect(.bounds),
-                        arrowEdge: .leading
+                        arrowEdge: editorArrowEdge
                     ) {
                         RosterParticipantEditorPopover(
                             entry: editingEntry ?? entry,
