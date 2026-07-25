@@ -124,6 +124,8 @@ private struct CachedComposerDiffPill: View {
     /// When true, renders an intrinsic chip for a shared above-composer pill row
     /// (tools pill on the right). Host owns padding/transition.
     var compactInline: Bool = true
+    /// Liquid Glass morph namespace shared with the sibling tools pill.
+    var glassNamespace: Namespace.ID? = nil
     let onTap: () -> Void
 
     private var snapshot: GitWorkspaceSnapshot? {
@@ -146,9 +148,37 @@ private struct CachedComposerDiffPill: View {
                 deletions: metrics.deletions,
                 commitsAhead: metrics.commitsAhead,
                 onTap: onTap,
-                compactInline: compactInline
+                compactInline: compactInline,
+                glassNamespace: glassNamespace
             )
         }
+    }
+}
+
+/// Hosts the floating above-composer chips in a `GlassEffectContainer` where
+/// the OS has one, so sibling Liquid Glass surfaces blend at the edges when
+/// they're close and separate as they move apart.
+///
+/// The availability branch is safe for view identity: the OS version is fixed
+/// for the process lifetime, so this `if` never flips at runtime and can't tear
+/// down and rebuild the chips (the failure mode called out on the composer
+/// shell placement a few hundred lines below).
+private struct ComposerPillGlassRow: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(iOS 26.0, macOS 26.0, *) {
+            // Spacing matches the row's own HStack spacing so the merge
+            // threshold lines up with where the chips actually sit.
+            GlassEffectContainer(spacing: 8) { content }
+        } else {
+            content
+        }
+    }
+}
+
+extension View {
+    /// Host floating composer chips in a shared Liquid Glass container.
+    fileprivate func composerPillGlassRow() -> some View {
+        modifier(ComposerPillGlassRow())
     }
 }
 
@@ -190,6 +220,9 @@ struct ThreadDetailView: View {
     /// groups can pick their transition without a second source of truth.
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @Environment(\.horizontalSizeClass) private var hSizeClass
+    /// Shared morph identity for the two floating above-composer chips (diff +
+    /// tools) so their Liquid Glass blends and separates as one system.
+    @Namespace private var composerPillGlass
     @State private var followUp = ""
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
@@ -1797,6 +1830,7 @@ struct ThreadDetailView: View {
                                 fallbackCommitsAhead: 0,
                                 reduceMotion: reduceMotion,
                                 compactInline: true,
+                                glassNamespace: composerPillGlass,
                                 onTap: { openComposerDiffSheet(workspaceId: primaryWorkspaceId) }
                             )
                             ComposerToolsPill(
@@ -1821,10 +1855,16 @@ struct ThreadDetailView: View {
                                         model.postBlackboardEntry(
                                             card, value: value, category: category, scope: scope)
                                     }
-                                    : nil
+                                    : nil,
+                                glassNamespace: composerPillGlass
                             )
                             Spacer(minLength: 0)
                         }
+                        // One Liquid Glass system, not two adjacent blurs: the
+                        // chips' edges gel when they sit close and separate as
+                        // they move apart. Independent `glassEffect`s can't do
+                        // that however carefully they're styled.
+                        .composerPillGlassRow()
                         .padding(.horizontal, 10)
                         .padding(.bottom, 2)
                         .transition(ComposerMotion.compactPillTransition(reduceMotion: reduceMotion))

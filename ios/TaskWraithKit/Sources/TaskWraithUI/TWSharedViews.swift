@@ -9119,60 +9119,229 @@ public struct QueuedComposerPromptsStack: View {
 /// above the collapsed composer. Applies real Liquid Glass on the content
 /// (not a solid fill behind `glassEffect`), with a slightly taller vertical
 /// pad so icons/labels breathe without growing wider.
+///
+/// Material stack, outermost first. Each layer earns its place:
+///   • ambient shadow — wide and soft; sells "floating above the composer".
+///   • contact shadow — tight and dark; without it the chip reads as a sticker
+///     printed on the background rather than an object in front of it. The two
+///     together are most of the perceived depth.
+///   • Liquid Glass on the CONTENT (iOS 26) / `.ultraThinMaterial` (iOS 17).
+///   • top specular rim — the light source, above and slightly forward.
+///   • bottom counter-rim — dimmer light bouncing UP off the composer beneath.
+///     Real edge-lit glass is never dark on the bottom, and its absence is why
+///     a single top-only rim reads flat.
+///   • accent wash — optional, data-reactive (see `accentIntensity`).
 struct ComposerFloatingPillChrome: ViewModifier {
+    /// Data-reactive rim tint. `nil` keeps the chip neutral.
+    var accent: Color? = nil
+    /// 0…1 weight for `accent`; 0 is neutral even when `accent` is non-nil, so
+    /// a caller can pass a colour unconditionally and let the data decide.
+    var accentIntensity: Double = 0
+    /// Segmented callers carry padding on their own segments so the dividers
+    /// can reach the chip's edges.
+    var horizontalPadding: CGFloat = 12
+    /// Liquid Glass morph identity. Supplied together, sibling chips inside a
+    /// `GlassEffectContainer` blend at the edges when near and separate as
+    /// they move — the behaviour that distinguishes Liquid Glass from a blur.
+    var glassID: String? = nil
+    var glassNamespace: Namespace.ID? = nil
+
     @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
 
     private var pillShape: RoundedRectangle {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
 
+    private var weight: Double { max(0, min(1, accentIntensity)) }
+
+    /// Top-lit rim, warming toward the accent as the data heats up.
+    private var topRim: Color {
+        let base = Color.white.opacity(0.34)
+        guard let accent, weight > 0 else { return base }
+        return TWTheme.mix(accent.opacity(0.85), weight * 0.7, base)
+    }
+
+    /// Upward bounce off the composer below — always dimmer than `topRim`, or
+    /// the chip reads as lit from nowhere.
+    private var bottomRim: Color {
+        let base = Color.white.opacity(0.10)
+        guard let accent, weight > 0 else { return base }
+        return TWTheme.mix(accent.opacity(0.45), weight * 0.6, base)
+    }
+
+    /// Ambient halo. Neutral chips cast plain shade; hot ones bleed a little
+    /// accent, which is what makes "64 commits ahead" feel different from "1"
+    /// before you have read a single digit.
+    private var ambientShadow: Color {
+        guard let accent, weight > 0 else { return .black.opacity(0.10) }
+        return TWTheme.mix(accent.opacity(0.22 * weight), 0.55, .black.opacity(0.10))
+    }
+
+    @ViewBuilder
+    private func rims(_ view: some View) -> some View {
+        view
+            .overlay(
+                pillShape.strokeBorder(
+                    LinearGradient(
+                        colors: [topRim, Color.white.opacity(0.04), bottomRim],
+                        startPoint: .top, endPoint: .bottom),
+                    lineWidth: 1)
+            )
+            // Inset hairline: a second ring one point in, at very low alpha,
+            // reads as glass THICKNESS rather than a drawn outline.
+            .overlay(
+                pillShape.inset(by: 1.5)
+                    .strokeBorder(Color.white.opacity(0.06), lineWidth: 0.5)
+            )
+    }
+
     @ViewBuilder
     func body(content: Content) -> some View {
         let chrome = content
             .lineLimit(1)
-            .padding(.horizontal, 12)
+            .padding(.horizontal, horizontalPadding)
             // Taller than the previous 6pt pad; horizontal stays 12 so chips
             // don't grow wider.
             .padding(.vertical, 9)
 
         if reduceTransparency || !TWTheme.composerGlassEnabled {
+            // Reduce Transparency: opaque surface, no rims, no halo. The accent
+            // survives as a plain border so the data signal isn't lost with the
+            // material.
             chrome
                 .background(TWTheme.surface2, in: pillShape)
-                .overlay(pillShape.strokeBorder(TWTheme.border, lineWidth: 1))
+                .overlay(
+                    pillShape.strokeBorder(
+                        weight > 0 && accent != nil
+                            ? TWTheme.mix(accent!, weight * 0.8, TWTheme.border)
+                            : TWTheme.border,
+                        lineWidth: 1)
+                )
                 .shadow(color: .black.opacity(0.28), radius: 6, y: 2)
         } else if #available(iOS 26.0, macOS 26.0, *) {
             // Apply glassEffect ON the content — Color.clear + opacity in
             // .background collapses into an opaque slab and reads solid.
-            chrome
-                .glassEffect(.regular, in: pillShape)
-                .overlay(
-                    pillShape.strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1)
-                )
-                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+            // `.interactive()` gives the system's own press deformation, which
+            // is tuned better than anything hand-rolled here.
+            let glass = chrome.glassEffect(.regular.interactive(), in: pillShape)
+            rims(
+                Group {
+                    if let glassID, let glassNamespace {
+                        glass.glassEffectID(glassID, in: glassNamespace)
+                    } else {
+                        glass
+                    }
+                }
+            )
+            .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+            .shadow(color: ambientShadow, radius: 18, y: 8)
         } else {
-            chrome
-                .background(.ultraThinMaterial, in: pillShape)
-                .overlay(
-                    pillShape.strokeBorder(
-                        LinearGradient(
-                            colors: [Color.white.opacity(0.34), Color.white.opacity(0.06)],
-                            startPoint: .top, endPoint: .bottom),
-                        lineWidth: 1)
-                )
-                .overlay(pillShape.strokeBorder(TWTheme.border.opacity(0.55), lineWidth: 0.5))
-                .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+            rims(
+                chrome
+                    .background(.ultraThinMaterial, in: pillShape)
+                    .overlay(pillShape.fill(Color.black.opacity(0.12)))
+            )
+            .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
+            .shadow(color: ambientShadow, radius: 18, y: 8)
         }
     }
 }
 
 extension View {
     /// Glass chip chrome for floating Diff / Tools pills above the composer.
-    func composerFloatingPillChrome() -> some View {
-        modifier(ComposerFloatingPillChrome())
+    func composerFloatingPillChrome(
+        accent: Color? = nil,
+        accentIntensity: Double = 0,
+        horizontalPadding: CGFloat = 12,
+        glassID: String? = nil,
+        glassNamespace: Namespace.ID? = nil
+    ) -> some View {
+        modifier(
+            ComposerFloatingPillChrome(
+                accent: accent, accentIntensity: accentIntensity,
+                horizontalPadding: horizontalPadding,
+                glassID: glassID, glassNamespace: glassNamespace))
+    }
+}
+
+/// One-shot specular sweep across a floating pill, fired when the numbers
+/// underneath it change (a commit lands, files change).
+///
+/// Deliberately VISUAL ONLY. `MotionHaptics`' law reserves haptics for
+/// user-initiated discrete actions; new git state arriving over the wire is
+/// passive, so a haptic here would be a violation however good it feels.
+struct ComposerPillSpecularSweep: View {
+    /// Host bumps this when the underlying data changes.
+    let tick: Int
+    var cornerRadius: CGFloat = 12
+
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// 1 parks the highlight past the trailing edge (invisible at rest).
+    @State private var phase: CGFloat = 1
+
+    var body: some View {
+        // This GeometryReader READS width to place the highlight and never
+        // writes back to @State. The measurement→@State feedback documented on
+        // `ComposerDiffPill.quantizedMeasurement` (one-ULP oscillation that
+        // wedged launch at 100% CPU) is not reintroduced here.
+        GeometryReader { proxy in
+            let w = max(proxy.size.width, 1)
+            let band = w * 0.45
+            LinearGradient(
+                colors: [.clear, Color.white.opacity(0.22), .clear],
+                startPoint: .leading, endPoint: .trailing
+            )
+            .frame(width: band)
+            .offset(x: -band + phase * (w + band))
+            .blendMode(.plusLighter)
+        }
+        .allowsHitTesting(false)
+        .mask(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))
+        .onChange(of: tick) { _, _ in
+            guard !reduceMotion else { return }
+            phase = 0
+            withAnimation(.easeOut(duration: 0.75)) { phase = 1 }
+        }
+    }
+}
+
+/// Add/delete proportion as a hairline rail beneath the counters.
+///
+/// The digits carry the exact numbers; this carries the SHAPE of the change.
+/// `+506 −45` and `+6 −5` are the same glyph count and near-identical as text,
+/// but land completely differently here — which is the whole point of a diff
+/// pill as opposed to a generic one.
+struct DiffRatioRail: View {
+    let additions: Int
+    let deletions: Int
+
+    private var addFraction: CGFloat {
+        let total = additions + deletions
+        guard total > 0 else { return 0.5 }
+        return CGFloat(additions) / CGFloat(total)
+    }
+
+    var body: some View {
+        // Hard-stop gradient rather than two measured capsules: the split is
+        // expressed in the gradient's own unit space, so this needs no
+        // GeometryReader at all — no measurement, nothing that could
+        // reintroduce the layout feedback documented on
+        // `ComposerDiffPill.quantizedMeasurement`.
+        Capsule()
+            .fill(
+                LinearGradient(
+                    stops: [
+                        .init(color: TWTheme.diffStatAdd.opacity(0.9), location: 0),
+                        .init(color: TWTheme.diffStatAdd.opacity(0.9), location: addFraction),
+                        .init(color: TWTheme.diffStatDel.opacity(0.9), location: addFraction),
+                        .init(color: TWTheme.diffStatDel.opacity(0.9), location: 1),
+                    ],
+                    startPoint: .leading, endPoint: .trailing)
+            )
+            .frame(height: 2)
+            .animation(.easeInOut(duration: 0.28), value: addFraction)
+            // The digits above are already announced; the rail is the same data.
+            .accessibilityHidden(true)
     }
 }
 
@@ -9189,11 +9358,14 @@ public struct ComposerDiffPill: View {
     /// Intrinsic-width tappable chip without drag-to-reposition. Used when the
     /// tools pill sits beside this chip in a shared above-composer row.
     var compactInline: Bool = false
+    /// Liquid Glass morph namespace shared with the sibling tools pill.
+    var glassNamespace: Namespace.ID? = nil
 
     public init(
         filesChanged: Int, additions: Int, deletions: Int, commitsAhead: Int = 0,
         onTap: (() -> Void)? = nil,
-        compactInline: Bool = false
+        compactInline: Bool = false,
+        glassNamespace: Namespace.ID? = nil
     ) {
         self.filesChanged = filesChanged
         self.additions = additions
@@ -9201,6 +9373,24 @@ public struct ComposerDiffPill: View {
         self.commitsAhead = max(0, commitsAhead)
         self.onTap = onTap
         self.compactInline = compactInline
+        self.glassNamespace = glassNamespace
+    }
+
+    /// Rim heat from commits-ahead, saturating at 24. A branch that is one
+    /// commit out should not look like one that is sixty out, but neither
+    /// should a long-lived branch scream indefinitely.
+    private var accentIntensity: Double {
+        guard commitsAhead > 0 else { return 0 }
+        return min(1, Double(commitsAhead) / 24)
+    }
+
+    /// The rail needs both sides to mean anything; a pure-addition diff is
+    /// already unambiguous from the digits.
+    private var showsRatioRail: Bool { additions > 0 && deletions > 0 }
+
+    /// Change stamp for the specular sweep. Any counter moving re-fires it.
+    private var dataSignature: String {
+        "\(commitsAhead)/\(filesChanged)/\(additions)/\(deletions)"
     }
 
     /// 2_100 → "2.1k", 25_000 → "25k", 718 → "718".
@@ -9229,6 +9419,8 @@ public struct ComposerDiffPill: View {
     @State private var pillWidth: CGFloat = 0
     @State private var commitTick = 0
     @State private var resetTick = 0
+    /// Bumped when the git counters change — drives the specular sweep only.
+    @State private var dataTick = 0
 
     /// An upward drag past this — and more vertical than horizontal — recentres
     /// the pill. The threshold keeps an accidental nudge from snapping it back.
@@ -9349,6 +9541,38 @@ public struct ComposerDiffPill: View {
     }
 
     private var pillBody: some View {
+        statsRow
+            // The rail hangs off the stats row as an overlay and is nudged DOWN
+            // into the chrome's 9pt bottom pad. Three constraints meet here:
+            //   • overlay, not a VStack sibling — a Shape is greedy in both
+            //     axes, so as a sibling it stretched the whole chip to the
+            //     composer's full width. As an overlay it adopts the row's.
+            //   • offset rather than padding — padding would add height and
+            //     this chip must stay exactly as tall as the tools pill (the
+            //     lockstep the chrome's doc comment promises). Overlays aren't
+            //     clipped, so it draws into the pad for free.
+            //   • INSIDE the chrome, not over it — layered above the glass the
+            //     rail's fill flattened to near-black.
+            .overlay(alignment: .bottom) {
+                if showsRatioRail {
+                    DiffRatioRail(additions: additions, deletions: deletions)
+                        .offset(y: 7)
+                }
+            }
+            // Shared chrome with ComposerToolsPill: slightly taller + real
+            // glass. The accent is passed unconditionally; `accentIntensity`
+            // decides whether it shows, so a clean tree stays neutral chrome.
+            .composerFloatingPillChrome(
+                accent: TWTheme.statusAttention,
+                accentIntensity: accentIntensity,
+                glassID: glassNamespace == nil ? nil : "tw.composer.pill.diff",
+                glassNamespace: glassNamespace
+            )
+            .overlay(ComposerPillSpecularSweep(tick: dataTick))
+            .onChange(of: dataSignature) { _, _ in dataTick += 1 }
+    }
+
+    private var statsRow: some View {
         HStack(spacing: 8) {
             if commitsAhead > 0 {
                 NumericTickText(
@@ -9375,8 +9599,6 @@ public struct ComposerDiffPill: View {
                     color: TWTheme.diffStatDel)
             }
         }
-        // Shared chrome with ComposerToolsPill: slightly taller + real glass.
-        .composerFloatingPillChrome()
     }
 
     public var body: some View {

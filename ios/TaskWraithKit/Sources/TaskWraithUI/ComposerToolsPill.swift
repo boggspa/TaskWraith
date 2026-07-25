@@ -24,8 +24,16 @@ public struct ComposerToolsPill: View {
     let onEnsembleToggle: ((Bool) -> Void)?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
     let onBlackboardPost: ((String, String, String) -> Void)?
+    /// Liquid Glass morph namespace shared with the sibling diff pill.
+    var glassNamespace: Namespace.ID? = nil
 
     @State private var presented = false
+    /// Section the picker opens on — set by whichever segment was tapped.
+    @State private var selectedRoute: ComposerToolsRoute? = nil
+    /// Segment taps are user-initiated discrete actions, so a selection haptic
+    /// is within MotionHaptics' law here (unlike the diff pill's passive
+    /// git updates, which stay visual-only).
+    @State private var tapTick = 0
 
     public init(
         isEnsemble: Bool,
@@ -37,8 +45,10 @@ public struct ComposerToolsPill: View {
         blackboardEntries: [RemoteThreadSnapshot.BlackboardEntry] = [],
         onEnsembleToggle: ((Bool) -> Void)? = nil,
         onGoalUpdate: ((String, String?, String?) -> Void)? = nil,
-        onBlackboardPost: ((String, String, String) -> Void)? = nil
+        onBlackboardPost: ((String, String, String) -> Void)? = nil,
+        glassNamespace: Namespace.ID? = nil
     ) {
+        self.glassNamespace = glassNamespace
         self.isEnsemble = isEnsemble
         self.ensembleToggleVisible = ensembleToggleVisible
         self.ensembleToggleDisabled = ensembleToggleDisabled
@@ -76,65 +86,68 @@ public struct ComposerToolsPill: View {
     }
 
     public var body: some View {
-        Button {
-            presented = true
-        } label: {
-            // Dedicated Ensemble / Goal / Plan / Blackboard glyphs — same icons as
-            // the focused telemetry rail — rather than a generic "Tools" label.
-            HStack(spacing: 8) {
-                if ensembleToggleVisible {
-                    ProviderGlyphIcon(
-                        provider: "ensemble", isEnsemble: true, size: 14
-                    )
+        // Segmented, not one button: the diff pill beside this is a READOUT,
+        // this is a CONTROL cluster, and identical chrome made them read as the
+        // same kind of object. Each glyph is now its own target that lands on
+        // its own section, so reaching Plan is one tap instead of tap-then-pick.
+        HStack(spacing: 0) {
+            if ensembleToggleVisible {
+                segment(
+                    .ensemble, label: ensembleToggleTitle,
+                    value: isEnsemble ? "On" : "Off"
+                ) {
+                    ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 14)
                         .opacity(isEnsemble ? 1 : 0.55)
-                        .frame(width: 16, height: 16)
                 }
+                segmentDivider
+            }
 
-                ZStack(alignment: .topTrailing) {
+            segment(.goal, label: "Goal", value: goalSubtitleShort) {
+                badged(dot: goalHasAttention ? goalAccent : nil) {
                     Image(
                         systemName: activeGoal?.status == "completed"
                             ? "checkmark.circle.fill" : "scope"
                     )
                     .font(.system(size: 11, weight: .semibold))
                     .foregroundStyle(goalAccent)
-                    .frame(width: 16, height: 16)
-                    if activeGoal?.status == "active" || activeGoal?.status == "paused"
-                        || activeGoal?.status == "blocked"
-                    {
-                        Circle()
-                            .fill(goalAccent)
-                            .frame(width: 5, height: 5)
-                            .offset(x: 2, y: -2)
-                    }
                 }
+            }
 
-                ZStack(alignment: .topTrailing) {
+            segmentDivider
+
+            segment(.plan, label: "Plan", value: planSubtitleShort) {
+                badged(dot: planHasInProgress ? planAccent : nil) {
                     Image(systemName: "checklist")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(planAccent)
-                        .frame(width: 16, height: 16)
-                    if planHasInProgress {
-                        Circle()
-                            .fill(planAccent)
-                            .frame(width: 5, height: 5)
-                            .offset(x: 2, y: -2)
-                    }
                 }
+            }
 
-                if isEnsemble {
+            if isEnsemble {
+                segmentDivider
+                segment(
+                    .blackboard, label: "Blackboard",
+                    value: blackboardEntries.isEmpty
+                        ? "Empty" : "\(blackboardEntries.count) entries"
+                ) {
                     Image(systemName: "rectangle.and.pencil.and.ellipsis")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(
                             blackboardEntries.isEmpty ? TWTheme.textTertiary : TWTheme.chroma1
                         )
-                        .frame(width: 16, height: 16)
                 }
             }
-            .composerFloatingPillChrome()
         }
-        .buttonStyle(.plain)
+        // Segments carry their own horizontal padding so the dividers can run
+        // the full height of the chip rather than floating in a 12pt gutter.
+        .composerFloatingPillChrome(
+            horizontalPadding: 4,
+            glassID: glassNamespace == nil ? nil : "tw.composer.pill.tools",
+            glassNamespace: glassNamespace
+        )
+        .motionHaptic(MotionHaptics.selection, trigger: tapTick)
+        .accessibilityElement(children: .contain)
         .accessibilityLabel("Composer tools. \(summaryLabel)")
-        .accessibilityHint("Opens Ensemble, Goal, Plan, and Blackboard controls.")
         .sheet(isPresented: $presented) {
             ComposerToolsPickerSheet(
                 isEnsemble: isEnsemble,
@@ -146,10 +159,75 @@ public struct ComposerToolsPill: View {
                 blackboardEntries: blackboardEntries,
                 onEnsembleToggle: onEnsembleToggle,
                 onGoalUpdate: onGoalUpdate,
-                onBlackboardPost: onBlackboardPost
+                onBlackboardPost: onBlackboardPost,
+                initialRoute: selectedRoute
             )
             .twSheetLiquidGlass(detents: [.medium, .large])
         }
+    }
+
+    /// One tappable glyph. Opens the picker already pushed to `route`.
+    @ViewBuilder
+    private func segment(
+        _ route: ComposerToolsRoute, label: String, value: String,
+        @ViewBuilder content: () -> some View
+    ) -> some View {
+        Button {
+            selectedRoute = route
+            tapTick += 1
+            presented = true
+        } label: {
+            content()
+                .frame(width: 16, height: 16)
+                .padding(.horizontal, 8)
+                .padding(.vertical, 2)
+                // Whole cell is the target, not just the glyph's alpha.
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(ComposerToolsSegmentStyle())
+        .accessibilityLabel(label)
+        .accessibilityValue(value)
+        .accessibilityHint("Opens \(label) controls.")
+    }
+
+    /// Hairline rule between segments. Low alpha — it should separate, not
+    /// draw attention to itself.
+    private var segmentDivider: some View {
+        Rectangle()
+            .fill(Color.white.opacity(0.10))
+            .frame(width: 0.5, height: 15)
+            .accessibilityHidden(true)
+    }
+
+    /// Glyph plus the live-state dot, kept in one place so every segment's
+    /// badge sits at the same offset.
+    @ViewBuilder
+    private func badged(dot: Color?, @ViewBuilder content: () -> some View) -> some View {
+        ZStack(alignment: .topTrailing) {
+            content().frame(width: 16, height: 16)
+            if let dot {
+                Circle()
+                    .fill(dot)
+                    .frame(width: 5, height: 5)
+                    // Ring lifts the dot off a same-hue glyph underneath.
+                    .overlay(Circle().strokeBorder(Color.black.opacity(0.35), lineWidth: 0.5))
+                    .offset(x: 2, y: -2)
+            }
+        }
+    }
+
+    private var goalHasAttention: Bool {
+        activeGoal?.status == "active" || activeGoal?.status == "paused"
+            || activeGoal?.status == "blocked"
+    }
+
+    /// VoiceOver values — short, since the segment label already says what it is.
+    private var goalSubtitleShort: String { activeGoal?.status ?? "None" }
+
+    private var planSubtitleShort: String {
+        let active = planLanes.reduce(0) { $0 + $1.activeCount }
+        let done = planLanes.reduce(0) { $0 + $1.completedCount }
+        return active > 0 ? "\(done) of \(active) done" : "None"
     }
 
     private var planHasInProgress: Bool {
@@ -177,6 +255,24 @@ public struct ComposerToolsPill: View {
     }
 }
 
+/// Press response for a tools segment. Scale + dim only — the chip's own
+/// Liquid Glass already deforms under `.interactive()`, so anything heavier
+/// here fights it.
+private struct ComposerToolsSegmentStyle: ButtonStyle {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .opacity(configuration.isPressed ? 0.55 : 1)
+            .scaleEffect(reduceMotion || !configuration.isPressed ? 1 : 0.9)
+            .animation(
+                reduceMotion
+                    ? .easeOut(duration: 0.12)
+                    : .spring(response: 0.24, dampingFraction: 0.7),
+                value: configuration.isPressed)
+    }
+}
+
 // MARK: - Hierarchical picker
 
 private enum ComposerToolsRoute: Hashable {
@@ -197,6 +293,10 @@ private struct ComposerToolsPickerSheet: View {
     let onEnsembleToggle: ((Bool) -> Void)?
     let onGoalUpdate: ((String, String?, String?) -> Void)?
     let onBlackboardPost: ((String, String, String) -> Void)?
+    /// Section to push on open — set by the tools pill's tapped segment. Nil
+    /// opens the root list (the old behaviour, still used by any caller that
+    /// has no specific destination in mind).
+    var initialRoute: ComposerToolsRoute? = nil
 
     @Environment(\.dismiss) private var dismiss
     @State private var path = NavigationPath()
@@ -282,6 +382,12 @@ private struct ComposerToolsPickerSheet: View {
             }
         }
         .background(Color.clear)
+        // Seed the destination ONCE, on first appear. Doing it in `init` isn't
+        // possible for @State, and re-seeding on every appear would fight the
+        // user's own back-navigation inside the sheet.
+        .onAppear {
+            if let initialRoute, path.isEmpty { path.append(initialRoute) }
+        }
     }
 
     private var goalSubtitle: String {
