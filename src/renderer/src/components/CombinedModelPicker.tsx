@@ -38,6 +38,7 @@ import {
   resolveProviderBrandLabel,
   resolveProviderHueClass
 } from '../lib/ollamaDisplayBrand'
+import { humaniseModelId } from '../lib/modelDisplayName'
 import type {
   CombinedModelPickerModelOption,
   CombinedModelPickerReasoningOption
@@ -1035,9 +1036,17 @@ export function CombinedModelPicker({
     // since-dropped model id from a saved preset) rather than silently
     // mislabeling it as the first option. Fall back to the first option only
     // when no id is set at all.
-    (selectedModelId ? { id: selectedModelId, label: selectedModelId } : modelOptions[0]) || {
+    //
+    // The id is humanised, not printed raw: this branch is reached whenever the
+    // option list is empty — for Pi that is simply "no upstream key configured
+    // yet" — and it was rendering the bare wire id, so the trigger read
+    // "Pi mistral/devstral-2512". `humaniseModelId` returns the id unchanged
+    // when it knows nothing about it, so an unrecognised id is no worse off.
+    (selectedModelId
+      ? { id: selectedModelId, label: humaniseModelId(provider, selectedModelId) }
+      : modelOptions[0]) || {
       id: selectedModelId,
-      label: selectedModelId
+      label: humaniseModelId(provider, selectedModelId)
     }
 
   const selectedOllamaProviderId = useMemo(() => {

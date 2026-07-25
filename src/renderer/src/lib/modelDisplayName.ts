@@ -1,5 +1,6 @@
 import type { ProviderId } from '../../../main/store/types'
 import { antigravityGeminiApiModelDisplayLabel } from '../../../shared/antigravityGeminiApiModelNaming'
+import { resolvePiModelLabel } from '../../../shared/piBrandTable'
 
 /**
  * 1.0.5-EW50 — Shared model-id → human-readable display name
@@ -315,6 +316,13 @@ export function humaniseModelId(
   if (provider === 'antigravity') {
     const apiLabel = antigravityGeminiApiModelDisplayLabel(key)
     if (apiLabel) return apiLabel
+  }
+  // Pi wire ids are `<upstream>/<modelId>` and are matched CASE-SENSITIVELY
+  // against the curated catalog — `minimax/MiniMax-M3` is mixed-case on the
+  // wire, so the lowercased `key` used for the flat table would never hit.
+  if (provider === 'pi') {
+    const piLabel = resolvePiModelLabel(canonical)
+    if (piLabel) return piLabel
   }
   return KNOWN_MODEL_LABELS[key] || canonical
 }

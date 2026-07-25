@@ -37,6 +37,39 @@ export const PI_UPSTREAM_BRANDS: Readonly<Record<string, PiUpstreamBrand>> = {
 }
 
 /**
+ * Wire id -> human display label for the curated Pi catalog.
+ *
+ * The labels themselves live on `PI_STATIC_MODELS` (main), which the renderer
+ * may not import; this is the renderer-reachable half, pinned equal to the
+ * catalog by `piBrandTable.test.ts` so the two cannot drift as models are added.
+ * Without it every Pi surface that holds only a wire id — above-composer chips,
+ * the composer picker trigger, transcript headers, the usage tables — renders
+ * the raw `mistral/devstral-2512` instead of `Devstral 2512`.
+ *
+ * The `(Groq)` / `(Cerebras)` suffixes are load-bearing in the flat picker list,
+ * where the same open-weights model is served by two upstreams and the rows
+ * would otherwise be indistinguishable.
+ */
+export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
+  'deepseek/deepseek-v4-pro': 'DeepSeek V4 Pro',
+  'deepseek/deepseek-v4-flash': 'DeepSeek V4 Flash',
+  'zai/glm-5.2': 'GLM-5.2',
+  'zai/glm-5.1': 'GLM-5.1',
+  'zai/glm-4.7': 'GLM-4.7',
+  'qwen-token-plan/qwen3.7-max': 'Qwen3.7 Max',
+  'qwen-token-plan/qwen3.7-plus': 'Qwen3.7 Plus',
+  'qwen-token-plan/qwen3.8-max-preview': 'Qwen3.8 Max Preview',
+  'minimax/MiniMax-M3': 'MiniMax M3',
+  'minimax/MiniMax-M2.7': 'MiniMax M2.7',
+  'mistral/devstral-2512': 'Devstral 2512',
+  'mistral/mistral-medium-3.5': 'Mistral Medium 3.5',
+  'groq/openai/gpt-oss-120b': 'GPT-OSS 120B (Groq)',
+  'groq/qwen/qwen3-32b': 'Qwen3 32B (Groq)',
+  'cerebras/zai-glm-4.7': 'GLM-4.7 (Cerebras)',
+  'cerebras/gpt-oss-120b': 'GPT-OSS 120B (Cerebras)'
+}
+
+/**
  * Split a Pi wire id on the FIRST slash: upstream vs pi model id.
  *
  * Splitting on the LAST slash silently breaks Groq, whose ids carry a SECOND
@@ -60,4 +93,25 @@ export function resolvePiUpstreamBrand(
   const split = splitPiWireModelId(String(wireModelId || '').trim())
   if (!split) return null
   return PI_UPSTREAM_BRANDS[split.upstream] ?? null
+}
+
+/**
+ * Human label for a Pi wire id, or null when the id is malformed / names no
+ * surfaced upstream.
+ *
+ * A wire id from an upstream we DO surface but a model we have not catalogued
+ * (a mid-cycle upstream release) falls back to the model half alone: the
+ * upstream is already rendered beside this label as the brand name, so
+ * repeating it — "Mistral · mistral/some-new-model" — is pure noise. Unknown
+ * upstreams return null so the caller keeps the raw id rather than showing a
+ * fragment of an id we cannot vouch for.
+ */
+export function resolvePiModelLabel(wireModelId: string | null | undefined): string | null {
+  const wire = String(wireModelId || '').trim()
+  if (!wire) return null
+  const known = PI_MODEL_LABELS[wire]
+  if (known) return known
+  const split = splitPiWireModelId(wire)
+  if (!split || !PI_UPSTREAM_BRANDS[split.upstream]) return null
+  return split.modelId
 }

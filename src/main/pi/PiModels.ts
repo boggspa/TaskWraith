@@ -47,7 +47,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   { wireId: 'minimax/MiniMax-M3', upstream: 'minimax', modelId: 'MiniMax-M3', label: 'MiniMax M3', contextWindow: 1_000_000, maxOutputTokens: 128_000, thinking: true, images: true },
   { wireId: 'minimax/MiniMax-M2.7', upstream: 'minimax', modelId: 'MiniMax-M2.7', label: 'MiniMax M2.7', contextWindow: 204_800, maxOutputTokens: 131_072, thinking: true, images: false },
   // Mistral
-  { wireId: 'mistral/devstral-2512', upstream: 'mistral', modelId: 'devstral-2512', label: 'Devstral 2', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: false },
+  { wireId: 'mistral/devstral-2512', upstream: 'mistral', modelId: 'devstral-2512', label: 'Devstral 2512', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: false, images: false },
   { wireId: 'mistral/mistral-medium-3.5', upstream: 'mistral', modelId: 'mistral-medium-3.5', label: 'Mistral Medium 3.5', contextWindow: 262_144, maxOutputTokens: 262_144, thinking: true, images: true },
   // Groq — open-weights on fast inference silicon
   { wireId: 'groq/openai/gpt-oss-120b', upstream: 'groq', modelId: 'openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)', contextWindow: 131_072, maxOutputTokens: 65_536, thinking: true, images: false },

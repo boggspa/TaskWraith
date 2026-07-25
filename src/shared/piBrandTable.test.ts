@@ -1,7 +1,14 @@
 import { readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { PI_UPSTREAM_BRANDS, resolvePiUpstreamBrand, splitPiWireModelId } from './piBrandTable'
+import {
+  PI_MODEL_LABELS,
+  PI_UPSTREAM_BRANDS,
+  resolvePiModelLabel,
+  resolvePiUpstreamBrand,
+  splitPiWireModelId
+} from './piBrandTable'
+import { PI_STATIC_MODELS } from '../main/pi/PiModels'
 
 const THEME_CSS = join(process.cwd(), 'src/renderer/src/styles/theme.css')
 const IOS_THEME = join(process.cwd(), 'ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift')
@@ -59,6 +66,46 @@ describe('resolvePiUpstreamBrand', () => {
   )
 })
 
+describe('resolvePiModelLabel', () => {
+  it('humanises a catalogued wire id', () => {
+    expect(resolvePiModelLabel('mistral/devstral-2512')).toBe('Devstral 2512')
+    expect(resolvePiModelLabel('deepseek/deepseek-v4-flash')).toBe('DeepSeek V4 Flash')
+  })
+
+  it('keeps the disambiguating suffix on models two upstreams both serve', () => {
+    // GPT-OSS 120B is served by BOTH groq and cerebras; in the flat picker the
+    // rows are otherwise identical.
+    expect(resolvePiModelLabel('groq/openai/gpt-oss-120b')).toBe('GPT-OSS 120B (Groq)')
+    expect(resolvePiModelLabel('cerebras/gpt-oss-120b')).toBe('GPT-OSS 120B (Cerebras)')
+  })
+
+  it('drops the redundant upstream prefix for an uncatalogued model', () => {
+    // The upstream is already rendered beside the label as the brand name.
+    expect(resolvePiModelLabel('mistral/some-future-model')).toBe('some-future-model')
+  })
+
+  it.each([null, undefined, '', 'noslash', 'anthropic/claude-opus'])(
+    'returns null for %o so the caller keeps the raw id',
+    (wire) => {
+      expect(resolvePiModelLabel(wire)).toBeNull()
+    }
+  )
+
+  it('labels every model in the curated catalog', () => {
+    // Pinned against the main-side catalog: the renderer may not import
+    // src/main, so the label map is a second copy and would otherwise drift
+    // silently the next time a model is added.
+    const catalog = Object.fromEntries(PI_STATIC_MODELS.map((m) => [m.wireId, m.label]))
+    expect(PI_MODEL_LABELS).toEqual(catalog)
+  })
+
+  it('names an upstream brand for every catalogued model', () => {
+    for (const model of PI_STATIC_MODELS) {
+      expect(resolvePiUpstreamBrand(model.wireId), `no brand for ${model.wireId}`).toBeTruthy()
+    }
+  })
+})
+
 describe('Pi sub-provider palette', () => {
   const css = readFileSync(THEME_CSS, 'utf8')
   const hueClasses = [...new Set(Object.values(PI_UPSTREAM_BRANDS).map((b) => b.hueClass))]
@@ -113,5 +160,41 @@ describe('Pi sub-provider palette', () => {
   it('keeps the pi seat colour itself in sync across css and iOS', () => {
     const swift = readFileSync(IOS_THEME, 'utf8')
     expect(swift).toContain(`case "pi": return Color(hex: 0x${cssHex('pi').slice(1)})`)
+  })
+})
+
+describe('Pi hue classes are actually painted', () => {
+  // A theme TOKEN is only half of a hue: the surface has to carry a rule that
+  // reads it. `resolveProviderHueClass` shipped returning `mistral` before any
+  // stylesheet matched `.provider-mistral`, so Pi participants rendered in the
+  // inherited text colour while every other provider wore its accent. These
+  // pin the enumerated blocks — a new Pi upstream that lands in the brand table
+  // without its CSS row fails here instead of silently rendering uncoloured.
+  const classes = ['pi', ...new Set(Object.values(PI_UPSTREAM_BRANDS).map((b) => b.hueClass))]
+
+  const cssFile = (name: string): string =>
+    readFileSync(join(process.cwd(), 'src/renderer/src/assets/css', name), 'utf8')
+
+  it.each(classes)('%s tints the above-composer participant role', (cls) => {
+    expect(cssFile('09-ensemble-work-session.css')).toContain(
+      `.ensemble-above-chip.provider-${cls} .ensemble-above-chip-role`
+    )
+  })
+
+  it.each(classes)('%s tints the above-composer chip tooltip title', (cls) => {
+    expect(cssFile('09-ensemble-work-session.css')).toContain(
+      `.ensemble-above-chip-tooltip.provider-${cls} .ensemble-above-chip-tooltip-title`
+    )
+  })
+
+  it.each(classes)('%s tints the transcript speaker label', (cls) => {
+    // `qwen` predates Pi on the Ollama side and is already present.
+    expect(cssFile('02-transcript-messages-fx.css')).toContain(`.message-meta.provider-${cls}`)
+  })
+
+  it.each(classes)('%s tints the participant-health chip', (cls) => {
+    expect(cssFile('02-transcript-messages-fx.css')).toContain(
+      `.participant-health-chip.provider-${cls}`
+    )
   })
 })
