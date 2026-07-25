@@ -57,13 +57,63 @@ export type McpToolApprovalPreviewer = (
  * exact count, so a reviewer can decline what they cannot see.
  */
 export const OUTLOOK_PREVIEW_BODY_LIMIT = 8_000
+/** Mirrors the executor's own caps in OutlookToolExecutors. */
+const OUTLOOK_SUBJECT_LIMIT = 4_000
+const OUTLOOK_LOCATION_LIMIT = 4_000
+const OUTLOOK_DRAFT_BODY_LIMIT = 100_000
+const OUTLOOK_EVENT_BODY_LIMIT = 32_000
 
-export function outlookPreviewBody(value: string): string {
-  if (value.length <= OUTLOOK_PREVIEW_BODY_LIMIT) return value
-  const hidden = value.length - OUTLOOK_PREVIEW_BODY_LIMIT
-  return `${value.slice(0, OUTLOOK_PREVIEW_BODY_LIMIT)}\n\n[${hidden.toLocaleString(
-    'en-US'
-  )} more characters WILL BE WRITTEN but are not shown here]`
+export function outlookHiddenNotice(hidden: number): string {
+  return `[${hidden.toLocaleString('en-US')} more characters WILL BE WRITTEN but are not shown here]`
+}
+
+export interface OutlookPreviewBody {
+  text: string
+  /** Characters the executor will write that the preview does not show. */
+  hidden: number
+}
+
+/**
+ * Split an agent-authored body into what the approval shows and how much it
+ * is withholding.
+ *
+ * The count is against what the EXECUTOR will actually write, not the raw
+ * argument: it clamps to `writeLimit`, so measuring the argument overstated a
+ * 200k body by a full 100k. Code points, not UTF-16 units, so 20k emoji are
+ * not reported as 40k — and slicing by code point cannot strand half a
+ * surrogate pair at the cut.
+ *
+ * The count is returned SEPARATELY rather than appended: an in-band notice is
+ * indistinguishable from the same sentence typed into the body itself, and
+ * the preview `<pre>` shows about ten lines, so a forged marker on line ten
+ * hides the payload behind a scroll the reviewer was just told was empty.
+ */
+export function outlookPreviewBody(value: string, writeLimit: number): OutlookPreviewBody {
+  const written = Array.from(value).slice(0, writeLimit)
+  const shown = written.slice(0, OUTLOOK_PREVIEW_BODY_LIMIT)
+  return { text: shown.join(''), hidden: written.length - shown.length }
+}
+
+/**
+ * Clamp a preview field to what the executor accepts.
+ *
+ * Preview and executor caps must agree in BOTH directions: a field the
+ * preview renders beyond the executor's limit is text the approver reads and
+ * the write silently drops, and it is also an amplifier — every character can
+ * expand ~44× through the codepoint reviewer.
+ */
+function clampField(value: string | undefined, limit: number): string {
+  return (value || '').slice(0, limit)
+}
+
+/**
+ * Whether a field is non-empty for the EXECUTOR, which does not trim.
+ *
+ * `optionalString` treats whitespace as absent, so a subject of 4,000
+ * newlines rendered as "(no subject)" while 4,000 newlines were written.
+ */
+function writtenOrPlaceholder(raw: unknown, placeholder: string): string {
+  return typeof raw === 'string' && raw.length > 0 ? raw : placeholder
 }
 
 export function createMcpToolApprovalPreviewer(
@@ -94,8 +144,14 @@ export function createMcpToolApprovalPreviewer(
     if (toolName === 'outlook_create_draft') {
       const to = outlookRecipientList(args.to)
       const cc = outlookRecipientList(args.cc)
-      const subject = deps.optionalString(args.subject) || '(no subject)'
-      const body = outlookPreviewBody(deps.optionalString(args.body) || '')
+      const subject = clampField(
+        writtenOrPlaceholder(args.subject, '(no subject)'),
+        OUTLOOK_SUBJECT_LIMIT
+      )
+      const body = outlookPreviewBody(
+        typeof args.body === 'string' ? args.body : '',
+        OUTLOOK_DRAFT_BODY_LIMIT
+      )
       const recipientLines =
         `To: ${to.length > 0 ? to.join(', ') : '(no recipients)'}\n` +
         // cc is only shown when present, but it is NEVER omitted when set —
@@ -105,38 +161,64 @@ export function createMcpToolApprovalPreviewer(
         title: `Approve ${providerName} Outlook draft`,
         body:
           `${intentBody}Saves a DRAFT — nothing is sent.\n` +
-          `${recipientLines}Subject: ${subject}\n\n${body}`.trim(),
+          `${recipientLines}Subject: ${subject}\n\n${body.text}`.trim() +
+          (body.hidden > 0 ? `\n\n${outlookHiddenNotice(body.hidden)}` : ''),
         service: 'mcpTools',
         // `kind: 'tool'` + `params` is the shape the renderer displays as a
         // structured block; a bare object renders nothing at all.
         preview: {
           kind: 'tool',
           toolName,
-          params: { to, cc, subject, body },
+          params: {
+            to,
+            cc,
+            subject,
+            body: body.text,
+            // Structured, so the renderer can show it OUTSIDE the body block
+            // where an agent cannot imitate it.
+            ...(body.hidden > 0 ? { hiddenBodyCharacters: body.hidden } : {})
+          },
           ...intentPreview
         }
       }
     }
     if (toolName === 'outlook_create_event') {
-      const subject = deps.optionalString(args.subject) || '(no title)'
+      const subject = clampField(
+        writtenOrPlaceholder(args.subject, '(no title)'),
+        OUTLOOK_SUBJECT_LIMIT
+      )
       const window = `${deps.optionalString(args.startIso) || '?'} → ${
         deps.optionalString(args.endIso) || '?'
       }`
       // location and body are written to the calendar entry, so they belong in
       // the approval. Showing only subject+window meant 32k of agent-authored
       // event text went in unseen.
-      const location = deps.optionalString(args.location) || ''
-      const body = outlookPreviewBody(deps.optionalString(args.body) || '')
+      const location = clampField(
+        typeof args.location === 'string' ? args.location : '',
+        OUTLOOK_LOCATION_LIMIT
+      )
+      const body = outlookPreviewBody(
+        typeof args.body === 'string' ? args.body : '',
+        OUTLOOK_EVENT_BODY_LIMIT
+      )
       return {
         title: `Approve ${providerName} calendar entry`,
         body: `${intentBody}Creates a calendar entry with no attendees, so no invitations are sent.\n${subject}\n${window}${
           location ? `\n${location}` : ''
-        }${body ? `\n\n${body}` : ''}`,
+        }${body.text ? `\n\n${body.text}` : ''}${
+          body.hidden > 0 ? `\n\n${outlookHiddenNotice(body.hidden)}` : ''
+        }`,
         service: 'mcpTools',
         preview: {
           kind: 'tool',
           toolName,
-          params: { subject, window, location, body },
+          params: {
+            subject,
+            window,
+            location,
+            body: body.text,
+            ...(body.hidden > 0 ? { hiddenBodyCharacters: body.hidden } : {})
+          },
           ...intentPreview
         }
       }
@@ -148,9 +230,9 @@ export function createMcpToolApprovalPreviewer(
       toolName === 'outlook_list_events'
     ) {
       const detail =
-        deps.optionalString(args.query) ||
-        deps.optionalString(args.messageId) ||
-        deps.optionalString(args.folder) ||
+        clampField(deps.optionalString(args.query), 400) ||
+        clampField(deps.optionalString(args.messageId), 512) ||
+        clampField(deps.optionalString(args.folder), 32) ||
         [deps.optionalString(args.startIso), deps.optionalString(args.endIso)]
           .filter(Boolean)
           .join(' → ')

@@ -252,8 +252,12 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
           : formatApprovalFieldForReview(flatten(params[key]))
     })).filter((row) => row.value)
     const body = typeof params.body === 'string' ? params.body : ''
-    if (rows.length === 0 && !body) return null
-    return { rows, body }
+    const hiddenBodyCharacters =
+      typeof params.hiddenBodyCharacters === 'number' && params.hiddenBodyCharacters > 0
+        ? params.hiddenBodyCharacters
+        : 0
+    if (rows.length === 0 && !body && !hiddenBodyCharacters) return null
+    return { rows, body, hiddenBodyCharacters }
   })()
   const hasDetails =
     command ||
@@ -322,6 +326,20 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
         <div className="agent-approval-preview-block">
           <span>Message</span>
           <pre>{outlookFields.body}</pre>
+        </div>
+      )}
+      {outlookFields && outlookFields.hiddenBodyCharacters > 0 && (
+        // Rendered as its own row, OUTSIDE the message block: the same
+        // sentence inside the body would be indistinguishable from a real
+        // notice, and the block shows only ~10 lines, so a forged marker on
+        // line ten hides the rest behind a scroll the reviewer thinks is
+        // empty.
+        <div className="agent-approval-preview-row agent-approval-preview-row--warning">
+          <span>Not shown</span>
+          <code>
+            {outlookFields.hiddenBodyCharacters.toLocaleString('en-US')} more characters will be
+            written
+          </code>
         </div>
       )}
       {riskLabels.length > 0 && (

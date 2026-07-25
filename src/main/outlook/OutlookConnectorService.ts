@@ -198,7 +198,18 @@ export class OutlookConnectorService {
       try {
         response = await this.fetchImpl(url, { ...init, signal: controller.signal })
       } catch {
-        return { kind: 'failure', failure: failure('network', 'Could not reach Microsoft Graph.') }
+        // A POST that dies at the socket is ambiguous in the same way a
+        // POST whose body will not read is: the request was already on the
+        // wire, so the item may exist. Only the body-read path said so.
+        return {
+          kind: 'failure',
+          failure: failure(
+            'network',
+            init.method === 'POST'
+              ? 'Could not reach Microsoft Graph. The request may already have been received — check Outlook before retrying.'
+              : 'Could not reach Microsoft Graph.'
+          )
+        }
       }
       if (response.status === 401) {
         return {

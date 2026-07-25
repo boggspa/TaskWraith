@@ -362,7 +362,7 @@ describe('createMcpToolApprovalPreviewer', () => {
 })
 
 describe('outlook approval discloses what it cannot show', () => {
-  it('states the exact number of body characters it is not rendering', () => {
+  it('states the number of body characters it is not rendering', () => {
     // The executor accepts 100k; showing a silent 8k prefix would let an
     // innocuous opening stand in for anything that follows it.
     const body = 'a'.repeat(20_000)
@@ -373,9 +373,67 @@ describe('outlook approval discloses what it cannot show', () => {
       context
     )
     expect(preview.body).toContain('12,000 more characters WILL BE WRITTEN but are not shown')
-    expect((preview.preview as { params: { body: string } }).params.body).toContain(
-      '12,000 more characters'
+    // Structured too, so the renderer can show it where the agent's own text
+    // cannot imitate it.
+    expect(preview.preview).toMatchObject({ params: { hiddenBodyCharacters: 12_000 } })
+    // …and the shown prefix is exactly the prefix, with no notice spliced in.
+    expect((preview.preview as { params: { body: string } }).params.body).toBe('a'.repeat(8_000))
+  })
+
+  it('counts against what will actually be written, not the raw argument', () => {
+    // The executor clamps a draft body to 100k, so measuring the argument
+    // overstated a 200k body by a full 100k.
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'S', body: 'x'.repeat(200_000) },
+      '/repo',
+      context
     )
+    expect(preview.preview).toMatchObject({ params: { hiddenBodyCharacters: 92_000 } })
+  })
+
+  it('counts code points, and never cuts a surrogate pair in half', () => {
+    const body = 'a' + '\u{1F600}'.repeat(19_999)
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'S', body },
+      '/repo',
+      context
+    )
+    // 20,000 code points in, 8,000 shown.
+    expect(preview.preview).toMatchObject({ params: { hiddenBodyCharacters: 12_000 } })
+    const shown = (preview.preview as { params: { body: string } }).params.body
+    const lastUnit = shown.charCodeAt(shown.length - 1)
+    expect(lastUnit >= 0xd800 && lastUnit <= 0xdbff).toBe(false)
+  })
+
+  it('shows a whitespace-only subject as written rather than as absent', () => {
+    // `optionalString` treats whitespace as absent; the executor does not
+    // trim, so "(no subject)" was shown while 4,000 newlines were written.
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: '\n'.repeat(4_000), body: 'B' },
+      '/repo',
+      context
+    )
+    expect(preview.body).not.toContain('(no subject)')
+  })
+
+  it('clamps preview fields to the caps the executor enforces', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_event',
+      {
+        subject: 's'.repeat(200_000),
+        startIso: '2026-08-01T09:00',
+        endIso: '2026-08-01T10:00',
+        location: 'l'.repeat(50_000)
+      },
+      '/repo',
+      context
+    )
+    const params = (preview.preview as { params: { subject: string; location: string } }).params
+    expect(params.subject).toHaveLength(4_000)
+    expect(params.location).toHaveLength(4_000)
   })
 
   it('shows a short body verbatim with no disclosure noise', () => {

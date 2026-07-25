@@ -5576,6 +5576,13 @@ input:disabled, select:disabled, textarea:disabled {
   color: var(--text-secondary);
 }
 
+/* The truncation notice is a claim about what the approval is NOT showing, so
+ * it must not look like the agent-authored text around it. */
+.agent-approval-preview-row--warning code {
+  color: var(--danger, #d9534f);
+  font-weight: 600;
+}
+
 .agent-approval-preview-row code,
 .agent-approval-preview-block pre {
   margin: 0;
