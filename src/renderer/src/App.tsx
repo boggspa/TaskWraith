@@ -383,6 +383,11 @@ import {
   type ComposerWorktreeSelection
 } from './lib/composerWorktreeSelection'
 import {
+  observeChatGitWorkflow,
+  type GitWorkflowObserverMemory
+} from './lib/chatGitWorkflowObserver'
+import { summarizeChecks } from './components/GitStatusChips'
+import {
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
 } from './components/Sidebar'
@@ -2809,6 +2814,59 @@ function App(): React.JSX.Element {
     primaryPr?.headRefOid,
     runCompleteNotice?.timestamp
   ])
+
+  // Sidebar git-workflow marker: fold the focused chat's settled satellite
+  // state into the transition-gated observer (lib/chatGitWorkflowObserver.ts)
+  // and report marker changes to main. Gated on the PR fetch having RESOLVED
+  // for this workspace and the snapshot being present — fetch staggering must
+  // never fabricate a transition (see the observer module contract).
+  const gitWorkflowObserverMemoryRef = useRef<GitWorkflowObserverMemory>(new Map())
+  const gitWorkflowLastSentRef = useRef('')
+  useEffect(() => {
+    const chatId = currentChat?.appChatId
+    if (!chatId || !currentGitPresentationPath || !primaryGitSnapshot) return
+    if (typeof window.api.setChatGitWorkflow !== 'function') return
+    const workspaceKey = normalizeWorkspacePath(currentGitPresentationPath)
+    if (normalizeWorkspacePath(primaryPrOwnerPathRef.current || '') !== workspaceKey) return
+    const ciOwned = normalizeWorkspacePath(primaryCiOwnerPathRef.current || '') === workspaceKey
+    const checksSummary = summarizeChecks(primaryPr?.checks)
+    const ciStatus =
+      ciOwned && primaryCi
+        ? primaryCi.status
+        : checksSummary.total > 0
+          ? checksSummary.fail > 0
+            ? 'failed'
+            : checksSummary.pending > 0
+              ? 'pending'
+              : 'passed'
+          : null
+    const input = observeChatGitWorkflow({
+      memory: gitWorkflowObserverMemoryRef.current,
+      chatId,
+      workspaceKey,
+      pr: primaryPr,
+      ciStatus,
+      snapshot: primaryGitSnapshot,
+      persisted: currentChat?.gitWorkflow
+    })
+    if (!input) return
+    const sendKey = `${chatId} ${input.state} ${input.prNumber ?? ''} ${input.prUrl ?? ''}`
+    if (gitWorkflowLastSentRef.current === sendKey) return
+    gitWorkflowLastSentRef.current = sendKey
+    void window.api.setChatGitWorkflow({ chatId, gitWorkflow: input })
+  }, [currentChat, currentGitPresentationPath, primaryGitSnapshot, primaryPr, primaryCi])
+
+  // Active-row sidebar title ticker: the selected row's label slowly cycles
+  // between the thread title and this workspace/branch identity (e.g.
+  // "TaskWraith/master"). Null (no workspace context / global chat) keeps the
+  // plain static label.
+  const activeChatSidebarIdentity = ((): string | null => {
+    if (!currentChat || isGlobalChat(currentChat)) return null
+    const name = currentChatWorkspace?.displayName?.trim()
+    if (!name) return null
+    const branch = primaryGitSnapshot?.branch?.trim()
+    return branch ? `${name}/${branch}` : name
+  })()
 
   // Bounded, visibility-gated CI poll. CI transitions (pending → pass/fail) on
   // GitHub's servers without a local commit, so the PR-status dedup key can't
@@ -8677,6 +8735,34 @@ function App(): React.JSX.Element {
       ...source,
       pinned: !source.pinned
     }))
+  }
+
+  /**
+   * Hide/show a chat in the sidebar's main sections while its Git-section
+   * entry keeps it reachable — the declutter path for finished git workflows.
+   * Renderer-owned boolean on the same save pipeline as `pinned`; the sidebar
+   * only offers it while `gitWorkflow` is set so a chat can't be orphaned.
+   */
+  const handleSetChatHiddenFromMainList = (chatId: string, hidden: boolean) => {
+    updateChatById(chatId, (source) => ({
+      ...source,
+      hiddenFromMainList: hidden || undefined
+    }))
+  }
+
+  /**
+   * "Remove from Git" — clear the main-owned per-thread git workflow marker
+   * (async patch; the chat-updated broadcast refreshes the sidebar). Also
+   * un-hides the chat: without a Git-section entry the hidden flag would
+   * orphan it from every list.
+   */
+  const handleClearChatGitWorkflow = (chatId: string) => {
+    updateChatById(chatId, (source) =>
+      source.hiddenFromMainList ? { ...source, hiddenFromMainList: undefined } : source
+    )
+    if (typeof window.api.setChatGitWorkflow === 'function') {
+      void window.api.setChatGitWorkflow({ chatId, gitWorkflow: null })
+    }
   }
 
   /**
@@ -29222,6 +29308,9 @@ function App(): React.JSX.Element {
     handleStoreKimiApiKey,
     handleToggleArchiveChat,
     handleTogglePinChat,
+    handleSetChatHiddenFromMainList,
+    handleClearChatGitWorkflow,
+    activeChatSidebarIdentity,
     handleTogglePinWorkspace,
     handleTogglePinWorkspaceBoard,
     handleToggleWorkflowEnabled,

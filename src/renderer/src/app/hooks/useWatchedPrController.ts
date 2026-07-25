@@ -5,6 +5,11 @@ import type { ChatRecord } from '../../../../main/store/types'
 import type { WatchPrNotifyPayload } from '../../../../main/services/WatchPrPoller'
 import type { WatchPollProgress } from '../../../../shared/watchPrPollCycle'
 import { buildCiNotice } from '../../lib/ciNotice'
+import {
+  chatGitWorkflowDiffers,
+  chatGitWorkflowInputFromObservation,
+  deriveChatGitWorkflowState
+} from '../../../../shared/chatGitWorkflow'
 import { stripElectronInvokeErrorFraming } from '../../lib/electronInvokeError'
 import { isChatSummaryRecord } from '../../lib/chatRecordMerge'
 import {
@@ -104,6 +109,18 @@ export function useWatchedPrController({
           else delete updated.watchedPr
           return updated
         })
+        // Watching a PR is an explicit per-thread association — record the
+        // sidebar git-workflow marker immediately instead of waiting for a
+        // witnessed transition. Best-effort; the observer/poller keep it fresh.
+        if (descriptor && typeof window.api.setChatGitWorkflow === 'function') {
+          const marker = chatGitWorkflowInputFromObservation(
+            deriveChatGitWorkflowState({ pr: primaryPr }),
+            primaryPr
+          )
+          if (marker && chatGitWorkflowDiffers(currentChat.gitWorkflow, marker)) {
+            void window.api.setChatGitWorkflow({ chatId, gitWorkflow: marker })
+          }
+        }
         if (!descriptor) {
           setProgressByChatId((previous) => {
             const updated = { ...previous }
