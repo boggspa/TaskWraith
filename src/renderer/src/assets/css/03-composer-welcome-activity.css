@@ -5099,9 +5099,11 @@
 .composer-thread-timecodes {
   width: 100%;
   max-width: min(100%, var(--composer-content-max-width));
-  display: flex;
+  /* 1fr/auto/1fr grid keeps the centre slot (GitHub PR/CI satellite pill)
+   * truly centred regardless of the turn/total labels' unequal widths. */
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
   align-items: center;
-  justify-content: space-between;
   gap: var(--space-md);
   padding: 1px 6px 0;
   pointer-events: auto;
@@ -5118,6 +5120,24 @@
   align-items: center;
   gap: 6px;
   min-width: 0;
+}
+.composer-thread-timecode--turn {
+  justify-self: start;
+}
+.composer-thread-timecode--total {
+  justify-self: end;
+}
+.composer-thread-timecodes-center {
+  justify-self: center;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+}
+/* The satellite pill keeps its own chrome; strip the row spacing it carried
+ * when it lived as a standalone row above the composer. */
+.composer-thread-timecodes-center .github-satellite-row {
+  padding: 0;
+  flex-wrap: nowrap;
 }
 .composer-thread-timecode-label {
   font-family: var(--font-sans);

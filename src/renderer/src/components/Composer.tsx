@@ -2043,22 +2043,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                   currentWorkspace?.path,
                   composerWorktreeSelection
                 )
-                // GitHub PR/CI/Merge satellite row — icon-only upstream status,
-                // pinned at the top of the above-composer area. Renders null
-                // unless there's a remote + PR/CI worth surfacing.
-                const githubSatelliteRow =
-                  !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
-                    <GitHubSatelliteRow
-                      pr={primaryPr}
-                      ci={primaryCi}
-                      snapshot={primaryGitSnapshot}
-                      onNotify={onNotifyThreadOfCi}
-                      isWatching={isWatchingPr}
-                      onToggleWatch={onToggleWatchPr}
-                      watchDisabledReason={watchPrDisabledReason}
-                      watchStatusMessage={watchPrStatusMessage}
-                    />
-                  ) : null
+                // (The GitHub PR/CI satellite pill moved from its own row
+                // above the composer into the pane-bottom timecode bar's
+                // centre slot — see ComposerThreadTimecodeBar below.)
                 const primaryWorkspaceAboveBar =
                   !isWelcomeChat && currentWorkspace && showWorkspaceGitAboveRows ? (
                     <div
@@ -2301,11 +2288,9 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
 
                 return (
                   <>
-                    {aboveRowsFloatAboveStack && githubSatelliteRow}
                     {aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                     {aboveRowsFloatAboveStack && externalWorkspaceAboveRows}
                     <div className={`composer-above-bar-stack ${composerAboveBarStackAuraClass}`}>
-                      {!aboveRowsFloatAboveStack && githubSatelliteRow}
                       {!aboveRowsFloatAboveStack && primaryWorkspaceAboveBar}
                       {/* Slice 3 of the external-path-redesign arc. One stacked
                     row per external-path grant. Per-grant repo metadata
@@ -5270,6 +5255,24 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                 running={isCurrentChatRunning}
                 startedAt={composerRunTimecodeStartedAt}
                 cumulativeBaseMs={cumulativeRunBaseMs}
+                center={
+                  // GitHub PR/CI satellite pill — centred between the Turn and
+                  // Total-thread timecodes (it renders null without a remote +
+                  // PR/CI worth surfacing; the hover popover opens upward from
+                  // here over the composer).
+                  currentWorkspace && showWorkspaceGitAboveRows ? (
+                    <GitHubSatelliteRow
+                      pr={primaryPr}
+                      ci={primaryCi}
+                      snapshot={primaryGitSnapshot}
+                      onNotify={onNotifyThreadOfCi}
+                      isWatching={isWatchingPr}
+                      onToggleWatch={onToggleWatchPr}
+                      watchDisabledReason={watchPrDisabledReason}
+                      watchStatusMessage={watchPrStatusMessage}
+                    />
+                  ) : undefined
+                }
               />
             )}
             {shouldShowWelcomeStandaloneHeatmaps && (

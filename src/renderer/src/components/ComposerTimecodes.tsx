@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type CSSProperties } from 'react'
+import { useEffect, useRef, useState, type CSSProperties, type ReactNode } from 'react'
 import { createPortal } from 'react-dom'
 import type { ComposerStyle } from '../../../main/store/types'
 import { resolveComposerSurfacePopoverPosition } from '../lib/composerSurfacePopover'
@@ -267,11 +267,16 @@ export function ComposerTimecode({
 export function ComposerThreadTimecodeBar({
   running,
   startedAt,
-  cumulativeBaseMs
+  cumulativeBaseMs,
+  center
 }: {
   running: boolean
   startedAt?: string | null
   cumulativeBaseMs: number
+  /** Optional centred slot between the two timecodes (the GitHub PR/CI
+   * satellite pill). Rendered even when empty so the bar's 1fr/auto/1fr
+   * grid keeps the turn/total columns stable. */
+  center?: ReactNode
 }) {
   const now = useTimecodeNow(running, startedAt)
   const { turnLabel, totalLabel } = getComposerTimecodePresentation({
@@ -292,6 +297,7 @@ export function ComposerThreadTimecodeBar({
         <span className="composer-thread-timecode-label">Turn</span>
         <span className="composer-thread-timecode-value">{turnLabel}</span>
       </span>
+      <span className="composer-thread-timecodes-center">{center}</span>
       <span
         className="composer-thread-timecode composer-thread-timecode--total"
         title="Total thread wall time"
