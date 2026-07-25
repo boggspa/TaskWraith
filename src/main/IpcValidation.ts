@@ -295,10 +295,13 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'canvas:open-window': ['optionalCanvasOpenArgs'],
   'canvas:open-embedded': ['optionalCanvasOpenArgs'],
   'canvas:open-sketch-window': ['optionalCanvasSketchArgs'],
+  'canvas:open-sketch-embedded': ['optionalCanvasSketchArgs'],
   'canvas:set-bounds': ['nonEmptyString', 'canvasBounds'],
   'canvas:set-visible': ['nonEmptyString', 'boolean'],
   'canvas:close': ['nonEmptyString'],
+  'canvas:close-chat': ['nonEmptyString', 'nonEmptyString'],
   'canvas:list': [],
+  'canvas:list-chat': ['nonEmptyString'],
   // Changelog sheet (update-pill feature): `changelog-snapshot` is a no-arg
   // read returning ProductChangelogSnapshot | null; `mark-changelog-seen`
   // persists the last-seen version. The handler coerces a missing/empty

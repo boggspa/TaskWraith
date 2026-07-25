@@ -230,6 +230,18 @@ describe('CanvasService', () => {
     expect(store.getSession(opened.canvasId)?.chatId).toBe('chat-a')
   })
 
+  it('embeds only the surface-hosting drivers (web + sketch), never surface-less ones', async () => {
+    await service.open({ url: 'http://localhost:3000', embed: true }, { chatId: 'chat-a' })
+    expect(lastDriverOpts?.embedded).toBe(true)
+
+    await service.open({ driver: 'sketch', embed: true }, { chatId: 'chat-a' })
+    expect(lastDriverOpts?.embedded).toBe(true)
+
+    // html renders offscreen (no live surface) — the embed flag must not leak in.
+    await service.open({ driver: 'html', html: '<p>x</p>', embed: true }, { chatId: 'chat-a' })
+    expect(lastDriverOpts?.embedded).toBe(false)
+  })
+
   it('device open requires a valid bundleId, rejected before the driver runs', async () => {
     await expect(service.open({ driver: 'device' }, {})).rejects.toThrow(/bundleId/)
     await expect(service.open({ driver: 'device', bundleId: 'com.x; rm -rf /' }, {})).rejects.toThrow(

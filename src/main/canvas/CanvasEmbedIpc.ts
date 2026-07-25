@@ -124,14 +124,15 @@ export function registerCanvasEmbedIpc(
 
   const openSketchCanvas = async (
     event: IpcMainInvokeEvent,
-    args: OpenSketchArgs
+    args: OpenSketchArgs,
+    embed: boolean
   ): Promise<OpenCanvasResult> => {
     let context: CanvasCallContext | undefined
     let openedCanvasId: string | undefined
     try {
       context = deps.resolveContext(event, requiredChatId(args?.chatId))
       const opened = await deps.controller.open(
-        { driver: 'sketch' },
+        { driver: 'sketch', embed },
         context
       )
       openedCanvasId = opened.canvasId
@@ -164,7 +165,10 @@ export function registerCanvasEmbedIpc(
     openCanvas(event, args, true)
   )
   ipcMain.handle('canvas:open-sketch-window', (event, args: OpenSketchArgs) =>
-    openSketchCanvas(event, args)
+    openSketchCanvas(event, args, false)
+  )
+  ipcMain.handle('canvas:open-sketch-embedded', (event, args: OpenSketchArgs) =>
+    openSketchCanvas(event, args, true)
   )
 
   ipcMain.handle('canvas:set-bounds', (event, canvasId: unknown, rect: unknown) => {
@@ -190,6 +194,30 @@ export function registerCanvasEmbedIpc(
     } finally {
       deps.embed.detach(canvasId)
     }
+  })
+
+  // Chat-scoped visibility for the right-dock Canvas panel: EVERY open canvas in
+  // the chat (agent-opened floating windows and html renders included), not just
+  // the ones this renderer opened. Authority is the same main-owned
+  // resolveContext gate every canvas call uses; summaries are redacted metadata
+  // (no pixels), matching what canvas_list already exposes to agents.
+  ipcMain.handle('canvas:list-chat', (event, chatId: unknown) => {
+    const context = deps.resolveContext(event, requiredChatId(chatId))
+    return deps.controller.list(context)
+  })
+
+  // Close ANY canvas in the sender's chat (the human closing an agent's canvas
+  // is equivalent to closing its floating window by hand). CanvasService.close
+  // re-checks chat ownership, so a canvasId from another chat throws.
+  ipcMain.handle('canvas:close-chat', async (event, chatId: unknown, canvasId: unknown) => {
+    if (typeof canvasId !== 'string') return
+    const context = deps.resolveContext(event, requiredChatId(chatId))
+    // Ownership check IS controller.close (chat-scoped); only clean up renderer
+    // bookkeeping once it succeeds, so a cross-chat canvasId can't detach a view
+    // that was never this chat's to touch.
+    await deps.controller.close(canvasId, context)
+    owned.delete(canvasId)
+    deps.embed.detach(canvasId)
   })
 
   ipcMain.handle('canvas:list', (event) => {

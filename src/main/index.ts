@@ -3240,7 +3240,10 @@ const canvasService = new CanvasService({
     if (kind === 'sketch') {
       return new CanvasSketchDriver(sessionId, {
         initialDocument: opts?.initialSketchDocument,
-        onDocumentChange: opts?.onSketchDocumentChange
+        onDocumentChange: opts?.onSketchDocumentChange,
+        ...(opts?.embedded
+          ? { createSurface: canvasEmbedController.surfaceFor(sessionId) }
+          : {})
       })
     }
     if (kind === 'web') {

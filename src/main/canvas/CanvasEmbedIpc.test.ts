@@ -58,10 +58,13 @@ describe('registerCanvasEmbedIpc', () => {
       'canvas:open-window',
       'canvas:open-embedded',
       'canvas:open-sketch-window',
+      'canvas:open-sketch-embedded',
       'canvas:set-bounds',
       'canvas:set-visible',
       'canvas:close',
-      'canvas:list'
+      'canvas:close-chat',
+      'canvas:list',
+      'canvas:list-chat'
     ]) {
       expect(ipc.has(channel)).toBe(true)
     }
@@ -112,9 +115,62 @@ describe('registerCanvasEmbedIpc', () => {
     const result = await ipc.invoke('canvas:open-sketch-window', { chatId: 'chat-a' })
     expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
     expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
-      { driver: 'sketch' },
+      { driver: 'sketch', embed: false },
       { chatId: 'chat-a', workspacePath: '/workspace/a' }
     ])
+  })
+
+  it('opens an embedded sketch for the right-dock canvas panel', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+    const result = await ipc.invoke('canvas:open-sketch-embedded', { chatId: 'chat-a' })
+    expect(result).toMatchObject({ ok: true, canvasId: 'c1' })
+    expect(deps.calls.find((call) => call[0] === 'open')?.[1]).toEqual([
+      { driver: 'sketch', embed: true },
+      { chatId: 'chat-a', workspacePath: '/workspace/a' }
+    ])
+  })
+
+  it('lists every canvas in the chat under resolved authority', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    expect(await ipc.invoke('canvas:list-chat', 'chat-a')).toEqual([{ canvasId: 'c1' }])
+    expect(deps.calls).toContainEqual([
+      'list',
+      [{ chatId: 'chat-a', workspacePath: '/workspace/a' }]
+    ])
+    expect(() => ipc.invoke('canvas:list-chat', '')).toThrow(/canonical chat/)
+    expect(() => ipc.invoke('canvas:list-chat', 42)).toThrow(/canonical chat/)
+  })
+
+  it('closes a chat canvas only when the controller accepts the close', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    await ipc.invoke('canvas:close-chat', 'chat-a', 'agent-canvas')
+    expect(deps.calls).toContainEqual([
+      'close',
+      ['agent-canvas', { chatId: 'chat-a', workspacePath: '/workspace/a' }]
+    ])
+    expect(deps.calls).toContainEqual(['detach', ['agent-canvas']])
+  })
+
+  it('never detaches when a cross-chat close is rejected', async () => {
+    const ipc = fakeIpc()
+    const deps = fakeDeps()
+    ;(deps.controller as { close: unknown }).close = async () => {
+      throw new Error('Canvas session not found for this chat.')
+    }
+    registerCanvasEmbedIpc(ipc.ipcMain, deps)
+
+    await expect(ipc.invoke('canvas:close-chat', 'chat-b', 'foreign-canvas')).rejects.toThrow(
+      /not found/
+    )
+    expect(deps.calls.some((call) => call[0] === 'detach')).toBe(false)
   })
 
   it('returns a normal error result when navigation fails', async () => {

@@ -1071,6 +1071,18 @@ declare global {
             }
           | { ok: false; error: string }
         >
+        openSketchEmbedded: (args: { chatId: string }) => Promise<
+          | {
+              ok: true
+              canvasId: string
+              url: string
+              title: string
+              viewport: { width: number; height: number }
+            }
+          | { ok: false; error: string }
+        >
+        listForChat: (chatId: string) => Promise<unknown[]>
+        closeForChat: (chatId: string, canvasId: string) => Promise<void>
         setBounds: (
           canvasId: string,
           rect: { x: number; y: number; width: number; height: number }

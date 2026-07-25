@@ -502,8 +502,10 @@ export class CanvasService implements CanvasController {
       throw error
     }
 
-    // Embed is web-only and renderer-initiated; the agent's executor never sets it.
-    const embedded = driverKind === 'web' && input.embed === true
+    // Embed is renderer-initiated (the multiview pane / right-dock canvas panel);
+    // the agent's executor never sets it. Only the drivers with a live, hostable
+    // surface can embed — web and sketch; html/image/device have no surface.
+    const embedded = (driverKind === 'web' || driverKind === 'sketch') && input.embed === true
     const sketchScope = driverKind === 'sketch' ? this.sketchScope(ctx) : undefined
     let driver: CanvasDriver
     try {

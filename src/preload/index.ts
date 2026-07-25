@@ -757,6 +757,23 @@ const api = {
         }
       | { ok: false; error: string }
     > => ipcRenderer.invoke('canvas:open-sketch-window', args),
+    openSketchEmbedded: (args: { chatId: string }): Promise<
+      | {
+          ok: true
+          canvasId: string
+          url: string
+          title: string
+          viewport: { width: number; height: number }
+        }
+      | { ok: false; error: string }
+    > => ipcRenderer.invoke('canvas:open-sketch-embedded', args),
+    // Chat-scoped list/close for the right-dock Canvas panel: covers agent-opened
+    // canvases too (redacted summaries, no pixels), unlike `list` which only
+    // returns canvases this renderer opened itself.
+    listForChat: (chatId: string): Promise<unknown[]> =>
+      ipcRenderer.invoke('canvas:list-chat', chatId),
+    closeForChat: (chatId: string, canvasId: string): Promise<void> =>
+      ipcRenderer.invoke('canvas:close-chat', chatId, canvasId),
     setBounds: (
       canvasId: string,
       rect: { x: number; y: number; width: number; height: number }
