@@ -55,6 +55,23 @@ public enum ContextWindows {
         "sonnet": 200_000,
         "opus": 200_000,
         "haiku": 200_000,
+        // Pi seat wire ids (`<upstream>/<model>`); mirrors contextWindows.ts.
+        "deepseek/deepseek-v4-pro": 1_000_000,
+        "deepseek/deepseek-v4-flash": 1_000_000,
+        "zai/glm-5.2": 1_000_000,
+        "zai/glm-5.1": 200_000,
+        "zai/glm-4.7": 204_800,
+        "qwen-token-plan/qwen3.7-max": 1_000_000,
+        "qwen-token-plan/qwen3.7-plus": 1_000_000,
+        "qwen-token-plan/qwen3.8-max-preview": 1_000_000,
+        "minimax/MiniMax-M3": 1_000_000,
+        "minimax/MiniMax-M2.7": 204_800,
+        "mistral/devstral-2512": 262_144,
+        "mistral/mistral-medium-3.5": 262_144,
+        "groq/openai/gpt-oss-120b": 131_072,
+        "groq/qwen/qwen3-32b": 131_072,
+        "cerebras/zai-glm-4.7": 131_072,
+        "cerebras/gpt-oss-120b": 131_072,
         // Kimi
         "kimi-k3": 256_000,
         "kimi-k2.7-code": 256_000,
@@ -117,6 +134,7 @@ public enum ContextWindows {
         "cursor": 200_000,
         "ollama": 262_144,
         "antigravity": 1_048_576,
+        "pi": 1_000_000,
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's

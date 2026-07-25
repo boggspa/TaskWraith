@@ -37,7 +37,7 @@ public enum ModelContextLengths {
     // Mirrors desktop MODEL_USAGE_PROVIDER_ORDER. Ollama is appended separately
     // only when includeOllama is true (ollama-last convention).
     private static let providerOrder: [String] = [
-        "gemini", "codex", "claude", "kimi", "grok", "cursor"
+        "gemini", "codex", "claude", "kimi", "grok", "cursor", "pi"
     ]
 
     // Gemini router alias — NOT a concrete model with a single official window.
@@ -86,6 +86,17 @@ public enum ModelContextLengths {
                 // K3 (2026-07-16) — Moonshot's flagship; 256K on Moderato and
                 // up to 1M on Allegretto+, with no Highspeed tier.
                 (id: "kimi-k3",        label: "K3"),
+            ]
+        case "pi":
+            // BYOK seat: the flagship row per allowed upstream. Wire ids stay
+            // `<upstream>/<model>` so the window lookup matches the desktop.
+            return [
+                (id: "deepseek/deepseek-v4-flash",  label: "DeepSeek V4 Flash"),
+                (id: "deepseek/deepseek-v4-pro",    label: "DeepSeek V4 Pro"),
+                (id: "zai/glm-5.2",                 label: "GLM-5.2"),
+                (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
+                (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
+                (id: "mistral/devstral-2512",       label: "Devstral 2"),
             ]
         case "grok":
             return [

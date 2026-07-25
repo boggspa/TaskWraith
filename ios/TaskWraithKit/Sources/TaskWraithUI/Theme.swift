@@ -147,6 +147,7 @@ public enum TWTheme {
         case "cursor": return Color(hex: 0x8D7312)
         case "ollama": return Color(hex: 0x1A8562)
         case "antigravity": return Color(hex: 0x308713)
+        case "pi": return Color(hex: 0xC25E4C)
         case "ensemble": return Color(hex: 0x986781)
         case "grok": return Color(hex: 0x757575)
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
@@ -191,6 +192,7 @@ public enum TWTheme {
         case "cursor": return "Cursor"
         case "ollama": return "Ollama"
         case "antigravity": return "AntiGravity"
+        case "pi": return "Pi"
         case "ensemble": return "Ensemble"
         case "alibaba": return "Alibaba"
         case "deep-reinforce": return "Deep Reinforce"
@@ -242,7 +244,7 @@ public enum TWTheme {
     /// mirrored here or iOS ships with a stale roster (build 81 shipped a
     /// Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
-        "codex", "claude", "kimi", "cursor", "grok", "ollama",
+        "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi",
     ]
 
     public static func isLiveSelectableProvider(_ provider: String?) -> Bool {
