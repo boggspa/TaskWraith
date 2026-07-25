@@ -1,10 +1,8 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" role="img" aria-labelledby="api-key-required-title api-key-required-desc" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">
   <title id="api-key-required-title">API key required</title>
   <desc id="api-key-required-desc">Monoline horizontal key with a serrated bit, its bow enclosing a dollar sign.</desc>
-  <circle cx="17.5" cy="11.8" r="5"/>
-  <path d="M12.5 11.8H1.5"/>
-  <path d="M1.6 11.8l2.3 5.35 2.3-5.35"/>
-  <path d="M6.2 11.8l2.3 5.35 2.3-5.35"/>
-  <path d="M17.5 8.7v6.2"/>
-  <path d="M19.12 9.1h-2.16a1.35 1.35 0 0 0 0 2.7h1.08a1.35 1.35 0 0 1 0 2.7h-2.16"/>
+  <circle cx="17.5" cy="11.6" r="5"/>
+  <path d="M12.84 9.8H1.5v3.6h.34l2.2 4 2.2-4 2.2 4 2.2-4h2.2"/>
+  <path d="M17.5 8.5v6.2"/>
+  <path d="M19.12 8.9h-2.16a1.35 1.35 0 0 0 0 2.7h1.08a1.35 1.35 0 0 1 0 2.7h-2.16"/>
 </svg>
