@@ -35,6 +35,12 @@ const GRAPH_ROOT = 'https://graph.microsoft.com/v1.0'
 const DEFAULT_TIMEOUT_MS = 20_000
 const MAX_THROTTLE_RETRIES = 2
 const MAX_PAGE_SIZE = 50
+/**
+ * Hard ceiling on a Graph response body. Mail bodies are legitimately large;
+ * an unbounded one is either a fault or a hostile mailbox, and neither should
+ * be buffered into the main process whole.
+ */
+const MAX_RESPONSE_BYTES = 8_000_000
 
 export type OutlookConnectorError =
   | 'not-connected'
@@ -69,6 +75,38 @@ const failure = (error: OutlookConnectorError, message: string): OutlookConnecto
   error,
   message
 })
+
+/**
+ * Read a JSON body with a byte ceiling.
+ *
+ * Streams when the runtime exposes a body stream, so an oversized response is
+ * abandoned mid-flight instead of buffered; falls back to `json()` for
+ * responses that have no stream.
+ */
+async function readBoundedJson(response: Response): Promise<unknown> {
+  const stream = (response as { body?: ReadableStream<Uint8Array> | null }).body
+  if (!stream || typeof stream.getReader !== 'function') return response.json()
+  const reader = stream.getReader()
+  const chunks: Uint8Array[] = []
+  let total = 0
+  for (;;) {
+    const { done, value } = await reader.read()
+    if (done) break
+    if (!value) continue
+    total += value.byteLength
+    if (total > MAX_RESPONSE_BYTES) {
+      await reader.cancel()
+      throw new Error('Microsoft Graph response exceeded the size ceiling.')
+    }
+    chunks.push(value)
+  }
+  return JSON.parse(Buffer.concat(chunks).toString('utf8'))
+}
+
+type GraphAttempt =
+  | { kind: 'ok'; body: unknown }
+  | { kind: 'throttled'; retryAfterSeconds: number | null }
+  | { kind: 'failure'; failure: OutlookConnectorFailure }
 
 export class OutlookConnectorService {
   private readonly deps: OutlookConnectorDeps
@@ -134,6 +172,58 @@ export class OutlookConnectorService {
     return { ok: true, token: refreshed.accessToken, credentials: next }
   }
 
+  /**
+   * One fully timed Graph request: the abort timer stays armed until the body
+   * has been read.
+   *
+   * `fetch` resolves as soon as the response HEADERS arrive, so clearing the
+   * timer at that point leaves the body read with no deadline at all — a
+   * server that stalls mid-body would hang the call for as long as the socket
+   * stays open. Reading the body inside the same try/finally is what makes
+   * the timeout mean what it says.
+   */
+  private async graphAttempt(url: string, init: RequestInit): Promise<GraphAttempt> {
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    try {
+      let response: Response
+      try {
+        response = await this.fetchImpl(url, { ...init, signal: controller.signal })
+      } catch {
+        return { kind: 'failure', failure: failure('network', 'Could not reach Microsoft Graph.') }
+      }
+      if (response.status === 401) {
+        return {
+          kind: 'failure',
+          failure: failure('reauth-required', 'Microsoft rejected the session. Sign in again.')
+        }
+      }
+      if (response.status === 429 || response.status === 503) {
+        const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '', 10)
+        return {
+          kind: 'throttled',
+          retryAfterSeconds: Number.isFinite(retryAfter) ? retryAfter : null
+        }
+      }
+      if (!response.ok) {
+        return {
+          kind: 'failure',
+          failure: failure('graph-error', `Microsoft Graph returned HTTP ${response.status}.`)
+        }
+      }
+      try {
+        return { kind: 'ok', body: await readBoundedJson(response) }
+      } catch {
+        return {
+          kind: 'failure',
+          failure: failure('graph-error', 'Microsoft Graph returned an unreadable response.')
+        }
+      }
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
   /** Single bounded GET with throttle handling. Never logs the token. */
   private async graphGet(
     path: string,
@@ -144,49 +234,25 @@ export class OutlookConnectorService {
 
     const url = `${GRAPH_ROOT}${path}?${new URLSearchParams(query).toString()}`
     for (let attempt = 0; attempt <= MAX_THROTTLE_RETRIES; attempt += 1) {
-      const controller = new AbortController()
-      const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-      let response: Response
-      try {
-        response = await this.fetchImpl(url, {
-          method: 'GET',
-          headers: {
-            authorization: `Bearer ${auth.token}`,
-            accept: 'application/json',
-            // Graph returns UTC unless asked otherwise; mapping converts.
-            prefer: 'outlook.timezone="UTC"'
-          },
-          signal: controller.signal
-        })
-      } catch {
-        return failure('network', 'Could not reach Microsoft Graph.')
-      } finally {
-        clearTimeout(timer)
-      }
-
-      if (response.status === 401) {
-        return failure('reauth-required', 'Microsoft rejected the session. Sign in again.')
-      }
-      if (response.status === 429 || response.status === 503) {
-        if (attempt === MAX_THROTTLE_RETRIES) {
-          return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
+      const result = await this.graphAttempt(url, {
+        method: 'GET',
+        headers: {
+          authorization: `Bearer ${auth.token}`,
+          accept: 'application/json',
+          // Graph returns UTC unless asked otherwise; mapping converts.
+          prefer: 'outlook.timezone="UTC"'
         }
-        const retryAfter = Number.parseInt(response.headers.get('retry-after') ?? '', 10)
-        const delayMs = Math.min(
-          30_000,
-          Math.max(1_000, (Number.isFinite(retryAfter) ? retryAfter : 2 ** attempt) * 1_000)
-        )
-        await (this.deps.sleep?.(delayMs) ?? new Promise((resolve) => setTimeout(resolve, delayMs)))
-        continue
+      })
+      if (result.kind === 'ok') return { ok: true, body: result.body }
+      if (result.kind === 'failure') return result.failure
+      if (attempt === MAX_THROTTLE_RETRIES) {
+        return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
       }
-      if (!response.ok) {
-        return failure('graph-error', `Microsoft Graph returned HTTP ${response.status}.`)
-      }
-      try {
-        return { ok: true, body: await response.json() }
-      } catch {
-        return failure('graph-error', 'Microsoft Graph returned an unreadable response.')
-      }
+      const delayMs = Math.min(
+        30_000,
+        Math.max(1_000, (result.retryAfterSeconds ?? 2 ** attempt) * 1_000)
+      )
+      await (this.deps.sleep?.(delayMs) ?? new Promise((resolve) => setTimeout(resolve, delayMs)))
     }
     return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
   }
@@ -301,41 +367,19 @@ export class OutlookConnectorService {
       )
     }
 
-    const controller = new AbortController()
-    const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
-    let response: Response
-    try {
-      response = await this.fetchImpl(`${GRAPH_ROOT}${path}`, {
-        method: 'POST',
-        headers: {
-          authorization: `Bearer ${auth.token}`,
-          accept: 'application/json',
-          'content-type': 'application/json'
-        },
-        body: JSON.stringify(body),
-        signal: controller.signal
-      })
-    } catch {
-      return failure('network', 'Could not reach Microsoft Graph.')
-    } finally {
-      clearTimeout(timer)
-    }
-
-    if (response.status === 401) {
-      return failure('reauth-required', 'Microsoft rejected the session. Sign in again.')
-    }
-    if (response.status === 429 || response.status === 503) {
-      // Creation is not retried: a blind retry risks a duplicate draft.
-      return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
-    }
-    if (!response.ok) {
-      return failure('graph-error', `Microsoft Graph returned HTTP ${response.status}.`)
-    }
-    try {
-      return { ok: true, body: await response.json() }
-    } catch {
-      return failure('graph-error', 'Microsoft Graph returned an unreadable response.')
-    }
+    const result = await this.graphAttempt(`${GRAPH_ROOT}${path}`, {
+      method: 'POST',
+      headers: {
+        authorization: `Bearer ${auth.token}`,
+        accept: 'application/json',
+        'content-type': 'application/json'
+      },
+      body: JSON.stringify(body)
+    })
+    if (result.kind === 'ok') return { ok: true, body: result.body }
+    if (result.kind === 'failure') return result.failure
+    // Creation is not retried: a blind retry risks a duplicate draft.
+    return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
   }
 
   /**

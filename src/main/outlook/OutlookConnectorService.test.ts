@@ -64,6 +64,40 @@ function stubFetch(responses: StubResponse[]): {
   return { fetchImpl, calls }
 }
 
+/** A response whose body only settles when the request is aborted. */
+function stallingFetch(): typeof globalThis.fetch {
+  return (async (_url: string, init: RequestInit) => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    json: () =>
+      new Promise((_resolve, reject) => {
+        init.signal?.addEventListener('abort', () => reject(new Error('aborted')))
+      })
+  })) as unknown as typeof globalThis.fetch
+}
+
+/** A response body stream that emits more bytes than the ceiling allows. */
+function oversizedFetch(): typeof globalThis.fetch {
+  let emitted = 0
+  return (async () => ({
+    ok: true,
+    status: 200,
+    headers: { get: () => null },
+    body: {
+      getReader: () => ({
+        read: async () => {
+          if (emitted >= 12_000_000) return { done: true, value: undefined }
+          emitted += 1_000_000
+          return { done: false, value: new Uint8Array(1_000_000) }
+        },
+        cancel: async () => {}
+      })
+    },
+    json: async () => ({})
+  })) as unknown as typeof globalThis.fetch
+}
+
 const MESSAGE_PAGE = {
   value: [
     {
@@ -389,5 +423,35 @@ describe('throttling and errors', () => {
       nowMs: () => NOW
     })
     expect(await broken.listMessages({})).toMatchObject({ error: 'graph-error' })
+  })
+})
+
+describe('response reading', () => {
+  it('keeps the timeout armed until the body has been read', async () => {
+    // fetch resolves on HEADERS. A timer cleared at that point leaves the body
+    // read with no deadline, so a server that stalls mid-body hangs the call
+    // forever. The stub only settles when the abort fires.
+    const { store } = stubStore(CREDENTIALS)
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl: stallingFetch(),
+      timeoutMs: 20,
+      nowMs: () => NOW,
+      sleep: async () => {}
+    })
+    const result = await service.listMessages({})
+    expect(result).toMatchObject({ ok: false, error: 'graph-error' })
+  })
+
+  it('refuses a response body past the size ceiling', async () => {
+    const { store } = stubStore(CREDENTIALS)
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl: oversizedFetch(),
+      nowMs: () => NOW,
+      sleep: async () => {}
+    })
+    const result = await service.listMessages({})
+    expect(result).toMatchObject({ ok: false, error: 'graph-error' })
   })
 })
