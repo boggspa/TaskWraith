@@ -72,6 +72,17 @@ export interface ModelRateEntry {
   /** Optional notes — e.g. "subscription-only via Codex CLI",
    * "tier-1 only", "preview pricing". */
   notes?: string
+  /**
+   * Set when the upstream bills by SUBSCRIPTION or prepaid allowance and
+   * publishes no per-token price (Z.ai's coding plan, the Qwen token plan).
+   * Such a row carries zero rates on purpose: zero means "no per-token
+   * projection" — the display layer renders a neutral placeholder — NOT "free".
+   *
+   * The row must still exist. `resolveModelRate` falls back to `models[0]` when
+   * nothing matches, so omitting these ids would price them at an unrelated
+   * model's rate instead of leaving the estimate blank.
+   */
+  subscriptionLane?: true
   /** Explicit source confidence for the rate value. Missing means
    * baked-in manual table. */
   confidence?: ProviderRateConfidence
@@ -717,6 +728,19 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // Pi seat: BYOK upstreams with wildly different rates; rows below cover the
   // curated defaults and the FIRST row is the fallback estimate for any other
   // pi wire id. Rates from pi 0.82.1's bundled catalog (per-million USD).
+  // Pi is BYOK across SEVEN upstreams, so one rate per provider is not enough:
+  // every surfaced wire id needs its own row. `resolveModelRate` falls back to
+  // `models[0]` when nothing matches exactly or by prefix, and a Pi wire id
+  // (`zai/glm-5.2`) shares no prefix with any other, so ANY missing row was
+  // silently priced at row 0 — i.e. every Z.ai, Qwen, MiniMax, Mistral, Groq
+  // and Cerebras run was being projected at DeepSeek V4 Flash rates.
+  //
+  // Values extracted from pi's own bundled catalogue
+  // (`@earendil-works/pi-ai/dist/providers/data/<upstream>.json`), the same
+  // source PiModels' metadata came from — re-extract on pi upgrades. Table-level
+  // `pricingUrl` can only ever verify one vendor, so each entry carries the
+  // vendor's own `sourceUrl` for the human half of the diligence cycle; expect
+  // the probe to report not-verified for the other six.
   pi: {
     provider: 'pi',
     pricingUrl: 'https://pi.dev/docs/latest/providers',
@@ -726,7 +750,7 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         inputUsdPerMillion: 0.14,
         outputUsdPerMillion: 0.28,
         cachedInputUsdPerMillion: 0.0028,
-        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
       },
@@ -735,9 +759,136 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         inputUsdPerMillion: 0.435,
         outputUsdPerMillion: 0.87,
         cachedInputUsdPerMillion: 0.003625,
-        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        sourceUrl: 'https://api-docs.deepseek.com/quick_start/pricing',
         lastVerified: RATE_TABLE_VERSION,
         notes: 'DeepSeek V4 Pro via the Pi seat.'
+      },
+      // Z.ai + Qwen are SUBSCRIPTION/token-plan lanes: pi publishes no
+      // per-token price, so these are genuinely 0 and the display layer renders
+      // a neutral placeholder rather than a figure. The rows still matter —
+      // without them these ids fall through to row 0 and get billed as DeepSeek.
+      // 0 here means "no per-token projection", NOT "free".
+      {
+        modelId: 'zai/glm-4.7',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://docs.z.ai/guides/overview/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Z.ai coding-plan lane — subscription, no per-token rate published.'
+      },
+      {
+        modelId: 'zai/glm-5.1',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://docs.z.ai/guides/overview/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Z.ai coding-plan lane — subscription, no per-token rate published.'
+      },
+      {
+        modelId: 'zai/glm-5.2',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://docs.z.ai/guides/overview/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Z.ai coding-plan lane — subscription, no per-token rate published.'
+      },
+      {
+        modelId: 'qwen-token-plan/qwen3.7-max',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'qwen-token-plan/qwen3.7-plus',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'qwen-token-plan/qwen3.8-max-preview',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        subscriptionLane: true,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Qwen token plan — prepaid allowance, no per-token rate published.'
+      },
+      {
+        modelId: 'minimax/MiniMax-M2.7',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 1.2,
+        cachedInputUsdPerMillion: 0.06,
+        sourceUrl: 'https://platform.minimax.io/docs/price',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'MiniMax model ids are CASE-SENSITIVE.'
+      },
+      {
+        modelId: 'minimax/MiniMax-M3',
+        inputUsdPerMillion: 0.3,
+        outputUsdPerMillion: 1.2,
+        cachedInputUsdPerMillion: 0.06,
+        sourceUrl: 'https://platform.minimax.io/docs/price',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'MiniMax model ids are CASE-SENSITIVE.'
+      },
+      {
+        modelId: 'mistral/devstral-2512',
+        inputUsdPerMillion: 0.4,
+        outputUsdPerMillion: 2,
+        cachedInputUsdPerMillion: 0.04,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION
+      },
+      {
+        modelId: 'mistral/mistral-medium-3.5',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 7.5,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Priciest wired Mistral row; Mistral also publishes far cheaper tiers pi supports.'
+      },
+      // Groq wire ids carry a SECOND slash — the id below is the whole key.
+      {
+        modelId: 'groq/openai/gpt-oss-120b',
+        inputUsdPerMillion: 0.15,
+        outputUsdPerMillion: 0.6,
+        cachedInputUsdPerMillion: 0.075,
+        sourceUrl: 'https://groq.com/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Paid tier; Groq also has a free tier where actual spend is 0.'
+      },
+      {
+        modelId: 'groq/qwen/qwen3-32b',
+        inputUsdPerMillion: 0.29,
+        outputUsdPerMillion: 0.59,
+        sourceUrl: 'https://groq.com/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Paid tier; Groq also has a free tier where actual spend is 0.'
+      },
+      {
+        modelId: 'cerebras/gpt-oss-120b',
+        inputUsdPerMillion: 0.35,
+        outputUsdPerMillion: 0.75,
+        sourceUrl: 'https://www.cerebras.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Paid tier; Cerebras also has a free 1M tokens/day tier.'
+      },
+      {
+        modelId: 'cerebras/zai-glm-4.7',
+        inputUsdPerMillion: 2.25,
+        outputUsdPerMillion: 2.75,
+        sourceUrl: 'https://www.cerebras.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Most expensive wired Pi model by input rate — ~16x DeepSeek V4 Flash.'
       }
     ]
   },

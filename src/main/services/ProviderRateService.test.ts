@@ -9,6 +9,7 @@ import {
   shouldRefreshProviderRateProbe,
   RATE_TABLE_VERSION
 } from './ProviderRateService'
+import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 
 /**
  * 1.0.5-EW38 — Tests for the pure helpers + the baseline shape.
@@ -109,6 +110,49 @@ describe('BAKED_IN_RATES', () => {
       expect(table.pricingUrl).toMatch(/^(https?:\/\/|local:\/\/)/)
       expect(table.models.length).toBeGreaterThan(0)
     }
+  })
+
+  describe('pi — one row per surfaced BYOK model', () => {
+    const piRows = BAKED_IN_RATES.pi.models
+
+    // `resolveModelRate` falls back to models[0] when nothing matches exactly
+    // or by prefix. Pi wire ids share no prefix across upstreams, so a missing
+    // row does not degrade to "no estimate" — it silently bills that model at
+    // row 0's rate. An exact row for every OFFERED model is what makes the
+    // fallback unreachable in practice.
+    it.each(PI_STATIC_MODELS.map((model) => model.wireId))(
+      'prices %s with its own row rather than another upstream',
+      (wireId) => {
+        const row = piRows.find((entry) => entry.modelId === wireId)
+        expect(row, `no rate row for ${wireId}`).toBeDefined()
+        expect(row?.sourceUrl).toMatch(/^https?:\/\//)
+        expect(row?.lastVerified).toBe(RATE_TABLE_VERSION)
+      }
+    )
+
+    it('keeps the pi default model as the models[0] fallback', () => {
+      expect(piRows[0]?.modelId).toBe(PI_DEFAULT_MODEL_WIRE_ID)
+      expect(piRows[0]?.notes).toMatch(/fallback/i)
+    })
+
+    it('prices the subscription lanes at zero rather than a foreign rate', () => {
+      // Z.ai and Qwen publish no per-token price. Zero renders as a neutral
+      // placeholder; the row exists purely so these ids never hit models[0].
+      for (const row of piRows.filter((r) => /^(zai|qwen-token-plan)\//.test(r.modelId))) {
+        expect(row.inputUsdPerMillion).toBe(0)
+        expect(row.outputUsdPerMillion).toBe(0)
+        expect(row.notes).toMatch(/subscription|prepaid/i)
+      }
+    })
+
+    it('carries the Groq two-slash wire id verbatim as the rate key', () => {
+      expect(piRows.some((r) => r.modelId === 'groq/openai/gpt-oss-120b')).toBe(true)
+    })
+
+    it('has no duplicate model ids', () => {
+      const ids = piRows.map((r) => r.modelId)
+      expect(new Set(ids).size).toBe(ids.length)
+    })
   })
 
   it('keeps Grok Composer priced as a Grok-provider projection, distinct from Cursor', () => {
@@ -239,6 +283,13 @@ describe('BAKED_IN_RATES', () => {
         if (table.provider === 'ollama') {
           expect(model.inputUsdPerMillion).toBe(0)
           expect(model.outputUsdPerMillion).toBe(0)
+        } else if (model.subscriptionLane) {
+          // Upstream bills by subscription/prepaid allowance and publishes no
+          // per-token price. Zero is deliberate and must be EXACT — the row
+          // exists so the id never falls back to another model's rate.
+          expect(model.inputUsdPerMillion).toBe(0)
+          expect(model.outputUsdPerMillion).toBe(0)
+          expect(model.notes, `${model.modelId} must document why it is zero`).toBeTruthy()
         } else {
           expect(model.inputUsdPerMillion).toBeGreaterThan(0)
           expect(model.outputUsdPerMillion).toBeGreaterThan(0)
