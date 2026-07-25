@@ -125,6 +125,32 @@ describe('wordHtmlToModel', () => {
     })
   })
 
+  it('round-trips image blocks and imports pasted data-URI images', () => {
+    const PNG_URI =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const model: WordDocumentModel = {
+      kind: 'word',
+      blocks: [
+        { type: 'paragraph', runs: [{ text: 'above' }] },
+        { type: 'image', image: { dataUri: PNG_URI, name: 'pixel.png', widthPx: 40, heightPx: 30 } }
+      ]
+    }
+    const html = wordModelToHtml(model)
+    expect(html).toContain(`<img src="${PNG_URI}" alt="pixel.png" width="40" height="30">`)
+    expect(wordHtmlToModel(html)).toEqual(model)
+
+    // Chromium paste shape: bare img inside a div, mixed with text. The
+    // remote image is dropped; its wrapper survives as a blank line.
+    const pasted = wordHtmlToModel(
+      `<div>look: <img src="${PNG_URI}"></div><div><img src="https://remote.example/x.png"></div>`
+    )
+    expect(pasted.blocks).toEqual([
+      { type: 'paragraph', runs: [{ text: 'look: ' }] },
+      { type: 'image', image: { dataUri: PNG_URI, name: '' } },
+      { type: 'paragraph', runs: [] }
+    ])
+  })
+
   it('returns a single empty paragraph for empty or placeholder input', () => {
     expect(wordHtmlToModel('')).toEqual({
       kind: 'word',

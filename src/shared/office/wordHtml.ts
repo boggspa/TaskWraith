@@ -9,7 +9,7 @@
  * unit-test without a DOM.
  */
 
-import type { WordBlock, WordDocumentModel, WordRun } from './officeModels'
+import type { WordBlock, WordDocumentModel, WordImage, WordRun } from './officeModels'
 import {
   TEXT_NODE_TAG,
   escapeXmlAttr,
@@ -75,6 +75,16 @@ export function wordModelToHtml(model: WordDocumentModel): string {
           .map((row) => `<tr>${row.map((cell) => `<td>${runsToHtml(cell)}</td>`).join('')}</tr>`)
           .join('')
         parts.push(`<table><tbody>${rows}</tbody></table>`)
+        break
+      }
+      case 'image': {
+        const { image } = block
+        const size =
+          (image.widthPx ? ` width="${image.widthPx}"` : '') +
+          (image.heightPx ? ` height="${image.heightPx}"` : '')
+        parts.push(
+          `<p class="office-word-image-block"><img src="${escapeXmlAttr(image.dataUri)}" alt="${escapeXmlAttr(image.name)}"${size}></p>`
+        )
         break
       }
       default:
@@ -223,6 +233,41 @@ function inlineRunsOf(node: XmlNode): WordRun[] {
 
 const runsHaveContent = (runs: WordRun[]): boolean => runs.some((run) => run.text.trim() !== '')
 
+const parseDimension = (value: string | undefined): number | undefined => {
+  if (!value) return undefined
+  const parsed = Number.parseInt(value, 10)
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : undefined
+}
+
+/**
+ * data:-URI images anywhere under the node, document order. Remote (http)
+ * sources are intentionally dropped: the editor never fetches the network,
+ * and full raster validation happens again during model normalization.
+ */
+function collectImages(node: XmlNode): WordImage[] {
+  const images: WordImage[] = []
+  const walk = (current: XmlNode): void => {
+    for (const child of current.children) {
+      if (child.tag === TEXT_NODE_TAG) continue
+      if (localName(child.tag) === 'img') {
+        const src = child.attrs.src ?? ''
+        if (/^data:image\//i.test(src)) {
+          const image: WordImage = { dataUri: src, name: (child.attrs.alt ?? '').trim() }
+          const widthPx = parseDimension(child.attrs.width)
+          const heightPx = parseDimension(child.attrs.height)
+          if (widthPx) image.widthPx = widthPx
+          if (heightPx) image.heightPx = heightPx
+          images.push(image)
+        }
+        continue
+      }
+      walk(child)
+    }
+  }
+  walk(node)
+  return images
+}
+
 function collectBlocks(
   parent: XmlNode,
   blocks: WordBlock[],
@@ -236,6 +281,7 @@ function collectBlocks(
     const wrapper: XmlNode = { tag: '#inline', attrs: {}, children: pendingInline, text: '' }
     const runs = inlineRunsOf(wrapper)
     if (runsHaveContent(runs)) blocks.push({ type: 'paragraph', runs })
+    for (const image of collectImages(wrapper)) blocks.push({ type: 'image', image })
     pendingInline = []
   }
 
@@ -303,7 +349,14 @@ function collectBlocks(
     if (hasBlockChildren) {
       collectBlocks(child, blocks, listDepth, ordered)
     } else {
-      blocks.push({ type: 'paragraph', runs: inlineRunsOf(child) })
+      const runs = inlineRunsOf(child)
+      const images = collectImages(child)
+      // A paragraph that only wraps an image contributes just the image
+      // block; mixed content keeps text first, then its images.
+      if (images.length === 0 || runsHaveContent(runs)) {
+        blocks.push({ type: 'paragraph', runs })
+      }
+      for (const image of images) blocks.push({ type: 'image', image })
     }
   }
   flushInline()

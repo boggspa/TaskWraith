@@ -50,6 +50,12 @@ export function wordModelToMarkdown(model: WordDocumentModel): string {
   let previousWasListItem = false
   for (const block of model.blocks) {
     switch (block.type) {
+      case 'image':
+        // Standard image syntax with the raster inlined as a data URI —
+        // bulky but lossless, and GitHub/VS Code render it.
+        parts.push(`![${block.image.name.replace(/[[\]]/g, '')}](${block.image.dataUri})`)
+        previousWasListItem = false
+        break
       case 'heading':
         parts.push(`${'#'.repeat(block.level)} ${runsToMarkdown(block.runs)}`)
         previousWasListItem = false
@@ -238,6 +244,14 @@ export function markdownToWordModel(markdown: string): WordDocumentModel {
       flushParagraph()
       const level = Math.min(3, headingMatch[1].length) as 1 | 2 | 3
       blocks.push({ type: 'heading', level, runs: parseInlineMarkdown(headingMatch[2]) })
+      index += 1
+      continue
+    }
+
+    const imageMatch = /^!\[([^\]]*)\]\((data:image\/[^)\s]+)\)$/.exec(trimmed)
+    if (imageMatch) {
+      flushParagraph()
+      blocks.push({ type: 'image', image: { dataUri: imageMatch[2], name: imageMatch[1] } })
       index += 1
       continue
     }

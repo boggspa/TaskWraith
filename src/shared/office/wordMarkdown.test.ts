@@ -102,6 +102,18 @@ describe('wordModelToMarkdown', () => {
     })
   })
 
+  it('round-trips image blocks as data-URI image syntax', () => {
+    const PNG_URI =
+      'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const model: WordDocumentModel = {
+      kind: 'word',
+      blocks: [{ type: 'image', image: { dataUri: PNG_URI, name: 'pixel.png' } }]
+    }
+    const markdown = wordModelToMarkdown(model)
+    expect(markdown).toBe(`![pixel.png](${PNG_URI})\n`)
+    expect(markdownToWordModel(markdown)).toEqual(model)
+  })
+
   it('renders underline as a u-span and keeps ordered list markers', () => {
     const model: WordDocumentModel = {
       kind: 'word',

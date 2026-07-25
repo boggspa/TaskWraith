@@ -6,14 +6,25 @@
  * insertions (w:ins). Unknown constructs degrade to plain text.
  */
 
-import type { WordBlock, WordDocumentModel, WordRun } from '../../shared/office/officeModels'
+import type {
+  WordBlock,
+  WordDocumentModel,
+  WordImage,
+  WordRun
+} from '../../shared/office/officeModels'
 import { OFFICE_MODEL_LIMITS } from '../../shared/office/officeModels'
+import {
+  EMU_PER_PIXEL,
+  parseRasterDataUri,
+  rasterDataUriFromBytes
+} from '../../shared/office/officeImages'
 import {
   attrByLocalName,
   childByLocalName,
   childrenByLocalName,
   escapeXmlAttr,
   escapeXmlText,
+  firstDescendantByLocalName,
   localName,
   parseMarkup,
   sanitizeXmlText,
@@ -39,8 +50,21 @@ const XML_DECL = '<?xml version="1.0" encoding="UTF-8" standalone="yes"?>\r\n'
 const W_NS = 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'
 const R_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
 const REL_PKG_NS = 'http://schemas.openxmlformats.org/package/2006/relationships'
+const WP_NS = 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing'
+const A_NS = 'http://schemas.openxmlformats.org/drawingml/2006/main'
+const PIC_NS = 'http://schemas.openxmlformats.org/drawingml/2006/picture'
 
-const CONTENT_TYPES = `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>`
+const contentTypesXml = (imageExtensions: ReadonlySet<string>): string => {
+  const imageDefaults = [...imageExtensions]
+    .sort()
+    .map((extension) => {
+      const mime =
+        extension === 'png' ? 'image/png' : extension === 'gif' ? 'image/gif' : 'image/jpeg'
+      return `<Default Extension="${extension}" ContentType="${mime}"/>`
+    })
+    .join('')
+  return `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/>${imageDefaults}<Override PartName="/word/document.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml"/><Override PartName="/word/styles.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml"/><Override PartName="/word/numbering.xml" ContentType="application/vnd.openxmlformats-officedocument.wordprocessingml.numbering+xml"/></Types>`
+}
 
 const ROOT_RELS = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="word/document.xml"/></Relationships>`
 
@@ -61,6 +85,41 @@ function numberingXml(): string {
 
 interface HyperlinkRegistry {
   idsByUrl: Map<string, string>
+}
+
+interface MediaRegistry {
+  entries: { relId: string; partName: string; data: Buffer }[]
+}
+
+function imageBlockXml(image: WordImage, media: MediaRegistry): string {
+  const parsed = parseRasterDataUri(image.dataUri, OFFICE_MODEL_LIMITS.maxImageBytes)
+  if (!parsed) return ''
+  const ordinal = media.entries.length + 1
+  const relId = `rIdImage${ordinal}`
+  const partName = `media/image${ordinal}.${parsed.info.extension}`
+  media.entries.push({ relId, partName, data: Buffer.from(parsed.bytes) })
+
+  const widthPx = image.widthPx ?? parsed.info.widthPx ?? 480
+  const heightPx = image.heightPx ?? parsed.info.heightPx ?? 360
+  const cx = Math.max(1, Math.round(widthPx * EMU_PER_PIXEL))
+  const cy = Math.max(1, Math.round(heightPx * EMU_PER_PIXEL))
+  const name = escapeXmlAttr(image.name)
+
+  return (
+    `<w:p><w:r><w:drawing>` +
+    `<wp:inline distT="0" distB="0" distL="0" distR="0">` +
+    `<wp:extent cx="${cx}" cy="${cy}"/>` +
+    `<wp:docPr id="${ordinal}" name="${name}"/>` +
+    `<a:graphic><a:graphicData uri="${PIC_NS}">` +
+    `<pic:pic>` +
+    `<pic:nvPicPr><pic:cNvPr id="${ordinal}" name="${name}"/><pic:cNvPicPr/></pic:nvPicPr>` +
+    `<pic:blipFill><a:blip r:embed="${relId}"/><a:stretch><a:fillRect/></a:stretch></pic:blipFill>` +
+    `<pic:spPr><a:xfrm><a:off x="0" y="0"/><a:ext cx="${cx}" cy="${cy}"/></a:xfrm>` +
+    `<a:prstGeom prst="rect"><a:avLst/></a:prstGeom></pic:spPr>` +
+    `</pic:pic>` +
+    `</a:graphicData></a:graphic>` +
+    `</wp:inline></w:drawing></w:r></w:p>`
+  )
 }
 
 function runPropertiesXml(run: WordRun, inHyperlink: boolean): string {
@@ -100,8 +159,10 @@ function runsXml(runs: WordRun[], links: HyperlinkRegistry): string {
   return parts.join('')
 }
 
-function paragraphXml(block: WordBlock, links: HyperlinkRegistry): string {
+function paragraphXml(block: WordBlock, links: HyperlinkRegistry, media: MediaRegistry): string {
   switch (block.type) {
+    case 'image':
+      return imageBlockXml(block.image, media)
     case 'heading':
       return `<w:p><w:pPr><w:pStyle w:val="Heading${block.level}"/></w:pPr>${runsXml(block.runs, links)}</w:p>`
     case 'list-item': {
@@ -134,10 +195,11 @@ function paragraphXml(block: WordBlock, links: HyperlinkRegistry): string {
 
 export function buildDocx(model: WordDocumentModel): Buffer {
   const links: HyperlinkRegistry = { idsByUrl: new Map() }
-  const bodyXml = model.blocks.map((block) => paragraphXml(block, links)).join('')
+  const media: MediaRegistry = { entries: [] }
+  const bodyXml = model.blocks.map((block) => paragraphXml(block, links, media)).join('')
   const sectPr =
     '<w:sectPr><w:pgSz w:w="12240" w:h="15840"/><w:pgMar w:top="1440" w:right="1440" w:bottom="1440" w:left="1440"/></w:sectPr>'
-  const documentXml = `${XML_DECL}<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}"><w:body>${bodyXml}${sectPr}</w:body></w:document>`
+  const documentXml = `${XML_DECL}<w:document xmlns:w="${W_NS}" xmlns:r="${R_NS}" xmlns:wp="${WP_NS}" xmlns:a="${A_NS}" xmlns:pic="${PIC_NS}"><w:body>${bodyXml}${sectPr}</w:body></w:document>`
 
   const linkRels = [...links.idsByUrl.entries()]
     .map(
@@ -145,15 +207,26 @@ export function buildDocx(model: WordDocumentModel): Buffer {
         `<Relationship Id="${id}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink" Target="${escapeXmlAttr(url)}" TargetMode="External"/>`
     )
     .join('')
-  const documentRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${linkRels}</Relationships>`
+  const mediaRels = media.entries
+    .map(
+      (entry) =>
+        `<Relationship Id="${entry.relId}" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/image" Target="${entry.partName}"/>`
+    )
+    .join('')
+  const documentRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rIdStyles" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/styles" Target="styles.xml"/><Relationship Id="rIdNumbering" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/numbering" Target="numbering.xml"/>${linkRels}${mediaRels}</Relationships>`
+
+  const imageExtensions = new Set(
+    media.entries.map((entry) => entry.partName.slice(entry.partName.lastIndexOf('.') + 1))
+  )
 
   return buildZip([
-    { name: '[Content_Types].xml', data: Buffer.from(CONTENT_TYPES, 'utf8') },
+    { name: '[Content_Types].xml', data: Buffer.from(contentTypesXml(imageExtensions), 'utf8') },
     { name: '_rels/.rels', data: Buffer.from(ROOT_RELS, 'utf8') },
     { name: 'word/document.xml', data: Buffer.from(documentXml, 'utf8') },
     { name: 'word/_rels/document.xml.rels', data: Buffer.from(documentRels, 'utf8') },
     { name: 'word/styles.xml', data: Buffer.from(STYLES_XML, 'utf8') },
-    { name: 'word/numbering.xml', data: Buffer.from(numberingXml(), 'utf8') }
+    { name: 'word/numbering.xml', data: Buffer.from(numberingXml(), 'utf8') },
+    ...media.entries.map((entry) => ({ name: `word/${entry.partName}`, data: entry.data }))
   ])
 }
 
@@ -212,7 +285,97 @@ function parseNumberingKinds(entries: Map<string, Buffer>): Map<string, boolean>
 
 interface DocxRunContext {
   rels: Map<string, string>
+  entries: Map<string, Buffer>
   warnings: string[]
+  imageOrdinal: number
+  /** Data URIs are encoded once per media part; repeats share the string. */
+  imageDataUriByTarget: Map<string, string | null>
+  totalImageBytes: number
+  skippedNonRasterImages: number
+  skippedOverBudgetImages: number
+  skippedDrawingsWithoutImage: number
+}
+
+function resolveWordPartTarget(target: string): string {
+  if (target.startsWith('/')) return target.slice(1)
+  const segments = `word/${target}`.split('/')
+  const resolved: string[] = []
+  for (const segment of segments) {
+    if (segment === '' || segment === '.') continue
+    if (segment === '..') resolved.pop()
+    else resolved.push(segment)
+  }
+  return resolved.join('/')
+}
+
+/**
+ * Images referenced by a paragraph's drawings, converted to data URIs.
+ * Bounded on three axes — per-image bytes, total document image count, and
+ * cumulative decoded bytes — because a tiny DEFLATE archive can reference
+ * one media part from thousands of paragraphs; each part is also encoded
+ * exactly once, with repeats sharing the same string.
+ */
+function extractParagraphImages(node: XmlNode, context: DocxRunContext): WordImage[] {
+  const images: WordImage[] = []
+  for (const drawing of descendants(node, 'drawing')) {
+    const blips = descendants(drawing, 'blip')
+    if (blips.length === 0) {
+      context.skippedDrawingsWithoutImage += 1
+      continue
+    }
+    for (const blip of blips) {
+      if (context.imageOrdinal >= OFFICE_MODEL_LIMITS.maxWordImages) {
+        context.skippedOverBudgetImages += 1
+        continue
+      }
+      const relId = attrByLocalName(blip, 'embed')
+      const target = relId ? context.rels.get(relId) : undefined
+      const partName = target ? resolveWordPartTarget(target) : undefined
+      if (!partName) {
+        context.skippedNonRasterImages += 1
+        continue
+      }
+      let dataUri = context.imageDataUriByTarget.get(partName)
+      if (dataUri === undefined) {
+        const bytes = context.entries.get(partName)
+        if (!bytes || bytes.length > OFFICE_MODEL_LIMITS.maxImageBytes) {
+          context.imageDataUriByTarget.set(partName, null)
+          context.skippedNonRasterImages += 1
+          continue
+        }
+        if (context.totalImageBytes + bytes.length > OFFICE_MODEL_LIMITS.maxWordImageTotalBytes) {
+          // Budget-dependent: do NOT cache, so an already-encoded part can
+          // still be reused below while fresh parts stay skipped.
+          context.skippedOverBudgetImages += 1
+          continue
+        }
+        dataUri = rasterDataUriFromBytes(Uint8Array.from(bytes))
+        context.imageDataUriByTarget.set(partName, dataUri)
+        if (dataUri === null) {
+          context.skippedNonRasterImages += 1
+          continue
+        }
+        context.totalImageBytes += bytes.length
+      } else if (dataUri === null) {
+        context.skippedNonRasterImages += 1
+        continue
+      }
+      context.imageOrdinal += 1
+      const extent = firstDescendantByLocalName(drawing, 'extent')
+      const cx = extent ? Number.parseInt(attrByLocalName(extent, 'cx') ?? '', 10) : Number.NaN
+      const cy = extent ? Number.parseInt(attrByLocalName(extent, 'cy') ?? '', 10) : Number.NaN
+      const docPr = firstDescendantByLocalName(drawing, 'docPr')
+      const name =
+        (docPr ? attrByLocalName(docPr, 'name') : undefined)?.trim() ||
+        `image-${context.imageOrdinal}`
+      const image: WordImage = { dataUri, name }
+      if (Number.isFinite(cx) && cx > 0) image.widthPx = Math.max(1, Math.round(cx / EMU_PER_PIXEL))
+      if (Number.isFinite(cy) && cy > 0)
+        image.heightPx = Math.max(1, Math.round(cy / EMU_PER_PIXEL))
+      images.push(image)
+    }
+  }
+  return images
 }
 
 function flagEnabled(properties: XmlNode | undefined, name: string): boolean {
@@ -332,7 +495,7 @@ function tableToBlock(
       paragraphs.forEach((paragraph, index) => {
         const block = paragraphToBlock(paragraph, context, numberingKinds)
         if (index > 0) cellRuns.push({ text: '\n' })
-        if (block.type === 'table') return
+        if (!('runs' in block)) return
         cellRuns.push(...block.runs)
       })
       cells.push(cellRuns)
@@ -360,7 +523,14 @@ export function parseDocx(archive: Buffer): DocxParseResult {
   const warnings: string[] = []
   const context: DocxRunContext = {
     rels: parseRelationships(entries, 'word/_rels/document.xml.rels'),
-    warnings
+    entries,
+    warnings,
+    imageOrdinal: 0,
+    imageDataUriByTarget: new Map(),
+    totalImageBytes: 0,
+    skippedNonRasterImages: 0,
+    skippedOverBudgetImages: 0,
+    skippedDrawingsWithoutImage: 0
   }
   const numberingKinds = parseNumberingKinds(entries)
   const root = parseMarkup(documentEntry.toString('utf8'))
@@ -380,7 +550,13 @@ export function parseDocx(archive: Buffer): DocxParseResult {
       }
       const tag = localName(child.tag)
       if (tag === 'p') {
-        blocks.push(paragraphToBlock(child, context, numberingKinds))
+        const block = paragraphToBlock(child, context, numberingKinds)
+        const images = extractParagraphImages(child, context)
+        // A paragraph that only hosted a drawing becomes pure image blocks;
+        // mixed paragraphs keep their text followed by the images.
+        const hasText = !('runs' in block) || block.runs.some((run) => run.text.trim() !== '')
+        if (hasText || images.length === 0) blocks.push(block)
+        for (const image of images) blocks.push({ type: 'image', image })
       } else if (tag === 'tbl') {
         blocks.push(tableToBlock(child, context, numberingKinds))
       } else if (tag === 'sdt') {
@@ -392,9 +568,24 @@ export function parseDocx(archive: Buffer): DocxParseResult {
   }
   visitBodyChildren(body)
   if (truncated) warnings.push('Document truncated: too many blocks for the editor.')
-
-  const hasDrawings = documentEntry.includes('<w:drawing>') || documentEntry.includes('<pic:pic')
-  if (hasDrawings) warnings.push('Images and drawings are not imported.')
+  if (context.skippedNonRasterImages > 0) {
+    warnings.push(
+      `${context.skippedNonRasterImages} embedded image${
+        context.skippedNonRasterImages === 1 ? '' : 's'
+      } in unsupported formats (EMF/WMF/TIFF…) were skipped.`
+    )
+  }
+  if (context.skippedOverBudgetImages > 0) {
+    warnings.push(
+      `${context.skippedOverBudgetImages} image reference${
+        context.skippedOverBudgetImages === 1 ? '' : 's'
+      } beyond the editor's image budget (${OFFICE_MODEL_LIMITS.maxWordImages} images / ` +
+        `${Math.round(OFFICE_MODEL_LIMITS.maxWordImageTotalBytes / 1_000_000)} MB) were skipped.`
+    )
+  }
+  if (context.skippedDrawingsWithoutImage > 0) {
+    warnings.push('Shapes and charts are not imported.')
+  }
 
   return { model: { kind: 'word', blocks }, warnings }
 }
