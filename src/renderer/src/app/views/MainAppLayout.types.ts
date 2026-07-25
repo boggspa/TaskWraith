@@ -549,6 +549,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showOfficeSuite: any
   officeOpenRequest: any
   onOpenOfficeDocument: any
+  onRequestOfficeExternalAccess: any
   showFirstLaunchSheet: any
   showGeminiTerminal: any
   showJumpToLatestPill: any

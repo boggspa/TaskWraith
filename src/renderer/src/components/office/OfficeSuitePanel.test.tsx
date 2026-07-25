@@ -3,8 +3,11 @@ import { describe, expect, it } from 'vitest'
 import type { WorkspaceFileEntry } from '../../../../main/store/types'
 import type { OfficeDocumentReadResult } from '../../../../shared/office/officeFormats'
 import {
+  OFFICE_GRANT_REQUIRED_MARKER,
   OfficeSuitePanel,
   dedupeOfficeFileName,
+  officeErrorIsGrantRequired,
+  officeGrantRequiredCopy,
   officeRailEntriesFromFiles,
   type OfficeRailEntry
 } from './OfficeSuitePanel'
@@ -217,6 +220,129 @@ describe('OfficeSuitePanel', () => {
     // Row 300 (index 299) rendered; row 301 not.
     expect(html).toContain('value="299"')
     expect(html).not.toContain('value="300"')
+  })
+
+  describe('external documents', () => {
+    const EXTERNAL = '/Users/me/Documents/brief.docx'
+
+    it('marks a writable external document and keeps Save enabled', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'write' })}
+          initialExternalPath={EXTERNAL}
+        />
+      )
+      expect(html).toContain('>External<')
+      expect(html).not.toContain('External · read-only')
+      // No Delete affordance for documents outside the workspace.
+      expect(html).not.toContain('Delete this document from the workspace')
+      expect(html).not.toContain('Read-only: this chat can open')
+    })
+
+    it('locks saving for read-only grants and points at Export', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'read' })}
+          initialExternalPath={EXTERNAL}
+        />
+      )
+      expect(html).toContain('External · read-only')
+      expect(html).toContain('Read-only: this chat can open')
+      expect(html).toContain('Export saves an editable copy into the workspace.')
+      expect(html).toContain('use Export to save a copy in the workspace')
+    })
+
+    it('offers a consent action when no grant covers the path', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          onRequestExternalAccess={async () => false}
+          initialError={{
+            message: officeGrantRequiredCopy(EXTERNAL),
+            grantPath: EXTERNAL
+          }}
+        />
+      )
+      expect(html).toContain('sits outside this workspace')
+      expect(html).toContain('Grant access…')
+      // The raw main-process marker never reaches the user.
+      expect(html).not.toContain(OFFICE_GRANT_REQUIRED_MARKER)
+    })
+
+    it('hides the consent action when the host cannot request access', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel workspacePath="/ws" initialError={{ message: 'Something else failed' }} />
+      )
+      expect(html).not.toContain('Grant access…')
+    })
+
+    it('still renders an open external document without a bound workspace', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          chatId="chat-1"
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'write' })}
+          initialExternalPath={EXTERNAL}
+        />
+      )
+      expect(html).not.toContain('Office needs a bound workspace')
+      expect(html).toContain('brief.docx')
+    })
+
+    it('classifies grant-required error text', () => {
+      expect(officeErrorIsGrantRequired(`${OFFICE_GRANT_REQUIRED_MARKER}: nope`)).toBe(true)
+      expect(officeErrorIsGrantRequired('File changed on disk.')).toBe(false)
+    })
+
+    it('offers an explicit write-access request from the read-only banner', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          onRequestExternalAccess={async () => false}
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'read' })}
+          initialExternalPath={EXTERNAL}
+          initialExternalChatId="chat-1"
+        />
+      )
+      // Read access never silently implies write; escalation is a deliberate act.
+      expect(html).toContain('Request write access…')
+    })
+
+    it('locks saving and explains when the document belongs to another chat', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-2"
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'write' })}
+          initialExternalPath={EXTERNAL}
+          initialExternalChatId="chat-1"
+        />
+      )
+      expect(html).toContain('was opened from another chat')
+      expect(html).toContain('Access grants are per-chat')
+      // Not misreported as a revocation, and Save is unavailable.
+      expect(html).not.toContain('was revoked')
+      expect(html).toContain('External · read-only')
+    })
+
+    it('treats a matching chat as fully writable', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          initialDocument={docFixture({ path: EXTERNAL, externalAccess: 'write' })}
+          initialExternalPath={EXTERNAL}
+          initialExternalChatId="chat-1"
+        />
+      )
+      expect(html).not.toContain('was opened from another chat')
+      expect(html).not.toContain('External · read-only')
+    })
   })
 
   it('renders the delete affordance and its confirmation card', () => {

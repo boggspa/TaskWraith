@@ -2245,6 +2245,7 @@ function App(): React.JSX.Element {
   const [officeOpenRequest, setOfficeOpenRequest] = useState<{
     path: string
     nonce: number
+    external?: boolean
   } | null>(null)
   const officeOpenNonceRef = useRef(0)
   const [showGeminiTerminal, setShowGeminiTerminal] = useState(false)
@@ -24023,10 +24024,49 @@ function App(): React.JSX.Element {
   /** Files-tree → Office handoff: an Office-native file (docx/xlsx/pptx/
    * ics/eml) opened from the code editor's tree activates the adjacent
    * Office dock surface and loads it there instead. */
-  const handleOpenOfficeDocument = (path: string): void => {
+  const handleOpenOfficeDocument = (
+    target: string | { path: string; external?: boolean }
+  ): void => {
+    const request = typeof target === 'string' ? { path: target } : target
     activateRightDockTab('office')
     officeOpenNonceRef.current += 1
-    setOfficeOpenRequest({ path, nonce: officeOpenNonceRef.current })
+    setOfficeOpenRequest({
+      path: request.path,
+      nonce: officeOpenNonceRef.current,
+      external: request.external === true
+    })
+  }
+  /**
+   * Consent for opening a document outside the bound workspace. The OS picker
+   * IS the consent — main refuses to mint a grant for a path the renderer
+   * merely names, so the user selects the file (or a containing folder).
+   *
+   * READ by default, deliberately: these grants are not Office-scoped. A
+   * write grant also suppresses agent approval prompts for everything under
+   * the picked path for the rest of the thread, which is far more than
+   * "let me look at this document" implies. Write is only requested when the
+   * user explicitly asks to edit in place; otherwise the Office panel stays
+   * read-only and Export saves an editable copy into the workspace.
+   *
+   * No renderer-side coverage check: `result.path` is realpath-canonicalized
+   * by main while the locator is not (`/tmp` vs `/private/tmp`), so comparing
+   * them here produces false negatives. Main re-derives authority on the
+   * retry and is the only opinion that counts.
+   */
+  const handleRequestOfficeExternalAccess = async (
+    path: string,
+    access: 'read' | 'write' = 'read'
+  ): Promise<boolean> => {
+    const chatId = currentChat?.appChatId
+    if (!chatId) return false
+    try {
+      const result = await window.api.pickAndPersistExternalPathGrant({ chatId, access })
+      if (!result.ok) return false
+      void path
+      return true
+    } catch {
+      return false
+    }
   }
   // The "project desk" strip above the transcript: Work surface active, not
   // multiview, and the focused chat a member of the active (live) project.
@@ -29320,6 +29360,7 @@ function App(): React.JSX.Element {
     showOfficeSuite,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
+    onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,
     showFirstLaunchSheet,
     showGeminiTerminal,
     showJumpToLatestPill,

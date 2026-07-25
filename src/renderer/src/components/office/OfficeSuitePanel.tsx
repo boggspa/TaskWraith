@@ -28,7 +28,22 @@ import { WordEditorView } from './WordEditorView'
 export interface OfficeOpenRequest {
   path: string
   nonce: number
+  /**
+   * Absolute path outside the bound workspace, opened through the chat's
+   * external path grants. `path` carries the absolute locator in this mode.
+   */
+  external?: boolean
 }
+
+/** Marker the main process uses when no chat grant covers a path. */
+export const OFFICE_GRANT_REQUIRED_MARKER = 'external-grant-required'
+
+export const officeErrorIsGrantRequired = (message: string): boolean =>
+  message.includes(OFFICE_GRANT_REQUIRED_MARKER)
+
+/** Human copy for the grant-required state; never shows the raw marker. */
+export const officeGrantRequiredCopy = (path: string): string =>
+  `${path} sits outside this workspace. Grant this chat access to open it in Office.`
 
 export interface OfficeRailEntry {
   path: string
@@ -41,6 +56,14 @@ export interface OfficeSuitePanelProps {
   workspacePath?: string
   width?: number
   openRequest?: OfficeOpenRequest | null
+  /** Chat whose external path grants authorize out-of-workspace documents. */
+  chatId?: string | null
+  /**
+   * Opens the OS consent picker for an external path; resolves true when a
+   * grant was minted. `access` defaults to read — write is only requested
+   * when the user explicitly asks to edit the file in place.
+   */
+  onRequestExternalAccess?: (path: string, access?: 'read' | 'write') => Promise<boolean>
   /** Test seam: preloaded document state rendered without any IPC. */
   initialDocument?: OfficeDocumentReadResult | null
   /** Test seam: preloaded rail entries rendered without any IPC. */
@@ -49,6 +72,12 @@ export interface OfficeSuitePanelProps {
   initialConfirmDelete?: boolean
   /** Test seam: renders the discard-unsaved-changes card open for this path. */
   initialPendingOpenPath?: string | null
+  /** Test seam: treats the initial document as externally granted. */
+  initialExternalPath?: string | null
+  /** Test seam: the chat that authorized `initialExternalPath`. */
+  initialExternalChatId?: string | null
+  /** Test seam: preset error banner (e.g. the grant-required state). */
+  initialError?: { message: string; staleEtag?: boolean; grantPath?: string } | null
 }
 
 const KIND_ORDER: OfficeDocumentKind[] = ['word', 'sheet', 'deck', 'calendar', 'mail']
@@ -88,16 +117,23 @@ export function dedupeOfficeFileName(baseName: string, taken: ReadonlySet<string
 interface OfficeErrorState {
   message: string
   staleEtag: boolean
+  /** Path awaiting an access grant; drives the consent affordance. */
+  grantPath?: string
 }
 
 export function OfficeSuitePanel({
   workspacePath,
   width,
   openRequest,
+  chatId,
+  onRequestExternalAccess,
   initialDocument = null,
   initialRailEntries = [],
   initialConfirmDelete = false,
-  initialPendingOpenPath = null
+  initialPendingOpenPath = null,
+  initialExternalPath = null,
+  initialExternalChatId = null,
+  initialError = null
 }: OfficeSuitePanelProps) {
   const [railEntries, setRailEntries] = useState<OfficeRailEntry[]>(initialRailEntries)
   const [doc, setDoc] = useState<OfficeDocumentReadResult | null>(initialDocument)
@@ -110,7 +146,19 @@ export function OfficeSuitePanel({
   const [confirmingDelete, setConfirmingDelete] = useState(initialConfirmDelete)
   const [pendingOpenPath, setPendingOpenPath] = useState<string | null>(initialPendingOpenPath)
   const [status, setStatus] = useState(initialDocument ? initialDocument.path : '')
-  const [error, setError] = useState<OfficeErrorState | null>(null)
+  const [error, setError] = useState<OfficeErrorState | null>(
+    initialError ? { staleEtag: false, ...initialError } : null
+  )
+  /** Absolute path when the open document lives outside the workspace. */
+  const [externalPath, setExternalPath] = useState<string | null>(initialExternalPath)
+  /**
+   * Chat whose grants authorized the open external document. Grants are
+   * per-chat, so switching chats must not silently re-bind the document to a
+   * chat that never consented to it.
+   */
+  const [externalChatId, setExternalChatId] = useState<string | null>(
+    initialExternalPath ? (initialExternalChatId ?? chatId ?? null) : null
+  )
   const [warnings, setWarnings] = useState<string[]>(initialDocument?.warnings ?? [])
   const [isBusy, setIsBusy] = useState(false)
   const wordHtmlRef = useRef<string | null>(null)
@@ -119,6 +167,7 @@ export function OfficeSuitePanel({
   // (a save resolving after the user opened another file) compare against it
   // and drop their state updates instead of clobbering the newer document.
   const activeDocPathRef = useRef<string | null>(initialDocument?.path ?? null)
+  const pendingOpenExternalRef = useRef(false)
 
   const dirty = doc ? (doc.kind === 'word' ? wordDirty : modelDirty) : false
 
@@ -133,17 +182,34 @@ export function OfficeSuitePanel({
   }, [workspacePath])
 
   const loadDocument = useCallback(
-    async (path: string) => {
-      if (!workspacePath) return
+    async (path: string, options: { external?: boolean } = {}) => {
+      const external = options.external === true
+      if (!workspacePath && !external) return
+      if (external && !chatId) {
+        setError({
+          message: 'Open a chat in this workspace before opening external documents.',
+          staleEtag: false
+        })
+        return
+      }
       setIsBusy(true)
       setError(null)
       setStatus(`Opening ${path}…`)
+      // Restored on failure: a grant-required rejection is the ROUTINE first
+      // outcome of an external open, and leaving the ref pointing at a
+      // document that never loaded makes the next successful save drop its
+      // own state update as "stale".
+      const previousActivePath = activeDocPathRef.current
       activeDocPathRef.current = path
       try {
-        const result = await window.api.readOfficeDocument(workspacePath, path)
+        const result = external
+          ? await window.api.readExternalOfficeDocument(chatId as string, path)
+          : await window.api.readOfficeDocument(workspacePath as string, path)
         if (activeDocPathRef.current !== path) return
         activeDocPathRef.current = result.path
         setDoc(result)
+        setExternalPath(external ? result.path : null)
+        setExternalChatId(external ? (chatId ?? null) : null)
         setModelDirty(false)
         setWarnings(result.warnings)
         setWordDirty(false)
@@ -151,16 +217,42 @@ export function OfficeSuitePanel({
         setDocRevision((revision) => revision + 1)
         setStatus(result.path)
       } catch (loadError) {
-        setError({
-          message: loadError instanceof Error ? loadError.message : `Could not open ${path}`,
-          staleEtag: false
-        })
+        if (activeDocPathRef.current === path) activeDocPathRef.current = previousActivePath
+        const message = loadError instanceof Error ? loadError.message : `Could not open ${path}`
+        setError(
+          officeErrorIsGrantRequired(message)
+            ? { message: officeGrantRequiredCopy(path), staleEtag: false, grantPath: path }
+            : { message, staleEtag: false }
+        )
         setStatus('')
       } finally {
         setIsBusy(false)
       }
     },
-    [workspacePath]
+    [chatId, workspacePath]
+  )
+
+  /**
+   * Runs the OS consent picker, then reopens the document. Routed through
+   * `requestOpenDocument` so unsaved edits get the discard confirmation
+   * first — the grant-revoked-mid-edit banner offers this button, and a bare
+   * reload there would throw away exactly the work the user is trying to
+   * rescue.
+   */
+  const requestAccessAndOpen = useCallback(
+    async (path: string, access: 'read' | 'write' = 'read') => {
+      if (!onRequestExternalAccess) return
+      setIsBusy(true)
+      try {
+        const granted = await onRequestExternalAccess(path, access)
+        if (!granted) return
+        setError(null)
+        requestOpenDocumentRef.current(path, { external: true })
+      } finally {
+        setIsBusy(false)
+      }
+    },
+    [onRequestExternalAccess]
   )
 
   useEffect(() => {
@@ -173,21 +265,29 @@ export function OfficeSuitePanel({
    * would discard work with no undo.
    */
   const requestOpenDocument = useCallback(
-    (path: string) => {
-      if (doc && dirty && path !== doc.path) {
+    (path: string, options: { external?: boolean } = {}) => {
+      // Reopening the SAME path with unsaved edits still confirms: the only
+      // reason to do that is discarding in favour of what is on disk.
+      if (doc && dirty) {
         setPendingOpenPath(path)
+        pendingOpenExternalRef.current = options.external === true
         return
       }
-      void loadDocument(path)
+      void loadDocument(path, options)
     },
     [dirty, doc, loadDocument]
   )
+  // Consent flow calls back into the opener; a ref keeps that edge out of
+  // the callback dependency cycle.
+  const requestOpenDocumentRef = useRef(requestOpenDocument)
+  requestOpenDocumentRef.current = requestOpenDocument
 
   useEffect(() => {
     if (!openRequest || openRequest.nonce === lastOpenNonceRef.current) return
     lastOpenNonceRef.current = openRequest.nonce
+    const { path, external } = openRequest
     queueMicrotask(() => {
-      requestOpenDocument(openRequest.path)
+      requestOpenDocument(path, { external })
     })
   }, [openRequest, requestOpenDocument])
 
@@ -199,15 +299,33 @@ export function OfficeSuitePanel({
     return doc.model
   }, [doc, wordDirty])
 
+  /**
+   * The document was opened under a different chat's grants. Saving would
+   * be authorized against a chat that never consented, so main would refuse
+   * — surface it as its own state rather than a misleading "revoked".
+   */
+  const externalChatMismatch =
+    externalPath !== null && externalChatId !== null && chatId !== externalChatId
+  const readOnlyExternal =
+    externalPath !== null && (doc?.externalAccess !== 'write' || externalChatMismatch)
+
   const save = useCallback(async () => {
-    if (!workspacePath || !doc) return
+    if (!doc) return
+    if (externalPath ? !chatId || readOnlyExternal : !workspacePath) return
     const model = currentModelForSave()
     if (!model) return
     setIsBusy(true)
     setError(null)
     const pathAtSave = doc.path
     try {
-      const result = await window.api.writeOfficeDocument(workspacePath, doc.path, model, doc.etag)
+      const result = externalPath
+        ? await window.api.writeExternalOfficeDocument(
+            chatId as string,
+            externalPath,
+            model,
+            doc.etag
+          )
+        : await window.api.writeOfficeDocument(workspacePath as string, doc.path, model, doc.etag)
       void refreshRail()
       // The user may have opened another document while the save ran; the
       // write itself succeeded, but its state must not replace the new doc.
@@ -220,19 +338,36 @@ export function OfficeSuitePanel({
     } catch (saveError) {
       if (activeDocPathRef.current !== pathAtSave) return
       const message = saveError instanceof Error ? saveError.message : 'Save failed'
+      if (officeErrorIsGrantRequired(message)) {
+        setError({
+          message: `Access to ${pathAtSave} was revoked. Re-grant it or export a copy into the workspace.`,
+          staleEtag: false,
+          grantPath: pathAtSave
+        })
+        return
+      }
       setError({ message, staleEtag: /changed on disk|no longer exists/i.test(message) })
     } finally {
       setIsBusy(false)
     }
-  }, [currentModelForSave, doc, refreshRail, workspacePath])
+  }, [chatId, currentModelForSave, doc, externalPath, readOnlyExternal, refreshRail, workspacePath])
 
+  /**
+   * Export ALWAYS writes into the bound workspace — for external documents
+   * that makes it the "save a copy I can keep editing" escape hatch, which
+   * is also the only way to persist edits to a read-only granted file.
+   */
   const exportAs = useCallback(
     async (format: OfficeFileFormat) => {
       if (!workspacePath || !doc) return
       const model = currentModelForSave()
       if (!model) return
       const takenNames = new Set(railEntries.map((entry) => entry.path))
-      let targetPath = replaceOfficeExtension(doc.path, format)
+      // External docs carry an absolute path; land the copy at the workspace
+      // root under the file's own name rather than mirroring the absolute
+      // directory structure.
+      const sourcePath = externalPath ? (externalPath.split(/[\\/]/).pop() ?? 'Document') : doc.path
+      let targetPath = replaceOfficeExtension(sourcePath, format)
       if (targetPath === doc.path || takenNames.has(targetPath)) {
         const slash = targetPath.lastIndexOf('/')
         const directory = slash === -1 ? '' : targetPath.slice(0, slash + 1)
@@ -261,7 +396,7 @@ export function OfficeSuitePanel({
         setIsBusy(false)
       }
     },
-    [currentModelForSave, doc, railEntries, refreshRail, workspacePath]
+    [currentModelForSave, doc, externalPath, railEntries, refreshRail, workspacePath]
   )
 
   const createDocument = useCallback(
@@ -281,6 +416,8 @@ export function OfficeSuitePanel({
           null
         )
         activeDocPathRef.current = result.path
+        setExternalPath(null)
+        setExternalChatId(null)
         setDoc(result)
         setModelDirty(false)
         setWarnings(result.warnings)
@@ -313,6 +450,8 @@ export function OfficeSuitePanel({
     try {
       await window.api.deleteOfficeDocument(workspacePath, doc.path, doc.etag)
       activeDocPathRef.current = null
+      setExternalPath(null)
+      setExternalChatId(null)
       setStatus(`Deleted ${doc.path}`)
       setDoc(null)
       setModelDirty(false)
@@ -341,7 +480,9 @@ export function OfficeSuitePanel({
 
   const docKey = doc ? `${doc.path}#${docRevision}` : 'none'
 
-  if (!workspacePath) {
+  // A workspace is required for the rail, New and Export; an externally
+  // granted document can still be open without one.
+  if (!workspacePath && !doc) {
     return (
       <aside className="office-suite office-suite-empty-shell">
         <p className="office-muted">Office needs a bound workspace.</p>
@@ -413,13 +554,28 @@ export function OfficeSuitePanel({
             <div className="office-editor-title">
               <span className="office-editor-kind">{officeKindLabel(doc.kind)}</span>
               <h3 title={doc.path}>{doc.path.split('/').pop()}</h3>
+              {externalPath ? (
+                <span
+                  className="office-editor-external"
+                  title={`Outside this workspace — opened through a chat access grant (${
+                    readOnlyExternal ? 'read-only' : 'read + write'
+                  })`}
+                >
+                  {readOnlyExternal ? 'External · read-only' : 'External'}
+                </span>
+              ) : null}
               {dirty ? <span className="office-dirty-dot" title="Unsaved changes" /> : null}
             </div>
             <div className="office-editor-actions">
               <button
                 type="button"
                 className="office-toolbar-button office-save-button"
-                disabled={!dirty || isBusy}
+                disabled={!dirty || isBusy || readOnlyExternal}
+                title={
+                  readOnlyExternal
+                    ? 'This chat has read-only access — use Export to save a copy in the workspace'
+                    : undefined
+                }
                 onClick={() => void save()}
               >
                 Save
@@ -448,19 +604,21 @@ export function OfficeSuitePanel({
                 className="office-toolbar-button"
                 disabled={isBusy}
                 title="Reload from disk (discards unsaved changes)"
-                onClick={() => void loadDocument(doc.path)}
+                onClick={() => requestOpenDocument(doc.path, { external: externalPath !== null })}
               >
                 Reload
               </button>
-              <button
-                type="button"
-                className="office-toolbar-button office-danger"
-                disabled={isBusy}
-                title="Delete this document from the workspace"
-                onClick={() => setConfirmingDelete(true)}
-              >
-                Delete
-              </button>
+              {externalPath ? null : (
+                <button
+                  type="button"
+                  className="office-toolbar-button office-danger"
+                  disabled={isBusy}
+                  title="Delete this document from the workspace"
+                  onClick={() => setConfirmingDelete(true)}
+                >
+                  Delete
+                </button>
+              )}
             </div>
           </header>
         ) : null}
@@ -490,8 +648,10 @@ export function OfficeSuitePanel({
                   size="compact"
                   onClick={() => {
                     const target = pendingOpenPath
+                    const external = pendingOpenExternalRef.current
                     setPendingOpenPath(null)
-                    void loadDocument(target)
+                    pendingOpenExternalRef.current = false
+                    void loadDocument(target, { external })
                   }}
                 >
                   Discard &amp; open
@@ -541,8 +701,44 @@ export function OfficeSuitePanel({
           <div className="office-banner office-banner-error" role="alert">
             <span>{error.message}</span>
             {error.staleEtag && doc ? (
-              <button type="button" onClick={() => void loadDocument(doc.path)}>
+              <button
+                type="button"
+                onClick={() => void loadDocument(doc.path, { external: externalPath !== null })}
+              >
                 Reload from disk
+              </button>
+            ) : null}
+            {error.grantPath && onRequestExternalAccess ? (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void requestAccessAndOpen(error.grantPath as string)}
+              >
+                Grant access…
+              </button>
+            ) : null}
+          </div>
+        ) : null}
+        {externalChatMismatch && doc ? (
+          <div className="office-banner office-banner-warning">
+            <span>
+              {doc.path} was opened from another chat. Access grants are per-chat — reopen it here,
+              or use Export to save a copy into the workspace.
+            </span>
+          </div>
+        ) : readOnlyExternal && doc ? (
+          <div className="office-banner office-banner-warning">
+            <span>
+              Read-only: this chat can open {doc.path} but not write to it. Export saves an editable
+              copy into the workspace.
+            </span>
+            {onRequestExternalAccess ? (
+              <button
+                type="button"
+                disabled={isBusy}
+                onClick={() => void requestAccessAndOpen(doc.path, 'write')}
+              >
+                Request write access…
               </button>
             ) : null}
           </div>

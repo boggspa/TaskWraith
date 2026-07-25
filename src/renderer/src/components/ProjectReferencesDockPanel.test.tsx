@@ -143,13 +143,19 @@ it('offers Open in Office only for file references resolvable inside the workspa
       projectId="project-a"
       onClose={() => undefined}
       resolveOfficeTarget={(locator) =>
-        locator.startsWith('/ws/') ? locator.slice('/ws/'.length) : null
+        locator.startsWith('/ws/')
+          ? { path: locator.slice('/ws/'.length), external: false }
+          : { path: locator, external: true }
       }
       onOpenInOffice={() => undefined}
     />
   )
-  // Exactly one Office action: the inside-workspace reference.
-  expect(html.match(/Open in the Office editor/g)).toHaveLength(1)
+  // Both references offer Office; the out-of-workspace one is marked as
+  // needing consent (ellipsis label + "asks for access first" tooltip).
+  expect(html.match(/Open in the Office editor/g)).toHaveLength(2)
+  expect(html.match(/asks for access first/g)).toHaveLength(1)
+  expect(html).toContain('>Office…<')
+  expect(html).toContain('>Office<')
 })
 
 it('renders agent suggestions as explicitly untrusted inert catalogue candidates', () => {

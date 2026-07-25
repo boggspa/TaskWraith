@@ -158,6 +158,18 @@
   text-transform: uppercase;
 }
 
+.office-editor-external {
+  flex: 0 0 auto;
+  padding: 2px 7px;
+  border: 1px dashed var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-tertiary);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  white-space: nowrap;
+}
+
 .office-dirty-dot {
   flex: 0 0 auto;
   width: 7px;

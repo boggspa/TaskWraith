@@ -41,13 +41,16 @@ interface ProjectReferencesDockPanelProps {
   onClose: () => void
   showCloseButton?: boolean
   /**
-   * Maps a file reference's absolute locator to a workspace-relative Office
-   * path, or null when the reference is not openable (outside the bound
-   * workspace, or not an office format). Gates the "Office" row action.
+   * Classifies a file reference for the Office row action: workspace files
+   * open by relative path; office-format files outside the workspace open
+   * through the chat's external access grants (consent happens in the Office
+   * panel). Returns null when the reference is not an office document.
    */
-  resolveOfficeTarget?: (locator: string) => string | null
-  /** Opens a workspace-relative path in the Office dock surface. */
-  onOpenInOffice?: (workspaceRelativePath: string) => void
+  resolveOfficeTarget?: (
+    locator: string
+  ) => { path: string; external: boolean } | null
+  /** Opens a resolved Office target in the dock surface. */
+  onOpenInOffice?: (target: { path: string; external: boolean }) => void
 }
 
 /**
@@ -717,9 +720,13 @@ export function ProjectReferencesDockPanel({
                         type="button"
                         disabled={busy}
                         onClick={() => onOpenInOffice(officeTarget)}
-                        title="Open in the Office editor"
+                        title={
+                          officeTarget.external
+                            ? 'Open in the Office editor (asks for access first)'
+                            : 'Open in the Office editor'
+                        }
                       >
-                        Office
+                        {officeTarget.external ? 'Office…' : 'Office'}
                       </button>
                     )
                   })()}

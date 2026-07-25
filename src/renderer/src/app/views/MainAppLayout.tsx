@@ -463,6 +463,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showOfficeSuite,
   officeOpenRequest,
   onOpenOfficeDocument,
+  onRequestOfficeExternalAccess,
   showFirstLaunchSheet,
   showJumpToLatestPill,
   showOnboardingHint,
@@ -2549,6 +2550,8 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     workspacePath={currentWorkspace?.path}
                     width={appearance.inspectorWidth}
                     openRequest={officeOpenRequest}
+                    chatId={currentChat?.appChatId}
+                    onRequestExternalAccess={onRequestOfficeExternalAccess}
                   />
                 )}
 
@@ -2573,11 +2576,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       showCloseButton={!isWorkRouteReferencesPinned}
                       onClose={() => closeRightDockPanel('references')}
                       resolveOfficeTarget={(locator) => {
-                        // Office can only open files inside the bound
-                        // workspace — reference locators are absolute paths.
+                        // Reference locators are absolute. Inside the bound
+                        // workspace they open by relative path; outside it
+                        // they open through the chat's access grants.
+                        if (!isOfficeDocumentPath(locator)) return null
                         const workspaceRoot = currentWorkspace?.path
-                        if (!workspaceRoot || !isOfficeDocumentPath(locator)) return null
-                        return officeWorkspaceRelativePath(workspaceRoot, locator)
+                        const relative = workspaceRoot
+                          ? officeWorkspaceRelativePath(workspaceRoot, locator)
+                          : null
+                        if (relative) return { path: relative, external: false }
+                        return currentChat?.appChatId ? { path: locator, external: true } : null
                       }}
                       onOpenInOffice={onOpenOfficeDocument}
                     />
