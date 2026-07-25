@@ -14,6 +14,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import {
   GitService,
   parseBranchList,
+  parseDiffNumstat,
   parseStatusPorcelainZ,
   parseWorktreeList,
   type GitCommandRunner
@@ -821,5 +822,167 @@ describe('GitService', () => {
       ok: false,
       error: 'Push the current branch before creating a pull request.'
     })
+  })
+
+  it(
+    'captures a candidate worktree patch (tracked edits AND untracked files) and applies it to the primary tree uncommitted',
+    async () => {
+      const service = new GitService()
+      const created = await service.createWorktree({
+        repoPath: repo,
+        name: 'candidate-a',
+        branch: 'taskwraith/fanout-candidate-a'
+      })
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+      const worktreePath = created.data.repoRoot
+      worktreeCleanupPaths.push(worktreePath)
+
+      writeFileSync(join(worktreePath, 'README.md'), 'initial\ncandidate change\n')
+      writeFileSync(join(worktreePath, 'brand-new.txt'), 'untracked content\n')
+
+      const capture = await service.captureWorktreePatch({ worktreePath })
+      expect(capture.ok).toBe(true)
+      if (!capture.ok) return
+      expect(capture.data.clean).toBe(false)
+      expect(capture.data.totals.files).toBe(2)
+      const paths = capture.data.numstat.map((entry) => entry.path).sort()
+      expect(paths).toEqual(['README.md', 'brand-new.txt'])
+
+      const applied = await service.applyPatchToRepository({
+        repoPath: repo,
+        patch: capture.data.patch
+      })
+      expect(applied.ok).toBe(true)
+      if (!applied.ok) return
+      // Winner lands as ordinary uncommitted changes — nothing auto-committed.
+      expect(applied.data.counts.changed).toBe(2)
+      expect(runGit(repo, ['log', '--oneline']).trim().split('\n')).toHaveLength(1)
+      expect(runGit(repo, ['status', '--porcelain'])).toContain('brand-new.txt')
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+
+  it(
+    'reports a clean capture for an untouched candidate worktree',
+    async () => {
+      const service = new GitService()
+      const created = await service.createWorktree({
+        repoPath: repo,
+        name: 'candidate-clean',
+        branch: 'taskwraith/fanout-candidate-clean'
+      })
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+      worktreeCleanupPaths.push(created.data.repoRoot)
+
+      const capture = await service.captureWorktreePatch({ worktreePath: created.data.repoRoot })
+      expect(capture.ok).toBe(true)
+      if (!capture.ok) return
+      expect(capture.data.clean).toBe(true)
+      expect(capture.data.totals).toEqual({ files: 0, insertions: 0, deletions: 0 })
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+
+  it(
+    'refuses to apply a drifted patch by default without touching the working tree',
+    async () => {
+      const service = new GitService()
+      const created = await service.createWorktree({
+        repoPath: repo,
+        name: 'candidate-drift',
+        branch: 'taskwraith/fanout-candidate-drift'
+      })
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+      worktreeCleanupPaths.push(created.data.repoRoot)
+
+      writeFileSync(join(created.data.repoRoot, 'README.md'), 'initial\nfrom candidate\n')
+      const capture = await service.captureWorktreePatch({ worktreePath: created.data.repoRoot })
+      expect(capture.ok).toBe(true)
+      if (!capture.ok) return
+
+      // The primary tree drifts incompatibly before adjudication.
+      writeFileSync(join(repo, 'README.md'), 'rewritten upstream\n')
+      const applied = await service.applyPatchToRepository({
+        repoPath: repo,
+        patch: capture.data.patch
+      })
+      expect(applied.ok).toBe(false)
+      if (applied.ok) return
+      expect(applied.error).toContain('no longer applies cleanly')
+      // Refusal must not have mutated the drifted file.
+      expect(runGit(repo, ['status', '--porcelain']).trim()).toBe('M README.md')
+      expect(runGit(repo, ['diff', '--', 'README.md'])).not.toContain('from candidate')
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+
+  it(
+    'rejects an empty candidate patch instead of silently no-opping',
+    async () => {
+      const result = await new GitService().applyPatchToRepository({ repoPath: repo, patch: '   ' })
+      expect(result).toEqual({
+        ok: false,
+        error: 'The candidate patch is empty; nothing to apply.'
+      })
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+
+  it(
+    'deletes a candidate branch after its worktree is removed, and refuses the checked-out branch',
+    async () => {
+      const service = new GitService()
+      const created = await service.createWorktree({
+        repoPath: repo,
+        name: 'candidate-del',
+        branch: 'taskwraith/fanout-candidate-del'
+      })
+      expect(created.ok).toBe(true)
+      if (!created.ok) return
+
+      const checkedOut = await service.deleteBranch({
+        repoPath: repo,
+        branch: 'taskwraith/fanout-candidate-del',
+        force: true
+      })
+      expect(checkedOut.ok).toBe(false)
+
+      const removed = await service.removeWorktree({
+        repoPath: repo,
+        path: created.data.repoRoot,
+        force: true
+      })
+      expect(removed.ok).toBe(true)
+
+      const deleted = await service.deleteBranch({
+        repoPath: repo,
+        branch: 'taskwraith/fanout-candidate-del',
+        force: true
+      })
+      expect(deleted).toEqual({ ok: true, data: { branch: 'taskwraith/fanout-candidate-del' } })
+      expect(runGit(repo, ['branch', '--list', 'taskwraith/fanout-candidate-del']).trim()).toBe('')
+    },
+    WORKTREE_LIFECYCLE_TIMEOUT_MS
+  )
+})
+
+describe('parseDiffNumstat', () => {
+  it('parses counts, binary markers, and rename display paths', () => {
+    const entries = parseDiffNumstat(
+      ['12\t3\tsrc/app.ts', '-\t-\tassets/logo.png', '1\t0\tdir/{old.ts => new.ts}', '', 'garbage-line'].join('\n')
+    )
+    expect(entries).toEqual([
+      { path: 'src/app.ts', insertions: 12, deletions: 3, binary: false },
+      { path: 'assets/logo.png', insertions: null, deletions: null, binary: true },
+      { path: 'dir/{old.ts => new.ts}', insertions: 1, deletions: 0, binary: false }
+    ])
+  })
+
+  it('returns an empty list for empty output', () => {
+    expect(parseDiffNumstat('')).toEqual([])
+    expect(parseDiffNumstat('\n\n')).toEqual([])
   })
 })

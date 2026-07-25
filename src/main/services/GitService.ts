@@ -1,6 +1,6 @@
 import { spawn } from 'child_process'
 import { promises as fs } from 'fs'
-import { homedir } from 'os'
+import { homedir, tmpdir } from 'os'
 import { basename, dirname, isAbsolute, join, normalize, relative, resolve, sep } from 'path'
 import {
   gitCommandEnvironment,
@@ -260,6 +260,47 @@ export interface GitSelectWorktreeInput {
   path: string
 }
 
+export interface GitCaptureWorktreePatchInput {
+  /** Root of the (linked) worktree whose staged-everything diff to capture. */
+  worktreePath: string
+}
+
+export interface GitNumstatEntry {
+  path: string
+  /** null for binary files (git reports `-`). */
+  insertions: number | null
+  deletions: number | null
+  binary: boolean
+}
+
+export interface GitWorktreePatchCapture {
+  repoRoot: string
+  /** Full binary-safe patch of everything vs HEAD (add -A + diff --cached). */
+  patch: string
+  numstat: GitNumstatEntry[]
+  totals: { files: number; insertions: number; deletions: number }
+  clean: boolean
+}
+
+export interface GitApplyPatchInput {
+  repoPath: string
+  patch: string
+  /**
+   * false (default): verify with `git apply --check` first and refuse without
+   * touching the tree when the patch no longer applies. true: apply with
+   * `--3way`, which can leave conflict markers in the working tree for the
+   * user to resolve — callers must surface that clearly.
+   */
+  allowConflicts?: boolean
+}
+
+export interface GitDeleteBranchInput {
+  repoPath: string
+  branch: string
+  /** -D instead of -d (delete even when unmerged). */
+  force?: boolean
+}
+
 export class GitService {
   private run: GitCommandRunner
   private timeoutMs: number
@@ -503,6 +544,132 @@ export class GitService {
 
   async selectWorktree(input: GitSelectWorktreeInput): Promise<GitResult<GitRepositorySnapshot>> {
     return this.snapshot(input.path)
+  }
+
+  /**
+   * Stage everything in a (candidate) worktree and capture the full patch vs
+   * HEAD. Staging in the worktree is deliberate: linked worktrees own a
+   * private index, and `add -A` is the only way untracked files enter the
+   * patch. The shared object database means blobs written here are reachable
+   * for a later `--3way` apply in the primary worktree.
+   */
+  async captureWorktreePatch(
+    input: GitCaptureWorktreePatchInput
+  ): Promise<GitResult<GitWorktreePatchCapture>> {
+    try {
+      const repo = await this.resolveRepository(input.worktreePath)
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
+      await this.mustRun('git', ['add', '-A'], repo.repoRoot)
+      const patch = await this.mustRun(
+        'git',
+        ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--binary'],
+        repo.repoRoot
+      )
+      const numstatResult = await this.mustRun(
+        'git',
+        ['diff', '--no-ext-diff', '--no-textconv', '--cached', '--numstat'],
+        repo.repoRoot
+      )
+      const numstat = parseDiffNumstat(numstatResult.stdout)
+      const totals = numstat.reduce(
+        (acc, entry) => ({
+          files: acc.files + 1,
+          insertions: acc.insertions + (entry.insertions ?? 0),
+          deletions: acc.deletions + (entry.deletions ?? 0)
+        }),
+        { files: 0, insertions: 0, deletions: 0 }
+      )
+      return {
+        ok: true,
+        data: {
+          repoRoot: repo.repoRoot,
+          patch: patch.stdout,
+          numstat,
+          totals,
+          clean: numstat.length === 0 && !patch.stdout.trim()
+        }
+      }
+    } catch (error) {
+      return failure(error)
+    }
+  }
+
+  /**
+   * Apply a captured candidate patch onto a repository's working tree,
+   * leaving the result uncommitted — exactly the state a serial agent run
+   * would leave behind. Default mode refuses (without touching the tree) when
+   * the patch no longer applies cleanly; `allowConflicts` switches to
+   * `--3way`, which may leave conflict markers for manual resolution.
+   */
+  async applyPatchToRepository(
+    input: GitApplyPatchInput
+  ): Promise<GitResult<GitRepositorySnapshot>> {
+    let tempDir: string | null = null
+    try {
+      if (!input.patch.trim()) {
+        return { ok: false, error: 'The candidate patch is empty; nothing to apply.' }
+      }
+      const repo = await this.resolveRepository(input.repoPath)
+      await this.assertNoRepositoryLocalFilters(repo.repoRoot)
+      tempDir = await fs.mkdtemp(join(tmpdir(), 'taskwraith-candidate-'))
+      const patchPath = join(tempDir, 'candidate.patch')
+      await fs.writeFile(patchPath, input.patch, { encoding: 'utf8', mode: 0o600 })
+      if (input.allowConflicts) {
+        const applied = await this.run(
+          'git',
+          ['apply', '--3way', '--binary', '--whitespace=nowarn', patchPath],
+          { cwd: repo.repoRoot, timeoutMs: this.timeoutMs }
+        )
+        if (applied.code !== 0) {
+          const conflicted = /with conflicts|three-way merge/i.test(applied.stderr)
+          return {
+            ok: false,
+            error: conflicted
+              ? 'The candidate patch applied with conflicts. Conflict markers were left in the working tree for manual resolution.'
+              : applied.stderr.trim() || 'git apply failed.'
+          }
+        }
+      } else {
+        const check = await this.run(
+          'git',
+          ['apply', '--check', '--binary', '--whitespace=nowarn', patchPath],
+          { cwd: repo.repoRoot, timeoutMs: this.timeoutMs }
+        )
+        if (check.code !== 0) {
+          return {
+            ok: false,
+            error: `The candidate patch no longer applies cleanly — the workspace has drifted since the lane forked. ${check.stderr.trim()}`.trim()
+          }
+        }
+        await this.mustRun(
+          'git',
+          ['apply', '--binary', '--whitespace=nowarn', patchPath],
+          repo.repoRoot
+        )
+      }
+      return { ok: true, data: await this.buildSnapshot(repo.repoRoot) }
+    } catch (error) {
+      return failure(error)
+    } finally {
+      if (tempDir) {
+        await fs.rm(tempDir, { recursive: true, force: true }).catch(() => undefined)
+      }
+    }
+  }
+
+  async deleteBranch(input: GitDeleteBranchInput): Promise<GitResult<{ branch: string }>> {
+    try {
+      const repo = await this.resolveRepository(input.repoPath)
+      const branch = await this.assertBranchName(repo.repoRoot, input.branch)
+      await this.mustRun(
+        'git',
+        ['branch', input.force ? '-D' : '-d', branch],
+        repo.repoRoot
+      )
+      return { ok: true, data: { branch } }
+    } catch (error) {
+      return failure(error)
+    }
   }
 
   async createPullRequest(input: GitCreatePrInput): Promise<GitResult<GitPrSummary>> {
@@ -1123,6 +1290,34 @@ export function parseWorktreeList(output: string, currentRepoRoot?: string): Git
   }
   finish()
   return worktrees
+}
+
+/**
+ * Parse `git diff --numstat` output. Binary files report `-` for both
+ * counters and become `insertions/deletions: null`. Rename lines keep git's
+ * `dir/{old => new}` display path verbatim — numstat consumers are
+ * summary-only.
+ */
+export function parseDiffNumstat(output: string): GitNumstatEntry[] {
+  const entries: GitNumstatEntry[] = []
+  for (const line of output.split('\n')) {
+    const row = line.trimEnd()
+    if (!row) continue
+    const [rawInsertions, rawDeletions, ...pathParts] = row.split('\t')
+    const path = pathParts.join('\t').trim()
+    if (!path || rawInsertions === undefined || rawDeletions === undefined) continue
+    const binary = rawInsertions === '-' || rawDeletions === '-'
+    const insertions = binary ? null : Number.parseInt(rawInsertions, 10)
+    const deletions = binary ? null : Number.parseInt(rawDeletions, 10)
+    if (!binary && (!Number.isFinite(insertions) || !Number.isFinite(deletions))) continue
+    entries.push({
+      path,
+      insertions: binary ? null : insertions,
+      deletions: binary ? null : deletions,
+      binary
+    })
+  }
+  return entries
 }
 
 async function runCommand(
