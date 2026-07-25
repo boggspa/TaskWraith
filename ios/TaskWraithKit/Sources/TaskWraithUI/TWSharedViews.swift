@@ -6236,11 +6236,17 @@ public struct EditableRosterStrip: View {
     /// Chip whose compact editor popover is open (Electron chip-popover parity).
     @Environment(\.horizontalSizeClass) private var editorSizeClass
     /// Side-anchoring the participant editor only pays off where there is
-    /// lateral room. On a compact width the sheet/composer spans the screen,
-    /// a leading arrow pushes the panel off the trailing edge, and it comes
-    /// back CLIPPED ON BOTH SIDES — verified on iPhone, and worse than the
-    /// default. Regular width only; compact keeps the vertical placement.
-    private var editorArrowEdge: Edge { editorSizeClass == .regular ? .leading : .top }
+    /// lateral room. On a compact width the composer spans the screen, a
+    /// leading arrow pushes the panel off the trailing edge, and it comes back
+    /// CLIPPED ON BOTH SIDES — verified on iPhone, and worse than the default.
+    ///
+    /// The compact fallback is `.bottom`, NOT `.top`. `arrowEdge` names the edge
+    /// of the POPOVER carrying the arrow, so `.top` puts the panel BELOW its
+    /// anchor — and this anchor is a roster chip pinned directly above the
+    /// composer, with roughly 170pt beneath it against 610pt above. `.top`
+    /// therefore chose the one side that cannot fit and the panel was clipped
+    /// top and bottom (verified). `.bottom` opens it upward into the transcript.
+    private var editorArrowEdge: Edge { editorSizeClass == .regular ? .leading : .bottom }
 
     @State private var editingChipId: String? = nil
     @State private var addPopoverPresented = false
