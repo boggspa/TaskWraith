@@ -387,6 +387,7 @@ import {
   type GitWorkflowObserverMemory
 } from './lib/chatGitWorkflowObserver'
 import { summarizeChecks } from './components/GitStatusChips'
+import { repoNameFromRemote } from './components/GitHubSatellitePopover'
 import {
   type SharedChatCreateVariant,
   type WorkspaceBoardCreateInput
@@ -2857,12 +2858,19 @@ function App(): React.JSX.Element {
   }, [currentChat, currentGitPresentationPath, primaryGitSnapshot, primaryPr, primaryCi])
 
   // Active-row sidebar title ticker: the selected row's label slowly cycles
-  // between the thread title and this workspace/branch identity (e.g.
-  // "TaskWraith/master"). Null (no workspace context / global chat) keeps the
+  // between the thread title and this repo/branch identity (e.g.
+  // "TaskWraith/master"). The TRUE git repo name from the remote URL wins
+  // over the workspace displayName (which is usually just the folder name —
+  // "AGBench" for the TaskWraith repo); the folder-derived name is only the
+  // no-remote fallback. Null (no workspace context / global chat) keeps the
   // plain static label.
   const activeChatSidebarIdentity = ((): string | null => {
     if (!currentChat || isGlobalChat(currentChat)) return null
-    const name = currentChatWorkspace?.displayName?.trim()
+    const repoName = repoNameFromRemote(primaryGitSnapshot?.remoteUrl ?? undefined)
+      ?.split('/')
+      .pop()
+      ?.trim()
+    const name = repoName || currentChatWorkspace?.displayName?.trim()
     if (!name) return null
     const branch = primaryGitSnapshot?.branch?.trim()
     return branch ? `${name}/${branch}` : name
