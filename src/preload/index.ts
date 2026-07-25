@@ -496,6 +496,15 @@ const api = {
     ok: boolean
     error?: string
   }) => ipcRenderer.invoke('github:watch-pr-notify-ack', payload) as Promise<{ ok: true }>,
+  // Per-thread git workflow marker (sidebar git icon + "Git" section). Main-owned
+  // async patch; null clears the marker ("Remove from Git").
+  setChatGitWorkflow: (payload: {
+    chatId: string
+    gitWorkflow: { state: string; prNumber?: number; prUrl?: string } | null
+  }) =>
+    ipcRenderer.invoke('set-chat-git-workflow', payload) as Promise<
+      { ok: true } | { ok: false; error: string }
+    >,
   onGitHubWatchPrNotify: (callback: (payload: WatchPrNotifyPayload) => void): (() => void) => {
     const wrapped = (_event: unknown, payload: WatchPrNotifyPayload): void => callback(payload)
     ipcRenderer.on('github:watch-pr-notify', wrapped)

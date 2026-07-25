@@ -688,6 +688,11 @@ import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
 import { createWatchPrPoller } from './services/WatchPrPoller'
+import {
+  chatGitWorkflowDiffers,
+  chatGitWorkflowInputFromObservation,
+  deriveChatGitWorkflowState
+} from '../shared/chatGitWorkflow'
 import type { GitPrReadiness, GitPrSummary, GitRepositorySnapshot } from './services/GitService'
 import { AppShellStatsService } from './services/AppShellStatsService'
 import { getCachedHostWeather } from './services/HostWeatherService'
@@ -40791,6 +40796,8 @@ if (isGeminiMcpBridgeProcess) {
       detectConfiguredProviders: detectManagedRunConfiguredProviders,
       normalizeTranscriptMarkdownMediaForChat,
       maybeScheduleCodexNativeGoalSync,
+      persistChatGitWorkflow: (chatId, gitWorkflow) =>
+        AppStore.persistChatGitWorkflow(chatId, gitWorkflow),
       broadcastThreadUpdate,
       broadcastThreadList,
       broadcastChatUpdated,
@@ -41939,6 +41946,27 @@ if (isGeminiMcpBridgeProcess) {
         }),
       send: (channel, payload) => {
         mainWindow?.webContents.send(channel, payload)
+      },
+      // Sidebar git-workflow marker: a watched chat's merged/closed/failed
+      // states land from the host poller even while the chat is not focused.
+      // Diff-filtered so the 90s cadence writes only on genuine changes.
+      observeCiSummary: (chatId, summary) => {
+        const state = deriveChatGitWorkflowState({
+          pr: summary.binding.pr,
+          ciStatus: summary.status
+        })
+        const input = chatGitWorkflowInputFromObservation(state, summary.binding.pr)
+        if (!input) return
+        const stored = AppStore.getChat(chatId)?.gitWorkflow
+        if (!chatGitWorkflowDiffers(stored, input)) return
+        void AppStore.persistChatGitWorkflow(chatId, input)
+          .then((saved) => {
+            broadcastChatUpdated(saved)
+            broadcastThreadUpdate(saved.appChatId)
+          })
+          .catch(() => {
+            // Best-effort marker; the next poll retries naturally.
+          })
       }
     })
     watchPrPoller.start()

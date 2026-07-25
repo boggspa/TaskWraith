@@ -796,6 +796,10 @@ declare global {
         chatId: string
         watchedPr: { workspacePath: string; owner: string; repo: string; prNumber: number } | null
       }) => Promise<{ ok: true } | { ok: false; error: string }>
+      setChatGitWorkflow: (payload: {
+        chatId: string
+        gitWorkflow: { state: string; prNumber?: number; prUrl?: string } | null
+      }) => Promise<{ ok: true } | { ok: false; error: string }>
       githubWatchPrNotifyAck: (payload: {
         chatId: string
         signature: string

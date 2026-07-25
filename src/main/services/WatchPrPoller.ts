@@ -74,6 +74,14 @@ export interface WatchPrPollerDeps {
   ) => Promise<GitResult<GitCiStatusSummary>>
   /** Best-effort main → renderer send (mainWindow.webContents.send). May throw safely. */
   send: (channel: string, payload: unknown) => void
+  /**
+   * Best-effort per-poll observation hook: the freshly fetched CI summary for
+   * one watched chat, BEFORE any notify-worthiness gating. The sidebar's git
+   * workflow marker rides this so merged/closed/failed states land for watched
+   * chats even while they are not focused. Must never throw into the poll loop
+   * (call sites guard), and must never affect notify decisions.
+   */
+  observeCiSummary?: (chatId: string, summary: GitCiStatusSummary) => void
   intervalMs?: number
   initialDelayMs?: number
   ackTimeoutMs?: number
@@ -236,6 +244,11 @@ export function createWatchPrPoller(deps: WatchPrPollerDeps): WatchPrPoller {
         const summary = await fetchSummary(current, 10)
         richPr = summary.binding.pr ?? null
         richCi = summary
+        try {
+          deps.observeCiSummary?.(current.chatId, summary)
+        } catch {
+          // Observation is a side channel; it must never fail the poll cycle.
+        }
         return toPolledState(summary)
       },
       fetchCurrentHead: async (current) => {

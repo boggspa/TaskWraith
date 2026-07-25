@@ -120,6 +120,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'set-chat-kind': ['object'],
   'rebind-chat-workspace': ['object'],
   'save-chat': ['chatRecord'],
+  'set-chat-git-workflow': ['object'],
   'delete-chat': ['chatId'],
   // Human collaboration (shared chat: host + up to 2 human collaborators). These
   // MUST be registered — installIpcValidation throws "No IPC schema registered"

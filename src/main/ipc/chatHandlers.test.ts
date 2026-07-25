@@ -96,6 +96,7 @@ function createDeps(overrides: Partial<Parameters<typeof registerChatHandlers>[0
     detectConfiguredProviders: vi.fn(async () => new Set(['codex'] as const)),
     normalizeTranscriptMarkdownMediaForChat: vi.fn((record: ChatRecord) => record),
     maybeScheduleCodexNativeGoalSync: vi.fn(),
+    persistChatGitWorkflow: vi.fn(async (chatId: string) => chat(chatId, {})),
     broadcastThreadUpdate: vi.fn(),
     broadcastThreadList: vi.fn(),
     broadcastChatUpdated: vi.fn(),

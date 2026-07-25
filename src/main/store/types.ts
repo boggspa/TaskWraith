@@ -7,6 +7,7 @@ import type { CodexReviewTelemetry } from '../../shared/codexReview'
 import type { CodexMultiAgentTelemetry } from '../../shared/codexMultiAgent'
 import type { ContextCompactionProvenance } from '../../shared/contextCompaction'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
+import type { ChatGitWorkflowSnapshot } from '../../shared/chatGitWorkflow'
 import type { UnattendedElevationAck } from '../UnattendedPostureGate'
 import type {
   TaskWraithPluginResourceProvenance,
@@ -3393,6 +3394,13 @@ export interface ChatRecord {
    * an async atomic patch (A1b-persist), never saveChat's sync whole-record writer.
    */
   watchedPr?: WatchedPrDescriptor
+  /**
+   * Main-owned per-thread git workflow marker (src/shared/chatGitWorkflow.ts)
+   * behind the sidebar's per-row git icon and its "Git" section. Written only
+   * via the async atomic patch (renderer observations + the watch-PR poller
+   * report through it); a lagging whole-record save must never clobber it.
+   */
+  gitWorkflow?: ChatGitWorkflowSnapshot
   createdAt: number
   updatedAt: number
   /**
@@ -3406,6 +3414,16 @@ export interface ChatRecord {
    * and excluded from "Recents". Default false. Persisted via the
    * existing `save-chat` IPC. */
   pinned?: boolean
+  /**
+   * When true the chat is hidden from the sidebar's main sections (Pinned,
+   * Recents, Ensembles, Workspaces, Chats, Shared) and remains reachable via
+   * its "Git" section entry — the declutter path for finished git workflows.
+   * Renderer-owned like `pinned`, persisted via the existing `save-chat` IPC;
+   * only offered while `gitWorkflow` is set so a chat can never be orphaned.
+   * Purely a VISIBILITY flag: it never gates dispatch and the DELETE-ONLY
+   * abandoned-chat reaper must not read it.
+   */
+  hiddenFromMainList?: boolean
   /** Per-thread markdown notes shown above this chat's pinned messages. */
   pinnedNotes?: string
   linkedProviderSessionId?: string

@@ -203,6 +203,7 @@ export const SECONDARY_RENDERER_SAFE_IPC_CHANNELS = new Set<string>([
   'run-workflow-now',
   'save-chat',
   'save-clipboard-image-attachment',
+  'set-chat-git-workflow',
   'save-evidence-pack',
   'save-repo-convention-index',
   'save-scheduled-task',

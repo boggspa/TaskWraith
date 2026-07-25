@@ -261,8 +261,10 @@ import {
   readThreadWorktreeBinding
 } from './ThreadWorktreeBindingPersistence'
 import { persistWatchedPrPatch } from './WatchedPrPersistence'
+import { persistChatGitWorkflowPatch } from './ChatGitWorkflowPersistence'
 import type { ThreadWorktreeBinding } from '../run/ThreadWorktreeBinding'
 import type { WatchedPrDescriptor } from '../../shared/watchedPrNotify'
+import type { ChatGitWorkflowInput } from '../../shared/chatGitWorkflow'
 import {
   acknowledgeSubThreadMailboxDelivery as acknowledgeMailboxDelivery,
   claimPendingSubThreadMailboxEvents,
@@ -4961,6 +4963,10 @@ export class AppStore {
    * than a new whole-record persistence protocol. */
   private static watchedPrWriteTails = new Map<string, Promise<ChatRecord>>()
 
+  /** Serializes only the async git-workflow marker patch for one chat. Same
+   * narrow race guard as the watched-PR tails. */
+  private static chatGitWorkflowWriteTails = new Map<string, Promise<ChatRecord>>()
+
   private static readChatRecordCached(chatId: string, chatPath: string): ChatRecord | null {
     let stat: fs.Stats
     try {
@@ -5231,6 +5237,60 @@ export class AppStore {
       () => {
         if (this.watchedPrWriteTails.get(chatId) === operation) {
           this.watchedPrWriteTails.delete(chatId)
+        }
+      }
+    )
+    return operation
+  }
+
+  /**
+   * Persist only the per-thread git workflow marker without routing a full
+   * chat record through saveChat's synchronous writeJson path. Reporters (the
+   * renderer's satellite observer, the watch-PR poller) pre-filter with
+   * chatGitWorkflowDiffers, so this only runs on genuine changes. Passing null
+   * clears the marker; the per-chat tails keep set/clear strictly ordered.
+   */
+  static persistChatGitWorkflow(
+    chatId: string,
+    gitWorkflow: ChatGitWorkflowInput | null
+  ): Promise<ChatRecord> {
+    if (!isSafeChatId(chatId)) {
+      return Promise.reject(new Error('A git workflow can only be recorded on a saved chat.'))
+    }
+
+    const previous: Promise<ChatRecord | null> =
+      this.chatGitWorkflowWriteTails.get(chatId) || Promise.resolve(null)
+    const operation = previous
+      .catch(() => null)
+      .then(async () => {
+        if (deletedChatIds.has(chatId)) {
+          throw new Error('This chat was deleted before its git workflow could be recorded.')
+        }
+        const persisted = await persistChatGitWorkflowPatch({
+          chatsDir,
+          chatId,
+          gitWorkflow,
+          admitMutation: async (chat) => {
+            await this.assertHistoryMutationAllowedAsync({
+              operation: 'Git workflow marker persistence',
+              chatIds: [chat.appChatId],
+              workspaceIds: [chat.workspaceId]
+            })
+          }
+        })
+        this.chatRecordCache.delete(chatId)
+        return persisted
+      })
+    this.chatGitWorkflowWriteTails.set(chatId, operation)
+    void operation.then(
+      () => {
+        if (this.chatGitWorkflowWriteTails.get(chatId) === operation) {
+          this.chatGitWorkflowWriteTails.delete(chatId)
+        }
+      },
+      () => {
+        if (this.chatGitWorkflowWriteTails.get(chatId) === operation) {
+          this.chatGitWorkflowWriteTails.delete(chatId)
         }
       }
     )
@@ -5847,11 +5907,13 @@ export class AppStore {
     )
     // These fields are written only by main-owned async patchers. Renderer
     // chat records can lag those writes, so a later whole-record save must not
-    // erase either a durable isolated-worktree binding or an explicit PR watch.
-    // The persisted record is authoritative even when a field is absent.
+    // erase a durable isolated-worktree binding, an explicit PR watch, or the
+    // git workflow marker. The persisted record is authoritative even when a
+    // field is absent.
     const {
       threadWorktreeBinding: _rendererThreadWorktreeBinding,
       watchedPr: _rendererWatchedPr,
+      gitWorkflow: _rendererGitWorkflow,
       ...rendererOwnedChat
     } = chat
     const chatWithMainOwnedFields: ChatRecord = {
@@ -5861,6 +5923,9 @@ export class AppStore {
         : {}),
       ...(previousChatForFeedback?.watchedPr
         ? { watchedPr: { ...previousChatForFeedback.watchedPr } }
+        : {}),
+      ...(previousChatForFeedback?.gitWorkflow
+        ? { gitWorkflow: { ...previousChatForFeedback.gitWorkflow } }
         : {})
     }
 

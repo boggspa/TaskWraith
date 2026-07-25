@@ -1,5 +1,9 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { ChatService, RebindChatWorkspaceInput } from '../services/ChatService'
+import {
+  isChatGitWorkflowState,
+  type ChatGitWorkflowInput
+} from '../../shared/chatGitWorkflow'
 import type {
   AppSettings,
   ChatKind,
@@ -125,7 +129,16 @@ export interface ChatHandlerDeps {
       | 'save-chat'
       | 'delete-chat'
       | 'truncate-chat'
+      | 'set-chat-git-workflow'
   ) => void
+  /**
+   * Main-owned async atomic patch for the per-thread git workflow marker
+   * (AppStore.persistChatGitWorkflow). Null clears the marker.
+   */
+  persistChatGitWorkflow: (
+    chatId: string,
+    gitWorkflow: ChatGitWorkflowInput | null
+  ) => Promise<ChatRecord>
   /**
    * Sender-bound authority check for moving a canonical chat between scopes.
    * Payload chat IDs are not proof that a secondary renderer owns that chat.
@@ -424,6 +437,59 @@ export function registerChatHandlers(deps: ChatHandlerDeps): void {
         persistenceRevision(saved) > persistenceRevision(previous)
     }
   })
+
+  // Per-thread git workflow marker (sidebar git icon + "Git" section). The
+  // field is MAIN-OWNED like watchedPr: reporters send a small observation and
+  // the store applies it as an async atomic patch, so a lagging whole-record
+  // save-chat can never clobber it. Deep field validation happens here AND in
+  // the persistence normalizer; null clears the marker ("Remove from Git").
+  ipcMain.handle(
+    'set-chat-git-workflow',
+    async (
+      event,
+      payload?: { chatId?: string; gitWorkflow?: Partial<ChatGitWorkflowInput> | null }
+    ): Promise<{ ok: true } | { ok: false; error: string }> => {
+      const chatId = typeof payload?.chatId === 'string' ? payload.chatId.trim() : ''
+      if (!chatId) return { ok: false, error: 'A chat is required to record a git workflow.' }
+      deps.assertSenderChatScope(event, chatId, 'set-chat-git-workflow')
+      const raw = payload?.gitWorkflow
+      let gitWorkflow: ChatGitWorkflowInput | null = null
+      if (raw != null) {
+        if (!isChatGitWorkflowState(raw.state)) {
+          return { ok: false, error: 'Unknown git workflow state.' }
+        }
+        gitWorkflow = { state: raw.state }
+        if (
+          typeof raw.prNumber === 'number' &&
+          Number.isSafeInteger(raw.prNumber) &&
+          raw.prNumber > 0
+        ) {
+          gitWorkflow.prNumber = raw.prNumber
+        }
+        if (
+          typeof raw.prUrl === 'string' &&
+          raw.prUrl.startsWith('https://github.com/') &&
+          raw.prUrl.length <= 2048
+        ) {
+          gitWorkflow.prUrl = raw.prUrl
+        }
+      }
+      try {
+        const saved = await deps.persistChatGitWorkflow(chatId, gitWorkflow)
+        deps.broadcastChatUpdated(saved)
+        deps.broadcastThreadUpdate(saved.appChatId)
+        return { ok: true }
+      } catch (error) {
+        return {
+          ok: false,
+          error:
+            error instanceof Error
+              ? error.message
+              : "Couldn't record this thread's git workflow."
+        }
+      }
+    }
+  )
 
   ipcMain.handle('delete-chat', (event, chatId: string) => {
     deps.assertSenderChatScope(event, chatId, 'delete-chat')
