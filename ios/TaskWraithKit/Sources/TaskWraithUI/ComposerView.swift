@@ -524,6 +524,14 @@ struct Composer: View {
     /// other landscape phone on the portrait treatment — which is precisely the
     /// case with width to spare. A compact VERTICAL class is the reliable "phone
     /// is on its side" signal, so it earns the fuller label too.
+    ///
+    /// CAVEAT, verified against Info.plist rather than assumed: the iPhone
+    /// target is portrait-ONLY (`UISupportedInterfaceOrientations` lists just
+    /// `Portrait`; the ~ipad variant lists all four). iPad is regular/regular in
+    /// both orientations. So today the vertical clause never fires and this
+    /// reduces to "iPad". It is kept because it is the correct rule the moment
+    /// the phone target gains landscape — but do NOT read it as load-bearing
+    /// now, and do not "verify" it on an iPhone: that state does not exist.
     private var compactPickerDetail: ProviderModelPicker.CompactDetail {
         if card.isEnsemble { return .glyphOnly }
         let roomy = horizontalSizeClass == .regular || verticalSizeClass == .compact
