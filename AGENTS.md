@@ -11,25 +11,31 @@ If you're a human, this is also a useful map of the product surface.
 
 ## Formatting policy for agents
 
-`npm run format` is now SAFE: it formats only the files this working tree
-changed (staged, unstaged and untracked). Use it freely.
+`npm run format` formats only files you have **staged**. It is scoped on
+purpose: concurrent sessions often have unrelated uncommitted work in the
+same tree, so formatting the whole working tree would rewrite another
+session's in-flight files. `--working-tree` opts into unstaged and
+untracked files when you know you are the only session in the tree.
+`npm run format:check` is the verifying form, suitable for a CI gate.
 
 Do not run `npm run format:all`, `prettier --write .`, or any repo-wide
-Prettier glob as routine cleanup. The baseline is ~44% unformatted — 1094
-of 2472 tracked `src` ts/tsx files as of 2026-07-25 — so a repo-wide write
-is not a tidy-up, it is a ~30,000-line mass reformat that rewrites
-`git blame` for a thousand files and conflicts with every open branch and
-fan-out worktree.
+Prettier glob. The baseline is ~44% unformatted — 1094 of 2472 tracked
+`src` ts/tsx files as of 2026-07-25 — so a repo-wide write is not a
+tidy-up: it is a ~30,000-line mass reformat that rewrites `git blame` for
+a thousand files and conflicts with every open branch and fan-out
+worktree.
 
-`npm run format:check` verifies only changed files, which is what a CI
-format gate should use: it holds new work to the standard without
-demanding the backlog be fixed first.
+Three files are in `.prettierignore` because Prettier never reaches a
+fixed point on them and **formatting them is corruption, not cleanup** —
+this file, `src/main/BridgeActionExecutor.test.ts`, and
+`src/renderer/src/assets/css/04-settings-controls.css`. Verified
+2026-07-25 by formatting all 2814 tracked files twice and comparing: pass
+3 differs from pass 1, so they do not even oscillate. In this file each
+pass adds two spaces of indentation to the code blocks nested inside list
+items below. Leave all three in the ignore file.
 
-**This file is in `.prettierignore` and must stay there.** Prettier does
-not converge on it: each pass adds two spaces of indentation to the code
-blocks nested inside list items below, so repeated runs corrupt the
-examples progressively rather than settling. Verified 2026-07-25 over five
-consecutive passes — 80 changed lines every time, never a fixed point.
+None of the above is authority to change what any code does. Formatting
+work is formatting only.
 
 Prettier is available for intentional formatting work, but normal code
 changes should preserve the surrounding style and format only the files

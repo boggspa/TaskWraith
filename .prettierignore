@@ -7,5 +7,13 @@ LICENSE.md
 # corrupt the examples progressively instead of settling (verified 2026-07-25 —
 # 80 changed lines on each of five consecutive passes, never a fixed point).
 AGENTS.md
+
+# Same class, verified 2026-07-25 by formatting every tracked file twice and
+# comparing: these are the only other two of 2814 files where Prettier never
+# reaches a fixed point (pass 3 differs from pass 1, so not even an oscillation).
+# It re-breaks a method chain in the first and a minmax() grid declaration in the
+# second, differently on every pass. Formatting them is corruption, not cleanup.
+src/main/BridgeActionExecutor.test.ts
+src/renderer/src/assets/css/04-settings-controls.css
 tsconfig.json
 tsconfig.*.json
