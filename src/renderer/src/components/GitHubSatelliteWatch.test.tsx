@@ -21,7 +21,7 @@ import type { GitRepositorySnapshot } from '../../../main/services/GitService'
 const snapshot = { remoteUrl: 'git@github.com:acme/widgets.git' } as GitRepositorySnapshot
 
 describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
-  it('renders a warning affordance when there is no PR/CI but a watch-disabled reason (gh-auth failure)', () => {
+  it('renders a MUTED affordance when there is no PR/CI but a watch-disabled reason (gh-auth failure)', () => {
     const markup = renderToStaticMarkup(
       <GitHubSatelliteRow
         pr={null}
@@ -30,9 +30,25 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
         watchDisabledReason="GitHub CLI not authenticated"
       />
     )
-    // The row no longer disappears — it surfaces a warning affordance.
+    // The row no longer disappears — it surfaces the affordance, but quiet
+    // gray, not warning amber: nothing is wrong until the user is watching.
     expect(markup).not.toBe('')
     expect(markup).toContain('github-satellite-row')
+    expect(markup).toContain('tone-muted')
+    expect(markup).not.toContain('tone-warning')
+  })
+
+  it('escalates the affordance to warning amber once watching is actually ON', () => {
+    const markup = renderToStaticMarkup(
+      <GitHubSatelliteRow
+        pr={null}
+        ci={null}
+        snapshot={snapshot}
+        isWatching
+        onToggleWatch={() => {}}
+        watchStatusMessage="Watching for an open pull request"
+      />
+    )
     expect(markup).toContain('tone-warning')
   })
 

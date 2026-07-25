@@ -226,13 +226,21 @@ export function GitHubSatelliteRow({
       {watchOnly && (watchDisabledReason || isWatching) && (
         <SatelliteIndicator
           kind="pr"
-          tone="warning"
+          // Quiet by default: with no PR/CI this is only a discoverability
+          // affordance (open the popover, see why watching is unavailable),
+          // so it sits muted gray. It earns the warning amber only once the
+          // user has actually turned watching ON — then "watching, but no
+          // PR/CI to show" is a state worth flagging.
+          tone={isWatching ? 'warning' : 'muted'}
           title={watchDisabledReason || watchStatusMessage || 'Watching this pull request'}
           label="PR"
           onHoverStart={hover.show}
           onHoverEnd={hover.scheduleClose}
         >
-          <span className="github-satellite-dot tone-warning" aria-hidden />
+          <span
+            className={`github-satellite-dot tone-${isWatching ? 'warning' : 'muted'}`}
+            aria-hidden
+          />
           <ToolFamilyIcon family="pull-request" size={14} />
         </SatelliteIndicator>
       )}
