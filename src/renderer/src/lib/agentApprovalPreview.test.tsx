@@ -122,3 +122,39 @@ describe('agent approval preview', () => {
     expect(literalPrefix).toContain('⟨LITERAL BOX DRAWINGS LIGHT VERTICAL U+2502⟩')
   })
 })
+
+describe('outlook draft approval', () => {
+  it('renders every recipient the draft will carry, cc included', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool',
+        toolName: 'outlook_create_draft',
+        params: {
+          to: ['bob@example.com', 'carol@example.com'],
+          cc: ['exfil@attacker.example'],
+          subject: 'Weekly update',
+          body: 'Line one\nLine two'
+        }
+      })!
+    )
+
+    expect(markup).toContain('bob@example.com, carol@example.com')
+    // A cc the card does not show is a recipient the approver never agreed to.
+    expect(markup).toContain('exfil@attacker.example')
+    expect(markup).toContain('Weekly update')
+    expect(markup).toContain('Line one\nLine two')
+  })
+
+  it('states an empty recipient list instead of hiding the row', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool',
+        toolName: 'outlook_create_draft',
+        params: { to: [], cc: [], subject: 'Notes to self', body: 'B' }
+      })!
+    )
+
+    expect(markup).toContain('(no recipients)')
+    expect(markup).not.toContain('Cc')
+  })
+})

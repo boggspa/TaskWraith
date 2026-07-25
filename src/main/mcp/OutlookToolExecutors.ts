@@ -66,8 +66,14 @@ export interface OutlookToolDeps {
 const text = (value: unknown, max = 8_000): string =>
   typeof value === 'string' ? value.slice(0, max) : ''
 
-/** Comma/semicolon separated recipients → a bounded, de-duplicated list. */
-function recipientList(value: unknown, max = 50): string[] {
+/**
+ * Comma/semicolon separated recipients → a bounded, de-duplicated list.
+ *
+ * Exported because the APPROVAL PROMPT must show exactly the addresses the
+ * write will use. Formatting recipients twice, in two places, is how a
+ * prompt ends up disagreeing with what is sent.
+ */
+export function outlookRecipientList(value: unknown, max = 50): string[] {
   const raw = Array.isArray(value)
     ? value.filter((entry): entry is string => typeof entry === 'string')
     : text(value, 8_000)
@@ -205,8 +211,8 @@ export async function executeOutlookMcpTool(
         const result = await connector.createDraft({
           subject,
           body,
-          to: recipientList(args.to),
-          cc: recipientList(args.cc)
+          to: outlookRecipientList(args.to),
+          cc: outlookRecipientList(args.cc)
         })
         if (!result.ok) return { result, isError: true }
         return {
@@ -222,7 +228,7 @@ export async function executeOutlookMcpTool(
       }
 
       case 'outlook_create_event': {
-        const attendees = recipientList(args.attendees)
+        const attendees = outlookRecipientList(args.attendees)
         if (attendees.length > 0) {
           return {
             result: {

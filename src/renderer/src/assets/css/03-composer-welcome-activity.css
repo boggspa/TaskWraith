@@ -8493,6 +8493,12 @@ button.composer-run-timecode.is-open {
 .composer-permission-message {
   font-size: var(--font-size-xs);
   color: var(--text-secondary);
+  /* Approval bodies are newline-structured — a shell command above its cwd, a
+   * draft's To/Subject above its text. Collapsing those into one run-on line
+   * is how a reader stops parsing the thing they are approving. `anywhere`
+   * keeps a long path or address list inside the card instead of overflowing. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 /* Order-4 — optional one-line "why" note for an approval decision.

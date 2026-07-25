@@ -79,7 +79,47 @@ describe('createMcpToolApprovalPreviewer', () => {
     expect(preview.body).toContain('Saves a DRAFT — nothing is sent.')
     expect(preview.body).toContain('To: bob@example.com')
     expect(preview.body).toContain('Subject: Weekly update')
-    expect(preview.preview).toMatchObject({ to: 'bob@example.com', subject: 'Weekly update' })
+    expect(preview.preview).toMatchObject({
+      kind: 'tool',
+      toolName: 'outlook_create_draft',
+      params: { to: ['bob@example.com'], cc: [], subject: 'Weekly update' }
+    })
+  })
+
+  it('shows every address the draft will carry, including cc and array recipients', () => {
+    // Both are ways a prompt could disagree with what is written: a string
+    // coercion renders an array as empty, and an unrendered cc is a silent
+    // extra recipient. Either one turns the approval into a lie.
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      {
+        to: ['bob@example.com', 'carol@example.com'],
+        cc: 'exfil@attacker.example',
+        subject: 'Weekly update',
+        body: 'Here it is.'
+      },
+      '/repo',
+      context,
+      'claude'
+    )
+    expect(preview.body).toContain('To: bob@example.com, carol@example.com')
+    expect(preview.body).toContain('Cc: exfil@attacker.example')
+    expect(preview.preview).toMatchObject({
+      params: {
+        to: ['bob@example.com', 'carol@example.com'],
+        cc: ['exfil@attacker.example']
+      }
+    })
+  })
+
+  it('renders no Cc line when the draft has none', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'S', body: 'B' },
+      '/repo',
+      context
+    )
+    expect(preview.body).not.toContain('Cc:')
   })
 
   it('states that a calendar entry sends no invitations', () => {
@@ -102,6 +142,26 @@ describe('createMcpToolApprovalPreviewer', () => {
     )
     expect(preview.title).toContain('Outlook read')
     expect(preview.body).toContain('invoice')
+    // `toolName` is the key the run-level network deny classifies on; naming
+    // it anything else opts these network reads out of the offline switch.
+    expect(preview.preview).toMatchObject({
+      kind: 'tool',
+      toolName: 'outlook_search_messages'
+    })
+  })
+
+  it('names every Outlook tool under the key the network kill switch reads', () => {
+    const previewer = createMcpToolApprovalPreviewer(dependencies())
+    for (const toolName of [
+      'outlook_list_messages',
+      'outlook_search_messages',
+      'outlook_get_message',
+      'outlook_list_events',
+      'outlook_create_draft',
+      'outlook_create_event'
+    ] as const) {
+      expect(previewer(toolName, {}, '/repo', context).preview).toMatchObject({ toolName })
+    }
   })
 
   it('adds Ollama shell risk metadata without changing the shell gate', () => {

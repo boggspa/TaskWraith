@@ -1,6 +1,7 @@
 import type { GeminiToolContext } from './runStateTypes'
 import type { TaskWraithMcpToolName } from './TaskWraithMcpTools'
 import type { AgenticServiceId, ProviderId } from './store/types'
+import { outlookRecipientList } from './mcp/OutlookToolExecutors'
 
 export interface McpToolApprovalPreview {
   title: string
@@ -64,19 +65,34 @@ export function createMcpToolApprovalPreviewer(
     const intentBody = intent ? `Intent: ${intent}\n\n` : ''
     const intentPreview = intent ? { intent } : {}
 
-    // Outlook: the user must see WHO a draft addresses and WHAT it says
-    // before approving, not a JSON blob. Reads name the mailbox scope.
+    // Outlook: the user must see WHO a draft addresses before approving.
+    // Recipients are formatted with the SAME parser the executor uses, so
+    // the prompt can never disagree with what is written — including the
+    // array form, which a plain string coercion would render as empty.
     if (toolName === 'outlook_create_draft') {
-      const to = deps.optionalString(args.to) || '(no recipients)'
+      const to = outlookRecipientList(args.to)
+      const cc = outlookRecipientList(args.cc)
       const subject = deps.optionalString(args.subject) || '(no subject)'
-      const body = deps.optionalString(args.body) || ''
+      const body = (deps.optionalString(args.body) || '').slice(0, 2_000)
+      const recipientLines =
+        `To: ${to.length > 0 ? to.join(', ') : '(no recipients)'}\n` +
+        // cc is only shown when present, but it is NEVER omitted when set —
+        // a hidden cc is how an injected instruction would exfiltrate.
+        (cc.length > 0 ? `Cc: ${cc.join(', ')}\n` : '')
       return {
         title: `Approve ${providerName} Outlook draft`,
         body:
           `${intentBody}Saves a DRAFT — nothing is sent.\n` +
-          `To: ${to}\nSubject: ${subject}\n\n${body.slice(0, 2_000)}`.trim(),
+          `${recipientLines}Subject: ${subject}\n\n${body}`.trim(),
         service: 'mcpTools',
-        preview: { ...intentPreview, to, subject, body: body.slice(0, 2_000) }
+        // `kind: 'tool'` + `params` is the shape the renderer displays as a
+        // structured block; a bare object renders nothing at all.
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: { to, cc, subject, body },
+          ...intentPreview
+        }
       }
     }
     if (toolName === 'outlook_create_event') {
@@ -88,7 +104,12 @@ export function createMcpToolApprovalPreviewer(
         title: `Approve ${providerName} calendar entry`,
         body: `${intentBody}Creates a calendar entry with no attendees, so no invitations are sent.\n${subject}\n${window}`,
         service: 'mcpTools',
-        preview: { ...intentPreview, subject, window }
+        preview: {
+          kind: 'tool',
+          toolName,
+          params: { subject, window, location: deps.optionalString(args.location) },
+          ...intentPreview
+        }
       }
     }
     if (
@@ -108,7 +129,10 @@ export function createMcpToolApprovalPreviewer(
         title: `Approve ${providerName} Outlook read`,
         body: `${intentBody}${toolName}${detail ? `\n${detail}` : ''}`.trim(),
         service: 'mcpTools',
-        preview: { ...intentPreview, tool: toolName, detail }
+        // `toolName` (not `tool`): the run-level network deny reads exactly
+        // this key to classify the call, so a different name silently opts
+        // these reads out of the offline kill switch.
+        preview: { kind: 'tool', toolName, params: { detail }, ...intentPreview }
       }
     }
 

@@ -200,6 +200,34 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
       : ''
   const kind = typeof preview.kind === 'string' ? preview.kind : 'approval'
   const launchContextPreview = formatLaunchContextPreview(preview)
+  // Outlook drafts: WHO receives this is the fact the approval turns on, so it
+  // gets its own rows rather than living inside the grey prompt paragraph. The
+  // main process normalizes recipients with the same parser the write uses, so
+  // these rows cannot disagree with what is created.
+  const mailFields = (() => {
+    if (!toolName.startsWith('outlook_')) return null
+    const params =
+      preview.params && typeof preview.params === 'object' && !Array.isArray(preview.params)
+        ? (preview.params as Record<string, unknown>)
+        : null
+    if (!params) return null
+    const addresses = (value: unknown): string =>
+      Array.isArray(value)
+        ? value.map((entry) => String(entry)).join(', ')
+        : typeof value === 'string'
+          ? value
+          : ''
+    const text = (value: unknown): string => (typeof value === 'string' ? value : '')
+    const fields = {
+      to: addresses(params.to),
+      cc: addresses(params.cc),
+      subject: text(params.subject),
+      body: text(params.body)
+    }
+    const isDraft = toolName === 'outlook_create_draft'
+    if (!isDraft && !fields.to && !fields.cc && !fields.subject && !fields.body) return null
+    return { ...fields, isDraft }
+  })()
   const hasDetails =
     command ||
     cwd ||
@@ -255,6 +283,32 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
         <div className="agent-approval-preview-block">
           <span>Launch context</span>
           <pre>{launchContextPreview}</pre>
+        </div>
+      )}
+      {mailFields && (mailFields.isDraft || mailFields.to) && (
+        <div className="agent-approval-preview-row">
+          <span>To</span>
+          {/* Stated rather than hidden: a draft with no recipients is a fact
+            worth seeing, not a row that quietly disappears. */}
+          <code>{mailFields.to || '(no recipients)'}</code>
+        </div>
+      )}
+      {mailFields?.cc && (
+        <div className="agent-approval-preview-row">
+          <span>Cc</span>
+          <code>{mailFields.cc}</code>
+        </div>
+      )}
+      {mailFields?.subject && (
+        <div className="agent-approval-preview-row">
+          <span>Subject</span>
+          <code>{mailFields.subject}</code>
+        </div>
+      )}
+      {mailFields?.body && (
+        <div className="agent-approval-preview-block">
+          <span>Message</span>
+          <pre>{mailFields.body}</pre>
         </div>
       )}
       {riskLabels.length > 0 && (
