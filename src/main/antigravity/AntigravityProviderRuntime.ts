@@ -13,6 +13,7 @@ import {
   buildAgyReadOnlyPrintArgs,
   buildAgyWriteCapablePrintArgs,
   createAgyCliEnv,
+  normalizeAgyConversationId,
   resolveAgyCliBinary,
   type ResolvedAgyCliBinary
 } from './AntigravityCli'
@@ -25,6 +26,12 @@ export interface PrepareAntigravityProviderLaunchInput {
   approvalMode?: string | null
   effectivePermissions?: Pick<EffectiveRunPermissions, 'readOnly'> | null
   inheritedEnv?: Readonly<Record<string, string | undefined>>
+  /**
+   * Prior agy conversation to resume, learned from the CLI's own receipt after a
+   * previous turn (never synthesized). Non-uuid values are dropped by
+   * `normalizeAgyConversationId` and simply start a fresh conversation.
+   */
+  conversationId?: string | null
 }
 
 export interface AntigravityProviderLaunchPlan {
@@ -32,6 +39,8 @@ export interface AntigravityProviderLaunchPlan {
   args: string[]
   env: Record<string, string>
   mode: 'plan' | 'accept-edits'
+  /** The id actually placed on the argv, or null for a fresh conversation. */
+  resumedConversationId: string | null
 }
 
 export interface AntigravityProviderRuntimeDependencies {
@@ -69,10 +78,13 @@ function selectedAgyModel(value: string | null | undefined): string | null {
  * resolution, environment construction, or child-process opportunity until
  * the persisted Settings consent gate is true.
  *
- * There is intentionally no `--conversation` input. `agy --print` does not
- * expose a stable, structured conversation receipt without the forbidden
- * hook/transcript path, so S3 starts a fresh official print turn. A later
- * reviewed official session surface may add resumption without inventing IDs.
+ * Resumption (added 2026-07-25) passes `--conversation <uuid>` when the caller
+ * supplies an id the CLI itself previously reported. The earlier note here said
+ * no stable structured receipt existed outside the hook/transcript path; that
+ * was wrong — `~/.gemini/antigravity-cli/cache/last_conversations.json` is a
+ * plain `cwd -> uuid` map, which `AntigravityConversationReceipt` reads. No id
+ * is ever invented: agy silently ignores an unknown id and starts a fresh
+ * conversation, so only uuids it minted are forwarded.
  */
 export async function prepareAntigravityProviderLaunch(
   input: PrepareAntigravityProviderLaunchInput,
@@ -90,13 +102,16 @@ export async function prepareAntigravityProviderLaunch(
   }
 
   const mode = writeCapableAgyMode(input) ? 'accept-edits' : 'plan'
+  const resumedConversationId = normalizeAgyConversationId(input.conversationId)
   const argsInput = {
     prompt: input.prompt,
     model: selectedAgyModel(input.model),
-    reasoningEffort: input.reasoningEffort
+    reasoningEffort: input.reasoningEffort,
+    ...(resumedConversationId ? { conversationId: resumedConversationId } : {})
   }
   return {
     binary,
+    resumedConversationId,
     args:
       mode === 'plan'
         ? buildAgyReadOnlyPrintArgs(argsInput)

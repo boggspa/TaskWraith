@@ -35,7 +35,14 @@ describe('AntiGravity S3 runtime integration', () => {
     )
     expect(agy).toContain('prepareAntigravityProviderLaunch({')
     expect(agy).toContain('settings: AppStore.getSettings()')
-    expect(agy).toContain('payload.providerSessionId = null')
+    // Resumption: the prior conversation goes in, and the id agy actually used
+    // is re-learned from its own receipt after the turn. Both halves are
+    // required — passing an id agy does not recognise silently starts a fresh
+    // conversation, so without the re-read a stale id would strand the chat.
+    expect(agy).toContain('conversationId: payload.providerSessionId')
+    expect(agy).toContain('payload.providerSessionId = launch.resumedConversationId')
+    expect(agy).toContain('resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)')
+    expect(agy).not.toContain('payload.providerSessionId = null')
     expect(agy).toContain("runCliProviderProcess(event, 'antigravity'")
     expect(agy).toContain('resolvedEnv: launch.env')
     expect(agy).toContain("runManager.finish(route.appRunId, 'failed')")

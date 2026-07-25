@@ -53,6 +53,90 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.env).toEqual({ PATH: '/usr/bin', KEEP: 'yes' })
     expect(launch.args).not.toContain('--dangerously-skip-permissions')
     expect(launch.args).not.toContain('--new-project')
+    expect(launch.resumedConversationId).toBeNull()
+  })
+
+  describe('conversation resumption', () => {
+    const resolveBinary = async () => ({
+      binaryPath: '/usr/local/bin/agy',
+      source: 'path' as const
+    })
+    const CONVERSATION = '0e81528b-aa70-4678-b9ce-d3005b829583'
+
+    it('resumes a prior conversation the CLI itself reported', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Carry on.',
+          approvalMode: 'plan',
+          conversationId: CONVERSATION
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.resumedConversationId).toBe(CONVERSATION)
+      expect(launch.args).toEqual([
+        '--sandbox',
+        '--mode',
+        'plan',
+        '--print-timeout',
+        '30m',
+        '--conversation',
+        CONVERSATION,
+        '-p',
+        'Carry on.'
+      ])
+    })
+
+    // A fresh turn needs no --new-project guard: verified 2026-07-25 that agy
+    // never implicitly inherits an existing conversation for the same cwd.
+    it('starts fresh with no conversation flag when no prior id exists', async () => {
+      for (const conversationId of [null, undefined, '']) {
+        const launch = await prepareAntigravityProviderLaunch(
+          { settings: OPTED_IN, prompt: 'Start.', approvalMode: 'plan', conversationId },
+          { resolveBinary }
+        )
+        expect(launch.resumedConversationId).toBeNull()
+        expect(launch.args).not.toContain('--conversation')
+        expect(launch.args).not.toContain('--new-project')
+      }
+    })
+
+    // agy silently allocates a new conversation for an id it does not recognise,
+    // so a foreign session id must be dropped rather than forwarded — otherwise
+    // the user loses context with no error.
+    it('drops a non-uuid id rather than forwarding another provider session', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Carry on.',
+          approvalMode: 'plan',
+          conversationId: 'claude-session-abc123'
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.resumedConversationId).toBeNull()
+      expect(launch.args).not.toContain('--conversation')
+      expect(launch.args.join(' ')).not.toContain('claude-session-abc123')
+    })
+
+    it('carries resumption into write-capable mode too', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          conversationId: CONVERSATION
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('accept-edits')
+      expect(launch.args).toContain('--conversation')
+      expect(launch.args).toContain(CONVERSATION)
+      expect(launch.args).not.toContain('--dangerously-skip-permissions')
+    })
   })
 
   it('uses the ordinary sandboxed accept-edits mode only for a write-capable posture', async () => {

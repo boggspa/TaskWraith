@@ -14,6 +14,7 @@ import {
   type AgyModelProbeDependencies,
   type AgyProcessCaptureResult
 } from './AntigravityCli'
+import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
 
 const MAX_CAPTURED_OUTPUT = 80_000
 
@@ -67,24 +68,47 @@ export function captureAgyModelDiscoveryOutput(
 }
 
 /**
- * The configured-provider cache may expose AntiGravity only after all four
- * conditions hold: explicit risk consent, a resolved user-installed binary,
- * successful official `agy models` exit, and at least one validated model.
+ * The configured-provider cache may expose AntiGravity only after explicit risk
+ * consent AND a resolved user-installed binary. Those two are hard gates: with
+ * either missing this returns nothing, so the ban-risk lane stays invisible.
+ *
+ * Beyond that pair, a live authenticated `agy models` is preferred but no longer
+ * REQUIRED. It used to be, and the consequence was that any probe failure — not
+ * logged in, non-zero exit, timeout, or a parse yielding nothing — returned `[]`
+ * with the error swallowed, which tripped the `models.length > 0` admission in
+ * `isAuthenticatedAntigravityConfiguredProvider` and made the whole provider
+ * vanish from every surface with no message anywhere. A consented install with
+ * the official binary present now falls back to `antigravityAgyStaticModels()`
+ * so the lane stays selectable and fails loudly at dispatch instead.
+ *
+ * Live discovery always wins when it returns anything.
  */
 export async function discoverAuthenticatedAgyModels(
   settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined,
   deps: AuthenticatedAgyModelDiscoveryDependencies = {}
 ): Promise<AgyModel[]> {
   if (!isAntigravityOptInEnabled(settings)) return []
+
+  // Resolved once and reused, so the probe cannot observe a different binary
+  // than the presence gate did.
+  let resolvedBinary: Awaited<ReturnType<typeof resolveAgyCliBinary>>
+  try {
+    resolvedBinary = await (deps.resolveBinary ?? resolveAgyCliBinary)()
+  } catch {
+    return []
+  }
+  if (!resolvedBinary.binaryPath) return []
+
   try {
     const result = await probeAgyModels({
-      resolveBinary: deps.resolveBinary ?? resolveAgyCliBinary,
+      resolveBinary: async () => resolvedBinary,
       capture: deps.capture ?? captureAgyModelDiscoveryOutput,
       env: deps.inheritedEnv,
       timeoutMs: deps.timeoutMs
     })
-    return !result.error && result.binary.binaryPath && result.models.length > 0 ? result.models : []
+    if (!result.error && result.models.length > 0) return result.models
   } catch {
-    return []
+    // Fall through to the static floor rather than hiding the provider.
   }
+  return antigravityAgyStaticModels()
 }

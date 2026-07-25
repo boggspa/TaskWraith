@@ -32,6 +32,9 @@ export const AGY_STRIPPED_CREDENTIAL_ENV_KEYS = [
 
 const AGY_STRIPPED_CREDENTIAL_ENV_KEY_SET = new Set<string>(AGY_STRIPPED_CREDENTIAL_ENV_KEYS)
 const AGY_REASONING_EFFORTS = new Set(['low', 'medium', 'high'])
+/** agy's canonical conversation id form; matching is case-insensitive. */
+const AGY_CONVERSATION_UUID_RE =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i
 const MAX_MODEL_VALUE_LENGTH = 512
 const MAX_DISCOVERED_MODELS = 128
 const CONTROL_CHARACTERS_RE = new RegExp(String.raw`[\u0000-\u001F\u007F]`)
@@ -186,6 +189,21 @@ function normalizeAgyArg(value: string | null | undefined): string | null {
   return normalized
 }
 
+/**
+ * Accept only agy's own uuid form for `--conversation`.
+ *
+ * This is stricter than `normalizeAgyArg` on purpose. Verified 2026-07-25: agy
+ * answers an UNKNOWN conversation id by silently allocating a fresh
+ * conversation and reporting no error, so a synthesized slug, another provider's
+ * session id, or a truncated value would not fail — it would quietly discard the
+ * user's context. Rejecting non-uuids here keeps that failure impossible.
+ */
+export function normalizeAgyConversationId(value: unknown): string | null {
+  if (typeof value !== 'string') return null
+  const normalized = value.trim()
+  return AGY_CONVERSATION_UUID_RE.test(normalized) ? normalized : null
+}
+
 export function normalizeAgyReasoningEffort(value: string | null | undefined): string | null {
   const normalized = normalizeAgyArg(value)?.toLowerCase() || null
   return normalized && AGY_REASONING_EFFORTS.has(normalized) ? normalized : null
@@ -226,7 +244,7 @@ function buildAgyPrintArgs(
     '--print-timeout',
     AGY_READ_ONLY_PRINT_TIMEOUT
   ]
-  const conversationId = normalizeAgyArg(input.conversationId)
+  const conversationId = normalizeAgyConversationId(input.conversationId)
   if (conversationId) args.push('--conversation', conversationId)
   const model = normalizeAgyArg(input.model)
   if (model) args.push('--model', model)

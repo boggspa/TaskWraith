@@ -6,6 +6,7 @@ import {
   buildAgyReadOnlyPrintArgs,
   createAgyCliEnv,
   isAgyCredentialEnvironmentKey,
+  normalizeAgyConversationId,
   normalizeAgyReasoningEffort,
   parseAgyModels,
   probeAgyModels,
@@ -81,7 +82,7 @@ describe('Antigravity argv builders', () => {
   it('builds sandboxed read-only print argv without a permission bypass', () => {
     const args = buildAgyReadOnlyPrintArgs({
       prompt: 'Inspect the repository and summarise findings.',
-      conversationId: 'conv-123',
+      conversationId: '0e81528b-aa70-4678-b9ce-d3005b829583',
       model: 'Gemini 3.6 Flash (High)',
       reasoningEffort: 'high'
     })
@@ -93,7 +94,7 @@ describe('Antigravity argv builders', () => {
       '--print-timeout',
       AGY_READ_ONLY_PRINT_TIMEOUT,
       '--conversation',
-      'conv-123',
+      '0e81528b-aa70-4678-b9ce-d3005b829583',
       '--model',
       'Gemini 3.6 Flash (High)',
       '--effort',
@@ -103,6 +104,30 @@ describe('Antigravity argv builders', () => {
     ])
     expect(args).not.toContain('--dangerously-skip-permissions')
     expect(args).not.toContain('--new-project')
+  })
+
+  // agy answers an unknown --conversation id by SILENTLY allocating a fresh
+  // conversation rather than failing, so a non-uuid on the argv would discard
+  // the user's context with no error anywhere. It must never be forwarded.
+  it.each([
+    'conv-123',
+    'not-a-uuid',
+    '0e81528b-aa70-4678-b9ce-d3005b82958',
+    '0e81528b_aa70_4678_b9ce_d3005b829583',
+    '0e81528b-aa70-4678-b9ce-d3005b829583 --dangerously-skip-permissions',
+    ''
+  ])('omits --conversation for a non-uuid id: %j', (conversationId) => {
+    const args = buildAgyReadOnlyPrintArgs({ prompt: 'Summarise.', conversationId })
+    expect(args).not.toContain('--conversation')
+    expect(args).not.toContain(conversationId)
+  })
+
+  it('accepts a uuid case-insensitively and trims it', () => {
+    expect(normalizeAgyConversationId('  0E81528B-AA70-4678-B9CE-D3005B829583  ')).toBe(
+      '0E81528B-AA70-4678-B9CE-D3005B829583'
+    )
+    expect(normalizeAgyConversationId(null)).toBeNull()
+    expect(normalizeAgyConversationId(12345)).toBeNull()
   })
 
   it('omits malformed optional values and rejects a blank prompt', () => {

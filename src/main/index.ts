@@ -1317,6 +1317,7 @@ import {
   getAntigravityProviderStatus,
   prepareAntigravityProviderLaunch
 } from './antigravity/AntigravityProviderRuntime'
+import { readAgyConversationReceipt } from './antigravity/AntigravityConversationReceipt'
 import {
   dispatchAntigravityCombinedMode,
   isAntigravityGeminiApiModelCandidate
@@ -16159,6 +16160,14 @@ function runCliProviderProcess(
      * (SIGKILL backstop after 4s).
      */
     stdinPlan?: { initialLines: string[] }
+    /**
+     * Resolve this run's provider session id after the child exits, for
+     * providers that report it nowhere in stream output. `agy --print` is the
+     * case: its conversation id lives only in the CLI's own
+     * `last_conversations.json` receipt. Returning null leaves the chat on its
+     * previous id, so the next turn simply starts fresh.
+     */
+    resolveExitSessionId?: () => Promise<string | null>
   } & (
     | { extraEnv?: Record<string, string>; resolvedEnv?: never }
     | {
@@ -16414,9 +16423,22 @@ function runCliProviderProcess(
     // the tracked transport operation closed.
   })
 
-  child.on('close', (code) => {
+  child.on('close', async (code) => {
     if (route.appRunId) piRunStdinClosers.delete(route.appRunId)
     emitCliProviderStderr(cliProviderStderrSanitizer.flush())
+    // Providers whose session id never appears in stream output (agy) resolve it
+    // from an on-disk receipt now. Awaited HERE, before the terminal `result`
+    // line carries `providerThreadId` and before `runManager.finish`, so the
+    // adopted id reaches chat persistence and the persistence-authority gate in
+    // updateCliProviderSession still sees a live run.
+    if (options.resolveExitSessionId) {
+      try {
+        const resolvedSessionId = await options.resolveExitSessionId()
+        if (resolvedSessionId) updateCliProviderSession(state, resolvedSessionId)
+      } catch {
+        // Best-effort: an unresolved receipt only means the next turn is fresh.
+      }
+    }
     const trailing = stdoutBuffer.trim()
     if (trailing) {
       try {
@@ -26781,7 +26803,8 @@ async function runAntigravityAgyProvider(
       model: payload.model,
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
-      effectivePermissions: payload.effectivePermissions
+      effectivePermissions: payload.effectivePermissions,
+      conversationId: payload.providerSessionId
     })
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
@@ -26797,13 +26820,23 @@ async function runAntigravityAgyProvider(
     return
   }
 
-  // S3 has no supported structured receipt for an `agy --conversation` id.
-  // Do not reuse an unverified historical string or infer one from logs/hooks.
-  payload.providerSessionId = null
+  // Resumption (2026-07-25): the id on the argv is only ever one agy itself
+  // minted, and it is re-learned from the CLI's own receipt after every turn.
+  // That re-read is load-bearing, not belt-and-braces: agy silently ignores an
+  // id it does not recognise and allocates a new conversation instead, so
+  // without it a single stale id would strand the chat on a conversation the CLI
+  // abandoned, and every later turn would look resumed while starting fresh.
+  // `normalizeAgyConversationId` already dropped any non-uuid.
+  payload.providerSessionId = launch.resumedConversationId
   await runCliProviderProcess(event, 'antigravity', launch.binary.binaryPath!, launch.args, payload, {
     fallback: false,
     requireExistingRun: true,
-    resolvedEnv: launch.env
+    resolvedEnv: launch.env,
+    // Keyed by the run's own cwd, which is what agy records. Fan-out lanes get
+    // their own worktrees, so per-lane cwds do not collide; two concurrent runs
+    // sharing one cwd are last-writer-wins on the CLI's side, which is agy's
+    // behaviour and not something TaskWraith can arbitrate.
+    resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)
   })
 }
 
