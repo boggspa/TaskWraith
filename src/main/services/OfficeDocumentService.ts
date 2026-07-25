@@ -180,12 +180,23 @@ export async function readOfficeDocument(
   filePath: string
 ): Promise<OfficeDocumentReadResult> {
   const format = requireOfficeFormat(filePath)
-  const binary = OFFICE_BINARY_FORMATS.has(format)
+  // Office documents always read byte-exact. The utf8 lane's strictness is
+  // right for source code, but it would reject a legacy cp1252 .eml or .ics
+  // that every mail client opens fine — so decoding is decided here instead.
   const read = await readWorkspaceFile(workspacePath, filePath, {
-    encoding: binary ? 'base64' : 'utf8',
+    encoding: 'base64',
     maxBytes: MAX_OFFICE_FILE_BYTES
   })
-  const raw = binary ? Buffer.from(read.content, 'base64') : read.content
+  const bytes = Buffer.from(read.content, 'base64')
+  const textWarnings: string[] = []
+  let raw: string | Buffer = bytes
+  if (!OFFICE_BINARY_FORMATS.has(format)) {
+    const decodedText = decodeOfficeText(bytes)
+    raw = decodedText.text
+    if (decodedText.fallback) {
+      textWarnings.push('File is not valid UTF-8; decoded as Latin-1. Saving rewrites it as UTF-8.')
+    }
+  }
   const decoded = decodeDocument(format, raw)
   // The editor works on the NORMALIZED model, so what the user sees is
   // exactly what a save will write — any clamping happens here, loudly,
@@ -200,8 +211,19 @@ export async function readOfficeDocument(
     etag: read.etag ?? null,
     sizeBytes: read.sizeBytes,
     mtimeMs: read.mtimeMs,
-    warnings: [...truncationWarnings, ...decoded.warnings]
+    warnings: [...textWarnings, ...truncationWarnings, ...decoded.warnings]
   }
+}
+
+/**
+ * UTF-8 when the bytes really are UTF-8, Latin-1 otherwise. Latin-1 maps
+ * every byte to a codepoint, so nothing is lost on the way in; a later save
+ * normalizes the file to UTF-8, which the warning states plainly.
+ */
+function decodeOfficeText(bytes: Buffer): { text: string; fallback: boolean } {
+  const utf8 = bytes.toString('utf8')
+  if (Buffer.from(utf8, 'utf8').equals(bytes)) return { text: utf8, fallback: false }
+  return { text: bytes.toString('latin1'), fallback: true }
 }
 
 /**
@@ -372,6 +394,73 @@ export async function writeExternalOfficeDocument(
     baseEtag: options.baseEtag
   })
   return { ...result, path: options.absolutePath }
+}
+
+export interface OfficeDocumentImportOptions {
+  workspacePath: string
+  workspaceId?: string
+  /** Destination path relative to the workspace; caller has already deduped it. */
+  filePath: string
+  /** Raw bytes of the dropped file, base64-encoded. */
+  contentBase64: string
+  recordChange?: RecordWorkspaceEditorChangeFn
+}
+
+/**
+ * Imports a dropped file (an Outlook .eml/.ics drag-out, a downloaded .docx)
+ * into the workspace by writing its raw bytes, then reads it back through the
+ * normal decode path so the caller gets a model plus any import warnings.
+ * Bytes are written verbatim — no model round-trip — so nothing is lost
+ * between the dropped file and what lands on disk.
+ */
+export async function importOfficeDocument(
+  options: OfficeDocumentImportOptions
+): Promise<OfficeDocumentReadResult> {
+  const format = requireOfficeFormat(options.filePath)
+  const bytes = Buffer.from(options.contentBase64, 'base64')
+  if (bytes.length === 0) {
+    throw new OfficeDocumentError('invalid_document', 'The dropped file is empty.')
+  }
+  // Verbatim means verbatim: the utf8 lane is only safe when the bytes
+  // survive a decode/encode round trip. A legacy cp1252 .eml (exactly what
+  // older Outlook exports produce) would otherwise land with U+FFFD
+  // replacements baked in, unrecoverably. Anything lossy goes down the
+  // base64 lane instead, at the cost of a text change-set entry.
+  const utf8Safe =
+    !OFFICE_BINARY_FORMATS.has(format) &&
+    Buffer.from(bytes.toString('utf8'), 'utf8').equals(bytes) &&
+    !bytes.includes(0)
+  const written = await writeWorkspaceFile({
+    workspacePath: options.workspacePath,
+    workspaceId: options.workspaceId,
+    filePath: options.filePath,
+    content: utf8Safe ? bytes.toString('utf8') : bytes.toString('base64'),
+    contentEncoding: utf8Safe ? 'utf8' : 'base64',
+    baseEtag: null,
+    origin: 'office-import',
+    maxBytes: MAX_OFFICE_FILE_BYTES,
+    recordChange: utf8Safe ? options.recordChange : undefined
+  })
+  try {
+    return await readOfficeDocument(options.workspacePath, options.filePath)
+  } catch (error) {
+    // An import that reports failure must not leave its bytes behind — that
+    // would be both a lie and a way to land arbitrary content under an
+    // office extension via a "failed" operation.
+    try {
+      await deleteWorkspaceFile({
+        workspacePath: options.workspacePath,
+        filePath: options.filePath,
+        baseEtag: written.etag ?? null,
+        origin: 'office-import',
+        contentEncoding: utf8Safe ? 'utf8' : 'base64',
+        maxBytes: MAX_OFFICE_FILE_BYTES
+      })
+    } catch {
+      // Best effort: surface the original decode failure regardless.
+    }
+    throw error
+  }
 }
 
 export interface OfficeDocumentDeleteOptions {

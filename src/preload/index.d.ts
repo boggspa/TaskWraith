@@ -81,6 +81,8 @@ import {
 } from '../main/store/types'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
 import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
+import type { OutlookConnectionStatus } from '../main/outlook/OutlookCredentialStore'
+import type { OutlookSignInPoll, OutlookSignInStart } from '../main/ipc/outlookAuthHandlers'
 import type { OfficeDocumentModel } from '../shared/office/officeModels'
 import type {
   Project,
@@ -929,6 +931,31 @@ declare global {
         path: string,
         baseEtag?: string | null
       ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
+      getOutlookStatus: () => Promise<OutlookConnectionStatus>
+      startOutlookSignIn: (payload: {
+        clientId: string
+        tenant?: string
+        scopeMode?: 'read' | 'write'
+      }) => Promise<OutlookSignInStart>
+      pollOutlookSignIn: () => Promise<OutlookSignInPoll>
+      disconnectOutlook: () => Promise<OutlookConnectionStatus>
+      importOfficeDocument: (
+        workspacePath: string,
+        filePath: string,
+        contentBase64: string
+      ) => Promise<OfficeDocumentReadResult>
+      revealOfficeDocument: (target: {
+        workspacePath?: string
+        filePath?: string
+        chatId?: string
+        path?: string
+      }) => Promise<{ ok: boolean }>
+      openOfficeDocumentInDefaultApp: (target: {
+        workspacePath?: string
+        filePath?: string
+        chatId?: string
+        path?: string
+      }) => Promise<{ ok: boolean; error?: string }>
       readExternalOfficeDocument: (chatId: string, path: string) => Promise<OfficeDocumentReadResult>
       writeExternalOfficeDocument: (
         chatId: string,

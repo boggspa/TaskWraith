@@ -345,6 +345,41 @@ describe('OfficeSuitePanel', () => {
     })
   })
 
+  describe('file-level interop', () => {
+    it('renders the drop overlay naming the importable formats', () => {
+      const html = renderToStaticMarkup(<OfficeSuitePanel workspacePath="/ws" initialDropActive />)
+      expect(html).toContain('Drop to import into the workspace')
+      expect(html).toContain('.ics calendar invites')
+      expect(html).toContain('.eml messages')
+      expect(html).toContain('is-drop-target')
+    })
+
+    it('offers Open in app and Reveal for an open document', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel workspacePath="/ws" initialDocument={docFixture({})} />
+      )
+      expect(html).toContain('Open in app')
+      expect(html).toContain('Reveal')
+      expect(html).toContain('Open in the system default application')
+    })
+
+    it('keeps shell actions available for external documents too', () => {
+      const html = renderToStaticMarkup(
+        <OfficeSuitePanel
+          workspacePath="/ws"
+          chatId="chat-1"
+          initialDocument={docFixture({ path: '/Users/me/brief.docx', externalAccess: 'read' })}
+          initialExternalPath="/Users/me/brief.docx"
+          initialExternalChatId="chat-1"
+        />
+      )
+      expect(html).toContain('Open in app')
+      expect(html).toContain('Reveal')
+      // Still no Delete for files outside the workspace.
+      expect(html).not.toContain('Delete this document from the workspace')
+    })
+  })
+
   it('renders the delete affordance and its confirmation card', () => {
     const html = renderToStaticMarkup(
       <OfficeSuitePanel workspacePath="/ws" initialDocument={docFixture({})} initialConfirmDelete />

@@ -422,6 +422,15 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // field validation lives in the handler (mirrors external-path:pick-and-persist).
   'office:read-external-document': ['object'],
   'office:write-external-document': ['object'],
+  'office:import-document': ['object'],
+  'office:reveal-document': ['object'],
+  'office:open-document-in-default-app': ['object'],
+  // Microsoft account connect/disconnect. The sign-in payload carries a
+  // client id + tenant; the handler validates their shapes.
+  'outlook:status': [],
+  'outlook:start-sign-in': ['object'],
+  'outlook:poll-sign-in': [],
+  'outlook:disconnect': [],
   'get-agent-status': ['provider'],
   'get-agent-rate-limits': ['provider', 'optionalObject'],
   'import-codex-usage-credential': ['optionalString'],

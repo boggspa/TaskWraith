@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import {
   deleteOfficeDocument,
+  importOfficeDocument,
   readExternalOfficeDocument,
   readOfficeDocument,
   writeExternalOfficeDocument,
@@ -19,6 +20,7 @@ vi.mock('../services/OfficeDocumentService', () => ({
   readOfficeDocument: vi.fn(),
   writeOfficeDocument: vi.fn(),
   deleteOfficeDocument: vi.fn(),
+  importOfficeDocument: vi.fn(),
   readExternalOfficeDocument: vi.fn(),
   writeExternalOfficeDocument: vi.fn()
 }))
@@ -51,6 +53,8 @@ function makeDeps(overrides: Partial<OfficeDocumentHandlerDeps> = {}): OfficeDoc
     executableExternalPathGrantsForChat: vi.fn(() => [] as ExternalPathGrant[]),
     externalGrantAllowsPath: vi.fn(() => false),
     canonicalExternalGrantPath: vi.fn((value: string) => value),
+    showItemInFolder: vi.fn(),
+    openPathInDefaultApp: vi.fn(async () => ''),
     ...overrides
   }
 }
@@ -86,6 +90,9 @@ describe('registerOfficeDocumentHandlers', () => {
       'office:write-document',
       'office:read-external-document',
       'office:write-external-document',
+      'office:import-document',
+      'office:reveal-document',
+      'office:open-document-in-default-app',
       'office:delete-document'
     ])
   })
@@ -298,6 +305,101 @@ describe('registerOfficeDocumentHandlers', () => {
       expect(deps.canonicalExternalGrantPath).toHaveBeenCalledWith('/tmp/brief.docx')
       expect(vi.mocked(readExternalOfficeDocument)).toHaveBeenCalledWith(canonical)
     })
+  })
+
+  describe('shell actions', () => {
+    it('reveals and opens workspace documents through the registered workspace', async () => {
+      const deps = makeDeps()
+      registerOfficeDocumentHandlers(deps)
+
+      await handlerFor('office:reveal-document')(fakeEvent, {
+        workspacePath: '/ws',
+        filePath: 'docs/brief.docx'
+      })
+      expect(deps.showItemInFolder).toHaveBeenCalledWith('/registered/ws/docs/brief.docx')
+
+      await handlerFor('office:open-document-in-default-app')(fakeEvent, {
+        workspacePath: '/ws',
+        filePath: 'docs/brief.docx'
+      })
+      expect(deps.openPathInDefaultApp).toHaveBeenCalledWith('/registered/ws/docs/brief.docx')
+    })
+
+    it('refuses to hand non-office files to the OS', async () => {
+      const deps = makeDeps()
+      registerOfficeDocumentHandlers(deps)
+      await expect(
+        handlerFor('office:open-document-in-default-app')(fakeEvent, {
+          workspacePath: '/ws',
+          filePath: 'scripts/run.sh'
+        })
+      ).rejects.toThrow(/Only Office documents/)
+      expect(deps.openPathInDefaultApp).not.toHaveBeenCalled()
+    })
+
+    it('requires a grant before revealing an external document', async () => {
+      const external = '/Users/me/brief.docx'
+      const denied = makeDeps(grantedDeps([]))
+      registerOfficeDocumentHandlers(denied)
+      await expect(
+        handlerFor('office:reveal-document')(fakeEvent, { chatId: 'chat-1', path: external })
+      ).rejects.toThrow(OFFICE_EXTERNAL_GRANT_REQUIRED)
+      expect(denied.showItemInFolder).not.toHaveBeenCalled()
+
+      mockedHandle.mockClear()
+      const allowed = makeDeps(grantedDeps([grantFor(external, 'read')]))
+      registerOfficeDocumentHandlers(allowed)
+      await handlerFor('office:reveal-document')(fakeEvent, { chatId: 'chat-1', path: external })
+      expect(allowed.showItemInFolder).toHaveBeenCalledWith(external)
+    })
+
+    it('reports an OS failure to open instead of throwing', async () => {
+      const deps = makeDeps({ openPathInDefaultApp: vi.fn(async () => 'No application found') })
+      registerOfficeDocumentHandlers(deps)
+      const result = await handlerFor('office:open-document-in-default-app')(fakeEvent, {
+        workspacePath: '/ws',
+        filePath: 'a.eml'
+      })
+      expect(result).toEqual({ ok: false, error: 'No application found' })
+    })
+  })
+
+  it('imports dropped bytes into the workspace under a write scope', async () => {
+    const deps = makeDeps()
+    registerOfficeDocumentHandlers(deps)
+    const imported = { path: 'Message.eml' }
+    vi.mocked(importOfficeDocument).mockResolvedValue(imported as never)
+
+    const result = await handlerFor('office:import-document')(fakeEvent, {
+      workspacePath: '/ws',
+      filePath: 'Message.eml',
+      contentBase64: 'RnJvbTogYUBiLmM='
+    })
+
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(fakeEvent, {
+      capability: 'workspace-file',
+      workspacePath: '/registered/ws',
+      operation: 'write'
+    })
+    expect(vi.mocked(importOfficeDocument)).toHaveBeenCalledWith({
+      workspacePath: '/registered/ws',
+      workspaceId: 'ws-1',
+      filePath: 'Message.eml',
+      contentBase64: 'RnJvbTogYUBiLmM=',
+      recordChange: deps.recordWorkspaceEditorChange
+    })
+    expect(result).toBe(imported)
+  })
+
+  it('rejects an empty import payload', async () => {
+    registerOfficeDocumentHandlers(makeDeps())
+    await expect(
+      handlerFor('office:import-document')(fakeEvent, {
+        workspacePath: '/ws',
+        filePath: 'a.eml',
+        contentBase64: ''
+      })
+    ).rejects.toThrow(/content is required/)
   })
 
   it('propagates scope failures without touching the service', async () => {

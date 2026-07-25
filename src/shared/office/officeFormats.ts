@@ -40,6 +40,12 @@ export const OFFICE_AUTO_ROUTE_FORMATS: ReadonlySet<OfficeFileFormat> = new Set(
 ])
 
 export function officeFormatForPath(filePath: string): OfficeFileFormat | null {
+  // A NUL (or other control byte) makes the extension a lie: native path
+  // consumers truncate at the NUL, so `evil.command\0.docx` would pass an
+  // extension check and then be opened as `evil.command`. Such a string is
+  // never a valid document path.
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(filePath)) return null
   const match = /\.([A-Za-z0-9]+)$/.exec(filePath)
   if (!match) return null
   const extension = match[1].toLowerCase()

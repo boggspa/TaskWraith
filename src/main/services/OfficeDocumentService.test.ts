@@ -12,6 +12,7 @@ import {
   MAX_OFFICE_FILE_BYTES,
   OfficeDocumentError,
   deleteOfficeDocument,
+  importOfficeDocument,
   readExternalOfficeDocument,
   readOfficeDocument,
   writeExternalOfficeDocument,
@@ -314,6 +315,85 @@ describe('external office documents', () => {
     })
     expect(result.path).toBe(absolutePath)
     expect(result.warnings).toEqual([])
+  })
+})
+
+describe('importOfficeDocument', () => {
+  it('writes dropped .eml bytes verbatim and returns the parsed model', async () => {
+    const workspace = await makeWorkspace()
+    const raw =
+      'From: Alice <alice@example.com>\r\nTo: bob@example.com\r\nSubject: Dropped\r\n\r\nBody text\r\n'
+    const result = await importOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'Dropped.eml',
+      contentBase64: Buffer.from(raw, 'utf8').toString('base64')
+    })
+    expect(result.kind).toBe('mail')
+    expect(result.model).toMatchObject({ subject: 'Dropped', body: 'Body text' })
+    // Bytes land verbatim — no model round-trip on the way in.
+    expect(await readFile(join(workspace, 'Dropped.eml'), 'utf8')).toBe(raw)
+  })
+
+  it('imports binary containers through the base64 lane', async () => {
+    const workspace = await makeWorkspace()
+    const bytes = buildDocx(WORD_MODEL)
+    const result = await importOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'Dropped.docx',
+      contentBase64: bytes.toString('base64')
+    })
+    expect(result.model).toEqual(WORD_MODEL)
+    expect((await readFile(join(workspace, 'Dropped.docx'))).equals(bytes)).toBe(true)
+  })
+
+  it('preserves non-UTF-8 bytes verbatim instead of substituting U+FFFD', async () => {
+    const workspace = await makeWorkspace()
+    // A legacy cp1252 export: 0xE9 = "é", 0x80 = "€". The utf8 lane would
+    // rewrite both as replacement characters, unrecoverably.
+    const raw = Buffer.concat([
+      Buffer.from('From: a@b.c\r\nSubject: Caf', 'ascii'),
+      Buffer.from([0xe9]),
+      Buffer.from('\r\n\r\nCost: ', 'ascii'),
+      Buffer.from([0x80]),
+      Buffer.from('5\r\n', 'ascii')
+    ])
+    await importOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'legacy.eml',
+      contentBase64: raw.toString('base64')
+    })
+    expect((await readFile(join(workspace, 'legacy.eml'))).equals(raw)).toBe(true)
+  })
+
+  it('removes the file again when the import cannot be decoded', async () => {
+    const workspace = await makeWorkspace()
+    await expect(
+      importOfficeDocument({
+        workspacePath: workspace,
+        filePath: 'trojan.docx',
+        contentBase64: Buffer.from('this is not a zip archive').toString('base64')
+      })
+    ).rejects.toThrow(/Not a valid \.docx/)
+    // A failed import must not leave renderer-chosen bytes on disk.
+    await expect(readFile(join(workspace, 'trojan.docx'))).rejects.toThrow()
+  })
+
+  it('rejects empty payloads and non-office extensions', async () => {
+    const workspace = await makeWorkspace()
+    await expect(
+      importOfficeDocument({
+        workspacePath: workspace,
+        filePath: 'empty.eml',
+        contentBase64: ''
+      })
+    ).rejects.toThrow(/empty/)
+    await expect(
+      importOfficeDocument({
+        workspacePath: workspace,
+        filePath: 'script.sh',
+        contentBase64: Buffer.from('rm -rf /').toString('base64')
+      })
+    ).rejects.toThrow(/not an Office document/)
   })
 })
 

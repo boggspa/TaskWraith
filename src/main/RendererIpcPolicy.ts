@@ -288,6 +288,16 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'office:delete-document',
   'office:read-external-document',
   'office:write-external-document',
+  'office:import-document',
+  'office:reveal-document',
+  'office:open-document-in-default-app',
+
+  // Microsoft account credentials are managed from the main window only,
+  // matching every other secret-bearing surface.
+  'outlook:status',
+  'outlook:start-sign-in',
+  'outlook:poll-sign-in',
+  'outlook:disconnect',
 
   // Project registry (Work surface): app-level organisational state managed
   // from the main window only; the domain handler asserts the same authority.

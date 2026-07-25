@@ -608,6 +608,28 @@ const api = {
   ) => ipcRenderer.invoke('office:write-document', workspace, path, model, baseEtag),
   deleteOfficeDocument: (workspace: string, path: string, baseEtag?: string | null) =>
     ipcRenderer.invoke('office:delete-document', workspace, path, baseEtag),
+  getOutlookStatus: () => ipcRenderer.invoke('outlook:status'),
+  startOutlookSignIn: (payload: {
+    clientId: string
+    tenant?: string
+    scopeMode?: 'read' | 'write'
+  }) => ipcRenderer.invoke('outlook:start-sign-in', payload),
+  pollOutlookSignIn: () => ipcRenderer.invoke('outlook:poll-sign-in'),
+  disconnectOutlook: () => ipcRenderer.invoke('outlook:disconnect'),
+  importOfficeDocument: (workspacePath: string, filePath: string, contentBase64: string) =>
+    ipcRenderer.invoke('office:import-document', { workspacePath, filePath, contentBase64 }),
+  revealOfficeDocument: (target: {
+    workspacePath?: string
+    filePath?: string
+    chatId?: string
+    path?: string
+  }) => ipcRenderer.invoke('office:reveal-document', target),
+  openOfficeDocumentInDefaultApp: (target: {
+    workspacePath?: string
+    filePath?: string
+    chatId?: string
+    path?: string
+  }) => ipcRenderer.invoke('office:open-document-in-default-app', target),
   readExternalOfficeDocument: (chatId: string, path: string) =>
     ipcRenderer.invoke('office:read-external-document', { chatId, path }),
   writeExternalOfficeDocument: (

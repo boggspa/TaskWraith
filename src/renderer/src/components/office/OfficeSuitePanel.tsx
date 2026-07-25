@@ -38,6 +38,9 @@ export interface OfficeOpenRequest {
 /** Marker the main process uses when no chat grant covers a path. */
 export const OFFICE_GRANT_REQUIRED_MARKER = 'external-grant-required'
 
+/** Mirrors MAX_OFFICE_FILE_BYTES in main; checked before any file is read. */
+export const MAX_OFFICE_IMPORT_BYTES = 25_000_000
+
 export const officeErrorIsGrantRequired = (message: string): boolean =>
   message.includes(OFFICE_GRANT_REQUIRED_MARKER)
 
@@ -78,6 +81,8 @@ export interface OfficeSuitePanelProps {
   initialExternalChatId?: string | null
   /** Test seam: preset error banner (e.g. the grant-required state). */
   initialError?: { message: string; staleEtag?: boolean; grantPath?: string } | null
+  /** Test seam: renders the drop overlay active. */
+  initialDropActive?: boolean
 }
 
 const KIND_ORDER: OfficeDocumentKind[] = ['word', 'sheet', 'deck', 'calendar', 'mail']
@@ -133,7 +138,8 @@ export function OfficeSuitePanel({
   initialPendingOpenPath = null,
   initialExternalPath = null,
   initialExternalChatId = null,
-  initialError = null
+  initialError = null,
+  initialDropActive = false
 }: OfficeSuitePanelProps) {
   const [railEntries, setRailEntries] = useState<OfficeRailEntry[]>(initialRailEntries)
   const [doc, setDoc] = useState<OfficeDocumentReadResult | null>(initialDocument)
@@ -161,6 +167,7 @@ export function OfficeSuitePanel({
   )
   const [warnings, setWarnings] = useState<string[]>(initialDocument?.warnings ?? [])
   const [isBusy, setIsBusy] = useState(false)
+  const [isDropTarget, setIsDropTarget] = useState(initialDropActive)
   const wordHtmlRef = useRef<string | null>(null)
   const lastOpenNonceRef = useRef<number | null>(null)
   // Identity of the document the panel currently shows. Async completions
@@ -443,6 +450,134 @@ export function OfficeSuitePanel({
     setModelDirty(true)
   }, [])
 
+  /**
+   * Imports dropped files by VALUE, not by path: Outlook and Mail hand out
+   * temp-directory copies on drag, so the useful act is copying the bytes
+   * into the workspace. Reading the File in the renderer also avoids
+   * resolving (and thereby authorizing) an arbitrary local path.
+   */
+  const importDroppedFiles = useCallback(
+    async (files: File[]) => {
+      if (!workspacePath || files.length === 0) return
+      const importable = files.filter((file) => officeFormatForPath(file.name) !== null)
+      if (importable.length === 0) {
+        setError({
+          message: 'Drop a Word, Excel, PowerPoint, calendar (.ics) or email (.eml) file.',
+          staleEtag: false
+        })
+        return
+      }
+      const oversized = importable.find((file) => file.size > MAX_OFFICE_IMPORT_BYTES)
+      if (oversized) {
+        // Checked BEFORE reading: the renderer would otherwise hold the file
+        // three times over (buffer, binary string, base64) just to be told no.
+        setError({
+          message: `${oversized.name} is larger than the ${Math.round(
+            MAX_OFFICE_IMPORT_BYTES / 1_000_000
+          )} MB import limit.`,
+          staleEtag: false
+        })
+        return
+      }
+      setIsBusy(true)
+      setError(null)
+      const taken = new Set(railEntries.map((entry) => entry.path))
+      let opened: OfficeDocumentReadResult | null = null
+      try {
+        for (const file of importable) {
+          const buffer = await file.arrayBuffer()
+          const bytes = new Uint8Array(buffer)
+          let binary = ''
+          for (let index = 0; index < bytes.length; index += 0x8000) {
+            binary += String.fromCharCode(...bytes.subarray(index, index + 0x8000))
+          }
+          const name = dedupeOfficeFileName(file.name.split(/[\\/]/).pop() ?? file.name, taken)
+          taken.add(name)
+          opened = await window.api.importOfficeDocument(workspacePath, name, btoa(binary))
+        }
+        // Importing is additive; only STEALING the editor is destructive.
+        // With unsaved edits open, the files still land in the workspace and
+        // the rail refreshes — the open document is simply left alone.
+        if (opened && !dirty) {
+          activeDocPathRef.current = opened.path
+          setExternalPath(null)
+          setExternalChatId(null)
+          setDoc(opened)
+          setModelDirty(false)
+          setWordDirty(false)
+          wordHtmlRef.current = null
+          setWarnings(opened.warnings)
+          setDocRevision((revision) => revision + 1)
+          setStatus(
+            importable.length > 1
+              ? `Imported ${importable.length} files · showing ${opened.path}`
+              : `Imported ${opened.path}`
+          )
+        } else if (opened) {
+          setStatus(
+            `Imported ${importable.length > 1 ? `${importable.length} files` : opened.path} · open from the rail when ready`
+          )
+        }
+        void refreshRail()
+      } catch (importError) {
+        setError({
+          message: importError instanceof Error ? importError.message : 'Import failed',
+          staleEtag: false
+        })
+      } finally {
+        setIsBusy(false)
+      }
+    },
+    [dirty, railEntries, refreshRail, workspacePath]
+  )
+
+  /** Shell target for the open document, in whichever lane it lives. */
+  const shellTarget = useCallback((): Record<string, string> | null => {
+    if (!doc) return null
+    if (externalPath) {
+      return chatId ? { chatId, path: externalPath } : null
+    }
+    return workspacePath ? { workspacePath, filePath: doc.path } : null
+  }, [chatId, doc, externalPath, workspacePath])
+
+  const revealDocument = useCallback(async () => {
+    const target = shellTarget()
+    if (!target) return
+    try {
+      await window.api.revealOfficeDocument(target)
+    } catch (revealError) {
+      setError({
+        message: revealError instanceof Error ? revealError.message : 'Could not reveal the file',
+        staleEtag: false
+      })
+    }
+  }, [shellTarget])
+
+  /**
+   * Hands the file to the OS default app — the practical Outlook lane: a
+   * composed .eml opens in Outlook/Mail, an .ics in Calendar, a .docx in Word.
+   * Unsaved edits are flagged first, since the other app reads from disk.
+   */
+  const openInDefaultApp = useCallback(async () => {
+    const target = shellTarget()
+    if (!target) return
+    try {
+      const result = await window.api.openOfficeDocumentInDefaultApp(target)
+      if (!result.ok) {
+        setError({ message: result.error || 'No application opened the file.', staleEtag: false })
+        return
+      }
+      setStatus(
+        dirty ? 'Opened the last SAVED version in the default app' : 'Opened in default app'
+      )
+    } catch (openError) {
+      setError({
+        message: openError instanceof Error ? openError.message : 'Could not open the file',
+        staleEtag: false
+      })
+    }
+  }, [dirty, shellTarget])
+
   const deleteCurrentDocument = useCallback(async () => {
     if (!workspacePath || !doc) return
     setIsBusy(true)
@@ -491,7 +626,34 @@ export function OfficeSuitePanel({
   }
 
   return (
-    <aside className="office-suite" style={width ? { width } : undefined}>
+    <aside
+      className={`office-suite${isDropTarget ? ' is-drop-target' : ''}`}
+      style={width ? { width } : undefined}
+      onDragOver={(event) => {
+        if (!workspacePath || event.dataTransfer.types.indexOf('Files') === -1) return
+        event.preventDefault()
+        event.dataTransfer.dropEffect = 'copy'
+        if (!isDropTarget) setIsDropTarget(true)
+      }}
+      onDragLeave={(event) => {
+        if (event.currentTarget.contains(event.relatedTarget as Node | null)) return
+        setIsDropTarget(false)
+      }}
+      onDrop={(event) => {
+        if (!workspacePath) return
+        event.preventDefault()
+        setIsDropTarget(false)
+        void importDroppedFiles(Array.from(event.dataTransfer.files))
+      }}
+    >
+      {isDropTarget ? (
+        <div className="office-drop-overlay" aria-hidden="true">
+          <span>Drop to import into the workspace</span>
+          <span className="office-drop-hint">
+            Word, Excel, PowerPoint, .ics calendar invites, .eml messages
+          </span>
+        </div>
+      ) : null}
       <nav className="office-rail" aria-label="Office documents">
         <div className="office-rail-header">
           <span className="office-rail-eyebrow">Office</span>
@@ -607,6 +769,24 @@ export function OfficeSuitePanel({
                 onClick={() => requestOpenDocument(doc.path, { external: externalPath !== null })}
               >
                 Reload
+              </button>
+              <button
+                type="button"
+                className="office-toolbar-button"
+                disabled={isBusy}
+                title="Open in the system default application (Word, Outlook, Calendar…)"
+                onClick={() => void openInDefaultApp()}
+              >
+                Open in app
+              </button>
+              <button
+                type="button"
+                className="office-toolbar-button"
+                disabled={isBusy}
+                title="Reveal this document in the file manager"
+                onClick={() => void revealDocument()}
+              >
+                Reveal
               </button>
               {externalPath ? null : (
                 <button

@@ -1435,6 +1435,7 @@ import { registerClaudeAuthHandlers } from './ipc/claudeAuthHandlers'
 import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
+import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
@@ -1633,6 +1634,9 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
+import { OutlookCredentialStore } from './outlook/OutlookCredentialStore'
+import { OutlookConnectorService } from './outlook/OutlookConnectorService'
+import { systemTimeZone } from '../shared/office/zonedTime'
 import { createAntigravityGeminiApiMutationSuccessHandler } from './antigravity/AntigravityGeminiApiMutationLifecycle'
 import { mapAntigravityGeminiApiTurnStatusToMessage } from './antigravity/AntigravityGeminiApiMainRuntime'
 import {
@@ -1647,6 +1651,8 @@ import { AntigravityGeminiApiDiscoveryOutcomeStore } from './antigravity/Antigra
 
 /** Post-ready dedicated Gemini API secret store; null until app.whenReady constructs it. */
 let antigravityGeminiApiSecretStoreRef: AntigravityGeminiApiSecretStore | null = null
+/** Read-only Outlook lane; null until the app is ready. */
+let outlookConnectorServiceRef: OutlookConnectorService | null = null
 /**
  * In-memory only and safe to construct eagerly here — unlike the secret store
  * it touches neither safeStorage nor userData, so both the discovery deps below
@@ -31772,6 +31778,25 @@ if (isGeminiMcpBridgeProcess) {
       safeStorage
     })
     antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore
+    // Microsoft Graph credentials use the same safeStorage-only discipline:
+    // encrypted envelope on disk, status projection to the renderer, and no
+    // channel anywhere that hands back a token.
+    const outlookCredentialStore = new OutlookCredentialStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage
+    })
+    outlookConnectorServiceRef = new OutlookConnectorService({
+      store: outlookCredentialStore,
+      displayZone: () => systemTimeZone()
+    })
+    registerOutlookAuthHandlers({
+      store: outlookCredentialStore,
+      assertMainRenderer: assertMainRendererSender,
+      resolveAccount: async () => {
+        const result = await outlookConnectorServiceRef?.me()
+        return result?.ok ? result.account : null
+      }
+    })
     registerAntigravityGeminiApiSecretHandlers({
       secretStore: antigravityGeminiApiSecretStore,
       isMainRendererSender,
@@ -40308,7 +40333,9 @@ if (isGeminiMcpBridgeProcess) {
       executableExternalPathGrantsForChat: (chat) => executableExternalPathGrantsForChat(chat),
       externalGrantAllowsPath: (grant, targetPath, access) =>
         externalGrantAllowsPath(grant, targetPath, access),
-      canonicalExternalGrantPath
+      canonicalExternalGrantPath,
+      showItemInFolder: (absolutePath) => shell.showItemInFolder(absolutePath),
+      openPathInDefaultApp: (absolutePath) => shell.openPath(absolutePath)
     })
     registerWorkspaceDiffSnapshotHandlers({
       requireRegisteredWorkspace,

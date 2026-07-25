@@ -1,9 +1,12 @@
 import { dirname } from 'path'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import { assertSafeChatId } from '../ChatPath'
+import { resolveWorkspaceChild } from '../PathScope'
+import { officeFormatForPath } from '../../shared/office/officeFormats'
 import type { OfficeDocumentReadResult } from '../../shared/office/officeFormats'
 import {
   deleteOfficeDocument,
+  importOfficeDocument,
   readExternalOfficeDocument,
   readOfficeDocument,
   writeExternalOfficeDocument,
@@ -45,6 +48,14 @@ export interface OfficeDocumentHandlerDeps {
     access: 'read' | 'write'
   ) => boolean
   canonicalExternalGrantPath: (value: string) => string | null
+  /** Reveals a file in the OS file manager. */
+  showItemInFolder: (absolutePath: string) => void
+  /**
+   * Hands a file to the OS default application. Only ever called with an
+   * authorized OFFICE-format path, so this can never launch a script or app
+   * bundle — it opens documents in Word/Excel/PowerPoint/Outlook/Calendar.
+   */
+  openPathInDefaultApp: (absolutePath: string) => Promise<string>
 }
 
 interface ExternalOfficePayload {
@@ -52,6 +63,67 @@ interface ExternalOfficePayload {
   path: string
   model?: unknown
   baseEtag?: string | null
+}
+
+/**
+ * Rejects NUL and other control bytes before a path reaches any native
+ * consumer. `IpcValidation`'s `'filePath'` ArgSpec does this for the
+ * positional channels; the object-payload channels must do it themselves.
+ */
+function assertNoControlCharacters(value: string): void {
+  // eslint-disable-next-line no-control-regex
+  if (/[\u0000-\u001F\u007F]/.test(value)) {
+    throw new Error('Office paths cannot contain control characters.')
+  }
+}
+
+/** Office-extension gate shared by the shell actions. */
+function requireOfficeFormat(filePath: string): void {
+  assertNoControlCharacters(filePath)
+  if (!officeFormatForPath(filePath)) {
+    throw new Error('Only Office documents can be revealed or opened.')
+  }
+}
+
+/**
+ * Shell actions accept either a workspace document (registered workspace +
+ * relative path) or an external one (chat grant + absolute path), and resolve
+ * both to one authorized absolute path. Authority is identical to the read
+ * lane — revealing or opening a file is a read-equivalent act.
+ */
+function resolveShellTarget(
+  deps: OfficeDocumentHandlerDeps,
+  event: IpcMainInvokeEvent,
+  payload: unknown
+): string {
+  if (typeof payload !== 'object' || payload === null) {
+    throw new Error('Malformed office shell payload.')
+  }
+  const record = payload as Record<string, unknown>
+  const workspace = typeof record.workspacePath === 'string' ? record.workspacePath : ''
+  const filePath = typeof record.filePath === 'string' ? record.filePath : ''
+
+  if (workspace) {
+    const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+    deps.assertSenderScope(event, {
+      capability: 'workspace-file',
+      workspacePath: registeredWorkspace,
+      operation: 'read'
+    })
+    // Extension gate + containment: resolveWorkspaceChild rejects escapes.
+    requireOfficeFormat(filePath)
+    return resolveWorkspaceChild(registeredWorkspace, filePath)
+  }
+
+  const { chatId, path } = parseExternalPayload(record)
+  const { canonicalPath } = requireExternalAccess(deps, chatId, path, 'read')
+  requireOfficeFormat(canonicalPath)
+  deps.assertSenderScope(event, {
+    capability: 'workspace-file',
+    workspacePath: dirname(canonicalPath),
+    operation: 'read'
+  })
+  return canonicalPath
 }
 
 function parseExternalPayload(payload: unknown): ExternalOfficePayload {
@@ -65,6 +137,7 @@ function parseExternalPayload(payload: unknown): ExternalOfficePayload {
   if (!path || !/^([/\\~]|[A-Za-z]:[\\/])/.test(path)) {
     throw new Error('External office paths must be absolute.')
   }
+  assertNoControlCharacters(path)
   const baseEtag =
     record.baseEtag === null || record.baseEtag === undefined
       ? record.baseEtag
@@ -183,6 +256,49 @@ export function registerOfficeDocumentHandlers(deps: OfficeDocumentHandlerDeps):
       return { ...result, externalAccess: access }
     }
   )
+
+  ipcMain.handle(
+    'office:import-document',
+    async (event, payload: unknown): Promise<OfficeDocumentReadResult> => {
+      if (typeof payload !== 'object' || payload === null) {
+        throw new Error('Malformed office import payload.')
+      }
+      const record = payload as Record<string, unknown>
+      const workspace = typeof record.workspacePath === 'string' ? record.workspacePath : ''
+      const filePath = typeof record.filePath === 'string' ? record.filePath : ''
+      const contentBase64 = typeof record.contentBase64 === 'string' ? record.contentBase64 : ''
+      if (!contentBase64) throw new Error('Imported file content is required.')
+      const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'write'
+      })
+      const workspaceRecord = deps.findRegisteredWorkspace(registeredWorkspace)
+      const result = await importOfficeDocument({
+        workspacePath: registeredWorkspace,
+        workspaceId: workspaceRecord?.id,
+        filePath,
+        contentBase64,
+        recordChange: deps.recordWorkspaceEditorChange
+      })
+      deps.scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
+      return result
+    }
+  )
+
+  ipcMain.handle('office:reveal-document', async (event, payload: unknown) => {
+    const target = resolveShellTarget(deps, event, payload)
+    deps.showItemInFolder(target)
+    return { ok: true }
+  })
+
+  ipcMain.handle('office:open-document-in-default-app', async (event, payload: unknown) => {
+    const target = resolveShellTarget(deps, event, payload)
+    // Electron resolves with '' on success and an error string otherwise.
+    const failure = await deps.openPathInDefaultApp(target)
+    return failure ? { ok: false, error: failure } : { ok: true }
+  })
 
   ipcMain.handle(
     'office:delete-document',
