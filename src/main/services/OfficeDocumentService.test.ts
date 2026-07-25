@@ -12,7 +12,9 @@ import {
   MAX_OFFICE_FILE_BYTES,
   OfficeDocumentError,
   deleteOfficeDocument,
+  readExternalOfficeDocument,
   readOfficeDocument,
+  writeExternalOfficeDocument,
   writeOfficeDocument
 } from './OfficeDocumentService'
 
@@ -253,6 +255,65 @@ describe('writeOfficeDocument / readOfficeDocument', () => {
       baseEtag: null
     })
     expect(result.warnings.some((warning) => warning.includes('image was removed'))).toBe(true)
+  })
+})
+
+describe('external office documents', () => {
+  it('round-trips a document by absolute path, reporting it under that path', async () => {
+    const workspace = await makeWorkspace()
+    const absolutePath = join(workspace, 'brief.docx')
+    const written = await writeExternalOfficeDocument({
+      absolutePath,
+      model: WORD_MODEL,
+      baseEtag: null
+    })
+    expect(written.path).toBe(absolutePath)
+    expect((await readFile(absolutePath)).subarray(0, 2).toString('latin1')).toBe('PK')
+
+    const read = await readExternalOfficeDocument(absolutePath)
+    expect(read.path).toBe(absolutePath)
+    expect(read.model).toEqual(WORD_MODEL)
+    expect(read.etag).toBe(written.etag)
+  })
+
+  it('keeps etag concurrency on the external lane', async () => {
+    const workspace = await makeWorkspace()
+    const absolutePath = join(workspace, 'race.docx')
+    const first = await writeExternalOfficeDocument({
+      absolutePath,
+      model: WORD_MODEL,
+      baseEtag: null
+    })
+    await writeFile(absolutePath, buildDocx({ kind: 'word', blocks: [] }))
+    await expect(
+      writeExternalOfficeDocument({
+        absolutePath,
+        model: WORD_MODEL,
+        baseEtag: first.etag
+      })
+    ).rejects.toThrow(/changed on disk/)
+  })
+
+  it('refuses filesystem-root parents and non-office extensions', async () => {
+    await expect(readExternalOfficeDocument('/brief.docx')).rejects.toThrow(/filesystem root/)
+    const workspace = await makeWorkspace()
+    await expect(readExternalOfficeDocument(join(workspace, 'code.ts'))).rejects.toThrow(
+      /not an Office document/
+    )
+  })
+
+  it('never records change sets for external writes', async () => {
+    const workspace = await makeWorkspace()
+    const absolutePath = join(workspace, 'note.csv')
+    // The external lane takes no recordChange callback at all; a text-format
+    // external write must still succeed and leave no change-set behind.
+    const result = await writeExternalOfficeDocument({
+      absolutePath,
+      model: { kind: 'sheet', sheets: [{ name: 'S', rows: [['x']] }] },
+      baseEtag: null
+    })
+    expect(result.path).toBe(absolutePath)
+    expect(result.warnings).toEqual([])
   })
 })
 

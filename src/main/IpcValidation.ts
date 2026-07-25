@@ -418,6 +418,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'office:read-document': ['workspacePath', 'filePath'],
   'office:write-document': ['workspacePath', 'filePath', 'object', 'optionalString'],
   'office:delete-document': ['workspacePath', 'filePath', 'optionalString'],
+  // External office documents: payload objects carry chatId + absolute path;
+  // field validation lives in the handler (mirrors external-path:pick-and-persist).
+  'office:read-external-document': ['object'],
+  'office:write-external-document': ['object'],
   'get-agent-status': ['provider'],
   'get-agent-rate-limits': ['provider', 'optionalObject'],
   'import-codex-usage-credential': ['optionalString'],

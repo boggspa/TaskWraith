@@ -10,6 +10,7 @@
  * without change-set diffs (they are not meaningfully text-diffable).
  */
 
+import { basename, dirname } from 'path'
 import {
   OFFICE_BINARY_FORMATS,
   OFFICE_FORMAT_KINDS,
@@ -46,6 +47,7 @@ export type OfficeDocumentErrorCode =
   | 'invalid_document'
   | 'kind_mismatch'
   | 'invalid_model'
+  | 'unsafe_external_path'
 
 export class OfficeDocumentError extends Error {
   readonly code: OfficeDocumentErrorCode
@@ -317,6 +319,59 @@ export async function writeOfficeDocument(
     mtimeMs: written.mtimeMs,
     warnings: [...droppedImageWarnings, ...encoded.warnings]
   }
+}
+
+/**
+ * External (grant-covered) documents reuse the workspace read/write pipeline
+ * rooted at the file's parent directory — same hardened I/O, same etag
+ * concurrency, same normalization warnings. Grant AUTHORITY lives entirely
+ * in the IPC handler; these functions only add the path-shape guards and
+ * report the document under its absolute path. Change-set recording and git
+ * refreshes are registered-workspace concepts and never run here.
+ */
+function externalOfficeRoot(absolutePath: string): { root: string; name: string } {
+  const root = dirname(absolutePath)
+  const name = basename(absolutePath)
+  if (!name || root === absolutePath) {
+    throw new OfficeDocumentError('unsafe_external_path', 'This path cannot be opened.')
+  }
+  // Refuse filesystem roots as containment roots (mirrors the workspace-side
+  // assertSafeWorkspaceRoot, which lives at the registration layer).
+  if (dirname(root) === root) {
+    throw new OfficeDocumentError(
+      'unsafe_external_path',
+      'Files directly under the filesystem root cannot be opened.'
+    )
+  }
+  return { root, name }
+}
+
+export async function readExternalOfficeDocument(
+  absolutePath: string
+): Promise<OfficeDocumentReadResult> {
+  const { root, name } = externalOfficeRoot(absolutePath)
+  const result = await readOfficeDocument(root, name)
+  return { ...result, path: absolutePath }
+}
+
+export interface ExternalOfficeDocumentWriteOptions {
+  absolutePath: string
+  /** Untrusted model payload from the renderer; normalized before encoding. */
+  model: unknown
+  baseEtag?: string | null
+}
+
+export async function writeExternalOfficeDocument(
+  options: ExternalOfficeDocumentWriteOptions
+): Promise<OfficeDocumentReadResult> {
+  const { root, name } = externalOfficeRoot(options.absolutePath)
+  const result = await writeOfficeDocument({
+    workspacePath: root,
+    filePath: name,
+    model: options.model,
+    baseEtag: options.baseEtag
+  })
+  return { ...result, path: options.absolutePath }
 }
 
 export interface OfficeDocumentDeleteOptions {

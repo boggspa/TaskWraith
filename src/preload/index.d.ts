@@ -929,6 +929,13 @@ declare global {
         path: string,
         baseEtag?: string | null
       ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
+      readExternalOfficeDocument: (chatId: string, path: string) => Promise<OfficeDocumentReadResult>
+      writeExternalOfficeDocument: (
+        chatId: string,
+        path: string,
+        model: OfficeDocumentModel,
+        baseEtag?: string | null
+      ) => Promise<OfficeDocumentReadResult>
       captureSnapshot: (workspace: string) => Promise<any>
       computeRunDiff: (
         runId: string,

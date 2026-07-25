@@ -40303,7 +40303,12 @@ if (isGeminiMcpBridgeProcess) {
       assertSenderScope: assertRendererFilesystemScope,
       findRegisteredWorkspace,
       recordWorkspaceEditorChange: (input) => AppStore.recordWorkspaceEditorChange(input),
-      scheduleRemoteGitSnapshotRefresh
+      scheduleRemoteGitSnapshotRefresh,
+      getChatForExternalGrants: (chatId) => AppStore.getChat(chatId) ?? undefined,
+      executableExternalPathGrantsForChat: (chat) => executableExternalPathGrantsForChat(chat),
+      externalGrantAllowsPath: (grant, targetPath, access) =>
+        externalGrantAllowsPath(grant, targetPath, access),
+      canonicalExternalGrantPath
     })
     registerWorkspaceDiffSnapshotHandlers({
       requireRegisteredWorkspace,

@@ -170,4 +170,9 @@ export interface OfficeDocumentReadResult {
   sizeBytes: number
   mtimeMs?: number
   warnings: string[]
+  /**
+   * External-lane only: the strongest chat grant access covering the file at
+   * read time ('read' disables saving in place). Absent for workspace files.
+   */
+  externalAccess?: 'read' | 'write'
 }

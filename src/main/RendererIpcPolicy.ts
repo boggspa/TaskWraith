@@ -286,6 +286,8 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'office:read-document',
   'office:write-document',
   'office:delete-document',
+  'office:read-external-document',
+  'office:write-external-document',
 
   // Project registry (Work surface): app-level organisational state managed
   // from the main window only; the domain handler asserts the same authority.
