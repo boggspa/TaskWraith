@@ -598,6 +598,14 @@ const api = {
   ) => ipcRenderer.invoke('write-workspace-file', workspace, path, content, baseEtag),
   deleteWorkspaceFile: (workspace: string, path: string, baseEtag?: string | null) =>
     ipcRenderer.invoke('delete-workspace-file', workspace, path, baseEtag),
+  readOfficeDocument: (workspace: string, path: string) =>
+    ipcRenderer.invoke('office:read-document', workspace, path),
+  writeOfficeDocument: (
+    workspace: string,
+    path: string,
+    model: unknown,
+    baseEtag?: string | null
+  ) => ipcRenderer.invoke('office:write-document', workspace, path, model, baseEtag),
   captureSnapshot: (workspace: string) => ipcRenderer.invoke('capture-snapshot', workspace),
   computeRunDiff: (runId: string, preSnapshot: any, postSnapshot: any, changeContext: any = null) =>
     ipcRenderer.invoke('compute-run-diff', runId, preSnapshot, postSnapshot, changeContext),

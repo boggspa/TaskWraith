@@ -1359,6 +1359,7 @@ import { registerProjectHandlers } from './ipc/projectHandlers'
 import { createGitHubConnectorService } from './services/GitHubConnectorService'
 import { registerWorkspaceActivityHandlers } from './ipc/workspaceActivityHandlers'
 import { registerWorkspaceFileEditorHandlers } from './ipc/workspaceFileEditorHandlers'
+import { registerOfficeDocumentHandlers } from './ipc/officeDocumentHandlers'
 import { registerWorkspaceGeminiDiscoveryHandlers } from './ipc/workspaceGeminiDiscoveryHandlers'
 import { registerWorkspaceDiffSnapshotHandlers } from './ipc/workspaceDiffSnapshotHandlers'
 import { registerWorkspaceChangeLedgerHandlers } from './ipc/workspaceChangeLedgerHandlers'
@@ -40291,6 +40292,13 @@ if (isGeminiMcpBridgeProcess) {
         })
     })
     registerWorkspaceFileEditorHandlers({
+      requireRegisteredWorkspace,
+      assertSenderScope: assertRendererFilesystemScope,
+      findRegisteredWorkspace,
+      recordWorkspaceEditorChange: (input) => AppStore.recordWorkspaceEditorChange(input),
+      scheduleRemoteGitSnapshotRefresh
+    })
+    registerOfficeDocumentHandlers({
       requireRegisteredWorkspace,
       assertSenderScope: assertRendererFilesystemScope,
       findRegisteredWorkspace,

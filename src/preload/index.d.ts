@@ -80,6 +80,8 @@ import {
   MemoryProposalPack
 } from '../main/store/types'
 import type { ChatUpdateAck, ChatUpdateDelivery } from '../shared/chatUpdateTransport'
+import type { OfficeDocumentReadResult } from '../shared/office/officeFormats'
+import type { OfficeDocumentModel } from '../shared/office/officeModels'
 import type {
   Project,
   ProjectGraphEdge,
@@ -915,6 +917,13 @@ declare global {
         path: string,
         baseEtag?: string | null
       ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
+      readOfficeDocument: (workspace: string, path: string) => Promise<OfficeDocumentReadResult>
+      writeOfficeDocument: (
+        workspace: string,
+        path: string,
+        model: OfficeDocumentModel,
+        baseEtag?: string | null
+      ) => Promise<OfficeDocumentReadResult>
       captureSnapshot: (workspace: string) => Promise<any>
       computeRunDiff: (
         runId: string,

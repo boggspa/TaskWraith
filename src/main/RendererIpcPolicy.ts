@@ -280,6 +280,12 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'canvas:close',
   'canvas:list',
 
+  // Office suite documents live in the main window's right dock only; there
+  // is no office popout surface, so secondary renderers have no claim on
+  // these channels. The handlers additionally assert workspace-file scope.
+  'office:read-document',
+  'office:write-document',
+
   // Project registry (Work surface): app-level organisational state managed
   // from the main window only; the domain handler asserts the same authority.
   'projects:snapshot',

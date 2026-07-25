@@ -38,6 +38,21 @@ export type RecordWorkspaceEditorChangeFn = (
   input: WorkspaceEditorChangeInput
 ) => WorkspaceChangeSet
 
+/**
+ * How `content` travels across the IPC boundary. The default 'utf8' keeps the
+ * historical text-only contract (NUL/invalid-UTF-8 rejected). 'base64' is the
+ * opt-in lane for structured binary documents (docx/xlsx/pptx via the Office
+ * suite); callers using it are expected to skip `recordChange` — change-set
+ * diffs are text-oriented.
+ */
+export type WorkspaceFileContentEncoding = 'utf8' | 'base64'
+
+export interface WorkspaceFileReadOptions {
+  encoding?: WorkspaceFileContentEncoding
+  /** Per-call size ceiling override; defaults to MAX_EDITOR_FILE_BYTES. */
+  maxBytes?: number
+}
+
 export interface WorkspaceFileWriteOptions {
   workspacePath: string
   workspaceId?: string
@@ -48,6 +63,9 @@ export interface WorkspaceFileWriteOptions {
   origin?: string
   recordChange?: RecordWorkspaceEditorChangeFn
   requireBaseEtag?: boolean
+  contentEncoding?: WorkspaceFileContentEncoding
+  /** Per-call size ceiling override; defaults to MAX_EDITOR_FILE_BYTES. */
+  maxBytes?: number
 }
 
 export interface WorkspaceFileDeleteOptions {
@@ -388,8 +406,11 @@ async function resolveReadableDirectory(
 
 export async function readWorkspaceFile(
   workspacePath: string,
-  filePath: string
+  filePath: string,
+  options: WorkspaceFileReadOptions = {}
 ): Promise<WorkspaceFileReadResult> {
+  const encoding = options.encoding ?? 'utf8'
+  const maxBytes = options.maxBytes ?? MAX_EDITOR_FILE_BYTES
   const workspaceRoot = await canonicalWorkspaceRoot(workspacePath)
   const targetPath = resolveWorkspaceChild(workspaceRoot, filePath)
   const parentSnapshot = await snapshotDirectoryChain(workspaceRoot, dirname(targetPath))
@@ -403,15 +424,15 @@ export async function readWorkspaceFile(
       parentSnapshot,
       'opened'
     )
-    assertEditorFileStat(fileStat)
+    assertEditorFileStat(fileStat, maxBytes)
 
     // Content is read from the pinned descriptor, never by reopening the lexical path.
     const buffer = await fileHandle.readFile()
-    assertTextBuffer(buffer)
+    if (encoding === 'utf8') assertTextBuffer(buffer)
 
     return {
       path: toWorkspaceRelativePath(workspaceRoot, targetPath),
-      content: buffer.toString('utf8'),
+      content: buffer.toString(encoding),
       sizeBytes: Number(fileStat.size),
       mtimeMs: Number(fileStat.mtimeMs),
       etag: workspaceFileEtag(buffer)
@@ -424,6 +445,8 @@ export async function readWorkspaceFile(
 export async function writeWorkspaceFile(
   options: WorkspaceFileWriteOptions
 ): Promise<WorkspaceFileReadResult> {
+  const contentEncoding = options.contentEncoding ?? 'utf8'
+  const maxBytes = options.maxBytes ?? MAX_EDITOR_FILE_BYTES
   const recordedWorkspacePath = resolve(options.workspacePath)
   const workspaceRoot = await canonicalWorkspaceRoot(options.workspacePath)
   const requireBaseEtag = options.requireBaseEtag ?? true
@@ -437,8 +460,12 @@ export async function writeWorkspaceFile(
     else throw err
   }
 
-  const nextBuffer = Buffer.from(options.content, 'utf8')
-  assertIncomingTextContent(options.content, nextBuffer)
+  const nextBuffer = Buffer.from(options.content, contentEncoding)
+  if (contentEncoding === 'utf8') {
+    assertIncomingTextContent(options.content, nextBuffer, maxBytes)
+  } else if (nextBuffer.length > maxBytes) {
+    throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
+  }
 
   if (!parentSnapshot) {
     return createWorkspaceFile({
@@ -477,13 +504,13 @@ export async function writeWorkspaceFile(
       parentSnapshot,
       'edited'
     )
-    assertEditorFileStat(openedStat)
+    assertEditorFileStat(openedStat, maxBytes)
     if (requireBaseEtag && !options.baseEtag) {
       throw new WorkspaceFileEditorError('missing_base_etag', 'Missing base file version for save.')
     }
 
     const previousBuffer = await fileHandle.readFile()
-    assertTextBuffer(previousBuffer)
+    if (contentEncoding === 'utf8') assertTextBuffer(previousBuffer)
     const currentEtag = workspaceFileEtag(previousBuffer)
     if (requireBaseEtag && currentEtag !== options.baseEtag) {
       throw new WorkspaceFileEditorError(
@@ -729,8 +756,12 @@ export function workspaceFileEtag(buffer: Buffer): string {
   return `sha256:${createHash('sha256').update(buffer).digest('hex')}`
 }
 
-function assertIncomingTextContent(content: string, buffer: Buffer): void {
-  if (buffer.length > MAX_EDITOR_FILE_BYTES) {
+function assertIncomingTextContent(
+  content: string,
+  buffer: Buffer,
+  maxBytes: number = MAX_EDITOR_FILE_BYTES
+): void {
+  if (buffer.length > maxBytes) {
     throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
   }
   if (content.includes('\u0000')) {
@@ -922,11 +953,14 @@ async function assertOpenedWorkspaceFile(
   return fileStat
 }
 
-function assertEditorFileStat(fileStat: BigIntStats): void {
+function assertEditorFileStat(
+  fileStat: BigIntStats,
+  maxBytes: number = MAX_EDITOR_FILE_BYTES
+): void {
   if (!fileStat.isFile()) {
     throw new WorkspaceFileEditorError('directory_selected', 'Selected item is not a file.')
   }
-  if (fileStat.size > BigInt(MAX_EDITOR_FILE_BYTES)) {
+  if (fileStat.size > BigInt(maxBytes)) {
     throw new WorkspaceFileEditorError('file_too_large', 'File is too large for the basic editor.')
   }
 }
