@@ -1386,6 +1386,89 @@ private func twNormalizeFastModeSelection(
     }
 }
 
+/// Grabber block of the picker panel: 4pt capsule + 6pt above + 1pt below.
+/// File scope because `ProviderModelPickerPanel` is generic over its
+/// `topContent`, and generic types cannot hold static stored properties.
+private let twPickerGrabberHeight: CGFloat = 11
+
+#if canImport(UIKit)
+    /// App-lifetime keyboard height.
+    ///
+    /// MUST outlive any one view. A `.onReceive` attached to popover content
+    /// only ever sees keyboard CHANGES that happen while that popover is open —
+    /// and the keyboard is virtually always already up by the time you tap a
+    /// roster chip, so such an observer reports 0 forever and any clamp built
+    /// on it silently never engages. That is a failure mode with no symptom
+    /// except the bug it was supposed to fix still happening.
+    @MainActor
+    final class TWKeyboardTracker {
+        static let shared = TWKeyboardTracker()
+
+        /// Touch early — from a view that is alive BEFORE the keyboard first
+        /// rises. `shared` is lazy, so if the first access is the popover
+        /// itself the observers register too late to have seen the keyboard go
+        /// up and the height reads 0: the very bug this class exists to avoid,
+        /// just moved. Idempotent; call it as often as convenient.
+        func start() {}
+
+        /// Main-actor isolated; the observers below hop onto it explicitly.
+        private(set) var height: CGFloat = 0
+
+        private init() {
+            let center = NotificationCenter.default
+            center.addObserver(
+                forName: UIResponder.keyboardWillChangeFrameNotification,
+                object: nil, queue: .main
+            ) { [weak self] note in
+                let frame =
+                    (note.userInfo?[UIResponder.keyboardFrameEndUserInfoKey] as? CGRect) ?? .zero
+                // A keyboard parked off the bottom edge is a dismissal, not a
+                // full-height keyboard.
+                // Delivered on .main by the queue argument, but the closure is
+                // nonisolated as far as the compiler is concerned.
+                MainActor.assumeIsolated {
+                    let screenHeight = UIScreen.main.bounds.height
+                    self?.height = frame.origin.y >= screenHeight ? 0 : frame.height
+                }
+            }
+            center.addObserver(
+                forName: UIResponder.keyboardWillHideNotification,
+                object: nil, queue: .main
+            ) { [weak self] _ in
+                MainActor.assumeIsolated { self?.height = 0 }
+            }
+        }
+    }
+
+    /// How much vertical room a popover panel actually has.
+    ///
+    /// Exists because a `.popover` will not scroll, shrink or scroll-to-fit its
+    /// content: hand it a panel taller than the space available and the system
+    /// clips it, silently and without a scroll affordance. Any panel with a
+    /// fixed body height therefore has to bound itself, and the bound has to
+    /// account for the keyboard — which is the case that actually broke (the
+    /// roster editor's top row disappeared only with the keyboard up).
+    @MainActor
+    enum TWPopoverSpace {
+        /// Popover arrow, balloon inset and a little breathing room, so the
+        /// panel stops short of the safe-area edge rather than butting it.
+        private static let chromeAllowance: CGFloat = 56
+
+        static func availableHeight(keyboardHeight: CGFloat) -> CGFloat {
+            let window = UIApplication.shared.connectedScenes
+                .compactMap { $0 as? UIWindowScene }
+                .flatMap(\.windows)
+                .first { $0.isKeyWindow }
+            guard let window else { return 420 }
+            let safe =
+                window.bounds.height - window.safeAreaInsets.top - window.safeAreaInsets.bottom
+            // Never return something so small the panel becomes unusable; below
+            // this the list scrolls and that is the correct trade.
+            return max(240, safe - keyboardHeight - chromeAllowance)
+        }
+    }
+#endif
+
 /// The OPEN glass panel of the combined provider/model/reasoning picker —
 /// provider-grouped model rows on the left, the reasoning ladder + Fast pill
 /// sidecar on the right, a swipe-down grabber on top.
@@ -1414,6 +1497,10 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     /// to fit its fields cluster.
     var bodyHeight: CGFloat = 276
     var bodyMaxHeight: CGFloat = 308
+    /// Uniform scale for the whole panel — chrome, layout and the literal font
+    /// sizes together. 1 leaves the panel untouched; the roster popovers pass
+    /// 0.85 so the participant editor fits alongside its sidecar.
+    var contentScale: CGFloat = 1
     /// Keep the reasoning/Fast sidecar mounted even when the current model has
     /// neither (a dimmed, disabled rail) — the participant popovers use this so
     /// the effort ladder is a constant fixture of the surface, not a column
@@ -1444,6 +1531,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         listWidth: CGFloat? = nil,
         bodyHeight: CGFloat = 276,
         bodyMaxHeight: CGFloat = 308,
+        contentScale: CGFloat = 1,
         alwaysShowsSidecar: Bool = false,
         showsDisabledFastPill: Bool = false,
         sidecarAccessory: AnyView? = nil,
@@ -1462,6 +1550,7 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         self.listWidth = listWidth
         self.bodyHeight = bodyHeight
         self.bodyMaxHeight = bodyMaxHeight
+        self.contentScale = contentScale
         self.alwaysShowsSidecar = alwaysShowsSidecar
         self.showsDisabledFastPill = showsDisabledFastPill
         self.sidecarAccessory = sidecarAccessory
@@ -1481,6 +1570,50 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     }
     private var resolvedListWidth: CGFloat {
         listWidth ?? (showsSidecar ? 200 : 208)
+    }
+
+    /// Body height after clamping to what a popover can actually be given.
+    ///
+    /// A popover does NOT scroll or shrink to fit — hand it content taller than
+    /// the space available and the system simply CLIPS it, which is how the
+    /// roster editor lost its top row (the Enabled/Auto pills).
+    ///
+    /// The subtle part, and the thing a first attempt at this got wrong: a
+    /// popover must fit ENTIRELY ON ONE SIDE of its anchor. Measuring against
+    /// "screen minus keyboard" is measuring the wrong quantity — it leaves a
+    /// cap so generous it never engages, while the real constraint (the gap
+    /// between the anchor and the screen edge the balloon opens toward) is much
+    /// tighter. In iPad landscape with the keyboard up that gap is small enough
+    /// to clip a panel the naive cap considered comfortable.
+    ///
+    /// NOT halved. An earlier version halved this on the reasoning that a
+    /// popover must fit on one side of its anchor — true for one opening ABOVE,
+    /// which is what forced the roster editor through a gap far shorter than
+    /// itself. The real fix was to open that popover to the SIDE instead (see
+    /// the `arrowEdge: .leading` on the roster chip): a side-anchored balloon is
+    /// centred vertically on its anchor and can grow both ways, so the whole
+    /// safe height is genuinely available and halving would only ration space
+    /// that exists. This stays as the backstop for genuinely short screens.
+    /// The inner list already scrolls, so height given up costs scrolling,
+    /// never access.
+    private var resolvedBodyHeight: CGFloat {
+        let requested = min(bodyHeight, bodyMaxHeight)
+        #if canImport(UIKit)
+            let available =
+                TWPopoverSpace.availableHeight(
+                    keyboardHeight: TWKeyboardTracker.shared.height)
+            // Undo the scale first: the cap is in SCREEN points but this height
+            // is pre-scale, so a 0.85 panel may legitimately be ~18% taller
+            // here than the space it will ultimately occupy.
+            let capInContentSpace = (available / max(contentScale, 0.01)) - twPickerGrabberHeight
+            return max(200, min(requested, capInContentSpace))
+        #else
+            return requested
+        #endif
+    }
+
+    private var naturalWidth: CGFloat {
+        resolvedListWidth + (showsSidecar ? 68 : 0)
     }
 
     var body: some View {
@@ -1510,11 +1643,29 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
                         .frame(maxHeight: .infinity)
                 }
             }
-            .frame(height: showsSidecar ? bodyHeight : nil)
-            .frame(maxHeight: bodyMaxHeight)
+            .frame(height: showsSidecar ? resolvedBodyHeight : nil)
+            .frame(maxHeight: resolvedBodyHeight)
         }
-        .frame(width: resolvedListWidth + (showsSidecar ? 68 : 0))
+        .frame(width: naturalWidth)
         .twPickerGlassSurface(cornerRadius: 14)
+        // Scale AFTER the glass chrome so the surface, corner radius and every
+        // fixed font inside come down together — the panel's type is authored
+        // at literal sizes (`.system(size: 10)`), so a Dynamic Type nudge would
+        // move almost none of it.
+        //
+        // Anchor MUST stay .center. scaleEffect does not change the size a view
+        // reports, so the compensating frame below centres a still-full-size
+        // child inside a scaled-down container; only a centre anchor puts the
+        // drawn content where that container actually is. A .top anchor draws it
+        // starting half the height difference above the container's top edge.
+        .scaleEffect(contentScale, anchor: .center)
+        // Without this the panel would still RESERVE its full-size footprint and
+        // the popover would clip exactly as before, just with smaller content
+        // rattling around inside it.
+        .frame(
+            width: naturalWidth * contentScale,
+            height: showsSidecar
+                ? (twPickerGrabberHeight + resolvedBodyHeight) * contentScale : nil)
         .offset(y: dragOffset)
         .opacity(dragOffset > 0 ? max(0.55, 1 - dragOffset / 320) : 1)
         .onAppear {
@@ -6276,7 +6427,22 @@ public struct EditableRosterStrip: View {
             .opacity(draggingId == entry.id ? 0.4 : 1)
         }
         .buttonStyle(.plain)
-        .popover(isPresented: chipEditorPresentedBinding(for: entry.id)) {
+        // Open to the LEADING side of the chip, not above it.
+        //
+        // The roster strip sits directly on top of the composer, so an
+        // above-anchored balloon is squeezed between the chip and the top of
+        // the screen — and with the keyboard up in landscape that gap is far
+        // shorter than this panel, so the system clips the top rows off. Going
+        // sideways spends the LONG axis instead: a side-anchored popover is
+        // centred vertically on its anchor and can use the full safe height.
+        //
+        // Leading rather than trailing on purpose: it covers transcript, while
+        // trailing would sit over the composer's own send/stop controls.
+        .popover(
+            isPresented: chipEditorPresentedBinding(for: entry.id),
+            attachmentAnchor: .rect(.bounds),
+            arrowEdge: .leading
+        ) {
             RosterParticipantEditorPopover(
                 entry: draft.first { $0.id == entry.id } ?? entry,
                 catalogs: catalogs,

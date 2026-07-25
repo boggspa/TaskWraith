@@ -2281,6 +2281,12 @@ struct ThreadDetailView: View {
     private func keyboardChrome(_ base: AnyView) -> some View {
         #if canImport(UIKit)
             base
+                // Arm the app-lifetime keyboard tracker here, from a view that
+                // exists BEFORE the keyboard first rises. Popover panels clamp
+                // their height against it; if its first touch were the popover
+                // itself it would have missed the keyboard going up and report
+                // zero. See TWKeyboardTracker.start().
+                .onAppear { TWKeyboardTracker.shared.start() }
                 .onReceive(NotificationCenter.default.publisher(
                     for: UIResponder.keyboardWillShowNotification
                 )) { _ in keyboardVisible = true }

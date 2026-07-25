@@ -704,6 +704,13 @@ struct RosterParticipantEditorPopover: View {
             listWidth: compactWidth ? 208 : 252,
             bodyHeight: 420,
             bodyMaxHeight: 420,
+            // 0.85 of everything — chrome, layout and the panel's literal font
+            // sizes. The editor stacks the participant fields ABOVE the model
+            // rows and keeps the reasoning sidecar, which at full size could not
+            // fit the space left once the keyboard was up; the panel clamps its
+            // own height too (see `resolvedBodyHeight`), so the two together are
+            // what make the top row and the sidecar edges reachable again.
+            contentScale: 0.85,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(
@@ -819,6 +826,13 @@ struct RosterAddParticipantPopover: View {
             listWidth: compactWidth ? 208 : 252,
             bodyHeight: 420,
             bodyMaxHeight: 420,
+            // 0.85 of everything — chrome, layout and the panel's literal font
+            // sizes. The editor stacks the participant fields ABOVE the model
+            // rows and keeps the reasoning sidecar, which at full size could not
+            // fit the space left once the keyboard was up; the panel clamps its
+            // own height too (see `resolvedBodyHeight`), so the two together are
+            // what make the top row and the sidecar edges reachable again.
+            contentScale: 0.85,
             alwaysShowsSidecar: true,
             showsDisabledFastPill: true,
             sidecarAccessory: AnyView(
