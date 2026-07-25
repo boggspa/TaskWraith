@@ -33,7 +33,8 @@ import { resolveMainPaneWorkspaceLabel } from '../../lib/mainPaneWorkspaceHeader
 import { RunRailPanel } from '../../components/RunRailPanel'
 import { ProjectHomeHeader } from '../../components/ProjectHomeHeader'
 import { DigitOdometer } from '../../components/DigitOdometer'
-import { ProviderBadgeIcon, Sidebar } from '../../components/Sidebar'
+import { Sidebar } from '../../components/Sidebar'
+import { ProviderBrandLogoIcon } from '../../components/icons/ProviderBrandLogo'
 import { CollapsedSidebarCornerPill } from '../../components/CollapsedSidebarCornerPill'
 import { WorkspaceBoardView } from '../../components/WorkspaceBoardView'
 import { ProjectThreadGraphView } from '../../components/ProjectThreadGraphView'
@@ -1753,7 +1754,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 <SidebarCornerIcon direction="left" isOpen={showWorkspaceSidebar} />
               </button>
               <div className="chat-corner-thread-context">
-                <ProviderBadgeIcon provider={mainPaneProvider} />
+                <ProviderBrandLogoIcon provider={mainPaneProvider} />
                 <span className="chat-corner-thread-title" title={mainPaneThreadTitle}>
                   {mainPaneThreadTitle}
                 </span>

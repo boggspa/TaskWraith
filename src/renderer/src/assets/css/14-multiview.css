@@ -98,9 +98,14 @@
   padding: 0 11px;
 }
 
+/* Two selectors, not one `:is()` list: the mark is a GRANDCHILD of the pill,
+ * so `> :is(…, .sidebar-provider-icon svg)` never matched it and it rendered
+ * at the 12px base size inside a 14px box. */
+.multiview-pane-corner-controls .chat-corner-thread-context > .sidebar-provider-icon,
 .multiview-pane-corner-controls
   .chat-corner-thread-context
-  > :is(.sidebar-provider-icon, .sidebar-provider-icon svg) {
+  > .sidebar-provider-icon
+  :is(svg, .provider-brand-logo) {
   flex: 0 0 auto;
   width: 14px;
   height: 14px;

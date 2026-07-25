@@ -8,7 +8,7 @@ import { buildChatViewProps, type BuildChatViewPropsInput } from '../lib/buildCh
 import type { MessageFeedbackDetails } from '../lib/messageFeedback'
 import { FileMenuSelectionIcon } from './AppChromeSymbols'
 import { MainPaneActionPill } from './MainPaneActionPill'
-import { ProviderBadgeIcon } from './Sidebar'
+import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
 import { WelcomeUsageDashboard } from './WelcomeUsageDashboard'
 import type { WelcomeUsageDashboardData } from '../lib/welcomeUsageDashboard'
 import { bindComposerReservation } from '../lib/composerReservation'
@@ -375,7 +375,7 @@ function ChatViewPaneChrome(props: ChatViewPaneProps) {
       <div className="chat-corner-controls chat-corner-controls-left multiview-pane-corner-controls">
         {renderAction(leftAction)}
         <div className="chat-corner-thread-context">
-          <ProviderBadgeIcon provider={props.isEnsemble ? 'ensemble' : props.provider} />
+          <ProviderBrandLogoIcon provider={props.isEnsemble ? 'ensemble' : props.provider} />
           <span className="chat-corner-thread-title" title={title}>
             {title}
           </span>

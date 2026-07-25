@@ -707,13 +707,16 @@
   padding: 0 11px;
 }
 
+/* The mark is an <svg> for the ensemble mnemonic and a <span>+<img> for the
+ * official provider logos, so both have to be named here — matching on `svg`
+ * alone leaves a brand logo at the 12px base size inside a 14px box. */
 .chat-corner-controls-left:not(.multiview-pane-corner-controls)
   .chat-corner-thread-context
   > .sidebar-provider-icon,
 .chat-corner-controls-left:not(.multiview-pane-corner-controls)
   .chat-corner-thread-context
   > .sidebar-provider-icon
-  svg {
+  :is(svg, .provider-brand-logo) {
   width: 14px;
   height: 14px;
 }
