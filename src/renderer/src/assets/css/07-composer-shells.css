@@ -4278,17 +4278,17 @@
   display: inline-flex;
   align-items: center;
   gap: 4px;
-  padding: 2px 7px;
+  /* Bare satellite: no capsule chrome at rest — the tone tints the glyph,
+   * label and CI dot directly via currentColor. The radius stays so the
+   * faint hover wash below still reads as a capsule (the one interactive
+   * affordance left). */
+  padding: 2px 4px;
   border-radius: 999px;
-  border: 1px solid color-mix(in srgb, currentColor 26%, transparent);
-  background: color-mix(in srgb, currentColor 11%, transparent);
   font-size: var(--font-size-xs, 11px);
   font-weight: 600;
   line-height: 1;
   color: var(--text-secondary);
-  transition:
-    background 120ms ease,
-    border-color 120ms ease;
+  transition: background 120ms ease;
 }
 .github-satellite-icon .tool-family-icon {
   opacity: 0.9;
@@ -4300,8 +4300,7 @@
   cursor: pointer;
 }
 .github-satellite-icon.is-clickable:hover {
-  background: color-mix(in srgb, currentColor 20%, transparent);
-  border-color: color-mix(in srgb, currentColor 42%, transparent);
+  background: color-mix(in srgb, currentColor 14%, transparent);
 }
 .github-satellite-icon.is-clickable:focus-visible {
   outline: 2px solid color-mix(in srgb, currentColor 55%, transparent);
