@@ -58,11 +58,17 @@ describe('validation', () => {
 })
 
 describe('scopes', () => {
+  it('never requests permission to send mail, in either mode', () => {
+    // There is no send tool, so the app must not hold Mail.Send at all —
+    // drafts are created and the user sends them from Outlook.
+    expect(scopesForMode('read')).not.toContain('Mail.Send')
+    expect(scopesForMode('write')).not.toContain('Mail.Send')
+    expect(scopesForMode('write')).toContain('Mail.ReadWrite')
+  })
+
   it('requests read-only scopes by default and never a client secret', () => {
     expect(scopesForMode('read')).toEqual([...GRAPH_READ_SCOPES])
-    expect(scopesForMode('read')).not.toContain('Mail.Send')
     expect(scopesForMode('write')).toEqual([...GRAPH_WRITE_SCOPES])
-    expect(scopesForMode('write')).toContain('Mail.Send')
     // offline_access is what yields a refresh token in both modes.
     expect(scopesForMode('read')).toContain('offline_access')
   })

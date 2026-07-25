@@ -25,12 +25,16 @@ export const GRAPH_READ_SCOPES = [
   'Calendars.Read'
 ] as const
 
-/** Tier 2 adds send/create. Requested only when the user opts into writes. */
+/**
+ * Draft scopes. `Mail.Send` is deliberately ABSENT: this integration has no
+ * send tool, so it must not hold the permission to send. Drafts land in the
+ * mailbox and the user presses send in Outlook — the blast radius of a
+ * mistake is a draft nobody reads, not a message nobody can recall.
+ */
 export const GRAPH_WRITE_SCOPES = [
   'offline_access',
   'User.Read',
   'Mail.ReadWrite',
-  'Mail.Send',
   'Calendars.ReadWrite'
 ] as const
 

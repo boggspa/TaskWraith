@@ -194,8 +194,8 @@ export function OutlookConnectionCard({
               onChange={(event) => setWantsWrite(event.target.checked)}
             />
             <span>
-              Also allow drafting, sending and calendar writes. Sending always asks first, every
-              time — it can never be pre-approved.
+              Also allow creating drafts and calendar entries. Nothing is ever sent — drafts wait
+              in Outlook for you to send them, and TaskWraith never requests permission to send.
             </span>
           </label>
           <p className="outlook-card-subtitle">

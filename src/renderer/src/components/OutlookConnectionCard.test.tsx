@@ -10,8 +10,10 @@ describe('OutlookConnectionCard', () => {
     expect(html).toContain('Application (client) ID')
     expect(html).toContain('Connect Microsoft account')
     expect(html).toContain('TaskWraith stores no client secret')
-    // Write access is opt-in and its consequence is stated up front.
-    expect(html).toContain('Sending always asks first, every time')
+    // Write access is opt-in, and its ceiling is stated up front: drafts
+    // only, with no permission to send requested at all.
+    expect(html).toContain('Nothing is ever sent')
+    expect(html).toContain('never requests permission to send')
     expect(html).toContain('not-available')
   })
 
