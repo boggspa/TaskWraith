@@ -100,7 +100,8 @@ const PROVIDER_TRANSPORT: Record<ProviderId, ProviderAdapterTransport> = {
   grok: 'grok-cli',
   cursor: 'cursor-cli',
   ollama: 'ollama-http',
-  antigravity: 'antigravity-cli'
+  antigravity: 'antigravity-cli',
+  pi: 'pi-cli'
 }
 
 interface InspectorProps {

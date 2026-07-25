@@ -198,6 +198,8 @@
   --provider-ollama-color: #1A8562;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */
   --provider-antigravity-color: #308713;
+  /* Pi — terracotta; distinct from Claude's amber and Cursor's mustard. */
+  --provider-pi-color: #C25E4C;
   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #986781;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these

@@ -41,7 +41,8 @@ const PROVIDER_HELPERS: Record<(typeof LIVE_SELECTABLE_PROVIDER_IDS)[number], st
   kimi: 'Admitted ACP runtime with a governed per-run TaskWraith gateway.',
   cursor: 'Contained Cursor CLI — native tools inside the OS sandbox, no TaskWraith MCP seat.',
   grok: 'Grok CLI seat; shell and file tools route through the TaskWraith bridge when enabled.',
-  ollama: 'Local models over HTTP with the curated TaskWraith gateway tool surface.'
+  ollama: 'Local models over HTTP with the curated TaskWraith gateway tool surface.',
+  pi: 'Pi coding agent seat; BYOK access to DeepSeek, GLM, Qwen, MiniMax, Mistral and open-weights hosts.'
 }
 
 const PROVIDER_OPTIONS: Array<{ value: ProviderId; label: string; helper: string }> =

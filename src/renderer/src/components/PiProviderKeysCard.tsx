@@ -1,0 +1,235 @@
+import React, { useCallback, useEffect, useState } from 'react'
+import { PillButton } from './PillButton'
+
+/**
+ * Settings card for the Pi seat's BYOK upstream keys. Mirrors the
+ * SettingsProviderAuthCard markup/classes so it inherits the provider-card
+ * styling without widening that file-private component. Keys are write-only:
+ * the renderer sees configured booleans, never values.
+ *
+ * The upstream list deliberately duplicates PI_ALLOWED_UPSTREAMS
+ * (src/main/pi/PiModelPolicy.ts) rather than importing main-process code into
+ * the renderer bundle — the accept-set duplication idiom every provider
+ * surface uses. Keep them in lockstep; the wall itself is enforced main-side.
+ */
+export const PI_CARD_UPSTREAMS: ReadonlyArray<{ id: string; label: string; keyHint: string }> = [
+  { id: 'deepseek', label: 'DeepSeek', keyHint: 'platform.deepseek.com' },
+  { id: 'zai', label: 'Z.ai (GLM)', keyHint: 'z.ai coding plan' },
+  { id: 'qwen-token-plan', label: 'Qwen Token Plan', keyHint: 'sk-sp-… from Alibaba' },
+  { id: 'minimax', label: 'MiniMax', keyHint: 'platform.minimax.io' },
+  { id: 'mistral', label: 'Mistral', keyHint: 'console.mistral.ai' },
+  { id: 'groq', label: 'Groq', keyHint: 'console.groq.com' },
+  { id: 'cerebras', label: 'Cerebras', keyHint: 'cloud.cerebras.ai' }
+]
+
+export interface PiKeyCardStatus {
+  encryptionAvailable: boolean
+  configuredUpstreams: string[]
+  recordUnreadable: boolean
+}
+
+export interface PiProviderKeysCardViewProps {
+  status: PiKeyCardStatus | null
+  binaryAvailable: boolean
+  drafts: Record<string, string>
+  busyUpstream: string | null
+  error: string | null
+  onDraftChange: (upstream: string, value: string) => void
+  onSave: (upstream: string) => void
+  onClear: (upstream: string) => void
+}
+
+export function PiProviderKeysCardView({
+  status,
+  binaryAvailable,
+  drafts,
+  busyUpstream,
+  error,
+  onDraftChange,
+  onSave,
+  onClear
+}: PiProviderKeysCardViewProps): React.JSX.Element {
+  const configured = new Set(status?.configuredUpstreams ?? [])
+  const configuredCount = configured.size
+  const summaryVariant = !binaryAvailable
+    ? 'not-available'
+    : configuredCount > 0
+      ? 'signed-in'
+      : 'partial'
+  const statusText = !binaryAvailable
+    ? 'Pi CLI not installed'
+    : configuredCount > 0
+      ? `${configuredCount} upstream ${configuredCount === 1 ? 'key' : 'keys'} configured`
+      : 'No upstream keys yet'
+  return (
+    <article
+      className={`settings-provider-auth-card settings-provider-auth-card-${summaryVariant} provider-pi`}
+      data-provider="pi"
+    >
+      <div className="settings-provider-auth-card-header">
+        <strong>Pi</strong>
+        <span className="settings-provider-auth-optional">Optional</span>
+      </div>
+      <div className="settings-provider-auth-status">
+        <span
+          className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${summaryVariant}`}
+          aria-hidden
+        />
+        <span>{statusText}</span>
+      </div>
+      <p>
+        Pi runs models TaskWraith does not host first-party — DeepSeek, GLM, Qwen, MiniMax,
+        Mistral and open-weights serving — with your own API keys. Hosted providers (Claude,
+        GPT, Gemini, Grok, Kimi) stay on their first-party seats and are never reachable
+        through Pi.
+      </p>
+      <div className="settings-provider-auth-command">
+        <code>npm install -g @earendil-works/pi-coding-agent</code>
+        <span>Install the Pi CLI once, then add keys for the upstreams you use.</span>
+      </div>
+      {status?.recordUnreadable && (
+        <p className="settings-provider-auth-footnote">
+          The stored key record could not be read. Clear all Pi keys to recover, then re-add
+          them.
+        </p>
+      )}
+      {status && !status.encryptionAvailable && (
+        <p className="settings-provider-auth-footnote">
+          System keychain encryption is unavailable, so keys cannot be stored right now.
+        </p>
+      )}
+      {error && <p className="settings-provider-auth-footnote">{error}</p>}
+      <div className="settings-pi-upstream-list">
+        {PI_CARD_UPSTREAMS.map((upstream) => {
+          const isConfigured = configured.has(upstream.id)
+          const draft = drafts[upstream.id] ?? ''
+          const busy = busyUpstream === upstream.id
+          return (
+            <div className="settings-pi-upstream-row" key={upstream.id}>
+              <div className="settings-pi-upstream-name">
+                <span
+                  className={`settings-provider-auth-status-dot settings-provider-auth-status-dot-${isConfigured ? 'signed-in' : 'not-available'}`}
+                  aria-hidden
+                />
+                <strong>{upstream.label}</strong>
+                <span className="settings-pi-upstream-hint">{upstream.keyHint}</span>
+              </div>
+              <div className="settings-pi-upstream-controls">
+                <input
+                  type="password"
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={isConfigured ? 'Key stored — replace…' : 'API key'}
+                  value={draft}
+                  onChange={(event) => onDraftChange(upstream.id, event.target.value)}
+                />
+                <PillButton
+                  size="compact"
+                  variant="primary"
+                  disabled={busy || !draft.trim()}
+                  onClick={() => onSave(upstream.id)}
+                >
+                  Save
+                </PillButton>
+                <PillButton
+                  size="compact"
+                  variant="danger"
+                  disabled={busy || !isConfigured}
+                  onClick={() => onClear(upstream.id)}
+                >
+                  Clear
+                </PillButton>
+              </div>
+            </div>
+          )
+        })}
+      </div>
+      <p className="settings-provider-auth-footnote">
+        Keys are encrypted with the system keychain and injected only into the matching Pi
+        process — never shown again, never sent anywhere else.
+      </p>
+    </article>
+  )
+}
+
+export function PiProviderKeysCard({
+  binaryAvailable = true
+}: {
+  /** Install-state is advisory only; dispatch fails honestly without the CLI. */
+  binaryAvailable?: boolean
+} = {}): React.JSX.Element {
+  const [status, setStatus] = useState<PiKeyCardStatus | null>(null)
+  const [drafts, setDrafts] = useState<Record<string, string>>({})
+  const [busyUpstream, setBusyUpstream] = useState<string | null>(null)
+  const [error, setError] = useState<string | null>(null)
+
+  const refresh = useCallback(async () => {
+    try {
+      const next = await window.api.getPiKeyStatus()
+      setStatus({
+        encryptionAvailable: next.encryptionAvailable === true,
+        configuredUpstreams: Array.isArray(next.configuredUpstreams)
+          ? next.configuredUpstreams
+          : [],
+        recordUnreadable: next.recordUnreadable === true
+      })
+    } catch {
+      setStatus(null)
+    }
+  }, [])
+
+  useEffect(() => {
+    void refresh()
+  }, [refresh])
+
+  const mutate = useCallback(
+    async (upstream: string, action: 'save' | 'clear') => {
+      setBusyUpstream(upstream)
+      setError(null)
+      try {
+        const result =
+          action === 'save'
+            ? await window.api.setPiUpstreamKey(upstream, drafts[upstream] ?? '')
+            : await window.api.clearPiUpstreamKey(upstream)
+        if (!result.ok) {
+          setError(
+            result.error === 'encryptionUnavailable'
+              ? 'System keychain encryption is unavailable.'
+              : result.error === 'existingRecordUnreadable'
+                ? 'The stored record is unreadable; clear all Pi keys to recover.'
+                : 'Could not update the key. Check the value and try again.'
+          )
+        } else if (action === 'save') {
+          setDrafts((prev) => ({ ...prev, [upstream]: '' }))
+        }
+        setStatus({
+          encryptionAvailable: result.status.encryptionAvailable === true,
+          configuredUpstreams: Array.isArray(result.status.configuredUpstreams)
+            ? result.status.configuredUpstreams
+            : [],
+          recordUnreadable: result.status.recordUnreadable === true
+        })
+      } catch {
+        setError('Could not update the key.')
+      } finally {
+        setBusyUpstream(null)
+      }
+    },
+    [drafts]
+  )
+
+  return (
+    <PiProviderKeysCardView
+      status={status}
+      binaryAvailable={binaryAvailable}
+      drafts={drafts}
+      busyUpstream={busyUpstream}
+      error={error}
+      onDraftChange={(upstream, value) =>
+        setDrafts((prev) => ({ ...prev, [upstream]: value }))
+      }
+      onSave={(upstream) => void mutate(upstream, 'save')}
+      onClear={(upstream) => void mutate(upstream, 'clear')}
+    />
+  )
+}

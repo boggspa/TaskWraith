@@ -318,7 +318,8 @@ const emptyProviderTotals = (): Record<ProviderId, number> => ({
   grok: 0,
   cursor: 0,
   ollama: 0,
-  antigravity: 0
+  antigravity: 0,
+  pi: 0
 })
 
 const formatHourLabel = (dayKey: string, hour: number): string => {
@@ -642,7 +643,8 @@ export const buildWelcomeUsageDashboardData = (
     grok: { tokens: 0, costUsd: 0 },
     cursor: { tokens: 0, costUsd: 0 },
     ollama: { tokens: 0, costUsd: 0 },
-    antigravity: { tokens: 0, costUsd: 0 }
+    antigravity: { tokens: 0, costUsd: 0 },
+    pi: { tokens: 0, costUsd: 0 }
   }
   // 1.0.5-EW52 — Cumulative wall time across runs whose
   // timestamp is within the last 24 hours. Distinct from
@@ -1096,7 +1098,8 @@ export const buildWelcomeUsageDashboardData = (
     grok: 'Grok',
     cursor: 'Cursor',
     ollama: 'Ollama',
-    antigravity: 'Antigravity'
+    antigravity: 'Antigravity',
+    pi: 'Pi'
   }
   // 1.0.5-EW52 follow-up — Also compute total provider-tokens
   // so each card's meter can render as share-of-tokens rather

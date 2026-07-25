@@ -223,7 +223,8 @@ export function WelcomeUsageDashboard({
     grok: '#757575',
     cursor: '#8D7312',
     ollama: '#1A8562',
-    antigravity: '#308713'
+    antigravity: '#308713',
+    pi: '#C25E4C'
   } as const
   const chipRailColor =
     mixProviderColors(data.providerTokenTotals, PROVIDER_PALETTE) ||

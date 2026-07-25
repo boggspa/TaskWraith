@@ -7365,3 +7365,41 @@ input:disabled, select:disabled, textarea:disabled {
   flex: 0 0 auto;
   padding-right: 2px;
 }
+
+/* Pi BYOK upstream key rows (PiProviderKeysCard) */
+.settings-pi-upstream-list {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin-top: 10px;
+}
+.settings-pi-upstream-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.settings-pi-upstream-name {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 168px;
+}
+.settings-pi-upstream-hint {
+  color: var(--text-tertiary, var(--text-secondary));
+  font-size: 11px;
+}
+.settings-pi-upstream-controls {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex: 1 1 auto;
+  min-width: 0;
+  justify-content: flex-end;
+}
+.settings-pi-upstream-controls input {
+  flex: 1 1 140px;
+  min-width: 120px;
+  max-width: 240px;
+}

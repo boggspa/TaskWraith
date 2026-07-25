@@ -2043,7 +2043,8 @@ function App(): React.JSX.Element {
       grok: 120_000,
       cursor: 120_000,
       ollama: 120_000,
-      antigravity: 120_000
+      antigravity: 120_000,
+      pi: 120_000
     },
     mainAuthorityMs: 60_000
   })
@@ -2322,7 +2323,8 @@ function App(): React.JSX.Element {
     grok: [],
     cursor: [],
     ollama: [],
-    antigravity: []
+    antigravity: [],
+    pi: []
   })
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')

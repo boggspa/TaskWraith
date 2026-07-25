@@ -112,7 +112,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   grok: 'xAI Grok CLI',
   cursor: 'Cursor Agent CLI',
   ollama: 'Local Ollama HTTP',
-  antigravity: 'Antigravity CLI'
+  antigravity: 'Antigravity CLI',
+  pi: 'Pi CLI (BYOK)'
 }
 
 /** User-facing reason used to make historical provider chats read-only. */
@@ -145,7 +146,13 @@ export function resolveProviderRows(
   // auth probe timed out ('unknown') or reported not-authenticated. Only
   // AntiGravity — the opt-in, discovery-admitted provider — is gated on the
   // snapshot; Grok / Path-B Cursor keep their own runtime-availability flags.
+  // Pi is gated the same way for a different reason: it is statically live,
+  // but a seat with no stored upstream key has an EMPTY model list, so an
+  // ungated row would be a provider you can pick and never run. Admission
+  // requires the CLI plus at least one key (ProviderConfiguration's fail-closed
+  // pi probe), which is exactly what the snapshot reports.
   const antigravityAdmitted = Boolean(availability?.snapshot.providerIds.includes('antigravity'))
+  const piAdmitted = Boolean(availability?.snapshot.providerIds.includes('pi'))
   const ids: ProviderId[] = ([
     'gemini',
     'codex',
@@ -157,9 +164,15 @@ export function resolveProviderRows(
     // Not a static offer: survives only when the strict, post-connection
     // main-process discovery snapshot has admitted it.
     ...(antigravityAdmitted ? (['antigravity'] as ProviderId[]) : []),
+    // Pi ranks with the BYOK lanes, above local Ollama.
+    ...(piAdmitted ? (['pi'] as ProviderId[]) : []),
     'ollama'
   ] as ProviderId[]).filter((id) =>
-    id === 'antigravity' ? antigravityAdmitted : isLiveSelectableProvider(id)
+    id === 'antigravity'
+      ? antigravityAdmitted
+      : id === 'pi'
+        ? piAdmitted
+        : isLiveSelectableProvider(id)
   )
   return ids.map((id) => {
     const pauseInfo = getProviderPauseInfo(providerRunPauses, id)

@@ -13,6 +13,7 @@ const getProviderLabel = (provider: ProviderId): string => {
   // surface using this map (run labels, working indicator, failure copy,
   // composer placeholder) called the provider "Gemini".
   if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
   return 'Gemini'
 }
 

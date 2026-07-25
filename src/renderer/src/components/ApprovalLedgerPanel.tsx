@@ -66,7 +66,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   grok: 'Grok',
   cursor: 'Cursor',
   ollama: 'Ollama',
-  antigravity: 'Antigravity'
+  antigravity: 'Antigravity',
+  pi: 'Pi'
 }
 
 export interface ApprovalLedgerPanelProps {

@@ -92,7 +92,8 @@ const TOOL_ACTIVITY_PROVIDER_IDS = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'pi'
 ])
 
 function extractToolProvider(event: any): ProviderId | undefined {

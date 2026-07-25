@@ -98,6 +98,7 @@ import { ThreadIntrospectionSettingsPanel } from './ThreadIntrospectionSettingsP
 // sit together as a single device-management page.
 import { PairingPage } from './PairingPage'
 import { PillButton } from './PillButton'
+import { PiProviderKeysCard } from './PiProviderKeysCard'
 import { SegmentedControl } from './SegmentedControl'
 import { SharesPanel } from './SharesPanel'
 import { CommittedDraftField } from './CommittedDraftField'
@@ -757,7 +758,8 @@ const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'kimi',
   'cursor',
   'grok',
-  'ollama'
+  'ollama',
+  'pi'
 ]
 
 const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -768,7 +770,8 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   grok: 'Grok',
   cursor: 'Cursor',
   ollama: 'Ollama',
-  antigravity: 'Antigravity'
+  antigravity: 'Antigravity',
+  pi: 'Pi'
 }
 
 export type UserMcpServerFormState = {
@@ -7154,6 +7157,7 @@ export function SettingsPanel({
                     </p>
                     {renderProviderPauseControls('ollama')}
                   </SettingsProviderAuthCard>
+                  <PiProviderKeysCard />
 
                   <AntigravityOptInCard
                     enabled={antigravityEnabled}

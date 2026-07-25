@@ -203,6 +203,30 @@ const ANTIGRAVITY_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'gemini-api:gemini-2.0-flash', label: 'Gemini 2.0 Flash (API)' }
 ]
 
+/** Pi seat models. Wire ids are `<upstream>/<model>` (pi's own syntax) and
+ * MUST stay in lockstep with src/main/pi/PiModels.ts — that module owns the
+ * curated catalog and the anti-circumvention wall; this is the renderer-side
+ * mirror the seat editor offers. A model whose upstream has no stored key is
+ * still listed here but fails visibly at dispatch with a "no key" message. */
+const PI_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'deepseek/deepseek-v4-flash', label: 'DeepSeek V4 Flash' },
+  { id: 'deepseek/deepseek-v4-pro', label: 'DeepSeek V4 Pro' },
+  { id: 'zai/glm-5.2', label: 'GLM-5.2' },
+  { id: 'zai/glm-5.1', label: 'GLM-5.1' },
+  { id: 'zai/glm-4.7', label: 'GLM-4.7' },
+  { id: 'qwen-token-plan/qwen3.7-max', label: 'Qwen3.7 Max' },
+  { id: 'qwen-token-plan/qwen3.7-plus', label: 'Qwen3.7 Plus' },
+  { id: 'qwen-token-plan/qwen3.8-max-preview', label: 'Qwen3.8 Max Preview' },
+  { id: 'minimax/MiniMax-M3', label: 'MiniMax M3' },
+  { id: 'minimax/MiniMax-M2.7', label: 'MiniMax M2.7' },
+  { id: 'mistral/devstral-2512', label: 'Devstral 2' },
+  { id: 'mistral/mistral-medium-3.5', label: 'Mistral Medium 3.5' },
+  { id: 'groq/openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)' },
+  { id: 'groq/qwen/qwen3-32b', label: 'Qwen3 32B (Groq)' },
+  { id: 'cerebras/zai-glm-4.7', label: 'GLM-4.7 (Cerebras)' },
+  { id: 'cerebras/gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)' }
+]
+
 const OLLAMA_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'qwen3:4b-instruct', label: 'Qwen 3 (4B Param)' },
   { id: 'qwen3.5:9b', label: 'Qwen 3.5 (9B Param)' },
@@ -413,6 +437,11 @@ export function getDefaultEnsembleParticipantConfig(
         model: 'gemini-api:gemini-2.5-flash',
         permissionPresetId: 'default'
       }
+    case 'pi':
+      return {
+        model: 'deepseek/deepseek-v4-flash',
+        permissionPresetId: 'default'
+      }
     default:
       return {
         model: 'gpt-5.5',
@@ -444,6 +473,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'Local'
     case 'antigravity':
       return 'AntiGravity'
+    case 'pi':
+      return 'Pi'
     default:
       return 'Gemini'
   }
@@ -808,6 +839,14 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'gemini-api:gemini-2.5-flash'
+      }
+    case 'pi':
+      return {
+        modelOptions: PI_MODELS,
+        reasoningOptions: [],
+        defaultReasoning: '',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: 'deepseek/deepseek-v4-flash'
       }
     default:
       return {

@@ -374,6 +374,10 @@
   --model-usage-provider-glow: var(--provider-kimi-color);
 }
 
+.app-sidebar .model-usage-liquid-card .model-usage-item.provider-pi {
+  --model-usage-provider-glow: var(--provider-pi-color);
+}
+
 .app-sidebar .model-usage-liquid-card .model-usage-item.provider-cursor {
   --model-usage-provider-glow: var(--provider-cursor-color);
 }
@@ -565,6 +569,10 @@
 
 .model-usage-compact-cell.provider-kimi {
   --compact-quota-color: var(--provider-kimi-color);
+}
+
+.model-usage-compact-cell.provider-pi {
+  --compact-quota-color: var(--provider-pi-color);
 }
 
 .model-usage-compact-cell.provider-cursor {

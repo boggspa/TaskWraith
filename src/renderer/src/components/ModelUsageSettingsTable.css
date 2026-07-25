@@ -496,6 +496,10 @@
 .model-usage-table-provider.provider-kimi .model-usage-table-provider-cell {
   box-shadow: inset 3px 0 0 var(--provider-kimi-color, #0073e6);
 }
+
+.model-usage-table-provider.provider-pi .model-usage-table-provider-cell {
+  box-shadow: inset 3px 0 0 var(--provider-pi-color, #c25e4c);
+}
 .model-usage-table-provider.provider-grok .model-usage-table-provider-cell {
   box-shadow: inset 3px 0 0 var(--provider-grok-color, #757575);
 }

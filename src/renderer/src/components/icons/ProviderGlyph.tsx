@@ -232,6 +232,15 @@ function glyphBody(provider: string): ReactElement {
           <circle className="provider-glyph-dot" cx="7.7" cy="6.2" r="1.1" />
         </>
       )
+    case 'pi':
+      return (
+        <>
+          <path className="provider-glyph-line" d="M5.6 7.6h12.8" />
+          <path className="provider-glyph-line" d="M9.4 7.6v9.2" />
+          <path className="provider-glyph-line" d="M14.6 7.6v7.4c0 1.2.7 1.8 1.9 1.8" />
+          <circle className="provider-glyph-dot" cx="6.4" cy="16.6" r="1" />
+        </>
+      )
     case 'grok':
       return (
         <>

@@ -9,6 +9,7 @@ import grokLogoOnDark from '../../assets/provider-logos/provider-logo-grok-on-da
 import grokLogoOnLight from '../../assets/provider-logos/provider-logo-grok-on-light.png'
 import kimiLogo from '../../assets/provider-logos/provider-logo-kimi.png'
 import ollamaLogoOnDark from '../../assets/provider-logos/provider-logo-ollama-on-dark.png'
+import piLogo from '../../assets/provider-logos/provider-logo-pi.svg'
 import ollamaLogoOnLight from '../../assets/provider-logos/provider-logo-ollama.png'
 
 export type ProviderBrandLogoId = ProviderId | string | undefined
@@ -28,7 +29,8 @@ export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<Record<ProviderId, ProviderBr
   ollama: { light: ollamaLogoOnLight, dark: ollamaLogoOnDark },
   // An official runtime copy; this remains unreachable until the user's opt-in
   // and successful connection expose the provider.
-  antigravity: { light: antigravityLogo }
+  antigravity: { light: antigravityLogo },
+  pi: { light: piLogo }
 }
 
 export function providerBrandLogoKey(provider?: ProviderBrandLogoId): string {
