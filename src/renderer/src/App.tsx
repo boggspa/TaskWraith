@@ -409,6 +409,7 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   LinkCircleSymbolIcon,
+  OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
   QuestionCircleIcon,
@@ -2240,6 +2241,12 @@ function App(): React.JSX.Element {
     []
   )
   const [showFileEditor, setShowFileEditor] = useState(false)
+  const [showOfficeSuite, setShowOfficeSuite] = useState(false)
+  const [officeOpenRequest, setOfficeOpenRequest] = useState<{
+    path: string
+    nonce: number
+  } | null>(null)
+  const officeOpenNonceRef = useRef(0)
   const [showGeminiTerminal, setShowGeminiTerminal] = useState(false)
   const [geminiTerminalInputByChatId, setGeminiTerminalInputForChat] = usePerChatState('')
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
@@ -3343,6 +3350,8 @@ function App(): React.JSX.Element {
         return isPinnedMessagesPanelOpen
       case 'files':
         return showFileEditor
+      case 'office':
+        return showOfficeSuite
       case 'inspector':
         return appearance.showInspector
       case 'terminal':
@@ -23777,6 +23786,7 @@ function App(): React.JSX.Element {
     isSideChatDockPanelOpen,
     showInspector: appearance.showInspector,
     showFileEditor,
+    showOfficeSuite,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
@@ -23882,6 +23892,14 @@ function App(): React.JSX.Element {
       hint: 'Workspace file editor'
     },
     {
+      id: 'office',
+      label: 'Office',
+      icon: <OfficeSuiteSymbolIcon />,
+      enabled: hasWorkspaceContext,
+      group: 'work',
+      hint: 'Word, sheets, decks, calendar & mail'
+    },
+    {
       id: 'inspector',
       label: 'Inspect',
       icon: <ReviewSymbolIcon />,
@@ -23922,6 +23940,9 @@ function App(): React.JSX.Element {
       case 'files':
         setShowFileEditor(false)
         break
+      case 'office':
+        setShowOfficeSuite(false)
+        break
       case 'inspector':
         appearance.update({ showInspector: false })
         break
@@ -23955,6 +23976,9 @@ function App(): React.JSX.Element {
         break
       case 'files':
         if (hasWorkspaceContext) setShowFileEditor(true)
+        break
+      case 'office':
+        if (hasWorkspaceContext) setShowOfficeSuite(true)
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -23995,6 +24019,14 @@ function App(): React.JSX.Element {
   const handleOpenProjectReferencesLibrary = (projectId: string): void => {
     setActiveWorkProjectId(projectId)
     activateRightDockTab('references')
+  }
+  /** Files-tree → Office handoff: an Office-native file (docx/xlsx/pptx/
+   * ics/eml) opened from the code editor's tree activates the adjacent
+   * Office dock surface and loads it there instead. */
+  const handleOpenOfficeDocument = (path: string): void => {
+    activateRightDockTab('office')
+    officeOpenNonceRef.current += 1
+    setOfficeOpenRequest({ path, nonce: officeOpenNonceRef.current })
   }
   // The "project desk" strip above the transcript: Work surface active, not
   // multiview, and the focused chat a member of the active (live) project.
@@ -29285,6 +29317,9 @@ function App(): React.JSX.Element {
     showChangelogSheet,
     showCockpit,
     showFileEditor,
+    showOfficeSuite,
+    officeOpenRequest,
+    onOpenOfficeDocument: handleOpenOfficeDocument,
     showFirstLaunchSheet,
     showGeminiTerminal,
     showJumpToLatestPill,

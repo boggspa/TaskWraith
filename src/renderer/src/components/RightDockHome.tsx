@@ -3,6 +3,7 @@ import type { RightDockTab } from '../lib/rightDockState'
 import {
   ChatMediaIcon,
   FileMenuSelectionIcon,
+  OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
   RunRailSymbolIcon,
   SplitChatIcon
@@ -20,7 +21,7 @@ export type RightDockHomeInspectorDestination =
 
 export type RightDockHomeSurface = Extract<
   RightDockTab,
-  'run' | 'chat' | 'media' | 'pins' | 'files'
+  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office'
 >
 
 type RightDockHomeTarget =
@@ -74,6 +75,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     description: 'Browse and edit workspace files',
     group: 'session',
     target: { surface: 'files' },
+    requires: 'workspace'
+  },
+  {
+    id: 'office',
+    label: 'Office Suite',
+    description: 'Docs, sheets, decks, calendar & mail',
+    group: 'session',
+    target: { surface: 'office' },
     requires: 'workspace'
   },
   {
@@ -191,6 +200,7 @@ function destinationIcon(id: string): ReactNode {
   if (id === 'media') return <ChatMediaIcon />
   if (id === 'pins') return <PinnedMessagesIcon />
   if (id === 'files') return <FileMenuSelectionIcon />
+  if (id === 'office') return <OfficeSuiteSymbolIcon />
   return (
     <HomeGlyph
       kind={id as 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'}

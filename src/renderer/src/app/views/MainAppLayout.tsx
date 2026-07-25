@@ -60,6 +60,7 @@ import {
   ChatMediaPreviewOverlay
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
+import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
 import { ProjectReferencesDockPanel } from '../../components/ProjectReferencesDockPanel'
 import { WorkProjectReferencesEmptyShell } from '../../components/WorkProjectReferencesEmptyShell'
 import { AgentIdentityIcon } from '../../components/icons/AgentIdentityIcon'
@@ -455,6 +456,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showBugReportSheet,
   showChangelogSheet,
   showFileEditor,
+  showOfficeSuite,
+  officeOpenRequest,
+  onOpenOfficeDocument,
   showFirstLaunchSheet,
   showJumpToLatestPill,
   showOnboardingHint,
@@ -2529,7 +2533,19 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 )}
 
                 {activeRightDockTab === 'files' && showFileEditor && hasWorkspaceContext && (
-                  <FileEditorPanel workspacePath={currentWorkspace?.path} width={appearance.inspectorWidth} />
+                  <FileEditorPanel
+                    workspacePath={currentWorkspace?.path}
+                    width={appearance.inspectorWidth}
+                    onOpenOfficeDocument={onOpenOfficeDocument}
+                  />
+                )}
+
+                {activeRightDockTab === 'office' && showOfficeSuite && hasWorkspaceContext && (
+                  <OfficeSuitePanel
+                    workspacePath={currentWorkspace?.path}
+                    width={appearance.inspectorWidth}
+                    openRequest={officeOpenRequest}
+                  />
                 )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (

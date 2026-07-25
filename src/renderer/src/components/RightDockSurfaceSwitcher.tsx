@@ -47,6 +47,7 @@ const GROUP_ORDER: ReadonlyArray<{ id: RightDockSurfaceDef['group']; label: stri
 const DISABLED_REASON: Partial<Record<RightDockTab, string>> = {
   chat: 'Open a side chat from a message first',
   files: 'Files need a bound workspace',
+  office: 'Office needs a bound workspace',
   pins: 'Open a chat first'
 }
 

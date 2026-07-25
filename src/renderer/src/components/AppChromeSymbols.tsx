@@ -77,6 +77,27 @@ export function FileMenuSelectionIcon() {
   )
 }
 
+export function OfficeSuiteSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <path d="M2.6 2.6h7l3.8 3.8v7h-10.8z" />
+        <path d="M9.6 2.6v3.8h3.8" />
+        <path d="M5 8.4h6" />
+        <path d="M5 10.9h6" />
+        <path d="M8 8.4v5" />
+      </svg>
+    </span>
+  )
+}
+
 export function AppleTerminalIcon() {
   return (
     <span className="chat-corner-symbol">

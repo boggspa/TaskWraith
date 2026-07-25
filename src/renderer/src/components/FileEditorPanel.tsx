@@ -30,6 +30,7 @@ import { cpp } from '@codemirror/lang-cpp'
 import { shell } from '@codemirror/legacy-modes/mode/shell'
 import { tags } from '@lezer/highlight'
 import type { WorkspaceFileEntry, WorkspaceFileReadResult } from '../../../main/store/types'
+import { shouldAutoRouteToOffice } from '../../../shared/office/officeFormats'
 import type { GitFileStatus, GitRepositorySnapshot } from '../../../main/services/GitService'
 import {
   bufferFromReadResult,
@@ -65,6 +66,12 @@ interface FileEditorPanelProps {
   onShowInDiff?: (path: string) => void
   onDirtyChange?: (dirtyBufferCount: number) => void
   onEditorStateChange?: (state: FileEditorPanelState) => void
+  /**
+   * When provided, opening an Office-native file (docx/xlsx/pptx/ics/eml)
+   * hands off to the Office suite instead of the code editor, which would
+   * reject the binary formats anyway.
+   */
+  onOpenOfficeDocument?: (path: string) => void
 }
 
 interface FileEditorOpenRequest {
@@ -583,7 +590,8 @@ export function FileEditorPanel({
   commandRequest,
   onShowInDiff,
   onDirtyChange,
-  onEditorStateChange
+  onEditorStateChange,
+  onOpenOfficeDocument
 }: FileEditorPanelProps) {
   const [childrenByDirectory, setChildrenByDirectory] = useState<
     Record<string, WorkspaceFileEntry[]>
@@ -1282,6 +1290,12 @@ export function FileEditorPanel({
     async (filePath: string) => {
       if (!workspacePath || !filePath) return
 
+      if (onOpenOfficeDocument && shouldAutoRouteToOffice(filePath)) {
+        onOpenOfficeDocument(filePath)
+        setStatus(`${filePath} · opened in Office`)
+        return
+      }
+
       setFilter('')
       if (buffers.some((buffer) => buffer.path === filePath)) {
         setSelectedPath(filePath)
@@ -1311,7 +1325,7 @@ export function FileEditorPanel({
         setIsLoading(false)
       }
     },
-    [buffers, expandDirectoryPath, refreshGitSnapshot, workspacePath]
+    [buffers, expandDirectoryPath, onOpenOfficeDocument, refreshGitSnapshot, workspacePath]
   )
 
   useEffect(() => {

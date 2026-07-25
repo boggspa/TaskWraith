@@ -16,6 +16,7 @@ const allClosed: RightDockTabAvailabilityInput = {
   isSideChatDockPanelOpen: false,
   showInspector: false,
   showFileEditor: false,
+  showOfficeSuite: false,
   hasWorkspaceContext: false,
   isChatMediaPanelOpen: false,
   isProjectReferencesPanelOpen: false,
@@ -34,6 +35,7 @@ describe('rightDockState', () => {
           isSideChatDockPanelOpen: true,
           showInspector: true,
           showFileEditor: true,
+          showOfficeSuite: true,
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
           isProjectReferencesPanelOpen: true,
@@ -46,6 +48,7 @@ describe('rightDockState', () => {
         { id: 'chat', label: 'Chat' },
         { id: 'inspector', label: 'Inspect' },
         { id: 'files', label: 'Files' },
+        { id: 'office', label: 'Office' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
         { id: 'pins', label: 'Notes' },
@@ -171,6 +174,7 @@ describe('rightDockState', () => {
         'references',
         'pins',
         'files',
+        'office',
         'inspector',
         'terminal'
       ])
