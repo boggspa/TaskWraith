@@ -140,6 +140,17 @@ const WEB_READ_TOOLS = new Set<string>([
   'outlook_list_events'
 ])
 
+/**
+ * Tools that reach the network but are NOT `web_read` — they mutate a remote
+ * account, so their permission class must stay `workspace_write`.
+ *
+ * Classification and egress are different questions. `web_read` answers "may a
+ * read-only seat run this"; this set answers "does this touch the network".
+ * Keying the kill switch on the class alone let an Outlook draft be written to
+ * a cloud mailbox during a run whose posture said the network was off.
+ */
+const NETWORK_EGRESS_WRITE_TOOLS = new Set<string>(['outlook_create_draft', 'outlook_create_event'])
+
 const ORCHESTRATION_TOOLS = new Set<string>([
   'approval_status',
   'provider_auth_status',
@@ -348,7 +359,8 @@ export function isNetworkAccessBlockedTool(
     settings?.agenticServices?.networkAccess === 'deny'
       ? 'deny'
       : effectivePermissions?.networkAccess
-  return networkAccess === 'deny' && classifyTool(toolName) === 'web_read'
+  if (networkAccess !== 'deny') return false
+  return classifyTool(toolName) === 'web_read' || NETWORK_EGRESS_WRITE_TOOLS.has(toolName)
 }
 
 /**

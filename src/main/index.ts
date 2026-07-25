@@ -1538,6 +1538,7 @@ import {
   type GatewayTargetDispatchMarker
 } from './mcp/McpGatewayTargetDispatch'
 import {
+  mcpToolAlwaysPrompts,
   validateMcpCallerWorkspace,
   validateMutatingMcpRoute,
   type McpCallerContext
@@ -28457,10 +28458,13 @@ async function executeGeminiMcpTool(
           // full_access / session-YOLO) — it ships agent-chosen text off-box to a
           // 3rd-party API, a prompt-injection exfil channel that must never be
           // auto-allowed silently.
-          forcePrompt:
-            context.scope === 'global' ||
-            toolName === 'image_generate' ||
-            toolName === 'canvas_eval',
+          //
+          // Outlook joins them, reads included. A read pulls a third party's
+          // words into the model's context, so it is the INGRESS half of the
+          // same channel; a draft carries agent-chosen text and recipients to a
+          // real mailbox. Without this, a standing grant or session-YOLO would
+          // silence the mailbox prompts entirely.
+          forcePrompt: mcpToolAlwaysPrompts(toolName, context.scope),
           ...(toolName === 'canvas_eval'
             ? {
                 onApprovalPromptCreated: ({ approvalId }: { approvalId: string }) => {

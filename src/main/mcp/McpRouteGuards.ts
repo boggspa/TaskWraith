@@ -3,6 +3,9 @@ import type { AgentRunRoute } from '../run/AgentRunTypes'
 import type { TaskWraithMcpToolName } from '../TaskWraithMcpTools'
 import { classifyTool } from '../ToolClassTaxonomy'
 import { MCP_APP_STATE_MUTATION_TOOLS } from './McpAutoAllowedTools'
+import { OUTLOOK_MCP_TOOL_NAMES } from './OutlookToolExecutors'
+
+const OUTLOOK_ALWAYS_PROMPT_TOOLS = new Set<string>(OUTLOOK_MCP_TOOL_NAMES)
 
 export interface McpCallerContext {
   callerCwd?: string
@@ -13,6 +16,30 @@ export type McpGuardResult = { ok: true } | { ok: false; error: string }
 
 export function isMutatingTaskWraithMcpTool(toolName: TaskWraithMcpToolName): boolean {
   return classifyTool(toolName) === 'workspace_write' || MCP_APP_STATE_MUTATION_TOOLS.has(toolName)
+}
+
+/**
+ * Tools whose approval prompt must reach a human on EVERY call, regardless of
+ * standing grants, trusted-session state or session-YOLO.
+ *
+ * The shared property is a channel between the agent and a third party that no
+ * amount of prior trust in the workspace covers:
+ *  - `image_generate` ships agent-chosen text off-box to a third-party API.
+ *  - `canvas_eval` executes agent-authored JavaScript.
+ *  - Outlook reads pull a stranger's words into the model's context; Outlook
+ *    writes put agent-chosen text and recipients into a real mailbox. Both
+ *    halves of that channel are prompt-injection surface, so both prompt.
+ *
+ * Global-scope chats prompt for everything, which is why scope is a parameter
+ * rather than a caller-side `||`.
+ */
+export function mcpToolAlwaysPrompts(toolName: string, scope?: string): boolean {
+  if (scope === 'global') return true
+  return (
+    toolName === 'image_generate' ||
+    toolName === 'canvas_eval' ||
+    OUTLOOK_ALWAYS_PROMPT_TOOLS.has(toolName)
+  )
 }
 
 export function hasExplicitMcpRoute(route?: AgentRunRoute | null): boolean {

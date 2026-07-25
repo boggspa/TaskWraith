@@ -69,6 +69,26 @@ describe('isNetworkAccessBlockedTool', () => {
     expect(isNetworkAccessBlockedTool('write_file', denied)).toBe(false)
   })
 
+  it('blocks every Outlook tool under a network deny, writes included', () => {
+    const denied = { networkAccess: 'deny' }
+    for (const toolName of [
+      'outlook_list_messages',
+      'outlook_search_messages',
+      'outlook_get_message',
+      'outlook_list_events',
+      // The writes are `workspace_write` by class — correct, so a read-only
+      // seat cannot run them — but they still reach a cloud mailbox, and a run
+      // whose posture says the network is off must not write one.
+      'outlook_create_draft',
+      'outlook_create_event'
+    ]) {
+      expect(isNetworkAccessBlockedTool(toolName, denied)).toBe(true)
+    }
+    expect(isNetworkAccessBlockedTool('outlook_create_draft', { networkAccess: 'allow' })).toBe(
+      false
+    )
+  })
+
   it('treats the global network deny setting as stronger than a run-level allow', () => {
     expect(
       isNetworkAccessBlockedTool(
