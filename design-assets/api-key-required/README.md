@@ -16,20 +16,29 @@ Design constraints (same as the other monoline sets here):
 | Concept | File |
 | --- | --- |
 | The mark | `api-key-required.svg` |
+| Raster exports | `png/api-key-required-{white,black}-{32,64,128,256,512,1024}.png` |
 | Size/contrast contact sheet | `preview.png` |
 
-**There are deliberately no PNG exports.** An earlier revision shipped a
-`png/{white,black}-{32…1024}` set generated with `qlmanage -t`; it was wrong in both
-tones and has been removed. `qlmanage` flattens SVGs onto an opaque WHITE background, so
-the white renders were blank white squares (verified: one unique colour across the whole
-image) and the black ones were opaque rather than transparent. The failure is silent —
-the files are the right dimensions, report `hasAlpha: yes`, and a blank white PNG looks
-identical to a correct one in any preview with a white backdrop.
+PNGs are transparent-background renders. Prefer the SVG in-app so the stroke inherits the
+theme colour through `currentColor`, which no raster can carry; the PNGs are for docs,
+decks and store artwork.
 
-Regenerating them needs a real SVG rasteriser that honours transparency (`rsvg-convert`,
-`inkscape`, `cairosvg`, or ImageMagick with librsvg) — none of which is installed here.
-`qlmanage` is not a substitute. Until then use the SVG, which is the canonical asset
-anyway: it inherits the theme colour through `currentColor`, which no PNG can do.
+Regenerate with:
+
+```bash
+npm run assets:png -- design-assets/api-key-required/api-key-required.svg \
+  --out design-assets/api-key-required/png --name api-key-required
+```
+
+**Use that script, not `qlmanage`.** An earlier revision of this set was exported with
+`qlmanage -t`, which flattens SVGs onto an opaque WHITE background: all six white renders
+were blank white squares and all six black ones were opaque rather than transparent. It
+shipped, because the failure is completely silent — right dimensions, `sips -g hasAlpha`
+reports "yes" (a fully-opaque alpha channel is still an alpha channel), and a blank white
+PNG is indistinguishable from a correct one in any preview with a white backdrop.
+[`scripts/rasterize-svg.cjs`](../../scripts/rasterize-svg.cjs) uses `sips -s format png`,
+which does honour SVG alpha, and then decodes every file it writes to assert the pixels
+are real — a blank export now fails loudly instead of landing in git.
 
 ## Geometry notes
 
