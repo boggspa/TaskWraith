@@ -24,6 +24,7 @@ import {
   buildProviderFilteredHeatmapGrid,
   formatTokenCount,
   HEATMAP_COLUMNS,
+  HEATMAP_PROVIDER_FILTERS,
   HEATMAP_ROWS,
   type HeatmapProviderFilter,
   type HeatmapCell,
@@ -37,16 +38,6 @@ import {
 } from '../lib/usageRecordsCache'
 
 const TIME_LABELS = ['00', '04', '08', '12', '16', '20'] // hour-of-day ticks shown on the left rail
-const PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'gemini', label: 'Gemini' },
-  { id: 'kimi', label: 'Kimi' },
-  { id: 'grok', label: 'Grok' },
-  { id: 'cursor', label: 'Cursor' }
-]
-
 /** A single cell. Pulled out so React.memo can short-circuit
  * re-renders when the cell's bucket data hasn't changed. */
 function HeatmapCellTile({ cell }: { cell: HeatmapCell }) {
@@ -210,7 +201,7 @@ export function UsageHeatmap({
           <span className="usage-heatmap-title">{title}</span>
           {showProviderFilter && (
             <div className="usage-heatmap-provider-filter" aria-label={`${title} provider filter`}>
-              {PROVIDER_FILTERS.map((filter) => (
+              {HEATMAP_PROVIDER_FILTERS.map((filter) => (
                 <button
                   key={filter.id}
                   type="button"

@@ -5,8 +5,12 @@ import {
   buildProviderFilteredHeatmapGrid,
   formatTokenCount,
   HEATMAP_COLUMNS,
+  HEATMAP_PROVIDER_COLOR_HEX,
+  HEATMAP_PROVIDER_FILTERS,
+  HEATMAP_PROVIDER_ORDER,
   HEATMAP_ROWS
 } from './UsageHeatmap'
+import { getProviderLabel } from './providerLabels'
 
 function makeRecord(
   overrides: Partial<UsageRecord> & { timestamp: number; totalTokens: number }
@@ -189,5 +193,29 @@ describe('formatTokenCount', () => {
 
   it('formats billions with two decimals', () => {
     expect(formatTokenCount(1_500_000_000)).toBe('1.50B')
+  })
+})
+
+describe('HEATMAP_PROVIDER_ORDER', () => {
+  // The colour map is `Record<ProviderId, string>`, so the compiler already
+  // forces it complete. Anchoring the order to it turns "someone added a tenth
+  // provider and forgot the usage surfaces" into a failing test rather than an
+  // uncoloured, unfilterable bar. This is a HISTORY surface: retired providers
+  // (gemini) stay listed on purpose — see shared/retiredProviders.
+  it('covers every provider that can appear in a usage record', () => {
+    expect([...HEATMAP_PROVIDER_ORDER].sort()).toEqual(
+      Object.keys(HEATMAP_PROVIDER_COLOR_HEX).sort()
+    )
+  })
+
+  it('lists each provider exactly once', () => {
+    expect(new Set(HEATMAP_PROVIDER_ORDER).size).toBe(HEATMAP_PROVIDER_ORDER.length)
+  })
+
+  it('builds filter tabs as All plus every provider, canonically labelled', () => {
+    expect(HEATMAP_PROVIDER_FILTERS[0]).toEqual({ id: 'all', label: 'All' })
+    expect(HEATMAP_PROVIDER_FILTERS.slice(1)).toEqual(
+      HEATMAP_PROVIDER_ORDER.map((id) => ({ id, label: getProviderLabel(id) }))
+    )
   })
 })

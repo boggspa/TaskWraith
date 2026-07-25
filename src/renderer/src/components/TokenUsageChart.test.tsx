@@ -97,13 +97,48 @@ describe('buildTokenUsageChartData', () => {
   })
 })
 
+describe('dominant provider for late-added providers', () => {
+  // Regression: the tie-break loop walked a private 7-entry provider list, so a
+  // day whose tokens were entirely `pi` or `antigravity` resolved to a null
+  // dominant provider and rendered as an uncoloured bar.
+  it.each(['pi', 'antigravity'] as const)('colours a day whose tokens are all %s', (provider) => {
+    const now = new Date(2026, 5, 15, 12)
+    const data = buildTokenUsageChartData(
+      [
+        record({
+          id: `${provider}-only`,
+          timestamp: new Date(2026, 5, 15, 9).getTime(),
+          provider,
+          totalTokens: 250
+        })
+      ],
+      now,
+      1
+    )
+
+    expect(data.days[0].dominantProvider).toBe(provider)
+    expect(data.days[0].tokens).toBe(250)
+  })
+})
+
 describe('TokenUsageChart', () => {
   it('renders provider isolation controls when requested', () => {
     const html = renderToStaticMarkup(
       <TokenUsageChart title="TaskWraith Tokens" records={[]} showProviderFilter />
     )
 
-    for (const label of ['All', 'Codex', 'Claude', 'Gemini', 'Kimi', 'Grok', 'Cursor', 'Ollama']) {
+    for (const label of [
+      'All',
+      'Codex',
+      'Claude',
+      'Gemini',
+      'Kimi',
+      'Grok',
+      'Cursor',
+      'Ollama',
+      'AntiGravity',
+      'Pi'
+    ]) {
       expect(html).toContain(`>${label}</button>`)
     }
     expect(html).toContain('TaskWraith Tokens provider filter')

@@ -4,6 +4,8 @@ import type { ProviderId, UsageRecord } from '../../../main/store/types'
 import {
   formatTokenCount,
   HEATMAP_PROVIDER_COLOR_HEX,
+  HEATMAP_PROVIDER_FILTERS,
+  HEATMAP_PROVIDER_ORDER,
   type HeatmapProviderFilter
 } from '../lib/UsageHeatmap'
 import {
@@ -39,27 +41,6 @@ interface TokenUsageChartProps {
   showProviderFilter?: boolean
   className?: string
 }
-
-const TOKEN_PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
-  { id: 'all', label: 'All' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'claude', label: 'Claude' },
-  { id: 'gemini', label: 'Gemini' },
-  { id: 'kimi', label: 'Kimi' },
-  { id: 'grok', label: 'Grok' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'ollama', label: 'Ollama' }
-]
-
-const PROVIDER_ORDER: ProviderId[] = [
-  'codex',
-  'claude',
-  'gemini',
-  'kimi',
-  'grok',
-  'cursor',
-  'ollama'
-]
 
 const pad2 = (value: number): string => String(value).padStart(2, '0')
 
@@ -116,7 +97,7 @@ export function buildTokenUsageChartData(
     totalTokens += bucket.tokens
     let dominantProvider: ProviderId | null = null
     let dominantTokens = -1
-    for (const provider of PROVIDER_ORDER) {
+    for (const provider of HEATMAP_PROVIDER_ORDER) {
       const providerTokens = bucket.providerTotals.get(provider) ?? 0
       if (providerTokens > dominantTokens) {
         dominantTokens = providerTokens
@@ -238,7 +219,7 @@ export function TokenUsageChart({
             className="usage-heatmap-provider-filter token-usage-chart-provider-filter"
             aria-label={`${title} provider filter`}
           >
-            {TOKEN_PROVIDER_FILTERS.map((filter) => (
+            {HEATMAP_PROVIDER_FILTERS.map((filter) => (
               <button
                 key={filter.id}
                 type="button"

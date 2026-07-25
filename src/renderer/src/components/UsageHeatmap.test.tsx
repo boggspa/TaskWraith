@@ -8,7 +8,18 @@ describe('UsageHeatmap', () => {
       <UsageHeatmap title="TaskWraith Activity" dayCount={90} showProviderFilter />
     )
 
-    for (const label of ['All', 'Codex', 'Claude', 'Gemini', 'Kimi', 'Grok', 'Cursor']) {
+    for (const label of [
+      'All',
+      'Codex',
+      'Claude',
+      'Gemini',
+      'Kimi',
+      'Grok',
+      'Cursor',
+      'Ollama',
+      'AntiGravity',
+      'Pi'
+    ]) {
       expect(html).toContain(`>${label}</button>`)
     }
     expect(html).toContain('TaskWraith Activity')

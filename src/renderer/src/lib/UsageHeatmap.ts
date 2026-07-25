@@ -17,6 +17,7 @@ import {
   externalActivityWindowBounds
 } from '../../../shared/usageAccounting'
 import { usageRecordRunCount } from '../../../shared/externalUsageBuckets'
+import { getProviderLabel } from './providerLabels'
 
 export const HEATMAP_COLUMNS = 30 // days (default sidebar window)
 export const HEATMAP_ROWS = 12 // 2-hour buckets per day (00-02, 02-04, …, 22-24)
@@ -79,6 +80,40 @@ export interface HeatmapGrid {
 }
 
 export type HeatmapProviderFilter = 'all' | ProviderId
+
+/**
+ * Display order for every provider that can appear in a historical usage
+ * record. RETIRED providers belong here: usage surfaces RENDER HISTORY, and
+ * `shared/retiredProviders` keeps retired ids on decode/render surfaces while
+ * removing them only from offer/run surfaces (pickers, onboarding, dispatch).
+ * So this list is the full `ProviderId` union, not the live-selectable set.
+ *
+ * Single source for the filter tabs AND the dominant-provider tie-break in
+ * `TokenUsageChart`. Both used to keep private copies and both drifted — the
+ * chart silently lost `antigravity`/`pi` (uncoloured bars, unfilterable) and
+ * the heatmap also lost `ollama`. `UsageHeatmap.test.ts` asserts this stays
+ * exhaustive against `HEATMAP_PROVIDER_COLOR_HEX`, which the compiler already
+ * forces complete via `Record<ProviderId, string>` — so adding a tenth
+ * provider fails a test here instead of quietly rendering a grey bar.
+ */
+export const HEATMAP_PROVIDER_ORDER: ProviderId[] = [
+  'codex',
+  'claude',
+  'gemini',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity',
+  'pi'
+]
+
+/** Filter tabs for the usage surfaces: "All" plus every provider, labelled
+ *  from the canonical `getProviderLabel` so names never fork per surface. */
+export const HEATMAP_PROVIDER_FILTERS: Array<{ id: HeatmapProviderFilter; label: string }> = [
+  { id: 'all', label: 'All' },
+  ...HEATMAP_PROVIDER_ORDER.map((id) => ({ id, label: getProviderLabel(id) }))
+]
 
 /**
  * Bucket usage records into the day-count × 12 heatmap grid relative to a
