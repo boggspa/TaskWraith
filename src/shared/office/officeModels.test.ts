@@ -116,6 +116,51 @@ describe('normalizeOfficeDocumentModel', () => {
   })
 })
 
+describe('word image normalization', () => {
+  const PNG_URI =
+    'data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+
+  it('keeps valid raster images, sniffing dimensions and naming unnamed ones', () => {
+    const model = normalizeOfficeDocumentModel({
+      kind: 'word',
+      blocks: [
+        { type: 'image', image: { dataUri: PNG_URI, name: '' } },
+        {
+          type: 'image',
+          image: { dataUri: PNG_URI, name: 'shot.png', widthPx: 300, heightPx: 200 }
+        }
+      ]
+    }) as WordDocumentModel
+    expect(model.blocks).toEqual([
+      { type: 'image', image: { dataUri: PNG_URI, name: 'image-1.png', widthPx: 1, heightPx: 1 } },
+      { type: 'image', image: { dataUri: PNG_URI, name: 'shot.png', widthPx: 300, heightPx: 200 } }
+    ])
+  })
+
+  it('drops non-raster, remote and malformed images', () => {
+    const model = normalizeOfficeDocumentModel({
+      kind: 'word',
+      blocks: [
+        { type: 'image', image: { dataUri: 'data:image/svg+xml;base64,PHN2Zy8+', name: 'x' } },
+        { type: 'image', image: { dataUri: 'https://example.com/a.png', name: 'x' } },
+        { type: 'image', image: { dataUri: 'data:image/png;base64,%%%%', name: 'x' } },
+        { type: 'image', image: null },
+        { type: 'paragraph', runs: [{ text: 'kept' }] }
+      ]
+    }) as WordDocumentModel
+    expect(model.blocks).toEqual([{ type: 'paragraph', runs: [{ text: 'kept' }] }])
+  })
+
+  it('caps the image count', () => {
+    const blocks = Array.from({ length: OFFICE_MODEL_LIMITS.maxWordImages + 5 }, () => ({
+      type: 'image',
+      image: { dataUri: PNG_URI, name: 'x.png' }
+    }))
+    const model = normalizeOfficeDocumentModel({ kind: 'word', blocks }) as WordDocumentModel
+    expect(model.blocks).toHaveLength(OFFICE_MODEL_LIMITS.maxWordImages)
+  })
+})
+
 describe('createEmptyOfficeDocumentModel', () => {
   it('creates a usable starter model for every kind', () => {
     expect(createEmptyOfficeDocumentModel('word').kind).toBe('word')

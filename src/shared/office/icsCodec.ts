@@ -4,12 +4,21 @@
  * ATTENDEE, VALARM…) are preserved verbatim in `extraProperties` and
  * re-emitted on save, so editing a title never strips a recurrence.
  *
- * Timezone stance (v1): DTSTART/DTEND wall times are taken as written —
- * TZID parameters and trailing `Z` markers are surfaced as warnings rather
- * than converted, since no zone database is available here.
+ * Timezone stance: UTC (`Z`) and IANA-TZID stamps are converted to the
+ * caller's display zone for editing, while the ORIGINAL property lines ride
+ * along in `startRaw`/`endRaw` and are re-emitted verbatim on save — the
+ * source timezone survives untouched unless the user actually edits the
+ * times. Unrecognized TZIDs fall back to as-written wall time with a
+ * warning (raw still preserved).
  */
 
 import type { CalendarDocumentModel, CalendarEvent } from './officeModels'
+import {
+  convertWallTime,
+  isValidTimeZone,
+  utcWallTimeToZone,
+  type WallTimeParts
+} from './zonedTime'
 
 export interface IcsParseResult {
   model: CalendarDocumentModel
@@ -74,10 +83,17 @@ function parseIcsProperty(line: string): IcsProperty | null {
 interface ParsedStamp {
   value: string
   allDay: boolean
+  /** Original property line, kept when the stamp was zone-anchored. */
+  raw?: string
   warning?: string
 }
 
-function parseIcsStamp(property: IcsProperty): ParsedStamp | null {
+const pad2 = (value: number): string => String(value).padStart(2, '0')
+
+const wallPartsToStamp = (parts: WallTimeParts): string =>
+  `${parts.year}-${pad2(parts.month)}-${pad2(parts.day)}T${pad2(parts.hour)}:${pad2(parts.minute)}`
+
+function parseIcsStamp(property: IcsProperty, displayZone?: string): ParsedStamp | null {
   const isDateOnly = property.params.VALUE === 'DATE' || /^\d{8}$/.test(property.value)
   if (isDateOnly) {
     const match = /^(\d{4})(\d{2})(\d{2})$/.exec(property.value)
@@ -86,14 +102,45 @@ function parseIcsStamp(property: IcsProperty): ParsedStamp | null {
   }
   const match = /^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})?(Z)?$/.exec(property.value)
   if (!match) return null
-  const stamp = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}`
-  let warning: string | undefined
-  if (match[7] === 'Z') {
-    warning = `${property.name} is in UTC; shown as wall time without conversion.`
-  } else if (property.params.TZID) {
-    warning = `${property.name} uses TZID=${property.params.TZID}; shown as wall time without conversion.`
+  const asWritten = `${match[1]}-${match[2]}-${match[3]}T${match[4]}:${match[5]}`
+  const wallParts: WallTimeParts = {
+    year: Number(match[1]),
+    month: Number(match[2]),
+    day: Number(match[3]),
+    hour: Number(match[4]),
+    minute: Number(match[5]),
+    second: match[6] ? Number(match[6]) : 0
   }
-  return { value: stamp, allDay: false, warning }
+
+  if (match[7] === 'Z') {
+    const converted = displayZone ? utcWallTimeToZone(displayZone, wallParts) : null
+    if (converted) {
+      return { value: wallPartsToStamp(converted), allDay: false, raw: property.raw }
+    }
+    return {
+      value: asWritten,
+      allDay: false,
+      raw: property.raw,
+      warning: `${property.name} is in UTC; shown as written without conversion.`
+    }
+  }
+
+  const tzid = property.params.TZID
+  if (tzid) {
+    const converted =
+      displayZone && isValidTimeZone(tzid) ? convertWallTime(tzid, displayZone, wallParts) : null
+    if (converted) {
+      return { value: wallPartsToStamp(converted), allDay: false, raw: property.raw }
+    }
+    return {
+      value: asWritten,
+      allDay: false,
+      raw: property.raw,
+      warning: `${property.name} uses TZID=${tzid}; shown as written without conversion.`
+    }
+  }
+
+  return { value: asWritten, allDay: false }
 }
 
 const MODELED_EVENT_PROPS = new Set([
@@ -106,7 +153,15 @@ const MODELED_EVENT_PROPS = new Set([
   'DTSTAMP'
 ])
 
-export function parseIcs(text: string): IcsParseResult {
+export interface ParseIcsOptions {
+  /**
+   * IANA zone UTC/TZID stamps are converted into for display/editing.
+   * Omitted (tests, headless callers): stamps stay as written with warnings.
+   */
+  displayZone?: string
+}
+
+export function parseIcs(text: string, options: ParseIcsOptions = {}): IcsParseResult {
   const lines = unfoldIcsLines(text)
   const warnings: string[] = []
   const events: CalendarEvent[] = []
@@ -148,7 +203,7 @@ export function parseIcs(text: string): IcsParseResult {
         index += 1
       }
       eventCounter += 1
-      const event = parseEventBlock(block, eventCounter, warnings)
+      const event = parseEventBlock(block, eventCounter, warnings, options.displayZone)
       if (event) events.push(event)
       continue
     }
@@ -189,7 +244,8 @@ export function parseIcs(text: string): IcsParseResult {
 function parseEventBlock(
   block: string[],
   ordinal: number,
-  warnings: string[]
+  warnings: string[],
+  displayZone?: string
 ): CalendarEvent | null {
   const extras: string[] = []
   let uid = ''
@@ -237,11 +293,11 @@ function parseEventBlock(
         description = unescapeIcsText(property.value)
         break
       case 'DTSTART':
-        start = parseIcsStamp(property)
+        start = parseIcsStamp(property, displayZone)
         if (start?.warning) warnings.push(start.warning)
         break
       case 'DTEND':
-        end = parseIcsStamp(property)
+        end = parseIcsStamp(property, displayZone)
         if (end?.warning) warnings.push(end.warning)
         break
       case 'DTSTAMP':
@@ -271,6 +327,8 @@ function parseEventBlock(
   }
   if (location) event.location = location
   if (description) event.description = description
+  if (start.raw) event.startRaw = start.raw
+  if (end?.raw && end.allDay === allDay) event.endRaw = end.raw
   if (extras.length > 0) event.extraProperties = extras
   return event
 }
@@ -333,8 +391,11 @@ export function buildIcs(model: CalendarDocumentModel, options: BuildIcsOptions 
       lines.push(`DTSTART;VALUE=DATE:${stampToIcs(event.start, true)}`)
       lines.push(`DTEND;VALUE=DATE:${stampToIcs(event.end, true)}`)
     } else {
-      lines.push(`DTSTART:${stampToIcs(event.start, false)}`)
-      lines.push(`DTEND:${stampToIcs(event.end, false)}`)
+      // Zone-anchored imports re-emit their original stamps verbatim; the
+      // editor drops the raws when times are edited, which regenerates
+      // floating local stamps below.
+      lines.push(event.startRaw ?? `DTSTART:${stampToIcs(event.start, false)}`)
+      lines.push(event.endRaw ?? `DTEND:${stampToIcs(event.end, false)}`)
     }
     lines.push(`SUMMARY:${escapeIcsText(event.title)}`)
     if (event.location) lines.push(`LOCATION:${escapeIcsText(event.location)}`)

@@ -11,6 +11,8 @@
  * whole save.
  */
 
+import { parseRasterDataUri } from './officeImages'
+
 export type OfficeDocumentKind = 'word' | 'sheet' | 'deck' | 'calendar' | 'mail'
 
 export const OFFICE_DOCUMENT_KINDS: readonly OfficeDocumentKind[] = [
@@ -32,12 +34,22 @@ export interface WordRun {
   link?: string
 }
 
+export interface WordImage {
+  /** data:image/(png|jpeg|gif);base64,… — raster only, magic-byte validated on normalize. */
+  dataUri: string
+  /** Media part / alt-text name. */
+  name: string
+  widthPx?: number
+  heightPx?: number
+}
+
 export type WordBlock =
   | { type: 'paragraph'; runs: WordRun[] }
   | { type: 'heading'; level: 1 | 2 | 3; runs: WordRun[] }
   | { type: 'list-item'; ordered: boolean; level: number; runs: WordRun[] }
   /** rows → cells → runs. One implicit paragraph per cell; '\n' in run text is a line break. */
   | { type: 'table'; rows: WordRun[][][] }
+  | { type: 'image'; image: WordImage }
 
 export interface WordDocumentModel {
   kind: 'word'
@@ -75,13 +87,22 @@ export interface DeckDocumentModel {
 export interface CalendarEvent {
   uid: string
   title: string
-  /** 'YYYY-MM-DD' when allDay, else floating local 'YYYY-MM-DDTHH:mm'. */
+  /** 'YYYY-MM-DD' when allDay, else local-wall 'YYYY-MM-DDTHH:mm'. */
   start: string
-  /** Exclusive end date when allDay (RFC 5545 convention), else floating local end. */
+  /** Exclusive end date when allDay (RFC 5545 convention), else local-wall end. */
   end: string
   allDay: boolean
   location?: string
   description?: string
+  /**
+   * Original DTSTART/DTEND property lines for stamps imported from UTC or a
+   * foreign TZID. `start`/`end` hold the local-wall projection for display;
+   * on save the raw lines are re-emitted verbatim so the source timezone is
+   * never lost. Editors drop these when the user edits the times, which
+   * re-anchors the event to floating local time.
+   */
+  startRaw?: string
+  endRaw?: string
   /**
    * Unfolded ICS lines this model does not represent (RRULE, ATTENDEE, whole
    * VALARM blocks…), re-emitted verbatim so a round-trip never drops them.
@@ -130,8 +151,13 @@ export const OFFICE_MODEL_LIMITS = {
   maxRunsPerBlock: 2_000,
   maxTableRows: 2_000,
   maxTableCols: 64,
+  maxWordImages: 40,
+  maxImageBytes: 4_000_000,
+  /** Cumulative decoded image budget per document — keeps the assembled
+   * container safely under the office write cap. */
+  maxWordImageTotalBytes: 18_000_000,
   maxSheets: 32,
-  maxSheetRows: 5_000,
+  maxSheetRows: 20_000,
   maxSheetCols: 256,
   maxDeckSlides: 500,
   maxDeckBullets: 300,
@@ -180,6 +206,34 @@ function normalizeRuns(value: unknown): WordRun[] {
   return runs
 }
 
+const clampDimension = (value: unknown): number | undefined => {
+  if (typeof value !== 'number' || !Number.isFinite(value)) return undefined
+  const rounded = Math.round(value)
+  return rounded >= 1 && rounded <= 10_000 ? rounded : undefined
+}
+
+function normalizeWordImage(
+  value: unknown,
+  ordinal: number
+): { image: WordImage; byteLength: number } | null {
+  if (!isRecord(value)) return null
+  const dataUri = typeof value.dataUri === 'string' ? value.dataUri : ''
+  const parsed = parseRasterDataUri(dataUri, OFFICE_MODEL_LIMITS.maxImageBytes)
+  if (!parsed) return null
+  const rawName = clampText(value.name, 128)
+    .replace(/[^A-Za-z0-9._ -]/g, '')
+    .trim()
+  const image: WordImage = {
+    dataUri,
+    name: rawName || `image-${ordinal}.${parsed.info.extension}`
+  }
+  const widthPx = clampDimension(value.widthPx) ?? clampDimension(parsed.info.widthPx)
+  const heightPx = clampDimension(value.heightPx) ?? clampDimension(parsed.info.heightPx)
+  if (widthPx) image.widthPx = widthPx
+  if (heightPx) image.heightPx = heightPx
+  return { image, byteLength: parsed.bytes.length }
+}
+
 function normalizeWordBlock(value: unknown): WordBlock | null {
   if (!isRecord(value)) return null
   switch (value.type) {
@@ -216,8 +270,25 @@ function normalizeWordBlock(value: unknown): WordBlock | null {
 
 function normalizeWordModel(value: Record<string, unknown>): WordDocumentModel {
   const blocks: WordBlock[] = []
+  let imageCount = 0
+  let imageBytes = 0
   if (Array.isArray(value.blocks)) {
     for (const entry of value.blocks.slice(0, OFFICE_MODEL_LIMITS.maxWordBlocks)) {
+      // Images normalize here (not in normalizeWordBlock) so the running
+      // ordinal can cap count and cumulative bytes, and name unnamed images
+      // stably.
+      if (isRecord(entry) && entry.type === 'image') {
+        if (imageCount >= OFFICE_MODEL_LIMITS.maxWordImages) continue
+        const normalized = normalizeWordImage(entry.image, imageCount + 1)
+        if (!normalized) continue
+        if (imageBytes + normalized.byteLength > OFFICE_MODEL_LIMITS.maxWordImageTotalBytes) {
+          continue
+        }
+        imageCount += 1
+        imageBytes += normalized.byteLength
+        blocks.push({ type: 'image', image: normalized.image })
+        continue
+      }
       const block = normalizeWordBlock(entry)
       if (block) blocks.push(block)
     }
@@ -296,6 +367,10 @@ function normalizeCalendarEvent(value: unknown, index: number): CalendarEvent | 
   if (location) event.location = location
   const description = clampText(value.description, 32_000)
   if (description) event.description = description
+  const startRaw = clampText(value.startRaw, 1_024)
+  if (/^DTSTART[;:]/i.test(startRaw)) event.startRaw = startRaw
+  const endRaw = clampText(value.endRaw, 1_024)
+  if (/^DTEND[;:]/i.test(endRaw)) event.endRaw = endRaw
   const extra = clampStringArray(value.extraProperties, OFFICE_MODEL_LIMITS.maxExtraLines)
   if (extra.length > 0) event.extraProperties = extra
   return event
@@ -327,7 +402,7 @@ function normalizeMailModel(value: Record<string, unknown>): MailDocumentModel {
     cc: clampText(value.cc, 8_000),
     bcc: clampText(value.bcc, 8_000),
     subject: clampText(value.subject, 4_000),
-    body: clampText(value.body)
+    body: clampText(value.body, 500_000)
   }
   const date = clampText(value.date, 128).trim()
   if (date) model.date = date
@@ -398,13 +473,15 @@ export function officeModelPlainText(model: OfficeDocumentModel): string {
   switch (model.kind) {
     case 'word':
       return model.blocks
-        .map((block) =>
-          block.type === 'table'
-            ? block.rows
-                .map((row) => row.map((cell) => cell.map((run) => run.text).join('')).join('\t'))
-                .join('\n')
-            : block.runs.map((run) => run.text).join('')
-        )
+        .map((block) => {
+          if (block.type === 'table') {
+            return block.rows
+              .map((row) => row.map((cell) => cell.map((run) => run.text).join('')).join('\t'))
+              .join('\n')
+          }
+          if (block.type === 'image') return `[image: ${block.image.name}]`
+          return block.runs.map((run) => run.text).join('')
+        })
         .join('\n')
     case 'sheet':
       return model.sheets

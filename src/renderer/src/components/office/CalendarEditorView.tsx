@@ -56,6 +56,23 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
     replaceEvents(model.events.map((event) => (event.uid === uid ? { ...event, ...patch } : event)))
   }
 
+  /**
+   * Time edits re-anchor the event to floating local time: the preserved
+   * original DTSTART/DTEND stamps (UTC/foreign-TZID imports) are dropped so
+   * the save path regenerates stamps from the edited local values.
+   */
+  const updateEventTimes = (uid: string, patch: Partial<CalendarEvent>): void => {
+    replaceEvents(
+      model.events.map((event) => {
+        if (event.uid !== uid) return event
+        const next: CalendarEvent = { ...event, ...patch }
+        delete next.startRaw
+        delete next.endRaw
+        return next
+      })
+    )
+  }
+
   const addEvent = (): void => {
     const day = selectedDay ?? weeks[0]?.find((cell) => cell.inMonth)?.iso
     if (!day) return
@@ -80,10 +97,10 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
     if (allDay === event.allDay) return
     if (allDay) {
       const day = event.start.slice(0, 10)
-      updateEvent(event.uid, { allDay: true, start: day, end: addDaysToIsoDate(day, 1) })
+      updateEventTimes(event.uid, { allDay: true, start: day, end: addDaysToIsoDate(day, 1) })
     } else {
       const day = event.start.slice(0, 10)
-      updateEvent(event.uid, { allDay: false, start: `${day}T09:00`, end: `${day}T10:00` })
+      updateEventTimes(event.uid, { allDay: false, start: `${day}T09:00`, end: `${day}T10:00` })
     }
   }
 
@@ -225,7 +242,7 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
                     type="date"
                     value={selectedEvent.start}
                     onChange={(event) =>
-                      updateEvent(selectedEvent.uid, { start: event.target.value })
+                      updateEventTimes(selectedEvent.uid, { start: event.target.value })
                     }
                   />
                 </label>
@@ -235,7 +252,7 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
                     type="date"
                     value={selectedEvent.end}
                     onChange={(event) =>
-                      updateEvent(selectedEvent.uid, { end: event.target.value })
+                      updateEventTimes(selectedEvent.uid, { end: event.target.value })
                     }
                   />
                 </label>
@@ -248,7 +265,7 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
                     type="datetime-local"
                     value={selectedEvent.start}
                     onChange={(event) =>
-                      updateEvent(selectedEvent.uid, { start: event.target.value })
+                      updateEventTimes(selectedEvent.uid, { start: event.target.value })
                     }
                   />
                 </label>
@@ -258,7 +275,7 @@ export function CalendarEditorView({ model, onChange, initialMonth }: CalendarEd
                     type="datetime-local"
                     value={selectedEvent.end}
                     onChange={(event) =>
-                      updateEvent(selectedEvent.uid, { end: event.target.value })
+                      updateEventTimes(selectedEvent.uid, { end: event.target.value })
                     }
                   />
                 </label>

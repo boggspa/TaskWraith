@@ -68,13 +68,63 @@ describe('parseIcs', () => {
     expect(model.events[0].title).toBe('A very long title')
   })
 
-  it('warns about UTC and TZID stamps instead of silently converting', () => {
+  it('keeps zone-anchored stamps as written (with warnings) when no display zone is given', () => {
     const utc =
       'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u\nDTSTART:20260801T090000Z\nDTEND;TZID=Europe/London:20260801T100000\nSUMMARY:x\nEND:VEVENT\nEND:VCALENDAR'
     const { model, warnings } = parseIcs(utc)
     expect(model.events[0].start).toBe('2026-08-01T09:00')
     expect(warnings.some((warning) => warning.includes('UTC'))).toBe(true)
     expect(warnings.some((warning) => warning.includes('TZID=Europe/London'))).toBe(true)
+    // Originals ride along either way.
+    expect(model.events[0].startRaw).toBe('DTSTART:20260801T090000Z')
+    expect(model.events[0].endRaw).toBe('DTEND;TZID=Europe/London:20260801T100000')
+  })
+
+  it('converts UTC and IANA-TZID stamps into the display zone without warnings', () => {
+    const utc =
+      'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u\nDTSTART:20260801T090000Z\nDTEND;TZID=Europe/London:20260801T110000\nSUMMARY:x\nEND:VEVENT\nEND:VCALENDAR'
+    const { model, warnings } = parseIcs(utc, { displayZone: 'America/New_York' })
+    expect(warnings).toEqual([])
+    // 09:00Z in August = 05:00 EDT; 11:00 BST = 10:00Z = 06:00 EDT.
+    expect(model.events[0].start).toBe('2026-08-01T05:00')
+    expect(model.events[0].end).toBe('2026-08-01T06:00')
+    expect(model.events[0].startRaw).toBe('DTSTART:20260801T090000Z')
+    expect(model.events[0].endRaw).toBe('DTEND;TZID=Europe/London:20260801T110000')
+  })
+
+  it('falls back to as-written wall time for unknown TZIDs, preserving the raw stamp', () => {
+    const source =
+      'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u\nDTSTART;TZID=Custom/House_Zone:20260801T090000\nSUMMARY:x\nEND:VEVENT\nEND:VCALENDAR'
+    const { model, warnings } = parseIcs(source, { displayZone: 'America/New_York' })
+    expect(model.events[0].start).toBe('2026-08-01T09:00')
+    expect(model.events[0].startRaw).toBe('DTSTART;TZID=Custom/House_Zone:20260801T090000')
+    expect(warnings.some((warning) => warning.includes('Custom/House_Zone'))).toBe(true)
+  })
+
+  it('re-emits preserved zone-anchored stamps verbatim, and floating stamps once edited', () => {
+    const source =
+      'BEGIN:VCALENDAR\nBEGIN:VEVENT\nUID:u\nDTSTART:20260801T090000Z\nDTEND:20260801T093000Z\nSUMMARY:x\nEND:VEVENT\nEND:VCALENDAR'
+    const { model } = parseIcs(source, { displayZone: 'Asia/Kolkata' })
+    expect(model.events[0].start).toBe('2026-08-01T14:30')
+
+    const rebuilt = buildIcs(model, { dtstamp: '20260725T120000Z' })
+    expect(rebuilt).toContain('DTSTART:20260801T090000Z')
+    expect(rebuilt).toContain('DTEND:20260801T093000Z')
+    // Same document parses back to the identical model.
+    expect(parseIcs(rebuilt, { displayZone: 'Asia/Kolkata' }).model).toEqual(model)
+
+    // Simulate the editor re-anchoring after a time edit: raws dropped.
+    const edited = {
+      ...model,
+      events: model.events.map(({ startRaw, endRaw, ...event }) => {
+        void startRaw
+        void endRaw
+        return { ...event, start: '2026-08-01T15:00', end: '2026-08-01T15:30' }
+      })
+    }
+    const rebuiltEdited = buildIcs(edited, { dtstamp: '20260725T120000Z' })
+    expect(rebuiltEdited).toContain('DTSTART:20260801T150000')
+    expect(rebuiltEdited).not.toContain('DTSTART:20260801T090000Z')
   })
 
   it('skips events without DTSTART and defaults missing DTEND', () => {
