@@ -11,10 +11,25 @@ If you're a human, this is also a useful map of the product surface.
 
 ## Formatting policy for agents
 
-Do not run `npm run format` or repository-wide Prettier as routine
-cleanup. The current `format` script runs `prettier --write .`, which
-can create large unrelated diffs across the workspace and make review
-harder.
+`npm run format` is now SAFE: it formats only the files this working tree
+changed (staged, unstaged and untracked). Use it freely.
+
+Do not run `npm run format:all`, `prettier --write .`, or any repo-wide
+Prettier glob as routine cleanup. The baseline is ~44% unformatted — 1094
+of 2472 tracked `src` ts/tsx files as of 2026-07-25 — so a repo-wide write
+is not a tidy-up, it is a ~30,000-line mass reformat that rewrites
+`git blame` for a thousand files and conflicts with every open branch and
+fan-out worktree.
+
+`npm run format:check` verifies only changed files, which is what a CI
+format gate should use: it holds new work to the standard without
+demanding the backlog be fixed first.
+
+**This file is in `.prettierignore` and must stay there.** Prettier does
+not converge on it: each pass adds two spaces of indentation to the code
+blocks nested inside list items below, so repeated runs corrupt the
+examples progressively rather than settling. Verified 2026-07-25 over five
+consecutive passes — 80 changed lines every time, never a fixed point.
 
 Prettier is available for intentional formatting work, but normal code
 changes should preserve the surrounding style and format only the files

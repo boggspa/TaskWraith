@@ -2,5 +2,10 @@ out
 dist
 pnpm-lock.yaml
 LICENSE.md
+# Prettier does NOT converge on this file: every pass adds two spaces of
+# indentation to the code blocks nested inside list items, so repeated runs
+# corrupt the examples progressively instead of settling (verified 2026-07-25 —
+# 80 changed lines on each of five consecutive passes, never a fixed point).
+AGENTS.md
 tsconfig.json
 tsconfig.*.json

@@ -14,7 +14,9 @@
     "url": "https://github.com/boggspa/TaskWraith/issues"
   },
   "scripts": {
-    "format": "prettier --write .",
+    "format": "node scripts/format-changed.cjs",
+    "format:check": "node scripts/format-changed.cjs --check",
+    "format:all": "prettier --write .",
     "lint": "eslint --cache .",
     "lint:errors": "eslint --cache . --quiet",
     "test": "vitest run",
