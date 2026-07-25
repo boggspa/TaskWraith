@@ -15,6 +15,8 @@ import {
   GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
   GATEWAY_V3_ADDED_TOOL_NAMES,
   GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V4_ADDED_TOOL_NAMES,
+  GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
@@ -37,7 +39,8 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_MCP_ADVERTISE_TOOLS,
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
       GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
-      GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -198,8 +201,12 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // then the bounded Blackboard poll schema and lifecycle guidance.
     // Re-measured 2026-07-24 after the Work Session removal dropped the
     // ensemble_continue schema from both catalogues.
-    expect(fullChars).toBe(131_178)
-    expect(gatewayChars).toBe(38_724)
+    // Re-measured 2026-07-25: gateway-v4 graph primitives (ensemble_await +
+    // ensemble_lane_result) grew the full catalogue, and the fan-out
+    // isolation parameter grew ensemble_fanout on the DIRECT surface; both
+    // stay inside the 40k transport contract and the 0.301 ratio.
+    expect(fullChars).toBe(131_759)
+    expect(gatewayChars).toBe(39_305)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })
@@ -323,7 +330,7 @@ describe('catalogue reachability', () => {
       ...FULL_MCP_ADVERTISE_TOOLS,
       ...CORE_MCP_ADVERTISE_TOOLS,
       ...GATEWAY_MCP_ADVERTISE_TOOLS,
-      ...GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
+      ...GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
     ])
     const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
       (name) => !reachable.has(name)
@@ -336,7 +343,11 @@ describe('catalogue reachability', () => {
       ...GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
       ...GATEWAY_V3_ADDED_TOOL_NAMES
     ])
-    for (const tool of GATEWAY_V3_ADDED_TOOL_NAMES) {
+    expect(GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V4_ADDED_TOOL_NAMES
+    ])
+    for (const tool of [...GATEWAY_V3_ADDED_TOOL_NAMES, ...GATEWAY_V4_ADDED_TOOL_NAMES]) {
       expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
       // Additions are discoverable capabilities, never new direct surface.
       expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
@@ -353,9 +364,12 @@ describe('catalogue reachability', () => {
     expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v3')).toBe(
       GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
     )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v4')).toBe(
+      GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
+    )
     // An unknown or missing id must not inherit a newer surface.
     expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
-    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v3')).toBe(
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v4')).toBe(
       GATEWAY_MCP_ADVERTISE_TOOLS
     )
   })

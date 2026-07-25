@@ -13,9 +13,10 @@ export const TASKWRAITH_CORE_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwrait
 export const TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v1'
 export const TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v2'
 export const TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v3'
+export const TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID: TaskWraithMcpProfileId = 'taskwraith-gateway-v4'
 /** Current birth profile for a fresh, persistently fenceable gateway session. */
 export const TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
-  TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID
+  TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID
 /** Backwards-compatible generic alias for the current fresh gateway profile. */
 export const TASKWRAITH_GATEWAY_MCP_PROFILE_ID: TaskWraithMcpProfileId =
   TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID
@@ -55,7 +56,8 @@ export function isTaskWraithMcpProfileId(value: unknown): value is TaskWraithMcp
     value === TASKWRAITH_CORE_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
     value === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID ||
-    value === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID
+    value === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID ||
+    value === TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID
   )
 }
 
@@ -388,7 +390,8 @@ export function isGatewayTaskWraithMcpProfile(
   return (
     profileId === TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID ||
     profileId === TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID ||
-    profileId === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID
+    profileId === TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID ||
+    profileId === TASKWRAITH_GATEWAY_V4_MCP_PROFILE_ID
   )
 }
 

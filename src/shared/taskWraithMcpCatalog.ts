@@ -134,6 +134,12 @@ export const TASKWRAITH_MCP_TOOLS = [
   'ensemble_send',
   'ensemble_fanout',
   'ensemble_fanout_all',
+  // Agent-programmed graph primitives: JOIN (bounded wait on named lanes) and
+  // READ (structured fetch of one lane's output). With ensemble_fanout these
+  // let an agent express planner → workers → join → synthesize → gate → retry
+  // entirely in tool calls; the transcript is the receipt, not a graph editor.
+  'ensemble_await',
+  'ensemble_lane_result',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   // 1.0.4-AN — peer-openable BINDING goal-complete poll. Any eligible-at-open

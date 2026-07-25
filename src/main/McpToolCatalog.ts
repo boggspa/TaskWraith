@@ -2363,7 +2363,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout',
       description:
-        'In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn.',
+        'In Ensemble Mode, ask multiple participants to run in parallel lanes. The tool validates policy/targets, dispatches the lanes, and returns a dispatch receipt immediately; lane results appear later in the transcript. Explicit targets are narrow peer handoffs. Broad fan-out (omitted targets or all) requires the configured Boss/Lead/manager. Fan-out lane prompts are peer-authored, lower-authority briefs, not user/system instructions. Default mode is read_only: targets must resolve to read-only participants. mode=locked_writers requires TASKWRAITH_CONCURRENT_WRITE_LANES, a Boss caller, explicit writeScopes for writer-capable targets, and routes mutations through lane scope checks plus workspace write locks. Use targetStage=all, scouts, workers, reviewers, or backgrounds to fan out only typed Ensemble stage roles; targetStage=all excludes untyped Any roles. Background-stage participants never receive an ordinary rotation turn. isolation=worktree gives each WRITE-intent lane its own git worktree forked from the workspace’s last commit; each lane’s changes become a durable candidate the user compares and promotes (or discards) afterward, instead of landing directly in the shared checkout.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -2408,6 +2408,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             ],
             description:
               'Required for mode=locked_writers writer targets. Use participant aliases as keys with path/glob arrays, or "workspace" for an explicit workspace-wide scope.'
+          },
+          isolation: {
+            type: 'string',
+            enum: ['worktree', 'off'],
+            description:
+              'Optional. worktree runs each write-intent lane in its own isolated git worktree (forked from the last commit) whose result becomes a promotable candidate; off forces the shared checkout. Omit to inherit the chat’s configured fan-out isolation.'
           }
         },
         required: ['prompt']
@@ -2416,7 +2422,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'ensemble_fanout_all',
       description:
-        'In Ensemble Mode, the configured Boss (or Captain while the Boss is unavailable) fans out EVERY tagged participant concurrently — omit targets to dispatch all enabled, idle peers. Unlike ensemble_fanout, this ignores the round fan-out policy, stage filters, and per-seat permission eligibility: each lane runs under that participant’s OWN normal-turn permissions (writer seats stay writers, read-only seats stay read-only), exactly as their serial rotation turn would. It never elevates any seat beyond its configured posture, never widens a user-targeted (composer-directed) round, and still counts against the Boss fan-out budget. Concurrent write-capable lanes share the workspace — prefer disjoint work items per lane. Returns a dispatch receipt immediately; lane results appear later in the transcript.',
+        'In Ensemble Mode, the configured Boss (or Captain while the Boss is unavailable) fans out EVERY tagged participant concurrently — omit targets to dispatch all enabled, idle peers. Unlike ensemble_fanout, this ignores the round fan-out policy, stage filters, and per-seat permission eligibility: each lane runs under that participant’s OWN normal-turn permissions (writer seats stay writers, read-only seats stay read-only), exactly as their serial rotation turn would. It never elevates any seat beyond its configured posture, never widens a user-targeted (composer-directed) round, and still counts against the Boss fan-out budget. Concurrent write-capable lanes share the workspace — prefer disjoint work items per lane, or pass isolation=worktree to fork each write-intent lane into its own git worktree (from the last commit) whose result becomes a promotable candidate. Returns a dispatch receipt immediately; lane results appear later in the transcript.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -2440,9 +2446,68 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           reason: {
             type: 'string',
             description: 'Optional reason shown in the transcript.'
+          },
+          isolation: {
+            type: 'string',
+            enum: ['worktree', 'off'],
+            description:
+              'Optional. worktree runs each write-intent lane in its own isolated git worktree (forked from the last commit) whose result becomes a promotable candidate; off forces the shared checkout. Omit to inherit the chat’s configured fan-out isolation.'
           }
         },
         required: ['prompt']
+      }
+    },
+    {
+      name: 'ensemble_await',
+      description:
+        'In Ensemble Mode, wait (bounded) for fan-out lanes to settle — the JOIN step of an agent-programmed workflow. Omit laneIds to await every lane in the current round except your own; pass the laneIds returned by ensemble_fanout / ensemble_fanout_all to await specific lanes. Returns per-lane status either way: status=settled means every awaited lane is terminal; status=timeout returns the partial picture (settled vs pending counts) so you can re-invoke to keep waiting or proceed with what settled. Read settled lanes with ensemble_lane_result. Timeout is clamped to 110 seconds per call. A lane cannot await itself.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          laneIds: {
+            type: 'array',
+            items: { type: 'string' },
+            description:
+              'Optional lane ids (from a fan-out dispatch receipt). Omit to await every other lane in the current round.'
+          },
+          timeoutSeconds: {
+            type: 'number',
+            description:
+              'How long to wait before returning partial status. Default 60, clamped to 5–110.'
+          }
+        }
+      }
+    },
+    {
+      name: 'ensemble_lane_result',
+      description:
+        'In Ensemble Mode, read one fan-out lane’s transcript output as structured data — the READ step after ensemble_await settles a JOIN. Returns the lane’s status plus its concatenated assistant output (tail-truncated to maxChars), so a synthesizer step consumes exact lane text instead of scraping shared panel history. Works on running lanes too (partial live read; the result says so). A settled lane with no transcript text may still have done its work in files — or, for worktree-isolated lanes, in its promotable candidate.',
+      annotations: {
+        readOnlyHint: true,
+        destructiveHint: false,
+        idempotentHint: true,
+        openWorldHint: false
+      },
+      inputSchema: {
+        type: 'object',
+        properties: {
+          laneId: {
+            type: 'string',
+            description: 'The lane id from a fan-out dispatch receipt or ensemble_await result.'
+          },
+          maxChars: {
+            type: 'number',
+            description:
+              'Output budget. Default 20000, clamped to 1000–60000; truncation keeps the tail (the final answer).'
+          }
+        },
+        required: ['laneId']
       }
     },
     {

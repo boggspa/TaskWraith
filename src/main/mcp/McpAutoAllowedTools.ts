@@ -158,7 +158,13 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   'canvas_console',
   // Thread Introspection read-only verbs — bounded pack metadata / full pack read.
   'tw_introspection_list',
-  'tw_introspection_read'
+  'tw_introspection_read',
+  // Agent-programmed-graph reads: a bounded JOIN on lane settlement and a
+  // structured lane-output fetch. Neither mutates anything — await polls the
+  // persisted round's lane statuses; lane_result reads durable transcript
+  // messages the caller's prompts already receive via shared history.
+  'ensemble_await',
+  'ensemble_lane_result'
 ])
 
 export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([

@@ -396,6 +396,27 @@ export const GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V3_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+/**
+ * Gateway-v4 additions: the agent-programmed-graph primitives — a bounded
+ * JOIN (`ensemble_await`) and a structured lane READ (`ensemble_lane_result`).
+ * With `ensemble_fanout` these let a Boss express planner → workers → join →
+ * synthesize → gate → retry entirely in tool calls; no graph-authoring UI.
+ *
+ * Hidden rather than direct, like every other specialist capability: the
+ * small direct gateway surface stays small, and the frozen v1–v3 snapshots
+ * stay untouched so receipted sessions keep the exact surface they were born
+ * with.
+ */
+export const GATEWAY_V4_ADDED_TOOL_NAMES = Object.freeze([
+  'ensemble_await',
+  'ensemble_lane_result'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V4_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -408,6 +429,7 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v4') return GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v3') return GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v2') return GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
   return GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
@@ -420,7 +442,10 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-gateway-v2': GATEWAY_MCP_ADVERTISE_TOOLS,
   // v3 advertises the same tiny direct surface as v1/v2 — only the hidden
   // universe behind capability_search grew.
-  'taskwraith-gateway-v3': GATEWAY_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v3': GATEWAY_MCP_ADVERTISE_TOOLS,
+  // v4 likewise: direct surface unchanged; hidden universe adds the
+  // await/lane-result graph primitives.
+  'taskwraith-gateway-v4': GATEWAY_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,
   readonly TaskWraithMcpAdvertisedToolName[]
