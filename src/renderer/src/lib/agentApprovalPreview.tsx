@@ -162,6 +162,30 @@ const canvasEvalScriptFromPreview = (value: unknown, depth = 0): string => {
   return ''
 }
 
+/**
+ * Make invisible and direction-altering code points visible in a short field.
+ *
+ * Same reviewer as the canvas-eval exact review, without the line numbering.
+ * A recipient address is exactly the kind of string it was written for: a
+ * bidi override or a zero-width joiner inside an address renders as something
+ * other than what will be written to the mailbox.
+ */
+export const formatApprovalFieldForReview = (value: string): string => {
+  let output = ''
+  for (const character of value) output += visibleCodePoint(character)
+  return output
+}
+
+/** Outlook approval fields, in the order a reviewer reads them. */
+const OUTLOOK_FIELD_ROWS: ReadonlyArray<{ key: string; label: string }> = [
+  { key: 'to', label: 'To' },
+  { key: 'cc', label: 'Cc' },
+  { key: 'subject', label: 'Subject' },
+  { key: 'window', label: 'When' },
+  { key: 'location', label: 'Location' },
+  { key: 'detail', label: 'Detail' }
+]
+
 const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
   if (!preview || typeof preview !== 'object') return null
   const command = typeof preview.command === 'string' ? preview.command : ''
@@ -200,33 +224,36 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
       : ''
   const kind = typeof preview.kind === 'string' ? preview.kind : 'approval'
   const launchContextPreview = formatLaunchContextPreview(preview)
-  // Outlook drafts: WHO receives this is the fact the approval turns on, so it
-  // gets its own rows rather than living inside the grey prompt paragraph. The
-  // main process normalizes recipients with the same parser the write uses, so
-  // these rows cannot disagree with what is created.
-  const mailFields = (() => {
+  // Outlook: every field the call actually writes gets its own row. Showing
+  // only subject+recipients let an event's 32k body and its location through
+  // unseen, and burying recipients in the grey prompt paragraph is how a cc
+  // goes unread. Values run through the codepoint reviewer so a bidi override
+  // inside an address cannot render as a different address.
+  const outlookFields = (() => {
     if (!toolName.startsWith('outlook_')) return null
     const params =
       preview.params && typeof preview.params === 'object' && !Array.isArray(preview.params)
         ? (preview.params as Record<string, unknown>)
         : null
     if (!params) return null
-    const addresses = (value: unknown): string =>
+    const flatten = (value: unknown): string =>
       Array.isArray(value)
         ? value.map((entry) => String(entry)).join(', ')
         : typeof value === 'string'
           ? value
           : ''
-    const text = (value: unknown): string => (typeof value === 'string' ? value : '')
-    const fields = {
-      to: addresses(params.to),
-      cc: addresses(params.cc),
-      subject: text(params.subject),
-      body: text(params.body)
-    }
-    const isDraft = toolName === 'outlook_create_draft'
-    if (!isDraft && !fields.to && !fields.cc && !fields.subject && !fields.body) return null
-    return { ...fields, isDraft }
+    const rows = OUTLOOK_FIELD_ROWS.map(({ key, label }) => ({
+      label,
+      // A draft with no recipients is a fact worth stating, not a row that
+      // quietly disappears.
+      value:
+        key === 'to' && toolName === 'outlook_create_draft'
+          ? formatApprovalFieldForReview(flatten(params.to)) || '(no recipients)'
+          : formatApprovalFieldForReview(flatten(params[key]))
+    })).filter((row) => row.value)
+    const body = typeof params.body === 'string' ? params.body : ''
+    if (rows.length === 0 && !body) return null
+    return { rows, body }
   })()
   const hasDetails =
     command ||
@@ -285,30 +312,16 @@ const renderAgentApprovalPreview = (preview: any): React.JSX.Element | null => {
           <pre>{launchContextPreview}</pre>
         </div>
       )}
-      {mailFields && (mailFields.isDraft || mailFields.to) && (
-        <div className="agent-approval-preview-row">
-          <span>To</span>
-          {/* Stated rather than hidden: a draft with no recipients is a fact
-            worth seeing, not a row that quietly disappears. */}
-          <code>{mailFields.to || '(no recipients)'}</code>
+      {outlookFields?.rows.map((row) => (
+        <div className="agent-approval-preview-row" key={row.label}>
+          <span>{row.label}</span>
+          <code>{row.value}</code>
         </div>
-      )}
-      {mailFields?.cc && (
-        <div className="agent-approval-preview-row">
-          <span>Cc</span>
-          <code>{mailFields.cc}</code>
-        </div>
-      )}
-      {mailFields?.subject && (
-        <div className="agent-approval-preview-row">
-          <span>Subject</span>
-          <code>{mailFields.subject}</code>
-        </div>
-      )}
-      {mailFields?.body && (
+      ))}
+      {outlookFields?.body && (
         <div className="agent-approval-preview-block">
           <span>Message</span>
-          <pre>{mailFields.body}</pre>
+          <pre>{outlookFields.body}</pre>
         </div>
       )}
       {riskLabels.length > 0 && (

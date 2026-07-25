@@ -48,6 +48,24 @@ export type McpToolApprovalPreviewer = (
  * Host state and filesystem projections are explicit dependencies so the
  * classification and preview policy stays independently testable.
  */
+/**
+ * How much agent-authored mail/event text the approval renders inline.
+ *
+ * The executor accepts far more than this (100k for a draft body, 32k for an
+ * event). Rather than silently showing a prefix — which let 2k of innocuous
+ * text stand in for 100k of anything — the remainder is DISCLOSED with an
+ * exact count, so a reviewer can decline what they cannot see.
+ */
+export const OUTLOOK_PREVIEW_BODY_LIMIT = 8_000
+
+export function outlookPreviewBody(value: string): string {
+  if (value.length <= OUTLOOK_PREVIEW_BODY_LIMIT) return value
+  const hidden = value.length - OUTLOOK_PREVIEW_BODY_LIMIT
+  return `${value.slice(0, OUTLOOK_PREVIEW_BODY_LIMIT)}\n\n[${hidden.toLocaleString(
+    'en-US'
+  )} more characters WILL BE WRITTEN but are not shown here]`
+}
+
 export function createMcpToolApprovalPreviewer(
   deps: McpToolApprovalPreviewDependencies
 ): McpToolApprovalPreviewer {
@@ -59,9 +77,13 @@ export function createMcpToolApprovalPreviewer(
     parentProvider = 'gemini'
   ): McpToolApprovalPreview {
     const providerName = deps.providerDisplayName(parentProvider)
-    const intent = deps.optionalString(
+    // Clamped: `optionalString` does not truncate, and this string is
+    // prepended to EVERY tool's approval body. An agent-authored intent of
+    // arbitrary length is a lever on the size of the approval card itself.
+    const rawIntent = deps.optionalString(
       args.intent || args.summary || args.reason || args.description
     )
+    const intent = rawIntent ? rawIntent.slice(0, 600) : undefined
     const intentBody = intent ? `Intent: ${intent}\n\n` : ''
     const intentPreview = intent ? { intent } : {}
 
@@ -73,7 +95,7 @@ export function createMcpToolApprovalPreviewer(
       const to = outlookRecipientList(args.to)
       const cc = outlookRecipientList(args.cc)
       const subject = deps.optionalString(args.subject) || '(no subject)'
-      const body = (deps.optionalString(args.body) || '').slice(0, 2_000)
+      const body = outlookPreviewBody(deps.optionalString(args.body) || '')
       const recipientLines =
         `To: ${to.length > 0 ? to.join(', ') : '(no recipients)'}\n` +
         // cc is only shown when present, but it is NEVER omitted when set —
@@ -100,14 +122,21 @@ export function createMcpToolApprovalPreviewer(
       const window = `${deps.optionalString(args.startIso) || '?'} → ${
         deps.optionalString(args.endIso) || '?'
       }`
+      // location and body are written to the calendar entry, so they belong in
+      // the approval. Showing only subject+window meant 32k of agent-authored
+      // event text went in unseen.
+      const location = deps.optionalString(args.location) || ''
+      const body = outlookPreviewBody(deps.optionalString(args.body) || '')
       return {
         title: `Approve ${providerName} calendar entry`,
-        body: `${intentBody}Creates a calendar entry with no attendees, so no invitations are sent.\n${subject}\n${window}`,
+        body: `${intentBody}Creates a calendar entry with no attendees, so no invitations are sent.\n${subject}\n${window}${
+          location ? `\n${location}` : ''
+        }${body ? `\n\n${body}` : ''}`,
         service: 'mcpTools',
         preview: {
           kind: 'tool',
           toolName,
-          params: { subject, window, location: deps.optionalString(args.location) },
+          params: { subject, window, location, body },
           ...intentPreview
         }
       }

@@ -145,6 +145,41 @@ describe('outlook draft approval', () => {
     expect(markup).toContain('Line one\nLine two')
   })
 
+  it('makes invisible and direction-altering code points visible in an address', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool',
+        toolName: 'outlook_create_draft',
+        // U+202E flips rendering direction; U+200B is invisible. Left literal,
+        // the row would not show the address that gets written.
+        params: { to: ['bob\u202E@example.com', 'ca\u200Brol@example.com'], subject: 'S' }
+      })!
+    )
+
+    expect(markup).toContain('U+202E')
+    expect(markup).toContain('U+200B')
+    expect(markup).not.toContain('\u202E')
+  })
+
+  it('shows the location and window of a calendar entry', () => {
+    const markup = renderToStaticMarkup(
+      renderAgentApprovalPreview({
+        kind: 'tool',
+        toolName: 'outlook_create_event',
+        params: {
+          subject: 'Focus block',
+          window: '2026-08-01T09:00 → 2026-08-01T10:00',
+          location: 'Room 4',
+          body: 'Agenda: everything.'
+        }
+      })!
+    )
+
+    expect(markup).toContain('Room 4')
+    expect(markup).toContain('2026-08-01T09:00')
+    expect(markup).toContain('Agenda: everything.')
+  })
+
   it('states an empty recipient list instead of hiding the row', () => {
     const markup = renderToStaticMarkup(
       renderAgentApprovalPreview({

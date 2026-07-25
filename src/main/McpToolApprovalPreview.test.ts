@@ -360,3 +360,63 @@ describe('createMcpToolApprovalPreviewer', () => {
     })
   })
 })
+
+describe('outlook approval discloses what it cannot show', () => {
+  it('states the exact number of body characters it is not rendering', () => {
+    // The executor accepts 100k; showing a silent 8k prefix would let an
+    // innocuous opening stand in for anything that follows it.
+    const body = 'a'.repeat(20_000)
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'S', body },
+      '/repo',
+      context
+    )
+    expect(preview.body).toContain('12,000 more characters WILL BE WRITTEN but are not shown')
+    expect((preview.preview as { params: { body: string } }).params.body).toContain(
+      '12,000 more characters'
+    )
+  })
+
+  it('shows a short body verbatim with no disclosure noise', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'S', body: 'Short and complete.' },
+      '/repo',
+      context
+    )
+    expect(preview.body).toContain('Short and complete.')
+    expect(preview.body).not.toContain('not shown here')
+  })
+
+  it('shows the location and body a calendar entry will carry', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_event',
+      {
+        subject: 'Focus block',
+        startIso: '2026-08-01T09:00',
+        endIso: '2026-08-01T10:00',
+        location: 'Room 4',
+        body: 'Agenda: everything.'
+      },
+      '/repo',
+      context
+    )
+    expect(preview.body).toContain('Room 4')
+    expect(preview.body).toContain('Agenda: everything.')
+    expect(preview.preview).toMatchObject({
+      params: { location: 'Room 4', body: 'Agenda: everything.' }
+    })
+  })
+
+  it('clamps an agent-authored intent so it cannot inflate any approval card', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'run_shell_command',
+      { command: 'ls', intent: 'x'.repeat(5_000) },
+      '/repo',
+      context
+    )
+    expect(preview.body.length).toBeLessThan(1_000)
+    expect((preview.preview as { intent: string }).intent).toHaveLength(600)
+  })
+})

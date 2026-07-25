@@ -8294,6 +8294,18 @@ button.composer-run-timecode.is-open {
   overflow-y: auto;
 }
 
+/* The prompt body is agent-authored (`intent` and a draft body both land
+ * here), and since it became `pre-wrap` its content height is its own
+ * minimum: a body of newlines grew this flex child to 5354px inside a 564px
+ * clipped card, pushing the recipient rows AND the Approve button out of the
+ * box with no way to scroll back. Bounded and scrollable, so no amount of
+ * agent text can push the decision controls out of view. */
+.composer-permission-card--overlay .composer-permission-message {
+  min-height: 0;
+  max-height: 22vh;
+  overflow-y: auto;
+}
+
 .composer-permission-card--overlay .composer-permission-note {
   padding: var(--space-xs, 8px) var(--space-sm, 10px);
 }
