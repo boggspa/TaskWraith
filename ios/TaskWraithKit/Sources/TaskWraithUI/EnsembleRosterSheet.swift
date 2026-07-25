@@ -423,7 +423,27 @@ public struct EnsembleRosterSheet: View {
                     .accessibilityValue(participantAccessibilityValue(entry))
                     // Compact anchored editor (Electron chip-popover parity) —
                     // replaces the old full-height RosterChipEditor sheet.
-                    .popover(isPresented: editorPresentedBinding(for: entry.id)) {
+                    //
+                    // Leading-anchored for the same reason as the composer's
+                    // roster chip: an above-anchored balloon has to fit between
+                    // its anchor and the top of the screen, and the FIRST rows
+                    // of this list sit near the top of the sheet with almost
+                    // nothing above them. Opening sideways spends the long axis
+                    // and the panel is centred vertically on its row.
+                    //
+                    // The anchor here is a full-width List row, not a small
+                    // chip, so this only buys space where the sheet is narrower
+                    // than the screen — an iPad form sheet, which has backdrop
+                    // either side. On a phone the sheet is full-width, there is
+                    // nowhere to the leading side to go, and the system falls
+                    // back to placing it vertically as before: no worse, but no
+                    // better either. The 0.85 panel scale is what carries that
+                    // case.
+                    .popover(
+                        isPresented: editorPresentedBinding(for: entry.id),
+                        attachmentAnchor: .rect(.bounds),
+                        arrowEdge: .leading
+                    ) {
                         RosterParticipantEditorPopover(
                             entry: editingEntry ?? entry,
                             catalogs: catalogs,
