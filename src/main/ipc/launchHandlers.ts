@@ -5,7 +5,7 @@ import type { ProviderId } from '../store/types'
 import type { LaunchManager } from '../launch/LaunchManager'
 import type { LaunchAttempt } from '../launch/types'
 
-const PROVIDERS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+const PROVIDERS = new Set<ProviderId>(['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'pi'])
 const ACTIVE_ATTEMPT_STATUSES = new Set<LaunchAttempt['status']>([
   'starting',
   'running',

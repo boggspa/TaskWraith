@@ -409,6 +409,7 @@ function providerDisplayName(provider: unknown, fallback = 'Sub-thread'): string
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'gemini') return 'Gemini'
   if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
   return fallback
 }
 

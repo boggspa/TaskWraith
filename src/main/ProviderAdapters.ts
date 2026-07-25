@@ -98,6 +98,7 @@ export function providerLabel(provider: ProviderId): string {
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
   return 'Gemini'
 }
 
@@ -313,6 +314,51 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       }
+    }
+  }
+  if (provider === 'pi') {
+    // Pi has no built-in permission system; containment is TaskWraith-owned
+    // argv (tool allowlist by posture, project-config discovery disabled) plus
+    // the BYOK env firewall. Native tools are not individually mediated —
+    // write posture is the diff-review model, like Grok write mode.
+    return {
+      provider,
+      label: providerLabel(provider),
+      transport: 'pi-cli',
+      runChannel: 'run-agent',
+      capabilitySource: 'provider',
+      features: {
+        persistentSessions: true,
+        appManagedApprovals: false,
+        workspaceGrants: false,
+        agentBenchMcpBridge: false,
+        providerManagedMcp: false,
+        nativeThreadTools: true,
+        hostCommandFallback: false
+      },
+      capabilities: {
+        approvalModes: ['plan', 'default'],
+        // Pi's per-model thinking maps are sparse (many levels resolve to
+        // null); v1 defers to pi's own per-model default instead of an
+        // effort picker.
+        reasoningEffort: false,
+        speedTiers: [],
+        imageAttachments: false,
+        contextInjection: false,
+        sessionResumption: true,
+        perThreadMcp: false,
+        assistantTextStreaming: 'token'
+      },
+      capabilityCaveats: [
+        {
+          id: 'pi-tool-allowlist-posture',
+          severity: 'info',
+          capability: 'approvalModes',
+          title: 'Pi posture rides its tool allowlist',
+          message:
+            'Pi ships no permission prompts. Plan seats run with read-only built-ins (read, grep, find, ls); write-capable seats add bash, edit and write without per-call approval — review changes via diffs. The TaskWraith MCP bridge is not attached in this version.'
+        }
+      ]
     }
   }
   if (provider === 'antigravity') {

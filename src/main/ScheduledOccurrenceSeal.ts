@@ -59,7 +59,8 @@ const PROVIDER_IDS = {
   grok: true,
   cursor: true,
   ollama: true,
-  antigravity: true
+  antigravity: true,
+  pi: true
 } as const satisfies Record<ProviderId, true>
 
 const AGENTIC_SERVICE_AUTHORITY_FIELDS = {

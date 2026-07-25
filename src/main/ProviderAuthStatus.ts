@@ -35,7 +35,9 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   ollama: 'http',
   // Opt-in antigravity wraps the user's official `agy` CLI (neutral placeholder;
   // real transport wiring lands with the runtime slice).
-  antigravity: 'cli'
+  antigravity: 'cli',
+  // Pi is a spawned CLI; auth is BYOK env keys, never an interactive login.
+  pi: 'cli'
 }
 
 const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -50,7 +52,9 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // Phase 1 local chat is read-only/no-tools.
   ollama: false,
   // No runtime/approval flow yet (opt-in provider).
-  antigravity: false
+  antigravity: false,
+  // Pi ships no permission prompts; posture is enforced via its tool allowlist.
+  pi: false
 }
 
 const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -68,7 +72,9 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // Ollama exposes a TaskWraith-local read-only tool loop through the adapter.
   ollama: true,
   // No TaskWraith MCP gateway for the opt-in provider yet.
-  antigravity: false
+  antigravity: false,
+  // Pi has no MCP support (extensions are its plugin story); no bridge in v1.
+  pi: false
 }
 
 export function buildProviderAuthStatusV2(input: ProviderAuthStatusV2Input): ProviderAuthStatusV2 {

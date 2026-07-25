@@ -111,8 +111,8 @@ export interface RemoteFirstLaunchStateInput {
   providerSetup?: readonly TaskWraithPluginActivatedProviderSetup[]
 }
 
-const PROVIDER_ORDER: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama']
-const OPTIONAL_PROVIDERS = new Set<ProviderId>(['kimi', 'cursor', 'grok', 'ollama'])
+const PROVIDER_ORDER: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi']
+const OPTIONAL_PROVIDERS = new Set<ProviderId>(['kimi', 'cursor', 'grok', 'ollama', 'pi'])
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   gemini: 'Gemini is retired for new runs. Existing Gemini chats remain visible in history.',
@@ -129,7 +129,9 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
     'Local Ollama models run on the Mac with no cloud account required. Pull at least one local model on the Mac.',
   // Opt-in provider; never listed in PROVIDER_ORDER, so this placeholder is not
   // surfaced. Real onboarding copy lives in the buried Settings card slice.
-  antigravity: 'Antigravity.'
+  antigravity: 'Antigravity.',
+  pi:
+    'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.'
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -144,7 +146,8 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
   ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.',
   // Opt-in provider; not in PROVIDER_ORDER, so this placeholder is not surfaced.
-  antigravity: ''
+  antigravity: '',
+  pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.'
 }
 
 export function buildRemoteFirstLaunchState(
@@ -406,6 +409,8 @@ function providerSetupHintsForProvider(
 
 function providerLabel(provider: ProviderId): string {
   switch (provider) {
+    case 'pi':
+      return 'Pi'
     case 'codex':
       return 'Codex'
     case 'claude':

@@ -181,6 +181,10 @@ export type ComposerStyle =
 // always a known/decode id, but offer/run eligibility is gated by
 // isAntigravityOptInEnabled(settings) — it is deliberately NOT in
 // LIVE_SELECTABLE_PROVIDER_IDS, any provider ORDER, FirstLaunch, or offer list.
+// `pi` is the Pi coding agent seat: BYOK env-key upstreams only, model surface
+// scoped by src/main/pi/PiModelPolicy (never a second door to first-party
+// hosted models). It IS live-selectable; with zero configured upstream keys it
+// has zero models and the configured-provider snapshot hides it.
 export type ProviderId =
   | 'gemini'
   | 'codex'
@@ -190,6 +194,7 @@ export type ProviderId =
   | 'cursor'
   | 'ollama'
   | 'antigravity'
+  | 'pi'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -1846,6 +1851,7 @@ export type ProviderAdapterTransport =
   | 'cursor-cli'
   | 'ollama-http'
   | 'antigravity-cli'
+  | 'pi-cli'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 

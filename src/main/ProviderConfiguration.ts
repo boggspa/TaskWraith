@@ -29,6 +29,8 @@ export interface DetectConfiguredProvidersDependencies {
   getOllamaStatus?: (
     settings: AppSettings
   ) => Promise<{ available: boolean; modelCount: number }>
+  /** Count of Pi upstreams with a stored BYOK key; 0 keeps pi unconfigured. */
+  getPiConfiguredUpstreamCount?: () => number
   /** Official `agy models` probe; only called after opt-in or API-key admission. */
   getAntigravityConfiguredModels?: (settings: AppSettings) => Promise<ConfiguredProviderModel[]>
   /** Combined authenticated agy + Gemini API catalog; called only after lane admission. */
@@ -181,6 +183,22 @@ function configuredProviderProbes(
         resolveProviderBinary(provider).then((resolved) => ({ configured: Boolean(resolved.binaryPath) }))
     })
   }
+  probes.push({
+    provider: 'pi',
+    // Configured = pi binary present AND at least one allowlisted upstream key
+    // stored. Zero keys means zero models, so admitting on binary alone would
+    // surface a picker entry that cannot run anything — and for the same
+    // reason this probe is NOT fail-open: an unresolved probe must leave pi
+    // out of the strict picker snapshot rather than optimistically admit a
+    // model-less seat (the AntiGravity `includeWhenUnknown: false` rule).
+    includeWhenUnknown: false,
+    run: () =>
+      resolveProviderBinary('pi').then((resolved) => ({
+        configured:
+          Boolean(resolved.binaryPath) &&
+          (dependencies.getPiConfiguredUpstreamCount?.() ?? 0) > 0
+      }))
+  })
   let apiKeyConfigured = false
   try {
     apiKeyConfigured = hasConfiguredGeminiApiKey(

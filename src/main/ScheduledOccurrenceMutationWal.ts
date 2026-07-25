@@ -148,7 +148,8 @@ const PROVIDER_IDS = new Set([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 const PERMISSION_PRESET_IDS = new Set([
   'read_only',

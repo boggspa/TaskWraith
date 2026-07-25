@@ -73,7 +73,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'ollama',
   // Known/decode id. Offer/run eligibility is gated separately (opt-in); being
   // here only lets persisted records with provider 'antigravity' decode.
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
@@ -229,7 +230,7 @@ export function assertProviderId(value: unknown): ProviderId {
 }
 
 export function availableProviderIds(): ProviderId[] {
-  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity']
+  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity', 'pi']
 }
 
 /**
@@ -593,7 +594,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the

@@ -47,6 +47,7 @@ import type {
   PromoteQueuedJobForSteerResult
 } from '../main/services/RunLifecycleCoordinator'
 import { createAntigravityGeminiApiSecretBridge } from './antigravityGeminiApiSecretContract'
+import { createPiKeyBridge } from './piKeyContract'
 import type {
   ExecutionGraphLayout,
   ExecutionGraphRevision
@@ -1222,6 +1223,7 @@ const api = {
     ipcRenderer.invoke('set-extension-secret', ref, value),
   clearExtensionSecret: (ref: any) => ipcRenderer.invoke('clear-extension-secret', ref),
   ...createAntigravityGeminiApiSecretBridge(ipcRenderer),
+  ...createPiKeyBridge(ipcRenderer),
   getManagedPolicyStatus: () => ipcRenderer.invoke('get-managed-policy-status'),
   getHandoffCards: (filter: any = {}) => ipcRenderer.invoke('get-handoff-cards', filter),
   saveHandoffCard: (card: any) => ipcRenderer.invoke('save-handoff-card', card),

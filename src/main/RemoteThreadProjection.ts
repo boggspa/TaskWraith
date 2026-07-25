@@ -93,7 +93,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   grok: 'Grok',
   cursor: 'Cursor',
   ollama: 'Ollama',
-  antigravity: 'Antigravity'
+  antigravity: 'Antigravity',
+  pi: 'Pi'
 }
 
 const FALLBACK_FX_RATES_PER_USD: Record<RemoteDisplayCurrency, number> = {

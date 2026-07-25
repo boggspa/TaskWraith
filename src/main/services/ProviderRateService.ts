@@ -714,6 +714,33 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
   // the key lane genuinely bills per token, so these are the user's ACTUAL
   // billing basis (Gemini API paid tier, ≤200K-prompt rate where tiered) —
   // still surfaced as an estimate because TaskWraith never sees the invoice.
+  // Pi seat: BYOK upstreams with wildly different rates; rows below cover the
+  // curated defaults and the FIRST row is the fallback estimate for any other
+  // pi wire id. Rates from pi 0.82.1's bundled catalog (per-million USD).
+  pi: {
+    provider: 'pi',
+    pricingUrl: 'https://pi.dev/docs/latest/providers',
+    models: [
+      {
+        modelId: 'deepseek/deepseek-v4-flash',
+        inputUsdPerMillion: 0.14,
+        outputUsdPerMillion: 0.28,
+        cachedInputUsdPerMillion: 0.0028,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Pi default model (DeepSeek API direct). First row = fallback rate for unknown pi ids.'
+      },
+      {
+        modelId: 'deepseek/deepseek-v4-pro',
+        inputUsdPerMillion: 0.435,
+        outputUsdPerMillion: 0.87,
+        cachedInputUsdPerMillion: 0.003625,
+        sourceUrl: 'https://pi.dev/docs/latest/providers',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'DeepSeek V4 Pro via the Pi seat.'
+      }
+    ]
+  },
   // agy-lane records (non-prefixed ids) fall back to the first row as a
   // projected API-equivalent, same as the other subscription providers.
   // Row order matters twice: unknown ids fall back to the FIRST row, and
@@ -924,7 +951,8 @@ const providerIds = new Set<ProviderId>([
   // Without this, a persisted probe containing the (now probed) AntiGravity
   // table would fail parsing wholesale — parsePersistedProviderRateProbe
   // returns null for the ENTIRE cache on any unknown provider id.
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

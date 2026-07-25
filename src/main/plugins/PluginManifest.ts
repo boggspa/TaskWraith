@@ -94,7 +94,8 @@ const PROVIDER_IDS = new Set([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 const AGENTIC_SERVICE_IDS = new Set([
   'shellCommands',

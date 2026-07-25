@@ -167,6 +167,8 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
   /** Sticky marker for conflicting provisional result/response statuses. */
   deferredTerminalConflict?: boolean
   assistantText: string
+  /** Per-run Pi RPC reducer (usage summing, settle detection). */
+  piReducer?: import('./pi/PiRpc').PiRpcTurnReducer
   /** Token-sized Kimi ACP thinking deltas awaiting their next UI/ledger batch. */
   kimiThinkingPendingText?: string
   kimiThinkingFlushTimer?: NodeJS.Timeout

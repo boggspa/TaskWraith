@@ -33,5 +33,6 @@ function providerDisplayName(provider: ProviderId): string {
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
   return String(provider)
 }

@@ -44,6 +44,12 @@ export const PROVIDER_INSTALL_COMMANDS: readonly ProviderInstallEntry[] = [
     source: 'xAI'
   },
   {
+    id: 'pi',
+    label: 'Pi',
+    command: 'npm i -g @earendil-works/pi-coding-agent',
+    source: 'Earendil'
+  },
+  {
     id: 'ollama',
     label: 'Ollama',
     command: 'curl -fsSL https://ollama.com/install.sh | sh',

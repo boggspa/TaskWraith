@@ -47,7 +47,8 @@ const PROVIDERS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 
 const CONVENTION_ENTRY_KINDS = new Set<RepoConventionIndexEntryKind>([

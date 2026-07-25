@@ -6,6 +6,8 @@ type ArgSpec =
   | 'string'
   | 'nonEmptyString'
   | 'antigravityGeminiApiKey'
+  | 'piUpstreamId'
+  | 'piApiKey'
   | 'optionalString'
   | 'number'
   | 'optionalNumber'
@@ -33,6 +35,17 @@ type ArgSpec =
   | 'optionalCanvasSketchArgs'
   | 'canvasBounds'
 
+// Pi BYOK upstream ids accepted over IPC; must mirror PI_ALLOWED_UPSTREAMS in
+// src/main/pi/PiModelPolicy.ts (this module stays import-light by design).
+const PI_UPSTREAMS = new Set([
+  'deepseek',
+  'zai',
+  'qwen-token-plan',
+  'minimax',
+  'mistral',
+  'groq',
+  'cerebras'
+])
 // Structural IPC/decode allowlist only. Live run/authority admission is enforced
 // downstream by the canonical selectable-provider contract.
 const PROVIDERS = new Set([
@@ -43,7 +56,8 @@ const PROVIDERS = new Set([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 const APPROVAL_ACTIONS = new Set([
   'accept',
@@ -267,6 +281,10 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'antigravity-gemini-api:set-secret': ['antigravityGeminiApiKey'],
   'antigravity-gemini-api:clear-secret': [],
   'antigravity-gemini-api:get-discovery-outcome': [],
+  'pi:get-key-status': [],
+  'pi:set-upstream-key': ['piUpstreamId', 'piApiKey'],
+  'pi:clear-upstream-key': ['piUpstreamId'],
+  'pi:clear-all-keys': [],
   'get-managed-policy-status': [],
   // 1.0.6-CRUX42 — open a Terminal running a provider's interactive CLI login.
   'provider:open-login-terminal': ['provider'],
@@ -590,6 +608,15 @@ function validateArg(channel: string, spec: ArgSpec, value: unknown, index: numb
     (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value.trim(), 'utf8') > 4_096)
   ) {
     throw new Error(`${label} must be a non-empty Gemini API key of at most 4096 bytes.`)
+  }
+  if (spec === 'piUpstreamId' && (typeof value !== 'string' || !PI_UPSTREAMS.has(value))) {
+    throw new Error(`${label} must be a supported Pi upstream id.`)
+  }
+  if (
+    spec === 'piApiKey' &&
+    (typeof value !== 'string' || !value.trim() || Buffer.byteLength(value.trim(), 'utf8') > 4_096)
+  ) {
+    throw new Error(`${label} must be a non-empty API key of at most 4096 bytes.`)
   }
   if (
     (spec === 'workspacePath' || spec === 'filePath' || spec === 'runId' || spec === 'chatId') &&

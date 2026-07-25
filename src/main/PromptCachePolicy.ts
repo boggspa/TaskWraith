@@ -18,7 +18,8 @@ const PROVIDERS: ProviderId[] = [
   'cursor',
   'ollama',
   'gemini',
-  'antigravity'
+  'antigravity',
+  'pi'
 ]
 const PROMPT_CACHE_MODES = new Set<PromptCacheMode>(['off', 'auto', 'explicit'])
 export const DEFAULT_PROMPT_CACHE_SETTINGS: Required<Pick<PromptCacheSettings, 'enabled'>> &
@@ -32,7 +33,9 @@ export const DEFAULT_PROMPT_CACHE_SETTINGS: Required<Pick<PromptCacheSettings, '
     cursor: { mode: 'off' },
     ollama: { mode: 'off' },
     gemini: { mode: 'off' },
-    antigravity: { mode: 'off' }
+    antigravity: { mode: 'off' },
+    // Pi's upstreams cache provider-side with no client control.
+    pi: { mode: 'off' }
   }
 }
 
@@ -141,6 +144,17 @@ const STATIC_CAPABILITIES: StaticCacheCapability[] = [
     guaranteeLabel: 'Automatic',
     detail:
       'Gemini API key runs use Google-managed implicit caching; the official agy CLI lane is an opaque transport. TaskWraith records cache tokens only where the transport reports them and cannot force cache breakpoints on either lane.',
+    controllable: false,
+    supportsModeControl: false
+  },
+  {
+    provider: 'pi',
+    label: 'Pi',
+    transport: 'cli-opaque',
+    guaranteeTier: 'automatic-observed',
+    guaranteeLabel: 'Automatic',
+    detail:
+      'Pi upstreams (DeepSeek, GLM, Qwen, MiniMax and friends) apply their own provider-side caching where supported; pi reports cache-read tokens per turn and TaskWraith records them as observed. No cache breakpoints can be forced.',
     controllable: false,
     supportsModeControl: false
   }

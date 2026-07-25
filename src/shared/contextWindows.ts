@@ -12,6 +12,7 @@ export type ContextWindowProviderId =
   | 'cursor'
   | 'ollama'
   | 'antigravity'
+  | 'pi'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -31,6 +32,23 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'gemini-api:gemini-2.5-flash': 1_048_576,
   'gemini-api:gemini-2.5-flash-lite': 1_048_576,
   'gemini-api:gemini-2.0-flash': 1_048_576,
+  // Pi seat wire ids (`<upstream>/<model>`, pi 0.82.1 bundled catalog).
+  'deepseek/deepseek-v4-pro': 1_000_000,
+  'deepseek/deepseek-v4-flash': 1_000_000,
+  'zai/glm-5.2': 1_000_000,
+  'zai/glm-5.1': 200_000,
+  'zai/glm-4.7': 204_800,
+  'qwen-token-plan/qwen3.7-max': 1_000_000,
+  'qwen-token-plan/qwen3.7-plus': 1_000_000,
+  'qwen-token-plan/qwen3.8-max-preview': 1_000_000,
+  'minimax/MiniMax-M3': 1_000_000,
+  'minimax/MiniMax-M2.7': 204_800,
+  'mistral/devstral-2512': 262_144,
+  'mistral/mistral-medium-3.5': 262_144,
+  'groq/openai/gpt-oss-120b': 131_072,
+  'groq/qwen/qwen3-32b': 131_072,
+  'cerebras/zai-glm-4.7': 131_072,
+  'cerebras/gpt-oss-120b': 131_072,
   // Codex
   // GPT-5.6 trio (GA 2026-07-09): official raw API window is 1,050,000 on all
   // three (developers.openai.com; TaskWraith's context-config override raises
@@ -124,7 +142,10 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   // Antigravity's gemini-api lane runs Gemini wire models (1M family window).
   // Pre-fix this fell through to the generic 200k floor, so the meter showed a
   // ~5x-inflated percent for antigravity chats.
-  antigravity: 1_048_576
+  antigravity: 1_048_576,
+  // Pi's default model (DeepSeek V4) carries a 1M window; per-model entries
+  // below cover the smaller GLM/Mistral/Groq rows so this floor rarely fires.
+  pi: 1_000_000
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(

@@ -1585,6 +1585,15 @@ declare global {
       ) => Promise<AntigravityGeminiApiSecretMutationResult>
       clearAntigravityGeminiApiSecret: () => Promise<AntigravityGeminiApiSecretMutationResult>
       getAntigravityGeminiApiDiscoveryOutcome: () => Promise<AntigravityGeminiApiDiscoveryOutcome | null>
+      getPiKeyStatus: () => Promise<import('../main/pi/PiKeyStore').PiKeyStoreStatus>
+      setPiUpstreamKey: (
+        upstream: string,
+        apiKey: string
+      ) => Promise<import('../main/pi/PiKeyStore').PiKeyMutationResult>
+      clearPiUpstreamKey: (
+        upstream: string
+      ) => Promise<import('../main/pi/PiKeyStore').PiKeyMutationResult>
+      clearAllPiKeys: () => Promise<import('../main/pi/PiKeyStore').PiKeyMutationResult>
       getManagedPolicyStatus: () => Promise<Record<string, unknown> | null>
       getHandoffCards: (filter?: HandoffCardFilter) => Promise<HandoffCard[]>
       saveHandoffCard: (

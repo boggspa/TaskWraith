@@ -14,6 +14,8 @@ import {
   isCursorGrok45ModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
+import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
 
 export {
   activeCodexModelRows,
@@ -558,6 +560,17 @@ const KIMI_STATIC_MODELS = [
 /** AntiGravity gemini-api (BYO-key) lane floor — mirrors the renderer's
  * ANTIGRAVITY_MODELS defaults and the contextWindows registrations. Live
  * discovery may widen this; it must never shrink below these rows. */
+// Pi seat picker rows derive from the curated pi-side catalog (single source
+// of truth for wire ids and the policy wall). Context windows live in
+// shared/contextWindows.ts, matching every other provider.
+const PI_STATIC_MODEL_ROWS = PI_STATIC_MODELS.map((model) => ({
+  id: model.wireId,
+  label: model.label,
+  description: `${PI_UPSTREAM_LABELS[model.upstream]} via the Pi CLI (bring your own key)`,
+  ...(model.wireId === PI_DEFAULT_MODEL_WIRE_ID ? { isDefault: true } : {})
+}))
+const PI_MODEL_WIRE_IDS = new Set(PI_STATIC_MODELS.map((model) => model.wireId))
+
 const ANTIGRAVITY_GEMINI_API_STATIC_MODELS = [
   {
     id: 'gemini-api:gemini-2.5-pro',
@@ -782,7 +795,9 @@ export function getStaticProviderModels(
                 ? GROK_STATIC_MODELS
                 : provider === 'cursor'
                   ? CURSOR_STATIC_MODELS
-                  : provider === 'antigravity'
+                  : provider === 'pi'
+                    ? PI_STATIC_MODEL_ROWS
+                    : provider === 'antigravity'
                     // Official agy-CLI rows stay discovery-owned (S4), but the
                     // BYO-key gemini-api sub-lane gets a deterministic static
                     // floor so ensemble catalogs and fallbacks are never
@@ -836,6 +851,16 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'gemini') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GEMINI_DEFAULT_MODEL
     return trimmed
+  }
+  if (provider === 'pi') {
+    // Unknown ids clamp to the curated default: the wall in PiModelPolicy is
+    // the real gate at dispatch, but normalize should never emit an id the
+    // picker would not offer (exact-case membership — pi model ids are
+    // case-sensitive, e.g. MiniMax-M3).
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default') {
+      return PI_DEFAULT_MODEL_WIRE_ID
+    }
+    return PI_MODEL_WIRE_IDS.has(trimmed) ? trimmed : PI_DEFAULT_MODEL_WIRE_ID
   }
   if (provider === 'antigravity') {
     // S3 intentionally has no static AntiGravity model catalogue. Preserve a

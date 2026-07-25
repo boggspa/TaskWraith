@@ -16,6 +16,7 @@ export type RunItemEventProvider =
   | 'cursor'
   | 'ollama'
   | 'antigravity'
+  | 'pi'
 
 export type RunItemEventKind =
   | 'run/started'

@@ -22,7 +22,8 @@ const providerLabels: Record<ProviderId, string> = {
   grok: 'Grok',
   cursor: 'Cursor',
   ollama: 'Ollama',
-  antigravity: 'Antigravity'
+  antigravity: 'Antigravity',
+  pi: 'Pi'
 }
 
 const providerIds = new Set<ProviderId>([
@@ -32,9 +33,10 @@ const providerIds = new Set<ProviderId>([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'pi'
 ])
-const providerMcpMethodPattern = /^(gemini|codex|claude|kimi|grok|cursor|ollama)-mcp\//
+const providerMcpMethodPattern = /^(gemini|codex|claude|kimi|grok|cursor|ollama|pi)-mcp\//
 
 export interface ApprovalTitleBackfillChange {
   index: number

@@ -681,7 +681,8 @@ const providerIds: ProviderId[] = [
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ]
 const LEGACY_TASKWRAITH_FONT_STACK =
   '"SF Pro", "SF Pro Text", "SF Pro Display", -apple-system, BlinkMacSystemFont, "Segoe UI", "Helvetica Neue", Roboto, Arial, sans-serif'
@@ -1960,7 +1961,8 @@ const defaultSettings: AppSettings = {
       grok: 120_000,
       cursor: 120_000,
       ollama: 120_000,
-      antigravity: 120_000
+      antigravity: 120_000,
+      pi: 120_000
     },
     mainAuthorityMs: 60_000
   }

@@ -69,7 +69,9 @@ export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
     // Ollama Phase 1 is read-only/no-approval, but keep the record complete.
     ollama: 120_000,
     // Opt-in antigravity has no approval flow yet; keep the record complete.
-    antigravity: 120_000
+    antigravity: 120_000,
+    // Pi has no approval prompts (tool-allowlist posture); record completeness.
+    pi: 120_000
   },
   mainTimeoutMs: 60_000,
   perKindOverridesMs: {

@@ -249,7 +249,7 @@ export function createCliEnv(
  * is actually handed to spawn, including its per-run routing identity.
  */
 export function createCliProviderRunEnv(input: {
-  provider: 'claude' | 'kimi' | 'grok' | 'cursor'
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'pi'
   command: string
   appRunId: string | null | undefined
   appChatId: string | null | undefined

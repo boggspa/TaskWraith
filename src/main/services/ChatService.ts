@@ -57,7 +57,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 
 export interface CreateSubThreadInput {

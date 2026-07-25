@@ -629,7 +629,8 @@ const RESERVED_DISPLAY_NAMES = new Set([
   'grok',
   'cursor',
   'ollama',
-  'gemini'
+  'gemini',
+  'pi'
 ])
 
 function normalizeDisplayName(value: string): string {

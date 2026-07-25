@@ -1256,6 +1256,17 @@ import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import { cursorDebugEnabled } from './cursorGate'
 import {
+  PiRpcTurnReducer,
+  piPromptCommand,
+  type NormalizedPiRunEvent,
+  type PiUsage
+} from './pi/PiRpc'
+import { buildPiRpcArgs } from './pi/PiCliArgs'
+import { buildPiCredentialEnv, piModelPolicyVerdict, PI_UPSTREAM_LABELS } from './pi/PiModelPolicy'
+import { splitPiWireModelId } from './pi/PiModels'
+import { PiKeyStore } from './pi/PiKeyStore'
+import { registerPiKeyHandlers } from './ipc/piKeyHandlers'
+import {
   cursorEffectiveExitCode,
   cursorEventToRunEvents,
   cursorTerminalCompatOutcome,
@@ -14018,6 +14029,8 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
     }
   },
   getKimiConfiguredStatus: getKimiRosterConfigurationStatus,
+  getPiConfiguredUpstreamCount: () =>
+    piKeyStoreRef ? piKeyStoreRef.getStatus().configuredUpstreams.length : 0,
   getOllamaStatus: async (settings) => {
     const models = await fetchOllamaModels(settings)
     return { available: true, modelCount: models.length }
@@ -15691,6 +15704,142 @@ function maybeLogCursorRawEvent(event: unknown): void {
   }
 }
 
+// Pi RPC stdin closers keyed by appRunId: the terminal `agent_settled` event
+// closes stdin (pi's documented shutdown — it ignores nothing, but EOF is the
+// clean path, verified ~0.6s on 0.82.1) with a SIGKILL backstop so no pi child
+// can ever hang a run.
+const piRunStdinClosers = new Map<string, () => void>()
+
+function piUsageToStats(usage: PiUsage): Record<string, number> {
+  return {
+    input_tokens: usage.inputTokens ?? 0,
+    output_tokens: usage.outputTokens ?? 0,
+    cache_read_input_tokens: usage.cacheReadTokens ?? 0,
+    cache_creation_input_tokens: usage.cacheWriteTokens ?? 0,
+    total_cost_usd: usage.costUsd ?? 0
+  }
+}
+
+let piFallbackToolSeq = 0
+function applyPiRunEvent(state: CliProviderStreamState, evt: NormalizedPiRunEvent) {
+  if (evt.sessionId) updateCliProviderSession(state, evt.sessionId)
+  if (evt.type === 'content' && evt.text) {
+    state.assistantText = `${state.assistantText || ''}${evt.text}`
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'pi',
+      { type: 'content', text: evt.text, provider: 'pi' },
+      state
+    )
+  } else if (evt.type === 'thinking' && evt.text) {
+    accumulateEstimatedStreamChars(state, 'output', evt.text.length)
+    reportGenericLiveEstimate(state)
+    emitCliProviderThinkingEvent(state, evt.text)
+  } else if (evt.type === 'tool_use') {
+    accumulateEstimatedStreamChars(
+      state,
+      'output',
+      (evt.toolName || 'tool').length + visiblePayloadChars(evt.toolInput)
+    )
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'pi',
+      {
+        type: 'tool_use',
+        tool_id: evt.toolId || `pi-tool-${++piFallbackToolSeq}`,
+        tool_name: evt.toolName || 'tool',
+        tool_kind: evt.toolKind,
+        parameters: evt.toolInput || {},
+        provider: 'pi'
+      },
+      state
+    )
+  } else if (evt.type === 'tool_result') {
+    accumulateEstimatedStreamChars(state, 'input', visiblePayloadChars(evt.toolOutput))
+    reportGenericLiveEstimate(state)
+    sendAgentCompatLine(
+      state.sender,
+      'pi',
+      {
+        type: 'tool_result',
+        tool_id: evt.toolId || `pi-tool-${piFallbackToolSeq || ++piFallbackToolSeq}`,
+        status: evt.toolStatus || 'success',
+        output: evt.toolOutput || '',
+        provider: 'pi'
+      },
+      state
+    )
+  } else if (evt.type === 'result') {
+    if (evt.usage) {
+      state.tokenUsage = piUsageToStats(evt.usage)
+      ensembleOrchestratorRef?.reportParticipantTokenUsage(
+        state.appRunId,
+        state.tokenUsage as Record<string, unknown> | undefined,
+        { provider: state.provider, chatId: state.appChatId }
+      )
+      if (!state.ensembleRun) {
+        const soloEvent = soloWorkingTokenTelemetry.report({
+          runId: state.appRunId,
+          chatId: state.appChatId,
+          provider: state.provider,
+          startedAtMs: state.startedAt,
+          stats: state.tokenUsage as Record<string, unknown> | undefined,
+          nowMs: Date.now()
+        })
+        if (soloEvent) broadcastParticipantWorkingTelemetry(soloEvent)
+      }
+    }
+    const failed = evt.status !== 'success'
+    if (failed && evt.text) {
+      sendAgentCompatError(state.sender, 'pi', evt.text, state)
+    }
+    state.terminalResultFailed = failed
+    state.completed = true
+    sendAgentCompatLine(
+      state.sender,
+      'pi',
+      {
+        type: 'result',
+        status: failed ? 'failed' : 'success',
+        subtype: failed ? 'error' : 'success',
+        stats: {
+          ...(state.tokenUsage || {}),
+          duration_ms: Date.now() - state.startedAt
+        },
+        provider: 'pi',
+        providerThreadId: state.providerSessionId || undefined,
+        fallback: state.fallback
+      },
+      state
+    )
+    // The turn is settled: close stdin so pi exits (EOF is its clean
+    // shutdown); the closer arms its own SIGKILL backstop.
+    if (state.appRunId) piRunStdinClosers.get(state.appRunId)?.()
+  } else if (evt.type === 'provider_warning' && evt.text) {
+    sendAgentCompatLine(
+      state.sender,
+      'pi',
+      {
+        type: 'provider_warning',
+        provider: 'pi',
+        severity: 'warning',
+        title: 'Pi',
+        message: evt.text
+      },
+      state
+    )
+  }
+}
+
+function handlePiStreamEvent(state: CliProviderStreamState, event: unknown) {
+  const reducer = (state.piReducer ??= new PiRpcTurnReducer())
+  for (const evt of reducer.ingest({ json: event as Record<string, unknown> })) {
+    applyPiRunEvent(state, evt)
+  }
+}
+
 function handleCursorStreamEvent(state: CliProviderStreamState, event: unknown) {
   maybeLogCursorRawEvent(event)
   for (const evt of cursorEventToRunEvents({ json: event as Record<string, unknown> })) {
@@ -15815,6 +15964,10 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
   }
   if (state.provider === 'cursor') {
     handleCursorStreamEvent(state, event)
+    return
+  }
+  if (state.provider === 'pi') {
+    handlePiStreamEvent(state, event)
     return
   }
   if (state.provider === 'claude' && isClaudeWorkflowSystemEvent(event)) {
@@ -15990,7 +16143,7 @@ function handleCliProviderJsonEvent(state: CliProviderStreamState, event: any) {
 
 function runCliProviderProcess(
   event: Electron.IpcMainInvokeEvent,
-  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'antigravity',
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'antigravity' | 'pi',
   command: string,
   args: string[],
   payload: AgentRunPayload,
@@ -15999,6 +16152,13 @@ function runCliProviderProcess(
     requireExistingRun?: boolean
     warning?: string
     onComplete?: () => Promise<void> | void
+    /**
+     * RPC-style providers (pi) submit the prompt over stdin and terminate on
+     * stdin EOF. Lines are written after spawn, stdin stays OPEN, and a closer
+     * keyed by appRunId lets the terminal protocol event end the process
+     * (SIGKILL backstop after 4s).
+     */
+    stdinPlan?: { initialLines: string[] }
   } & (
     | { extraEnv?: Record<string, string>; resolvedEnv?: never }
     | {
@@ -16138,7 +16298,27 @@ function runCliProviderProcess(
     transportClose.markTransportClosed()
     return transportOperation
   }
-  child.stdin?.end()
+  if (options.stdinPlan) {
+    for (const line of options.stdinPlan.initialLines) {
+      child.stdin?.write(`${line}\n`)
+    }
+    const appRunId = route.appRunId
+    if (appRunId) {
+      piRunStdinClosers.set(appRunId, () => {
+        try {
+          child.stdin?.end()
+        } catch {
+          /* the kill backstop below still runs */
+        }
+        const backstop = setTimeout(() => {
+          if (child.exitCode === null && !child.killed) child.kill('SIGKILL')
+        }, 4_000)
+        backstop.unref?.()
+      })
+    }
+  } else {
+    child.stdin?.end()
+  }
   runManager.attachProcess(route.appRunId!, child)
   cliProviderProcesses.set(provider, child)
 
@@ -16235,6 +16415,7 @@ function runCliProviderProcess(
   })
 
   child.on('close', (code) => {
+    if (route.appRunId) piRunStdinClosers.delete(route.appRunId)
     emitCliProviderStderr(cliProviderStderrSanitizer.flush())
     const trailing = stdoutBuffer.trim()
     if (trailing) {
@@ -17597,6 +17778,145 @@ async function runCursorProvider(event: Electron.IpcMainInvokeEvent, payload: Ag
     fallback: false,
     extraEnv: {},
     onComplete: () => restoreCursorConfig?.()
+  })
+}
+
+// ── Pi coding agent (BYOK, `pi --mode rpc`) ─────────────────────────────────
+// Prompt goes over stdin as an RPC command; the turn terminates on stdin EOF
+// after `agent_settled` (see applyPiRunEvent). Containment = pi's own tool
+// allowlist by posture + project-config discovery disabled + the credential
+// env firewall (buildPiCredentialEnv) so a parent-env hosted-provider key can
+// never widen the seat beyond the policy wall.
+let piKeyStoreRef: PiKeyStore | null = null
+
+async function runPiProvider(event: Electron.IpcMainInvokeEvent, payload: AgentRunPayload) {
+  const route = routeWithRunId('pi', payload)
+  payload.providerSessionId = null
+
+  const failFast = (message: string, setupRequired: boolean): void => {
+    runManager.finish(route.appRunId, 'failed')
+    sendAgentCompatError(event.sender, 'pi', message, route)
+    sendAgentCompatLine(
+      event.sender,
+      'pi',
+      { type: 'result', status: 'failed', stats: {}, provider: 'pi', setupRequired },
+      route
+    )
+    sendAgentCompatExit(event.sender, 'pi', 1, route)
+  }
+
+  const resolved = await resolveCliProviderBinary('pi', payload.runtimeProfile)
+  if (!resolved.binaryPath) {
+    failFast(
+      resolved.error ||
+        'Pi CLI is not installed. Install it with `npm install -g @earendil-works/pi-coding-agent`.',
+      true
+    )
+    return
+  }
+
+  const keyLoad = piKeyStoreRef?.loadKeys()
+  if (!keyLoad || keyLoad.status !== 'ok' || Object.keys(keyLoad.keys).length === 0) {
+    failFast(
+      'No Pi upstream API keys are configured. Add at least one key (DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq or Cerebras) in Settings → Providers → Pi.',
+      true
+    )
+    return
+  }
+
+  const model = normalizeCliProviderModel('pi', payload.model)
+  const split = splitPiWireModelId(model)
+  if (!split) {
+    failFast(`Pi model id '${model}' is not a recognized <upstream>/<model> wire id.`, false)
+    return
+  }
+  // The anti-circumvention wall: refuse hosted-provider upstreams and resold
+  // first-party models before anything reaches the pi process.
+  const verdict = piModelPolicyVerdict(split.upstream, split.modelId)
+  if (!verdict.allowed) {
+    failFast(verdict.reason || 'Pi model refused by policy.', false)
+    return
+  }
+  const upstream = split.upstream as keyof typeof PI_UPSTREAM_LABELS
+  const upstreamKey = keyLoad.keys[upstream]
+  if (!upstreamKey) {
+    failFast(
+      `No ${PI_UPSTREAM_LABELS[upstream]} API key is configured. Add it in Settings → Providers → Pi, or pick a model from a configured upstream.`,
+      true
+    )
+    return
+  }
+
+  // Pi has no MCP support; never let the prompt claim TaskWraith MCP tools.
+  payload.taskWraithMcpAdvertised = false
+  payload.prompt = sanitizeTaskWraithMcpPromptClaims(payload.prompt, {
+    advertised: false,
+    coreProfile: false
+  })
+
+  const writeCapable = payload.approvalMode === 'default'
+  // Ensemble lanes run single-turn on the composed prompt (the tagged
+  // transcript already carries history — the antigravity double-injection
+  // lesson); solo chats get durable per-chat continuity via --session-id.
+  const ephemeralSession = Boolean(payload.ensembleRun)
+  const sessionDir = join(app.getPath('userData'), 'pi-sessions', route.appChatId || 'global')
+  const isolatedHomeDir = join(
+    os.tmpdir(),
+    `taskwraith-pi-home-${route.appRunId || Date.now().toString(36)}`
+  )
+  try {
+    fsSync.mkdirSync(isolatedHomeDir, { recursive: true, mode: 0o700 })
+    if (!ephemeralSession) fsSync.mkdirSync(sessionDir, { recursive: true })
+  } catch (error) {
+    failFast(
+      `Could not prepare the Pi runtime directories: ${error instanceof Error ? error.message : String(error)}`,
+      false
+    )
+    return
+  }
+
+  const args = buildPiRpcArgs({
+    upstream: split.upstream,
+    modelId: split.modelId,
+    writeCapable,
+    sessionDir,
+    ...(ephemeralSession
+      ? { ephemeralSession: true }
+      : { sessionId: `taskwraith-${route.appChatId || 'chat'}` })
+  })
+
+  // Base env (PATH + TASKWRAITH markers) → credential firewall → pi switches.
+  const baseEnv = createCliProviderRunEnv({
+    provider: 'pi',
+    command: resolved.binaryPath,
+    appRunId: route.appRunId,
+    appChatId: route.appChatId,
+    scope: payload.scope,
+    workspace: payload.workspace,
+    runtimeProfileId: payload.runtimeProfileId,
+    auditRun: Boolean(payload.auditRun)
+  })
+  const firewalled = buildPiCredentialEnv(baseEnv, { [upstream]: upstreamKey })
+  const resolvedEnv: Record<string, string> = {}
+  for (const [name, value] of Object.entries(firewalled)) {
+    if (typeof value === 'string') resolvedEnv[name] = value
+  }
+  resolvedEnv.PI_CODING_AGENT_DIR = isolatedHomeDir
+  resolvedEnv.PI_TELEMETRY = '0'
+  resolvedEnv.PI_SKIP_VERSION_CHECK = '1'
+  resolvedEnv.PI_OFFLINE = '1'
+
+  await runCliProviderProcess(event, 'pi', resolved.binaryPath, args, payload, {
+    fallback: false,
+    resolvedEnv,
+    stdinPlan: { initialLines: [piPromptCommand(payload.prompt)] },
+    onComplete: () => {
+      try {
+        fsSync.rmSync(isolatedHomeDir, { recursive: true, force: true })
+      } catch {
+        /* best-effort cleanup */
+      }
+    }
   })
 }
 
@@ -26513,6 +26833,18 @@ const cursorAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEve
   }
 ]
 
+const piAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
+  {
+    ...defaultProviderDescriptor('pi'),
+    run: ({ event, payload }) => runPiProvider(event, payload),
+    cancel: (runId) => cancelProviderRun('pi', runId),
+    getStatus: () => getAgentStatusSnapshotDirect('pi'),
+    getMcpStatus: () => getAgentMcpStatusSnapshotDirect('pi'),
+    getCapabilityContract: (request = {}) =>
+      getProviderCapabilityContractDirect('pi', request.workspacePath, request.approvalMode)
+  }
+]
+
 const antigravityAdapters: ProviderAdapter<AgentRunPayload, Electron.IpcMainInvokeEvent>[] = [
   {
     ...defaultProviderDescriptor('antigravity'),
@@ -26608,7 +26940,8 @@ const providerAdapters = createProviderAdapterRegistry<
   },
   ...antigravityAdapters,
   ...grokAdapters,
-  ...cursorAdapters
+  ...cursorAdapters,
+  ...piAdapters
 ])
 
 async function readCliVersion(command: string): Promise<string> {
@@ -31848,6 +32181,21 @@ if (isGeminiMcpBridgeProcess) {
       safeStorage
     })
     antigravityGeminiApiSecretStoreRef = antigravityGeminiApiSecretStore
+    const piKeyStore = new PiKeyStore({
+      userDataPath: app.getPath('userData'),
+      safeStorage
+    })
+    piKeyStoreRef = piKeyStore
+    registerPiKeyHandlers({
+      keyStore: piKeyStore,
+      isMainRendererSender,
+      onKeyMutationSuccess: () => {
+        // Configured-ness and the model list both key off stored upstreams;
+        // re-detect so pickers reflect the mutation without a relaunch.
+        managedRunConfiguredProviderDiscovery.start(AppStore.getSettings())
+        remoteProviderModelsTrigger?.()
+      }
+    })
     // Microsoft Graph credentials use the same safeStorage-only discipline:
     // encrypted envelope on disk, status projection to the renderer, and no
     // channel anywhere that hands back a token.
@@ -42527,6 +42875,18 @@ if (isGeminiMcpBridgeProcess) {
       if (provider === 'antigravity') {
         const settings = AppStore.getSettings()
         return managedRunConfiguredProviderDiscovery.modelsSnapshot(settings).get('antigravity') ?? []
+      }
+      if (provider === 'pi') {
+        // Only models whose upstream has a stored key: an unkeyed row could
+        // never run and would just be a confusing picker entry.
+        const configured = new Set<string>(
+          piKeyStoreRef ? piKeyStoreRef.getStatus().configuredUpstreams : []
+        )
+        return getStaticProviderModels('pi').filter((row) => {
+          const wireId = typeof (row as { id?: unknown }).id === 'string' ? (row as { id: string }).id : ''
+          const split = splitPiWireModelId(wireId)
+          return split ? configured.has(split.upstream) : false
+        })
       }
       if (provider !== 'codex') {
         return getStaticProviderModels(provider, {

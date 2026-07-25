@@ -21,7 +21,8 @@ const KNOWN_PROVIDER_IDS: ProviderId[] = [
   'grok',
   'kimi',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ]
 const KNOWN_PROVIDERS = new Set<ProviderId>(KNOWN_PROVIDER_IDS)
 

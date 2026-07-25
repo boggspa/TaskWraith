@@ -68,7 +68,8 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'kimi' ||
     value === 'grok' ||
     value === 'cursor' ||
-    value === 'ollama'
+    value === 'ollama' ||
+    value === 'pi'
   )
 }
 

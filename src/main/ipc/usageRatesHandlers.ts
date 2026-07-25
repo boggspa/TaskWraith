@@ -107,7 +107,8 @@ const FIRST_LAUNCH_REMOTE_PROVIDERS: ProviderId[] = [
   'kimi',
   'cursor',
   'grok',
-  'ollama'
+  'ollama',
+  'pi'
 ]
 
 const FIRST_LAUNCH_WORKSPACE_CAPABILITIES: Array<

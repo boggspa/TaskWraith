@@ -43,7 +43,8 @@ const PROVIDER_IDS: ReadonlySet<string> = new Set([
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'pi'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

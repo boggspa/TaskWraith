@@ -125,7 +125,8 @@ const approvalTimeoutProviderIds: readonly ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'pi'
 ]
 const auditRetentionSurfaces = [
   'approvalLedger',

@@ -98,6 +98,8 @@ function providerLabel(provider?: ProviderId | string | null, fallbackGemini = f
   if (provider === 'grok') return 'Grok'
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
+  if (provider === 'antigravity') return 'Antigravity'
+  if (provider === 'pi') return 'Pi'
   if (provider === 'gemini' || fallbackGemini) return 'Gemini'
   return 'Unknown provider'
 }

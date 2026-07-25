@@ -8,7 +8,10 @@ const MAX_TEXT_LENGTH = 4_096
 // antigravity is a known/decode ProviderId but has NO launch runtime yet (that
 // arrives in a later opt-in slice); exclude it from the launch-authority lane so
 // no vacuous launch-control/seal entry is minted for a provider that cannot run.
-export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity'>
+// 'pi' is excluded like antigravity for now: scheduled-occurrence launches
+// need a real SealEvidence producer before joining (do not half-wire — the
+// seal-service dispatch is live). Interactive pi runs are unaffected.
+export type LiveProviderLaunchId = Exclude<ProviderId, 'gemini' | 'antigravity' | 'pi'>
 
 export interface ProviderLaunchCommonAuthority {
   readonly adapterRevision: string

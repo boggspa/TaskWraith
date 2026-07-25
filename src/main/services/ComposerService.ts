@@ -78,7 +78,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'antigravity'
+  'antigravity',
+  'pi'
 ])
 
 export interface ComposerImageAttachment {
@@ -1103,6 +1104,7 @@ function getProviderLabel(provider: ProviderId): string {
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
   return 'Gemini'
 }
 
@@ -1118,6 +1120,9 @@ export function getDefaultModelForProvider(provider: ProviderId): string {
   // wire-id default keeps it on the key lane (which fails visibly without a
   // key) and is present in the static fallback catalogue.
   if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
+  // Pi wire ids are `<upstream>/<model>`; the default must stay in the curated
+  // static catalogue (PiModels) so the policy wall and pickers agree.
+  if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
   return 'flash-lite'
 }
 

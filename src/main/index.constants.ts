@@ -59,5 +59,6 @@ export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   'ollama',
   // Internal lifecycle inventory only. Offer/picker admission remains the
   // settings-aware gate plus the post-connection snapshot, never this list.
-  'antigravity'
+  'antigravity',
+  'pi'
 ]
