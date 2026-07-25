@@ -8294,16 +8294,34 @@ button.composer-run-timecode.is-open {
   overflow-y: auto;
 }
 
-/* The prompt body is agent-authored (`intent` and a draft body both land
- * here), and since it became `pre-wrap` its content height is its own
- * minimum: a body of newlines grew this flex child to 5354px inside a 564px
- * clipped card, pushing the recipient rows AND the Approve button out of the
- * box with no way to scroll back. Bounded and scrollable, so no amount of
- * agent text can push the decision controls out of view. */
-.composer-permission-card--overlay .composer-permission-message {
+/* This card is clipped (`max-height` + `overflow: hidden`) and its children
+ * are flex items, which default to `min-height: auto` — their own content
+ * height. So ANY child carrying agent-authored text can grow the column past
+ * the clip and push the decision controls out of a box with no scrollbar.
+ * Bounding one child at a time only relocates the bug: the message paragraph
+ * was fixed first and the external-path row reproduced it at ~800 characters.
+ *
+ * The rule is therefore general — every direct child may shrink — with the
+ * actions row pinned so it is never what gets shrunk, and an explicit
+ * scroll+ceiling on each child that carries untrusted text. */
+.composer-permission-card--overlay > * {
   min-height: 0;
+}
+
+.composer-permission-card--overlay > .composer-permission-actions {
+  flex: 0 0 auto;
+}
+
+.composer-permission-card--overlay .composer-permission-message,
+.composer-permission-card--overlay .composer-permission-external-path {
   max-height: 22vh;
-  overflow-y: auto;
+  overflow: auto;
+}
+
+/* `align-items: baseline` on the path row stops the label shrinking with it,
+ * which would otherwise clip the word "Path" itself. */
+.composer-permission-card--overlay .composer-permission-external-path {
+  align-items: flex-start;
 }
 
 .composer-permission-card--overlay .composer-permission-note {

@@ -65,4 +65,27 @@ describe('composer agent-approval overlay', () => {
       /\.composer-permission-card--overlay \.agent-approval-preview \{[^}]*overflow-y: auto/
     )
   })
+
+  it('keeps every child of the clipped card shrinkable, with the actions pinned', () => {
+    // The card clips at max-height with overflow:hidden, and flex items
+    // default to min-height:auto. Without these rules a single agent-authored
+    // string — a draft body, or an external path — grows a child past the clip
+    // and pushes Approve out of a box that has no scrollbar. Measured: a body
+    // of newlines put Approve 5409px down a 564px card, and an ~800-char path
+    // reproduced it after the body alone was bounded. No jsdom here, so pin
+    // the rules themselves.
+    const css = readSource('src/renderer/src/assets/css/03-composer-welcome-activity.css')
+
+    expect(css).toMatch(/\.composer-permission-card--overlay > \* \{[^}]*min-height: 0/)
+    expect(css).toMatch(
+      /\.composer-permission-card--overlay > \.composer-permission-actions \{[^}]*flex: 0 0 auto/
+    )
+    // Both untrusted-text carriers get a ceiling AND a scrollbar.
+    const bounded = css.match(
+      /\.composer-permission-card--overlay \.composer-permission-message,\s*\.composer-permission-card--overlay \.composer-permission-external-path \{([^}]*)\}/
+    )
+    expect(bounded).not.toBeNull()
+    expect(bounded![1]).toContain('max-height')
+    expect(bounded![1]).toContain('overflow: auto')
+  })
 })
