@@ -96,8 +96,13 @@ describe('MCP_AUTO_ALLOWED_TOOLS', () => {
     }
   })
 
-  it('does not auto-allow git history reads that can expose repository history', () => {
-    for (const tool of ['git_log', 'git_show', 'git_blame'] as const) {
+  it('auto-allows the fixed-argv repo reads (git_diff / git_log) but keeps show/blame gated', () => {
+    // 2026-07-25 user decision: diff + log join status (bounded, fixed-argv
+    // executors). git_show (arbitrary-object reads) and git_blame stay gated.
+    for (const tool of ['git_diff', 'git_log'] as const) {
+      expect(autoAllowedTools.has(tool)).toBe(true)
+    }
+    for (const tool of ['git_show', 'git_blame'] as const) {
       expect(autoAllowedTools.has(tool)).toBe(false)
     }
   })
@@ -165,8 +170,11 @@ describe('READ_ONLY_MCP_ADVERTISE_TOOLS', () => {
     }
   })
 
-  it('does not advertise git history reads to read-only gate-skipping seats', () => {
-    for (const tool of ['git_log', 'git_show', 'git_blame'] as const) {
+  it('advertises diff/log to read-only seats but never show/blame', () => {
+    for (const tool of ['git_diff', 'git_log'] as const) {
+      expect(READ_ONLY_MCP_ADVERTISE_TOOLS).toContain(tool)
+    }
+    for (const tool of ['git_show', 'git_blame'] as const) {
       expect(READ_ONLY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
     }
   })

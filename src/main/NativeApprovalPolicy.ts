@@ -129,12 +129,13 @@ export function resolveNativeApprovalPreflightDecision(args: {
    */
   trustedSessionExternalWrite?: boolean
   /**
-   * The request is a strictly-classified read-only `git status` shell command
-   * (isReadOnlyGitStatusCommand). Allowed under EVERY posture — including a
-   * read_only/plan shell deny — mirroring the auto-allowed MCP git_status
-   * tool. The caller computes this from the RAW command; external-path
-   * detection still wins (a git status never carries external paths, so a
-   * detection means the classification cannot be trusted).
+   * The request is a strictly-classified read-only git shell command —
+   * `git status` / `git diff` / `git log` (isReadOnlyGitShellCommand). Allowed
+   * under EVERY posture — including a read_only/plan shell deny — mirroring
+   * the auto-allowed MCP git read tools. The caller computes this from the
+   * RAW command; external-path detection still wins (these commands never
+   * carry external paths, so a detection means the classification cannot be
+   * trusted).
    */
   readOnlyShellFastPath?: boolean
   effectivePermissions?: EffectiveRunPermissions

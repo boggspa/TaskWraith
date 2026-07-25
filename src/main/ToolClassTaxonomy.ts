@@ -73,6 +73,8 @@ export const READ_ONLY_TOOL_PRESET: ReadonlyArray<string> = Object.freeze([
   'workspace_search',
   'workspace_symbols',
   'git_status',
+  'git_diff',
+  'git_log',
   'web_search',
   'web_fetch',
   'github_ci_status',

@@ -126,6 +126,14 @@ export const MCP_AUTO_ALLOWED_TOOLS = new Set<TaskWraithMcpToolName>([
   // otherwise mutate the repository, so read-only and plan seats may inspect
   // their working tree without an approval prompt.
   'git_status',
+  // 2026-07-25 (user decision): git_diff + git_log join git_status. Both
+  // executors build FIXED argv from structured params (scoped pathspecs after
+  // `--`, sanitizeGitRef rejects leading-dash injection, log output bounded by
+  // max-count/pretty), so there is no flag-injection surface. This narrows the
+  // earlier "history reads stay gated" stance to git_show / git_blame, which
+  // remain gated (arbitrary-object reads / line-provenance).
+  'git_diff',
+  'git_log',
   'list_chat_attachments',
   'inspect_chat_attachment',
   'workspace_board_snapshot',

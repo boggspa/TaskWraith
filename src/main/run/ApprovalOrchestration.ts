@@ -16,9 +16,9 @@ import type {
 } from '../store/types'
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import {
-  isReadOnlyGitStatusCommand,
+  isReadOnlyGitShellCommand,
   shellCommandFromApprovalPreview
-} from '../GitStatusShellCommand'
+} from '../ReadOnlyGitShellCommand'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -377,16 +377,17 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       effectiveSettings
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
-    // Universal read-only shell fast path: a pure `git status` — the shell twin
-    // of the auto-allowed MCP git_status tool — is allowed under EVERY posture
-    // (read_only / plan deny shell; default prompts). The classifier fails
-    // closed on anything that is not exactly a git status invocation, so this
-    // cannot widen into a general shell bypass. forcePrompt (caller-demanded
-    // human review) still prompts, and policy-'allow' resolutions keep flowing
-    // through the ordinary audited path below.
+    // Universal read-only shell fast path: a pure `git status` / `git diff` /
+    // `git log` — the shell twins of the auto-allowed MCP git read tools — is
+    // allowed under EVERY posture (read_only / plan deny shell; default
+    // prompts). The classifier fails closed on anything beyond those exact
+    // read invocations, so this cannot widen into a general shell bypass.
+    // forcePrompt (caller-demanded human review) still prompts, and
+    // policy-'allow' resolutions keep flowing through the ordinary audited
+    // path below.
     if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
       const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
-      if (readOnlyShellCommand !== null && isReadOnlyGitStatusCommand(readOnlyShellCommand)) {
+      if (readOnlyShellCommand !== null && isReadOnlyGitShellCommand(readOnlyShellCommand)) {
         deps.auditService.recordAutomaticApprovalDecision(
           provider,
           auditRoute,

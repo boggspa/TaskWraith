@@ -685,6 +685,24 @@ describe('createApprovalOrchestration — read-only git status shell fast path',
     expect(metadata).toMatchObject({ command: 'git status --porcelain' })
   })
 
+  it('extends to pure git diff / git log invocations', async () => {
+    for (const command of ['git diff --stat', 'git log --oneline -20']) {
+      const order: string[] = []
+      const deps = makeDeps(order)
+      setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+      expect(
+        await createApprovalOrchestration(deps)(
+          sender,
+          'claude',
+          'shellCommands',
+          '/repo',
+          request({ preview: { kind: 'command', command } })
+        )
+      ).toBe(true)
+      expect(order).toContain('audit:autoAllow:readonly_shell')
+    }
+  })
+
   it('prefers the raw params command over a display string', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

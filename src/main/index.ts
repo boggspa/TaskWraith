@@ -1248,9 +1248,9 @@ import {
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
 import {
-  isReadOnlyGitStatusCommand,
+  isReadOnlyGitShellCommand,
   shellCommandFromRawCommand
-} from './GitStatusShellCommand'
+} from './ReadOnlyGitShellCommand'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import { cursorDebugEnabled } from './cursorGate'
@@ -11549,11 +11549,12 @@ function resolveNativeApprovalPreflight(args: {
       args.service === 'mediaRecording' ||
       isPostureApprovalOnlyService(effectivePermissions?.presetId, args.service) ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
-    // Pure `git status` runs prompt-free under every posture (parity with the
-    // auto-allowed MCP git_status tool); the classifier fails closed.
+    // Pure `git status` / `git diff` / `git log` runs prompt-free under every
+    // posture (parity with the auto-allowed MCP git read tools); the
+    // classifier fails closed.
     readOnlyShellFastPath:
       args.service === 'shellCommands' &&
-      isReadOnlyGitStatusCommand(shellCommandFromRawCommand(args.shellCommand)),
+      isReadOnlyGitShellCommand(shellCommandFromRawCommand(args.shellCommand)),
     effectivePermissions
   })
 }
