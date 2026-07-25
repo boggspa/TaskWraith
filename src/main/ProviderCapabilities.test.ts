@@ -45,6 +45,73 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.delegate.state).toBe('unavailable')
   })
 
+  // agy has no per-tool approval bridge, so a denied shell/file service can only
+  // be honoured by launching read-only. This clamp existed for gemini but not
+  // antigravity, so the contract reported accept-edits as enforced while the run
+  // ignored the setting. prepareAntigravityProviderLaunch shares the predicate.
+  it.each([
+    ['shell commands', { ...defaultServices, shellCommands: 'deny' as const }],
+    ['file changes', { ...defaultServices, fileChanges: 'deny' as const }]
+  ])('clamps AntiGravity to plan mode when %s is denied', (_label, services) => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'antigravity',
+      settings: settings(services),
+      approvalMode: 'default',
+      status: { provider: 'antigravity', available: true, binaryPath: '/usr/local/bin/agy' }
+    })
+
+    expect(contract.approvals.effectiveMode).toBe('plan')
+    expect(contract.approvals.providerMode).toContain('--sandbox --mode plan')
+    expect(contract.approvals.providerMode).not.toContain('accept-edits')
+  })
+
+  // The provenance mapping is explicit because this builder drops unknown status
+  // fields: without it the publisher check would be computed and discarded, and
+  // the mismatch warning would never reach a user.
+  it('forwards binary provenance and warns on a publisher mismatch', () => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'antigravity',
+      settings: settings(),
+      approvalMode: 'default',
+      status: {
+        provider: 'antigravity',
+        available: true,
+        binaryPath: '/usr/local/bin/agy',
+        binaryProvenance: 'mismatch',
+        binaryTeamId: 'ABCDE12345',
+        binaryProvenanceDetail: 'The resolved agy executable is signed by team ABCDE12345, not Google (EQHXZ8M8AV).'
+      }
+    })
+
+    expect(contract.availability.binaryProvenance).toBe('mismatch')
+    expect(contract.availability.binaryTeamId).toBe('ABCDE12345')
+    const publisherWarning = contract.warnings.find((entry) =>
+      entry.id.endsWith('binary-unverified-publisher')
+    )
+    expect(publisherWarning?.severity).toBe('warning')
+    expect(publisherWarning?.message).toContain('ABCDE12345')
+  })
+
+  // Not-checkable is not evidence against the binary: every Linux and Windows
+  // install reports 'unverified', which must stay silent.
+  it.each(['verified', 'unverified'])('raises no publisher warning for %s', (state) => {
+    const contract = buildProviderCapabilityContract({
+      provider: 'antigravity',
+      settings: settings(),
+      approvalMode: 'default',
+      status: {
+        provider: 'antigravity',
+        available: true,
+        binaryPath: '/usr/local/bin/agy',
+        binaryProvenance: state
+      }
+    })
+
+    expect(
+      contract.warnings.some((entry) => entry.id.endsWith('binary-unverified-publisher'))
+    ).toBe(false)
+  })
+
   it('does not advertise TaskWraith MCP tools when the bridge is disabled', () => {
     const contract = buildProviderCapabilityContract({
       provider: 'gemini',

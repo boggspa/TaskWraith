@@ -6,6 +6,7 @@ import type {
   GeminiMcpBridgeStatus,
   ProviderCapabilityContract,
   ProviderApprovalCapability,
+  ProviderAvailabilityCapability,
   ProviderCapabilityState,
   ProviderCapabilityWarning,
   ProviderId,
@@ -15,6 +16,7 @@ import type {
 } from './store/types'
 import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
+import { agenticServicesDenyWrites } from './AgenticServiceWriteClamp'
 import { providerLabel } from './ProviderAdapters'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
@@ -269,6 +271,17 @@ function creativeAppsCapability(policy?: AgenticServicePolicy): ProviderToolingC
     details:
       'TaskWraith exposes read-only creative app discovery, snapshots, and validation; future apply/control tools will route through the same approval model.'
   }
+}
+
+/**
+ * Narrow the status record's provenance to the declared union rather than casting.
+ * An unrecognised value becomes undefined, so a malformed or future status field
+ * cannot surface as a bogus state or trip the mismatch warning.
+ */
+function binaryProvenanceState(
+  value: unknown
+): ProviderAvailabilityCapability['binaryProvenance'] {
+  return value === 'verified' || value === 'unverified' || value === 'mismatch' ? value : undefined
 }
 
 function warning(
@@ -577,8 +590,11 @@ function approvalContract(
     return {
       requestedMode,
       effectiveMode,
+      // Keyed off effectiveMode, NOT requestedMode: a denied shell/file service
+      // clamps this lane to plan, and reporting the requested mode here would
+      // announce accept-edits for a run that launches read-only.
       providerMode:
-        requestedMode === 'plan'
+        effectiveMode === 'plan'
           ? 'official agy print mode with --sandbox --mode plan'
           : 'official agy print mode with --sandbox --mode accept-edits',
       inAppApprovals: false,
@@ -599,10 +615,15 @@ function approvalContract(
   }
 }
 
-function effectiveGeminiMode(requestedMode: string, services: AgenticServicesSettings): string {
+/**
+ * Providers with no per-tool approval bridge can only honour a denied
+ * shell/file service at launch, by giving up write capability. Shared with the
+ * launch path via `agenticServicesDenyWrites` so the reported mode and the
+ * launched mode cannot disagree.
+ */
+function effectiveNoBridgeMode(requestedMode: string, services: AgenticServicesSettings): string {
   if (requestedMode === 'plan') return requestedMode
-  if (services.shellCommands === 'deny' || services.fileChanges === 'deny') return 'plan'
-  return requestedMode
+  return agenticServicesDenyWrites(services) ? 'plan' : requestedMode
 }
 
 export function buildProviderCapabilityContract({
@@ -625,8 +646,12 @@ export function buildProviderCapabilityContract({
   // availability gate.
   const cursorSecurityUnavailable = false
   const effectiveMode =
-    provider === 'gemini'
-      ? effectiveGeminiMode(requestedMode, services)
+    // Both lack a per-tool approval bridge, so a denied shell/file service can
+    // only be honoured by dropping write capability at launch. AntiGravity was
+    // missing from this clamp: the setting reported as enforced while the run
+    // still received `--mode accept-edits`.
+    provider === 'gemini' || provider === 'antigravity'
+      ? effectiveNoBridgeMode(requestedMode, services)
       : cursorSecurityUnavailable
         ? 'unavailable'
         : requestedMode
@@ -645,6 +670,14 @@ export function buildProviderCapabilityContract({
     version: typeof statusRecord.version === 'string' ? statusRecord.version : undefined,
     authState: typeof statusRecord.authState === 'string' ? statusRecord.authState : undefined,
     appServer: typeof statusRecord.appServer === 'string' ? statusRecord.appServer : undefined,
+    // Publisher check for a resolved provider binary. Forwarded explicitly:
+    // this mapping drops unknown status fields, so a computed provenance that is
+    // not listed here would be silently discarded and the check would be dead.
+    binaryProvenance: binaryProvenanceState(statusRecord.binaryProvenance),
+    binaryTeamId:
+      typeof statusRecord.binaryTeamId === 'string' ? statusRecord.binaryTeamId : undefined,
+    binaryAuthority:
+      typeof statusRecord.binaryAuthority === 'string' ? statusRecord.binaryAuthority : undefined,
     error: cursorSecurityUnavailable
       ? cursorSecurityUnavailableMessage
       : typeof statusRecord.error === 'string'
@@ -660,6 +693,24 @@ export function buildProviderCapabilityContract({
         `${label} unavailable`,
         availability.error ||
           `${label} is not ready. Check the binary path and provider login state.`
+      )
+    )
+  }
+
+  // A resolved binary that is signed by someone other than its vendor is a
+  // PATH-hijack signal: that executable would receive the user's prompts and run
+  // inside the workspace. Surfaced as a warning rather than an availability gate
+  // because only macOS can be checked (see AntigravityBinaryProvenance), so
+  // blocking would break every other platform and any legitimate wrapper.
+  if (availability.binaryProvenance === 'mismatch') {
+    warnings.push(
+      warning(
+        `${provider}-binary-unverified-publisher`,
+        'warning',
+        `${label} executable publisher not verified`,
+        typeof statusRecord.binaryProvenanceDetail === 'string'
+          ? statusRecord.binaryProvenanceDetail
+          : `The resolved ${label} executable is not signed by its expected publisher. Confirm the binary on your PATH is the official one before running it.`
       )
     )
   }

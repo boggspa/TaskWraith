@@ -335,9 +335,24 @@ export function AntigravityOptInCard({
         ToS-approved or ban-safe.
       </p>
       <p className="settings-provider-auth-hint">
-        TaskWraith only opens the official user-installed <code>agy</code> CLI. Its browser and
-        OS-keyring sign-in stay under your control; TaskWraith never reads, copies, or stores Google
-        or AntiGravity OAuth credentials.
+        TaskWraith runs the official user-installed <code>agy</code> CLI. Its browser and OS-keyring
+        sign-in stay under your control; TaskWraith never reads, copies, or stores Google or
+        AntiGravity OAuth credentials, and never reads your AntiGravity conversation transcripts.
+      </p>
+      <p className="settings-provider-auth-hint">
+        For completeness, it does two other things on your machine: enabling this lane runs{' '}
+        <code>agy models</code> to list what your account can use, and continuing a conversation
+        reads one non-secret entry from <code>agy</code>&apos;s own cache — the workspace-to-
+        conversation-ID map it writes at <code>~/.gemini/antigravity-cli/cache/</code> — so a
+        follow-up turn resumes instead of starting over. No credentials, no transcripts, and no
+        plugins or hooks are installed into <code>agy</code>.
+      </p>
+      <p className="settings-provider-auth-hint">
+        TaskWraith&apos;s own per-tool approval cards do not apply inside <code>agy</code> — it has
+        no approval bridge, so its own sandbox and permission rules govern once a turn starts.
+        TaskWraith still owns run admission, cancellation and the audit trail, and if you set Shell
+        commands or File changes to <strong>Deny</strong> under Agentic services, this lane launches
+        read-only rather than ignoring you.
       </p>
 
       {!consentRecorded ? (

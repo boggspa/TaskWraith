@@ -56,6 +56,61 @@ describe('prepareAntigravityProviderLaunch', () => {
     expect(launch.resumedConversationId).toBeNull()
   })
 
+  // agy has no per-tool approval bridge, so a denied shell/file service can only
+  // be honoured at launch. Before this, "Shell commands: deny" was silently
+  // inert for AntiGravity: the setting read as enforced while the run still
+  // received --mode accept-edits.
+  describe('agentic-service write clamp', () => {
+    const resolveBinary = async () => ({
+      binaryPath: '/usr/local/bin/agy',
+      source: 'path' as const
+    })
+
+    it.each([
+      ['shell commands denied', { shellCommands: 'deny', fileChanges: 'allow' }],
+      ['file changes denied', { shellCommands: 'allow', fileChanges: 'deny' }]
+    ] as const)('launches read-only when %s', async (_label, agenticServices) => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          agenticServices
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('plan')
+      expect(launch.args).toContain('plan')
+      expect(launch.args).not.toContain('accept-edits')
+    })
+
+    it('still allows a write-capable turn when neither service is denied', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        {
+          settings: OPTED_IN,
+          prompt: 'Apply the fix.',
+          approvalMode: 'default',
+          agenticServices: { shellCommands: 'ask', fileChanges: 'allow' }
+        },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('accept-edits')
+    })
+
+    // Omitting the settings must not fabricate a denial and silently strip write
+    // capability from callers that have no settings context.
+    it('does not clamp when no service policy is supplied', async () => {
+      const launch = await prepareAntigravityProviderLaunch(
+        { settings: OPTED_IN, prompt: 'Apply the fix.', approvalMode: 'default' },
+        { resolveBinary }
+      )
+
+      expect(launch.mode).toBe('accept-edits')
+    })
+  })
+
   describe('conversation resumption', () => {
     const resolveBinary = async () => ({
       binaryPath: '/usr/local/bin/agy',

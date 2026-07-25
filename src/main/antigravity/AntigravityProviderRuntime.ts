@@ -5,9 +5,14 @@
 // cancellation, terminal event, and audit semantics; this module makes sure it
 // can receive an opted-in, sandboxed, credential-sanitized launch plan only.
 
-import type { AppSettings, EffectiveRunPermissions } from '../store/types'
+import type { AgenticServicesSettings, AppSettings, EffectiveRunPermissions } from '../store/types'
+import { agenticServicesDenyWrites } from '../AgenticServiceWriteClamp'
 import { isAntigravityOptInEnabled } from '../../shared/retiredProviders'
 import { isAntigravityGeminiApiKeyConfigured } from './AntigravityGeminiApiKeyConfiguredSignal'
+import {
+  verifyAgyBinaryProvenance,
+  type AgyBinaryProvenance
+} from './AntigravityBinaryProvenance'
 import {
   AGY_BINARY_NAME,
   buildAgyReadOnlyPrintArgs,
@@ -25,6 +30,13 @@ export interface PrepareAntigravityProviderLaunchInput {
   reasoningEffort?: string | null
   approvalMode?: string | null
   effectivePermissions?: Pick<EffectiveRunPermissions, 'readOnly'> | null
+  /**
+   * The user's shell/file service policy. Required for a write-capable turn to
+   * be honest: agy has no per-tool approval bridge, so a `deny` can only be
+   * enforced by launching read-only. Omitting it does NOT deny — callers that
+   * genuinely have no settings context keep the previous behaviour.
+   */
+  agenticServices?: Pick<AgenticServicesSettings, 'shellCommands' | 'fileChanges'> | null
   inheritedEnv?: Readonly<Record<string, string | undefined>>
   /**
    * Prior agy conversation to resume, learned from the CLI's own receipt after a
@@ -58,10 +70,17 @@ export interface AntigravityProviderStatusDependencies {
   resolveBinary?: () => Promise<ResolvedAgyCliBinary>
   /** Test seam; production reads the shared nonsecret configured-key signal. */
   isGeminiApiKeyConfigured?: () => boolean
+  /** Test seam; production inspects the resolved binary's code signature. */
+  verifyBinaryProvenance?: (binaryPath: string | null) => Promise<AgyBinaryProvenance>
 }
 
 function writeCapableAgyMode(input: PrepareAntigravityProviderLaunchInput): boolean {
   if (input.effectivePermissions?.readOnly === true) return false
+  // The official agy CLI exposes no per-tool approval bridge, so a denied
+  // shell/file service can only be honoured here, by refusing write capability
+  // before the child starts. Same predicate ProviderCapabilities reports with,
+  // so the contract cannot claim plan while the argv says accept-edits.
+  if (agenticServicesDenyWrites(input.agenticServices)) return false
   const mode = typeof input.approvalMode === 'string' ? input.approvalMode.trim() : ''
   return Boolean(mode && mode !== 'plan')
 }
@@ -220,6 +239,13 @@ export async function getAntigravityProviderStatus(
     }
   }
 
+  // Signature inspection only — codesign reads the file and never executes it,
+  // so the "never starts agy" invariant above still holds. Reported, not
+  // enforced: see AntigravityBinaryProvenance for why this cannot be a gate.
+  const provenance = await (deps.verifyBinaryProvenance ?? verifyAgyBinaryProvenance)(
+    binary.binaryPath
+  )
+
   return {
     provider: 'antigravity',
     label: 'AntiGravity',
@@ -228,6 +254,10 @@ export async function getAntigravityProviderStatus(
     authState: geminiApiKeyConfigured ? 'api-key' : 'unknown',
     binaryPath: binary.binaryPath,
     binarySource: binary.source,
+    binaryProvenance: provenance.state,
+    binaryTeamId: provenance.teamId,
+    binaryAuthority: provenance.authority,
+    ...(provenance.detail ? { binaryProvenanceDetail: provenance.detail } : {}),
     supportsSessions: false,
     supportsApprovals: false,
     supportsQuota: false,

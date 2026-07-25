@@ -26804,6 +26804,10 @@ async function runAntigravityAgyProvider(
       reasoningEffort: payload.reasoningEffort,
       approvalMode: payload.approvalMode,
       effectivePermissions: payload.effectivePermissions,
+      // agy has no per-tool approval bridge, so a denied shell/file service can
+      // only be honoured by launching read-only. Same predicate the capability
+      // contract reports with, so the two cannot disagree.
+      agenticServices: AppStore.getSettings().agenticServices,
       conversationId: payload.providerSessionId
     })
   } catch (error) {

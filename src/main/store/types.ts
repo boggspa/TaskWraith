@@ -1828,6 +1828,18 @@ export interface ProviderAvailabilityCapability {
   authState?: string
   appServer?: string
   error?: string
+  /**
+   * Publisher check for the resolved provider executable. `resolveBinary` finds a
+   * file by NAME, which is a weaker claim than "this is the vendor's binary" — a
+   * planted executable earlier on PATH would receive prompts and run in the
+   * workspace. 'unverified' means not checkable (non-macOS, no codesign) and is
+   * never treated as evidence against the binary; only 'mismatch' warns.
+   */
+  binaryProvenance?: 'verified' | 'unverified' | 'mismatch'
+  /** Apple Team Identifier observed on the signature, when one was present. */
+  binaryTeamId?: string
+  /** Leaf signing authority observed on the signature. */
+  binaryAuthority?: string
 }
 
 export interface ProviderCapabilityContract {
