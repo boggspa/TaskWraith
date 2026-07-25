@@ -1,0 +1,90 @@
+/**
+ * Argv + environment builders for spawning `pi --mode rpc`. Pure module.
+ *
+ * Containment posture (pi ships NO permission system of its own — its docs
+ * say to containerize; TaskWraith's containment is therefore built entirely
+ * from pi's own flag surface, all verified live on 0.82.1):
+ *  - Workspace-local files are never trusted: `-na` (ignore project-local
+ *    files), `-nc` (no AGENTS.md/CLAUDE.md discovery), `--no-extensions`,
+ *    `--no-skills`, `--no-prompt-templates` close the project-config
+ *    pre-prompt execution class (the Kimi B3 lesson) by flag instead of by
+ *    guard-and-refuse.
+ *  - Tool posture rides pi's first-class allowlist: read-only seats get
+ *    `--tools read,grep,find,ls`; write seats add bash, edit, write. Bash
+ *    on a write seat is unmediated (the Grok write-mode precedent — the
+ *    diff-review posture is the containment story, not per-call approval).
+ *  - `PI_CODING_AGENT_DIR` points at a per-run isolated home so user-level
+ *    settings/extensions never load; sessions live in a persistent per-chat
+ *    dir via `--session-dir` + `--session-id` (deterministic resume).
+ *  - `--offline` + PI_SKIP_VERSION_CHECK + PI_TELEMETRY=0 kill startup
+ *    network ops and telemetry ([[grok-data-egress-disable]] precedent);
+ *    provider API traffic is unaffected.
+ */
+
+export const PI_READ_ONLY_TOOLS: readonly string[] = ['read', 'grep', 'find', 'ls']
+export const PI_WRITE_TOOLS: readonly string[] = [
+  'read',
+  'bash',
+  'edit',
+  'write',
+  'grep',
+  'find',
+  'ls'
+]
+
+export type PiThinkingLevel = 'off' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max'
+
+export interface PiRpcArgsInput {
+  upstream: string
+  modelId: string
+  writeCapable: boolean
+  /** Omitted → pi's default for the model. */
+  thinkingLevel?: PiThinkingLevel
+  sessionDir: string
+  /** Deterministic per-chat id; pi creates it if missing (`--session-id`). */
+  sessionId?: string
+  /** Ephemeral turn (ensemble lanes): no session persisted at all. */
+  ephemeralSession?: boolean
+  appendSystemPrompt?: string
+}
+
+export function buildPiRpcArgs(input: PiRpcArgsInput): string[] {
+  const args: string[] = ['--mode', 'rpc']
+  args.push('--provider', input.upstream)
+  args.push('--model', input.modelId)
+  if (input.thinkingLevel) args.push('--thinking', input.thinkingLevel)
+  const tools = input.writeCapable ? PI_WRITE_TOOLS : PI_READ_ONLY_TOOLS
+  args.push('--tools', tools.join(','))
+  args.push('--no-extensions', '--no-skills', '--no-prompt-templates')
+  args.push('--no-context-files', '--no-approve')
+  args.push('--offline')
+  if (input.ephemeralSession) {
+    args.push('--no-session')
+  } else {
+    args.push('--session-dir', input.sessionDir)
+    if (input.sessionId) args.push('--session-id', input.sessionId)
+  }
+  if (input.appendSystemPrompt) {
+    args.push('--append-system-prompt', input.appendSystemPrompt)
+  }
+  return args
+}
+
+export interface PiProcessEnvInput {
+  /** Credential-firewalled env from buildPiCredentialEnv. */
+  credentialEnv: Readonly<Record<string, string | undefined>>
+  /** Per-run isolated config home (PI_CODING_AGENT_DIR). */
+  isolatedHomeDir: string
+}
+
+export function buildPiProcessEnv(
+  input: PiProcessEnvInput
+): Record<string, string | undefined> {
+  return {
+    ...input.credentialEnv,
+    PI_CODING_AGENT_DIR: input.isolatedHomeDir,
+    PI_TELEMETRY: '0',
+    PI_SKIP_VERSION_CHECK: '1',
+    PI_OFFLINE: '1'
+  }
+}
