@@ -661,3 +661,149 @@ describe('createMainApprovalOrchestration — security guard sequence', () => {
     })
   })
 })
+
+describe('createApprovalOrchestration — read-only git status shell fast path', () => {
+  it('auto-allows a posture-denied `git status` AFTER resolve, with no prompt', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'shellCommands',
+      '/repo',
+      request({ preview: { kind: 'command', command: 'git status --porcelain' } })
+    )
+
+    expect(result).toBe(true)
+    // Ordering: the fast path consults the resolved policy first, then audits.
+    expect(order).toEqual(['permissionService.resolvePermission', 'audit:autoAllow:readonly_shell'])
+    expect(order).not.toContain('getApprovalService')
+    expect(order).not.toContain('registerGeminiTool')
+    const metadata = vi.mocked(deps.auditService.recordAutomaticApprovalDecision).mock.calls[0][8]
+    expect(metadata).toMatchObject({ command: 'git status --porcelain' })
+  })
+
+  it('prefers the raw params command over a display string', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'codex',
+      'shellCommands',
+      '/repo',
+      request({
+        preview: {
+          kind: 'command',
+          command: 'bash -lc git status',
+          params: { command: ['bash', '-lc', 'git status'] }
+        }
+      })
+    )
+
+    expect(result).toBe(true)
+    expect(order).toContain('audit:autoAllow:readonly_shell')
+  })
+
+  it('fails closed: anything beyond a pure git status still hits the deny path', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    const result = await createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'shellCommands',
+      '/repo',
+      request({ preview: { kind: 'command', command: 'git status && rm -rf /' } })
+    )
+
+    expect(result).toBe(false)
+    expect(order).toContain('audit:autoDeny:policy')
+    expect(order).not.toContain('audit:autoAllow:readonly_shell')
+  })
+
+  it('never fires for other services, forcePrompt, or command-less previews', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'deny', decision: 'deny' })
+
+    // Same command string under a non-shell service → normal deny.
+    expect(
+      await createApprovalOrchestration(deps)(
+        sender,
+        'gemini',
+        'mcpTools',
+        '/repo',
+        request({ preview: { kind: 'command', command: 'git status' } })
+      )
+    ).toBe(false)
+
+    // forcePrompt demands human review even for git status (ask policy →
+    // prompt). Fire-and-drain like case (h): the registered prompt never
+    // resolves in this harness.
+    const promptOrder: string[] = []
+    const promptDeps = makeDeps(promptOrder)
+    setResolution(promptDeps, promptOrder, { policy: 'ask', decision: 'ask' })
+    void createApprovalOrchestration(promptDeps)(
+      sender,
+      'claude',
+      'shellCommands',
+      '/repo',
+      request({ forcePrompt: true, preview: { kind: 'command', command: 'git status' } })
+    )
+    await Promise.resolve()
+    expect(promptOrder).not.toContain('audit:autoAllow:readonly_shell')
+    expect(promptOrder).toContain('registerGeminiTool')
+
+    // No command in the preview → nothing to classify → normal deny.
+    const bareOrder: string[] = []
+    const bareDeps = makeDeps(bareOrder)
+    setResolution(bareDeps, bareOrder, { policy: 'deny', decision: 'deny' })
+    expect(
+      await createApprovalOrchestration(bareDeps)(
+        sender,
+        'claude',
+        'shellCommands',
+        '/repo',
+        request()
+      )
+    ).toBe(false)
+  })
+
+  it('skips an ask-policy prompt for git status but leaves policy-allow flows untouched', async () => {
+    const order: string[] = []
+    const deps = makeDeps(order)
+    setResolution(deps, order, { policy: 'ask', decision: 'ask' })
+
+    expect(
+      await createApprovalOrchestration(deps)(
+        sender,
+        'gemini',
+        'shellCommands',
+        '/repo',
+        request({ preview: { kind: 'command', command: 'git status -sb' } })
+      )
+    ).toBe(true)
+    expect(order).toContain('audit:autoAllow:readonly_shell')
+
+    // decision 'allow' keeps the ordinary audited auto-allow (reason: policy).
+    const allowOrder: string[] = []
+    const allowDeps = makeDeps(allowOrder)
+    setResolution(allowDeps, allowOrder, { policy: 'allow', decision: 'allow' })
+    expect(
+      await createApprovalOrchestration(allowDeps)(
+        sender,
+        'gemini',
+        'shellCommands',
+        '/repo',
+        request({ preview: { kind: 'command', command: 'git status' } })
+      )
+    ).toBe(true)
+    expect(allowOrder).toContain('audit:autoAllow:policy')
+    expect(allowOrder).not.toContain('audit:autoAllow:readonly_shell')
+  })
+})

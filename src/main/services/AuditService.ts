@@ -41,6 +41,7 @@ export type AutomaticApprovalDecisionSource =
   | 'trusted_session'
   | 'bossman_auto'
   | 'plan_artifact'
+  | 'readonly_shell'
   | 'explicit_user_request'
 export type AutomaticApprovalGrantedScope = 'request' | 'session' | 'workspace'
 

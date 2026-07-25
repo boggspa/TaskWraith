@@ -347,3 +347,58 @@ describe('effectiveAgenticSettings', () => {
     expect(merged.agenticServices.networkAccess).toBe('deny')
   })
 })
+
+describe('resolveNativeApprovalPreflightDecision — readOnlyShellFastPath (git status)', () => {
+  it('allows a posture-denied git status without a prompt, request-scoped', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('deny'),
+        readOnlyShellFastPath: true
+      })
+    ).toMatchObject({ kind: 'allow', reason: 'readonly_shell', scope: 'request' })
+  })
+
+  it('skips the prompt an ask-policy would raise', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('ask'),
+        readOnlyShellFastPath: true
+      })
+    ).toMatchObject({ kind: 'allow', reason: 'readonly_shell' })
+  })
+
+  it('leaves a policy-allow on the ordinary audited path', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('allow', 'allow'),
+        readOnlyShellFastPath: true
+      })
+    ).toMatchObject({ kind: 'allow', reason: 'policy' })
+  })
+
+  it('yields to external-path detection and neverAutoAllow', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('ask'),
+        readOnlyShellFastPath: true,
+        externalPathDetected: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+    expect(
+      resolveNativeApprovalPreflightDecision({
+        resolution: resolution('ask'),
+        readOnlyShellFastPath: true,
+        neverAutoAllow: true
+      })
+    ).toMatchObject({ kind: 'ask' })
+  })
+
+  it('changes nothing when the flag is absent', () => {
+    expect(
+      resolveNativeApprovalPreflightDecision({ resolution: resolution('deny') })
+    ).toMatchObject({ kind: 'deny' })
+    expect(resolveNativeApprovalPreflightDecision({ resolution: resolution('ask') })).toMatchObject(
+      { kind: 'ask' }
+    )
+  })
+})

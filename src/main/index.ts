@@ -1242,6 +1242,10 @@ import {
   shouldAdvertiseTaskWraithMcpToGrok
 } from './grok/GrokMcpAdvertise'
 import { grokReadOnlyShellRequestAllowed } from './grok/GrokReadOnlyShell'
+import {
+  isReadOnlyGitStatusCommand,
+  shellCommandFromRawCommand
+} from './GitStatusShellCommand'
 import { deleteCliProviderProcessIfOwned } from './grok/GrokProcessOwnership'
 import { grokEventToRunEvents, type NormalizedGrokRunEvent } from './grok/GrokStreamingJson'
 import { cursorDebugEnabled } from './cursorGate'
@@ -11497,6 +11501,8 @@ function resolveNativeApprovalPreflight(args: {
   runId?: string
   externalPathDetection?: PendingExternalPathDetection
   toolName?: string
+  /** Raw shell command (string or argv) for shellCommands requests, when known. */
+  shellCommand?: unknown
 }): NativeApprovalPreflight {
   if (!args.service) return { kind: 'none' }
   const settings = AppStore.getSettings()
@@ -11538,6 +11544,11 @@ function resolveNativeApprovalPreflight(args: {
       args.service === 'mediaRecording' ||
       isPostureApprovalOnlyService(effectivePermissions?.presetId, args.service) ||
       isPlanInstrumentGrantHold(effectivePermissions?.presetId, args.service),
+    // Pure `git status` runs prompt-free under every posture (parity with the
+    // auto-allowed MCP git_status tool); the classifier fails closed.
+    readOnlyShellFastPath:
+      args.service === 'shellCommands' &&
+      isReadOnlyGitStatusCommand(shellCommandFromRawCommand(args.shellCommand)),
     effectivePermissions
   })
 }
@@ -23525,7 +23536,11 @@ function handleCodexServerRequest(message: any) {
     workspacePath: workspacePathForCodexApproval,
     runId: state.appRunId,
     externalPathDetection,
-    toolName: codexCanonicalToolName || probedToolName
+    toolName: codexCanonicalToolName || probedToolName,
+    // The RAW exec command (argv or string) — same lookup chain the approval
+    // formatter uses — so a pure `git status` is allowed under every posture.
+    shellCommand:
+      params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command
   })
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
   const postureApprovalOnly = isPostureApprovalOnlyService(

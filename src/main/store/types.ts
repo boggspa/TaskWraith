@@ -3393,6 +3393,13 @@ export interface ChatRecord {
    * an async atomic patch (A1b-persist), never saveChat's sync whole-record writer.
    */
   watchedPr?: WatchedPrDescriptor
+  /**
+   * Main-owned per-thread git workflow marker (src/shared/chatGitWorkflow.ts)
+   * behind the sidebar's per-row git icon and its "Git" section. Written only
+   * via the async atomic patch (renderer observations + the watch-PR poller
+   * report through it); a lagging whole-record save must never clobber it.
+   */
+  gitWorkflow?: ChatGitWorkflowSnapshot
   createdAt: number
   updatedAt: number
   /**
@@ -3844,6 +3851,7 @@ export type ApprovalLedgerDecisionSource =
   | 'trusted_session'
   | 'bossman_auto'
   | 'plan_artifact'
+  | 'readonly_shell'
   | 'explicit_user_request'
   | 'system'
 export type ApprovalLedgerExpirationMode =

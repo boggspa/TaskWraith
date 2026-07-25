@@ -15,6 +15,10 @@ import type {
   RunEventInput
 } from '../store/types'
 import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
+import {
+  isReadOnlyGitStatusCommand,
+  shellCommandFromApprovalPreview
+} from '../GitStatusShellCommand'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
@@ -373,6 +377,34 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       effectiveSettings
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
+    // Universal read-only shell fast path: a pure `git status` — the shell twin
+    // of the auto-allowed MCP git_status tool — is allowed under EVERY posture
+    // (read_only / plan deny shell; default prompts). The classifier fails
+    // closed on anything that is not exactly a git status invocation, so this
+    // cannot widen into a general shell bypass. forcePrompt (caller-demanded
+    // human review) still prompts, and policy-'allow' resolutions keep flowing
+    // through the ordinary audited path below.
+    if (service === 'shellCommands' && !request.forcePrompt && decision !== 'allow') {
+      const readOnlyShellCommand = shellCommandFromApprovalPreview(request.preview)
+      if (readOnlyShellCommand !== null && isReadOnlyGitStatusCommand(readOnlyShellCommand)) {
+        deps.auditService.recordAutomaticApprovalDecision(
+          provider,
+          auditRoute,
+          service,
+          workspacePath,
+          request,
+          'autoAllow',
+          'readonly_shell',
+          'request',
+          {
+            policy,
+            command: readOnlyShellCommand,
+            ...(ensembleApproval ? { ensembleParticipant: ensembleApproval.preview } : {})
+          }
+        )
+        return true
+      }
+    }
     const planArtifactWriteMetadata = deps.planArtifactWriteApprovalMetadata({
       workflowMode,
       effectivePermissions,

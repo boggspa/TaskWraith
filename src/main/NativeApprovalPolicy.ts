@@ -27,7 +27,13 @@ export type NativeApprovalPreflight =
   | {
       kind: 'allow'
       policy: AgenticServicePolicy
-      reason: 'workspace_grant' | 'session_grant' | 'policy' | 'session_yolo' | 'trusted_session'
+      reason:
+        | 'workspace_grant'
+        | 'session_grant'
+        | 'policy'
+        | 'session_yolo'
+        | 'trusted_session'
+        | 'readonly_shell'
       scope: 'workspace' | 'session' | 'request'
       effectivePermissions?: EffectiveRunPermissions
     }
@@ -122,9 +128,32 @@ export function resolveNativeApprovalPreflightDecision(args: {
    * the ordinary external-path prompt for Full Access only.
    */
   trustedSessionExternalWrite?: boolean
+  /**
+   * The request is a strictly-classified read-only `git status` shell command
+   * (isReadOnlyGitStatusCommand). Allowed under EVERY posture — including a
+   * read_only/plan shell deny — mirroring the auto-allowed MCP git_status
+   * tool. The caller computes this from the RAW command; external-path
+   * detection still wins (a git status never carries external paths, so a
+   * detection means the classification cannot be trusted).
+   */
+  readOnlyShellFastPath?: boolean
   effectivePermissions?: EffectiveRunPermissions
 }): Exclude<NativeApprovalPreflight, { kind: 'none' }> {
   const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = args.resolution
+  if (
+    args.readOnlyShellFastPath &&
+    !args.neverAutoAllow &&
+    !args.externalPathDetected &&
+    decision !== 'allow'
+  ) {
+    return {
+      kind: 'allow',
+      policy,
+      reason: 'readonly_shell',
+      scope: 'request',
+      effectivePermissions: args.effectivePermissions
+    }
+  }
   if (decision === 'deny')
     return { kind: 'deny', policy, effectivePermissions: args.effectivePermissions }
   if (args.neverAutoAllow)
