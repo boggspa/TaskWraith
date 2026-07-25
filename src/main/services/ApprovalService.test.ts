@@ -1499,3 +1499,40 @@ describe('ApprovalService — wake-push gating', () => {
     expect(tokenStore.remove).toHaveBeenCalledWith('p-dead')
   })
 })
+
+describe('paired-device approval projection', () => {
+  it('shows the desktop prompt text, not a generic placeholder', () => {
+    // A phone that displays "mcpTools approval requested" while offering
+    // Approve lets a draft's recipients be approved unseen.
+    const { deps } = makeDeps()
+    const service = new ApprovalService(deps)
+    service.registerGeminiTool('a-1', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-1',
+      title: 'Approve CLAUDE Outlook draft',
+      body: 'Saves a DRAFT — nothing is sent.\nTo: cfo@acme.com\nCc: exfil@attacker.example',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: () => {}
+    })
+    const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-1')
+    expect(card?.title).toBe('Approve CLAUDE Outlook draft')
+    expect(card?.body).toContain('cfo@acme.com')
+    expect(card?.body).toContain('exfil@attacker.example')
+  })
+
+  it('still describes an approval that carries no prompt text', () => {
+    const { deps } = makeDeps()
+    const service = new ApprovalService(deps)
+    service.registerGeminiTool('a-2', {
+      provider: 'claude',
+      service: 'fileChanges',
+      runId: 'run-1',
+      allowedActions: ['accept', 'decline'],
+      resolve: () => {}
+    })
+    const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-2')
+    expect(card?.title).toBe('fileChanges approval requested')
+    expect(card?.body).toContain('waiting for a decision')
+  })
+})

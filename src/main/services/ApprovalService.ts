@@ -87,6 +87,15 @@ export interface PendingGeminiToolApproval {
   service: AgenticServiceId
   workspacePath?: string
   runId?: string
+  /**
+   * The exact desktop prompt text. Carried so a PAIRED DEVICE sees what it is
+   * approving: without these the remote card read "mcpTools approval
+   * requested" / "Gemini requested a gated tool or workspace action" for every
+   * request, while still offering Approve — so a draft's recipients could be
+   * approved from a phone that never displayed them.
+   */
+  title?: string
+  body?: string
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
   allowedActions?: AgentApprovalAction[]
@@ -499,10 +508,10 @@ export class ApprovalService {
           runId: info.runId,
           title: requiresDesktopExactReview
             ? 'Canvas eval requires desktop review'
-            : `${info.service} approval requested`,
+            : info.title || `${info.service} approval requested`,
           body: requiresDesktopExactReview
             ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
-            : 'Gemini requested a gated tool or workspace action.',
+            : info.body || 'A gated tool or workspace action is waiting for a decision.',
           allowedActions: requiresDesktopExactReview
             ? (info.allowedActions || []).filter(
                 (action) => action === 'decline' || action === 'cancel'

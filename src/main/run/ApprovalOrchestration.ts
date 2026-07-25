@@ -617,6 +617,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         service,
         workspacePath,
         runId: request.runId,
+        // The same strings the desktop modal shows, so a paired device is
+        // deciding on the same facts rather than a generic placeholder.
+        title,
+        body,
         externalPathDetection,
         requestOnly,
         allowedActions: actions,
