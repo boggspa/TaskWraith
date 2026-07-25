@@ -606,6 +606,8 @@ const api = {
     model: unknown,
     baseEtag?: string | null
   ) => ipcRenderer.invoke('office:write-document', workspace, path, model, baseEtag),
+  deleteOfficeDocument: (workspace: string, path: string, baseEtag?: string | null) =>
+    ipcRenderer.invoke('office:delete-document', workspace, path, baseEtag),
   captureSnapshot: (workspace: string) => ipcRenderer.invoke('capture-snapshot', workspace),
   computeRunDiff: (runId: string, preSnapshot: any, postSnapshot: any, changeContext: any = null) =>
     ipcRenderer.invoke('compute-run-diff', runId, preSnapshot, postSnapshot, changeContext),

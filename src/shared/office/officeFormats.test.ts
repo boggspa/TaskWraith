@@ -6,6 +6,7 @@ import {
   isOfficeDocumentPath,
   officeFormatForPath,
   officeKindForPath,
+  officeWorkspaceRelativePath,
   replaceOfficeExtension,
   shouldAutoRouteToOffice
 } from './officeFormats'
@@ -63,6 +64,35 @@ describe('replaceOfficeExtension', () => {
   it('appends when there is no extension and ignores dot-directories', () => {
     expect(replaceOfficeExtension('notes', 'md')).toBe('notes.md')
     expect(replaceOfficeExtension('.hidden/file', 'docx')).toBe('.hidden/file.docx')
+  })
+})
+
+describe('officeWorkspaceRelativePath', () => {
+  it('maps contained absolute paths to workspace-relative paths', () => {
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project/docs/a.docx')).toBe(
+      'docs/a.docx'
+    )
+    expect(officeWorkspaceRelativePath('/ws/project/', '/ws/project/a.docx')).toBe('a.docx')
+  })
+
+  it('normalizes Windows separators', () => {
+    expect(officeWorkspaceRelativePath('C:\\ws\\project', 'C:\\ws\\project\\docs\\a.docx')).toBe(
+      'docs/a.docx'
+    )
+  })
+
+  it('rejects the root itself, siblings, prefix look-alikes and blanks', () => {
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project')).toBeNull()
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/other/a.docx')).toBeNull()
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project-two/a.docx')).toBeNull()
+    expect(officeWorkspaceRelativePath('', '/ws/a.docx')).toBeNull()
+    expect(officeWorkspaceRelativePath('/ws/project', '')).toBeNull()
+  })
+
+  it('rejects dot-segment traversal inside the prefix-matched remainder', () => {
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project/../other/a.docx')).toBeNull()
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project/docs/../../a.docx')).toBeNull()
+    expect(officeWorkspaceRelativePath('/ws/project', '/ws/project/./a.docx')).toBeNull()
   })
 })
 

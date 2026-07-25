@@ -285,6 +285,7 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   // these channels. The handlers additionally assert workspace-file scope.
   'office:read-document',
   'office:write-document',
+  'office:delete-document',
 
   // Project registry (Work surface): app-level organisational state managed
   // from the main window only; the domain handler asserts the same authority.

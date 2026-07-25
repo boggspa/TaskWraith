@@ -89,6 +89,67 @@ it('renders the selected Project library without implying access', () => {
   expect(html).toContain('Catalogue only until you choose Use next')
   expect(html).toContain('spec.docx')
   expect(html).toContain('Available when last verified')
+  // No Office affordance without the resolver/open plumbing.
+  expect(html).not.toContain('Open in the Office editor')
+})
+
+it('offers Open in Office only for file references resolvable inside the workspace', () => {
+  const seed = (): void => {
+    listProjects()
+    fake.broadcast.cb?.({
+      projects: [
+        {
+          schemaVersion: 1,
+          id: 'project-a',
+          name: 'Alpha',
+          icon: { iconKind: 'seed', seed: 'a' },
+          hue: 1,
+          parentId: null,
+          order: 1,
+          memberChatIds: [],
+          createdAt: 1,
+          updatedAt: 1
+        }
+      ],
+      workProfiles: [],
+      references: [
+        {
+          id: 'ref-inside',
+          projectId: 'project-a',
+          kind: 'file',
+          locator: '/ws/docs/spec.docx',
+          title: 'spec.docx',
+          provenance: { addedBy: 'user', addedAt: 1 },
+          contextPolicy: 'available',
+          updatedAt: 2
+        },
+        {
+          id: 'ref-outside',
+          projectId: 'project-a',
+          kind: 'file',
+          locator: '/elsewhere/other.docx',
+          title: 'other.docx',
+          provenance: { addedBy: 'user', addedAt: 1 },
+          contextPolicy: 'available',
+          updatedAt: 2
+        }
+      ]
+    })
+  }
+
+  seed()
+  const html = renderToStaticMarkup(
+    <ProjectReferencesDockPanel
+      projectId="project-a"
+      onClose={() => undefined}
+      resolveOfficeTarget={(locator) =>
+        locator.startsWith('/ws/') ? locator.slice('/ws/'.length) : null
+      }
+      onOpenInOffice={() => undefined}
+    />
+  )
+  // Exactly one Office action: the inside-workspace reference.
+  expect(html.match(/Open in the Office editor/g)).toHaveLength(1)
 })
 
 it('renders agent suggestions as explicitly untrusted inert catalogue candidates', () => {

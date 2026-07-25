@@ -924,6 +924,11 @@ declare global {
         model: OfficeDocumentModel,
         baseEtag?: string | null
       ) => Promise<OfficeDocumentReadResult>
+      deleteOfficeDocument: (
+        workspace: string,
+        path: string,
+        baseEtag?: string | null
+      ) => Promise<{ path: string; changeSet?: WorkspaceChangeSet }>
       captureSnapshot: (workspace: string) => Promise<any>
       computeRunDiff: (
         runId: string,

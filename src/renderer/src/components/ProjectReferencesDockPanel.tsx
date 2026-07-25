@@ -40,6 +40,14 @@ interface ProjectReferencesDockPanelProps {
   contextSelectionEnabled?: boolean
   onClose: () => void
   showCloseButton?: boolean
+  /**
+   * Maps a file reference's absolute locator to a workspace-relative Office
+   * path, or null when the reference is not openable (outside the bound
+   * workspace, or not an office format). Gates the "Office" row action.
+   */
+  resolveOfficeTarget?: (locator: string) => string | null
+  /** Opens a workspace-relative path in the Office dock surface. */
+  onOpenInOffice?: (workspaceRelativePath: string) => void
 }
 
 /**
@@ -249,7 +257,9 @@ export function ProjectReferencesDockPanel({
   chatId,
   contextSelectionEnabled = true,
   onClose,
-  showCloseButton = true
+  showCloseButton = true,
+  resolveOfficeTarget,
+  onOpenInOffice
 }: ProjectReferencesDockPanelProps): JSX.Element {
   const projectIdRef = useRef(projectId)
   projectIdRef.current = projectId
@@ -696,6 +706,23 @@ export function ProjectReferencesDockPanel({
                       Verify
                     </button>
                   )}
+                  {(() => {
+                    if (reference.kind !== 'file' || !onOpenInOffice || !resolveOfficeTarget) {
+                      return null
+                    }
+                    const officeTarget = resolveOfficeTarget(reference.locator)
+                    if (!officeTarget) return null
+                    return (
+                      <button
+                        type="button"
+                        disabled={busy}
+                        onClick={() => onOpenInOffice(officeTarget)}
+                        title="Open in the Office editor"
+                      >
+                        Office
+                      </button>
+                    )
+                  })()}
                   <button
                     type="button"
                     disabled={busy}

@@ -23,6 +23,7 @@ import {
 } from '../../shared/office/officeModels'
 import { buildDelimitedText, parseDelimitedText } from '../../shared/office/csvCodec'
 import { buildIcs, parseIcs } from '../../shared/office/icsCodec'
+import { systemTimeZone } from '../../shared/office/zonedTime'
 import { buildEml, parseEml } from '../../shared/office/emlCodec'
 import { markdownToWordModel, wordModelToMarkdown } from '../../shared/office/wordMarkdown'
 import { deckModelToMarkdown } from '../../shared/office/deckMarkdown'
@@ -30,9 +31,11 @@ import { buildDocx, OfficeCodecError, parseDocx } from '../office/DocxCodec'
 import { buildXlsx, parseXlsx } from '../office/XlsxCodec'
 import { buildPptx, parsePptx } from '../office/PptxCodec'
 import {
+  deleteWorkspaceFile,
   readWorkspaceFile,
   writeWorkspaceFile,
-  type RecordWorkspaceEditorChangeFn
+  type RecordWorkspaceEditorChangeFn,
+  type WorkspaceFileDeleteResult
 } from './WorkspaceFileEditorService'
 
 /** Office documents may exceed the plain-text editor cap (images-free OOXML stays small, but imports vary). */
@@ -87,7 +90,7 @@ function decodeDocument(format: OfficeFileFormat, raw: string | Buffer): Decoded
           warnings: []
         }
       case 'ics': {
-        const parsed = parseIcs(String(raw))
+        const parsed = parseIcs(String(raw), { displayZone: systemTimeZone() })
         return { model: parsed.model, warnings: parsed.warnings }
       }
       case 'eml': {
@@ -182,16 +185,76 @@ export async function readOfficeDocument(
   })
   const raw = binary ? Buffer.from(read.content, 'base64') : read.content
   const decoded = decodeDocument(format, raw)
+  // The editor works on the NORMALIZED model, so what the user sees is
+  // exactly what a save will write — any clamping happens here, loudly,
+  // instead of silently at save time.
+  const model = normalizeOfficeDocumentModel(decoded.model) ?? decoded.model
+  const truncationWarnings = summarizeReadTruncation(decoded.model, model)
   return {
     path: read.path,
     kind: OFFICE_FORMAT_KINDS[format],
     format,
-    model: decoded.model,
+    model,
     etag: read.etag ?? null,
     sizeBytes: read.sizeBytes,
     mtimeMs: read.mtimeMs,
-    warnings: decoded.warnings
+    warnings: [...truncationWarnings, ...decoded.warnings]
   }
+}
+
+/**
+ * Human-readable description of what read-time normalization clamped, so a
+ * file exceeding the editor's limits announces the loss BEFORE the user
+ * saves a truncated version over the original.
+ */
+function summarizeReadTruncation(
+  original: OfficeDocumentModel,
+  normalized: OfficeDocumentModel
+): string[] {
+  const warnings: string[] = []
+  const suffix = 'Saving writes only what the editor shows.'
+  if (original.kind === 'word' && normalized.kind === 'word') {
+    if (normalized.blocks.length < original.blocks.length) {
+      warnings.push(
+        `Document truncated to the first ${normalized.blocks.length} of ${original.blocks.length} blocks. ${suffix}`
+      )
+    }
+  } else if (original.kind === 'sheet' && normalized.kind === 'sheet') {
+    original.sheets.forEach((sheet, index) => {
+      const kept = normalized.sheets[index]
+      if (!kept) {
+        warnings.push(`Sheet "${sheet.name}" exceeds the workbook limit and was dropped. ${suffix}`)
+        return
+      }
+      const originalCols = sheet.rows.reduce((max, row) => Math.max(max, row.length), 0)
+      const keptCols = kept.rows.reduce((max, row) => Math.max(max, row.length), 0)
+      if (kept.rows.length < sheet.rows.length || keptCols < originalCols) {
+        warnings.push(
+          `Sheet "${sheet.name}" truncated to ${kept.rows.length} rows × ${Math.max(keptCols, 1)} columns` +
+            ` (file has ${sheet.rows.length} × ${Math.max(originalCols, 1)}). ${suffix}`
+        )
+      }
+    })
+  } else if (original.kind === 'deck' && normalized.kind === 'deck') {
+    if (normalized.slides.length < original.slides.length) {
+      warnings.push(
+        `Deck truncated to the first ${normalized.slides.length} of ${original.slides.length} slides. ${suffix}`
+      )
+    }
+  } else if (original.kind === 'calendar' && normalized.kind === 'calendar') {
+    if (normalized.events.length < original.events.length) {
+      warnings.push(
+        `Calendar kept ${normalized.events.length} of ${original.events.length} events. ${suffix}`
+      )
+    }
+  } else if (original.kind === 'mail' && normalized.kind === 'mail') {
+    if (normalized.body.length < original.body.length) {
+      warnings.push(
+        `Message body truncated to ${normalized.body.length} of ${original.body.length} characters. ${suffix}`
+      )
+    }
+  }
+  return warnings
 }
 
 export interface OfficeDocumentWriteOptions {
@@ -216,6 +279,20 @@ export async function writeOfficeDocument(
   const expectedKind = OFFICE_FORMAT_KINDS[format]
   if (model.kind !== expectedKind) throw kindMismatch(format, model.kind)
 
+  // Surface silently-dropped images (bad format / over the size cap) so a
+  // save never loses a pasted picture without telling the user.
+  const droppedImageWarnings: string[] = []
+  if (model.kind === 'word') {
+    const requested = countRequestedImageBlocks(options.model)
+    const kept = model.blocks.filter((block) => block.type === 'image').length
+    if (requested > kept) {
+      const dropped = requested - kept
+      droppedImageWarnings.push(
+        `${dropped} image${dropped === 1 ? ' was' : 's were'} removed: only PNG/JPEG/GIF up to 4 MB are supported.`
+      )
+    }
+  }
+
   const encoded = encodeDocument(format, model)
   const written = await writeWorkspaceFile({
     workspacePath: options.workspacePath,
@@ -238,6 +315,55 @@ export async function writeOfficeDocument(
     etag: written.etag ?? null,
     sizeBytes: written.sizeBytes,
     mtimeMs: written.mtimeMs,
-    warnings: encoded.warnings
+    warnings: [...droppedImageWarnings, ...encoded.warnings]
   }
+}
+
+export interface OfficeDocumentDeleteOptions {
+  workspacePath: string
+  workspaceId?: string
+  filePath: string
+  /** Etag from the last read — external edits are never deleted silently. */
+  baseEtag?: string | null
+  recordChange?: RecordWorkspaceEditorChangeFn
+}
+
+/**
+ * Deletes an office document. Restricted to office extensions so the binary
+ * opt-in never becomes a generic binary-delete lane; text office formats
+ * keep change-set recording, binary containers skip it (no text diff).
+ */
+export async function deleteOfficeDocument(
+  options: OfficeDocumentDeleteOptions
+): Promise<WorkspaceFileDeleteResult> {
+  const format = requireOfficeFormat(options.filePath)
+  const binary = OFFICE_BINARY_FORMATS.has(format)
+  return deleteWorkspaceFile({
+    workspacePath: options.workspacePath,
+    workspaceId: options.workspaceId,
+    filePath: options.filePath,
+    baseEtag: options.baseEtag,
+    origin: 'office-suite',
+    contentEncoding: binary ? 'base64' : 'utf8',
+    maxBytes: MAX_OFFICE_FILE_BYTES,
+    recordChange: binary ? undefined : options.recordChange
+  })
+}
+
+/** Defensive count of image blocks in the untrusted pre-normalization payload. */
+function countRequestedImageBlocks(payload: unknown): number {
+  if (typeof payload !== 'object' || payload === null) return 0
+  const blocks = (payload as { blocks?: unknown }).blocks
+  if (!Array.isArray(blocks)) return 0
+  let count = 0
+  for (const block of blocks) {
+    if (
+      typeof block === 'object' &&
+      block !== null &&
+      (block as { type?: unknown }).type === 'image'
+    ) {
+      count += 1
+    }
+  }
+  return count
 }

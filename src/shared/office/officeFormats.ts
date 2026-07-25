@@ -135,6 +135,31 @@ export function replaceOfficeExtension(filePath: string, format: OfficeFileForma
   return `${stem}.${format}`
 }
 
+/**
+ * Maps an absolute path (a project file reference locator) to a
+ * workspace-relative path when it lies strictly inside the workspace root.
+ * Separator-normalized so Windows locators match; returns null for the root
+ * itself, paths outside the root, or blank inputs. Purely lexical — callers
+ * that touch the filesystem still go through the main-process containment
+ * checks.
+ */
+export function officeWorkspaceRelativePath(
+  workspaceRoot: string,
+  absolutePath: string
+): string | null {
+  const normalize = (value: string): string => value.trim().replace(/\\/g, '/').replace(/\/+$/, '')
+  const root = normalize(workspaceRoot)
+  const target = normalize(absolutePath)
+  if (!root || !target || target === root) return null
+  if (!target.startsWith(`${root}/`)) return null
+  const relative = target.slice(root.length + 1)
+  if (!relative) return null
+  // Dot segments could re-escape after the prefix check; the main process
+  // re-validates containment, but the affordance should never offer them.
+  if (relative.split('/').some((segment) => segment === '..' || segment === '.')) return null
+  return relative
+}
+
 /** Read/write result exchanged over the office document IPC channels. */
 export interface OfficeDocumentReadResult {
   path: string

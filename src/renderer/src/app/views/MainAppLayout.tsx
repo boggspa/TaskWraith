@@ -61,6 +61,10 @@ import {
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
+import {
+  isOfficeDocumentPath,
+  officeWorkspaceRelativePath
+} from '../../../../shared/office/officeFormats'
 import { ProjectReferencesDockPanel } from '../../components/ProjectReferencesDockPanel'
 import { WorkProjectReferencesEmptyShell } from '../../components/WorkProjectReferencesEmptyShell'
 import { AgentIdentityIcon } from '../../components/icons/AgentIdentityIcon'
@@ -2568,6 +2572,14 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       contextSelectionEnabled={currentChat?.chatKind !== 'ensemble'}
                       showCloseButton={!isWorkRouteReferencesPinned}
                       onClose={() => closeRightDockPanel('references')}
+                      resolveOfficeTarget={(locator) => {
+                        // Office can only open files inside the bound
+                        // workspace — reference locators are absolute paths.
+                        const workspaceRoot = currentWorkspace?.path
+                        if (!workspaceRoot || !isOfficeDocumentPath(locator)) return null
+                        return officeWorkspaceRelativePath(workspaceRoot, locator)
+                      }}
+                      onOpenInOffice={onOpenOfficeDocument}
                     />
                   ) : (
                     <WorkProjectReferencesEmptyShell />

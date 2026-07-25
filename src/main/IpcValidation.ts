@@ -417,6 +417,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'delete-workspace-file': ['workspacePath', 'filePath', 'optionalString'],
   'office:read-document': ['workspacePath', 'filePath'],
   'office:write-document': ['workspacePath', 'filePath', 'object', 'optionalString'],
+  'office:delete-document': ['workspacePath', 'filePath', 'optionalString'],
   'get-agent-status': ['provider'],
   'get-agent-rate-limits': ['provider', 'optionalObject'],
   'import-codex-usage-credential': ['optionalString'],

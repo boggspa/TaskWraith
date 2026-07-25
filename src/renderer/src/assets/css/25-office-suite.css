@@ -3,6 +3,7 @@
    token usage (no accent flooding, --rightdock/--surface families only). */
 
 .office-suite {
+  position: relative;
   display: flex;
   min-height: 0;
   min-width: 0;
@@ -371,6 +372,43 @@
   color: var(--text-secondary);
 }
 
+.office-modal-backdrop {
+  position: absolute;
+  inset: 0;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: color-mix(in srgb, var(--surface-0, #000) 45%, transparent);
+}
+
+.office-confirm-card {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-width: 340px;
+  padding: 14px 16px;
+  border: 1px solid var(--border-subtle);
+  border-radius: 12px;
+  background: var(--surface-1);
+  font-size: 12.5px;
+}
+
+.office-confirm-card strong {
+  font-size: 13px;
+}
+
+.office-confirm-card span {
+  color: var(--text-secondary);
+  word-break: break-all;
+}
+
+.office-confirm-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
 .office-empty-state {
   padding: 32px 24px;
   max-width: 460px;
@@ -448,6 +486,12 @@
   background: color-mix(in srgb, var(--surface-2) 80%, transparent);
   border-radius: 4px;
   padding: 0 3px;
+}
+
+.office-word-surface img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
 }
 
 /* --- sheet ------------------------------------------------------------------ */

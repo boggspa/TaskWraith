@@ -186,6 +186,49 @@ describe('OfficeSuitePanel', () => {
     expect(html).toContain('Email (.eml)')
   })
 
+  it('asks before discarding unsaved edits when opening another document', () => {
+    const html = renderToStaticMarkup(
+      <OfficeSuitePanel
+        workspacePath="/ws"
+        initialDocument={docFixture({})}
+        initialPendingOpenPath="budget.xlsx"
+      />
+    )
+    expect(html).toContain('Discard unsaved changes?')
+    expect(html).toContain('Opening budget.xlsx discards them.')
+    expect(html).toContain('Keep editing')
+  })
+
+  it('windows huge sheets in the grid while keeping the model intact', () => {
+    const rows = Array.from({ length: 350 }, (_, index) => [String(index), 'x'])
+    const html = renderToStaticMarkup(
+      <OfficeSuitePanel
+        workspacePath="/ws"
+        initialDocument={docFixture({
+          path: 'big.csv',
+          kind: 'sheet',
+          format: 'csv',
+          model: { kind: 'sheet', sheets: [{ name: 'Big', rows }] }
+        })}
+      />
+    )
+    expect(html).toContain('Showing the first 300 of 350 rows')
+    expect(html).toContain('saves write all of it')
+    // Row 300 (index 299) rendered; row 301 not.
+    expect(html).toContain('value="299"')
+    expect(html).not.toContain('value="300"')
+  })
+
+  it('renders the delete affordance and its confirmation card', () => {
+    const html = renderToStaticMarkup(
+      <OfficeSuitePanel workspacePath="/ws" initialDocument={docFixture({})} initialConfirmDelete />
+    )
+    expect(html).toContain('Delete document?')
+    expect(html).toContain('docs/plan.docx will be removed from this workspace.')
+    expect(html).toContain('role="alertdialog"')
+    expect(html).toContain('office-danger')
+  })
+
   it('surfaces document warnings in a banner', () => {
     const html = renderToStaticMarkup(
       <OfficeSuitePanel

@@ -1,6 +1,10 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { OfficeDocumentReadResult } from '../../shared/office/officeFormats'
-import { readOfficeDocument, writeOfficeDocument } from '../services/OfficeDocumentService'
+import {
+  deleteOfficeDocument,
+  readOfficeDocument,
+  writeOfficeDocument
+} from '../services/OfficeDocumentService'
 import type { RecordWorkspaceEditorChangeFn } from '../services/WorkspaceFileEditorService'
 import type { WorkspaceRecord } from '../store/types'
 
@@ -57,6 +61,28 @@ export function registerOfficeDocumentHandlers(deps: OfficeDocumentHandlerDeps):
         workspaceId: workspaceRecord?.id,
         filePath,
         model,
+        baseEtag,
+        recordChange: deps.recordWorkspaceEditorChange
+      })
+      deps.scheduleRemoteGitSnapshotRefresh(workspaceRecord?.id, { delayMs: 50, force: true })
+      return result
+    }
+  )
+
+  ipcMain.handle(
+    'office:delete-document',
+    async (event, workspace: string, filePath: string, baseEtag?: string | null) => {
+      const registeredWorkspace = deps.requireRegisteredWorkspace(workspace)
+      deps.assertSenderScope(event, {
+        capability: 'workspace-file',
+        workspacePath: registeredWorkspace,
+        operation: 'write'
+      })
+      const workspaceRecord = deps.findRegisteredWorkspace(registeredWorkspace)
+      const result = await deleteOfficeDocument({
+        workspacePath: registeredWorkspace,
+        workspaceId: workspaceRecord?.id,
+        filePath,
         baseEtag,
         recordChange: deps.recordWorkspaceEditorChange
       })

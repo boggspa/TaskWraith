@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { readOfficeDocument, writeOfficeDocument } from '../services/OfficeDocumentService'
+import {
+  deleteOfficeDocument,
+  readOfficeDocument,
+  writeOfficeDocument
+} from '../services/OfficeDocumentService'
 import {
   registerOfficeDocumentHandlers,
   type OfficeDocumentHandlerDeps
@@ -10,7 +14,8 @@ import type { WorkspaceRecord } from '../store/types'
 vi.mock('electron', () => ({ ipcMain: { handle: vi.fn() } }))
 vi.mock('../services/OfficeDocumentService', () => ({
   readOfficeDocument: vi.fn(),
-  writeOfficeDocument: vi.fn()
+  writeOfficeDocument: vi.fn(),
+  deleteOfficeDocument: vi.fn()
 }))
 
 type RegisteredHandler = (event: IpcMainInvokeEvent, ...args: unknown[]) => Promise<unknown>
@@ -48,10 +53,14 @@ describe('registerOfficeDocumentHandlers', () => {
     vi.clearAllMocks()
   })
 
-  it('registers both office channels', () => {
+  it('registers all office channels', () => {
     registerOfficeDocumentHandlers(makeDeps())
     const channels = mockedHandle.mock.calls.map(([channel]) => channel)
-    expect(channels).toEqual(['office:read-document', 'office:write-document'])
+    expect(channels).toEqual([
+      'office:read-document',
+      'office:write-document',
+      'office:delete-document'
+    ])
   })
 
   it('normalizes the workspace, asserts read scope, then reads', async () => {
@@ -105,6 +114,38 @@ describe('registerOfficeDocumentHandlers', () => {
       force: true
     })
     expect(result).toBe(writeResult)
+  })
+
+  it('asserts write scope for deletes and refreshes the git snapshot', async () => {
+    const deps = makeDeps()
+    registerOfficeDocumentHandlers(deps)
+    const deleteResult = { path: 'a.docx' }
+    vi.mocked(deleteOfficeDocument).mockResolvedValue(deleteResult as never)
+
+    const result = await handlerFor('office:delete-document')(
+      fakeEvent,
+      '/ws',
+      'a.docx',
+      'sha256:prev'
+    )
+
+    expect(deps.assertSenderScope).toHaveBeenCalledWith(fakeEvent, {
+      capability: 'workspace-file',
+      workspacePath: '/registered/ws',
+      operation: 'write'
+    })
+    expect(vi.mocked(deleteOfficeDocument)).toHaveBeenCalledWith({
+      workspacePath: '/registered/ws',
+      workspaceId: 'ws-1',
+      filePath: 'a.docx',
+      baseEtag: 'sha256:prev',
+      recordChange: deps.recordWorkspaceEditorChange
+    })
+    expect(deps.scheduleRemoteGitSnapshotRefresh).toHaveBeenCalledWith('ws-1', {
+      delayMs: 50,
+      force: true
+    })
+    expect(result).toBe(deleteResult)
   })
 
   it('propagates scope failures without touching the service', async () => {

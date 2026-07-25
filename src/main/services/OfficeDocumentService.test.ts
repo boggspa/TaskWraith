@@ -11,6 +11,7 @@ import { buildDocx } from '../office/DocxCodec'
 import {
   MAX_OFFICE_FILE_BYTES,
   OfficeDocumentError,
+  deleteOfficeDocument,
   readOfficeDocument,
   writeOfficeDocument
 } from './OfficeDocumentService'
@@ -176,7 +177,7 @@ describe('writeOfficeDocument / readOfficeDocument', () => {
     ).rejects.toThrow(/Not a valid \.docx/)
   })
 
-  it('surfaces builder warnings (pptx notes) and multi-sheet csv exports', async () => {
+  it('round-trips pptx speaker notes and warns on multi-sheet csv exports', async () => {
     const workspace = await makeWorkspace()
     const deckWrite = await writeOfficeDocument({
       workspacePath: workspace,
@@ -184,7 +185,12 @@ describe('writeOfficeDocument / readOfficeDocument', () => {
       model: { kind: 'deck', slides: [{ title: 'T', bullets: [], notes: 'keep me' }] },
       baseEtag: null
     })
-    expect(deckWrite.warnings.some((warning) => warning.includes('Speaker notes'))).toBe(true)
+    expect(deckWrite.warnings).toEqual([])
+    const deckRead = await readOfficeDocument(workspace, 'deck.pptx')
+    expect(deckRead.model).toEqual({
+      kind: 'deck',
+      slides: [{ title: 'T', bullets: [], notes: 'keep me' }]
+    })
 
     const multiSheet: SheetDocumentModel = {
       kind: 'sheet',
@@ -204,5 +210,129 @@ describe('writeOfficeDocument / readOfficeDocument', () => {
 
   it('keeps the office byte cap far above the text editor cap', () => {
     expect(MAX_OFFICE_FILE_BYTES).toBeGreaterThan(10_000_000)
+  })
+
+  it('clamps oversized files at READ time with a loud truncation warning', async () => {
+    const workspace = await makeWorkspace()
+    // 300 columns exceeds the 256-column model cap.
+    const wideRow = Array.from({ length: 300 }, (_, index) => `c${index}`).join(',')
+    await writeFile(join(workspace, 'wide.csv'), `${wideRow}\r\n${wideRow}\r\n`)
+    const read = await readOfficeDocument(workspace, 'wide.csv')
+    expect(read.model.kind).toBe('sheet')
+    if (read.model.kind === 'sheet') {
+      expect(read.model.sheets[0].rows[0]).toHaveLength(256)
+    }
+    expect(
+      read.warnings.some(
+        (warning) => warning.includes('256 columns') && warning.includes('Saving writes only')
+      )
+    ).toBe(true)
+    // What the editor shows is exactly what a save writes — no silent
+    // second truncation at save time.
+    const saved = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'wide.csv',
+      model: read.model,
+      baseEtag: read.etag
+    })
+    expect(saved.model).toEqual(read.model)
+  })
+
+  it('warns when normalization drops oversized or invalid images on save', async () => {
+    const workspace = await makeWorkspace()
+    const result = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'imgs.docx',
+      model: {
+        kind: 'word',
+        blocks: [
+          { type: 'paragraph', runs: [{ text: 'keep' }] },
+          { type: 'image', image: { dataUri: 'data:image/svg+xml;base64,PHN2Zy8+', name: 'bad' } }
+        ]
+      },
+      baseEtag: null
+    })
+    expect(result.warnings.some((warning) => warning.includes('image was removed'))).toBe(true)
+  })
+})
+
+describe('deleteOfficeDocument', () => {
+  it('deletes binary office documents with etag concurrency', async () => {
+    const workspace = await makeWorkspace()
+    const written = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'gone.docx',
+      model: WORD_MODEL,
+      baseEtag: null
+    })
+    const result = await deleteOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'gone.docx',
+      baseEtag: written.etag
+    })
+    expect(result.path).toBe('gone.docx')
+    await expect(readFile(join(workspace, 'gone.docx'))).rejects.toThrow()
+  })
+
+  it('rejects stale etags and non-office extensions', async () => {
+    const workspace = await makeWorkspace()
+    const written = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'keep.docx',
+      model: WORD_MODEL,
+      baseEtag: null
+    })
+    await writeFile(join(workspace, 'keep.docx'), buildDocx({ kind: 'word', blocks: [] }))
+    await expect(
+      deleteOfficeDocument({
+        workspacePath: workspace,
+        filePath: 'keep.docx',
+        baseEtag: written.etag
+      })
+    ).rejects.toThrow(/changed on disk/)
+
+    await writeFile(join(workspace, 'code.ts'), 'export {}')
+    await expect(
+      deleteOfficeDocument({ workspacePath: workspace, filePath: 'code.ts', baseEtag: 'sha256:x' })
+    ).rejects.toThrow(/not an Office document/)
+  })
+
+  it('records change sets for text office formats but not binary ones', async () => {
+    const workspace = await makeWorkspace()
+    const recorded: { filePath: string; previousContent?: string }[] = []
+    const record = (input: { filePath: string; previousContent?: string }): never => {
+      recorded.push({ filePath: input.filePath, previousContent: input.previousContent })
+      return { id: 'cs' } as never
+    }
+
+    const csv = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'notes.csv',
+      model: { kind: 'sheet', sheets: [{ name: 'S', rows: [['x']] }] },
+      baseEtag: null
+    })
+    await deleteOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'notes.csv',
+      baseEtag: csv.etag,
+      recordChange: record as never
+    })
+    expect(recorded).toHaveLength(1)
+    expect(recorded[0].previousContent).toContain('x')
+
+    const docx = await writeOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'bin.docx',
+      model: WORD_MODEL,
+      baseEtag: null
+    })
+    await deleteOfficeDocument({
+      workspacePath: workspace,
+      filePath: 'bin.docx',
+      baseEtag: docx.etag,
+      recordChange: record as never
+    })
+    // Binary deletes skip change recording entirely.
+    expect(recorded).toHaveLength(1)
   })
 })

@@ -77,6 +77,14 @@ export interface WorkspaceFileDeleteOptions {
   origin?: string
   recordChange?: RecordWorkspaceEditorChangeFn
   requireBaseEtag?: boolean
+  /**
+   * 'base64' opts binary documents (Office suite) into deletion: the
+   * text-buffer assertion is skipped and change recording omits the
+   * (non-textual) previous content. Defaults to the strict utf8 contract.
+   */
+  contentEncoding?: WorkspaceFileContentEncoding
+  /** Per-call size ceiling override; defaults to MAX_EDITOR_FILE_BYTES. */
+  maxBytes?: number
 }
 
 export interface WorkspaceFileDeleteResult {
@@ -690,6 +698,8 @@ async function createWorkspaceFile(input: {
 export async function deleteWorkspaceFile(
   options: WorkspaceFileDeleteOptions
 ): Promise<WorkspaceFileDeleteResult> {
+  const contentEncoding = options.contentEncoding ?? 'utf8'
+  const maxBytes = options.maxBytes ?? MAX_EDITOR_FILE_BYTES
   const recordedWorkspacePath = resolve(options.workspacePath)
   const workspaceRoot = await canonicalWorkspaceRoot(options.workspacePath)
   const requireBaseEtag = options.requireBaseEtag ?? true
@@ -704,9 +714,9 @@ export async function deleteWorkspaceFile(
       parentSnapshot,
       'deleted'
     )
-    assertEditorFileStat(openedStat)
+    assertEditorFileStat(openedStat, maxBytes)
     const previousBuffer = await fileHandle.readFile()
-    assertTextBuffer(previousBuffer)
+    if (contentEncoding === 'utf8') assertTextBuffer(previousBuffer)
     const currentEtag = workspaceFileEtag(previousBuffer)
     if (requireBaseEtag && !options.baseEtag) {
       throw new WorkspaceFileEditorError(
@@ -738,7 +748,8 @@ export async function deleteWorkspaceFile(
       filePath: relativePath,
       existedBefore: true,
       deleted: true,
-      previousContent: previousBuffer.toString('utf8'),
+      previousContent:
+        contentEncoding === 'utf8' ? previousBuffer.toString('utf8') : undefined,
       nextContent: '',
       sizeBytes: 0,
       metadata: {

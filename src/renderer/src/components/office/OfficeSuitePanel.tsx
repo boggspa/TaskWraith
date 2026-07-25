@@ -18,6 +18,7 @@ import {
   type OfficeDocumentModel
 } from '../../../../shared/office/officeModels'
 import { wordHtmlToModel } from '../../../../shared/office/wordHtml'
+import { PillButton } from '../PillButton'
 import { CalendarEditorView } from './CalendarEditorView'
 import { DeckEditorView } from './DeckEditorView'
 import { MailEditorView } from './MailEditorView'
@@ -44,6 +45,10 @@ export interface OfficeSuitePanelProps {
   initialDocument?: OfficeDocumentReadResult | null
   /** Test seam: preloaded rail entries rendered without any IPC. */
   initialRailEntries?: OfficeRailEntry[]
+  /** Test seam: renders the delete confirmation card open. */
+  initialConfirmDelete?: boolean
+  /** Test seam: renders the discard-unsaved-changes card open for this path. */
+  initialPendingOpenPath?: string | null
 }
 
 const KIND_ORDER: OfficeDocumentKind[] = ['word', 'sheet', 'deck', 'calendar', 'mail']
@@ -90,7 +95,9 @@ export function OfficeSuitePanel({
   width,
   openRequest,
   initialDocument = null,
-  initialRailEntries = []
+  initialRailEntries = [],
+  initialConfirmDelete = false,
+  initialPendingOpenPath = null
 }: OfficeSuitePanelProps) {
   const [railEntries, setRailEntries] = useState<OfficeRailEntry[]>(initialRailEntries)
   const [doc, setDoc] = useState<OfficeDocumentReadResult | null>(initialDocument)
@@ -100,12 +107,18 @@ export function OfficeSuitePanel({
   // hand keeps the dirty dot until save, like every desktop editor.
   const [modelDirty, setModelDirty] = useState(false)
   const [wordDirty, setWordDirty] = useState(false)
+  const [confirmingDelete, setConfirmingDelete] = useState(initialConfirmDelete)
+  const [pendingOpenPath, setPendingOpenPath] = useState<string | null>(initialPendingOpenPath)
   const [status, setStatus] = useState(initialDocument ? initialDocument.path : '')
   const [error, setError] = useState<OfficeErrorState | null>(null)
   const [warnings, setWarnings] = useState<string[]>(initialDocument?.warnings ?? [])
   const [isBusy, setIsBusy] = useState(false)
   const wordHtmlRef = useRef<string | null>(null)
   const lastOpenNonceRef = useRef<number | null>(null)
+  // Identity of the document the panel currently shows. Async completions
+  // (a save resolving after the user opened another file) compare against it
+  // and drop their state updates instead of clobbering the newer document.
+  const activeDocPathRef = useRef<string | null>(initialDocument?.path ?? null)
 
   const dirty = doc ? (doc.kind === 'word' ? wordDirty : modelDirty) : false
 
@@ -125,8 +138,11 @@ export function OfficeSuitePanel({
       setIsBusy(true)
       setError(null)
       setStatus(`Opening ${path}…`)
+      activeDocPathRef.current = path
       try {
         const result = await window.api.readOfficeDocument(workspacePath, path)
+        if (activeDocPathRef.current !== path) return
+        activeDocPathRef.current = result.path
         setDoc(result)
         setModelDirty(false)
         setWarnings(result.warnings)
@@ -151,13 +167,29 @@ export function OfficeSuitePanel({
     void refreshRail()
   }, [refreshRail])
 
+  /**
+   * Single entry point for opening a document: unsaved edits always get a
+   * confirmation card first — the panel holds one document, so a bare load
+   * would discard work with no undo.
+   */
+  const requestOpenDocument = useCallback(
+    (path: string) => {
+      if (doc && dirty && path !== doc.path) {
+        setPendingOpenPath(path)
+        return
+      }
+      void loadDocument(path)
+    },
+    [dirty, doc, loadDocument]
+  )
+
   useEffect(() => {
     if (!openRequest || openRequest.nonce === lastOpenNonceRef.current) return
     lastOpenNonceRef.current = openRequest.nonce
     queueMicrotask(() => {
-      void loadDocument(openRequest.path)
+      requestOpenDocument(openRequest.path)
     })
-  }, [loadDocument, openRequest])
+  }, [openRequest, requestOpenDocument])
 
   const currentModelForSave = useCallback((): OfficeDocumentModel | null => {
     if (!doc) return null
@@ -173,15 +205,20 @@ export function OfficeSuitePanel({
     if (!model) return
     setIsBusy(true)
     setError(null)
+    const pathAtSave = doc.path
     try {
       const result = await window.api.writeOfficeDocument(workspacePath, doc.path, model, doc.etag)
+      void refreshRail()
+      // The user may have opened another document while the save ran; the
+      // write itself succeeded, but its state must not replace the new doc.
+      if (activeDocPathRef.current !== pathAtSave) return
       setDoc(result)
       setModelDirty(false)
       setWarnings(result.warnings)
       setWordDirty(false)
       setStatus(`Saved ${result.path}`)
-      void refreshRail()
     } catch (saveError) {
+      if (activeDocPathRef.current !== pathAtSave) return
       const message = saveError instanceof Error ? saveError.message : 'Save failed'
       setError({ message, staleEtag: /changed on disk|no longer exists/i.test(message) })
     } finally {
@@ -243,6 +280,7 @@ export function OfficeSuitePanel({
           createEmptyOfficeDocumentModel(kind),
           null
         )
+        activeDocPathRef.current = result.path
         setDoc(result)
         setModelDirty(false)
         setWarnings(result.warnings)
@@ -267,6 +305,29 @@ export function OfficeSuitePanel({
     setDoc((current) => (current ? { ...current, model: next } : current))
     setModelDirty(true)
   }, [])
+
+  const deleteCurrentDocument = useCallback(async () => {
+    if (!workspacePath || !doc) return
+    setIsBusy(true)
+    setError(null)
+    try {
+      await window.api.deleteOfficeDocument(workspacePath, doc.path, doc.etag)
+      activeDocPathRef.current = null
+      setStatus(`Deleted ${doc.path}`)
+      setDoc(null)
+      setModelDirty(false)
+      setWordDirty(false)
+      setWarnings([])
+      wordHtmlRef.current = null
+      void refreshRail()
+    } catch (deleteError) {
+      const message = deleteError instanceof Error ? deleteError.message : 'Delete failed'
+      setError({ message, staleEtag: /changed on disk|no longer exists/i.test(message) })
+    } finally {
+      setIsBusy(false)
+      setConfirmingDelete(false)
+    }
+  }, [doc, refreshRail, workspacePath])
 
   const groupedRail = useMemo(() => {
     const groups = new Map<OfficeDocumentKind, OfficeRailEntry[]>()
@@ -328,7 +389,7 @@ export function OfficeSuitePanel({
                     type="button"
                     className={`office-rail-item${doc?.path === entry.path ? ' is-active' : ''}`}
                     title={entry.path}
-                    onClick={() => void loadDocument(entry.path)}
+                    onClick={() => requestOpenDocument(entry.path)}
                   >
                     <span className="office-rail-item-name">{entry.name}</span>
                     <span className="office-rail-item-format">.{entry.format}</span>
@@ -391,8 +452,89 @@ export function OfficeSuitePanel({
               >
                 Reload
               </button>
+              <button
+                type="button"
+                className="office-toolbar-button office-danger"
+                disabled={isBusy}
+                title="Delete this document from the workspace"
+                onClick={() => setConfirmingDelete(true)}
+              >
+                Delete
+              </button>
             </div>
           </header>
+        ) : null}
+
+        {pendingOpenPath && doc ? (
+          <div className="office-modal-backdrop">
+            <div
+              className="office-confirm-card"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="office-discard-title"
+              aria-describedby="office-discard-body"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.stopPropagation()
+                  setPendingOpenPath(null)
+                }
+              }}
+            >
+              <strong id="office-discard-title">Discard unsaved changes?</strong>
+              <span id="office-discard-body">
+                {doc.path} has unsaved edits. Opening {pendingOpenPath} discards them.
+              </span>
+              <div className="office-confirm-actions">
+                <PillButton
+                  variant="danger"
+                  size="compact"
+                  onClick={() => {
+                    const target = pendingOpenPath
+                    setPendingOpenPath(null)
+                    void loadDocument(target)
+                  }}
+                >
+                  Discard &amp; open
+                </PillButton>
+                <PillButton size="compact" onClick={() => setPendingOpenPath(null)} autoFocus>
+                  Keep editing
+                </PillButton>
+              </div>
+            </div>
+          </div>
+        ) : null}
+
+        {confirmingDelete && doc ? (
+          <div className="office-modal-backdrop">
+            <div
+              className="office-confirm-card"
+              role="alertdialog"
+              aria-modal="true"
+              aria-labelledby="office-delete-title"
+              aria-describedby="office-delete-body"
+              onKeyDown={(event) => {
+                if (event.key === 'Escape') {
+                  event.stopPropagation()
+                  setConfirmingDelete(false)
+                }
+              }}
+            >
+              <strong id="office-delete-title">Delete document?</strong>
+              <span id="office-delete-body">{doc.path} will be removed from this workspace.</span>
+              <div className="office-confirm-actions">
+                <PillButton
+                  variant="danger"
+                  size="compact"
+                  onClick={() => void deleteCurrentDocument()}
+                >
+                  Delete
+                </PillButton>
+                <PillButton size="compact" onClick={() => setConfirmingDelete(false)} autoFocus>
+                  Cancel
+                </PillButton>
+              </div>
+            </div>
+          </div>
         ) : null}
 
         {error ? (
