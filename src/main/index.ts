@@ -14039,6 +14039,10 @@ const managedRunConfiguredProviderDiscovery = createConfiguredProviderDetector({
   getAntigravityCombinedModels: (settings) =>
     discoverAuthenticatedAntigravityCombinedModels(settings, {
       getSecretStore: () => antigravityGeminiApiSecretStoreRef,
+      // Without a userDataPath the agy last-known-good cache is inert and every
+      // failed discovery drops to the hardcoded floor, so this is the wiring that
+      // makes the cache real rather than dead code.
+      agyDependencies: { cache: { userDataPath: app.getPath('userData') } },
       recordGeminiApiOutcome: (outcome) =>
         antigravityGeminiApiDiscoveryOutcomeStore.record(outcome.status, outcome.modelCount)
     }),

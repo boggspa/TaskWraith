@@ -115,6 +115,68 @@ describe('discoverAuthenticatedAgyModels', () => {
     ).resolves.toEqual([])
   })
 
+  // The hardcoded floor is a mirror of agy's output, not a curated catalogue, so
+  // it should keep itself current: live > cached > hardcoded.
+  describe('last-known-good cache', () => {
+    const CACHED = [{ id: 'gemini-9.9-flash-high', label: 'gemini-9.9-flash-high' }]
+
+    it('persists a successful discovery as last-known-good', async () => {
+      const writeCachedModels = vi.fn(async () => undefined)
+      const live = await discoverAuthenticatedAgyModels(optedIn, {
+        ...dependencies({ stdout: 'gemini-3.6-flash-high' }),
+        writeCachedModels,
+        readCachedModels: async () => []
+      })
+
+      expect(live).toEqual([{ id: 'gemini-3.6-flash-high', label: 'gemini-3.6-flash-high' }])
+      expect(writeCachedModels).toHaveBeenCalledWith(live, undefined)
+    })
+
+    it('serves the cache when discovery fails, in preference to the floor', async () => {
+      const result = await discoverAuthenticatedAgyModels(optedIn, {
+        ...dependencies({ stderr: 'Not logged in', code: 1 }),
+        readCachedModels: async () => CACHED
+      })
+
+      expect(result).toEqual(CACHED)
+      expect(result).not.toEqual(antigravityAgyStaticModels())
+    })
+
+    it('falls back to the hardcoded floor only when the cache is empty', async () => {
+      await expect(
+        discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stderr: 'Not logged in', code: 1 }),
+          readCachedModels: async () => []
+        })
+      ).resolves.toEqual(antigravityAgyStaticModels())
+    })
+
+    // A cache write failure must not turn a good discovery into a failed one.
+    it('still returns live rows when persisting throws', async () => {
+      await expect(
+        discoverAuthenticatedAgyModels(optedIn, {
+          ...dependencies({ stdout: 'gemini-3.1-pro-low' }),
+          writeCachedModels: async () => Promise.reject(new Error('EACCES')),
+          readCachedModels: async () => []
+        })
+      ).resolves.toEqual([{ id: 'gemini-3.1-pro-low', label: 'gemini-3.1-pro-low' }])
+    })
+
+    it('never consults the cache without consent or a binary', async () => {
+      const readCachedModels = vi.fn(async () => CACHED)
+      await expect(
+        discoverAuthenticatedAgyModels({}, { ...dependencies({}), readCachedModels })
+      ).resolves.toEqual([])
+      await expect(
+        discoverAuthenticatedAgyModels(optedIn, {
+          resolveBinary: async () => ({ binaryPath: null, source: 'missing' }),
+          readCachedModels
+        })
+      ).resolves.toEqual([])
+      expect(readCachedModels).not.toHaveBeenCalled()
+    })
+  })
+
   it('resolves the binary once and reuses it for the probe', async () => {
     const resolveBinary = vi.fn(async () => ({
       binaryPath: '/Users/test/.local/bin/agy',

@@ -15,6 +15,11 @@ import {
   type AgyProcessCaptureResult
 } from './AntigravityCli'
 import { antigravityAgyStaticModels } from './AntigravityAgyStaticModels'
+import {
+  readCachedAgyModels,
+  writeCachedAgyModels,
+  type AgyModelCacheDependencies
+} from './AntigravityAgyModelCache'
 
 const MAX_CAPTURED_OUTPUT = 80_000
 
@@ -23,6 +28,18 @@ export interface AuthenticatedAgyModelDiscoveryDependencies {
   capture?: AgyModelProbeDependencies['capture']
   inheritedEnv?: AgyModelProbeDependencies['env']
   timeoutMs?: number
+  /**
+   * Last-known-good cache location. Omitting `userDataPath` disables the cache
+   * entirely and falls straight through to the hardcoded floor, which is what
+   * callers with no app context (and most tests) want.
+   */
+  cache?: AgyModelCacheDependencies
+  /** Test seams. */
+  readCachedModels?: (cache?: AgyModelCacheDependencies) => Promise<AgyModel[]>
+  writeCachedModels?: (
+    models: readonly AgyModel[],
+    cache?: AgyModelCacheDependencies
+  ) => Promise<void>
 }
 
 /**
@@ -77,11 +94,18 @@ export function captureAgyModelDiscoveryOutput(
  * logged in, non-zero exit, timeout, or a parse yielding nothing — returned `[]`
  * with the error swallowed, which tripped the `models.length > 0` admission in
  * `isAuthenticatedAntigravityConfiguredProvider` and made the whole provider
- * vanish from every surface with no message anywhere. A consented install with
- * the official binary present now falls back to `antigravityAgyStaticModels()`
- * so the lane stays selectable and fails loudly at dispatch instead.
+ * vanish from every surface with no message anywhere.
  *
- * Live discovery always wins when it returns anything.
+ * Resolution order is live > cached > hardcoded:
+ *   - a successful probe wins and is persisted as last-known-good;
+ *   - a failure serves the cache from the last time discovery worked, which is
+ *     per-account accurate and self-updating;
+ *   - only a machine that has never once discovered successfully falls back to
+ *     `antigravityAgyStaticModels()`.
+ *
+ * The cache exists because the hardcoded list is a mirror of agy's output, not a
+ * curated catalogue — see AntigravityAgyModelCache for why that distinction makes
+ * it the one model list worth self-refreshing.
  */
 export async function discoverAuthenticatedAgyModels(
   settings: Pick<AppSettings, 'antigravityEnabled' | 'antigravityOptInAcceptedAt'> | null | undefined,
@@ -106,9 +130,21 @@ export async function discoverAuthenticatedAgyModels(
       env: deps.inheritedEnv,
       timeoutMs: deps.timeoutMs
     })
-    if (!result.error && result.models.length > 0) return result.models
+    if (!result.error && result.models.length > 0) {
+      // Persisted, not awaited-for-correctness: a cache write failure must not
+      // turn a good discovery into a failed one. The `.catch` is load-bearing —
+      // `void` alone discards the promise WITHOUT a rejection handler, so a
+      // writer that rejects becomes an unhandled rejection in the main process.
+      void (deps.writeCachedModels ?? writeCachedAgyModels)(result.models, deps.cache).catch(
+        () => {}
+      )
+      return result.models
+    }
   } catch {
-    // Fall through to the static floor rather than hiding the provider.
+    // Fall through to cache, then floor, rather than hiding the provider.
   }
+
+  const cached = await (deps.readCachedModels ?? readCachedAgyModels)(deps.cache)
+  if (cached.length > 0) return cached
   return antigravityAgyStaticModels()
 }
