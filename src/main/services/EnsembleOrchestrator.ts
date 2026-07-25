@@ -42,6 +42,7 @@ import type {
   EnsembleBossmanQuarantine,
   EnsembleBossmanQuarantineCategory,
   EnsembleBossmanReviewGateStatus,
+  EnsembleFanoutIsolation,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   EnsembleParticipant,
@@ -369,6 +370,34 @@ export interface EnsembleOrchestratorDeps {
     payload: AgentRunPayload,
     event: EnsembleDispatchEvent
   ) => Promise<{ dispatched: boolean; appRunId: string }>
+  /**
+   * Fan-out worktree isolation (fanoutIsolation === 'worktree'). Allocates
+   * (or re-adopts) a per-LANE linked git worktree branched from the
+   * workspace's last commit and records the durable candidate. Optional so
+   * the unit-test harness can omit it — isolation then silently stays off,
+   * matching every other optional dep.
+   */
+  allocateFanoutLaneWorktree?: (input: {
+    chatId: string
+    roundId: string
+    laneId: string
+    runId: string
+    participantId: string
+    participantLabel?: string
+    provider: ProviderId
+    model?: string
+    baseWorkspacePath: string
+  }) => Promise<{ baseWorkspacePath: string; effectiveWorkspacePath: string; branch: string }>
+  /**
+   * Fire-and-forget candidate settlement when an isolated lane's run reaches
+   * a terminal state. Implementations must swallow their own failures —
+   * terminal run bookkeeping cannot depend on candidate persistence.
+   */
+  settleFanoutLaneWorktree?: (input: {
+    chatId: string
+    laneId: string
+    runStatus: 'completed' | 'failed' | 'cancelled'
+  }) => void
   /** False for an ephemeral cross-provider reroute with no target session lane. */
   shouldPersistProviderSessionForRun?: (runId: string) => boolean
   releaseProviderSessionPersistenceDecision?: (runId: string) => void
@@ -730,6 +759,8 @@ export interface EnsembleFanoutInput {
   mode?: EnsembleFanoutMode
   targetStage?: unknown
   writeScopes?: unknown
+  /** 'worktree' | 'off'; omitted inherits the chat's fanoutIsolation config. */
+  isolation?: unknown
 }
 
 /** `ensemble_fanout_all` — the Boss/Captain "everyone, now" sibling of
@@ -740,6 +771,8 @@ export interface EnsembleFanoutAllInput {
   targets?: unknown
   prompt?: string
   reason?: string
+  /** 'worktree' | 'off'; omitted inherits the chat's fanoutIsolation config. */
+  isolation?: unknown
 }
 
 export interface EnsembleFanoutAllResult {
@@ -754,6 +787,7 @@ export interface EnsembleFanoutAllResult {
     | 'not_ensemble'
     | 'missing_prompt'
     | 'invalid_target'
+    | 'invalid_isolation'
     | 'no_eligible_targets'
     | 'not_authorized'
     | 'budget_exhausted'
@@ -776,6 +810,7 @@ export interface EnsembleFanoutResult {
     | 'invalid_mode'
     | 'invalid_target_stage'
     | 'invalid_target'
+    | 'invalid_isolation'
     | 'no_eligible_targets'
     | 'not_authorized'
     | 'missing_write_scope'
@@ -783,6 +818,60 @@ export interface EnsembleFanoutResult {
     | 'write_lanes_disabled'
     | 'budget_exhausted'
     | 'dispatch_failed'
+}
+
+/** `ensemble_await` — join point for agent-programmed graphs: block (bounded)
+ * until named fan-out lanes settle, returning per-lane status either way. */
+export interface EnsembleAwaitInput {
+  laneIds?: unknown
+  timeoutSeconds?: unknown
+}
+
+export interface EnsembleAwaitLaneStatus {
+  laneId: string
+  participantId: string
+  provider: ProviderId
+  /** ConcurrentLane status at return time ('pending'|'running'|...|terminal). */
+  status: string
+  settled: boolean
+}
+
+export interface EnsembleAwaitResult {
+  ok: boolean
+  tool: 'ensemble_await'
+  /** 'settled' = every awaited lane terminal; 'timeout' = budget expired with
+   * lanes still running (partial results in `lanes`). */
+  status?: 'settled' | 'timeout'
+  message: string
+  lanes?: EnsembleAwaitLaneStatus[]
+  settledCount?: number
+  pendingCount?: number
+  error?: 'no_active_run' | 'not_ensemble' | 'invalid_lane' | 'self_await' | 'no_lanes'
+}
+
+/** `ensemble_lane_result` — structured read of one lane's transcript output,
+ * so a synthesizer step consumes exact lane text instead of scraping the
+ * shared panel history. */
+export interface EnsembleLaneResultInput {
+  laneId?: unknown
+  maxChars?: unknown
+}
+
+export interface EnsembleLaneResultResult {
+  ok: boolean
+  tool: 'ensemble_lane_result'
+  message: string
+  laneId?: string
+  participantId?: string
+  provider?: ProviderId
+  /** Lane record status when the active round still tracks it; 'archived'
+   * when only durable transcript messages remain. */
+  laneStatus?: string
+  settled?: boolean
+  content?: string
+  contentChars?: number
+  truncated?: boolean
+  error?: 'no_active_run' | 'not_ensemble' | 'missing_lane_id' | 'invalid_lane'
 }
 
 export type EnsembleBossmanControlAction =
@@ -1286,6 +1375,58 @@ function stripPseudoSystemYieldLines(text: string): string {
 function normalizeFanoutMode(value: unknown): EnsembleFanoutMode | null {
   if (value === undefined || value === null || value === '') return 'read_only'
   return value === 'read_only' || value === 'locked_writers' ? value : null
+}
+
+/** undefined = not specified (inherit chat config); null = invalid input. */
+function normalizeFanoutIsolation(value: unknown): EnsembleFanoutIsolation | null | undefined {
+  if (value === undefined || value === null || value === '') return undefined
+  return value === 'worktree' || value === 'off' ? value : null
+}
+
+/**
+ * Live-read per-chat isolation preference. Deliberately not captured into the
+ * round: unlike fanoutPolicy this is a mechanical preference, not an
+ * authority decision, so a mid-round toggle simply applies from the next
+ * fan-out pass onward.
+ */
+function resolveEnsembleFanoutIsolation(
+  config: { fanoutIsolation?: unknown } | null | undefined
+): EnsembleFanoutIsolation {
+  return config?.fanoutIsolation === 'worktree' ? 'worktree' : 'off'
+}
+
+const ENSEMBLE_AWAIT_POLL_INTERVAL_MS = 500
+/** MCP broker hard-kills tool calls at 130s; leave re-invoke headroom. */
+const ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS = 110
+const ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS = 60
+const ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS = 20_000
+const ENSEMBLE_LANE_RESULT_MAX_CHARS = 60_000
+
+/** null = invalid input; undefined = not provided (await the whole round). */
+function normalizeLaneIdList(value: unknown): string[] | null | undefined {
+  if (value === undefined || value === null) return undefined
+  if (!Array.isArray(value)) return null
+  const laneIds = value
+    .map((entry) => (typeof entry === 'string' ? entry.trim() : ''))
+    .filter(Boolean)
+  if (laneIds.length === 0) return null
+  return [...new Set(laneIds)]
+}
+
+function clampAwaitTimeoutSeconds(value: unknown): number {
+  const requested = typeof value === 'number' && Number.isFinite(value) ? value : NaN
+  if (!Number.isFinite(requested)) return ENSEMBLE_AWAIT_DEFAULT_TIMEOUT_SECONDS
+  return Math.max(5, Math.min(ENSEMBLE_AWAIT_MAX_TIMEOUT_SECONDS, Math.round(requested)))
+}
+
+function clampLaneResultMaxChars(value: unknown): number {
+  const requested = typeof value === 'number' && Number.isFinite(value) ? value : NaN
+  if (!Number.isFinite(requested)) return ENSEMBLE_LANE_RESULT_DEFAULT_MAX_CHARS
+  return Math.max(1_000, Math.min(ENSEMBLE_LANE_RESULT_MAX_CHARS, Math.round(requested)))
+}
+
+function delayMs(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function normalizeFanoutTargetStage(value: unknown): EnsembleFanoutTargetStage | null | undefined {
@@ -8728,6 +8869,220 @@ export class EnsembleOrchestrator {
     }
   }
 
+  /**
+   * `ensemble_await` — the JOIN primitive for agent-programmed graphs.
+   * Blocks (bounded) until the named lanes reach a terminal status, polling
+   * the DURABLE lane records rather than riding in-memory settlement
+   * promises: per-pass settlements cannot express per-lane granularity, a
+   * timeout race must never detach their cleanup chain, and a Boss awaiting
+   * lanes it did not dispatch has no owned settlement to ride. Polling the
+   * persisted round state covers all three and survives orchestrator
+   * restarts of in-memory bookkeeping.
+   *
+   * The MCP broker hard-kills tool calls at 130s, so the timeout clamps to
+   * 110s and expiry returns PARTIAL per-lane status (never an error) — the
+   * caller re-invokes to keep waiting. Deliberately NOT serialized through
+   * the owner's fanoutDispatchQueue: a wait queued behind its own pending
+   * dispatch would deadlock.
+   */
+  async awaitLanesForRun(
+    runId: string | undefined,
+    input: EnsembleAwaitInput
+  ): Promise<EnsembleAwaitResult> {
+    const invalid = (
+      error: NonNullable<EnsembleAwaitResult['error']>,
+      message: string
+    ): EnsembleAwaitResult => ({ ok: false, tool: 'ensemble_await', message, error })
+    if (!runId) {
+      return invalid('no_active_run', 'ensemble_await requires an active Ensemble participant run.')
+    }
+    const run = this.actionableRunForTool(runId)
+    if (!run) {
+      return invalid(
+        'no_active_run',
+        'ensemble_await: no active Ensemble participant run matches this tool call.'
+      )
+    }
+    const runtime = this.roundsByChatId.get(run.chatId)
+    if (!runtime || !this.deps.getChat(run.chatId)?.ensemble) {
+      return invalid('not_ensemble', 'ensemble_await: the active chat is not an Ensemble round.')
+    }
+    const requestedLaneIds = normalizeLaneIdList(input.laneIds)
+    if (requestedLaneIds === null) {
+      return invalid('invalid_lane', 'ensemble_await: laneIds must be an array of lane id strings.')
+    }
+    if (run.laneId && requestedLaneIds?.includes(run.laneId)) {
+      return invalid(
+        'self_await',
+        'ensemble_await: a lane cannot await itself — it would block until its own timeout.'
+      )
+    }
+
+    const laneSnapshot = (): Map<string, ConcurrentLane> => {
+      const lanes = this.deps.getChat(run.chatId)?.ensemble?.activeRound?.lanes || {}
+      return new Map(Object.entries(lanes))
+    }
+    const initial = laneSnapshot()
+    let awaitedIds: string[]
+    if (requestedLaneIds) {
+      const unknown = requestedLaneIds.filter((laneId) => !initial.has(laneId))
+      if (unknown.length > 0) {
+        return invalid(
+          'invalid_lane',
+          `ensemble_await: unknown lane id(s) in this round: ${unknown.join(', ')}.`
+        )
+      }
+      awaitedIds = requestedLaneIds
+    } else {
+      awaitedIds = [...initial.keys()].filter((laneId) => laneId !== run.laneId)
+    }
+    if (awaitedIds.length === 0) {
+      return invalid(
+        'no_lanes',
+        'ensemble_await: this round has no fan-out lanes to await. Dispatch lanes with ensemble_fanout first.'
+      )
+    }
+
+    const timeoutSeconds = clampAwaitTimeoutSeconds(input.timeoutSeconds)
+    const deadline = this.deps.now() + timeoutSeconds * 1_000
+    let lanes = laneSnapshot()
+    const report = (): EnsembleAwaitLaneStatus[] =>
+      awaitedIds.map((laneId) => {
+        const lane = lanes.get(laneId)
+        return {
+          laneId,
+          participantId: lane?.participantId || '',
+          provider: (lane?.provider || 'claude') as ProviderId,
+          status: lane?.status || 'unknown',
+          settled: lane ? isTerminalLaneStatus(lane.status) : false
+        }
+      })
+    const allSettled = (): boolean =>
+      awaitedIds.every((laneId) => {
+        const lane = lanes.get(laneId)
+        return Boolean(lane && isTerminalLaneStatus(lane.status))
+      })
+
+    while (!allSettled() && this.deps.now() < deadline && !runtime.cancelled) {
+      await delayMs(ENSEMBLE_AWAIT_POLL_INTERVAL_MS)
+      lanes = laneSnapshot()
+    }
+    const statuses = report()
+    const settledCount = statuses.filter((lane) => lane.settled).length
+    const pendingCount = statuses.length - settledCount
+    const settled = pendingCount === 0
+    return {
+      ok: true,
+      tool: 'ensemble_await',
+      status: settled ? 'settled' : 'timeout',
+      message: settled
+        ? `All ${statuses.length} awaited lane(s) settled. Read outputs with ensemble_lane_result.`
+        : `${settledCount}/${statuses.length} lane(s) settled within ${timeoutSeconds}s${
+            runtime.cancelled ? ' (round cancelled)' : ''
+          }. Re-invoke ensemble_await to keep waiting, or proceed with the settled lanes.`,
+      lanes: statuses,
+      settledCount,
+      pendingCount
+    }
+  }
+
+  /**
+   * `ensemble_lane_result` — structured read of one lane's transcript output
+   * (the READ primitive paired with ensemble_await's JOIN). Reads the DURABLE
+   * chat messages keyed by ensembleLaneId — in-memory run objects are dropped
+   * at finalization, but flushRun persists lane content as
+   * kind==='ensembleParticipant' messages that outlive the round.
+   */
+  laneResultForRun(
+    runId: string | undefined,
+    input: EnsembleLaneResultInput
+  ): EnsembleLaneResultResult {
+    const invalid = (
+      error: NonNullable<EnsembleLaneResultResult['error']>,
+      message: string
+    ): EnsembleLaneResultResult => ({ ok: false, tool: 'ensemble_lane_result', message, error })
+    if (!runId) {
+      return invalid(
+        'no_active_run',
+        'ensemble_lane_result requires an active Ensemble participant run.'
+      )
+    }
+    const run = this.actionableRunForTool(runId)
+    if (!run) {
+      return invalid(
+        'no_active_run',
+        'ensemble_lane_result: no active Ensemble participant run matches this tool call.'
+      )
+    }
+    const chat = this.deps.getChat(run.chatId)
+    if (!chat?.ensemble) {
+      return invalid(
+        'not_ensemble',
+        'ensemble_lane_result: the active chat is not an Ensemble round.'
+      )
+    }
+    const laneId = typeof input.laneId === 'string' ? input.laneId.trim() : ''
+    if (!laneId) {
+      return invalid('missing_lane_id', 'ensemble_lane_result: laneId is required.')
+    }
+
+    const lane = chat.ensemble.activeRound?.lanes?.[laneId]
+    const laneMessages = (chat.messages || []).filter((message) => {
+      if (message.role !== 'assistant') return false
+      const metadata = message.metadata as
+        | { kind?: unknown; ensembleLaneId?: unknown; ensembleTimelineIndex?: unknown }
+        | undefined
+      return metadata?.kind === 'ensembleParticipant' && metadata.ensembleLaneId === laneId
+    })
+    if (!lane && laneMessages.length === 0) {
+      return invalid(
+        'invalid_lane',
+        `ensemble_lane_result: no lane "${laneId}" in this chat. Lane ids come from ensemble_fanout results.`
+      )
+    }
+
+    const ordered = [...laneMessages].sort((a, b) => {
+      const indexOf = (message: (typeof laneMessages)[number]): number => {
+        const raw = (message.metadata as { ensembleTimelineIndex?: unknown } | undefined)
+          ?.ensembleTimelineIndex
+        return typeof raw === 'number' && Number.isFinite(raw) ? raw : 0
+      }
+      return indexOf(a) - indexOf(b)
+    })
+    const fullContent = ordered
+      .map((message) => (typeof message.content === 'string' ? message.content : ''))
+      .filter(Boolean)
+      .join('\n\n')
+    const maxChars = clampLaneResultMaxChars(input.maxChars)
+    // Keep the TAIL on truncation — a lane's final answer outranks its
+    // early narration.
+    const truncated = fullContent.length > maxChars
+    const content = truncated ? fullContent.slice(fullContent.length - maxChars) : fullContent
+    const settled = lane ? isTerminalLaneStatus(lane.status) : true
+    const laneRun = (chat.runs || []).find(
+      (candidate) => candidate.ensembleLaneId === laneId
+    )
+    return {
+      ok: true,
+      tool: 'ensemble_lane_result',
+      message: settled
+        ? content
+          ? `Lane ${laneId} settled with ${fullContent.length} char(s) of output.`
+          : `Lane ${laneId} settled without transcript output — its work may live in files or (if isolated) its worktree candidate.`
+        : `Lane ${laneId} is still ${lane?.status || 'running'}; content below is a partial live read.`,
+      laneId,
+      participantId: lane?.participantId || laneRun?.ensembleParticipantId || '',
+      ...(lane?.provider || laneRun?.provider
+        ? { provider: (lane?.provider || laneRun?.provider) as ProviderId }
+        : {}),
+      laneStatus: lane?.status || 'archived',
+      settled,
+      content,
+      contentChars: fullContent.length,
+      truncated
+    }
+  }
+
   private async fanoutForRunExclusive(
     runId: string | undefined,
     input: EnsembleFanoutInput
@@ -8751,6 +9106,16 @@ export class EnsembleOrchestrator {
         message:
           'ensemble_fanout: targetStage must be all, scouts, workers, reviewers, or backgrounds.',
         error: 'invalid_target_stage'
+      }
+    }
+    const isolation = normalizeFanoutIsolation(input.isolation)
+    if (isolation === null) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout',
+        mode,
+        message: 'ensemble_fanout: isolation must be worktree or off.',
+        error: 'invalid_isolation'
       }
     }
     const prompt = (input.prompt || '').trim()
@@ -8978,6 +9343,7 @@ export class EnsembleOrchestrator {
         mode,
         sourceRunId: runId,
         writeScopesByParticipantId,
+        ...(isolation ? { isolation } : {}),
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: resolvedTargets.targets.every(isBackgroundParticipant)
@@ -9123,6 +9489,15 @@ export class EnsembleOrchestrator {
         error: 'missing_prompt'
       }
     }
+    const isolation = normalizeFanoutIsolation(input.isolation)
+    if (isolation === null) {
+      return {
+        ok: false,
+        tool: 'ensemble_fanout_all',
+        message: 'ensemble_fanout_all: isolation must be worktree or off.',
+        error: 'invalid_isolation'
+      }
+    }
     if (!runId) {
       return {
         ok: false,
@@ -9232,6 +9607,7 @@ export class EnsembleOrchestrator {
         sourceRunId: runId,
         label,
         dispatchOwnPermissions: true,
+        ...(isolation ? { isolation } : {}),
         acceptedRuns,
         waitForCompletion: false,
         completionDisposition: resolvedTargets.targets.every(isBackgroundParticipant)
@@ -13207,6 +13583,8 @@ export class EnsembleOrchestrator {
        * validation below. */
       dispatchOwnPermissions?: boolean
       writeScopesByParticipantId?: Map<string, ConcurrentLaneWriteScope[]>
+      /** Explicit per-call override; omitted inherits chat fanoutIsolation. */
+      isolation?: EnsembleFanoutIsolation
       onCompleteRuns?: (runs: ActiveParticipantRun[]) => void
       acceptedRuns?: ActiveParticipantRun[]
       waitForCompletion?: boolean
@@ -13257,6 +13635,18 @@ export class EnsembleOrchestrator {
       return this.resolveFanoutDispatchPermissions(chat, runtime, participant, dispatchMode).readOnly
     }).length
     const writeCount = participants.length - readOnlyCount
+    // Worktree isolation applies to WRITE-intent lanes only: read lanes need
+    // the live checkout (and cannot mutate it), while parallel writers are the
+    // stomping hazard. Requires workspace scope and the wired allocator dep.
+    const fanoutIsolation: EnsembleFanoutIsolation =
+      options.isolation ??
+      resolveEnsembleFanoutIsolation((this.deps.getChat(runtime.chatId) || chat).ensemble)
+    const isolateWriteLanes =
+      fanoutIsolation === 'worktree' &&
+      writeCount > 0 &&
+      chat.scope !== 'global' &&
+      Boolean(chat.workspacePath) &&
+      Boolean(this.deps.allocateFanoutLaneWorktree)
     const label =
       options.label ||
       (mode === 'locked_writers'
@@ -13267,11 +13657,14 @@ export class EnsembleOrchestrator {
       ollamaLaneCount >= 2
         ? ` ${ollamaLaneCount} Ollama lane(s) — local models share RAM; expect slower loads when multiple quants are resident.`
         : ''
+    const isolationNote = isolateWriteLanes
+      ? ' Write lanes run in isolated worktrees (forked from the last commit); results land as candidates to compare and promote.'
+      : ''
     this.appendRoundStatus(
       runtime.chatId,
       runtime.roundId,
       writeCount > 0
-        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${ollamaRamNote}`
+        ? `${label} · ${participants.length} participant(s) dispatched concurrently (${readOnlyCount} read / ${writeCount} write-intent).${isolationNote}${ollamaRamNote}`
         : `${label} · ${participants.length} read-only participants dispatched concurrently.${ollamaRamNote}`
     )
 
@@ -13507,6 +13900,55 @@ export class EnsembleOrchestrator {
               )
             }
             return
+          }
+
+          if (isolateWriteLanes && run.laneIntent === 'write' && run.laneId) {
+            // Allocate this lane's isolated worktree before the provider sees
+            // the payload. Fail CLOSED on allocation errors: silently falling
+            // back to the shared checkout would defeat the isolation the user
+            // (or Boss) explicitly asked for and reintroduce writer stomping.
+            try {
+              const allocation = await this.deps.allocateFanoutLaneWorktree!({
+                chatId: runtime.chatId,
+                roundId: runtime.roundId,
+                laneId: run.laneId,
+                runId: run.runId,
+                participantId: participant.id,
+                ...(participant.role ? { participantLabel: participant.role } : {}),
+                provider: participant.provider,
+                ...(participant.model ? { model: participant.model } : {}),
+                baseWorkspacePath: dispatchChat.workspacePath || ''
+              })
+              payload.runtimeWorktree = {
+                requested: true,
+                source: 'ensembleLane',
+                baseWorkspacePath: allocation.baseWorkspacePath,
+                effectiveWorkspacePath: allocation.effectiveWorkspacePath,
+                status: 'selected'
+              }
+            } catch (error) {
+              const message = error instanceof Error ? error.message : String(error)
+              const note = `${participant.role || participant.provider} fan-out lane failed before dispatch: ${message}`
+              this.appendRoundStatus(runtime.chatId, runtime.roundId, note)
+              if (this.runsByRunId.get(run.runId) === run) {
+                this.finalizeRun(run, 'failed', note)
+              }
+              return
+            }
+            // Worktree allocation can take real time (git worktree add).
+            // Re-check cancellation before handing the payload to a provider.
+            if (dispatchWasCancelled()) {
+              if (this.runsByRunId.get(run.runId) === run) {
+                this.finalizeRun(
+                  run,
+                  'cancelled',
+                  runtime.cancelled
+                    ? 'Round cancelled before fan-out dispatch.'
+                    : 'Owning participant was skipped before fan-out dispatch.'
+                )
+              }
+              return
+            }
           }
 
           let dispatched: Awaited<ReturnType<EnsembleOrchestratorDeps['dispatch']>>
@@ -14548,6 +14990,25 @@ export class EnsembleOrchestrator {
         this.deps.releaseWriteIntentsForLane?.(run.laneId)
       } catch {
         // Lock cleanup is best-effort; the in-memory registry is defensive.
+      }
+      try {
+        // Candidate settlement for isolated lanes. Missing candidates are a
+        // normal no-op inside the dep — most lanes never ran isolated.
+        // 'skipped' maps to completed on purpose: a lane that returned no
+        // transcript text still ran, and its worktree diff (not its chatter)
+        // is the candidate's deliverable.
+        this.deps.settleFanoutLaneWorktree?.({
+          chatId: run.chatId,
+          laneId: run.laneId,
+          runStatus:
+            run.status === 'failed' || run.status === 'unreachable'
+              ? 'failed'
+              : run.status === 'cancelled'
+                ? 'cancelled'
+                : 'completed'
+        })
+      } catch {
+        // Candidate settlement is best-effort terminal projection only.
       }
     }
   }

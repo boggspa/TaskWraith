@@ -24,7 +24,13 @@ export interface AgentRunRoute {
 
 export interface RuntimeWorktreeIntent {
   requested: boolean
-  source: 'runtimeProfile' | 'composer'
+  /**
+   * 'ensembleLane' is stamped by the EnsembleOrchestrator for isolated
+   * fan-out lanes: main-built, always status 'selected' with a per-lane
+   * worktree already allocated, validated by the same preflight linkage
+   * check as a composer-selected worktree.
+   */
+  source: 'runtimeProfile' | 'composer' | 'ensembleLane'
   profileId?: string
   profileName?: string
   baseWorkspacePath?: string

@@ -238,6 +238,8 @@ function makeHarness(
     initialChat?: ChatRecord
     dispatch?: (payload: AgentRunPayload) => Promise<{ dispatched: boolean; appRunId: string }>
     beforeSaveChat?: (chat: ChatRecord) => void
+    allocateFanoutLaneWorktree?: EnsembleOrchestratorDeps['allocateFanoutLaneWorktree']
+    settleFanoutLaneWorktree?: EnsembleOrchestratorDeps['settleFanoutLaneWorktree']
     getProviderRunTransportLiveness?: EnsembleOrchestratorDeps['getProviderRunTransportLiveness']
     hasPendingProviderRunApprovals?: EnsembleOrchestratorDeps['hasPendingProviderRunApprovals']
     cancelRun?: (provider: EnsembleParticipant['provider'], runId?: string) => Promise<boolean>
@@ -366,6 +368,12 @@ function makeHarness(
       : {}),
     ...(options.issueRunScopedExternalGrants
       ? { issueRunScopedExternalGrants: options.issueRunScopedExternalGrants }
+      : {}),
+    ...(options.allocateFanoutLaneWorktree
+      ? { allocateFanoutLaneWorktree: options.allocateFanoutLaneWorktree }
+      : {}),
+    ...(options.settleFanoutLaneWorktree
+      ? { settleFanoutLaneWorktree: options.settleFanoutLaneWorktree }
       : {}),
     ...(options.getProviderUsageSnapshot
       ? { getProviderUsageSnapshot: options.getProviderUsageSnapshot }
@@ -19597,5 +19605,410 @@ describe('assignment-aware continuation roster narrowing', () => {
         /Assignment-aware pass: 1 of 2 seats/.test(message.content || '')
       )
     ).toBe(true)
+  })
+})
+
+describe('fan-out worktree isolation', () => {
+  const isolationRoster = (): EnsembleParticipant[] => [
+    {
+      id: 'codex',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'LeadBoss',
+      instructions: 'Coordinate.',
+      order: 1,
+      permissionPresetId: 'workspace_write'
+    },
+    {
+      id: 'claude',
+      provider: 'claude' as const,
+      enabled: true,
+      role: 'Reviewer',
+      instructions: 'Review.',
+      order: 2,
+      permissionPresetId: 'read_only'
+    },
+    {
+      id: 'kimi',
+      provider: 'kimi' as const,
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Build.',
+      order: 3,
+      permissionPresetId: 'workspace_write'
+    }
+  ]
+
+  function allocationFor(laneId: string) {
+    return {
+      baseWorkspacePath: '/repo',
+      effectiveWorkspacePath: `/worktrees/${laneId}`,
+      branch: `taskwraith/fanout-${laneId}`
+    }
+  }
+
+  async function startIsolationRound(harness: ReturnType<typeof makeHarness>) {
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = isolationRoster()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+  }
+
+  it('gives WRITE-intent lanes isolated worktrees and leaves read lanes on the shared checkout', async () => {
+    const allocate = vi.fn(
+      async (input: { laneId: string }) => allocationFor(input.laneId)
+    )
+    const settle = vi.fn()
+    const harness = makeHarness({
+      allocateFanoutLaneWorktree: allocate as never,
+      settleFanoutLaneWorktree: settle
+    })
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'worktree'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands: take your assigned system.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      const route = { appRunId: lane.appRunId, appChatId: 'ensemble-chat' }
+      if (lane.provider === 'kimi') {
+        // Content-bearing completion finalizes as 'answered'. The quiet
+        // Reviewer lane finalizes as an empty-output skip — a lane's worktree
+        // diff, not its chatter, is the deliverable, so both settle
+        // 'completed'.
+        harness.orchestrator.handleProviderOutput(lane.provider, route, {
+          type: 'content',
+          text: 'Implemented in my worktree.'
+        })
+      }
+      harness.orchestrator.handleProviderOutput(lane.provider, route, {
+        type: 'result',
+        status: 'success'
+      })
+    }
+    const result = await fanout
+    expect(result.ok).toBe(true)
+
+    // Exactly one allocation: the write-capable Builder seat. The read-only
+    // Reviewer must keep the live shared checkout.
+    expect(allocate).toHaveBeenCalledTimes(1)
+    expect(allocate.mock.calls[0][0]).toMatchObject({
+      chatId: 'ensemble-chat',
+      participantId: 'kimi',
+      provider: 'kimi',
+      baseWorkspacePath: '/repo'
+    })
+    const kimiLane = harness.dispatched.find(
+      (payload, index) => index > 0 && payload.provider === 'kimi'
+    )
+    const claudeLane = harness.dispatched.find(
+      (payload, index) => index > 0 && payload.provider === 'claude'
+    )
+    expect(kimiLane?.runtimeWorktree).toMatchObject({
+      requested: true,
+      source: 'ensembleLane',
+      status: 'selected',
+      baseWorkspacePath: '/repo'
+    })
+    expect(kimiLane?.runtimeWorktree?.effectiveWorkspacePath).toContain('/worktrees/')
+    expect(claudeLane?.runtimeWorktree).toBeUndefined()
+
+    // Terminal settlement fires for the isolated lane with a mapped status.
+    await vi.waitFor(() =>
+      expect(settle).toHaveBeenCalledWith(
+        expect.objectContaining({
+          chatId: 'ensemble-chat',
+          runStatus: 'completed'
+        })
+      )
+    )
+  })
+
+  it('inherits isolation from the explicit tool parameter when chat config is off', async () => {
+    const allocate = vi.fn(
+      async (input: { laneId: string }) => allocationFor(input.laneId)
+    )
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.',
+      isolation: 'worktree'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    await fanout
+    expect(allocate).toHaveBeenCalledTimes(1)
+  })
+
+  it('rejects an unrecognized isolation value', async () => {
+    const harness = makeHarness()
+    await startIsolationRound(harness)
+
+    const result = await harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.',
+      isolation: 'container'
+    })
+    expect(result).toMatchObject({ ok: false, error: 'invalid_isolation' })
+    expect(harness.dispatched).toHaveLength(1)
+  })
+
+  it('fails ONLY the lane whose allocation failed; sibling lanes still dispatch', async () => {
+    const allocate = vi.fn(async () => {
+      throw new Error('disk full while adding worktree')
+    })
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+    harness.chat.ensemble!.fanoutIsolation = 'worktree'
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.'
+    })
+    // Only the read-only Reviewer lane reaches a provider; the Builder lane
+    // fails closed before dispatch instead of silently sharing the checkout.
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(2))
+    expect(harness.dispatched[1].provider).toBe('claude')
+    harness.orchestrator.handleProviderOutput(
+      'claude',
+      { appRunId: harness.dispatched[1].appRunId, appChatId: 'ensemble-chat' },
+      { type: 'result', status: 'success' }
+    )
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    expect(result.laneIds).toHaveLength(1)
+    expect(
+      harness.chat.messages.some(
+        (message) =>
+          typeof message.content === 'string' &&
+          message.content.includes('fan-out lane failed before dispatch') &&
+          message.content.includes('disk full')
+      )
+    ).toBe(true)
+  })
+
+  it('never allocates when isolation is off (default) even with the dep wired', async () => {
+    const allocate = vi.fn(
+      async (input: { laneId: string }) => allocationFor(input.laneId)
+    )
+    const harness = makeHarness({ allocateFanoutLaneWorktree: allocate as never })
+    await startIsolationRound(harness)
+
+    const fanout = harness.orchestrator.fanoutAllForRun(harness.dispatched[0].appRunId, {
+      prompt: 'All hands.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    for (const lane of harness.dispatched.slice(1)) {
+      harness.orchestrator.handleProviderOutput(
+        lane.provider,
+        { appRunId: lane.appRunId, appChatId: 'ensemble-chat' },
+        { type: 'result', status: 'success' }
+      )
+    }
+    await fanout
+    expect(allocate).not.toHaveBeenCalled()
+    for (const payload of harness.dispatched) {
+      expect(payload.runtimeWorktree).toBeUndefined()
+    }
+  })
+})
+
+describe('agent-programmed graph primitives (ensemble_await / ensemble_lane_result)', () => {
+  const graphRoster = (): EnsembleParticipant[] => [
+    {
+      id: 'codex',
+      provider: 'codex' as const,
+      enabled: true,
+      role: 'LeadBoss',
+      instructions: 'Coordinate.',
+      order: 1,
+      permissionPresetId: 'workspace_write'
+    },
+    {
+      id: 'claude',
+      provider: 'claude' as const,
+      enabled: true,
+      role: 'Reviewer',
+      instructions: 'Review.',
+      order: 2,
+      permissionPresetId: 'read_only'
+    },
+    {
+      id: 'kimi',
+      provider: 'kimi' as const,
+      enabled: true,
+      role: 'Builder',
+      instructions: 'Build.',
+      order: 3,
+      permissionPresetId: 'workspace_write'
+    }
+  ]
+
+  async function startGraphRound(
+    harness: ReturnType<typeof makeHarness>
+  ): Promise<{ ownerRunId: string }> {
+    harness.chat.ensemble!.fanoutPolicy = 'off'
+    harness.chat.ensemble!.bossmanParticipantId = 'codex'
+    harness.chat.ensemble!.participants = graphRoster()
+    harness.orchestrator.startRound({
+      chatId: 'ensemble-chat',
+      prompt: 'Lead starts.',
+      event: { sender: {} as Electron.WebContents }
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(1))
+    return { ownerRunId: harness.dispatched[0].appRunId! }
+  }
+
+  async function dispatchLanes(
+    harness: ReturnType<typeof makeHarness>,
+    ownerRunId: string
+  ): Promise<string[]> {
+    const fanout = harness.orchestrator.fanoutAllForRun(ownerRunId, {
+      prompt: 'All hands.'
+    })
+    await vi.waitFor(() => expect(harness.dispatched).toHaveLength(3))
+    const result = await fanout
+    expect(result.ok).toBe(true)
+    return result.laneIds || []
+  }
+
+  function settleLane(
+    harness: ReturnType<typeof makeHarness>,
+    provider: string,
+    text?: string
+  ): void {
+    const lane = harness.dispatched.find(
+      (payload, index) => index > 0 && payload.provider === provider
+    )!
+    const route = { appRunId: lane.appRunId, appChatId: 'ensemble-chat' }
+    if (text) {
+      harness.orchestrator.handleProviderOutput(lane.provider, route, {
+        type: 'content',
+        text
+      })
+    }
+    harness.orchestrator.handleProviderOutput(lane.provider, route, {
+      type: 'result',
+      status: 'success'
+    })
+  }
+
+  it('await returns settled immediately once every awaited lane is terminal', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+    const laneIds = await dispatchLanes(harness, ownerRunId)
+    settleLane(harness, 'claude')
+    settleLane(harness, 'kimi', 'Built the ballistics system.')
+    await vi.waitFor(() => {
+      const lanes = harness.chat.ensemble?.activeRound?.lanes || {}
+      expect(Object.values(lanes).every((lane) => lane.endedAt)).toBe(true)
+    })
+
+    const result = await harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds })
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('settled')
+    expect(result.settledCount).toBe(2)
+    expect(result.pendingCount).toBe(0)
+    expect(result.lanes?.map((lane) => lane.settled)).toEqual([true, true])
+  })
+
+  it('await times out with a partial picture while lanes still run', async () => {
+    let clock = 0
+    const harness = makeHarness({ now: () => (clock += 3_000) })
+    const { ownerRunId } = await startGraphRound(harness)
+    const laneIds = await dispatchLanes(harness, ownerRunId)
+    settleLane(harness, 'claude')
+
+    const result = await harness.orchestrator.awaitLanesForRun(ownerRunId, {
+      laneIds,
+      timeoutSeconds: 5
+    })
+    expect(result.ok).toBe(true)
+    expect(result.status).toBe('timeout')
+    expect(result.settledCount).toBe(1)
+    expect(result.pendingCount).toBe(1)
+    expect(result.message).toContain('Re-invoke ensemble_await')
+
+    settleLane(harness, 'kimi')
+  })
+
+  it('await validates lane ids and reports empty rounds', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, {})
+    ).resolves.toMatchObject({ ok: false, error: 'no_lanes' })
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: 'lane-1' })
+    ).resolves.toMatchObject({ ok: false, error: 'invalid_lane' })
+
+    await dispatchLanes(harness, ownerRunId)
+    await expect(
+      harness.orchestrator.awaitLanesForRun(ownerRunId, { laneIds: ['lane-bogus'] })
+    ).resolves.toMatchObject({ ok: false, error: 'invalid_lane' })
+  })
+
+  it('lane_result returns a settled lane output and tail-truncates to maxChars', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+    const laneIds = await dispatchLanes(harness, ownerRunId)
+    const longTail = `${'x'.repeat(1_400)}FINAL-ANSWER`
+    settleLane(harness, 'kimi', longTail)
+    settleLane(harness, 'claude')
+    await vi.waitFor(() => {
+      const lanes = harness.chat.ensemble?.activeRound?.lanes || {}
+      expect(Object.values(lanes).every((lane) => lane.endedAt)).toBe(true)
+    })
+    const kimiLaneId = laneIds.find((laneId) => laneId.includes('kimi'))!
+
+    const full = harness.orchestrator.laneResultForRun(ownerRunId, { laneId: kimiLaneId })
+    expect(full.ok).toBe(true)
+    expect(full.settled).toBe(true)
+    expect(full.laneStatus).toBe('completed')
+    expect(full.participantId).toBe('kimi')
+    expect(full.content).toContain('FINAL-ANSWER')
+    expect(full.truncated).toBe(false)
+
+    const clamped = harness.orchestrator.laneResultForRun(ownerRunId, {
+      laneId: kimiLaneId,
+      maxChars: 1_000
+    })
+    expect(clamped.truncated).toBe(true)
+    expect(clamped.content?.length).toBe(1_000)
+    // Tail-kept: the final answer survives truncation.
+    expect(clamped.content?.endsWith('FINAL-ANSWER')).toBe(true)
+
+    const quiet = harness.orchestrator.laneResultForRun(ownerRunId, {
+      laneId: laneIds.find((laneId) => laneId.includes('claude'))!
+    })
+    expect(quiet.ok).toBe(true)
+    expect(quiet.message).toContain('without transcript output')
+  })
+
+  it('lane_result rejects unknown and missing lane ids', async () => {
+    const harness = makeHarness()
+    const { ownerRunId } = await startGraphRound(harness)
+    expect(
+      harness.orchestrator.laneResultForRun(ownerRunId, { laneId: 'lane-bogus' })
+    ).toMatchObject({ ok: false, error: 'invalid_lane' })
+    expect(harness.orchestrator.laneResultForRun(ownerRunId, {})).toMatchObject({
+      ok: false,
+      error: 'missing_lane_id'
+    })
+    expect(
+      harness.orchestrator.laneResultForRun(undefined, { laneId: 'lane-1' })
+    ).toMatchObject({ ok: false, error: 'no_active_run' })
   })
 })

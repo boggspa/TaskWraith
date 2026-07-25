@@ -6,6 +6,7 @@ import {
   ChatKind,
   ChatListItem,
   EnsembleParticipant,
+  FanoutWorktreeCandidate,
   PinnedMessageGroup,
   UsageRecord,
   TrustStatusResult,
@@ -770,6 +771,19 @@ declare global {
         chatId?: string
         path?: string
       }) => Promise<{ ok: boolean; snapshot?: GitRepositorySnapshot; error?: string }>
+      listFanoutCandidates: (chatId: string) => Promise<FanoutWorktreeCandidate[]>
+      fanoutCandidateDiff: (
+        chatId: string,
+        candidateId: string
+      ) => Promise<import('../main/ipc/fanoutCandidateHandlers').FanoutCandidateWorkspaceDiff>
+      promoteFanoutCandidate: (
+        chatId: string,
+        candidateId: string
+      ) => Promise<import('../main/services/FanoutCandidateService').CandidateResolution>
+      discardFanoutCandidate: (
+        chatId: string,
+        candidateId: string
+      ) => Promise<import('../main/services/FanoutCandidateService').CandidateResolution>
       githubPrStatus: (payload: {
         workspacePath?: string
         repoPath?: string

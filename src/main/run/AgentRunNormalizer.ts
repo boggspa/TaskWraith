@@ -326,7 +326,12 @@ function normalizeRuntimeWorktreeIntent(value: unknown): AgentRunPayload['runtim
   const baseWorkspacePath = optionalString(value.baseWorkspacePath)
   const status =
     value.status === 'selected' && effectiveWorkspacePath ? 'selected' : 'selection-required'
-  const source = value.source === 'composer' ? 'composer' : 'runtimeProfile'
+  const source =
+    value.source === 'composer'
+      ? 'composer'
+      : value.source === 'ensembleLane'
+        ? 'ensembleLane'
+        : 'runtimeProfile'
   return {
     requested: value.requested !== false,
     source,

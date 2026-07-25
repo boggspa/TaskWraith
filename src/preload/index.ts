@@ -457,6 +457,13 @@ const api = {
     path?: string
   }) =>
     ipcRenderer.invoke('git:select-worktree', payload),
+  listFanoutCandidates: (chatId: string) => ipcRenderer.invoke('fanout-candidates:list', chatId),
+  fanoutCandidateDiff: (chatId: string, candidateId: string) =>
+    ipcRenderer.invoke('fanout-candidates:diff', chatId, candidateId),
+  promoteFanoutCandidate: (chatId: string, candidateId: string) =>
+    ipcRenderer.invoke('fanout-candidates:promote', chatId, candidateId),
+  discardFanoutCandidate: (chatId: string, candidateId: string) =>
+    ipcRenderer.invoke('fanout-candidates:discard', chatId, candidateId),
   githubPrStatus: (payload: {
     workspacePath?: string
     repoPath?: string

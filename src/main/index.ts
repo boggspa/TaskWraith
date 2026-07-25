@@ -686,6 +686,7 @@ import { SettingsService } from './services/SettingsService'
 import { WorkspaceService } from './services/WorkspaceService'
 import { GitService } from './services/GitService'
 import { GitSnapshotPublisher } from './services/GitSnapshotPublisher'
+import { FanoutCandidateService } from './services/FanoutCandidateService'
 import { RemoteGitSnapshotFeed } from './services/RemoteGitSnapshotFeed'
 import { createWatchPrPoller } from './services/WatchPrPoller'
 import {
@@ -1383,6 +1384,7 @@ import { registerPluginHandlers } from './ipc/pluginHandlers'
 import { registerShellHandlers } from './ipc/shellHandlers'
 import { registerAuditHandlers } from './ipc/auditHandlers'
 import { registerEnsembleRosterPresetsHandlers } from './ipc/ensembleRosterPresetsHandlers'
+import { registerFanoutCandidateHandlers } from './ipc/fanoutCandidateHandlers'
 import { registerAgenticWorkspaceGrantHandlers } from './ipc/agenticWorkspaceGrantHandlers'
 import { registerUsageRatesHandlers } from './ipc/usageRatesHandlers'
 import { registerScheduledWorkflowHandlers } from './ipc/scheduledWorkflowHandlers'
@@ -28978,7 +28980,8 @@ async function executeGeminiMcpTool(
               ? 'read_only'
               : undefined,
         targetStage: args.targetStage ?? args.target_stage ?? args.stage,
-        writeScopes: args.writeScopes ?? args.write_scopes
+        writeScopes: args.writeScopes ?? args.write_scopes,
+        isolation: args.isolation
       }) ??
         Promise.resolve({
           ok: false,
@@ -28993,7 +28996,8 @@ async function executeGeminiMcpTool(
       const result = await (ensembleOrchestratorRef?.fanoutAllForRun(context.appRunId, {
         targets: args.targets,
         prompt: optionalString(args.prompt),
-        reason: optionalString(args.reason)
+        reason: optionalString(args.reason),
+        isolation: args.isolation
       }) ??
         Promise.resolve({
           ok: false,
@@ -29001,6 +29005,31 @@ async function executeGeminiMcpTool(
           message: 'Ensemble orchestrator is not available.',
           error: 'no_active_run' as const
         }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
+    } else if (toolName === 'ensemble_await') {
+      const result = await (ensembleOrchestratorRef?.awaitLanesForRun(context.appRunId, {
+        laneIds: args.laneIds ?? args.lane_ids,
+        timeoutSeconds: args.timeoutSeconds ?? args.timeout_seconds
+      }) ??
+        Promise.resolve({
+          ok: false,
+          tool: 'ensemble_await' as const,
+          message: 'Ensemble orchestrator is not available.',
+          error: 'no_active_run' as const
+        }))
+      toolIsError = result.ok === false
+      text = mcpJson(result)
+    } else if (toolName === 'ensemble_lane_result') {
+      const result = ensembleOrchestratorRef?.laneResultForRun(context.appRunId, {
+        laneId: args.laneId ?? args.lane_id,
+        maxChars: args.maxChars ?? args.max_chars
+      }) || {
+        ok: false,
+        tool: 'ensemble_lane_result' as const,
+        message: 'Ensemble orchestrator is not available.',
+        error: 'no_active_run' as const
+      }
       toolIsError = result.ok === false
       text = mcpJson(result)
     } else if (toolName === 'ensemble_bossman_control') {
@@ -43081,11 +43110,35 @@ if (isGeminiMcpBridgeProcess) {
     wakeupTimerServiceRef = new WakeupTimerService({
       onFire: handleEnsembleWakeupTimerFired
     })
+    const fanoutCandidateService = new FanoutCandidateService({
+      git: new GitService(),
+      store: {
+        getCandidates: (chatId) => AppStore.getFanoutWorktreeCandidates(chatId),
+        upsertCandidate: (chatId, candidate) =>
+          AppStore.upsertFanoutWorktreeCandidate(chatId, candidate),
+        patchCandidate: (chatId, candidateId, patch) =>
+          AppStore.patchFanoutWorktreeCandidate(chatId, candidateId, patch)
+      }
+    })
+    registerFanoutCandidateHandlers({
+      service: fanoutCandidateService,
+      getChat: (chatId) => AppStore.getChat(chatId),
+      getWorkspaceDiff: (workspace) => getWorkspaceDiff(workspace)
+    })
     ensembleOrchestratorRef = new EnsembleOrchestrator({
       getChat: (chatId) => AppStore.getChat(chatId),
       saveChat: saveEnsembleChatWithScheduledHeartbeat,
       getSettings: () => AppStore.getSettings(),
       signRunPermissionPosture: signRunPosture,
+      allocateFanoutLaneWorktree: (input) => fanoutCandidateService.allocateForLane(input),
+      settleFanoutLaneWorktree: (input) => {
+        void fanoutCandidateService.settleLane(input).catch((error) => {
+          console.warn(
+            '[fanout-candidates] settle failed:',
+            error instanceof Error ? error.message : String(error)
+          )
+        })
+      },
       isTrustedSessionGranted: (scope) => trustedSessionGrants.isGranted(scope),
       issueRunScopedExternalGrants: ({ chat, participant, appRunId, attachments }) =>
         issueRunScopedExternalGrantsForNonImageAttachments(
