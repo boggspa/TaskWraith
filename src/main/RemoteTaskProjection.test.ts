@@ -9,6 +9,7 @@ import type {
   WorkspaceBoardDefinition
 } from './store/types'
 import {
+  buildMobileApprovalCard,
   buildMobileDiffSummary,
   buildMobileQuestionCard,
   buildRemoteCanvasPreviews,
@@ -1518,5 +1519,22 @@ describe('buildRemoteEnsembleState — round participant ordering', () => {
       'ensemble-participant-10',
       'ensemble-participant-12'
     ])
+  })
+})
+
+describe('projected text cannot disguise itself', () => {
+  it('neutralises bidi and zero-width characters in an approval card', () => {
+    // The desktop escapes these visibly, but that reviewer is renderer-only —
+    // raw, a U+202E inside an address displays as a different address on the
+    // one surface with the least room to check.
+    const card = buildMobileApprovalCard({
+      toolCallId: 'a-1',
+      title: 'Approve Outlook draft',
+      body: 'To: bob\u202E@example.com, ca\u200Brol@example.com'
+    })
+    expect(card.body).not.toContain('\u202E')
+    expect(card.body).not.toContain('\u200B')
+    expect(card.body).toContain('bob')
+    expect(card.body).toContain('example.com')
   })
 })

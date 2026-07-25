@@ -1521,6 +1521,42 @@ describe('paired-device approval projection', () => {
     expect(card?.body).toContain('exfil@attacker.example')
   })
 
+  it('prefers the recipients-first remote body over the desktop one', () => {
+    const { deps } = makeDeps()
+    const service = new ApprovalService(deps)
+    service.registerGeminiTool('a-3', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-1',
+      body: 'Intent: benign filler that used to eat the whole remote budget…',
+      remoteBody: 'To: cfo@acme.com · Cc: exfil@attacker.example · Subject: Q3',
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: () => {}
+    })
+    const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-3')
+    expect(card?.body).toContain('exfil@attacker.example')
+    expect(card?.body).not.toContain('benign filler')
+    expect(card?.actions).toContain('accept')
+  })
+
+  it('withholds accept when the device cannot see the whole request', () => {
+    // Approving what you cannot see is the thing being prevented.
+    const { deps } = makeDeps()
+    const service = new ApprovalService(deps)
+    service.registerGeminiTool('a-4', {
+      provider: 'claude',
+      service: 'mcpTools',
+      runId: 'run-1',
+      remoteBody: 'To: one@example.com, two@example.com…',
+      remoteIncomplete: true,
+      allowedActions: ['accept', 'decline', 'cancel'],
+      resolve: () => {}
+    })
+    const card = service.listProjectionCards().find((entry) => entry.toolCallId === 'a-4')
+    expect(card?.actions).toEqual(['decline', 'cancel'])
+    expect(card?.body).toContain('open TaskWraith on the Mac')
+  })
+
   it('still describes an approval that carries no prompt text', () => {
     const { deps } = makeDeps()
     const service = new ApprovalService(deps)

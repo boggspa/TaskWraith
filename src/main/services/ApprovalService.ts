@@ -77,6 +77,9 @@ export interface PendingMainApproval {
   workspacePath?: string
   runId?: string
   appChatId?: string
+  /** Prompt text, so a paired device sees which request it is deciding. */
+  title?: string
+  body?: string
   allowedActions?: AgentApprovalAction[]
   resolveAction?: (action: AgentApprovalAction) => void
   resolve: (allowed: boolean) => void
@@ -96,6 +99,14 @@ export interface PendingGeminiToolApproval {
    */
   title?: string
   body?: string
+  /**
+   * Purpose-built body for a PAIRED DEVICE, and whether that device can see
+   * the whole request. The desktop body leads with the agent's `intent` and
+   * is far longer than the 400-char remote budget, so reusing it truncated
+   * the recipients away. See RemoteApprovalSummary.
+   */
+  remoteBody?: string
+  remoteIncomplete?: boolean
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
   allowedActions?: AgentApprovalAction[]
@@ -494,14 +505,17 @@ export class ApprovalService {
           workspacePath: info.workspacePath,
           runId: info.runId,
           threadId: info.appChatId,
-          title: 'Approval requested',
-          body: 'Main-process approval is waiting for a decision.',
+          title: info.title || 'Approval requested',
+          body: info.body || 'Main-process approval is waiting for a decision.',
           allowedActions: info.allowedActions
         })
       )
     }
     for (const [approvalId, info] of this.pendingGeminiTool.entries()) {
       const requiresDesktopExactReview = info.service === 'canvasEval'
+      // A device that cannot display the whole request must not be able to
+      // approve it — same rule canvas_eval already follows.
+      const withholdAccept = requiresDesktopExactReview || info.remoteIncomplete === true
       cards.push(
         this.projectApprovalCard(approvalId, info.provider, {
           workspacePath: info.workspacePath,
@@ -511,8 +525,12 @@ export class ApprovalService {
             : info.title || `${info.service} approval requested`,
           body: requiresDesktopExactReview
             ? 'Open TaskWraith on the Mac to review the exact JavaScript. A paired device may decline, but cannot approve this signed-elevated request.'
-            : info.body || 'A gated tool or workspace action is waiting for a decision.',
-          allowedActions: requiresDesktopExactReview
+            : info.remoteIncomplete
+              ? `${info.remoteBody || info.body || ''}\n\nToo large to show in full here — open TaskWraith on the Mac to approve. You may decline from this device.`.trim()
+              : info.remoteBody ||
+                info.body ||
+                'A gated tool or workspace action is waiting for a decision.',
+          allowedActions: withholdAccept
             ? (info.allowedActions || []).filter(
                 (action) => action === 'decline' || action === 'cancel'
               )

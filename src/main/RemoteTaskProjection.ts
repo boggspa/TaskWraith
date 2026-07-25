@@ -1617,6 +1617,29 @@ function previewForChat(
   return sanitizeText(lastMessage?.content || chat.title || '', maxChars)
 }
 
+/**
+ * Bidi controls, zero-width characters and the soft hyphen.
+ *
+ * The desktop renders these visibly (see formatApprovalFieldForReview), but
+ * that reviewer is renderer-only — the projected string reached a phone raw,
+ * so a U+202E inside a recipient address displayed as a different address on
+ * the one surface with the least room to check. Remote text is a preview, not
+ * a document, so neutralising them outright is the right trade.
+ */
+function isDisguisingCodePoint(code: number): boolean {
+  return (
+    code === 0x00ad ||
+    code === 0x034f ||
+    code === 0x061c ||
+    code === 0x180e ||
+    (code >= 0x200b && code <= 0x200f) ||
+    (code >= 0x2028 && code <= 0x202e) ||
+    code === 0x2060 ||
+    (code >= 0x2066 && code <= 0x2069) ||
+    code === 0xfeff
+  )
+}
+
 function sanitizeText(
   raw: string | undefined,
   maxChars: number = DEFAULT_PREVIEW_MAX
@@ -1625,7 +1648,9 @@ function sanitizeText(
   let cleaned = ''
   for (let i = 0; i < raw.length; i++) {
     const code = raw.charCodeAt(i)
-    cleaned += code <= 0x1f || (code >= 0x7f && code <= 0x9f) ? ' ' : raw[i]
+    cleaned += code <= 0x1f || (code >= 0x7f && code <= 0x9f) || isDisguisingCodePoint(code)
+      ? ' '
+      : raw[i]
   }
   const collapsed = cleaned.replace(/\s+/g, ' ').trim()
   const limit = clampPositiveInt(maxChars, DEFAULT_PREVIEW_MAX)

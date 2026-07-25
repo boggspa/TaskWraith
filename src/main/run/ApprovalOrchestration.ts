@@ -18,6 +18,7 @@ import { effectiveAgenticSettings } from '../NativeApprovalPolicy'
 import { agenticServiceBlockedMessage, approvalActionsForPolicy } from '../AgenticServiceMessages'
 import { isPlanInstrumentGrantHold, isPostureApprovalOnlyService } from '../EffectiveRunPermissions'
 import { isRecord } from '../settings/MainSanitizers'
+import { buildRemoteApprovalSummary } from '../RemoteApprovalSummary'
 import {
   assertCanvasEvalApprovalReceipt,
   canvasEvalApprovalPayloadForDurableStorage,
@@ -606,6 +607,11 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       : request.body
     const title = ensembleApproval ? `${ensembleApproval.label}: ${baseTitle}` : baseTitle
     const body = ensembleApproval ? `${ensembleApproval.bodyPrefix}\n\n${baseBody}` : baseBody
+    // Built from the preview's STRUCTURED fields, not from `body`: the remote
+    // card gets 400 chars with newlines collapsed, and the desktop body leads
+    // with a 600-char agent `intent` (the ensemble prefix alone eats 41%), so
+    // reusing it truncated the recipients away entirely.
+    const remoteSummary = buildRemoteApprovalSummary(request.preview)
     return new Promise((resolveApproval) => {
       const approvalService = deps.getApprovalService()
       if (!approvalService) {
@@ -621,6 +627,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         // deciding on the same facts rather than a generic placeholder.
         title,
         body,
+        ...(remoteSummary.text ? { remoteBody: remoteSummary.text } : {}),
+        ...(remoteSummary.complete ? {} : { remoteIncomplete: true }),
         externalPathDetection,
         requestOnly,
         allowedActions: actions,
