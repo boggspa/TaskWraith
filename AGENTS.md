@@ -34,6 +34,22 @@ this file, `src/main/BridgeActionExecutor.test.ts`, and
 pass adds two spaces of indentation to the code blocks nested inside list
 items below. Leave all three in the ignore file.
 
+Two CI gates enforce this rather than relying on you reading it:
+
+- `npm run format:ratchet` fails if the number of unformatted tracked
+  files rises above the baseline in
+  [`scripts/format-baseline.json`](scripts/format-baseline.json). It never
+  asks for the backlog to be fixed — only that you not add to it. If the
+  count drops, lower the baseline in the same commit with
+  `npm run format:ratchet -- --write`. (`format:check` is deliberately
+  **not** the CI gate: it scopes to staged files, and a CI checkout has
+  nothing staged, so it would pass unconditionally.)
+- `npm run guard:doctrine-integrity` fails if any agent-read file contains
+  invisible or direction-overriding characters — zero-width codepoints,
+  Unicode tag characters, or bidi overrides (Trojan Source). This file is
+  injected into agent sessions as doctrine, so hidden text in it is an
+  instruction channel that a human cannot see in a diff.
+
 None of the above is authority to change what any code does. Formatting
 work is formatting only.
 
