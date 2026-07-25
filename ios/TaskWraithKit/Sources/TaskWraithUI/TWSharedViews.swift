@@ -1180,6 +1180,22 @@ struct ProviderModelPicker: View {
     /// composer's top-left corner) instead of the full flat-text label. The
     /// popover it opens is identical.
     var compact: Bool = false
+
+    /// How much the compact trigger spells out. A bare provider glyph tells you
+    /// the vendor but not WHICH model is about to run, which is the thing worth
+    /// confirming before you send.
+    enum CompactDetail {
+        /// Glyph + chevron only. Ensemble composers speak for a roster rather
+        /// than one model, so a single model name there would be a lie.
+        case glyphOnly
+        /// Glyph + model name. Portrait phone — the composer row has no width
+        /// for more without crowding the send controls.
+        case model
+        /// Glyph + model name + reasoning value in the provider hue. iPad and
+        /// landscape phone, where the row has room to spare.
+        case modelAndReasoning
+    }
+    var compactDetail: CompactDetail = .glyphOnly
     @State private var isPresented = false
 
     private var currentCatalog: ProviderModelCatalog? {
@@ -1274,9 +1290,35 @@ struct ProviderModelPicker: View {
     /// Tiny pill for the unfocused composer's top-left corner: the first-party
     /// provider logo + a chevron in a small capsule. Opens the same picker popover.
     private var compactPickerLabel: some View {
-        HStack(spacing: 3) {
+        let modelLabel = displayModelLabel
+        return HStack(spacing: compactDetail == .glyphOnly ? 3 : 4) {
             ProviderLogoIcon(
                 provider: provider, modelId: displayModelId, size: 12)
+
+            if compactDetail != .glyphOnly, let modelLabel, !modelLabel.isEmpty {
+                Text(modelLabel)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(1)
+                    // Truncate the model name before the composer's send
+                    // controls give up any width — this pill is the flexible
+                    // element in that row, not them.
+                    .layoutPriority(-1)
+            }
+
+            if compactDetail == .modelAndReasoning, let reasoningLabel {
+                // Same progressive provider-hue treatment as the focused
+                // label's suffix; identity keyed on the effort so a tier change
+                // restarts its fresh state rather than cross-fading.
+                ChipReasoningSuffix(
+                    label: reasoningLabel,
+                    effort: reasoningEffort,
+                    accent: TWTheme.providerAccent(
+                        provider, modelId: displayModelId, modelLabel: modelLabel)
+                )
+                .id(reasoningEffort ?? "")
+            }
+
             Image(systemName: "chevron.up.chevron.down")
                 .font(.system(size: 7, weight: .semibold))
                 .foregroundStyle(TWTheme.textMuted)

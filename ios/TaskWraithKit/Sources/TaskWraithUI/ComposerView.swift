@@ -23,6 +23,9 @@ struct Composer: View {
     let card: RemoteTaskCard
     @Environment(\.appScale) private var appScale
     @Environment(\.horizontalSizeClass) private var horizontalSizeClass
+    /// Compact VERTICAL class is the reliable "phone is in landscape" signal —
+    /// see `compactPickerDetail`.
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
     var runModel: String? = nil
     var runStatus: String? = nil
     /// Shell attachment: a diff header above / telemetry rail below flatten
@@ -510,6 +513,23 @@ struct Composer: View {
         }
     }
 
+    /// How much the idle composer's picker pill spells out.
+    ///
+    /// Ensemble chats stay on the bare glyph: that composer sends to a roster,
+    /// so naming one model would misrepresent what is about to run.
+    ///
+    /// For single-provider chats the split is by available width, and it
+    /// deliberately reads BOTH size classes. `horizontalSizeClass == .regular`
+    /// alone catches iPad and the Max-class phones in landscape but leaves every
+    /// other landscape phone on the portrait treatment — which is precisely the
+    /// case with width to spare. A compact VERTICAL class is the reliable "phone
+    /// is on its side" signal, so it earns the fuller label too.
+    private var compactPickerDetail: ProviderModelPicker.CompactDetail {
+        if card.isEnsemble { return .glyphOnly }
+        let roomy = horizontalSizeClass == .regular || verticalSizeClass == .compact
+        return roomy ? .modelAndReasoning : .model
+    }
+
     /// Tiny picker pill for the idle/unfocused composer's top-left corner —
     /// same picker + popover as `modelPickerControl`, just a compact trigger.
     @ViewBuilder
@@ -523,7 +543,8 @@ struct Composer: View {
                 fastModeEnabled: $selectedFastMode,
                 kimiThinkingEnabled: $selectedKimiThinking,
                 allowsProviderChange: canChangeProvider,
-                compact: true)
+                compact: true,
+                compactDetail: compactPickerDetail)
             .transition(.opacity)
         }
     }
