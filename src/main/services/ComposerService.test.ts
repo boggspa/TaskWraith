@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
+import { TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID } from '../mcp/McpSessionProfileFence'
 import {
   ComposerService,
   type ComposerRunPayload,
@@ -234,7 +235,7 @@ describe('ComposerService', () => {
     process.env.TASKWRAITH_CORE_MCP_PROFILE = '1'
     try {
       const payload = compose({ provider: 'claude' }, {}, { geminiMcpBridgeEnabled: true })
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v2')
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
     } finally {
@@ -321,7 +322,7 @@ describe('ComposerService', () => {
         { provider: 'grok' },
         { selectedModelType: 'cli-default', userInput: 'blur the screenshot' }
       )
-      expect(payload.taskWraithMcpProfileId).toBe('taskwraith-gateway-v2')
+      expect(payload.taskWraithMcpProfileId).toBe(TASKWRAITH_FRESH_GATEWAY_MCP_PROFILE_ID)
       expect(payload.prompt).toContain('TaskWraith gateway MCP profile is active')
       expect(payload.prompt).not.toContain('Image tools are also available over MCP')
       expect(payload.prompt).not.toContain('TaskWraith image tools are available over MCP')

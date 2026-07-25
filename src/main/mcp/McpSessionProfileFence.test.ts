@@ -5,6 +5,7 @@ import {
   TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
   TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
+  TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID,
   createTaskWraithMcpProfileReceipt,
   isGatewayTaskWraithMcpProfile,
   isGatewayV2TaskWraithMcpProfile,
@@ -24,7 +25,7 @@ import {
 } from './McpSessionProfileFence'
 
 describe('resolveTaskWraithMcpProfile', () => {
-  it('defaults a fresh persistable Claude session to gateway-v2 without a feature flag', () => {
+  it('defaults a fresh persistable Claude session to the newest gateway profile', () => {
     for (const coreProfileOptIn of [false, true]) {
       expect(
         resolveTaskWraithMcpProfile({
@@ -36,7 +37,7 @@ describe('resolveTaskWraithMcpProfile', () => {
         profileId: TASKWRAITH_GATEWAY_MCP_PROFILE_ID,
         source: 'fresh_gateway_default'
       })
-      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)
+      expect(TASKWRAITH_GATEWAY_MCP_PROFILE_ID).toBe(TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID)
     }
   })
 
@@ -119,13 +120,21 @@ describe('resolveTaskWraithMcpProfile', () => {
     ).toBe(TASKWRAITH_GATEWAY_MCP_PROFILE_ID)
   })
 
-  it('recognizes both gateway generations without treating v1 as v2', () => {
-    expect(isTaskWraithMcpProfileId(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(true)
-    expect(isTaskWraithMcpProfileId(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
-    expect(isGatewayTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(true)
-    expect(isGatewayTaskWraithMcpProfile(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
+  it('recognizes every gateway generation without collapsing them', () => {
+    for (const profileId of [
+      TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID,
+      TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID
+    ]) {
+      expect(isTaskWraithMcpProfileId(profileId)).toBe(true)
+      // Load-bearing: this predicate drives the gateway-subset launch arg and
+      // prompt composition. A generation missing here is born as a gateway
+      // session that is not treated like one.
+      expect(isGatewayTaskWraithMcpProfile(profileId)).toBe(true)
+    }
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V1_MCP_PROFILE_ID)).toBe(false)
     expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V2_MCP_PROFILE_ID)).toBe(true)
+    expect(isGatewayV2TaskWraithMcpProfile(TASKWRAITH_GATEWAY_V3_MCP_PROFILE_ID)).toBe(false)
   })
 
   it('does not claim a gateway surface for headless or toolless Grok runs', () => {

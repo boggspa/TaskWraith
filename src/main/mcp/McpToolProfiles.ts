@@ -368,6 +368,34 @@ export const GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME
 ] as const satisfies readonly string[])
 
+/**
+ * Gateway-v3 additions: the Outlook mail/calendar lane and the document
+ * extraction pair.
+ *
+ * All eight were reachable from NO profile — present in the canonical
+ * catalogue, implemented, gated, and callable by nobody. `taskWraithMcpCatalogIsFullyReachable`
+ * in the tests now fails if that ever happens again.
+ *
+ * Hidden rather than direct: they are discovered through capability_search
+ * like every other specialist capability, so the small direct gateway surface
+ * stays small.
+ */
+export const GATEWAY_V3_ADDED_TOOL_NAMES = Object.freeze([
+  'outlook_list_messages',
+  'outlook_search_messages',
+  'outlook_get_message',
+  'outlook_list_events',
+  'outlook_create_draft',
+  'outlook_create_event',
+  'document_extract_text',
+  'document_ocr_image'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V3_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -380,16 +408,19 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
-  return profileId === 'taskwraith-gateway-v2'
-    ? GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
-    : GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v3') return GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
+  if (profileId === 'taskwraith-gateway-v2') return GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
+  return GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
 }
 
 const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-full-v1': FULL_MCP_ADVERTISE_TOOLS,
   'taskwraith-core-v1': CORE_MCP_ADVERTISE_TOOLS,
   'taskwraith-gateway-v1': GATEWAY_MCP_ADVERTISE_TOOLS,
-  'taskwraith-gateway-v2': GATEWAY_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v2': GATEWAY_MCP_ADVERTISE_TOOLS,
+  // v3 advertises the same tiny direct surface as v1/v2 — only the hidden
+  // universe behind capability_search grew.
+  'taskwraith-gateway-v3': GATEWAY_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,
   readonly TaskWraithMcpAdvertisedToolName[]

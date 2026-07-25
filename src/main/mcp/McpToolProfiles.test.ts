@@ -13,6 +13,8 @@ import {
   GATEWAY_MCP_DIRECT_TOOLS,
   GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
   GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+  GATEWAY_V3_ADDED_TOOL_NAMES,
+  GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES,
   ENSEMBLE_FANOUT_ALL_GATEWAY_TOOL_NAME,
   PROJECT_REFERENCE_PROPOSE_GATEWAY_TOOL_NAME,
   isCoreMcpAdvertisedTool,
@@ -34,7 +36,8 @@ describe('immutable v1 MCP profile snapshots', () => {
       GATEWAY_MCP_DIRECT_TOOLS,
       GATEWAY_MCP_ADVERTISE_TOOLS,
       GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES,
-      GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
+      GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+      GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
     ]) {
       expect(Object.isFrozen(profile)).toBe(true)
     }
@@ -306,5 +309,54 @@ describe('ensemble_propose_goal_complete reachability (O3 M3)', () => {
     // Constrained (Cursor/Grok) seats on the core profile can't propose until the
     // CORE_MCP_TOOL_BUDGET decision (bump vs evict) lands. See slice-2 disposition.
     expect(isCoreMcpAdvertisedTool('ensemble_propose_goal_complete')).toBe(false)
+  })
+})
+
+describe('catalogue reachability', () => {
+  it('leaves no canonical tool reachable from zero profiles', () => {
+    // A tool absent from every profile is implemented, gated, documented, and
+    // callable by nobody: Claude sees only its profile's advertised list, and
+    // gateway discovery/invocation is bounded by the pinned hidden universe.
+    // Eight tools shipped that way (six Outlook, two document) before this
+    // test existed — nothing failed, which is exactly the problem.
+    const reachable = new Set<string>([
+      ...FULL_MCP_ADVERTISE_TOOLS,
+      ...CORE_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_MCP_ADVERTISE_TOOLS,
+      ...GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
+    ])
+    const orphans = (TASKWRAITH_MCP_TOOLS as readonly string[]).filter(
+      (name) => !reachable.has(name)
+    )
+    expect(orphans).toEqual([])
+  })
+
+  it('grows the newest gateway generation rather than mutating a frozen one', () => {
+    expect(GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES).toEqual([
+      ...GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES,
+      ...GATEWAY_V3_ADDED_TOOL_NAMES
+    ])
+    for (const tool of GATEWAY_V3_ADDED_TOOL_NAMES) {
+      expect(TASKWRAITH_MCP_TOOLS).toContain(tool)
+      // Additions are discoverable capabilities, never new direct surface.
+      expect(GATEWAY_MCP_ADVERTISE_TOOLS).not.toContain(tool)
+    }
+  })
+
+  it('pins each profile id to the hidden universe its sessions were born with', () => {
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v1')).toBe(
+      GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v2')).toBe(
+      GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
+    )
+    expect(taskWraithGatewayHiddenToolNamesForProfile('taskwraith-gateway-v3')).toBe(
+      GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
+    )
+    // An unknown or missing id must not inherit a newer surface.
+    expect(taskWraithGatewayHiddenToolNamesForProfile(null)).toBe(GATEWAY_V1_MCP_HIDDEN_TOOL_NAMES)
+    expect(taskWraithMcpAdvertisedToolNamesForProfile('taskwraith-gateway-v3')).toBe(
+      GATEWAY_MCP_ADVERTISE_TOOLS
+    )
   })
 })
