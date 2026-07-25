@@ -137,7 +137,7 @@ export function DeckEditorView({ model, onChange }: DeckEditorViewProps) {
           />
         </label>
         <label className="office-field">
-          <span>Speaker notes (kept in Markdown exports)</span>
+          <span>Speaker notes</span>
           <textarea
             className="office-deck-notes"
             value={slide.notes}

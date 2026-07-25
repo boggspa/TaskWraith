@@ -14,14 +14,14 @@ const SAMPLE: DeckDocumentModel = {
         { text: 'Ship the beta', level: 1 },
         { text: 'Phase two & beyond', level: 0 }
       ],
-      notes: ''
+      notes: 'Open with the demo.\n\nThen cover pricing & risks.'
     },
     { title: 'Empty body', bullets: [], notes: '' }
   ]
 }
 
 describe('buildPptx → parsePptx round-trip', () => {
-  it('preserves slide order, titles and leveled bullets', () => {
+  it('preserves slide order, titles, leveled bullets and multi-line speaker notes', () => {
     const { data, warnings } = buildPptx(SAMPLE)
     expect(warnings).toEqual([])
     const { model, warnings: parseWarnings } = parsePptx(data)
@@ -29,7 +29,7 @@ describe('buildPptx → parsePptx round-trip', () => {
     expect(model).toEqual(SAMPLE)
   })
 
-  it('emits every part a minimal valid deck needs', () => {
+  it('emits every part a minimal valid deck needs, including notes parts', () => {
     const entries = parseZip(buildPptx(SAMPLE).data)
     const names = [...entries.keys()]
     for (const required of [
@@ -42,26 +42,41 @@ describe('buildPptx → parsePptx round-trip', () => {
       'ppt/slideLayouts/slideLayout1.xml',
       'ppt/slideLayouts/_rels/slideLayout1.xml.rels',
       'ppt/theme/theme1.xml',
+      'ppt/notesMasters/notesMaster1.xml',
+      'ppt/notesMasters/_rels/notesMaster1.xml.rels',
+      'ppt/notesSlides/notesSlide1.xml',
+      'ppt/notesSlides/_rels/notesSlide1.xml.rels',
       'ppt/slides/slide1.xml',
       'ppt/slides/_rels/slide1.xml.rels',
       'ppt/slides/slide2.xml'
     ]) {
       expect(names).toContain(required)
     }
+    // The notes-free slide 2 gets no notesSlide part or rel.
+    expect(names).not.toContain('ppt/notesSlides/notesSlide2.xml')
+    expect(entries.get('ppt/slides/_rels/slide2.xml.rels')!.toString('utf8')).not.toContain(
+      'notesSlide'
+    )
     const presentation = entries.get('ppt/presentation.xml')!.toString('utf8')
     expect(presentation).toContain('<p:sldSz cx="12192000" cy="6858000"/>')
+    expect(presentation).toContain('<p:notesMasterIdLst>')
     const slide = entries.get('ppt/slides/slide1.xml')!.toString('utf8')
     expect(slide).toContain('<a:t>Phase two &amp; beyond</a:t>')
     expect(slide).toContain('lvl="1"')
+    const notesSlide = entries.get('ppt/notesSlides/notesSlide1.xml')!.toString('utf8')
+    expect(notesSlide).toContain('<a:t>Open with the demo.</a:t>')
+    expect(notesSlide).toContain('<p:ph type="body" idx="1"/>')
   })
 
-  it('warns when speaker notes would be dropped from the pptx export', () => {
-    const withNotes: DeckDocumentModel = {
+  it('omits every notes part when no slide has notes', () => {
+    const plain: DeckDocumentModel = {
       kind: 'deck',
-      slides: [{ title: 'T', bullets: [], notes: 'remember this' }]
+      slides: [{ title: 'T', bullets: [], notes: '' }]
     }
-    const { warnings } = buildPptx(withNotes)
-    expect(warnings.some((warning) => warning.includes('Speaker notes'))).toBe(true)
+    const entries = parseZip(buildPptx(plain).data)
+    const names = [...entries.keys()]
+    expect(names.some((name) => name.includes('notes'))).toBe(false)
+    expect(entries.get('ppt/presentation.xml')!.toString('utf8')).not.toContain('notesMasterIdLst')
   })
 })
 

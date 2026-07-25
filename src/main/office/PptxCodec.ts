@@ -1,12 +1,9 @@
 /**
  * PresentationML (.pptx) codec. Builds a minimal 16:9 deck (one master, one
- * "title and body" layout, an Office-shaped theme) that PowerPoint, Keynote
- * and Google Slides all open; parses titles, body bullets (with indent
- * levels) and speaker notes from decks produced by those suites.
- *
- * v1 export limitation: speaker notes live in the model and in Markdown
- * exports but are not written into the .pptx (no notesMaster part) — the
- * writer reports this as a warning when notes exist.
+ * "title and body" layout, an Office-shaped theme, and — when any slide has
+ * speaker notes — a notesMaster plus per-slide notesSlides) that PowerPoint,
+ * Keynote and Google Slides all open; parses titles, body bullets (with
+ * indent levels) and speaker notes from decks produced by those suites.
  */
 
 import type { DeckDocumentModel, DeckSlide } from '../../shared/office/officeModels'
@@ -59,6 +56,27 @@ const LAYOUT_RELS = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationsh
 
 const SLIDE_RELS = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="${REL_OD}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/></Relationships>`
 
+const slideRelsWithNotes = (index: number): string =>
+  `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="${REL_OD}/slideLayout" Target="../slideLayouts/slideLayout1.xml"/><Relationship Id="rId2" Type="${REL_OD}/notesSlide" Target="../notesSlides/notesSlide${index + 1}.xml"/></Relationships>`
+
+const NOTES_MASTER_XML = `${XML_DECL}<p:notesMaster xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>${EMPTY_GRP_SP_PR}</p:spTree></p:cSld><p:clrMap bg1="lt1" tx1="dk1" bg2="lt2" tx2="dk2" accent1="accent1" accent2="accent2" accent3="accent3" accent4="accent4" accent5="accent5" accent6="accent6" hlink="hlink" folHlink="folHlink"/><p:notesStyle/></p:notesMaster>`
+
+const NOTES_MASTER_RELS = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="${REL_OD}/theme" Target="../theme/theme1.xml"/></Relationships>`
+
+const notesSlideRels = (index: number): string =>
+  `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="${REL_OD}/notesMaster" Target="../notesMasters/notesMaster1.xml"/><Relationship Id="rId2" Type="${REL_OD}/slide" Target="../slides/slide${index + 1}.xml"/></Relationships>`
+
+function notesSlideXml(notes: string): string {
+  const paragraphs = notes
+    .split('\n')
+    .map((line) => {
+      const text = escapeXmlText(sanitizeXmlText(line))
+      return text === '' ? '<a:p><a:endParaRPr/></a:p>' : `<a:p><a:r><a:t>${text}</a:t></a:r></a:p>`
+    })
+    .join('')
+  return `${XML_DECL}<p:notes xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:cSld><p:spTree><p:nvGrpSpPr><p:cNvPr id="1" name=""/><p:cNvGrpSpPr/><p:nvPr/></p:nvGrpSpPr>${EMPTY_GRP_SP_PR}<p:sp><p:nvSpPr><p:cNvPr id="2" name="Notes Placeholder 1"/><p:cNvSpPr><a:spLocks noGrp="1"/></p:cNvSpPr><p:nvPr><p:ph type="body" idx="1"/></p:nvPr></p:nvSpPr><p:spPr/><p:txBody><a:bodyPr/><a:lstStyle/>${paragraphs}</p:txBody></p:sp></p:spTree></p:cSld><p:clrMapOvr><a:masterClrMapping/></p:clrMapOvr></p:notes>`
+}
+
 function slideTextParagraphs(slide: DeckSlide): string {
   if (slide.bullets.length === 0) return '<a:p><a:endParaRPr/></a:p>'
   return slide.bullets
@@ -78,9 +96,10 @@ function slideXml(slide: DeckSlide): string {
 export function buildPptx(model: DeckDocumentModel): PptxBuildResult {
   const warnings: string[] = []
   const slides = model.slides.length > 0 ? model.slides : [{ title: '', bullets: [], notes: '' }]
-  if (slides.some((slide) => slide.notes.trim() !== '')) {
-    warnings.push('Speaker notes are not written to .pptx yet — export Markdown to keep them.')
-  }
+  const notedIndexes = slides
+    .map((slide, index) => (slide.notes.trim() !== '' ? index : -1))
+    .filter((index) => index >= 0)
+  const hasNotes = notedIndexes.length > 0
 
   const slideOverrides = slides
     .map(
@@ -88,21 +107,56 @@ export function buildPptx(model: DeckDocumentModel): PptxBuildResult {
         `<Override PartName="/ppt/slides/slide${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slide+xml"/>`
     )
     .join('')
-  const contentTypes = `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>${slideOverrides}</Types>`
+  const notesOverrides = hasNotes
+    ? `<Override PartName="/ppt/notesMasters/notesMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesMaster+xml"/>` +
+      notedIndexes
+        .map(
+          (index) =>
+            `<Override PartName="/ppt/notesSlides/notesSlide${index + 1}.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.notesSlide+xml"/>`
+        )
+        .join('')
+    : ''
+  const contentTypes = `${XML_DECL}<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="xml" ContentType="application/xml"/><Override PartName="/ppt/presentation.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.presentation.main+xml"/><Override PartName="/ppt/slideMasters/slideMaster1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideMaster+xml"/><Override PartName="/ppt/slideLayouts/slideLayout1.xml" ContentType="application/vnd.openxmlformats-officedocument.presentationml.slideLayout+xml"/><Override PartName="/ppt/theme/theme1.xml" ContentType="application/vnd.openxmlformats-officedocument.theme+xml"/>${slideOverrides}${notesOverrides}</Types>`
 
   const rootRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="${REL_OD}/officeDocument" Target="ppt/presentation.xml"/></Relationships>`
 
   const slideIdEntries = slides
     .map((_, index) => `<p:sldId id="${256 + index}" r:id="rIdSlide${index + 1}"/>`)
     .join('')
-  const presentationXml = `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rIdMaster1"/></p:sldMasterIdLst><p:sldIdLst>${slideIdEntries}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`
+  const notesMasterIdList = hasNotes
+    ? '<p:notesMasterIdLst><p:notesMasterId r:id="rIdNotesMaster1"/></p:notesMasterIdLst>'
+    : ''
+  const presentationXml = `${XML_DECL}<p:presentation xmlns:a="${A_NS}" xmlns:r="${R_NS}" xmlns:p="${P_NS}"><p:sldMasterIdLst><p:sldMasterId id="2147483648" r:id="rIdMaster1"/></p:sldMasterIdLst>${notesMasterIdList}<p:sldIdLst>${slideIdEntries}</p:sldIdLst><p:sldSz cx="12192000" cy="6858000"/><p:notesSz cx="6858000" cy="9144000"/></p:presentation>`
 
-  const presentationRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rIdMaster1" Type="${REL_OD}/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rIdTheme1" Type="${REL_OD}/theme" Target="theme/theme1.xml"/>${slides
+  const notesMasterRel = hasNotes
+    ? `<Relationship Id="rIdNotesMaster1" Type="${REL_OD}/notesMaster" Target="notesMasters/notesMaster1.xml"/>`
+    : ''
+  const presentationRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rIdMaster1" Type="${REL_OD}/slideMaster" Target="slideMasters/slideMaster1.xml"/><Relationship Id="rIdTheme1" Type="${REL_OD}/theme" Target="theme/theme1.xml"/>${notesMasterRel}${slides
     .map(
       (_, index) =>
         `<Relationship Id="rIdSlide${index + 1}" Type="${REL_OD}/slide" Target="slides/slide${index + 1}.xml"/>`
     )
     .join('')}</Relationships>`
+
+  const notesParts = hasNotes
+    ? [
+        { name: 'ppt/notesMasters/notesMaster1.xml', data: Buffer.from(NOTES_MASTER_XML, 'utf8') },
+        {
+          name: 'ppt/notesMasters/_rels/notesMaster1.xml.rels',
+          data: Buffer.from(NOTES_MASTER_RELS, 'utf8')
+        },
+        ...notedIndexes.flatMap((index) => [
+          {
+            name: `ppt/notesSlides/notesSlide${index + 1}.xml`,
+            data: Buffer.from(notesSlideXml(slides[index].notes), 'utf8')
+          },
+          {
+            name: `ppt/notesSlides/_rels/notesSlide${index + 1}.xml.rels`,
+            data: Buffer.from(notesSlideRels(index), 'utf8')
+          }
+        ])
+      ]
+    : []
 
   const data = buildZip([
     { name: '[Content_Types].xml', data: Buffer.from(contentTypes, 'utf8') },
@@ -120,9 +174,16 @@ export function buildPptx(model: DeckDocumentModel): PptxBuildResult {
       data: Buffer.from(LAYOUT_RELS, 'utf8')
     },
     { name: 'ppt/theme/theme1.xml', data: Buffer.from(THEME_XML, 'utf8') },
+    ...notesParts,
     ...slides.flatMap((slide, index) => [
       { name: `ppt/slides/slide${index + 1}.xml`, data: Buffer.from(slideXml(slide), 'utf8') },
-      { name: `ppt/slides/_rels/slide${index + 1}.xml.rels`, data: Buffer.from(SLIDE_RELS, 'utf8') }
+      {
+        name: `ppt/slides/_rels/slide${index + 1}.xml.rels`,
+        data: Buffer.from(
+          slide.notes.trim() !== '' ? slideRelsWithNotes(index) : SLIDE_RELS,
+          'utf8'
+        )
+      }
     ])
   ])
   return { data, warnings }
@@ -267,8 +328,13 @@ export function parsePptx(archive: Buffer): PptxParseResult {
       for (const shape of noteShapes) {
         if (placeholderType(shape) !== 'body') continue
         for (const paragraph of shapeParagraphs(shape)) {
-          if (paragraph.text.trim() !== '') noteLines.push(paragraph.text)
+          noteLines.push(paragraph.text)
         }
+      }
+      // Interior blank paragraphs are real content; only trim the edges.
+      while (noteLines.length > 0 && noteLines[0].trim() === '') noteLines.shift()
+      while (noteLines.length > 0 && noteLines[noteLines.length - 1].trim() === '') {
+        noteLines.pop()
       }
       notes = noteLines.join('\n')
     }
