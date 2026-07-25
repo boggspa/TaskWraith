@@ -111,7 +111,8 @@ function makeDeps(overrides: Partial<ApprovalServiceDeps> = {}): {
         grok: 75_000,
         cursor: 80_000,
         ollama: 85_000,
-        antigravity: 85_000
+        antigravity: 85_000,
+        pi: 85_000
       },
       mainAuthorityMs: 60_000
     })),

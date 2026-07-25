@@ -39,7 +39,16 @@ describe('retiredProviders', () => {
   })
 
   it('keeps one canonical live-selection set including Cursor', () => {
-    expect(LIVE_SELECTABLE_PROVIDER_IDS).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama'])
+    expect(LIVE_SELECTABLE_PROVIDER_IDS).toEqual([
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'pi'
+    ])
+    expect(isLiveSelectableProvider('pi')).toBe(true)
     expect(isLiveSelectableProvider('codex')).toBe(true)
     expect(isLiveSelectableProvider('cursor')).toBe(true)
     expect(isLiveSelectableProvider('gemini')).toBe(false)

@@ -34,7 +34,8 @@ describe('PromptCachePolicy', () => {
         cursor: { mode: 'off' },
         ollama: { mode: 'off' },
         gemini: { mode: 'off' },
-        antigravity: { mode: 'off' }
+        antigravity: { mode: 'off' },
+        pi: { mode: 'off' }
       }
     })
   })

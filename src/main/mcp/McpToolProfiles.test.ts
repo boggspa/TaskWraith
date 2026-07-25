@@ -205,8 +205,11 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // ensemble_lane_result) grew the full catalogue, and the fan-out
     // isolation parameter grew ensemble_fanout on the DIRECT surface; both
     // stay inside the 40k transport contract and the 0.301 ratio.
-    expect(fullChars).toBe(131_759)
-    expect(gatewayChars).toBe(39_305)
+    // Re-measured 2026-07-25 after the Pi seat joined LIVE_SELECTABLE_PROVIDER_IDS:
+    // the provider enum is inlined into tool schemas on BOTH surfaces, so each
+    // grew by one enum member's worth of characters.
+    expect(fullChars).toBe(131_824)
+    expect(gatewayChars).toBe(39_330)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })

@@ -111,7 +111,8 @@ describe('canvas_eval persisted approval and execution receipts', () => {
           grok: 1,
           cursor: 1,
           ollama: 1,
-          antigravity: 1
+          antigravity: 1,
+          pi: 1
         },
         mainAuthorityMs: 1
       }),

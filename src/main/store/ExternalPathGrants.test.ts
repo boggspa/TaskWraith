@@ -37,7 +37,8 @@ describe('ExternalPathGrants metadata helpers', () => {
       'cursor',
       'grok',
       'kimi',
-      'ollama'
+      'ollama',
+      'pi'
     ])
     expect(isExternalPathGrantDispatchProvider('gemini')).toBe(false)
     expect(isExternalPathGrantDispatchProvider('cursor')).toBe(true)

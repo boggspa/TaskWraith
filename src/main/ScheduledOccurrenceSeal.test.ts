@@ -258,6 +258,10 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
     launchArgsTemplateSha256: hex('f')
   }
   switch (provider) {
+    case 'pi':
+      // Excluded from LiveProviderLaunchId (no seal-evidence producer yet);
+      // scheduled launches cannot name pi, so the helper must never either.
+      throw new Error('pi is not schedulable until a SealEvidencePi producer exists')
     case 'codex':
       return {
         schemaVersion: 1,
@@ -405,7 +409,7 @@ function providerLaunchPlan(provider: ProviderId): ProviderLaunchAuthorityInput 
  * posture is structural (digest invariants + the pinned posture version).
  */
 function contradictoryPosturePlan(
-  provider: Exclude<ProviderId, 'gemini' | 'kimi' | 'antigravity'>
+  provider: Exclude<ProviderId, 'gemini' | 'kimi' | 'antigravity' | 'pi'>
 ): ProviderLaunchAuthorityInput {
   const plan = providerLaunchPlan(provider)
   switch (provider) {

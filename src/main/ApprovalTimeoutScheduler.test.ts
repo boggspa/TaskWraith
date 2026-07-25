@@ -155,7 +155,8 @@ describe('ApprovalTimeoutScheduler', () => {
         grok: 120_000,
         cursor: 120_000,
         ollama: 120_000,
-        antigravity: 120_000
+        antigravity: 120_000,
+        pi: 120_000
       },
       mainTimeoutMs: 60_000,
       perKindOverridesMs: { 'hostCommand/rerun': 90_000 }

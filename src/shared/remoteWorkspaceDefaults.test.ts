@@ -21,7 +21,8 @@ describe('remoteWorkspaceDefaults', () => {
       'kimi',
       'cursor',
       'grok',
-      'ollama'
+      'ollama',
+      'pi'
     ])
     expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
   })

@@ -33,7 +33,8 @@ function makeCapabilityContract(provider: ProviderId): ProviderCapabilityContrac
     grok: 'Grok',
     cursor: 'Cursor',
     ollama: 'Ollama',
-    antigravity: 'Antigravity'
+    antigravity: 'Antigravity',
+    pi: 'Pi'
   }
   const label = labels[provider]
   const tool = (id: keyof ProviderCapabilityContract['tools'], toolLabel: string) => ({
