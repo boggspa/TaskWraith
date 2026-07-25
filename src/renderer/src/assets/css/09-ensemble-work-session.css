@@ -1612,6 +1612,36 @@
 .ensemble-above-chip.provider-poolside .ensemble-above-chip-role {
   color: var(--provider-poolside-color);
 }
+/* Pi BYOK upstreams — same spoof, other direction: the seat is `pi` but the
+ * wire id names the upstream serving the run, so the role text wears the
+ * upstream's hue (Mistral orange, DeepSeek royal blue). `provider-pi` itself is
+ * the fallback for an upstream this build does not surface, and `provider-qwen`
+ * is shared with the Ollama side — qwen-token-plan maps onto the same class so
+ * Qwen reads identically whichever way it arrives. */
+.ensemble-above-chip.provider-pi .ensemble-above-chip-role {
+  color: var(--provider-pi-color);
+}
+.ensemble-above-chip.provider-qwen .ensemble-above-chip-role {
+  color: var(--provider-qwen-color);
+}
+.ensemble-above-chip.provider-deepseek .ensemble-above-chip-role {
+  color: var(--provider-deepseek-color);
+}
+.ensemble-above-chip.provider-zai .ensemble-above-chip-role {
+  color: var(--provider-zai-color);
+}
+.ensemble-above-chip.provider-minimax .ensemble-above-chip-role {
+  color: var(--provider-minimax-color);
+}
+.ensemble-above-chip.provider-mistral .ensemble-above-chip-role {
+  color: var(--provider-mistral-color);
+}
+.ensemble-above-chip.provider-groq .ensemble-above-chip-role {
+  color: var(--provider-groq-color);
+}
+.ensemble-above-chip.provider-cerebras .ensemble-above-chip-role {
+  color: var(--provider-cerebras-color);
+}
 
 /* 2026-07 chip polish — live/failed role-name glow.
  *
@@ -1769,6 +1799,30 @@
 }
 .ensemble-above-chip-tooltip.provider-poolside .ensemble-above-chip-tooltip-title {
   color: var(--provider-poolside-color);
+}
+.ensemble-above-chip-tooltip.provider-pi .ensemble-above-chip-tooltip-title {
+  color: var(--provider-pi-color);
+}
+.ensemble-above-chip-tooltip.provider-qwen .ensemble-above-chip-tooltip-title {
+  color: var(--provider-qwen-color);
+}
+.ensemble-above-chip-tooltip.provider-deepseek .ensemble-above-chip-tooltip-title {
+  color: var(--provider-deepseek-color);
+}
+.ensemble-above-chip-tooltip.provider-zai .ensemble-above-chip-tooltip-title {
+  color: var(--provider-zai-color);
+}
+.ensemble-above-chip-tooltip.provider-minimax .ensemble-above-chip-tooltip-title {
+  color: var(--provider-minimax-color);
+}
+.ensemble-above-chip-tooltip.provider-mistral .ensemble-above-chip-tooltip-title {
+  color: var(--provider-mistral-color);
+}
+.ensemble-above-chip-tooltip.provider-groq .ensemble-above-chip-tooltip-title {
+  color: var(--provider-groq-color);
+}
+.ensemble-above-chip-tooltip.provider-cerebras .ensemble-above-chip-tooltip-title {
+  color: var(--provider-cerebras-color);
 }
 
 /* Neutralise the per-provider chip-border overrides — the chip

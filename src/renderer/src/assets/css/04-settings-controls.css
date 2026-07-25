@@ -694,6 +694,48 @@
   color: var(--provider-poolside-color);
 }
 
+/* Pi BYOK upstreams — comparison rows resolve their hue class from the wire
+ * id, so a Pi row is coloured by the upstream serving it. */
+.settings-model-comparison-dot.provider-pi,
+.settings-model-comparison-fill.provider-pi {
+  color: var(--provider-pi-color);
+}
+
+.settings-model-comparison-dot.provider-qwen,
+.settings-model-comparison-fill.provider-qwen {
+  color: var(--provider-qwen-color);
+}
+
+.settings-model-comparison-dot.provider-deepseek,
+.settings-model-comparison-fill.provider-deepseek {
+  color: var(--provider-deepseek-color);
+}
+
+.settings-model-comparison-dot.provider-zai,
+.settings-model-comparison-fill.provider-zai {
+  color: var(--provider-zai-color);
+}
+
+.settings-model-comparison-dot.provider-minimax,
+.settings-model-comparison-fill.provider-minimax {
+  color: var(--provider-minimax-color);
+}
+
+.settings-model-comparison-dot.provider-mistral,
+.settings-model-comparison-fill.provider-mistral {
+  color: var(--provider-mistral-color);
+}
+
+.settings-model-comparison-dot.provider-groq,
+.settings-model-comparison-fill.provider-groq {
+  color: var(--provider-groq-color);
+}
+
+.settings-model-comparison-dot.provider-cerebras,
+.settings-model-comparison-fill.provider-cerebras {
+  color: var(--provider-cerebras-color);
+}
+
 .settings-provider-telemetry-grid {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -4298,6 +4340,50 @@ input:disabled, select:disabled, textarea:disabled {
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.18),
     0 0 10px color-mix(in srgb, var(--provider-poolside-color) 14%, transparent);
+}
+
+/* Pi BYOK upstreams. Each class above repeats the same four-property rim-shine
+ * recipe with one hue substituted; for the eight Pi classes that would be ~60
+ * lines of near-identical CSS, so the tint is lifted into a variable and the
+ * recipe written once. Output is identical to the per-class blocks — same
+ * specificity (0,2,0), and this rule is later in source, so it wins for the
+ * shared properties while each selector above supplies only the tint. */
+.run-card-provider.provider-pi {
+  --run-card-provider-tint: var(--provider-pi-color);
+}
+.run-card-provider.provider-deepseek {
+  --run-card-provider-tint: var(--provider-deepseek-color);
+}
+.run-card-provider.provider-zai {
+  --run-card-provider-tint: var(--provider-zai-color);
+}
+.run-card-provider.provider-minimax {
+  --run-card-provider-tint: var(--provider-minimax-color);
+}
+.run-card-provider.provider-mistral {
+  --run-card-provider-tint: var(--provider-mistral-color);
+}
+.run-card-provider.provider-groq {
+  --run-card-provider-tint: var(--provider-groq-color);
+}
+.run-card-provider.provider-cerebras {
+  --run-card-provider-tint: var(--provider-cerebras-color);
+}
+.run-card-provider:is(
+    .provider-pi,
+    .provider-deepseek,
+    .provider-zai,
+    .provider-minimax,
+    .provider-mistral,
+    .provider-groq,
+    .provider-cerebras
+  ) {
+  color: var(--run-card-provider-tint);
+  border-color: color-mix(in srgb, var(--run-card-provider-tint) 32%, transparent);
+  background: color-mix(in srgb, var(--run-card-provider-tint) 12%, transparent);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.18),
+    0 0 10px color-mix(in srgb, var(--run-card-provider-tint) 14%, transparent);
 }
 
 /* Status chip — same rim-shine pattern per tone. Each tone

@@ -3071,6 +3071,28 @@
 .welcome-usage-model-dot.provider-poolside,
 .welcome-usage-model-meter-fill.provider-poolside,
 .welcome-usage-bar-segment.provider-poolside { color: var(--provider-poolside-color); }
+/* Pi BYOK upstreams. */
+.welcome-usage-model-dot.provider-qwen,
+.welcome-usage-model-meter-fill.provider-qwen,
+.welcome-usage-bar-segment.provider-qwen { color: var(--provider-qwen-color); }
+.welcome-usage-model-dot.provider-deepseek,
+.welcome-usage-model-meter-fill.provider-deepseek,
+.welcome-usage-bar-segment.provider-deepseek { color: var(--provider-deepseek-color); }
+.welcome-usage-model-dot.provider-zai,
+.welcome-usage-model-meter-fill.provider-zai,
+.welcome-usage-bar-segment.provider-zai { color: var(--provider-zai-color); }
+.welcome-usage-model-dot.provider-minimax,
+.welcome-usage-model-meter-fill.provider-minimax,
+.welcome-usage-bar-segment.provider-minimax { color: var(--provider-minimax-color); }
+.welcome-usage-model-dot.provider-mistral,
+.welcome-usage-model-meter-fill.provider-mistral,
+.welcome-usage-bar-segment.provider-mistral { color: var(--provider-mistral-color); }
+.welcome-usage-model-dot.provider-groq,
+.welcome-usage-model-meter-fill.provider-groq,
+.welcome-usage-bar-segment.provider-groq { color: var(--provider-groq-color); }
+.welcome-usage-model-dot.provider-cerebras,
+.welcome-usage-model-meter-fill.provider-cerebras,
+.welcome-usage-bar-segment.provider-cerebras { color: var(--provider-cerebras-color); }
 
 [data-reduce-transparency="true"] .welcome-usage-dashboard {
   background: color-mix(in srgb, var(--panel-bg-solid) 86%, var(--accent) 6%);
@@ -12654,6 +12676,14 @@ button.diff-file-row {
 .activity-yield-target.provider-openai { --provider-tint: var(--provider-openai-color); }
 .activity-yield-target.provider-openbmb { --provider-tint: var(--provider-openbmb-color); }
 .activity-yield-target.provider-poolside { --provider-tint: var(--provider-poolside-color); }
+.activity-yield-target.provider-pi { --provider-tint: var(--provider-pi-color); }
+.activity-yield-target.provider-qwen { --provider-tint: var(--provider-qwen-color); }
+.activity-yield-target.provider-deepseek { --provider-tint: var(--provider-deepseek-color); }
+.activity-yield-target.provider-zai { --provider-tint: var(--provider-zai-color); }
+.activity-yield-target.provider-minimax { --provider-tint: var(--provider-minimax-color); }
+.activity-yield-target.provider-mistral { --provider-tint: var(--provider-mistral-color); }
+.activity-yield-target.provider-groq { --provider-tint: var(--provider-groq-color); }
+.activity-yield-target.provider-cerebras { --provider-tint: var(--provider-cerebras-color); }
 
 /* Light theme — keep the colour but lift saturation against the
  * lighter background so the tag stays legible. */
@@ -13749,6 +13779,30 @@ button.diff-file-row {
 }
 .notification-newadditions-model.provider-poolside {
   color: var(--provider-poolside-color, #0c8194);
+}
+/* Pi's group heading stays the seat colour; each model name wears the hue of
+ * the BYOK upstream that serves it. */
+.notification-newadditions-provider.provider-pi,
+.notification-newadditions-model.provider-pi {
+  color: var(--provider-pi-color, #68768c);
+}
+.notification-newadditions-model.provider-deepseek {
+  color: var(--provider-deepseek-color, #4e6aee);
+}
+.notification-newadditions-model.provider-zai {
+  color: var(--provider-zai-color, #177daa);
+}
+.notification-newadditions-model.provider-minimax {
+  color: var(--provider-minimax-color, #c044a4);
+}
+.notification-newadditions-model.provider-mistral {
+  color: var(--provider-mistral-color, #d44404);
+}
+.notification-newadditions-model.provider-groq {
+  color: var(--provider-groq-color, #088482);
+}
+.notification-newadditions-model.provider-cerebras {
+  color: var(--provider-cerebras-color, #bb584a);
 }
 
 .notification-card-dismiss {
