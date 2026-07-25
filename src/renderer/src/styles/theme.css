@@ -206,7 +206,9 @@
    * presentation aliases let local models wear their upstream brand hue. */
   --provider-alibaba-color: #8C52EF;
   --provider-qwen-color: var(--provider-alibaba-color);
-  --provider-google-color: var(--provider-gemini-color);
+  /* `google` is the Gemma spoof class and nothing else. It now wears
+   * Google's AntiGravity green rather than the retired Gemini blue. */
+  --provider-google-color: var(--provider-antigravity-color);
   --provider-openai-color: var(--provider-codex-color);
   --provider-deep-reinforce-color: #BE5809;
   --provider-ornith-color: var(--provider-deep-reinforce-color);

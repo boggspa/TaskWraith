@@ -40,20 +40,20 @@ const STATIC_PROVIDER_COLORS = {
 
 const PROVIDER_ALIASES = {
   qwen: 'alibaba',
-  google: 'gemini',
+  google: 'antigravity',
   openai: 'codex',
   ornith: 'deep-reinforce'
 } as const
 
 const IOS_PROVIDER_CASES = [
-  ['case "gemini", "google"', '#346EEC'],
+  ['case "gemini"', '#346EEC'],
   ['case "codex", "openai"', '#705AFF'],
   ['case "claude"', '#B16105'],
   ['case "kimi"', '#0073E6'],
   ['case "grok"', '#757575'],
   ['case "cursor"', '#8D7312'],
   ['case "ollama"', '#1A8562'],
-  ['case "antigravity"', '#308713'],
+  ['case "antigravity", "google"', '#308713'],
   ['case "ensemble"', '#986781'],
   ['case "alibaba", "qwen"', '#8C52EF'],
   ['case "deep-reinforce", "ornith"', '#BE5809'],

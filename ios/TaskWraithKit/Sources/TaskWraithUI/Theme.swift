@@ -140,22 +140,24 @@ public enum TWTheme {
     // accent on the provider pill, placeholder, and send button.
     @MainActor public static func providerAccent(_ provider: String?) -> Color {
         switch provider?.lowercased() {
-        case "gemini", "google": return Color(hex: 0x346EEC)
+        case "gemini": return Color(hex: 0x346EEC)
         case "codex", "openai": return Color(hex: 0x705AFF)
         case "claude": return Color(hex: 0xB16105)
         case "kimi": return Color(hex: 0x0073E6)
         case "cursor": return Color(hex: 0x8D7312)
         case "ollama": return Color(hex: 0x1A8562)
-        case "antigravity": return Color(hex: 0x308713)
+        case "antigravity", "google": return Color(hex: 0x308713)
         case "pi": return Color(hex: 0xC25E4C)
         case "ensemble": return Color(hex: 0x986781)
         case "grok": return Color(hex: 0x757575)
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
         // Runtime provider stays `ollama`; these spoofed brand classes let
         // local models wear their upstream brand hue. Mirrors theme.css
-        // lines 148–159. `google`/`openai` reuse the gemini/codex accents
-        // above. `qwen`/`ornith` retained as legacy speaker heads but now
-        // alias to their canonical brand colors (Alibaba / Deep Reinforce).
+        // lines 148–159. `google` (Gemma) reuses the AntiGravity accent and
+        // `openai` the codex accent above — Gemma deliberately no longer
+        // wears the retired Gemini blue. `qwen`/`ornith` retained as legacy
+        // speaker heads but now alias to their canonical brand colors
+        // (Alibaba / Deep Reinforce).
         case "alibaba", "qwen": return Color(hex: 0x8C52EF)
         case "deep-reinforce", "ornith": return Color(hex: 0xBE5809)
         case "ibm": return Color(hex: 0x3079BC)
