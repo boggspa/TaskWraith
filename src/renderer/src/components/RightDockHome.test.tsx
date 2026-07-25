@@ -21,6 +21,7 @@ describe('RightDockHome', () => {
       ['office', 'Office Suite', 'office', undefined],
       ['canvas', 'Canvas', 'canvas', undefined],
       ['diff', 'Diff Studio', 'inspector', 'diff'],
+      ['candidates', 'Fan-out Candidates', 'candidates', undefined],
       ['raw', 'Raw Events', 'inspector', 'raw'],
       ['invocations', 'Invocations', 'inspector', 'delegation'],
       ['timeline', 'Invocation Timeline', 'inspector', 'timeline'],
@@ -49,11 +50,11 @@ describe('RightDockHome', () => {
     expect(html).toContain('<nav')
     expect(html).toContain('aria-labelledby="right-dock-home-title"')
     expect(destinationIds).toEqual(RIGHT_DOCK_HOME_DESTINATIONS.map(({ id }) => id))
-    expect(html.match(/<button/g)).toHaveLength(14)
-    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(14)
-    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(14)
+    expect(html.match(/<button/g)).toHaveLength(15)
+    expect(html.match(/class="pill-card right-dock-home-card/g)).toHaveLength(15)
+    expect(html.match(/class="pill-card-inner right-dock-home-card-inner"/g)).toHaveLength(15)
     expect(html).toContain('class="right-dock-home-content"')
-    expect(html.match(/ disabled=""/g)).toHaveLength(5)
+    expect(html.match(/ disabled=""/g)).toHaveLength(6)
     expect(html).toMatch(/data-right-dock-home-destination="chat"[^>]*disabled=""/)
     expect(html).toContain('Side Chats. Linked branches and focused follow-ups')
     expect(html).toContain('Media Attachments. Images, audio, video, and paths. 3 items')

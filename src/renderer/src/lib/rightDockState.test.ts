@@ -18,6 +18,7 @@ const allClosed: RightDockTabAvailabilityInput = {
   showFileEditor: false,
   showOfficeSuite: false,
   isCanvasDockPanelOpen: false,
+  isFanoutCandidatesPanelOpen: false,
   hasWorkspaceContext: false,
   isChatMediaPanelOpen: false,
   isProjectReferencesPanelOpen: false,
@@ -38,6 +39,7 @@ describe('rightDockState', () => {
           showFileEditor: true,
           showOfficeSuite: true,
           isCanvasDockPanelOpen: true,
+          isFanoutCandidatesPanelOpen: true,
           hasWorkspaceContext: true,
           isChatMediaPanelOpen: true,
           isProjectReferencesPanelOpen: true,
@@ -52,6 +54,7 @@ describe('rightDockState', () => {
         { id: 'files', label: 'Files' },
         { id: 'office', label: 'Office' },
         { id: 'canvas', label: 'Canvas' },
+        { id: 'candidates', label: 'Compare' },
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
         { id: 'pins', label: 'Notes' },
@@ -179,9 +182,25 @@ describe('rightDockState', () => {
         'files',
         'office',
         'canvas',
+        'candidates',
         'inspector',
         'terminal'
       ])
+    })
+  })
+
+  describe('candidates surface availability', () => {
+    it('shows Compare only when the panel is open AND a workspace exists', () => {
+      expect(
+        buildRightDockTabs({ ...allClosed, isFanoutCandidatesPanelOpen: true })
+      ).toEqual([])
+      expect(
+        buildRightDockTabs({
+          ...allClosed,
+          isFanoutCandidatesPanelOpen: true,
+          hasWorkspaceContext: true
+        })
+      ).toEqual([{ id: 'candidates', label: 'Compare' }])
     })
   })
 })

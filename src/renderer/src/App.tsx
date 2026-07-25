@@ -136,6 +136,7 @@ import {
   RunAnalystSnapshot,
   EnsembleParticipant,
   PermissionPresetId,
+  EnsembleFanoutIsolation,
   EnsembleFanoutPolicy,
   EnsembleOrchestrationMode,
   PinnedMessageGroup,
@@ -416,6 +417,7 @@ import {
   InfoCircleIcon,
   LinkCircleSymbolIcon,
   CanvasSurfaceSymbolIcon,
+  FanoutCandidatesSymbolIcon,
   OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
@@ -2250,6 +2252,7 @@ function App(): React.JSX.Element {
   const [showFileEditor, setShowFileEditor] = useState(false)
   const [showOfficeSuite, setShowOfficeSuite] = useState(false)
   const [isCanvasDockPanelOpen, setIsCanvasDockPanelOpen] = useState(false)
+  const [isFanoutCandidatesPanelOpen, setIsFanoutCandidatesPanelOpen] = useState(false)
   const [officeOpenRequest, setOfficeOpenRequest] = useState<{
     path: string
     nonce: number
@@ -2851,7 +2854,7 @@ function App(): React.JSX.Element {
       persisted: currentChat?.gitWorkflow
     })
     if (!input) return
-    const sendKey = `${chatId} ${input.state} ${input.prNumber ?? ''} ${input.prUrl ?? ''}`
+    const sendKey = `${chatId}\u0000${input.state}\u0000${input.prNumber ?? ''}\u0000${input.prUrl ?? ''}`
     if (gitWorkflowLastSentRef.current === sendKey) return
     gitWorkflowLastSentRef.current = sendKey
     void window.api.setChatGitWorkflow({ chatId, gitWorkflow: input })
@@ -3423,6 +3426,8 @@ function App(): React.JSX.Element {
         return showOfficeSuite
       case 'canvas':
         return isCanvasDockPanelOpen
+      case 'candidates':
+        return isFanoutCandidatesPanelOpen
       case 'inspector':
         return appearance.showInspector
       case 'terminal':
@@ -19882,6 +19887,25 @@ function App(): React.JSX.Element {
     },
     [updateChatById]
   )
+  const updateEnsembleFanoutIsolationForChat = useCallback(
+    (chatId: string, isolation: EnsembleFanoutIsolation): void => {
+      const nextIsolation: EnsembleFanoutIsolation = isolation === 'worktree' ? 'worktree' : 'off'
+      updateChatById(chatId, (source) => {
+        if (!source.ensemble) return source
+        const patched: ChatRecord = {
+          ...source,
+          ensemble: {
+            ...source.ensemble,
+            fanoutIsolation: nextIsolation,
+            updatedAt: new Date().toISOString()
+          },
+          updatedAt: Date.now()
+        }
+        return withSessionActivityLedger(source, patched)
+      })
+    },
+    [updateChatById]
+  )
   const updateEnsembleContextCharsForChat = useCallback(
     (chatId: string, nextChars: number): void => {
       const safeChars = Math.max(5_000, Math.min(256_000, Math.round(Number(nextChars) || 0)))
@@ -20021,6 +20045,18 @@ function App(): React.JSX.Element {
       updateCurrentEnsembleFanoutPolicy(enabled ? 'read_only' : 'off')
     },
     [updateCurrentEnsembleFanoutPolicy]
+  )
+  const updateCurrentEnsembleFanoutIsolation = useCallback(
+    (isolation: EnsembleFanoutIsolation) => {
+      if (!isCurrentEnsembleChat || !currentChat?.ensemble) return
+      updateEnsembleFanoutIsolationForChat(currentChat.appChatId, isolation)
+    },
+    [
+      isCurrentEnsembleChat,
+      currentChat?.appChatId,
+      currentChat?.ensemble,
+      updateEnsembleFanoutIsolationForChat
+    ]
   )
 
   // D — persist the user-set shared-transcript char budget (5K–256K) onto
@@ -23887,6 +23923,7 @@ function App(): React.JSX.Element {
     showFileEditor,
     showOfficeSuite,
     isCanvasDockPanelOpen,
+    isFanoutCandidatesPanelOpen,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
@@ -24008,6 +24045,14 @@ function App(): React.JSX.Element {
       hint: 'Live web preview & sketch board'
     },
     {
+      id: 'candidates',
+      label: 'Compare',
+      icon: <FanoutCandidatesSymbolIcon />,
+      enabled: Boolean(currentChat) && hasWorkspaceContext,
+      group: 'inspect',
+      hint: 'Fan-out candidates: compare & promote'
+    },
+    {
       id: 'inspector',
       label: 'Inspect',
       icon: <ReviewSymbolIcon />,
@@ -24054,6 +24099,9 @@ function App(): React.JSX.Element {
       case 'canvas':
         setIsCanvasDockPanelOpen(false)
         break
+      case 'candidates':
+        setIsFanoutCandidatesPanelOpen(false)
+        break
       case 'inspector':
         appearance.update({ showInspector: false })
         break
@@ -24093,6 +24141,9 @@ function App(): React.JSX.Element {
         break
       case 'canvas':
         if (currentChat) setIsCanvasDockPanelOpen(true)
+        break
+      case 'candidates':
+        if (currentChat && hasWorkspaceContext) setIsFanoutCandidatesPanelOpen(true)
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -27297,6 +27348,8 @@ function App(): React.JSX.Element {
         updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
       updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
         updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
+      updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) =>
+        updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
       updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
         updateEnsembleFanoutPolicyForChat(viewerChatId, enabled ? 'read_only' : 'off'),
       updateCurrentEnsembleContextChars: (nextChars: number) =>
@@ -27796,6 +27849,7 @@ function App(): React.JSX.Element {
     selectEnsembleParticipantForChat,
     setActiveEnsembleRosterPresetIdForChat,
     updateEnsembleContextCharsForChat,
+    updateEnsembleFanoutIsolationForChat,
     updateEnsembleFanoutPolicyForChat,
     updateEnsembleMaxContinuationHopsForChat,
     updateEnsembleOrchestrationModeForChat
@@ -27952,6 +28006,7 @@ function App(): React.JSX.Element {
       trustSelectValue,
       updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
+      updateCurrentEnsembleFanoutIsolation,
       updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,
@@ -28074,6 +28129,7 @@ function App(): React.JSX.Element {
       trustSelectValue,
       updateCurrentEnsembleConcurrentMode,
       updateCurrentEnsembleFanoutPolicy,
+      updateCurrentEnsembleFanoutIsolation,
       updateCurrentEnsembleContextChars,
       updateCurrentEnsembleMaxContinuationHops,
       updateCurrentEnsembleOrchestrationMode,
@@ -28493,6 +28549,8 @@ function App(): React.JSX.Element {
           paneCtxHelpers.updateEnsembleOrchestrationModeForChat(viewerChatId, mode),
         updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(viewerChatId, policy),
+        updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) =>
+          paneCtxHelpers.updateEnsembleFanoutIsolationForChat(viewerChatId, isolation),
         updateCurrentEnsembleConcurrentMode: (enabled: boolean) =>
           paneCtxHelpers.updateEnsembleFanoutPolicyForChat(
             viewerChatId,
@@ -29475,6 +29533,7 @@ function App(): React.JSX.Element {
     showFileEditor,
     showOfficeSuite,
     isCanvasDockPanelOpen,
+    isFanoutCandidatesPanelOpen,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
     onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,

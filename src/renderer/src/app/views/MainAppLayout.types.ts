@@ -556,6 +556,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showFileEditor: any
   showOfficeSuite: any
   isCanvasDockPanelOpen: any
+  isFanoutCandidatesPanelOpen: any
   officeOpenRequest: any
   onOpenOfficeDocument: any
   onRequestOfficeExternalAccess: any

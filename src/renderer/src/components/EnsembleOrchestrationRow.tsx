@@ -34,7 +34,11 @@ import {
   type ContinuousHopsRoundStatus
 } from './ContinuousHopsLimitChip'
 import { EnsembleModePicker, type EnsembleOrchestrationMode } from './EnsembleModePicker'
-import type { ComposerStyle, EnsembleFanoutPolicy } from '../../../main/store/types'
+import type {
+  ComposerStyle,
+  EnsembleFanoutIsolation,
+  EnsembleFanoutPolicy
+} from '../../../main/store/types'
 
 // Shared-transcript char budget bounds (mirror buildTaggedTranscript's clamp).
 // Moved here from EnsembleModePicker when the slider left its popover.
@@ -71,6 +75,8 @@ export function EnsembleOrchestrationRow({
   fanoutPolicy,
   writerFanoutPolicy,
   onFanoutPolicyChange,
+  fanoutIsolation,
+  onFanoutIsolationChange,
   concurrentLanesAvailable,
   concurrentWriteLanesAvailable,
   bossmanAssigned,
@@ -96,6 +102,10 @@ export function EnsembleOrchestrationRow({
    * vs user-preflight) — resolved upstream from bossmanParticipantId. */
   writerFanoutPolicy: EnsembleFanoutPolicy
   onFanoutPolicyChange: (policy: EnsembleFanoutPolicy) => void
+  /** Worktree isolation for WRITE-intent fan-out lanes (chat-level config;
+   * ensemble_fanout/_all tool calls may still override per call). */
+  fanoutIsolation: EnsembleFanoutIsolation
+  onFanoutIsolationChange: (isolation: EnsembleFanoutIsolation) => void
   concurrentLanesAvailable: boolean
   concurrentWriteLanesAvailable: boolean
   bossmanAssigned: boolean
@@ -208,6 +218,27 @@ export function EnsembleOrchestrationRow({
             />
           </span>
         </span>
+      </span>
+      <span className="composer-orchestration-cell">
+        <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">
+          Isolate
+        </span>
+        <button
+          type="button"
+          className="composer-fanout-isolation-toggle"
+          data-active={fanoutIsolation === 'worktree'}
+          aria-pressed={fanoutIsolation === 'worktree'}
+          title={
+            fanoutIsolation === 'worktree'
+              ? 'Write-intent fan-out lanes run in their own git worktrees (forked from the last commit). Each lane’s result becomes a candidate to compare & promote from the Compare surface.'
+              : 'Write-intent fan-out lanes share the live workspace checkout. Turn on to give each write lane an isolated worktree whose result you promote or discard.'
+          }
+          onClick={() =>
+            onFanoutIsolationChange(fanoutIsolation === 'worktree' ? 'off' : 'worktree')
+          }
+        >
+          {fanoutIsolation === 'worktree' ? 'Worktrees' : 'Shared'}
+        </button>
       </span>
       <span className="composer-orchestration-cell composer-orchestration-cell-history">
         <span className="ensemble-roster-preset-picker-label composer-orchestration-cell-label">

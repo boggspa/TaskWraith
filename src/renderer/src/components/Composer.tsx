@@ -7,6 +7,7 @@ import {
   AgenticServiceId,
   AgenticWorkspaceGrant,
   ChatWorkflowMode,
+  EnsembleFanoutIsolation,
   EnsembleFanoutPolicy,
   EnsembleParticipant,
   PermissionPresetId,
@@ -487,6 +488,7 @@ export interface ComposerProps {
   workspaceTrustMutationDisabledReason?: string
   updateCurrentEnsembleConcurrentMode: any
   updateCurrentEnsembleFanoutPolicy: (policy: EnsembleFanoutPolicy) => void
+  updateCurrentEnsembleFanoutIsolation: (isolation: EnsembleFanoutIsolation) => void
   updateCurrentEnsembleContextChars: any
   updateCurrentEnsembleMaxContinuationHops: any
   updateCurrentEnsembleOrchestrationMode: any
@@ -807,6 +809,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     trustedSessionMutationDisabledReason,
     workspaceTrustMutationDisabledReason,
     updateCurrentEnsembleFanoutPolicy,
+    updateCurrentEnsembleFanoutIsolation,
     updateCurrentEnsembleContextChars,
     updateCurrentEnsembleMaxContinuationHops,
     updateCurrentEnsembleOrchestrationMode,
@@ -1017,6 +1020,8 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
         fanoutPolicy={currentEnsembleFanoutPolicy}
         writerFanoutPolicy={writerFanoutPolicy}
         onFanoutPolicyChange={updateCurrentEnsembleFanoutPolicy}
+        fanoutIsolation={currentChat.ensemble.fanoutIsolation === 'worktree' ? 'worktree' : 'off'}
+        onFanoutIsolationChange={updateCurrentEnsembleFanoutIsolation}
         concurrentLanesAvailable={ensembleConcurrentLanesAvailable}
         concurrentWriteLanesAvailable={ensembleConcurrentWriteLanesAvailable}
         bossmanAssigned={Boolean(currentChat.ensemble.bossmanParticipantId)}

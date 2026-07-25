@@ -98,6 +98,30 @@ export function CanvasSurfaceSymbolIcon() {
   )
 }
 
+/** Two isolated lanes converging into one promoted landing — the fan-out
+ * candidates (compare & promote) dock surface. */
+export function FanoutCandidatesSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <circle cx="4.2" cy="3.4" r="1.3" />
+        <circle cx="11.8" cy="3.4" r="1.3" />
+        <path d="M4.2 4.7v2.1c0 2 3.8 1.8 3.8 3.8" />
+        <path d="M11.8 4.7v2.1c0 2-3.8 1.8-3.8 3.8" />
+        <path d="M8 10.6v3" />
+        <path d="M6.6 12.3L8 13.7l1.4-1.4" />
+      </svg>
+    </span>
+  )
+}
+
 export function OfficeSuiteSymbolIcon() {
   return (
     <span className="chat-corner-symbol">

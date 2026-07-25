@@ -114,6 +114,7 @@ describe('Multiview pane Composer context parity', () => {
       'steerIndicatorMessage',
       'updateCurrentEnsembleConcurrentMode',
       'updateCurrentEnsembleContextChars',
+      'updateCurrentEnsembleFanoutIsolation',
       'updateCurrentEnsembleFanoutPolicy',
       'updateCurrentEnsembleMaxContinuationHops',
       'updateCurrentEnsembleOrchestrationMode',

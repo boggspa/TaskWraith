@@ -3,6 +3,7 @@ import type { RightDockTab } from '../lib/rightDockState'
 import {
   CanvasSurfaceSymbolIcon,
   ChatMediaIcon,
+  FanoutCandidatesSymbolIcon,
   FileMenuSelectionIcon,
   OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
@@ -22,7 +23,7 @@ export type RightDockHomeInspectorDestination =
 
 export type RightDockHomeSurface = Extract<
   RightDockTab,
-  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas'
+  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas' | 'candidates'
 >
 
 type RightDockHomeTarget =
@@ -100,6 +101,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     description: 'Review workspace and run changes',
     group: 'inspect',
     target: { surface: 'inspector', inspectorTab: 'diff' }
+  },
+  {
+    id: 'candidates',
+    label: 'Fan-out Candidates',
+    description: 'Compare isolated lanes & promote a winner',
+    group: 'inspect',
+    target: { surface: 'candidates' },
+    requires: 'workspace'
   },
   {
     id: 'raw',
@@ -211,6 +220,7 @@ function destinationIcon(id: string): ReactNode {
   if (id === 'files') return <FileMenuSelectionIcon />
   if (id === 'office') return <OfficeSuiteSymbolIcon />
   if (id === 'canvas') return <CanvasSurfaceSymbolIcon />
+  if (id === 'candidates') return <FanoutCandidatesSymbolIcon />
   return (
     <HomeGlyph
       kind={id as 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'}

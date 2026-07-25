@@ -62,6 +62,7 @@ import {
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { CanvasDockPanel } from '../../components/CanvasDockPanel'
+import { FanoutCandidatesPanel } from '../../components/FanoutCandidatesPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
 import {
   isOfficeDocumentPath,
@@ -467,6 +468,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showFileEditor,
   showOfficeSuite,
   isCanvasDockPanelOpen,
+  isFanoutCandidatesPanelOpen,
   officeOpenRequest,
   onOpenOfficeDocument,
   onRequestOfficeExternalAccess,
@@ -2567,6 +2569,16 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 {activeRightDockTab === 'canvas' && isCanvasDockPanelOpen && currentChat && (
                   <CanvasDockPanel chatId={currentChat.appChatId} />
                 )}
+
+                {activeRightDockTab === 'candidates' &&
+                  isFanoutCandidatesPanelOpen &&
+                  currentChat && (
+                    <FanoutCandidatesPanel
+                      key={currentChat.appChatId}
+                      chatId={currentChat.appChatId}
+                      workspacePath={currentWorkspace?.path}
+                    />
+                  )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (
                   <ChatMediaDockPanel
