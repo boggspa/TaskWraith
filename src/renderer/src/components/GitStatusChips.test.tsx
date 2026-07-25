@@ -73,13 +73,10 @@ describe('GitSyncChip', () => {
     expect(html).toContain('2 commits upstream-only')
   })
 
-  it('renders a green synced chip once the branch matches upstream', () => {
+  it('renders NOTHING once the branch matches upstream — the green tick moved to the timecode-bar satellite as "Pushed"', () => {
     const html = renderToStaticMarkup(<GitSyncChip snapshot={snapshot()} />)
 
-    expect(html).toContain('git-status-synced')
-    expect(html).toContain('synced')
-    expect(html).toContain('Branch matches local tracking ref origin/feature/demo')
-    expect(html).toContain('fetch to refresh remote state')
+    expect(html).toBe('')
   })
 })
 

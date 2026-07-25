@@ -125,7 +125,7 @@ function SatelliteIndicator({
   onHoverEnd,
   children
 }: {
-  kind: 'pr' | 'ci'
+  kind: 'pr' | 'ci' | 'push'
   tone: string
   title: string
   label?: string
@@ -184,10 +184,18 @@ export function GitHubSatelliteRow({
 
   const lifecycle = pr && pr.number != null ? prLifecycle(pr, snapshot) : null
   const ciResolved = resolveCi(pr, ci)
+  // "Pushed" — every local commit is on the upstream (the green tick that
+  // used to live in the workspace rows as the `Synced` chip). Strictly an
+  // ahead===0 signal: being behind the remote doesn't unpush anything (the
+  // title mentions it instead).
+  const pushed = Boolean(
+    snapshot?.branch && !snapshot.detached && snapshot.upstream && (snapshot.ahead ?? 0) === 0
+  )
 
-  // Only surface the row for relevant GH/PR/CI actions — or a watch-error affordance
-  // (gh-auth / no-open-PR) so the failure is no longer silent (Slice-6).
-  if (!lifecycle && !ciResolved && !watchDisabledReason && !isWatching) return null
+  // Only surface the row for relevant GH/PR/CI actions, the pushed tick — or
+  // a watch-error affordance (gh-auth / no-open-PR) so the failure is no
+  // longer silent (Slice-6).
+  if (!lifecycle && !ciResolved && !watchDisabledReason && !isWatching && !pushed) return null
   const watchOnly = !lifecycle && !ciResolved
 
   const prNumberLabel = typeof pr?.number === 'number' ? `#${pr.number}` : 'PR'
@@ -196,6 +204,25 @@ export function GitHubSatelliteRow({
 
   return (
     <div className="github-satellite-row" role="group" aria-label="GitHub pull request status">
+      {pushed && (
+        <SatelliteIndicator
+          kind="push"
+          tone="success"
+          title={`All local commits pushed — ${snapshot?.branch} matches ${snapshot?.upstream}${
+            (snapshot?.behind ?? 0) > 0
+              ? ` (${snapshot?.behind} behind upstream; fetch to refresh)`
+              : ''
+          }`}
+          label="Pushed"
+          onHoverStart={hover.show}
+          onHoverEnd={hover.scheduleClose}
+        >
+          <span className="github-satellite-tick" aria-hidden>
+            ✓
+          </span>
+          <ToolFamilyIcon family="git" size={14} />
+        </SatelliteIndicator>
+      )}
       {lifecycle && pr && (
         <SatelliteIndicator
           kind="pr"

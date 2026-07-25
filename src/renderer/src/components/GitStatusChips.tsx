@@ -250,17 +250,10 @@ export function GitSyncChip({
   const ahead = snapshot.ahead ?? 0
   const behind = snapshot.behind ?? 0
   if (ahead === 0 && behind === 0) {
-    return (
-      <span
-        className="git-status-push git-status-synced"
-        title={`Branch matches local tracking ref ${snapshot.upstream}; fetch to refresh remote state.`}
-      >
-        <span className="git-status-sync-glyph" aria-hidden>
-          ✓
-        </span>
-        synced
-      </span>
-    )
+    // Fully synced renders NOTHING here — the workspace rows keep only the
+    // ahead/behind counts, and the green tick moved to the timecode bar's
+    // git satellite cluster as the "Pushed" indicator (GitHubSatelliteRow).
+    return null
   }
   const diverged = ahead > 0 && behind > 0
   const syncState = diverged ? 'diverged' : behind > 0 ? 'behind' : 'ahead'

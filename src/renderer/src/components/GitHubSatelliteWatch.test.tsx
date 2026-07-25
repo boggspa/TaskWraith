@@ -59,6 +59,47 @@ describe('GitHubSatelliteRow — Slice-6 watch-error reachability', () => {
     expect(markup).toBe('')
   })
 
+  it('shows the green "Pushed" tick when every local commit is on the upstream', () => {
+    const markup = renderToStaticMarkup(
+      <GitHubSatelliteRow
+        pr={null}
+        ci={null}
+        snapshot={
+          {
+            remoteUrl: 'git@github.com:acme/widgets.git',
+            branch: 'feature/demo',
+            upstream: 'origin/feature/demo',
+            ahead: 0,
+            behind: 0
+          } as GitRepositorySnapshot
+        }
+      />
+    )
+    expect(markup).toContain('github-satellite-icon--push')
+    expect(markup).toContain('tone-success')
+    expect(markup).toContain('Pushed')
+    expect(markup).toContain('All local commits pushed')
+  })
+
+  it('hides "Pushed" while commits are ahead of the upstream (the rows keep the ↑N count)', () => {
+    const markup = renderToStaticMarkup(
+      <GitHubSatelliteRow
+        pr={null}
+        ci={null}
+        snapshot={
+          {
+            remoteUrl: 'git@github.com:acme/widgets.git',
+            branch: 'feature/demo',
+            upstream: 'origin/feature/demo',
+            ahead: 3,
+            behind: 0
+          } as GitRepositorySnapshot
+        }
+      />
+    )
+    expect(markup).not.toContain('Pushed')
+  })
+
   it('renders nothing without a GitHub remote, even with a watch reason', () => {
     const markup = renderToStaticMarkup(
       <GitHubSatelliteRow

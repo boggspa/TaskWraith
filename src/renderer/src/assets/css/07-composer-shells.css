@@ -4296,6 +4296,11 @@
 .github-satellite-icon-label {
   font-variant-numeric: tabular-nums;
 }
+/* The "Pushed" tick — inline glyph sized to sit flush with the 14px git icon. */
+.github-satellite-tick {
+  font-size: 10px;
+  line-height: 1;
+}
 .github-satellite-icon.is-clickable {
   cursor: pointer;
 }
