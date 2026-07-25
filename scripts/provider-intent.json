@@ -1,5 +1,9 @@
 {
-  "schemaVersion": 1,
-  "description": "User-approved live-selectable provider set (AGENTS.md: 'Capability governance — the user decides'). Membership changes in either direction are reserved to the user; edit this file only with explicit in-session user approval, in the same commit as the code change it authorizes.",
-  "liveSelectableProviderIds": ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
+  "schemaVersion": 2,
+  "description": "User-approved provider intent (AGENTS.md: 'Capability governance — the user decides'). Membership changes in either direction are reserved to the user; edit this file only with explicit in-session user approval, in the same commit as the code change it authorizes.",
+  "liveSelectableProviderIds": ["codex", "claude", "kimi", "cursor", "grok", "ollama", "pi"],
+  "conditionallyOfferedProviderIds": ["antigravity"],
+  "conditionalOfferNotes": {
+    "antigravity": "Approved as a product capability, and deliberately NOT live-selectable. AntiGravity is offered only behind its consent wall: the two-part opt-in (antigravityEnabled + antigravityOptInAcceptedAt, recording the user's acknowledgement of whole-Google-account ban risk and that third-party access is expressly prohibited by the Antigravity Additional Terms) plus a configured BYO gemini-api key or agy opt-in producing a non-empty model catalog. Its absence from liveSelectableProviderIds is the approved design, not drift — do not 'fix' it. Promotion would be a capability change reserved to the user AND would silently delete the wall: every gate reads isLiveSelectableProvider(p) || (p === 'antigravity' && <condition>), so making the left side true short-circuits the condition."
+  }
 }

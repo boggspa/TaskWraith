@@ -99,7 +99,19 @@ Rules, in priority order:
    mirrored by hand in
    [`ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift`](ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift)
    (`liveSelectableProviderIds`) — keep the two in sync. Changing membership
-   in either direction is reserved to the user.
+   in either direction is reserved to the user, recorded in
+   [`scripts/provider-intent.json`](scripts/provider-intent.json) and enforced
+   by `npm run guard:provider-intent`.
+
+   Some approved providers are deliberately **not** in that set because they
+   are offered only behind a consent/credential wall — today AntiGravity, which
+   requires the two-part opt-in (ban-risk acknowledgement) plus a configured
+   key. These are recorded in `conditionallyOfferedProviderIds`, and the guard
+   inverts the check for them: appearing in a static live set is a failure.
+   Their absence from `LIVE_SELECTABLE_PROVIDER_IDS` is the approved design,
+   not drift — do not "fix" it. Every gate reads
+   `isLiveSelectableProvider(p) || (p === '<id>' && <condition>)`, so promoting
+   one short-circuits its condition and silently deletes the wall.
 5. **Doctrine is executable.** Future sessions obey what this file, the
    README, the ledger, and the positioning docs assert. Never write "X is
    blocked/unavailable" unless the code enforces it *and* the user approved

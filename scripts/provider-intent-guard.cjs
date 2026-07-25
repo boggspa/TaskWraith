@@ -25,6 +25,18 @@
  * and in RETIRED_PROVIDER_IDS (gemini has been deliberately retired since
  * 2026-06-18).
  *
+ * Schema 2 adds `conditionallyOfferedProviderIds`: providers the user has
+ * approved as product capabilities that are deliberately NOT in the static
+ * live set because they are offered only behind a consent/credential wall
+ * (today: antigravity). This records the approval — so their absence from the
+ * live set reads as the approved design rather than drift — and inverts the
+ * check for them: a conditionally-offered provider appearing in either live
+ * set is a FAILURE, because every gate is written
+ * `isLiveSelectableProvider(p) || (p === 'antigravity' && <condition>)` and
+ * promoting it short-circuits the condition, silently deleting the wall.
+ * AGENTS.md rule 5, "doctrine is executable": this makes the code-comment
+ * convention a mechanically enforced invariant.
+ *
  * Both parsers fail loudly when a declaration cannot be found or is no longer
  * a plain literal — a parse miss must never pass vacuously. Scope is
  * deliberately tight: set comparisons over three tracked files, no doctrine
@@ -42,9 +54,10 @@ const TS_SOURCE_REPO_PATH = 'src/shared/retiredProviders.ts'
 const SWIFT_SOURCE_REPO_PATH = 'ios/TaskWraithKit/Sources/TaskWraithUI/Theme.swift'
 
 const PROVIDER_ID_PATTERN = /^[a-z][a-z0-9-]*$/
+const SCHEMA_VERSION = 2
 
-function assertProviderIdList(ids, label) {
-  if (!Array.isArray(ids) || ids.length === 0) {
+function assertProviderIdList(ids, label, { allowEmpty = false } = {}) {
+  if (!Array.isArray(ids) || (ids.length === 0 && !allowEmpty)) {
     throw new Error(`${label} must be a non-empty array of provider ids`)
   }
   for (const id of ids) {
@@ -60,13 +73,48 @@ function assertProviderIdList(ids, label) {
 }
 
 function validateIntent(intent) {
-  if (!intent || intent.schemaVersion !== 1) {
-    throw new Error(`${INTENT_REPO_PATH} must have schemaVersion: 1`)
+  if (!intent || intent.schemaVersion !== SCHEMA_VERSION) {
+    throw new Error(`${INTENT_REPO_PATH} must have schemaVersion: ${SCHEMA_VERSION}`)
   }
   assertProviderIdList(
     intent.liveSelectableProviderIds,
     `${INTENT_REPO_PATH} liveSelectableProviderIds`
   )
+
+  // May be empty (no conditionally-offered providers), but must be declared:
+  // an omitted field would let a wall-gated provider go unrecorded.
+  const conditional = intent.conditionallyOfferedProviderIds
+  assertProviderIdList(conditional, `${INTENT_REPO_PATH} conditionallyOfferedProviderIds`, {
+    allowEmpty: true
+  })
+
+  const live = new Set(intent.liveSelectableProviderIds)
+  const bothLists = conditional.filter((id) => live.has(id)).sort()
+  if (bothLists.length > 0) {
+    throw new Error(
+      `${INTENT_REPO_PATH} lists ${bothLists.join(', ')} as BOTH live-selectable and conditionally offered; a provider is either statically live or gated behind a wall, never both.`
+    )
+  }
+
+  const notes = intent.conditionalOfferNotes
+  if (notes !== undefined) {
+    if (!notes || typeof notes !== 'object' || Array.isArray(notes)) {
+      throw new Error(`${INTENT_REPO_PATH} conditionalOfferNotes must be an object when present`)
+    }
+    const conditionalSet = new Set(conditional)
+    for (const [id, note] of Object.entries(notes)) {
+      if (!conditionalSet.has(id)) {
+        throw new Error(
+          `${INTENT_REPO_PATH} conditionalOfferNotes documents ${JSON.stringify(id)}, which is not in conditionallyOfferedProviderIds`
+        )
+      }
+      if (typeof note !== 'string' || note.trim().length === 0) {
+        throw new Error(
+          `${INTENT_REPO_PATH} conditionalOfferNotes.${id} must be a non-empty string explaining the gate`
+        )
+      }
+    }
+  }
 }
 
 function readIntent(intentPath = INTENT_PATH) {
@@ -257,7 +305,13 @@ function setDiff(expected, actual) {
   }
 }
 
-function evaluateProviderIntent({ intentIds, tsLive, tsRetired, swiftLive }) {
+function evaluateProviderIntent({
+  intentIds,
+  tsLive,
+  tsRetired,
+  swiftLive,
+  conditionalIds = []
+}) {
   const failures = []
 
   const intentDrift = setDiff(intentIds, tsLive)
@@ -282,12 +336,36 @@ function evaluateProviderIntent({ intentIds, tsLive, tsRetired, swiftLive }) {
   }
 
   const retiredSet = new Set(tsRetired)
-  const retiredOverlap = [...new Set([...intentIds, ...tsLive])]
+  const retiredOverlap = [...new Set([...intentIds, ...tsLive, ...conditionalIds])]
     .filter((id) => retiredSet.has(id))
     .sort()
   if (retiredOverlap.length > 0) {
     failures.push(
-      `Retired provider${retiredOverlap.length === 1 ? '' : 's'} may not be live-selectable: ${retiredOverlap.join(', ')} appear${retiredOverlap.length === 1 ? 's' : ''} in RETIRED_PROVIDER_IDS and in the live set or intent list. Retirement keeps a provider decodable for history only (gemini has been deliberately retired since 2026-06-18); un-retiring is a user decision and must remove the id from RETIRED_PROVIDER_IDS in the same commit.`
+      `Retired provider${retiredOverlap.length === 1 ? '' : 's'} may not be live-selectable or conditionally offered: ${retiredOverlap.join(', ')} appear${retiredOverlap.length === 1 ? 's' : ''} in RETIRED_PROVIDER_IDS and in the live set, intent list, or conditional-offer list. Retirement keeps a provider decodable for history only (gemini has been deliberately retired since 2026-06-18); un-retiring is a user decision and must remove the id from RETIRED_PROVIDER_IDS in the same commit.`
+    )
+  }
+
+  // Inverted check: a conditionally-offered provider must stay OUT of both
+  // static live sets. Promotion is a capability change reserved to the user AND
+  // a silent teardown of the provider's consent wall.
+  const conditionalPromoted = [...new Set(conditionalIds)]
+    .filter((id) => tsLive.includes(id) || swiftLive.includes(id))
+    .sort()
+  if (conditionalPromoted.length > 0) {
+    const surfaces = conditionalPromoted.map((id) => {
+      const where = [
+        tsLive.includes(id) ? TS_SOURCE_REPO_PATH : null,
+        swiftLive.includes(id) ? SWIFT_SOURCE_REPO_PATH : null
+      ].filter(Boolean)
+      return `${id} (in ${where.join(' and ')})`
+    })
+    failures.push(
+      [
+        `Conditionally-offered provider${conditionalPromoted.length === 1 ? '' : 's'} promoted into the static live set: ${surfaces.join('; ')}.`,
+        `    ${INTENT_REPO_PATH} records ${conditionalPromoted.join(', ')} as approved but deliberately NOT live-selectable — offered only behind a consent/credential wall.`,
+        `    Every gate is written \`isLiveSelectableProvider(p) || (p === '<id>' && <condition>)\`, so making the left side true short-circuits the condition and deletes the wall (an unconfigured provider becomes offerable and dispatchable with no consent recorded).`,
+        `    If promotion is genuinely intended, the user must move the id from conditionallyOfferedProviderIds to liveSelectableProviderIds in ${INTENT_REPO_PATH} in the same commit, and the now-dead conditions must be removed deliberately rather than left as no-ops.`
+      ].join('\n')
     )
   }
 
@@ -318,7 +396,13 @@ function collectProviderSets(options = {}) {
   const { live: tsLive, retired: tsRetired } = parseTsProviderSets(tsSource)
   const swiftSource = fs.readFileSync(path.join(repoRoot, SWIFT_SOURCE_REPO_PATH), 'utf8')
   const swiftLive = parseSwiftLiveSet(swiftSource)
-  return { intentIds: intent.liveSelectableProviderIds, tsLive, tsRetired, swiftLive }
+  return {
+    intentIds: intent.liveSelectableProviderIds,
+    conditionalIds: intent.conditionallyOfferedProviderIds,
+    tsLive,
+    tsRetired,
+    swiftLive
+  }
 }
 
 function main() {
@@ -333,8 +417,9 @@ function main() {
       process.exitCode = 1
       return
     }
+    const conditional = [...(sets.conditionalIds || [])].sort()
     console.log(
-      `[provider-intent-guard] ok — live set [${[...sets.intentIds].sort().join(', ')}] matches ${TS_SOURCE_REPO_PATH} and the iOS mirror; retired [${[...sets.tsRetired].sort().join(', ')}] stays out`
+      `[provider-intent-guard] ok — live set [${[...sets.intentIds].sort().join(', ')}] matches ${TS_SOURCE_REPO_PATH} and the iOS mirror; retired [${[...sets.tsRetired].sort().join(', ')}] stays out; wall-gated [${conditional.join(', ') || 'none'}] approved and correctly out of the static live set`
     )
   } catch (error) {
     console.error(
