@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import type { ChatRecord, UsageRecord } from '../../../main/store/types'
 import {
+  MODEL_USAGE_PROVIDER_ORDER,
   MODEL_USAGE_WINDOW_MS,
   MODEL_USAGE_WINDOW_ORDER,
   buildModelUsageTable,
@@ -9,6 +10,7 @@ import {
   sumModelUsageProviderTotals,
   type ModelUsageTableOptions
 } from './modelUsageTable'
+import { HEATMAP_PROVIDER_COLOR_HEX } from './UsageHeatmap'
 import { getFxRatesPerUsd, setFxRatesPerUsd } from './formatCost'
 import type { RendererProviderRates } from './providerRateEstimate'
 
@@ -67,6 +69,58 @@ function HOURS(n: number): number {
 function DAYS(n: number): number {
   return n * 24 * 60 * 60 * 1000
 }
+
+describe('MODEL_USAGE_PROVIDER_ORDER', () => {
+  // This list is an `allowed` FILTER — a provider missing from it has its
+  // records dropped, so drift here makes real spend invisible rather than
+  // merely misordered (antigravity and pi were both silently absent). The
+  // colour map is Record<ProviderId, string>, so the compiler keeps it
+  // complete; anchoring to it makes a tenth provider fail here.
+  const ALL_PROVIDER_IDS = Object.keys(HEATMAP_PROVIDER_COLOR_HEX)
+
+  it('covers every provider except ollama, the one deliberate exclusion', () => {
+    const covered = [...MODEL_USAGE_PROVIDER_ORDER, 'ollama'].sort()
+    expect(covered).toEqual([...ALL_PROVIDER_IDS].sort())
+  })
+
+  it('excludes ollama, which is reported as RAM rows rather than token spend', () => {
+    expect(MODEL_USAGE_PROVIDER_ORDER).not.toContain('ollama')
+  })
+
+  it('lists each provider exactly once', () => {
+    expect(new Set(MODEL_USAGE_PROVIDER_ORDER).size).toBe(MODEL_USAGE_PROVIDER_ORDER.length)
+  })
+
+  // Regression: both were outside the allowed set, so these records produced no
+  // group at all — spend invisible rather than merely unpriced.
+  it.each([
+    ['antigravity', 'gemini-api:gemini-2.5-flash'],
+    ['pi', 'deepseek/deepseek-v4-flash']
+  ] as const)('surfaces %s usage as a priced group', (provider, model) => {
+    const groups = buildModelUsageTable(
+      [
+        makeRecord({
+          timestamp: NOW - HOURS(1),
+          provider,
+          model,
+          inputTokens: 1_000_000,
+          outputTokens: 1_000_000,
+          totalTokens: 2_000_000
+        })
+      ],
+      [],
+      { [provider]: [{ modelId: model, inputUsdPerMillion: 2, outputUsdPerMillion: 4 }] },
+      USD,
+      NOW
+    )
+
+    const group = groups.find((entry) => entry.provider === provider)
+    expect(group).toBeDefined()
+    expect(group?.models[0].model).toBe(model)
+    expect(group?.models[0].windows.h24.totalTokens).toBe(2_000_000)
+    expect(group?.models[0].windows.h24.costUsd).toBeCloseTo(6, 6)
+  })
+})
 
 describe('buildModelUsageTable — empty / zero / exclusions', () => {
   it('returns an empty array when there are no records', () => {

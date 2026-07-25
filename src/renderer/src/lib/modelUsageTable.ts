@@ -77,12 +77,20 @@ export const MODEL_USAGE_WINDOW_LABEL: Record<ModelUsageWindowKey, string> = {
 }
 
 /**
- * Providers that can surface in the token/cost table. Ollama is handled
- * separately via {@link buildOllamaMemoryModelTable} (RAM semantics).
+ * Providers that can surface in the token/cost table. Ollama is the ONLY
+ * deliberate omission — it is handled separately via
+ * {@link buildOllamaMemoryModelTable} (RAM semantics, not token spend).
  * Grok token runs are priced here; subscription credits stay on the plan
  * meter. Historical Gemini/Cursor records remain visible alongside current
  * live-provider and external-scanner usage; this table is reporting, not an
- * offer or dispatch surface.
+ * offer or dispatch surface — so BOTH retired ids and wall-gated ids
+ * (antigravity) belong here whenever they can appear in a usage record.
+ *
+ * This list is an `allowed` FILTER, not just a sort order: a provider missing
+ * here has its records dropped entirely. antigravity and pi were absent, so
+ * their spend was silently invisible despite both carrying real, sourced rate
+ * tables in ProviderRateService. `modelUsageTable.test.ts` pins ollama as the
+ * sole exclusion so a tenth provider fails a test instead of vanishing.
  */
 export const MODEL_USAGE_PROVIDER_ORDER: ProviderId[] = [
   'gemini',
@@ -90,7 +98,9 @@ export const MODEL_USAGE_PROVIDER_ORDER: ProviderId[] = [
   'claude',
   'kimi',
   'grok',
-  'cursor'
+  'cursor',
+  'antigravity',
+  'pi'
 ]
 
 /** Aggregated token + cost totals for one (provider, model) over one window. */

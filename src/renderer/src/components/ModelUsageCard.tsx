@@ -106,6 +106,9 @@ interface ModelUsageCardProps {
   apiSpend?: ModelUsageApiSpendOptions
 }
 
+/** Row sort order for the quota view. `sortByProvider` maps an unlisted id to
+ *  99, so omissions land at the end in undefined relative order rather than
+ *  their intended slot — keep every provider that can produce a row here. */
 const PROVIDER_ORDER: ProviderId[] = [
   'gemini',
   'codex',
@@ -113,7 +116,9 @@ const PROVIDER_ORDER: ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'antigravity',
+  'pi'
 ]
 
 /** Token/cost providers in the spend view (Ollama uses RAM rows). */
@@ -124,7 +129,8 @@ const API_SPEND_RENDER_ORDER: ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'antigravity'
+  'antigravity',
+  'pi'
 ]
 const SIDEBAR_USAGE_HEIGHT_STORAGE_KEY = 'taskwraith-sidebar-model-usage-height'
 const SIDEBAR_USAGE_DEFAULT_HEIGHT = 520

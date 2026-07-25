@@ -216,9 +216,15 @@ describe('ModelUsageCard', () => {
     expect(html).toContain('model-usage-context-list')
     // A known 1M context window should appear in the table.
     expect(html).toContain('1.0M')
-    // Sidebar variant includes local Ollama models but omits Gemini.
+    // Sidebar variant includes local Ollama models.
     expect(html).toContain('Ollama')
-    expect(html).not.toContain('Gemini')
+    // AntiGravity is the BYO gemini-api lane, so its rows legitimately carry
+    // Gemini-BRANDED MODEL names. Assert on the provider-group marker rather
+    // than the bare string "Gemini", which conflates a retired PROVIDER coming
+    // back with a live provider simply offering Gemini models.
+    expect(html).toContain('provider-antigravity')
+    // The RETIRED gemini provider group stays out (excludeProviders: ['gemini']).
+    expect(html).not.toContain('provider-gemini')
     // Full quota meter rows are hidden while the context view is active.
     expect(html).not.toContain('model-usage-window-list')
   })
