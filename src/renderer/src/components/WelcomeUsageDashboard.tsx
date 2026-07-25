@@ -224,7 +224,7 @@ export function WelcomeUsageDashboard({
     cursor: '#8D7312',
     ollama: '#1A8562',
     antigravity: '#308713',
-    pi: '#C25E4C'
+    pi: '#68768C'
   } as const
   const chipRailColor =
     mixProviderColors(data.providerTokenTotals, PROVIDER_PALETTE) ||

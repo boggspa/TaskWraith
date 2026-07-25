@@ -498,7 +498,7 @@
 }
 
 .model-usage-table-provider.provider-pi .model-usage-table-provider-cell {
-  box-shadow: inset 3px 0 0 var(--provider-pi-color, #c25e4c);
+  box-shadow: inset 3px 0 0 var(--provider-pi-color, #68768c);
 }
 .model-usage-table-provider.provider-grok .model-usage-table-provider-cell {
   box-shadow: inset 3px 0 0 var(--provider-grok-color, #757575);

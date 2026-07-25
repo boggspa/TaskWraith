@@ -147,7 +147,7 @@ public enum TWTheme {
         case "cursor": return Color(hex: 0x8D7312)
         case "ollama": return Color(hex: 0x1A8562)
         case "antigravity", "google": return Color(hex: 0x308713)
-        case "pi": return Color(hex: 0xC25E4C)
+        case "pi": return Color(hex: 0x68768C)
         case "ensemble": return Color(hex: 0x986781)
         case "grok": return Color(hex: 0x757575)
         // ── Ollama-backed display brands (--provider-*-color) ──────────────
@@ -165,6 +165,19 @@ public enum TWTheme {
         case "nvidia": return Color(hex: 0x538200)
         case "openbmb": return Color(hex: 0xE22B17)
         case "poolside": return Color(hex: 0x0C8194)
+        // ── Pi-backed BYOK upstream brands (--provider-*-color) ────────────
+        // Runtime provider stays `pi`; the wire id names the upstream that
+        // serves the run, so a Pi row wears that brand. Mirrors theme.css.
+        // `qwen-token-plan` resolves to the `qwen` class handled above, so
+        // Qwen reads the same whether it arrives via Ollama or via Pi.
+        // Groq wears its own published SECONDARY cyan and Z.ai an azure —
+        // their primaries collided with Mistral's orange and DeepSeek's blue.
+        case "deepseek": return Color(hex: 0x4E6AEE)
+        case "zai": return Color(hex: 0x177DAA)
+        case "minimax": return Color(hex: 0xC044A4)
+        case "mistral": return Color(hex: 0xD44404)
+        case "cerebras": return Color(hex: 0xBB584A)
+        case "groq": return Color(hex: 0x088482)
         default: return chroma1
         }
     }

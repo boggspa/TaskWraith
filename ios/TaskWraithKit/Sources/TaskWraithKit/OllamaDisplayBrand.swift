@@ -122,7 +122,30 @@ public enum OllamaDisplayBrands {
         {
             return brand.providerClass
         }
+        if id.lowercased() == "pi", let hue = piUpstreamHueClass(modelId: modelId) {
+            return hue
+        }
         return id
+    }
+
+    /// Hue class for a Pi BYOK wire id (`deepseek/deepseek-v4-flash` →
+    /// `deepseek`), or `nil` when the id is malformed or names an upstream this
+    /// build does not surface — callers then fall back to the `pi` seat colour.
+    ///
+    /// Twin of `shared/piBrandTable.ts`; keep the two in lockstep. Splits on the
+    /// FIRST slash: Groq ids carry a SECOND one (`groq/openai/gpt-oss-120b`), so
+    /// splitting on the last silently mis-brands every Groq model.
+    /// `qwen-token-plan` maps to the existing `qwen` class on purpose.
+    public static func piUpstreamHueClass(modelId: String?) -> String? {
+        let wire = (modelId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let slash = wire.firstIndex(of: "/"), slash != wire.startIndex else { return nil }
+        let upstream = String(wire[wire.startIndex..<slash])
+        guard wire.index(after: slash) < wire.endIndex else { return nil }
+        switch upstream {
+        case "deepseek", "zai", "minimax", "mistral", "groq", "cerebras": return upstream
+        case "qwen-token-plan": return "qwen"
+        default: return nil
+        }
     }
 
     /// Spoofed upstream brand label for an Ollama-backed model (e.g. "Alibaba"),

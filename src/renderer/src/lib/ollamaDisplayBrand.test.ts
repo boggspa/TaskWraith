@@ -80,6 +80,36 @@ describe('resolveProviderHueClass', () => {
   })
 })
 
+describe('resolveProviderHueClass — Pi BYOK upstreams', () => {
+  it('paints a Pi row with the upstream that actually serves it', () => {
+    expect(resolveProviderHueClass('pi', 'deepseek/deepseek-v4-flash')).toBe('deepseek')
+    expect(resolveProviderHueClass('pi', 'mistral/devstral-2512')).toBe('mistral')
+    expect(resolveProviderHueClass('pi', 'cerebras/gpt-oss-120b')).toBe('cerebras')
+    expect(resolveProviderHueClass('pi', 'zai/glm-5.2')).toBe('zai')
+    expect(resolveProviderHueClass('pi', 'minimax/MiniMax-M3')).toBe('minimax')
+  })
+
+  it('handles the Groq two-slash wire id', () => {
+    expect(resolveProviderHueClass('pi', 'groq/openai/gpt-oss-120b')).toBe('groq')
+  })
+
+  it('reuses the existing qwen hue for qwen-token-plan', () => {
+    expect(resolveProviderHueClass('pi', 'qwen-token-plan/qwen3.7-max')).toBe('qwen')
+    // Same class the Ollama lane resolves Qwen to — one brand, one colour.
+    expect(resolveProviderHueClass('ollama', 'qwen3.5:9b')).toBe('alibaba')
+  })
+
+  it('falls back to the pi seat colour for unknown or malformed ids', () => {
+    expect(resolveProviderHueClass('pi', 'anthropic/claude-opus')).toBe('pi')
+    expect(resolveProviderHueClass('pi', 'noslash')).toBe('pi')
+    expect(resolveProviderHueClass('pi')).toBe('pi')
+  })
+
+  it('does not apply Pi splitting to other providers', () => {
+    expect(resolveProviderHueClass('claude', 'deepseek/deepseek-v4-flash')).toBe('claude')
+  })
+})
+
 describe('resolveProviderBrandLabel', () => {
   it('returns the spoofed upstream brand label for Ollama brands', () => {
     expect(resolveProviderBrandLabel('ollama', 'qwen3.5:9b')).toBe('Alibaba')

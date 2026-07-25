@@ -198,8 +198,14 @@
   --provider-ollama-color: #1A8562;
   /* AntiGravity — yellow-green, AA-readable on both pure white and black. */
   --provider-antigravity-color: #308713;
-  /* Pi — terracotta; distinct from Claude's amber and Cursor's mustard. */
-  --provider-pi-color: #C25E4C;
+  /* Pi — cold slate. Every other hue in this palette sits at ~4.58 contrast
+   * against BOTH pure white and pure black (the equal-contrast point, relative
+   * luminance ~0.179); Pi's old terracotta #C25E4C was the one outlier at 4.20
+   * on white, under the AA floor. This slate restores the invariant and reads
+   * as a neutral seat colour: Pi is a BYOK shell, so the sub-provider brand
+   * below carries the identity. Low chroma keeps it clear of Grok's pure
+   * neutral gray. */
+  --provider-pi-color: #68768C;
   /* Ensemble — aggregate provider roster in a soft white-gray pink. */
   --provider-ensemble-color: #986781;
   /* Ollama-backed display brands. Runtime provider remains `ollama`; these
@@ -217,6 +223,25 @@
   --provider-nvidia-color: #538200;
   --provider-openbmb-color: #E22B17;
   --provider-poolside-color: #0C8194;
+  /* Pi-backed BYOK upstream brands. Runtime provider remains `pi`; these
+   * presentation aliases let a Pi row wear the upstream that actually serves
+   * it (see shared/piBrandTable + resolveProviderHueClass). Each is its real
+   * brand hue pulled to the palette's equal-contrast luminance, so all clear
+   * AA on white AND black like every seat colour above.
+   *
+   * Two deliberate departures from brand, both forced by collisions:
+   *  - Groq ships an orange (#F55036) indistinguishable from Mistral's and
+   *    from openbmb; it wears its OWN published SECONDARY cyan (#0AAFC8).
+   *  - Z.ai ships an indigo (#3859FF) all but identical to DeepSeek's, so it
+   *    moves to azure and DeepSeek keeps the royal blue it is known for.
+   * `qwen-token-plan` maps to the EXISTING --provider-qwen-color, so Qwen
+   * reads the same whether it arrives via Ollama or via Pi. */
+  --provider-deepseek-color: #4E6AEE;
+  --provider-zai-color: #177DAA;
+  --provider-minimax-color: #C044A4;
+  --provider-mistral-color: #D44404;
+  --provider-cerebras-color: #BB584A;
+  --provider-groq-color: #088482;
 
   /* Phase L6 slice 2 — Quota warning palette. Drives the
    * progressive bar gradient on the Model Usage Card: the fill

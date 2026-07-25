@@ -4,6 +4,7 @@ import {
   matchOllamaBrand,
   type OllamaDisplayBrandDefinition
 } from '../../../shared/ollamaBrandTable'
+import { resolvePiUpstreamBrand } from '../../../shared/piBrandTable'
 
 type OllamaDisplayBrand = {
   providerLabel: string
@@ -28,11 +29,20 @@ export function resolveOllamaDisplayBrand(
 
 /**
  * Resolve the CSS hue class for a provider + model. Returns the runtime
- * provider id for everything except Ollama-backed display brands, which
- * resolve to their spoofed upstream brand class (e.g. `alibaba`). Callers
- * compose this into `var(--provider-${class}-color)` for tinting — used by
- * the @-mention chips so a `@Planner` running Qwen paints Alibaba purple
+ * provider id for everything except the two providers whose id hides the brand
+ * the user actually picked:
+ *
+ * - **Ollama** — local models resolve to their spoofed upstream brand class
+ *   (e.g. `alibaba`).
+ * - **Pi** — a BYOK seat whose wire id names the upstream serving it, so
+ *   `deepseek/deepseek-v4-flash` resolves to `deepseek`.
+ *
+ * Callers compose this into `var(--provider-${class}-color)` for tinting — used
+ * by the @-mention chips so a `@Planner` running Qwen paints Alibaba purple
  * instead of generic Ollama green, matching the transcript header.
+ *
+ * Unknown upstreams/models fall through to the plain provider id, so a Pi model
+ * this build does not surface simply wears the Pi seat colour.
  */
 export function resolveProviderHueClass(
   provider: string | undefined | null,
@@ -43,6 +53,10 @@ export function resolveProviderHueClass(
   if (id === 'ollama') {
     const brand = resolveOllamaDisplayBrand(modelId, modelLabel)
     if (brand) return brand.providerClass
+  }
+  if (id === 'pi') {
+    const brand = resolvePiUpstreamBrand(modelId)
+    if (brand) return brand.hueClass
   }
   return id
 }

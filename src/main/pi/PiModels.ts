@@ -59,14 +59,15 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
 
 export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
 
-/** Split a wire id on the FIRST slash: upstream vs pi model id. */
-export function splitPiWireModelId(
-  wireId: string
-): { upstream: string; modelId: string } | null {
-  const idx = wireId.indexOf('/')
-  if (idx <= 0 || idx === wireId.length - 1) return null
-  return { upstream: wireId.slice(0, idx), modelId: wireId.slice(idx + 1) }
-}
+/**
+ * Split a wire id on the FIRST slash: upstream vs pi model id.
+ *
+ * The implementation moved to `shared/piBrandTable` when the renderer needed it
+ * for sub-provider hue tinting (the architecture guard forbids a renderer ->
+ * src/main runtime edge). Re-exported here so main call sites are unchanged and
+ * there is exactly ONE splitter — the Groq two-slash rule cannot drift.
+ */
+export { splitPiWireModelId } from '../../shared/piBrandTable'
 
 export function findPiStaticModel(wireId: string): PiModelDefinition | undefined {
   return PI_STATIC_MODELS.find((model) => model.wireId === wireId)
