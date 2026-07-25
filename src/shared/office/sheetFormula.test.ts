@@ -3,6 +3,7 @@ import {
   cellRefLabel,
   columnIndex,
   columnLabel,
+  createSheetEvaluator,
   evaluateFormulaCell,
   evaluateSheetGrid,
   formatNumber,
@@ -69,6 +70,27 @@ describe('evaluateSheetGrid', () => {
   it('handles percent literals and unary minus', () => {
     const { display } = evaluateSheetGrid([['=50%*200', '=-A1']])
     expect(display[0]).toEqual(['100', '-100'])
+  })
+
+  it('matches Excel power semantics: unary minus binds tighter, ^ is left-associative', () => {
+    const { display } = evaluateSheetGrid([['=-2^2', '=2^3^2', '=0-2^2', '=2^-1']])
+    expect(display[0]).toEqual(['4', '64', '-4', '0.5'])
+  })
+
+  it('shares memoized work across cells via createSheetEvaluator', () => {
+    const rows: string[][] = [['1']]
+    for (let index = 1; index < 600; index += 1) {
+      rows.push([`=A${index}+1`])
+    }
+    const evaluator = createSheetEvaluator(rows)
+    const started = performance.now()
+    for (let index = 0; index < 600; index += 1) {
+      evaluator.valueAt(index, 0)
+    }
+    expect(evaluator.valueAt(599, 0)).toEqual({ value: 600, error: null })
+    // O(N) with the shared memo; the old per-cell context was quadratic and
+    // took hundreds of milliseconds at this size.
+    expect(performance.now() - started).toBeLessThan(250)
   })
 
   it('reports Excel-style errors', () => {

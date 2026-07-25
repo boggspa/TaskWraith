@@ -12,8 +12,8 @@ import { OFFICE_MODEL_LIMITS } from '../../shared/office/officeModels'
 import {
   columnIndex,
   columnLabel,
-  evaluateFormulaCell,
-  formatNumber
+  createSheetEvaluator,
+  type SheetEvaluator
 } from '../../shared/office/sheetFormula'
 import {
   attrByLocalName,
@@ -21,6 +21,7 @@ import {
   childrenByLocalName,
   deepText,
   descendantsByLocalName,
+  escapeXmlAttr,
   escapeXmlText,
   firstDescendantByLocalName,
   parseMarkup,
@@ -46,13 +47,18 @@ const STYLES_XML = `${XML_DECL}<styleSheet xmlns="${MAIN_NS}"><fonts count="1"><
 const isNumericLiteral = (value: string): boolean =>
   /^[+-]?(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$/.test(value.trim()) && value.trim() !== ''
 
-function cellXml(rows: string[][], rowIndex: number, colIndex: number): string {
+function cellXml(
+  rows: string[][],
+  rowIndex: number,
+  colIndex: number,
+  evaluator: SheetEvaluator
+): string {
   const raw = rows[rowIndex]?.[colIndex] ?? ''
   if (raw === '') return ''
   const ref = `${columnLabel(colIndex)}${rowIndex + 1}`
   if (raw.startsWith('=')) {
     const formula = escapeXmlText(sanitizeXmlText(raw.slice(1)))
-    const cached = evaluateFormulaCell(rows, rowIndex, colIndex)
+    const cached = evaluator.valueAt(rowIndex, colIndex)
     if (cached.error !== null) {
       return `<c r="${ref}" t="e"><f>${formula}</f><v>${escapeXmlText(cached.error)}</v></c>`
     }
@@ -77,12 +83,18 @@ function cellXml(rows: string[][], rowIndex: number, colIndex: number): string {
 
 function worksheetXml(grid: SheetGrid): string {
   const rowCount = grid.rows.length
-  const colCount = Math.max(1, ...grid.rows.map((row) => row.length), 1)
+  let colCount = 1
+  for (const row of grid.rows) {
+    if (row.length > colCount) colCount = row.length
+  }
   const dimension = `A1:${columnLabel(Math.max(0, colCount - 1))}${Math.max(1, rowCount)}`
+  // One shared evaluator per sheet: dependent formula chains stay O(cells)
+  // instead of re-evaluating from scratch for every cached value.
+  const evaluator = createSheetEvaluator(grid.rows)
   const rowsXml = grid.rows
     .map((row, rowIndex) => {
       const cells = row
-        .map((_, colIndex) => cellXml(grid.rows, rowIndex, colIndex))
+        .map((_, colIndex) => cellXml(grid.rows, rowIndex, colIndex, evaluator))
         .filter((cell) => cell !== '')
       if (cells.length === 0) return ''
       return `<row r="${rowIndex + 1}">${cells.join('')}</row>`
@@ -90,6 +102,30 @@ function worksheetXml(grid: SheetGrid): string {
     .filter((row) => row !== '')
     .join('')
   return `${XML_DECL}<worksheet xmlns="${MAIN_NS}"><dimension ref="${dimension}"/><sheetData>${rowsXml}</sheetData></worksheet>`
+}
+
+/**
+ * Excel-legal, ≤31-char, DEDUPLICATED sheet names: distinct model names must
+ * never collide after sanitization (ECMA-376 forbids duplicate sheet names).
+ */
+function workbookSheetNames(sheets: SheetGrid[]): string[] {
+  const used = new Set<string>()
+  return sheets.map((sheet, index) => {
+    const base =
+      sheet.name
+        .replace(/[\\/?*[\]:]/g, ' ')
+        .slice(0, 31)
+        .trim() || `Sheet${index + 1}`
+    let candidate = base
+    let counter = 2
+    while (used.has(candidate.toLowerCase())) {
+      const suffix = ` ${counter}`
+      candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`
+      counter += 1
+    }
+    used.add(candidate.toLowerCase())
+    return candidate
+  })
 }
 
 export function buildXlsx(model: SheetDocumentModel): Buffer {
@@ -105,13 +141,12 @@ export function buildXlsx(model: SheetDocumentModel): Buffer {
 
   const rootRels = `${XML_DECL}<Relationships xmlns="${REL_PKG_NS}"><Relationship Id="rId1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument" Target="xl/workbook.xml"/></Relationships>`
 
+  const sheetNames = workbookSheetNames(sheets)
   const sheetEntries = sheets
-    .map((sheet, index) => {
-      const name = escapeXmlText(
-        sheet.name.replace(/[\\/?*[\]:]/g, ' ').slice(0, 31) || `Sheet${index + 1}`
-      )
-      return `<sheet name="${name}" sheetId="${index + 1}" r:id="rIdSheet${index + 1}"/>`
-    })
+    .map(
+      (_, index) =>
+        `<sheet name="${escapeXmlAttr(sheetNames[index])}" sheetId="${index + 1}" r:id="rIdSheet${index + 1}"/>`
+    )
     .join('')
   const workbookXml = `${XML_DECL}<workbook xmlns="${MAIN_NS}" xmlns:r="${R_NS}"><sheets>${sheetEntries}</sheets></workbook>`
 
@@ -277,12 +312,10 @@ export function parseXlsx(archive: Buffer): XlsxParseResult {
               row[colIndex] = rawValue
               break
             default: {
-              if (rawValue === '') {
-                row[colIndex] = ''
-              } else {
-                const numeric = Number(rawValue)
-                row[colIndex] = Number.isFinite(numeric) ? formatNumber(numeric) : rawValue
-              }
+              // Keep the file's own decimal text verbatim: reformatting here
+              // (e.g. to 12 significant digits) would silently corrupt
+              // 15-17-digit values on the next save.
+              row[colIndex] = rawValue.trim()
               break
             }
           }

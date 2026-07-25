@@ -48,14 +48,60 @@ describe('buildXlsx → parseXlsx round-trip', () => {
     expect(entries.get('xl/styles.xml')!.toString('utf8')).toContain('gray125')
   })
 
-  it('sanitizes hostile sheet names for the workbook part', () => {
+  it('sanitizes hostile sheet names, escapes quotes and dedupes collisions', () => {
     const model: SheetDocumentModel = {
       kind: 'sheet',
-      sheets: [{ name: 'bad[name]:with*chars?', rows: [['x']] }]
+      sheets: [
+        { name: 'bad[name]:with*chars?', rows: [['x']] },
+        { name: 'Q1 "final"', rows: [['x']] },
+        { name: 'Q1:EU', rows: [['x']] },
+        { name: 'Q1/EU', rows: [['x']] }
+      ]
     }
     const entries = parseZip(buildXlsx(model))
     const workbook = entries.get('xl/workbook.xml')!.toString('utf8')
-    expect(workbook).toContain('name="bad name  with chars "')
+    expect(workbook).toContain('name="bad name  with chars"')
+    // Quote survives via attribute escaping — no attribute injection.
+    expect(workbook).toContain('name="Q1 &quot;final&quot;"')
+    // Both collapse to 'Q1 EU'; the second gets a dedupe suffix.
+    expect(workbook).toContain('name="Q1 EU"')
+    expect(workbook).toContain('name="Q1 EU 2"')
+    // The workbook part stays well-formed XML.
+    const { model: reparsed } = parseXlsx(buildXlsx(model))
+    expect(reparsed.sheets.map((sheet) => sheet.name)).toEqual([
+      'bad name  with chars',
+      'Q1 "final"',
+      'Q1 EU',
+      'Q1 EU 2'
+    ])
+  })
+
+  it('preserves high-precision numerics verbatim through import', () => {
+    const archive = buildZip([
+      {
+        name: 'xl/workbook.xml',
+        data: Buffer.from(
+          '<?xml version="1.0"?><workbook xmlns="m" xmlns:r="r"><sheets><sheet name="S1" sheetId="1" r:id="rId1"/></sheets></workbook>'
+        )
+      },
+      {
+        name: 'xl/_rels/workbook.xml.rels',
+        data: Buffer.from(
+          '<?xml version="1.0"?><Relationships><Relationship Id="rId1" Type="t" Target="worksheets/sheet1.xml"/></Relationships>'
+        )
+      },
+      {
+        name: 'xl/worksheets/sheet1.xml',
+        data: Buffer.from(
+          '<?xml version="1.0"?><worksheet><sheetData><row r="1">' +
+            '<c r="A1"><v>0.123456789012345</v></c>' +
+            '<c r="B1"><v>1234567890123456</v></c>' +
+            '</row></sheetData></worksheet>'
+        )
+      }
+    ])
+    const { model } = parseXlsx(archive)
+    expect(model.sheets[0].rows[0]).toEqual(['0.123456789012345', '1234567890123456'])
   })
 })
 

@@ -4,8 +4,17 @@ import { OFFICE_MODEL_LIMITS } from '../../../../shared/office/officeModels'
 import {
   cellRefLabel,
   columnLabel,
-  evaluateSheetGrid
+  createSheetEvaluator
 } from '../../../../shared/office/sheetFormula'
+
+/**
+ * The grid renders a WINDOW of the sheet, never the whole thing: every cell
+ * is an <input>, so an unbounded sheet is an unbounded DOM. Data beyond the
+ * window stays intact in the model (formulas may reference it and saves
+ * write all of it) — only the view is clipped, and a banner says so.
+ */
+export const SHEET_RENDER_MAX_ROWS = 300
+export const SHEET_RENDER_MAX_COLS = 64
 
 interface SheetEditorViewProps {
   model: SheetDocumentModel
@@ -25,8 +34,16 @@ export function SheetEditorView({ model, onChange }: SheetEditorViewProps) {
 
   const sheetIndex = Math.min(activeSheetIndex, model.sheets.length - 1)
   const sheet = model.sheets[sheetIndex] ?? { name: 'Sheet1', rows: [] }
-  const columnCount = Math.max(1, ...sheet.rows.map((row) => row.length), 4)
-  const evaluation = useMemo(() => evaluateSheetGrid(sheet.rows), [sheet.rows])
+  let sheetColumnCount = 4
+  for (const row of sheet.rows) {
+    if (row.length > sheetColumnCount) sheetColumnCount = row.length
+  }
+  const rowCount = Math.min(sheet.rows.length, SHEET_RENDER_MAX_ROWS)
+  const columnCount = Math.min(sheetColumnCount, SHEET_RENDER_MAX_COLS)
+  const viewClipped = sheet.rows.length > rowCount || sheetColumnCount > columnCount
+  // Lazy shared-memo evaluator: only the visible window is computed, but
+  // formulas may reference any cell in the full sheet.
+  const evaluator = useMemo(() => createSheetEvaluator(sheet.rows), [sheet.rows])
 
   const mutateSheet = (mutate: (rows: string[][]) => string[][], name?: string): void => {
     const sheets = model.sheets.map((entry, index) =>
@@ -55,7 +72,7 @@ export function SheetEditorView({ model, onChange }: SheetEditorViewProps) {
   }
 
   const addColumn = (): void => {
-    if (columnCount >= OFFICE_MODEL_LIMITS.maxSheetCols) return
+    if (sheetColumnCount >= OFFICE_MODEL_LIMITS.maxSheetCols) return
     mutateSheet((rows) => rows.map((row) => [...row, '']))
   }
 
@@ -96,13 +113,32 @@ export function SheetEditorView({ model, onChange }: SheetEditorViewProps) {
             if (selection) setCell(selection.row, selection.col, event.target.value)
           }}
         />
-        <button type="button" className="office-toolbar-button" onClick={addRow}>
+        <button
+          type="button"
+          className="office-toolbar-button"
+          disabled={sheet.rows.length >= SHEET_RENDER_MAX_ROWS}
+          onClick={addRow}
+        >
           + Row
         </button>
-        <button type="button" className="office-toolbar-button" onClick={addColumn}>
+        <button
+          type="button"
+          className="office-toolbar-button"
+          disabled={sheetColumnCount >= SHEET_RENDER_MAX_COLS}
+          onClick={addColumn}
+        >
           + Column
         </button>
       </div>
+      {viewClipped ? (
+        <div className="office-banner office-banner-warning office-sheet-window-note">
+          <span>
+            Showing the first {rowCount} of {sheet.rows.length} rows and {columnCount} of{' '}
+            {sheetColumnCount} columns. The full sheet stays intact — formulas see it and saves
+            write all of it.
+          </span>
+        </div>
+      ) : null}
       <div className="office-sheet-scroll">
         <table className="office-sheet-table">
           <thead>
@@ -116,14 +152,14 @@ export function SheetEditorView({ model, onChange }: SheetEditorViewProps) {
             </tr>
           </thead>
           <tbody>
-            {sheet.rows.map((row, rowIndex) => (
+            {sheet.rows.slice(0, rowCount).map((row, rowIndex) => (
               <tr key={rowIndex}>
                 <th scope="row">{rowIndex + 1}</th>
                 {Array.from({ length: columnCount }, (_, colIndex) => {
                   const raw = row[colIndex] ?? ''
-                  const display = evaluation.display[rowIndex]?.[colIndex] ?? raw
+                  const display = evaluator.displayAt(rowIndex, colIndex)
                   const isSelected = selection?.row === rowIndex && selection?.col === colIndex
-                  const hasError = evaluation.errors.has(`${rowIndex}:${colIndex}`)
+                  const hasError = raw.startsWith('=') && /^#/.test(display)
                   return (
                     <td key={colIndex}>
                       <input

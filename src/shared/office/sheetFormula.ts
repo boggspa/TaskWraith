@@ -234,24 +234,32 @@ class Parser {
     }
   }
 
+  // Excel precedence: unary minus binds TIGHTER than ^ (so -2^2 = 4) and
+  // ^ is LEFT-associative (so 2^3^2 = 64) — both opposite to most languages.
   private parseUnary(): AstNode {
-    const token = this.peek()
-    if (token?.type === 'op' && (token.value === '-' || token.value === '+')) {
-      this.next()
-      return { type: 'unary', op: token.value, operand: this.parseUnary() }
-    }
     return this.parsePower()
   }
 
   private parsePower(): AstNode {
-    let left = this.parsePostfix()
-    const token = this.peek()
-    if (token?.type === 'op' && token.value === '^') {
-      this.next()
-      // Right-associative.
-      left = { type: 'binary', op: '^', left, right: this.parseUnary() }
+    let left = this.parseSigned()
+    while (true) {
+      const token = this.peek()
+      if (token?.type === 'op' && token.value === '^') {
+        this.next()
+        left = { type: 'binary', op: '^', left, right: this.parseSigned() }
+      } else {
+        return left
+      }
     }
-    return left
+  }
+
+  private parseSigned(): AstNode {
+    const token = this.peek()
+    if (token?.type === 'op' && (token.value === '-' || token.value === '+')) {
+      this.next()
+      return { type: 'unary', op: token.value, operand: this.parseSigned() }
+    }
+    return this.parsePostfix()
   }
 
   private parsePostfix(): AstNode {
@@ -584,6 +592,41 @@ function compareScalars(left: FormulaScalar, right: FormulaScalar, op: string): 
   }
 }
 
+export interface SheetCellValue {
+  value: FormulaScalar | null
+  error: string | null
+}
+
+/**
+ * Lazy evaluator over one grid, sharing a single memo across every lookup.
+ * Both the xlsx cached-value writer and the grid view use this — evaluating
+ * N dependent cells is O(N), not O(N²), and windowed views only pay for the
+ * cells they actually display.
+ */
+export interface SheetEvaluator {
+  valueAt(row: number, col: number): SheetCellValue
+  displayAt(row: number, col: number): string
+}
+
+export function createSheetEvaluator(rows: string[][]): SheetEvaluator {
+  const context: EvaluationContext = { rows, memo: new Map(), visiting: new Set() }
+  const valueAt = (row: number, col: number): SheetCellValue => {
+    try {
+      return { value: cellScalar(context, row, col), error: null }
+    } catch (error) {
+      return { value: null, error: error instanceof FormulaError ? error.code : '#ERROR!' }
+    }
+  }
+  const displayAt = (row: number, col: number): string => {
+    const raw = rows[row]?.[col] ?? ''
+    if (!raw.startsWith('=')) return raw
+    const result = valueAt(row, col)
+    if (result.error !== null) return result.error
+    return toText(result.value as FormulaScalar)
+  }
+  return { valueAt, displayAt }
+}
+
 export interface SheetEvaluation {
   /** Display strings, same dimensions as the input rows. */
   display: string[][]
@@ -593,34 +636,23 @@ export interface SheetEvaluation {
 
 /** Evaluates a whole grid: literals pass through, formulas compute or error. */
 export function evaluateSheetGrid(rows: string[][]): SheetEvaluation {
-  const context: EvaluationContext = { rows, memo: new Map(), visiting: new Set() }
+  const evaluator = createSheetEvaluator(rows)
   const errors = new Map<string, string>()
   const display = rows.map((row, rowIndex) =>
     row.map((raw, colIndex) => {
       if (!raw.startsWith('=')) return raw
-      try {
-        const value = cellScalar(context, rowIndex, colIndex)
-        return toText(value)
-      } catch (error) {
-        const code = error instanceof FormulaError ? error.code : '#ERROR!'
-        errors.set(`${rowIndex}:${colIndex}`, code)
-        return code
+      const result = evaluator.valueAt(rowIndex, colIndex)
+      if (result.error !== null) {
+        errors.set(`${rowIndex}:${colIndex}`, result.error)
+        return result.error
       }
+      return toText(result.value as FormulaScalar)
     })
   )
   return { display, errors }
 }
 
-/** Single-cell evaluation used by the xlsx writer for cached formula values. */
-export function evaluateFormulaCell(
-  rows: string[][],
-  row: number,
-  col: number
-): { value: FormulaScalar | null; error: string | null } {
-  const context: EvaluationContext = { rows, memo: new Map(), visiting: new Set() }
-  try {
-    return { value: cellScalar(context, row, col), error: null }
-  } catch (error) {
-    return { value: null, error: error instanceof FormulaError ? error.code : '#ERROR!' }
-  }
+/** Single-cell evaluation; prefer createSheetEvaluator when reading many cells. */
+export function evaluateFormulaCell(rows: string[][], row: number, col: number): SheetCellValue {
+  return createSheetEvaluator(rows).valueAt(row, col)
 }
