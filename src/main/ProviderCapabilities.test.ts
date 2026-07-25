@@ -45,6 +45,39 @@ describe('ProviderCapabilities', () => {
     expect(contract.tools.delegate.state).toBe('unavailable')
   })
 
+  // Pi had no branch at all, so it inherited the default whose note describes
+  // Claude Code's permission handling — a different provider entirely.
+  describe('Pi', () => {
+    const piContract = (approvalMode: string) =>
+      buildProviderCapabilityContract({
+        provider: 'pi',
+        settings: settings(),
+        approvalMode,
+        status: { provider: 'pi', available: true }
+      })
+
+    it('describes its own tool allowlist, not Claude', () => {
+      const contract = piContract('default')
+      expect(contract.approvals.notes.join(' ')).toContain('--tools allowlist')
+      expect(contract.approvals.notes.join(' ')).not.toContain('Claude')
+      expect(contract.approvals.providerMode).toContain('write tool allowlist')
+      expect(contract.approvals.inAppApprovals).toBe(false)
+    })
+
+    // Mirrors runPiProvider's `approvalMode === 'default'`, which is stricter
+    // than the house convention (any mode except 'plan'). If the runtime is ever
+    // widened to match Cursor/agy, this test must change with it — the contract
+    // must not claim a tool set the launch does not use.
+    it.each(['plan', 'acceptEdits', 'auto_edit'])(
+      'reports the read-only allowlist for %s',
+      (approvalMode) => {
+        expect(piContract(approvalMode).approvals.providerMode).toContain(
+          'read-only tool allowlist'
+        )
+      }
+    )
+  })
+
   // agy has no per-tool approval bridge, so a denied shell/file service can only
   // be honoured by launching read-only. This clamp existed for gemini but not
   // antigravity, so the contract reported accept-edits as enforced while the run

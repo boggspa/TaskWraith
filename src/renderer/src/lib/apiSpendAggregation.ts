@@ -67,7 +67,14 @@ export const API_SPEND_PROVIDER_ORDER: ProviderId[] = [
   // the one provider whose spend view reflects an actual billing basis rather
   // than a projected API-equivalent (still an estimate — we never see the
   // invoice). agy-lane records price as projected-equivalent like the rest.
-  'antigravity'
+  'antigravity',
+  // Pi is BYOK-only, so like the AntiGravity key lane every run is real
+  // per-token spend on the user's own upstream key. It was present in
+  // ModelUsageCard.API_SPEND_RENDER_ORDER but missing here, and this roster is
+  // what `buildApiSpendAggregation` gates on (`allowed.has(provider)`), so the
+  // card rendered a Pi row that could only ever read zero. These two rosters
+  // must move in lockstep.
+  'pi'
 ]
 
 /** Aggregated token + cost totals for one provider over one window. */

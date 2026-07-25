@@ -121,8 +121,15 @@ const PROVIDER_ORDER: ProviderId[] = [
   'pi'
 ]
 
-/** Token/cost providers in the spend view (Ollama uses RAM rows). */
-const API_SPEND_RENDER_ORDER: ProviderId[] = [
+/**
+ * Token/cost providers in the spend view (Ollama uses RAM rows).
+ *
+ * Exported for the lockstep test only. Every provider rendered here MUST also be
+ * in `API_SPEND_PROVIDER_ORDER`, which is what `buildApiSpendAggregation` gates
+ * on — a provider present here and absent there renders a row that can only ever
+ * read zero. Pi shipped in exactly that state.
+ */
+export const API_SPEND_RENDER_ORDER: ProviderId[] = [
   'gemini',
   'codex',
   'claude',

@@ -586,6 +586,36 @@ function approvalContract(
       ]
     }
   }
+  if (provider === 'pi') {
+    // Without this branch Pi fell through to the default, which reports
+    // "Claude Code permission handling is provider-managed in this build" — a
+    // note about a different provider entirely.
+    //
+    // Pi's containment is the launch-time `--tools` allowlist and nothing else:
+    // it runs `--mode rpc --no-approve`, so its own approval prompting is off
+    // and there is no per-tool bridge back to TaskWraith. The allowlist mirrors
+    // PI_READ_ONLY_TOOLS / PI_WRITE_TOOLS in pi/PiCliArgs.ts.
+    //
+    // The write condition mirrors runPiProvider EXACTLY (`approvalMode ===
+    // 'default'`), which is stricter than the house convention used by Cursor
+    // and agy (any mode except 'plan'): under Pi, acceptEdits gets read-only
+    // tools. Reported rather than "fixed" here — widening it would grant write
+    // capability the user has not asked for, and this contract must describe
+    // what the runtime does, not what it arguably should.
+    const piWriteCapable = requestedMode === 'default'
+    return {
+      requestedMode,
+      effectiveMode,
+      providerMode: piWriteCapable
+        ? 'pi rpc with the write tool allowlist (read, bash, edit, write, grep, find, ls)'
+        : 'pi rpc with the read-only tool allowlist (read, grep, find, ls)',
+      inAppApprovals: false,
+      supportsWorkspaceGrants: false,
+      notes: [
+        'Pi runs in RPC mode with an explicit --tools allowlist and --no-approve, so containment is the allowlist chosen at launch rather than per-tool approval. Extensions, skills, prompt templates and context files are disabled, and the credential firewall passes only the selected upstream key.'
+      ]
+    }
+  }
   if (provider === 'antigravity') {
     return {
       requestedMode,

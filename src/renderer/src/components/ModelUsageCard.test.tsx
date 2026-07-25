@@ -1,11 +1,13 @@
 import { renderToStaticMarkup } from 'react-dom/server'
 import { describe, expect, it } from 'vitest'
 import {
+  API_SPEND_RENDER_ORDER,
   ApiSpendProviderBlock,
   CompactModelUsageGrid,
   ModelUsageCard,
   type ModelUsageApiSpendOptions
 } from './ModelUsageCard'
+import { API_SPEND_PROVIDER_ORDER } from '../lib/apiSpendAggregation'
 import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import {
   buildApiSpendByProvider,
@@ -483,5 +485,17 @@ describe('AntiGravity budget meter (spend view)', () => {
     expect(html).toContain('Antigravity')
     expect(html).not.toContain('Budget')
     expect(html).not.toContain('quota-progress-bar')
+  })
+})
+
+// The two spend rosters must move in lockstep. buildApiSpendAggregation gates on
+// API_SPEND_PROVIDER_ORDER, so a provider rendered without being aggregated shows
+// a row that can only ever read zero — Pi shipped in exactly that state, and a
+// code comment did not prevent it.
+describe('API spend roster lockstep', () => {
+  it('renders no provider that the aggregation would drop', () => {
+    const aggregated = new Set(API_SPEND_PROVIDER_ORDER)
+    const rendered = API_SPEND_RENDER_ORDER.filter((provider) => !aggregated.has(provider))
+    expect(rendered).toEqual([])
   })
 })
