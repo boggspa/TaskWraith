@@ -9,6 +9,8 @@ import {
   resolveCombinedModelPickerResetState,
   resolveCombinedPickerPosition
 } from './CombinedModelPicker'
+import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
+import { API_KEY_MODEL_INDICATOR_LABEL } from '../../../shared/apiKeyModelIndicator'
 
 describe('CombinedModelPicker', () => {
   it('uses shared compact primary chrome for confirmation actions', () => {
@@ -37,6 +39,67 @@ describe('CombinedModelPicker', () => {
     expect(confirmLayoutRule).not.toMatch(
       /(?:^|\n)\s*(?:background|border|padding|min-height)\s*:/
     )
+  })
+
+  // Model labels no longer spell out their lane ("Gemini API: 2.5 Flash-Lite"
+  // truncated to noise in a narrow picker), so this glyph is the only remaining
+  // signal that a row bills per token.
+  //
+  // The picker's own rows are unreachable here: the popover mounts only behind
+  // internal `open` state AND a measured anchor position, so renderToStaticMarkup
+  // yields the trigger alone. Hence the mark lives in ModelApiKeyIndicator and is
+  // covered directly; which rows receive it is covered by the predicate's own
+  // suite in shared/apiKeyModelIndicator.test.ts.
+  describe('API-key indicator', () => {
+    it('renders the mark with its class hook and billing tooltip', () => {
+      const html = renderToStaticMarkup(<ModelApiKeyIndicator />)
+
+      expect(html).toContain('class="composer-combined-picker-api-indicator"')
+      expect(html).toContain(`title="${API_KEY_MODEL_INDICATOR_LABEL}"`)
+      expect(html).toContain(`aria-label="${API_KEY_MODEL_INDICATOR_LABEL}"`)
+      expect(html).toContain('class="api-key-required-icon"')
+      // Inherits row colour like the Fast bolt rather than hard-coding a fill.
+      expect(html).toContain('stroke="currentColor"')
+      expect(html).not.toMatch(/stroke="#|fill="#/)
+    })
+
+    // A wide, short glyph: forcing the Fast bolt's preserveAspectRatio="none"
+    // would squash the circular key bow into an ellipse and read as a bug.
+    it('scales proportionally, unlike the deliberately warped Fast bolt', () => {
+      const html = renderToStaticMarkup(<ModelApiKeyIndicator />)
+      expect(html).not.toContain('preserveAspectRatio="none"')
+    })
+
+    it('keeps the artwork identical to the shipped design asset', () => {
+      const asset = readFileSync(
+        new URL('../../../../design-assets/api-key-required/api-key-required.svg', import.meta.url),
+        'utf8'
+      )
+      const html = renderToStaticMarkup(<ModelApiKeyIndicator />)
+      const assetPaths = [...asset.matchAll(/ d="([^"]+)"/g)].map((match) => match[1])
+      expect(assetPaths.length).toBeGreaterThan(0)
+      for (const path of assetPaths) {
+        expect(html).toContain(path)
+      }
+      // The bow is a circle element, not a path — check it survived the trace.
+      expect(html).toContain('cx="17.5"')
+    })
+
+    it('keeps the glyph styled in lockstep with the Fast bolt', () => {
+      const css = readFileSync(
+        new URL('../assets/css/08-theme-picker-overrides.css', import.meta.url),
+        'utf8'
+      )
+      expect(css).toContain('.composer-combined-picker-api-indicator {')
+      expect(css).toContain('.api-key-required-icon {')
+      // Both marks must brighten on the selected/highlighted row, or the API
+      // glyph would visibly fade out exactly where the Fast bolt lights up.
+      for (const state of ['is-selected', 'is-highlighted']) {
+        expect(css).toContain(
+          `.composer-combined-picker-row.${state} .composer-combined-picker-api-indicator`
+        )
+      }
+    })
   })
 
   it('exposes Ultracode reasoning hooks for Claude composer styling', () => {

@@ -9815,6 +9815,51 @@
   opacity: 1;
 }
 
+/* API-key glyph on a model row whose lane needs the user's own key (see
+ * shared/apiKeyModelIndicator.ts). Model labels used to spell their lane out
+ * ("Gemini API: 2.5 Flash-Lite") and truncated to noise in a narrow picker; this
+ * carries the same information in the Fast bolt's visual register. Selectors
+ * mirror the fast-indicator block above so both marks pick up identical shell
+ * and light-theme treatment — keep them in lockstep.
+ *
+ * Neutral rather than accent-tinted: unlike Fast (a capability you switch on)
+ * this is a billing caveat, so it should read as informational, not as a feature
+ * being advertised. */
+.composer-combined-picker-api-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  color: color-mix(in srgb, currentColor 55%, transparent);
+  opacity: 0.75;
+}
+.api-key-required-icon {
+  display: block;
+  flex-shrink: 0;
+  /* Wide-and-short glyph (22.6×12.4 viewBox, ≈1.82:1) sized to the Fast bolt's
+   * optical WEIGHT, not its literal box: 16×8.8 ≈ 141px² against the bolt's
+   * 11×13 ≈ 143px², so neither mark dominates a row that shows both. Verified by
+   * render — below ~16px wide the serrated bit and the dollar sign fill in. */
+  width: 16px;
+  height: 8.8px;
+}
+[data-composer-style="codex"] .composer-combined-picker-api-indicator,
+.composer-combined-picker-popover.shell-codex .composer-combined-picker-api-indicator {
+  color: color-mix(in srgb, #ffffff 58%, transparent);
+  opacity: 1;
+}
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])[data-composer-style="codex"]
+  .composer-combined-picker-api-indicator,
+:is([data-theme="light"], [data-theme="mist"], [data-theme="sage"])
+  .composer-combined-picker-popover.shell-codex
+  .composer-combined-picker-api-indicator {
+  color: rgba(29, 29, 31, 0.58);
+}
+.composer-combined-picker-row.is-selected .composer-combined-picker-api-indicator,
+.composer-combined-picker-row.is-highlighted .composer-combined-picker-api-indicator {
+  opacity: 1;
+}
+
 /* 1.0.7-mini — retirement pill on a model picker row when option.retiresAt is
  * set (Codex GPT-5.3-Codex + GPT-5.2 retiring 2026-06-02). Replaces the
  * pre-1.0.7 "(retiring Jun 2)" baked into the label string, which flashed

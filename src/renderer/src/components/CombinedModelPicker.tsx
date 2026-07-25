@@ -43,6 +43,8 @@ import type {
   CombinedModelPickerReasoningOption
 } from '../lib/combinedModelPickerTypes'
 import { CodexFastBoltIcon } from './icons/CodexFastBoltIcon'
+import { ModelApiKeyIndicator } from './ModelApiKeyIndicator'
+import { modelRequiresApiKey } from '../../../shared/apiKeyModelIndicator'
 import { PillButton } from './PillButton'
 import { getProviderName } from './Sidebar'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
@@ -1555,6 +1557,9 @@ export function CombinedModelPicker({
                   const rowIndex = modelOffset + optionIndex
                   const selected = group.provider === provider && option.id === selectedModelId
                   const supportsFast = Boolean(group.fastModeCapableModelIds?.has(option.id))
+                  // Grouped view spans providers, so the lane is decided by THIS
+                  // row's provider — not the picker's currently selected one.
+                  const requiresApiKey = modelRequiresApiKey(group.provider, option.id)
                   return (
                     <button
                       ref={(node) => {
@@ -1609,6 +1614,7 @@ export function CombinedModelPicker({
                           )}
                         </span>
                       )}
+                      {requiresApiKey && <ModelApiKeyIndicator />}
                       {selected && (
                         <span className="composer-combined-picker-check" aria-hidden>
                           ✓
@@ -1638,6 +1644,8 @@ export function CombinedModelPicker({
               const supportsFast = Boolean(
                 fastModeCapableModelIds && fastModeCapableModelIds.has(option.id)
               )
+              // Single-provider view: every row belongs to the picker's provider.
+              const requiresApiKey = modelRequiresApiKey(provider, option.id)
               return (
                 <button
                   key={option.id}
@@ -1691,6 +1699,7 @@ export function CombinedModelPicker({
                       )}
                     </span>
                   )}
+                  {requiresApiKey && <ModelApiKeyIndicator />}
                   {option.id === selectedModelId && (
                     <span className="composer-combined-picker-check" aria-hidden>
                       ✓
