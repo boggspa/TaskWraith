@@ -208,8 +208,19 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // Re-measured 2026-07-25 after the Pi seat joined LIVE_SELECTABLE_PROVIDER_IDS:
     // the provider enum is inlined into tool schemas on BOTH surfaces, so each
     // grew by one enum member's worth of characters.
-    expect(fullChars).toBe(131_824)
-    expect(gatewayChars).toBe(39_330)
+    // Re-measured 2026-07-26: +52 full / +26 gateway for two `items` declarations
+    // that are NOT optional. Gemini rejects the WHOLE request when any array
+    // schema omits `items`, so a bare array anywhere 400'd every tool-advertising
+    // AntiGravity gemini-api run (confirmed live). `{"items":{"type":"object"}}`
+    // is the minimum valid form — the bytes cannot be spent more cheaply, and
+    // clawing them back by trimming a tool description would degrade real model
+    // guidance to satisfy a tripwire. Split: creative_timeline_import.ir.projects
+    // is discovery-only (full surface), ensemble_roster_edit's
+    // permissionOverrides.externalPathGrants is gateway-advertised (both).
+    // Transport contract unaffected: gateway keeps 644 chars of headroom under
+    // the 40k limit and the ratio moves 0.29831 -> 0.29843.
+    expect(fullChars).toBe(131_876)
+    expect(gatewayChars).toBe(39_356)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)
   })
