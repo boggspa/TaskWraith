@@ -167,7 +167,13 @@ export const MCP_APP_STATE_MUTATION_TOOLS = new Set<TaskWraithMcpToolName>([
   'blackboard_delete',
   'workspace_board_apply_plan',
   'tw_introspection_run',
-  'tw_introspection_review'
+  'tw_introspection_review',
+  // Outlook draft creation mutates the user's mailbox. Both are absent from
+  // MCP_AUTO_ALLOWED_TOOLS (so they always prompt) and listed here so the
+  // route/workspace-lineage guards treat them as mutations and read_only
+  // seats are denied outright.
+  'outlook_create_draft',
+  'outlook_create_event'
 ])
 
 /**

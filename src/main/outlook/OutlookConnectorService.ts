@@ -287,6 +287,122 @@ export class OutlookConnectorService {
     }
   }
 
+  /** Single bounded POST. Only ever used for draft-scoped creation. */
+  private async graphPost(
+    path: string,
+    body: unknown
+  ): Promise<{ ok: true; body: unknown } | OutlookConnectorFailure> {
+    const auth = await this.accessToken()
+    if (!auth.ok) return auth
+    if (auth.credentials.scopeMode !== 'write') {
+      return failure(
+        'reauth-required',
+        'This connection is read-only. Reconnect with drafting enabled to create drafts.'
+      )
+    }
+
+    const controller = new AbortController()
+    const timer = setTimeout(() => controller.abort(), this.deps.timeoutMs ?? DEFAULT_TIMEOUT_MS)
+    let response: Response
+    try {
+      response = await this.fetchImpl(`${GRAPH_ROOT}${path}`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${auth.token}`,
+          accept: 'application/json',
+          'content-type': 'application/json'
+        },
+        body: JSON.stringify(body),
+        signal: controller.signal
+      })
+    } catch {
+      return failure('network', 'Could not reach Microsoft Graph.')
+    } finally {
+      clearTimeout(timer)
+    }
+
+    if (response.status === 401) {
+      return failure('reauth-required', 'Microsoft rejected the session. Sign in again.')
+    }
+    if (response.status === 429 || response.status === 503) {
+      // Creation is not retried: a blind retry risks a duplicate draft.
+      return failure('throttled', 'Microsoft Graph is throttling requests. Try again shortly.')
+    }
+    if (!response.ok) {
+      return failure('graph-error', `Microsoft Graph returned HTTP ${response.status}.`)
+    }
+    try {
+      return { ok: true, body: await response.json() }
+    } catch {
+      return failure('graph-error', 'Microsoft Graph returned an unreadable response.')
+    }
+  }
+
+  /**
+   * Creates a DRAFT message. Graph's /me/messages POST saves to Drafts and
+   * sends nothing — there is no send call anywhere in this service, and the
+   * app does not hold the Mail.Send scope that would permit one.
+   */
+  async createDraft(input: {
+    subject: string
+    body: string
+    to: string[]
+    cc?: string[]
+  }): Promise<OutlookConnectorResult<{ draftId: string; webLink: string }>> {
+    const recipients = (addresses: string[] | undefined): unknown[] =>
+      (addresses ?? []).map((address) => ({ emailAddress: { address } }))
+    const result = await this.graphPost('/me/messages', {
+      subject: input.subject,
+      body: { contentType: 'text', content: input.body },
+      toRecipients: recipients(input.to),
+      ccRecipients: recipients(input.cc)
+    })
+    if (!result.ok) return result
+    const created = result.body as Record<string, unknown> | null
+    const draftId = typeof created?.id === 'string' ? created.id : ''
+    if (!draftId) return failure('graph-error', 'The draft was not created.')
+    return {
+      ok: true,
+      draftId,
+      webLink: typeof created?.webLink === 'string' ? created.webLink : ''
+    }
+  }
+
+  /**
+   * Creates a calendar entry with NO attendees. Attendees are rejected by the
+   * tool layer because Graph mails invitations on create, which would be
+   * sending; this method never populates the attendees field either.
+   */
+  async createEvent(input: {
+    subject: string
+    startIso: string
+    endIso: string
+    body?: string
+    location?: string
+  }): Promise<OutlookConnectorResult<{ eventId: string; webLink: string }>> {
+    const stamp = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2})?)?$/
+    if (!stamp.test(input.startIso) || !stamp.test(input.endIso)) {
+      return failure('graph-error', 'Event times must be ISO stamps.')
+    }
+    const zone = this.deps.displayZone?.() ?? 'UTC'
+    const result = await this.graphPost('/me/events', {
+      subject: input.subject,
+      start: { dateTime: input.startIso, timeZone: zone },
+      end: { dateTime: input.endIso, timeZone: zone },
+      ...(input.location ? { location: { displayName: input.location } } : {}),
+      ...(input.body ? { body: { contentType: 'text', content: input.body } } : {})
+    })
+    if (!result.ok) return result
+    const created = result.body as Record<string, unknown> | null
+    const eventId = typeof created?.id === 'string' ? created.id : ''
+    if (!eventId) return failure('graph-error', 'The calendar entry was not created.')
+    return {
+      ok: true,
+      eventId,
+      webLink: typeof created?.webLink === 'string' ? created.webLink : ''
+    }
+  }
+
   /** Signed-in account identity, used to label the connection. */
   async me(): Promise<OutlookConnectorResult<{ account: string }>> {
     const result = await this.graphGet('/me', { $select: 'displayName,userPrincipalName,mail' })

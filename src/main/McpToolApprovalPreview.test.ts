@@ -66,6 +66,44 @@ describe('createMcpToolApprovalPreviewer', () => {
     expect(preview.body).toBe(`Intent: inspect audio\n\n${toolName} track.wav`)
   })
 
+  it('shows who a draft addresses and states that nothing is sent', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_draft',
+      { to: 'bob@example.com', subject: 'Weekly update', body: 'Here it is.' },
+      '/repo',
+      context,
+      'claude'
+    )
+    expect(preview.title).toBe('Approve CLAUDE Outlook draft')
+    // The ceiling is on the prompt itself, not just in documentation.
+    expect(preview.body).toContain('Saves a DRAFT — nothing is sent.')
+    expect(preview.body).toContain('To: bob@example.com')
+    expect(preview.body).toContain('Subject: Weekly update')
+    expect(preview.preview).toMatchObject({ to: 'bob@example.com', subject: 'Weekly update' })
+  })
+
+  it('states that a calendar entry sends no invitations', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_create_event',
+      { subject: 'Focus block', startIso: '2026-08-01T09:00', endIso: '2026-08-01T10:00' },
+      '/repo',
+      context
+    )
+    expect(preview.body).toContain('no attendees, so no invitations are sent')
+    expect(preview.body).toContain('2026-08-01T09:00 → 2026-08-01T10:00')
+  })
+
+  it('names the mailbox scope for Outlook reads', () => {
+    const preview = createMcpToolApprovalPreviewer(dependencies())(
+      'outlook_search_messages',
+      { query: 'invoice' },
+      '/repo',
+      context
+    )
+    expect(preview.title).toContain('Outlook read')
+    expect(preview.body).toContain('invoice')
+  })
+
   it('adds Ollama shell risk metadata without changing the shell gate', () => {
     const preview = createMcpToolApprovalPreviewer(dependencies())(
       'run_shell_command',

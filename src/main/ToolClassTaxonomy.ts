@@ -126,7 +126,19 @@ const WORKSPACE_READ_TOOLS = new Set<string>([
 
 const UI_ELICITATION_TOOLS = new Set<string>(['ask_user_question'])
 
-const WEB_READ_TOOLS = new Set<string>(['web_search', 'web_fetch', 'github_ci_status'])
+const WEB_READ_TOOLS = new Set<string>([
+  'web_search',
+  'web_fetch',
+  'github_ci_status',
+  // Outlook READS are network lookups against Microsoft Graph, so the
+  // run/global network kill switch must be able to stop them. The draft
+  // creation tools are deliberately NOT here — they default to
+  // workspace_write and stay denied under read_only.
+  'outlook_list_messages',
+  'outlook_search_messages',
+  'outlook_get_message',
+  'outlook_list_events'
+])
 
 const ORCHESTRATION_TOOLS = new Set<string>([
   'approval_status',

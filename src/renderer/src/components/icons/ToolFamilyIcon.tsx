@@ -54,6 +54,7 @@ export type ToolFamily =
   | 'reasoning'
   | 'plan'
   | 'handoff'
+  | 'mail'
 
 interface ToolFamilyIconProps {
   family: ToolFamily | null | undefined
@@ -348,6 +349,8 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
   if (normalised.startsWith('tw_recall_')) return 'memory'
   if (normalised.startsWith('tw_introspection_')) return 'audit'
   if (normalised.startsWith('workspace_board_')) return 'plan'
+  // Outlook mail + calendar (reads and draft creation) share one glyph.
+  if (normalised.startsWith('outlook_')) return 'mail'
   if (normalised.startsWith('appwatch_')) return 'window-context'
   if (normalised.startsWith('ensemble_') || normalised === 'list_ensemble_participants') {
     return 'fanout'
@@ -849,6 +852,15 @@ function FamilyPaths({ family }: { family: ToolFamily }): ReactElement {
           <path d="M16.4 8.1 19 9.3 16.4 10.7" />
           <path d="M6.3 9.4 8.1 9" />
           <path d="M5.9 13.2 7.7 12.8" />
+        </g>
+      )
+    case 'mail':
+      return (
+        <g>
+          <path d="M3.6 6.4 20.4 6.4 20.4 17.6 3.6 17.6Z" />
+          <path d="M3.6 6.4 12 13.1 20.4 6.4" />
+          <path d="M3.6 17.6 9.7 11.9" />
+          <path d="M20.4 17.6 14.3 11.9" />
         </g>
       )
     case 'handoff':

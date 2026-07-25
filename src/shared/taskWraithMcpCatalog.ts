@@ -45,6 +45,17 @@ export const TASKWRAITH_MCP_TOOLS = [
   'workspace_board_snapshot',
   'workspace_board_preview_plan',
   'workspace_board_apply_plan',
+  // Outlook mail + calendar over Microsoft Graph. Reads pull untrusted
+  // third-party text into context; writes create DRAFTS only. There is no
+  // send tool and the app never holds the Mail.Send scope, so none of these
+  // can put a message in front of another human without the user pressing
+  // send in Outlook themselves. All six stay approval-gated.
+  'outlook_list_messages',
+  'outlook_search_messages',
+  'outlook_get_message',
+  'outlook_list_events',
+  'outlook_create_draft',
+  'outlook_create_event',
   // Propose-only Project library inbox. This writes bounded untrusted metadata
   // to the current run ledger; only the human review surface can materialize a
   // normal ProjectReference, and proposal never reads/fetches/grants access.

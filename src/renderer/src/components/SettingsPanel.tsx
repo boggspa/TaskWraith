@@ -2164,6 +2164,7 @@ type McpToolGroup =
   | 'memory'
   | 'media'
   | 'creative'
+  | 'outlook'
   | 'ide'
 
 type McpToolPolicyKey = keyof AgenticServicesSettings
@@ -2179,6 +2180,7 @@ const MCP_TOOL_GROUP_LABELS: Record<McpToolGroup, string> = {
   memory: 'Recall and wakeups',
   media: 'Media tools',
   creative: 'Creative apps',
+  outlook: 'Outlook mail and calendar',
   ide: 'IDE and provider status'
 }
 
@@ -2193,6 +2195,7 @@ const MCP_TOOL_GROUP_ORDER: McpToolGroup[] = [
   'memory',
   'media',
   'creative',
+  'outlook',
   'ide'
 ]
 
@@ -2544,6 +2547,14 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'creative_applescript_dispatch',
     'creative_blender_python',
     'creative_midi_dispatch'
+  ],
+  outlook: [
+    'outlook_list_messages',
+    'outlook_search_messages',
+    'outlook_get_message',
+    'outlook_list_events',
+    'outlook_create_draft',
+    'outlook_create_event'
   ],
   ide: [
     'approval_status',

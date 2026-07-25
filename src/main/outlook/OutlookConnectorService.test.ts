@@ -41,12 +41,16 @@ function stubStore(
 
 function stubFetch(responses: StubResponse[]): {
   fetchImpl: typeof globalThis.fetch
-  calls: { url: string; headers: Record<string, string> }[]
+  calls: { url: string; headers: Record<string, string>; body: string }[]
 } {
-  const calls: { url: string; headers: Record<string, string> }[] = []
+  const calls: { url: string; headers: Record<string, string>; body: string }[] = []
   let index = 0
   const fetchImpl = (async (url: string, init: RequestInit) => {
-    calls.push({ url, headers: (init.headers ?? {}) as Record<string, string> })
+    calls.push({
+      url,
+      headers: (init.headers ?? {}) as Record<string, string>,
+      body: typeof init.body === 'string' ? init.body : ''
+    })
     const next = responses[Math.min(index, responses.length - 1)]
     index += 1
     const status = next.status ?? 200
@@ -261,6 +265,82 @@ describe('authentication lifecycle', () => {
       nowMs: () => NOW
     })
     expect(await rejected.listMessages({})).toMatchObject({ error: 'reauth-required' })
+  })
+})
+
+describe('draft-only writes', () => {
+  const WRITE_CREDENTIALS = { ...CREDENTIALS, scopeMode: 'write' as const }
+
+  it('creates a draft via /me/messages, which saves without sending', async () => {
+    const { store } = stubStore(WRITE_CREDENTIALS)
+    const { fetchImpl, calls } = stubFetch([
+      { body: { id: 'draft-1', webLink: 'https://outlook/draft-1' } }
+    ])
+    const service = new OutlookConnectorService({ store, fetchImpl, nowMs: () => NOW })
+    const result = await service.createDraft({
+      subject: 'Weekly',
+      body: 'Body',
+      to: ['bob@example.com']
+    })
+    expect(result).toMatchObject({ ok: true, draftId: 'draft-1' })
+    // /me/messages saves to Drafts; /me/sendMail would send. Assert we never
+    // touch a send endpoint.
+    expect(calls[0].url).toBe('https://graph.microsoft.com/v1.0/me/messages')
+    expect(calls.some((call) => /sendmail|\/send/i.test(call.url))).toBe(false)
+  })
+
+  it('refuses to write on a read-only connection', async () => {
+    const { store } = stubStore(CREDENTIALS)
+    const { fetchImpl, calls } = stubFetch([{ body: {} }])
+    const service = new OutlookConnectorService({ store, fetchImpl, nowMs: () => NOW })
+    const result = await service.createDraft({ subject: 'S', body: 'B', to: [] })
+    expect(result).toMatchObject({ ok: false, error: 'reauth-required' })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('creates a calendar entry and never populates attendees', async () => {
+    const { store } = stubStore(WRITE_CREDENTIALS)
+    const { fetchImpl, calls } = stubFetch([{ body: { id: 'event-1' } }])
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl,
+      nowMs: () => NOW,
+      displayZone: () => 'Europe/London'
+    })
+    const result = await service.createEvent({
+      subject: 'Focus block',
+      startIso: '2026-08-01T09:00',
+      endIso: '2026-08-01T10:00'
+    })
+    expect(result).toMatchObject({ ok: true, eventId: 'event-1' })
+    expect(calls[0].url).toBe('https://graph.microsoft.com/v1.0/me/events')
+    expect(calls[0].body).not.toContain('attendees')
+    expect(calls[0].body).toContain('Europe/London')
+  })
+
+  it('validates event stamps before calling Graph', async () => {
+    const { store } = stubStore(WRITE_CREDENTIALS)
+    const { fetchImpl, calls } = stubFetch([{ body: {} }])
+    const service = new OutlookConnectorService({ store, fetchImpl, nowMs: () => NOW })
+    expect(
+      await service.createEvent({ subject: 'x', startIso: 'soon', endIso: 'later' })
+    ).toMatchObject({ ok: false })
+    expect(calls).toHaveLength(0)
+  })
+
+  it('does not retry creation on throttling, to avoid duplicate drafts', async () => {
+    const { store } = stubStore(WRITE_CREDENTIALS)
+    const { fetchImpl, calls } = stubFetch([{ status: 429 }])
+    const service = new OutlookConnectorService({
+      store,
+      fetchImpl,
+      nowMs: () => NOW,
+      sleep: async () => undefined
+    })
+    expect(await service.createDraft({ subject: 'S', body: 'B', to: [] })).toMatchObject({
+      error: 'throttled'
+    })
+    expect(calls).toHaveLength(1)
   })
 })
 

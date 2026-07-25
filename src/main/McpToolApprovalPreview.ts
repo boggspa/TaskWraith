@@ -64,6 +64,54 @@ export function createMcpToolApprovalPreviewer(
     const intentBody = intent ? `Intent: ${intent}\n\n` : ''
     const intentPreview = intent ? { intent } : {}
 
+    // Outlook: the user must see WHO a draft addresses and WHAT it says
+    // before approving, not a JSON blob. Reads name the mailbox scope.
+    if (toolName === 'outlook_create_draft') {
+      const to = deps.optionalString(args.to) || '(no recipients)'
+      const subject = deps.optionalString(args.subject) || '(no subject)'
+      const body = deps.optionalString(args.body) || ''
+      return {
+        title: `Approve ${providerName} Outlook draft`,
+        body:
+          `${intentBody}Saves a DRAFT — nothing is sent.\n` +
+          `To: ${to}\nSubject: ${subject}\n\n${body.slice(0, 2_000)}`.trim(),
+        service: 'mcpTools',
+        preview: { ...intentPreview, to, subject, body: body.slice(0, 2_000) }
+      }
+    }
+    if (toolName === 'outlook_create_event') {
+      const subject = deps.optionalString(args.subject) || '(no title)'
+      const window = `${deps.optionalString(args.startIso) || '?'} → ${
+        deps.optionalString(args.endIso) || '?'
+      }`
+      return {
+        title: `Approve ${providerName} calendar entry`,
+        body: `${intentBody}Creates a calendar entry with no attendees, so no invitations are sent.\n${subject}\n${window}`,
+        service: 'mcpTools',
+        preview: { ...intentPreview, subject, window }
+      }
+    }
+    if (
+      toolName === 'outlook_list_messages' ||
+      toolName === 'outlook_search_messages' ||
+      toolName === 'outlook_get_message' ||
+      toolName === 'outlook_list_events'
+    ) {
+      const detail =
+        deps.optionalString(args.query) ||
+        deps.optionalString(args.messageId) ||
+        deps.optionalString(args.folder) ||
+        [deps.optionalString(args.startIso), deps.optionalString(args.endIso)]
+          .filter(Boolean)
+          .join(' → ')
+      return {
+        title: `Approve ${providerName} Outlook read`,
+        body: `${intentBody}${toolName}${detail ? `\n${detail}` : ''}`.trim(),
+        service: 'mcpTools',
+        preview: { ...intentPreview, tool: toolName, detail }
+      }
+    }
+
     if (deps.mediaEditingTools.has(toolName)) {
       const isAnalyze = toolName === 'audio_analyze'
       const isRender = toolName === 'audio_render_wav'

@@ -168,6 +168,10 @@ describe('workspace_write is exactly the read-only deny set', () => {
         'launch_start',
         'launch_stop',
         'move_path',
+        // Draft creation mutates the mailbox, so read_only seats deny it.
+        // The four Outlook READ tools classify as web_read instead.
+        'outlook_create_draft',
+        'outlook_create_event',
         'rename_path',
         'replace',
         'run_shell_command',

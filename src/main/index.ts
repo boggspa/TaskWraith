@@ -1436,6 +1436,10 @@ import { registerKimiAuthHandlers } from './ipc/kimiAuthHandlers'
 import { registerGeminiAuthHandlers } from './ipc/geminiAuthHandlers'
 import { registerAntigravityGeminiApiSecretHandlers } from './ipc/antigravityGeminiApiSecretHandlers'
 import { registerOutlookAuthHandlers } from './ipc/outlookAuthHandlers'
+import {
+  createOutlookToolExecutors,
+  isOutlookMcpToolName
+} from './mcp/OutlookToolExecutors'
 import { registerProviderMetadataHandlers } from './ipc/providerMetadataHandlers'
 import { rendererSafeProviderStatus } from './RendererProviderProjection'
 import { registerProviderTerminalHandlers } from './ipc/providerTerminalHandlers'
@@ -6719,6 +6723,11 @@ const workspaceToolExecutors = createWorkspaceToolExecutors({
   }
 })
 
+// Resolves lazily: the connector is constructed after app-ready, and a chat
+// may call an Outlook tool before (or without) an account being connected.
+const outlookToolExecutors = createOutlookToolExecutors({
+  connector: () => outlookConnectorServiceRef
+})
 const workspaceBoardToolExecutors = createWorkspaceBoardToolExecutors({
   getChat: (chatId) => AppStore.getChat(chatId) ?? undefined,
   getWorkspaceBoards: (workspaceId) => AppStore.getWorkspaceBoards(workspaceId),
@@ -28665,6 +28674,10 @@ async function executeGeminiMcpTool(
         toolIsError = auditResult.isError
         text = mcpJson(auditResult.result)
       }
+    } else if (isOutlookMcpToolName(toolName)) {
+      const result = await outlookToolExecutors.executeOutlookMcpTool(toolName, args)
+      toolIsError = result.isError
+      text = mcpJson(result.result)
     } else if (isWorkspaceBoardMcpToolName(toolName)) {
       const result = await workspaceBoardToolExecutors.executeWorkspaceBoardMcpTool(
         toolName,
