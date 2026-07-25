@@ -62,19 +62,33 @@ export function resolveProviderHueClass(
 }
 
 /**
- * Spoofed upstream brand label for an Ollama-backed model (e.g. "Alibaba"),
- * or null for non-Ollama providers / unbranded Ollama models. Lets mention
- * chips fall back to the brand name instead of "Ollama" when a participant
- * has no explicit role.
+ * Spoofed upstream brand label for a model whose provider id hides the brand
+ * the user actually picked — "Alibaba" for an Ollama-hosted Qwen, "Mistral" for
+ * a Pi run served by the Mistral API. Null for every other provider, and for
+ * models of these two whose brand we cannot identify.
+ *
+ * Callers pair this with the plain provider name
+ * (`resolveProviderBrandLabel(...) || getProviderName(provider)`), so the spoof
+ * is OPT-IN per surface. That split is deliberate: presentation surfaces — the
+ * composer picker trigger, above-composer chips, transcript headers, mention
+ * chips — name the brand, while the surfaces that group models by seat or
+ * authenticate one (Mode/Reasoning picker, Settings sign-in, first launch)
+ * keep calling the seat "Pi" / "Ollama", because that IS the thing being
+ * grouped and signed into. Do not fold this into `getProviderName`.
  */
 export function resolveProviderBrandLabel(
   provider: string | undefined | null,
   modelId?: string | null,
   modelLabel?: string | null
 ): string | null {
-  if (String(provider || '').trim() === 'ollama') {
+  const id = String(provider || '').trim()
+  if (id === 'ollama') {
     const brand = resolveOllamaDisplayBrand(modelId, modelLabel)
     if (brand) return brand.providerLabel
+  }
+  if (id === 'pi') {
+    const brand = resolvePiUpstreamBrand(modelId)
+    if (brand) return brand.label
   }
   return null
 }

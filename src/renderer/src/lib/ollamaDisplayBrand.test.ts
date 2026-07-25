@@ -38,9 +38,7 @@ describe('resolveOllamaDisplayBrand', () => {
       providerLabel: 'OpenAI',
       providerClass: 'openai'
     })
-    expect(
-      resolveOllamaDisplayBrand('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)')
-    ).toMatchObject({
+    expect(resolveOllamaDisplayBrand('minicpm-v4.5:8b', 'MiniCPM-V 4.5 (8B Param)')).toMatchObject({
       providerLabel: 'OpenBMB',
       providerClass: 'openbmb'
     })
@@ -117,8 +115,20 @@ describe('resolveProviderBrandLabel', () => {
     expect(resolveProviderBrandLabel('ollama', 'laguna-xs-2.1:q8_0')).toBe('Poolside')
   })
 
-  it('returns null for non-Ollama providers and unbranded Ollama models', () => {
+  it('returns the BYOK upstream brand for a Pi row', () => {
+    // Without this the caller falls through to getProviderName('pi'), which
+    // before this pass had no `pi` case and answered "Gemini" — the leftover
+    // that put "Gemini deepseek/deepseek-v4-flash" on the composer trigger.
+    expect(resolveProviderBrandLabel('pi', 'mistral/devstral-2512')).toBe('Mistral')
+    expect(resolveProviderBrandLabel('pi', 'deepseek/deepseek-v4-flash')).toBe('DeepSeek')
+    expect(resolveProviderBrandLabel('pi', 'groq/openai/gpt-oss-120b')).toBe('Groq')
+    expect(resolveProviderBrandLabel('pi', 'qwen-token-plan/qwen3.7-max')).toBe('Qwen')
+  })
+
+  it('returns null for non-branded providers and unresolvable models', () => {
     expect(resolveProviderBrandLabel('claude', 'claude-opus-4-8')).toBeNull()
     expect(resolveProviderBrandLabel('ollama', 'mystery-model')).toBeNull()
+    // An unknown Pi upstream keeps the plain "Pi" seat name.
+    expect(resolveProviderBrandLabel('pi', 'anthropic/claude-opus')).toBeNull()
   })
 })

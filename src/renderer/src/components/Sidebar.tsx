@@ -1376,6 +1376,17 @@ function PeopleSymbolIcon() {
 }
 
 // Phase L6 slice 1 — exported for `ModelUsageCard` provider headers.
+//
+// The trailing 'Gemini' is this function's UNKNOWN-provider default, dating to
+// when Gemini was the only seat — so every seat added since has had to be
+// listed explicitly or silently answer "Gemini". Pi was missed, which is why
+// its rows read "Gemini deepseek/deepseek-v4-flash" across the composer picker
+// trigger, the above-composer chips and the mention menu.
+//
+// This returns the SEAT name on purpose. Surfaces that should show the brand
+// behind the seat ("Mistral" for a Pi run, "Alibaba" for an Ollama Qwen) get it
+// from `resolveProviderBrandLabel`, falling back to this — see that function's
+// note on why the two stay separate.
 export function getProviderName(provider?: ProviderId) {
   if (provider === 'codex') return 'Codex'
   if (provider === 'claude') return 'Claude'
@@ -1384,6 +1395,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'Antigravity'
+  if (provider === 'pi') return 'Pi'
   return 'Gemini'
 }
 
