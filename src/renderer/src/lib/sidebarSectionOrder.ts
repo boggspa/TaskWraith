@@ -5,6 +5,7 @@ export type SidebarHierarchySectionId =
   | 'workspace-boards'
   | 'pinned'
   | 'recents'
+  | 'git'
   | 'ensembles'
   | 'workspaces'
   | 'chats'
@@ -28,6 +29,7 @@ export const SIDEBAR_HIERARCHY_SECTION_IDS: readonly SidebarHierarchySectionId[]
   'local-servers',
   'pinned',
   'recents',
+  'git',
   'workspaces',
   'chats',
   'shared',
@@ -46,6 +48,7 @@ export const SIDEBAR_HIERARCHY_SECTION_LABELS: Record<SidebarHierarchySectionId,
   'workspace-boards': 'Workspace Boards',
   pinned: 'Pinned',
   recents: 'Recents',
+  git: 'Git',
   ensembles: 'Ensembles',
   workspaces: 'Workspaces',
   chats: 'Chats',
@@ -100,7 +103,10 @@ export function loadSidebarHierarchyOrder(): SidebarHierarchySectionId[] {
     const raw = window.localStorage.getItem(STORAGE_KEY)
     if (!raw) return [...DEFAULT_SIDEBAR_HIERARCHY_ORDER]
     const order = normalizeSidebarHierarchyOrder(JSON.parse(raw))
-    if (ordersEqual(order, LEGACY_SIDEBAR_HIERARCHY_ORDER_V1)) {
+    // Compare against the NORMALIZED legacy order: sections added after v1
+    // (e.g. 'git') are appended to a stored legacy default by normalization,
+    // and must not stop the never-customized migration to the new default.
+    if (ordersEqual(order, normalizeSidebarHierarchyOrder([...LEGACY_SIDEBAR_HIERARCHY_ORDER_V1]))) {
       return [...DEFAULT_SIDEBAR_HIERARCHY_ORDER]
     }
     return order

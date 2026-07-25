@@ -329,6 +329,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   handleStoreKimiApiKey,
   handleToggleArchiveChat,
   handleTogglePinChat,
+  handleSetChatHiddenFromMainList,
+  handleClearChatGitWorkflow,
+  activeChatSidebarIdentity,
   handleTogglePinWorkspace,
   handleTogglePinWorkspaceBoard,
   handleToggleWorkflowEnabled,
@@ -1274,6 +1277,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                 onCreateSubThread={(parent) => setSubThreadCreatorParent(parent)}
                 onTogglePinChat={handleTogglePinChat}
                 onTogglePinWorkspace={handleTogglePinWorkspace}
+                onSetChatHiddenFromMainList={handleSetChatHiddenFromMainList}
+                onClearChatGitWorkflow={handleClearChatGitWorkflow}
+                activeChatIdentityTicker={activeChatSidebarIdentity}
                 onToggleArchiveChat={handleToggleArchiveChat}
                 onDeleteChat={handleDeleteChat}
                 onRenameChat={handleRenameChat}

@@ -1951,3 +1951,130 @@ button.sidebar-item {
   display: flex;
   gap: var(--space-sm);
 }
+
+/* ————————————————————————————————————————————————————————————————
+   Per-row git workflow icon + the "Git" section (sidebar git markers).
+   Icon tones mirror the composer satellite palette exactly
+   (07-composer-shells.css .github-satellite-icon.tone-*). The icon is a
+   fixed 12px slot beside the provider logo; the row's elastic ellipsizing
+   title absorbs the width.
+   ———————————————————————————————————————————————————————————————— */
+.sidebar-git-workflow-icon {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 12px;
+  height: 12px;
+}
+.sidebar-git-workflow-icon.state-open {
+  color: #a78bfa;
+}
+.sidebar-git-workflow-icon.state-merged,
+.sidebar-git-workflow-icon.state-pushed {
+  color: #6ddfa8;
+}
+.sidebar-git-workflow-icon.state-draft {
+  color: color-mix(in srgb, var(--text-secondary) 82%, transparent);
+}
+.sidebar-git-workflow-icon.state-closed,
+.sidebar-git-workflow-icon.state-failed {
+  color: #ff6b7a;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) .sidebar-git-workflow-icon.state-open {
+  color: #6d4fe0;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.sidebar-git-workflow-icon.state-merged, .sidebar-git-workflow-icon.state-pushed) {
+  color: #138a59;
+}
+:is(
+  [data-theme='light'],
+  [data-theme='citrus'],
+  [data-theme='mist'],
+  [data-theme='sage'],
+  [data-theme='alabaster']
+) :is(.sidebar-git-workflow-icon.state-closed, .sidebar-git-workflow-icon.state-failed) {
+  color: #d23b4e;
+}
+
+/* Git section chrome — subheaders group threads by workflow state. */
+.sidebar-git-group {
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-git-subheader {
+  padding: 4px 10px 2px;
+  font-size: calc(var(--font-size-xs) * 0.85);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--sidebar-text-secondary);
+  opacity: 0.85;
+}
+
+/* ————————————————————————————————————————————————————————————————
+   Active-row title ticker — the selected row's label slowly slides
+   between the thread title and its workspace/branch identity. Two
+   100%-width ellipsizing segments in an overflow-hidden strip; the
+   ease-in-out keyframes hold on each face. Only the text moves — the
+   row, icons and trailing chrome stay put. Disabled under
+   prefers-reduced-motion (static title, exactly the non-active look).
+   ———————————————————————————————————————————————————————————————— */
+.sidebar-title-ticker {
+  display: flex;
+  overflow: hidden;
+}
+.sidebar-title-ticker-strip {
+  display: flex;
+  width: 100%;
+  animation: sidebar-title-ticker-cycle 16s ease-in-out infinite;
+}
+.sidebar-title-ticker-seg {
+  flex: 0 0 100%;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  overflow: hidden;
+}
+.sidebar-title-ticker-seg > .sidebar-pinned-label,
+.sidebar-title-ticker-seg > .sidebar-recents-label,
+.sidebar-title-ticker-seg > .sidebar-chat-title {
+  width: 100%;
+}
+.sidebar-title-ticker-identity {
+  color: var(--sidebar-text-secondary);
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  display: inline-block;
+  line-height: inherit;
+}
+@keyframes sidebar-title-ticker-cycle {
+  0%,
+  42% {
+    transform: translateX(0);
+  }
+  50%,
+  92% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(0);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-title-ticker-strip {
+    animation: none;
+  }
+}

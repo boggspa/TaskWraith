@@ -39,6 +39,7 @@ const SIDEBAR_SECTION_IDS = [
   'workspace-boards',
   'pinned',
   'recents',
+  'git',
   'ensembles',
   'workspaces',
   'chats',
@@ -198,6 +199,9 @@ function renderSidebar(
     runningChatIds?: string[]
     updateSnapshot?: UpdateStateSnapshot | null
     onQuickUpdate?: () => void
+    activeChatIdentityTicker?: string | null
+    onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
+    onClearChatGitWorkflow?: (chatId: string) => void
   } = {}
 ) {
   const workspace = makeWorkspace()
@@ -246,6 +250,9 @@ function renderSidebar(
       onOpenInMultiview={options.onOpenInMultiview}
       updateSnapshot={options.updateSnapshot}
       onQuickUpdate={options.onQuickUpdate}
+      activeChatIdentityTicker={options.activeChatIdentityTicker}
+      onSetChatHiddenFromMainList={options.onSetChatHiddenFromMainList}
+      onClearChatGitWorkflow={options.onClearChatGitWorkflow}
     />
   )
 }
@@ -1922,5 +1929,107 @@ describe('SharesFooterPopover', () => {
     )
     expect(html).toContain('Design review')
     expect(html).toContain('Live')
+  })
+})
+
+describe('git workflow markers', () => {
+  const merged = { state: 'merged' as const, prNumber: 12, updatedAt: 40 }
+  const open = { state: 'open' as const, prNumber: 9, updatedAt: 30 }
+
+  it('renders the per-row git icon beside the provider logo and the Git section groups', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents', 'git')
+    })
+
+    const html = renderSidebar([
+      makeChat({ appChatId: 'merged-thread', title: 'Merged thread', gitWorkflow: merged }),
+      makeChat({ appChatId: 'open-thread', title: 'Open thread', gitWorkflow: open }),
+      makeChat({ appChatId: 'plain-thread', title: 'Plain thread' })
+    ])
+
+    expect(html).toContain('sidebar-git-workflow-icon state-merged')
+    expect(html).toContain('sidebar-git-workflow-icon state-open')
+    expect(html).toContain('Git: PR #12 merged')
+    // Section chrome: header + only the non-empty subheaders. Bound the slice
+    // at Recents (rendered after the Git section in DOM order) so assertions
+    // don't leak into other sections' rows.
+    const gitSection = html.slice(
+      html.indexOf('sidebar-git-section'),
+      html.indexOf('sidebar-recents-section')
+    )
+    expect(gitSection).toContain('sidebar-git-subheader')
+    expect(gitSection).toContain('PRs')
+    expect(gitSection).toContain('Merged')
+    expect(gitSection).not.toContain('>Pushed<')
+    expect(gitSection).not.toContain('>Closed<')
+    // The marker-less chat stays out of the Git section.
+    expect(gitSection).not.toContain('Plain thread')
+  })
+
+  it('renders no Git section when no chat carries a marker', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents', 'git')
+    })
+
+    const html = renderSidebar([makeChat({ appChatId: 'plain-thread', title: 'Plain thread' })])
+
+    expect(html).not.toContain('sidebar-git-section')
+  })
+
+  it('hiddenFromMainList drops a chat from Recents but keeps its Git entry', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents', 'git')
+    })
+
+    const html = renderSidebar([
+      makeChat({
+        appChatId: 'shipped-thread',
+        title: 'Shipped thread',
+        gitWorkflow: merged,
+        hiddenFromMainList: true
+      }),
+      makeChat({ appChatId: 'other-thread', title: 'Other thread' })
+    ])
+
+    const gitSectionIndex = html.indexOf('sidebar-git-section')
+    expect(gitSectionIndex).toBeGreaterThanOrEqual(0)
+    // The Git section keeps the hidden chat reachable…
+    const gitSection = html.slice(gitSectionIndex, html.indexOf('sidebar-recents-section'))
+    expect(gitSection).toContain('Shipped thread')
+    // …while Recents (rendered after the Git section in DOM order) drops it.
+    const recents = html.slice(html.indexOf('sidebar-recents-section'))
+    expect(recents).toContain('Other thread')
+    expect(recents).not.toContain('Shipped thread')
+  })
+
+  it('cycles the ACTIVE row label through the workspace/branch identity ticker', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar(
+      [
+        makeChat({ appChatId: 'active-thread', title: 'Active thread' }),
+        makeChat({ appChatId: 'idle-thread', title: 'Idle thread' })
+      ],
+      { activeChatId: 'active-thread', activeChatIdentityTicker: 'TaskWraith/master' }
+    )
+
+    expect(html).toContain('sidebar-title-ticker')
+    expect(html).toContain('TaskWraith/master')
+    // Exactly one row gets the ticker — the active one.
+    expect(html.split('sidebar-title-ticker-strip').length - 1).toBe(1)
+  })
+
+  it('renders no ticker without an identity string', () => {
+    stubSidebarStorage({
+      [COLLAPSED_SIDEBAR_SECTIONS_STORAGE_KEY]: collapseSectionsExcept('recents')
+    })
+
+    const html = renderSidebar([makeChat({ appChatId: 'active-thread', title: 'Active thread' })], {
+      activeChatId: 'active-thread'
+    })
+
+    expect(html).not.toContain('sidebar-title-ticker')
   })
 })

@@ -112,6 +112,11 @@ type MainAppLayoutSidebarProps = {
   handleStartSharedChat: NonNullable<SidebarProps['onCreateSharedChat']>
   handleToggleArchiveChat: NonNullable<SidebarProps['onToggleArchiveChat']>
   handleTogglePinChat: NonNullable<SidebarProps['onTogglePinChat']>
+  handleSetChatHiddenFromMainList: NonNullable<SidebarProps['onSetChatHiddenFromMainList']>
+  handleClearChatGitWorkflow: NonNullable<SidebarProps['onClearChatGitWorkflow']>
+  /** Workspace/branch identity ("TaskWraith/master") for the active chat's
+   * sidebar title ticker; null when the chat has no workspace context. */
+  activeChatSidebarIdentity: SidebarProps['activeChatIdentityTicker']
   handleTogglePinWorkspace: NonNullable<SidebarProps['onTogglePinWorkspace']>
   handleTogglePinWorkspaceBoard: NonNullable<SidebarProps['onTogglePinWorkspaceBoard']>
   handleToggleWorkflowEnabled: NonNullable<SidebarProps['onToggleWorkflowEnabled']>
@@ -392,6 +397,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   handleStoreKimiApiKey: any
   handleToggleArchiveChat: MainAppLayoutSidebarProps['handleToggleArchiveChat']
   handleTogglePinChat: MainAppLayoutSidebarProps['handleTogglePinChat']
+  handleSetChatHiddenFromMainList: MainAppLayoutSidebarProps['handleSetChatHiddenFromMainList']
+  handleClearChatGitWorkflow: MainAppLayoutSidebarProps['handleClearChatGitWorkflow']
+  activeChatSidebarIdentity: MainAppLayoutSidebarProps['activeChatSidebarIdentity']
   handleTogglePinWorkspace: MainAppLayoutSidebarProps['handleTogglePinWorkspace']
   handleTogglePinWorkspaceBoard: MainAppLayoutSidebarProps['handleTogglePinWorkspaceBoard']
   handleToggleWorkflowEnabled: MainAppLayoutSidebarProps['handleToggleWorkflowEnabled']

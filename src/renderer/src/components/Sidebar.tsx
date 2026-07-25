@@ -56,6 +56,13 @@ import { SidebarOverflowMenu, type SidebarOverflowMenuItem } from './SidebarOver
 import { WorkflowRunHistory } from './WorkflowRunHistory'
 import { ProviderGlyph } from './icons/ProviderGlyph'
 import { ProviderBrandLogoIcon } from './icons/ProviderBrandLogo'
+import { ToolFamilyIcon } from './icons/ToolFamilyIcon'
+import {
+  chatGitWorkflowLabel,
+  type ChatGitWorkflowSnapshot,
+  type ChatGitWorkflowState
+} from '../../../shared/chatGitWorkflow'
+import { chatGitWorkflowMarker, groupChatsByGitWorkflow } from '../lib/gitWorkflowSections'
 import { isSubThreadChat } from '../lib/chatScope'
 import {
   primarySurfaceForSidebarTabChange,
@@ -256,6 +263,15 @@ interface SidebarProps {
   /** Toggle the `pinned` flag on a workspace. Optional for the same
    * reason as `onTogglePinChat`. */
   onTogglePinWorkspace?: (workspaceId: string) => void
+  /** Hide/show a chat in the MAIN sections while its Git-section entry keeps
+   * it reachable. Only offered for chats carrying a git workflow marker. */
+  onSetChatHiddenFromMainList?: (chatId: string, hidden: boolean) => void
+  /** "Remove from Git" — clear the chat's git workflow marker (and un-hide
+   * it, so it can't be orphaned from every list). */
+  onClearChatGitWorkflow?: (chatId: string) => void
+  /** Workspace/branch identity ("TaskWraith/master") for the ACTIVE chat —
+   * the selected row's label slowly cycles between title and this string. */
+  activeChatIdentityTicker?: string | null
   /** Toggle the `archived` flag on a chat. Hides the chat from the main
    * sidebar lists; existing filters already drop archived chats so the
    * caller just needs to persist the flag. */
@@ -472,6 +488,7 @@ type SidebarSectionId =
   | 'workspace-boards'
   | 'pinned'
   | 'recents'
+  | 'git'
   | 'ensembles'
   | 'workspaces'
   | 'chats'
@@ -481,6 +498,7 @@ const SIDEBAR_SECTION_IDS: readonly SidebarSectionId[] = [
   'workspace-boards',
   'pinned',
   'recents',
+  'git',
   'ensembles',
   'workspaces',
   'chats',
@@ -1396,6 +1414,72 @@ function getChatProviderBadgeId(chat: ChatRecord): SidebarProviderBadgeId {
   return chat.chatKind === 'ensemble' ? 'ensemble' : chat.provider || 'gemini'
 }
 
+/** Satellite-family icon per git workflow state (same vocabulary as the
+ * composer's GitHubSatelliteRow: git / pull-request / merge / ci). */
+const GIT_WORKFLOW_ICON_FAMILY: Record<
+  ChatGitWorkflowState,
+  'git' | 'pull-request' | 'merge' | 'ci'
+> = {
+  pushed: 'git',
+  draft: 'pull-request',
+  open: 'pull-request',
+  merged: 'merge',
+  closed: 'pull-request',
+  failed: 'ci'
+}
+
+/**
+ * The single-slot per-row git workflow icon (sits beside the provider logo).
+ * Derived from the stable `chat` object inside the memoized rows: a marker
+ * change replaces the ChatRecord, so the `a.chat === b.chat` comparators
+ * already cover re-rendering. Tones mirror the satellite row's palette.
+ */
+export function SidebarGitWorkflowIcon({
+  marker
+}: {
+  marker: ChatGitWorkflowSnapshot
+}): ReactNode {
+  const label = chatGitWorkflowLabel(marker)
+  return (
+    <span
+      className={`sidebar-git-workflow-icon state-${marker.state}`}
+      title={`Git: ${label}`}
+      aria-label={`Git: ${label}`}
+    >
+      <ToolFamilyIcon family={GIT_WORKFLOW_ICON_FAMILY[marker.state]} size={12} />
+    </span>
+  )
+}
+
+/**
+ * Active-row title ticker: the selected row's label slowly slides between the
+ * thread title and its workspace/branch identity ("TaskWraith/master"). Pure
+ * CSS (see 01-sidebar.css `.sidebar-title-ticker*`): two 100%-width
+ * ellipsizing segments in an overflow-hidden strip, ease-in-out holds,
+ * disabled under prefers-reduced-motion. Rename editing bypasses the ticker
+ * at the call sites so double-click-to-rename keeps working.
+ */
+function SidebarTitleTicker({
+  identity,
+  className,
+  children
+}: {
+  identity: string
+  className: string
+  children: ReactNode
+}): ReactNode {
+  return (
+    <span className={`sidebar-title-ticker ${className}`}>
+      <span className="sidebar-title-ticker-strip">
+        <span className="sidebar-title-ticker-seg">{children}</span>
+        <span className="sidebar-title-ticker-seg sidebar-title-ticker-identity" aria-hidden>
+          {identity}
+        </span>
+      </span>
+    </span>
+  )
+}
+
 /** Prop bag spread onto a draggable recents row — the exact shape
  * `getChatTileDragProps` returns. */
 type SidebarChatTileDragProps = {
@@ -1407,7 +1491,7 @@ type SidebarChatTileDragProps = {
 
 interface SidebarCompactChatRowProps {
   chat: ChatRecord
-  variant: 'pinned' | 'recents'
+  variant: 'pinned' | 'recents' | 'git'
   surfaceId: string
   isSelected: boolean
   isRunning: boolean
@@ -1415,6 +1499,10 @@ interface SidebarCompactChatRowProps {
   needsInput: boolean
   isEditing: boolean
   query: string
+  /** Workspace/branch identity ("TaskWraith/master") the ACTIVE row's label
+   * slowly cycles to. null/undefined (every non-active row) renders the plain
+   * label. Threaded as a primitive so the comparator can gate it. */
+  identityTicker?: string | null
   /** Comparator proxies for the SSR-relevant fields of `dragHandlers`
    * (recents only). `dragHandlers` itself is a fresh object each render and
    * is intentionally NOT compared — these primitives gate re-render. */
@@ -1446,6 +1534,7 @@ function SidebarCompactChatRowInner({
   needsInput,
   isEditing,
   query,
+  identityTicker,
   dragHandlers,
   onSelect,
   onStartRename,
@@ -1454,8 +1543,20 @@ function SidebarCompactChatRowInner({
   buildMenuItems
 }: SidebarCompactChatRowProps): ReactNode {
   const badgeId = getChatProviderBadgeId(chat)
+  const gitMarker = chatGitWorkflowMarker(chat)
   const baseClass = variant === 'pinned' ? 'sidebar-pinned-item' : 'sidebar-recents-item'
   const labelClass = variant === 'pinned' ? 'sidebar-pinned-label' : 'sidebar-recents-label'
+  const editableTitle = (
+    <SidebarChatTitleEditable
+      chat={chat}
+      className={labelClass}
+      query={query}
+      isEditing={isEditing}
+      onStartEdit={() => onStartRename(chat, surfaceId)}
+      onSubmit={(next) => onSubmitRename(chat, next)}
+      onCancel={onCancelRename}
+    />
+  )
   return (
     <div
       role="button"
@@ -1483,15 +1584,14 @@ function SidebarCompactChatRowInner({
       {...(variant === 'recents' && dragHandlers ? dragHandlers : {})}
     >
       <ProviderBrandLogoIcon provider={badgeId} />
-      <SidebarChatTitleEditable
-        chat={chat}
-        className={labelClass}
-        query={query}
-        isEditing={isEditing}
-        onStartEdit={() => onStartRename(chat, surfaceId)}
-        onSubmit={(next) => onSubmitRename(chat, next)}
-        onCancel={onCancelRename}
-      />
+      {gitMarker && <SidebarGitWorkflowIcon marker={gitMarker} />}
+      {identityTicker && isSelected && !isEditing ? (
+        <SidebarTitleTicker identity={identityTicker} className={labelClass}>
+          {editableTitle}
+        </SidebarTitleTicker>
+      ) : (
+        editableTitle
+      )}
       {needsInput ? (
         <span className="sidebar-run-status tone-warning sidebar-compact-needs-input">
           Needs input
@@ -1522,7 +1622,8 @@ export function sidebarCompactChatRowPropsAreEqual(
     a.isEditing === b.isEditing &&
     a.draggable === b.draggable &&
     a.isDragging === b.isDragging &&
-    a.query === b.query
+    a.query === b.query &&
+    (a.identityTicker ?? null) === (b.identityTicker ?? null)
   )
 }
 
@@ -1544,6 +1645,9 @@ interface SidebarChatRowProps {
   liveSubThreadCount: number
   subThreadsExpanded: boolean
   query: string
+  /** Workspace/branch identity the ACTIVE row's label slowly cycles to —
+   * see SidebarCompactChatRowProps.identityTicker. */
+  identityTicker?: string | null
   onSelect: (chat: ChatRecord) => void
   onRowKeyDown: (event: KeyboardEvent<HTMLDivElement>, chat: ChatRecord) => void
   onToggleSubThreads: (
@@ -1579,6 +1683,7 @@ function SidebarChatRowInner({
   liveSubThreadCount,
   subThreadsExpanded,
   query,
+  identityTicker,
   onSelect,
   onRowKeyDown,
   onToggleSubThreads,
@@ -1588,6 +1693,7 @@ function SidebarChatRowInner({
   buildMenuItems
 }: SidebarChatRowProps): ReactNode {
   const provider = chat.provider || 'gemini'
+  const gitMarker = chatGitWorkflowMarker(chat)
   const lastRunStatus = getLastRunStatus(chat)
   const branchedBadgeTone = liveSubThreadCount > 0 ? 'active' : 'dim'
   const a11y = buildSidebarChatRowA11y(
@@ -1670,15 +1776,30 @@ function SidebarChatRowInner({
           ) : (
             <SidebarProviderLabel provider={chat.provider} />
           )}
-          <SidebarChatTitleEditable
-            chat={chat}
-            className="sidebar-chat-title"
-            query={query}
-            isEditing={isEditing}
-            onStartEdit={() => onStartRename(chat, surfaceId)}
-            onSubmit={(next) => onSubmitRename(chat, next)}
-            onCancel={onCancelRename}
-          />
+          {gitMarker && <SidebarGitWorkflowIcon marker={gitMarker} />}
+          {identityTicker && isSelected && !isEditing ? (
+            <SidebarTitleTicker identity={identityTicker} className="sidebar-chat-title">
+              <SidebarChatTitleEditable
+                chat={chat}
+                className="sidebar-chat-title"
+                query={query}
+                isEditing={isEditing}
+                onStartEdit={() => onStartRename(chat, surfaceId)}
+                onSubmit={(next) => onSubmitRename(chat, next)}
+                onCancel={onCancelRename}
+              />
+            </SidebarTitleTicker>
+          ) : (
+            <SidebarChatTitleEditable
+              chat={chat}
+              className="sidebar-chat-title"
+              query={query}
+              isEditing={isEditing}
+              onStartEdit={() => onStartRename(chat, surfaceId)}
+              onSubmit={(next) => onSubmitRename(chat, next)}
+              onCancel={onCancelRename}
+            />
+          )}
         </span>
         {showSubline && (
           <span className="sidebar-chat-subline">
@@ -1747,7 +1868,8 @@ export function sidebarChatRowPropsAreEqual(
     a.subThreadCount === b.subThreadCount &&
     a.liveSubThreadCount === b.liveSubThreadCount &&
     a.subThreadsExpanded === b.subThreadsExpanded &&
-    a.query === b.query
+    a.query === b.query &&
+    (a.identityTicker ?? null) === (b.identityTicker ?? null)
   )
 }
 
@@ -2821,6 +2943,9 @@ export function Sidebar({
   onCreateSubThread,
   onTogglePinChat,
   onTogglePinWorkspace,
+  onSetChatHiddenFromMainList,
+  onClearChatGitWorkflow,
+  activeChatIdentityTicker,
   onToggleArchiveChat,
   onDeleteChat,
   onRenameChat,
@@ -3083,6 +3208,7 @@ export function Sidebar({
         (chat) =>
           chat.chatKind === 'ensemble' &&
           !chat.archived &&
+          !chat.hiddenFromMainList &&
           getChatSidebarTab(chat) === activeChatSurfaceTab
       )
     : []
@@ -3090,10 +3216,16 @@ export function Sidebar({
   // include ensembles; feed workspace-scoped ensembles into the workspace
   // buckets so they appear under their workspace group as well as Ensembles.
   // getChatsByWorkspace still skips archived/global/missing workspaceId.
+  // hiddenFromMainList drops a chat from every MAIN section (its Git-section
+  // entry keeps it reachable), so filter the workspace feed here too.
   const chatsByWorkspace = getChatsByWorkspace(
-    ensembleModeEnabled ? [...regularChats, ...ensembleChats] : regularChats
+    (ensembleModeEnabled ? [...regularChats, ...ensembleChats] : regularChats).filter(
+      (chat) => !chat.hiddenFromMainList
+    )
   )
-  const globalChats = regularChats.filter((chat) => !chat.archived && chat.scope === 'global')
+  const globalChats = regularChats.filter(
+    (chat) => !chat.archived && !chat.hiddenFromMainList && chat.scope === 'global'
+  )
   const runningChatIdSet = new Set(runningChatIds)
   const sidebarSearchQuery = normalizeSearchText(sidebarSearch)
   const isSidebarSearchActive = sidebarSearchQuery.length > 0
@@ -3119,7 +3251,7 @@ export function Sidebar({
     : globalChats
   const visibleChatCounts = displayChats.reduce(
     (counts, chat) => {
-      if (!chat.archived) counts[getChatSidebarTab(chat)] += 1
+      if (!chat.archived && !chat.hiddenFromMainList) counts[getChatSidebarTab(chat)] += 1
       return counts
     },
     { chat: 0, threads: 0 }
@@ -3162,6 +3294,7 @@ export function Sidebar({
         (chat) =>
           chat.pinned === true &&
           !chat.archived &&
+          !chat.hiddenFromMainList &&
           getChatSidebarTab(chat) === activeChatSurfaceTab
       ),
     [activeChatSurfaceTab, topLevelChats]
@@ -3178,7 +3311,9 @@ export function Sidebar({
     ? topLevelChats.filter((chat) => chat.chatKind !== 'ensemble' || !chat.archived)
     : regularChats
   const recentChats = selectRecentChats(
-    recentSourceChats.filter((chat) => getChatSidebarTab(chat) === activeChatSurfaceTab),
+    recentSourceChats.filter(
+      (chat) => !chat.hiddenFromMainList && getChatSidebarTab(chat) === activeChatSurfaceTab
+    ),
     { limit: SIDEBAR_RECENTS_MAX }
   )
   const visibleEnsembleChats = isSidebarSearchActive
@@ -3188,11 +3323,28 @@ export function Sidebar({
     (chat) =>
       collaboratingChatIds.has(chat.appChatId) &&
       !chat.archived &&
+      !chat.hiddenFromMainList &&
       getChatSidebarTab(chat) === activeChatSurfaceTab
   )
   const visibleSharedChats = isSidebarSearchActive
     ? sharedChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
     : sharedChats
+
+  // Git section — an ADDITIONAL reference surface for chats carrying a git
+  // workflow marker (dual-surfacing, the sidebar norm: the same chat keeps
+  // rendering in Pinned/Recents/Workspaces/Chats/Shared exactly as before).
+  // Deliberately NOT filtered by hiddenFromMainList — this section is where
+  // hidden threads stay reachable; `archived` stays the stronger put-away.
+  const gitWorkflowChats = topLevelChats.filter(
+    (chat) =>
+      !chat.archived &&
+      getChatSidebarTab(chat) === activeChatSurfaceTab &&
+      chatGitWorkflowMarker(chat) !== null
+  )
+  const visibleGitWorkflowChats = isSidebarSearchActive
+    ? gitWorkflowChats.filter((chat) => chatMatchesSearch(chat, sidebarSearchQuery))
+    : gitWorkflowChats
+  const gitWorkflowGroups = groupChatsByGitWorkflow(visibleGitWorkflowChats)
 
   const visiblePinnedWorkspaces =
     activeChatSurfaceTab === 'chat'
@@ -3939,6 +4091,29 @@ export function Sidebar({
         group: 'primary',
         onSelect: () => onToggleArchiveChat(chat.appChatId, !chat.archived)
       })
+    }
+    // Git-workflow housekeeping — only offered once the thread carries a git
+    // marker (its Git-section entry keeps a hidden chat reachable, so hiding
+    // can never orphan it).
+    if (chatGitWorkflowMarker(chat)) {
+      if (onSetChatHiddenFromMainList) {
+        items.push({
+          id: 'hide-from-main',
+          label: chat.hiddenFromMainList
+            ? 'Show in main lists'
+            : 'Hide from main lists (keep in Git)',
+          group: 'secondary',
+          onSelect: () => onSetChatHiddenFromMainList(chat.appChatId, !chat.hiddenFromMainList)
+        })
+      }
+      if (onClearChatGitWorkflow) {
+        items.push({
+          id: 'remove-from-git',
+          label: 'Remove from Git section',
+          group: 'secondary',
+          onSelect: () => onClearChatGitWorkflow(chat.appChatId)
+        })
+      }
     }
     if (onAddChatToWorkspaceBoard && chat.scope !== 'global' && chat.workspaceId) {
       items.push({
@@ -5259,6 +5434,9 @@ export function Sidebar({
                         )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         query={sidebarSearchQuery}
+                        identityTicker={
+                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
                         draggable={false}
                         isDragging={false}
                         onSelect={onSelectChat}
@@ -5301,6 +5479,67 @@ export function Sidebar({
           )}
 
           {wrapHierarchySection(
+            'git',
+            gitWorkflowGroups.length > 0 ? (
+            <div className="sidebar-git-section">
+              <div className="sidebar-section-header">
+                <button
+                  type="button"
+                  className="sidebar-section-header-toggle"
+                  onClick={() => toggleSidebarSection('git')}
+                  aria-expanded={!isSectionCollapsed('git')}
+                  title={isSectionCollapsed('git') ? 'Expand Git' : 'Collapse Git'}
+                >
+                  <ChevronSymbolIcon isExpanded={!isSectionCollapsed('git')} />
+                  <h4 className="sidebar-section-title">Git</h4>
+                  <span className="sidebar-section-count">{visibleGitWorkflowChats.length}</span>
+                </button>
+              </div>
+              {!isSectionCollapsed('git') && (
+                <div className="sidebar-git-list">
+                  {gitWorkflowGroups.map((group) => (
+                    <div key={`git-group-${group.group}`} className="sidebar-git-group">
+                      <div className="sidebar-git-subheader">{group.label}</div>
+                      {previewSidebarList(`git:${group.group}`, group.chats).map((chat) => {
+                        const renameSurfaceId = `git-${group.group}-${chat.appChatId}`
+                        return (
+                          <SidebarCompactChatRow
+                            key={`git-chat-${group.group}-${chat.appChatId}`}
+                            chat={chat}
+                            variant="git"
+                            surfaceId={renameSurfaceId}
+                            isSelected={selectedChatId === chat.appChatId}
+                            isRunning={runningChatIdSet.has(chat.appChatId)}
+                            needsInput={chatHasPendingAgentQuestion(
+                              pendingAgentQuestionsByChatId,
+                              chat.appChatId
+                            )}
+                            isEditing={isChatRenameTarget(chat, renameSurfaceId)}
+                            query={sidebarSearchQuery}
+                            identityTicker={
+                              selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                            }
+                            draggable={false}
+                            isDragging={false}
+                            onSelect={onSelectChat}
+                            onStartRename={startChatRename}
+                            onSubmitRename={commitChatRename}
+                            onCancelRename={cancelChatRename}
+                            buildMenuItems={buildChatMenuItems}
+                          />
+                        )
+                      })}
+                      {renderSidebarShowMore(`git:${group.group}`, group.chats.length)}
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+            ) : null,
+            gitWorkflowGroups.length > 0
+          )}
+
+          {wrapHierarchySection(
             'recents',
             visibleRecentChats.length > 0 ? (
             <div className="sidebar-recents-section">
@@ -5335,6 +5574,9 @@ export function Sidebar({
                         )}
                         isEditing={isChatRenameTarget(chat, renameSurfaceId)}
                         query={sidebarSearchQuery}
+                        identityTicker={
+                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
                         draggable={dragHandlers.draggable}
                         isDragging={dragHandlers['data-dragging'] === 'true'}
                         dragHandlers={dragHandlers}
@@ -5768,6 +6010,11 @@ export function Sidebar({
                                     liveSubThreadCount={liveSubThreadCount}
                                     subThreadsExpanded={subThreadsExpanded}
                                     query={sidebarSearchQuery}
+                                    identityTicker={
+                                      selectedChatId === chat.appChatId
+                                        ? activeChatIdentityTicker
+                                        : null
+                                    }
                                     onSelect={onSelectChat}
                                     onRowKeyDown={handleChatRowKeyDown}
                                     onToggleSubThreads={toggleSubThreadsExpanded}
@@ -5851,6 +6098,9 @@ export function Sidebar({
                         liveSubThreadCount={0}
                         subThreadsExpanded={false}
                         query={sidebarSearchQuery}
+                        identityTicker={
+                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
                         onSelect={onSelectChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}
@@ -5961,6 +6211,9 @@ export function Sidebar({
                         liveSubThreadCount={0}
                         subThreadsExpanded={false}
                         query={sidebarSearchQuery}
+                        identityTicker={
+                          selectedChatId === chat.appChatId ? activeChatIdentityTicker : null
+                        }
                         onSelect={onSelectChat}
                         onRowKeyDown={handleChatRowKeyDown}
                         onToggleSubThreads={toggleSubThreadsExpanded}

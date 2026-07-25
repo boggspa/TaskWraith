@@ -15,6 +15,7 @@ const EXPECTED_DEFAULT_ORDER: SidebarHierarchySectionId[] = [
   'local-servers',
   'pinned',
   'recents',
+  'git',
   'workspaces',
   'chats',
   'shared',
@@ -64,6 +65,7 @@ describe('sidebarSectionOrder', () => {
       'pinned',
       'active-runs',
       'local-servers',
+      'git',
       'workspaces',
       'chats',
       'shared',
@@ -98,6 +100,8 @@ describe('sidebarSectionOrder', () => {
       [STORAGE_KEY]: JSON.stringify(customOrder)
     })
 
-    expect(loadSidebarHierarchyOrder()).toEqual(customOrder)
+    // A stored custom order is preserved; sections added after it was saved
+    // ('git') are appended by normalization rather than resetting the order.
+    expect(loadSidebarHierarchyOrder()).toEqual([...customOrder, 'git'])
   })
 })
