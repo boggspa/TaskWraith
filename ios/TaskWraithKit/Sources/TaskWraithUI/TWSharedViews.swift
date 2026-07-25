@@ -9137,6 +9137,11 @@ struct ComposerFloatingPillChrome: ViewModifier {
     /// 0…1 weight for `accent`; 0 is neutral even when `accent` is non-nil, so
     /// a caller can pass a colour unconditionally and let the data decide.
     var accentIntensity: Double = 0
+    /// 0…1 escalation BEYOND full accent, for data that has run off the end of
+    /// the normal scale. Deliberately understated: it widens the halo and lifts
+    /// the rim slightly rather than adding a new visual element, so the chip
+    /// reads as hotter without turning into an alert.
+    var accentOverdrive: Double = 0
     /// Segmented callers carry padding on their own segments so the dividers
     /// can reach the chip's edges.
     var horizontalPadding: CGFloat = 12
@@ -9152,13 +9157,26 @@ struct ComposerFloatingPillChrome: ViewModifier {
         RoundedRectangle(cornerRadius: 12, style: .continuous)
     }
 
-    private var weight: Double { max(0, min(1, accentIntensity)) }
+    /// Shared inner band for both floating chips. A caption-height readout and
+    /// a 16pt icon row are naturally different sizes, which is what made the
+    /// diff pill sit visibly shorter than the tools pill; padding to a common
+    /// content height is what actually delivers the lockstep this chrome's doc
+    /// comment promises. 20 is the tools pill's natural height (16pt glyph plus
+    /// 2pt of breathing room each side) — the diff pill's text grows into it.
+    /// NOTE: at very large Dynamic Type the diff pill's text can exceed this and
+    /// the two will diverge again; equalising there needs a measured height.
+    static let contentHeight: CGFloat = 20
 
-    /// Top-lit rim, warming toward the accent as the data heats up.
+    private var weight: Double { max(0, min(1, accentIntensity)) }
+    private var overdrive: Double { max(0, min(1, accentOverdrive)) }
+
+    /// Top-lit rim, warming toward the accent as the data heats up. Overdrive
+    /// pushes the blend the last of the way so a saturated chip still gains a
+    /// little presence.
     private var topRim: Color {
         let base = Color.white.opacity(0.34)
         guard let accent, weight > 0 else { return base }
-        return TWTheme.mix(accent.opacity(0.85), weight * 0.7, base)
+        return TWTheme.mix(accent.opacity(0.85), weight * (0.7 + 0.2 * overdrive), base)
     }
 
     /// Upward bounce off the composer below — always dimmer than `topRim`, or
@@ -9170,12 +9188,18 @@ struct ComposerFloatingPillChrome: ViewModifier {
     }
 
     /// Ambient halo. Neutral chips cast plain shade; hot ones bleed a little
-    /// accent, which is what makes "64 commits ahead" feel different from "1"
-    /// before you have read a single digit.
+    /// accent, which is what makes a far-out branch feel different from a fresh
+    /// one before you have read a single digit. Overdrive deepens the bleed.
     private var ambientShadow: Color {
         guard let accent, weight > 0 else { return .black.opacity(0.10) }
-        return TWTheme.mix(accent.opacity(0.22 * weight), 0.55, .black.opacity(0.10))
+        let bleed = 0.22 * weight + 0.16 * overdrive
+        return TWTheme.mix(accent.opacity(bleed), 0.55, .black.opacity(0.10))
     }
+
+    /// Halo spread. Grows with overdrive so an extreme chip sits in a wider,
+    /// softer pool of its own colour — the "more extreme" read without adding
+    /// a ring, a pulse, or anything that would compete with the composer.
+    private var ambientRadius: CGFloat { 18 + 8 * overdrive }
 
     @ViewBuilder
     private func rims(_ view: some View) -> some View {
@@ -9199,6 +9223,9 @@ struct ComposerFloatingPillChrome: ViewModifier {
     func body(content: Content) -> some View {
         let chrome = content
             .lineLimit(1)
+            // Common inner band FIRST, so both chips are the same height before
+            // any padding is added. See `contentHeight`.
+            .frame(minHeight: Self.contentHeight)
             .padding(.horizontal, horizontalPadding)
             // Taller than the previous 6pt pad; horizontal stays 12 so chips
             // don't grow wider.
@@ -9234,7 +9261,7 @@ struct ComposerFloatingPillChrome: ViewModifier {
                 }
             )
             .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
-            .shadow(color: ambientShadow, radius: 18, y: 8)
+            .shadow(color: ambientShadow, radius: ambientRadius, y: 8)
         } else {
             rims(
                 chrome
@@ -9242,7 +9269,7 @@ struct ComposerFloatingPillChrome: ViewModifier {
                     .overlay(pillShape.fill(Color.black.opacity(0.12)))
             )
             .shadow(color: .black.opacity(0.22), radius: 6, y: 2)
-            .shadow(color: ambientShadow, radius: 18, y: 8)
+            .shadow(color: ambientShadow, radius: ambientRadius, y: 8)
         }
     }
 }
@@ -9252,6 +9279,7 @@ extension View {
     func composerFloatingPillChrome(
         accent: Color? = nil,
         accentIntensity: Double = 0,
+        accentOverdrive: Double = 0,
         horizontalPadding: CGFloat = 12,
         glassID: String? = nil,
         glassNamespace: Namespace.ID? = nil
@@ -9259,6 +9287,7 @@ extension View {
         modifier(
             ComposerFloatingPillChrome(
                 accent: accent, accentIntensity: accentIntensity,
+                accentOverdrive: accentOverdrive,
                 horizontalPadding: horizontalPadding,
                 glassID: glassID, glassNamespace: glassNamespace))
     }
@@ -9376,12 +9405,33 @@ public struct ComposerDiffPill: View {
         self.glassNamespace = glassNamespace
     }
 
-    /// Rim heat from commits-ahead, saturating at 24. A branch that is one
-    /// commit out should not look like one that is sixty out, but neither
-    /// should a long-lived branch scream indefinitely.
+    /// Where rim heat saturates. Raised from 24 after real branches turned out
+    /// to sit far past it — at 24 anything beyond a day's work looked identical.
+    private static let accentSaturationCommits = 120.0
+    /// Where the escalation past saturation tops out.
+    private static let accentOverdriveCommits = 350.0
+
+    /// Rim heat: 0 → 1 across 0…120 commits ahead.
     private var accentIntensity: Double {
         guard commitsAhead > 0 else { return 0 }
-        return min(1, Double(commitsAhead) / 24)
+        return min(1, Double(commitsAhead) / Self.accentSaturationCommits)
+    }
+
+    /// Escalation BEYOND saturation: 0 → 1 across 120…350. Kept to a hue shift
+    /// and a wider halo — no new element, no pulse, nothing that competes with
+    /// the composer it sits above. The chip should read as hotter at a glance
+    /// without ever becoming something you have to dismiss.
+    private var accentOverdrive: Double {
+        let over = Double(commitsAhead) - Self.accentSaturationCommits
+        guard over > 0 else { return 0 }
+        return min(1, over / (Self.accentOverdriveCommits - Self.accentSaturationCommits))
+    }
+
+    /// Amber at saturation, easing toward the failure red as overdrive climbs.
+    /// Capped at a 0.55 blend: this is "you are a long way out", not an error,
+    /// and a full statusFailed rim would read as something being broken.
+    private var accentColor: Color {
+        TWTheme.mix(TWTheme.statusFailed, accentOverdrive * 0.55, TWTheme.statusAttention)
     }
 
     /// The rail needs both sides to mean anything; a pure-addition diff is
@@ -9563,8 +9613,9 @@ public struct ComposerDiffPill: View {
             // glass. The accent is passed unconditionally; `accentIntensity`
             // decides whether it shows, so a clean tree stays neutral chrome.
             .composerFloatingPillChrome(
-                accent: TWTheme.statusAttention,
+                accent: accentColor,
                 accentIntensity: accentIntensity,
+                accentOverdrive: accentOverdrive,
                 glassID: glassNamespace == nil ? nil : "tw.composer.pill.diff",
                 glassNamespace: glassNamespace
             )

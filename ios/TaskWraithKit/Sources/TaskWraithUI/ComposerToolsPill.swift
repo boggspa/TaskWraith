@@ -96,7 +96,13 @@ public struct ComposerToolsPill: View {
                     .ensemble, label: ensembleToggleTitle,
                     value: isEnsemble ? "On" : "Off"
                 ) {
-                    ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 14)
+                    // 1.2x the other glyphs' optical size (14 -> 16.8). The
+                    // ensemble mark is a fine multi-arm spiral and read smaller
+                    // than the solid SF glyphs beside it at matched sizes.
+                    // Drawn at 16.8 but still handed the 16pt cell below, so it
+                    // overflows by 0.4pt a side and the pill's own geometry —
+                    // padding, height, divider spacing — is untouched.
+                    ProviderGlyphIcon(provider: "ensemble", isEnsemble: true, size: 16.8)
                         .opacity(isEnsemble ? 1 : 0.55)
                 }
                 segmentDivider
