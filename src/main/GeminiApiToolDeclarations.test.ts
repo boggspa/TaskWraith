@@ -252,6 +252,35 @@ describe('buildGeminiFunctionDeclarations', () => {
     }
   })
 
+  it('gives a bare array STRING items rather than emitting items-less ARRAY', () => {
+    // Live 400 on 2026-07-25: two catalogue schemas declared `{ type: 'array' }`
+    // with no `items`. Gemini rejects the WHOLE request for that
+    // ("function_declarations[78]...items: missing field"), so every
+    // AntiGravity gemini-api run failed with exit 1 before any inference —
+    // regardless of which tool the model actually wanted.
+    const converted = jsonSchemaToGeminiSchema({ type: 'array' })
+    expect(converted).toEqual({ type: 'ARRAY', items: { type: 'STRING' } })
+    // An omitted `items` is a schema gap, not an unconvertible one — no warning.
+    expect(warnSpy).not.toHaveBeenCalled()
+  })
+
+  it('never emits an ARRAY without items anywhere in the real catalogue', () => {
+    // The sanity check above only inspects the TOP level, which is exactly how
+    // the live 400 got through. Walk every nested schema instead.
+    const declarations = buildGeminiFunctionDeclarations(createTaskWraithMcpToolDefinitions())
+    const offenders: string[] = []
+    const walk = (schema: GeminiFunctionDeclaration['parameters'], path: string): void => {
+      if (!schema || typeof schema !== 'object') return
+      if (schema.type === 'ARRAY' && !schema.items) offenders.push(path)
+      if (schema.items) walk(schema.items, `${path}.items`)
+      for (const [key, child] of Object.entries(schema.properties ?? {})) {
+        walk(child, `${path}.${key}`)
+      }
+    }
+    for (const declaration of declarations) walk(declaration.parameters, declaration.name)
+    expect(offenders).toEqual([])
+  })
+
   it('warns are silenced for plain conversions (regression guard)', () => {
     buildGeminiFunctionDeclarations([
       {

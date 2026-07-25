@@ -2052,7 +2052,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
             properties: {
               version: { type: 'string' },
               resources: { type: 'object' },
-              projects: { type: 'array' }
+              // `items` is REQUIRED even though JSON Schema treats a bare array
+              // as "any element": Gemini rejects the WHOLE tool catalogue with
+              // 400 INVALID_ARGUMENT when any array declaration omits it, so a
+              // single bare array here breaks every AntiGravity gemini-api run
+              // regardless of which tool the model meant to call.
+              projects: { type: 'array', items: { type: 'object' } }
             }
           },
           bundleId: {
@@ -2792,6 +2797,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
                   },
                   externalPathGrants: {
                     type: 'array',
+                    // Declared even though maxItems is 0 and the array must stay
+                    // empty — Gemini 400s the entire catalogue on any array
+                    // without `items`. Harmless here: an always-empty array
+                    // never has an element to validate.
+                    items: { type: 'string' },
                     maxItems: 0,
                     description: 'Forbidden for this tool; any external path grant is rejected.'
                   }

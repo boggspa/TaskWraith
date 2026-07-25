@@ -224,8 +224,15 @@ export function jsonSchemaToGeminiSchema(input: unknown): GeminiSchema | undefin
     // `additionalProperties` stripped silently — Gemini doesn't support.
   }
 
-  if (out.type === 'ARRAY' && working.items) {
-    const converted = jsonSchemaToGeminiSchema(working.items)
+  // EVERY ARRAY must carry `items`, including one whose source schema omits it.
+  // JSON Schema treats a bare `{ type: 'array' }` as "any element", but Gemini
+  // rejects it — and it rejects the ENTIRE request, so one bare array anywhere
+  // in the catalogue 400s every tool-advertising run with
+  // `function_declarations[N]...items: missing field` rather than degrading that
+  // one parameter. This guard used to be `&& working.items`, which skipped the
+  // branch (and its fallback) precisely in the omitted case.
+  if (out.type === 'ARRAY') {
+    const converted = working.items ? jsonSchemaToGeminiSchema(working.items) : undefined
     if (converted) {
       out.items = converted
     } else {
@@ -233,9 +240,11 @@ export function jsonSchemaToGeminiSchema(input: unknown): GeminiSchema | undefin
       // declaration still parses. The model will see "array of strings"
       // which is less precise but better than dropping the parameter.
       out.items = { type: 'STRING' }
-      console.warn(
-        '[GeminiApiToolDeclarations] array items schema unconvertible; falling back to STRING.'
-      )
+      if (working.items) {
+        console.warn(
+          '[GeminiApiToolDeclarations] array items schema unconvertible; falling back to STRING.'
+        )
+      }
     }
   }
 
