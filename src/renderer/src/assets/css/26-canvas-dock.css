@@ -1,0 +1,267 @@
+/* Right-dock Canvas panel — the sidebar variant of the floating Canvas windows.
+   Mirrors the corporate-clean dock language: neutral surfaces, rationed accent.
+   The embedded page itself is a WebContentsView floated over .canvas-pane-host
+   (positioned from main); everything here is the chrome around that region. */
+
+.canvas-dock-panel {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  color: var(--text-primary);
+  background: transparent;
+}
+
+.canvas-dock-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.18));
+}
+
+.canvas-dock-toolbar-title {
+  font: 600 12px/1.3 system-ui, sans-serif;
+  opacity: 0.82;
+  padding: 2px 2px;
+}
+
+.canvas-dock-tabs {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.canvas-dock-tabs::-webkit-scrollbar {
+  display: none;
+}
+
+.canvas-dock-tab {
+  flex: 0 1 auto;
+  min-width: 0;
+  max-width: 160px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  padding: 3px 8px;
+  font: 11px/1.3 system-ui, sans-serif;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.canvas-dock-tab:hover {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.1));
+}
+
+.canvas-dock-tab.is-active {
+  opacity: 1;
+  border-color: var(--border-subtle, rgba(127, 127, 127, 0.32));
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-dock-tab-label {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-dock-new {
+  flex-shrink: 0;
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 6px;
+  background: transparent;
+  color: inherit;
+  font: 14px/1 system-ui, sans-serif;
+  cursor: pointer;
+  opacity: 0.72;
+}
+
+.canvas-dock-new:hover,
+.canvas-dock-new.is-active {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-dock-launcher {
+  display: grid;
+  gap: 10px;
+  padding: 12px 12px 14px;
+  flex-shrink: 0;
+}
+
+.canvas-dock-launcher-group {
+  display: grid;
+  gap: 6px;
+}
+
+.canvas-dock-launcher-title {
+  font: 600 11px/1.35 system-ui, sans-serif;
+  opacity: 0.74;
+}
+
+.canvas-dock-launcher-hint {
+  font: 11px/1.35 system-ui, sans-serif;
+  opacity: 0.58;
+}
+
+.canvas-dock-launcher-divider {
+  height: 1px;
+  background: var(--border-subtle, rgba(127, 127, 127, 0.22));
+}
+
+.canvas-dock-launcher-sketch {
+  width: 100%;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.32));
+  border-radius: 6px;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+  color: inherit;
+  padding: 7px 10px;
+  font: 12px/1.2 system-ui, sans-serif;
+  text-align: left;
+  cursor: pointer;
+}
+
+.canvas-dock-launcher-sketch:disabled {
+  cursor: default;
+  opacity: 0.58;
+}
+
+.canvas-dock-error {
+  margin: 0 12px 8px;
+  font: 11px/1.35 system-ui, sans-serif;
+  color: var(--status-failed, #e5484d);
+  flex-shrink: 0;
+}
+
+.canvas-dock-pane-host {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.canvas-dock-popout,
+.canvas-dock-panel .canvas-pane-close {
+  flex-shrink: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  border: none;
+  border-radius: 5px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.62;
+}
+
+.canvas-dock-popout:hover,
+.canvas-dock-panel .canvas-pane-close:hover {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-dock-agent-section {
+  flex-shrink: 0;
+  border-top: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.18));
+  padding: 8px 12px 10px;
+  display: grid;
+  gap: 6px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.canvas-dock-agent-title {
+  font: 600 11px/1.35 system-ui, sans-serif;
+  opacity: 0.74;
+}
+
+.canvas-dock-agent-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+}
+
+.canvas-dock-agent-row {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  font: 11px/1.35 system-ui, sans-serif;
+}
+
+.canvas-dock-agent-status {
+  flex-shrink: 0;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--text-tertiary, rgba(127, 127, 127, 0.6));
+}
+
+.canvas-dock-agent-status.is-active {
+  background: var(--status-succeeded, #30a46c);
+}
+
+.canvas-dock-agent-status.is-opening {
+  background: var(--status-running, #f5a623);
+}
+
+.canvas-dock-agent-status.is-error {
+  background: var(--status-failed, #e5484d);
+}
+
+.canvas-dock-agent-label {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.canvas-dock-agent-driver {
+  flex-shrink: 0;
+  font: 10px/1.2 system-ui, sans-serif;
+  opacity: 0.55;
+  border: 1px solid var(--border-subtle, rgba(127, 127, 127, 0.28));
+  border-radius: 4px;
+  padding: 1px 5px;
+}
+
+.canvas-dock-agent-close {
+  flex-shrink: 0;
+  width: 18px;
+  height: 18px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  opacity: 0.55;
+  font: 12px/1 system-ui, sans-serif;
+}
+
+.canvas-dock-agent-close:hover {
+  opacity: 1;
+  background: var(--button-bg, rgba(127, 127, 127, 0.12));
+}
+
+.canvas-dock-agent-hint {
+  font: 10px/1.4 system-ui, sans-serif;
+  opacity: 0.45;
+}

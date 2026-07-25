@@ -5,6 +5,7 @@ export type RightDockTab =
   | 'inspector'
   | 'files'
   | 'office'
+  | 'canvas'
   | 'media'
   | 'references'
   | 'pins'
@@ -18,6 +19,7 @@ export interface RightDockTabAvailabilityInput {
   showInspector: boolean
   showFileEditor: boolean
   showOfficeSuite: boolean
+  isCanvasDockPanelOpen: boolean
   hasWorkspaceContext: boolean
   isChatMediaPanelOpen: boolean
   isProjectReferencesPanelOpen: boolean
@@ -39,6 +41,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'pins',
   'files',
   'office',
+  'canvas',
   'inspector',
   'terminal'
 ]
@@ -63,6 +66,7 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       label: 'Office',
       available: input.showOfficeSuite && input.hasWorkspaceContext
     },
+    { id: 'canvas' as const, label: 'Canvas', available: input.isCanvasDockPanelOpen },
     { id: 'media' as const, label: 'Media', available: input.isChatMediaPanelOpen },
     {
       id: 'references' as const,

@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { RightDockTab } from '../lib/rightDockState'
 import {
+  CanvasSurfaceSymbolIcon,
   ChatMediaIcon,
   FileMenuSelectionIcon,
   OfficeSuiteSymbolIcon,
@@ -21,7 +22,7 @@ export type RightDockHomeInspectorDestination =
 
 export type RightDockHomeSurface = Extract<
   RightDockTab,
-  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office'
+  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas'
 >
 
 type RightDockHomeTarget =
@@ -84,6 +85,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     group: 'session',
     target: { surface: 'office' },
     requires: 'workspace'
+  },
+  {
+    id: 'canvas',
+    label: 'Canvas',
+    description: 'Live web preview & sketch board',
+    group: 'session',
+    target: { surface: 'canvas' },
+    requires: 'chat'
   },
   {
     id: 'diff',
@@ -201,6 +210,7 @@ function destinationIcon(id: string): ReactNode {
   if (id === 'pins') return <PinnedMessagesIcon />
   if (id === 'files') return <FileMenuSelectionIcon />
   if (id === 'office') return <OfficeSuiteSymbolIcon />
+  if (id === 'canvas') return <CanvasSurfaceSymbolIcon />
   return (
     <HomeGlyph
       kind={id as 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'}

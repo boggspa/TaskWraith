@@ -409,6 +409,7 @@ import {
   GhostCompanionIcon,
   InfoCircleIcon,
   LinkCircleSymbolIcon,
+  CanvasSurfaceSymbolIcon,
   OfficeSuiteSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
@@ -2242,6 +2243,7 @@ function App(): React.JSX.Element {
   )
   const [showFileEditor, setShowFileEditor] = useState(false)
   const [showOfficeSuite, setShowOfficeSuite] = useState(false)
+  const [isCanvasDockPanelOpen, setIsCanvasDockPanelOpen] = useState(false)
   const [officeOpenRequest, setOfficeOpenRequest] = useState<{
     path: string
     nonce: number
@@ -3353,6 +3355,8 @@ function App(): React.JSX.Element {
         return showFileEditor
       case 'office':
         return showOfficeSuite
+      case 'canvas':
+        return isCanvasDockPanelOpen
       case 'inspector':
         return appearance.showInspector
       case 'terminal':
@@ -23788,6 +23792,7 @@ function App(): React.JSX.Element {
     showInspector: appearance.showInspector,
     showFileEditor,
     showOfficeSuite,
+    isCanvasDockPanelOpen,
     hasWorkspaceContext,
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
@@ -23901,6 +23906,14 @@ function App(): React.JSX.Element {
       hint: 'Word, sheets, decks, calendar & mail'
     },
     {
+      id: 'canvas',
+      label: 'Canvas',
+      icon: <CanvasSurfaceSymbolIcon />,
+      enabled: Boolean(currentChat),
+      group: 'work',
+      hint: 'Live web preview & sketch board'
+    },
+    {
       id: 'inspector',
       label: 'Inspect',
       icon: <ReviewSymbolIcon />,
@@ -23944,6 +23957,9 @@ function App(): React.JSX.Element {
       case 'office':
         setShowOfficeSuite(false)
         break
+      case 'canvas':
+        setIsCanvasDockPanelOpen(false)
+        break
       case 'inspector':
         appearance.update({ showInspector: false })
         break
@@ -23980,6 +23996,9 @@ function App(): React.JSX.Element {
         break
       case 'office':
         if (hasWorkspaceContext) setShowOfficeSuite(true)
+        break
+      case 'canvas':
+        if (currentChat) setIsCanvasDockPanelOpen(true)
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -29358,6 +29377,7 @@ function App(): React.JSX.Element {
     showCockpit,
     showFileEditor,
     showOfficeSuite,
+    isCanvasDockPanelOpen,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
     onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,

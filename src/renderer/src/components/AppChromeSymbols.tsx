@@ -77,6 +77,27 @@ export function FileMenuSelectionIcon() {
   )
 }
 
+export function CanvasSurfaceSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="2" y="2.8" width="12" height="10.4" rx="1.4" />
+        <path d="M2 5.6h12" />
+        <circle cx="3.9" cy="4.2" r="0.2" />
+        <circle cx="5.7" cy="4.2" r="0.2" />
+        <path d="M5 9.2l1.8 1.8 3.4-3.4" />
+      </svg>
+    </span>
+  )
+}
+
 export function OfficeSuiteSymbolIcon() {
   return (
     <span className="chat-corner-symbol">

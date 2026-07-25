@@ -61,6 +61,7 @@ import {
   ChatMediaPreviewOverlay
 } from '../../components/ChatMediaPanel'
 import { FileEditorPanel } from '../../components/FileEditorPanel'
+import { CanvasDockPanel } from '../../components/CanvasDockPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
 import {
   isOfficeDocumentPath,
@@ -462,6 +463,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showChangelogSheet,
   showFileEditor,
   showOfficeSuite,
+  isCanvasDockPanelOpen,
   officeOpenRequest,
   onOpenOfficeDocument,
   onRequestOfficeExternalAccess,
@@ -2554,6 +2556,10 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                     chatId={currentChat?.appChatId}
                     onRequestExternalAccess={onRequestOfficeExternalAccess}
                   />
+                )}
+
+                {activeRightDockTab === 'canvas' && isCanvasDockPanelOpen && currentChat && (
+                  <CanvasDockPanel chatId={currentChat.appChatId} />
                 )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (

@@ -16,7 +16,7 @@ export interface CanvasComposerButtonProps {
 }
 
 /** A user-facing hint for the common embed failures (no server / bad url). */
-function friendlyCanvasError(raw: string | undefined): string {
+export function friendlyCanvasError(raw: string | undefined): string {
   const msg = raw || 'Could not open the canvas.'
   if (/CONNECTION_REFUSED|ERR_|NAME_NOT_RESOLVED|timed out/i.test(msg)) {
     return "Couldn't load that URL — is a dev server running there?"

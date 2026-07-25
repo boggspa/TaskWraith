@@ -547,6 +547,7 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showCockpit: any
   showFileEditor: any
   showOfficeSuite: any
+  isCanvasDockPanelOpen: any
   officeOpenRequest: any
   onOpenOfficeDocument: any
   onRequestOfficeExternalAccess: any
