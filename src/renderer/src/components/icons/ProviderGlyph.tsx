@@ -32,7 +32,7 @@ const ENSEMBLE_SPECTRUM_STOPS = [
   ['.667', '#1A8562', 'ollama'],
   ['.733', '#0C8194', 'poolside'],
   ['.80', '#0073E6', 'kimi'],
-  ['.867', '#346EEC', 'gemini-google'],
+  ['.867', '#346EEC', 'gemini'],
   ['.933', '#3079BC', 'ibm'],
   ['1', '#757575', 'grok']
 ] as const
@@ -72,7 +72,7 @@ function ensembleGlyphBody(instanceId: string): ReactElement {
         >
           <stop offset="0" stopColor="#0C8194" data-brand="poolside" />
           <stop offset=".34" stopColor="#0073E6" data-brand="kimi" />
-          <stop offset=".68" stopColor="#346EEC" data-brand="gemini-google" />
+          <stop offset=".68" stopColor="#346EEC" data-brand="gemini" />
           <stop offset="1" stopColor="#3079BC" data-brand="ibm" />
         </linearGradient>
         <path id={channelId} d="M12 3.2c3.35 0 6.1 2.7 6.1 6.05 0 2.2-1.25 3.75-3.25 4.4" />

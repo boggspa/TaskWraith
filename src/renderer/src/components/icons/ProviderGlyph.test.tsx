@@ -46,7 +46,7 @@ describe('ProviderGlyph', () => {
 
     expect(new Set(spectrumIds).size).toBe(2)
     expect(html).toContain('data-brand="antigravity"')
-    expect(html).toContain('data-brand="gemini-google"')
+    expect(html).toContain('data-brand="gemini"')
     expect(html).toContain('provider-glyph-ensemble-hub-')
     expect(html).toContain('provider-glyph-ensemble-sparkle-')
     expect(html).toContain('stroke="#000000"')
