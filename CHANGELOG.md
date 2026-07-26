@@ -115,7 +115,23 @@ values. Successful writes are pushed narrowly to every open window and applied
 through the same validated appearance path, so the change appears without a
 reload. Read-only review seats can inspect the palette but cannot restyle it.
 
-Two properties of that channel are deliberately not negotiable. A restyle
+Two changes tighten what a Canvas approval actually covers. Permission to let
+an agent interact with a preview now applies **only to the surface you
+approved**, not to every preview opened afterwards in the same run — an agent
+can enumerate a chat's canvases, so an unscoped grant reached windows you never
+saw a prompt for. Because a workspace-wide "interact with any preview, in any
+chat, until revoked" grant is not a scope anyone can meaningfully consent to,
+that tier is gone; a grant persisted by an older build is inert rather than
+honoured.
+
+Relatedly, and worth stating plainly: when an agent asked to type into a field,
+the approval record kept the text it was about to type, and that record reached
+TaskWraith's durable history — even though the tool contract told agents the
+typed value was never recorded. New runs no longer store it. **Existing history
+is not rewritten**, so if a previously typed value was sensitive, clear that
+chat's history.
+
+Two properties of the appearance channel are deliberately not negotiable. A restyle
 always asks: `theme_tokens_set` prompts on every call, and no standing grant,
 trusted session, or session-wide auto-approve can quiet it — previously a
 single "allow for this session" on any unrelated tool silenced every later
