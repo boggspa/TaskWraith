@@ -115,6 +115,14 @@ values. Successful writes are pushed narrowly to every open window and applied
 through the same validated appearance path, so the change appears without a
 reload. Read-only review seats can inspect the palette but cannot restyle it.
 
+Two properties of that channel are deliberately not negotiable. A restyle
+always asks: `theme_tokens_set` prompts on every call, and no standing grant,
+trusted session, or session-wide auto-approve can quiet it — previously a
+single "allow for this session" on any unrelated tool silenced every later
+restyle. And the approval card's own controls no longer take their spacing from
+values an agent can write, so a restyle cannot crowd Accept and Reject together
+and turn a near-miss click into a grant.
+
 ### Every provider leaves a clearer receipt
 
 Run management now measures lifecycle assurance across all ten stable provider
