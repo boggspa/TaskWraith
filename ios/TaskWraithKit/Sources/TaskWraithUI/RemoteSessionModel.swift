@@ -1989,7 +1989,7 @@ public final class RemoteSessionModel: ObservableObject {
             ]},
             {"provider":"mistral","label":"Mistral","models":[
               {"name":"Devstral Small","blurb":"A fast, frugal 262K coding model — the better default for lane work."},
-              {"name":"Mistral Medium 3.5","blurb":"The 262K flagship: high thinking and image input, on your Mistral plan."}
+              {"name":"Mistral Medium 3.5","blurb":"The 262K flagship, with its full thinking ladder, on your Mistral plan."}
             ]},
             {"provider":"claude","label":"Claude","models":[
               {"name":"Opus 5","blurb":"Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode."}

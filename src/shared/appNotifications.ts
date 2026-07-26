@@ -202,8 +202,14 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             blurb: 'A fast, frugal 262K coding model — the better default for lane work.'
           },
           {
+            // NO image claim here, deliberately. The model supports images, but
+            // the capability contract is PER-PROVIDER and the seat declares
+            // `imageAttachments: false` (index.ts) because its default model,
+            // devstral-small, cannot — so the UI never offers attachment on a
+            // Mistral seat. Advertising it would promise an affordance that
+            // does not exist. Restore only if the contract becomes per-model.
             name: 'Mistral Medium 3.5',
-            blurb: 'The 262K flagship: high thinking and image input, on your Mistral plan.'
+            blurb: 'The 262K flagship, with its full thinking ladder, on your Mistral plan.'
           }
         ]
       },

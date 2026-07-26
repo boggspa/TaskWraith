@@ -184,6 +184,15 @@ describe('notification registry', () => {
       // `devstral-2` is the RETIRED ALIAS for mistral-medium-3.5, so a row
       // named "Devstral 2" would advertise the wrong model entirely.
       expect(model.name).not.toMatch(/devstral\s*-?\s*2\b/i)
+      // The seat declares `imageAttachments: false` — the contract is
+      // per-PROVIDER and its default model (devstral-small) has no vision — so
+      // the UI never offers attachment here. Promising it on the card would
+      // advertise an affordance that does not exist.
+      expect(model.blurb).not.toMatch(/image/i)
+      // Mistral publishes no numeric budget and has no usage endpoint; our
+      // meter is a local estimate. A card implying a known ceiling would be
+      // false, so no quota/allowance language.
+      expect(model.blurb).not.toMatch(/quota|allowance|unlimited|\bfree\b/i)
     }
     expect(newAdditions?.body).toContain('Vibe coding agent')
 
