@@ -1741,7 +1741,9 @@ struct ThreadDetailView: View {
 
     @ViewBuilder
     private var composerShellStack: some View {
-            VStack(spacing: 4) {
+            // Row gap halves in a short viewport — 4pt between every row in the
+            // stack is invisible in portrait and is transcript in landscape.
+            VStack(spacing: compactHeight ? 2 : 4) {
                 if let card {
                     // T72 — global chats keep the full composer: the Mac
                     // clamps phone-origin turns to plan mode (no file

@@ -26,6 +26,17 @@ struct Composer: View {
     /// Compact VERTICAL class is the reliable "phone is in landscape" signal —
     /// see `compactPickerDetail`.
     @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// Short viewport: iPhone in landscape, and only there (iPad reports a
+    /// regular vertical class in both orientations).
+    ///
+    /// The composer wraps a ~20pt text line in ~30pt of vertical padding — 8pt
+    /// on the input row plus 7pt on the body, doubled. That is invisible in
+    /// portrait's 874pt and expensive in landscape's ~342pt: with the keyboard
+    /// up it is the difference between roughly one line of visible transcript
+    /// and three. Halved here rather than removed, so the input still reads as
+    /// a field rather than a hairline.
+    private var compactHeight: Bool { verticalSizeClass == .compact }
     var runModel: String? = nil
     var runStatus: String? = nil
     /// Shell attachment: a diff header above / telemetry rail below flatten
@@ -753,7 +764,7 @@ struct Composer: View {
                     }
                 }
                 .padding(.horizontal, 10)
-                .padding(.vertical, shell.style == .chatgpt ? 4 : 7)
+                .padding(.vertical, shell.style == .chatgpt ? 4 : (compactHeight ? 4 : 7))
             } else {
                 HStack(spacing: 8) {
                     // Idle/unfocused: the collapsed control row is gone, so surface a
@@ -786,13 +797,14 @@ struct Composer: View {
                 .padding(.horizontal, 10)
                 // CS14 chatgpt: tighter row inset — the flat pill reads capsule,
                 // not sausage; every other shell keeps the shipped 8pt.
-                .padding(.vertical, shell.style == .chatgpt ? 4 : 8)
+                .padding(.vertical, shell.style == .chatgpt ? 4 : (compactHeight ? 4 : 8))
             }
         }
         .padding(.horizontal, foldsControlsIntoInput ? 10 : 12)
         .padding(
             .vertical,
-            shell.style == .chatgpt ? 4 : (foldsControlsIntoInput ? 7 : 9))
+            shell.style == .chatgpt
+                ? 4 : (compactHeight ? 3 : (foldsControlsIntoInput ? 7 : 9)))
         .background(composerBodyBackground)
         // CS12: input-owning shells (claude bubble / gemini-cursor capsule /
         // obsidian-alabaster rect) frame ONLY the input here; the footer is bare.
