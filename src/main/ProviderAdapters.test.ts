@@ -82,31 +82,16 @@ describe('ProviderAdapters', () => {
         workspaceGrants: true
       }
     })
+    // Derived from the registration baseline rather than a frozen literal: the
+    // claim is "every registered identity dispatches on run-agent", which is
+    // true of the set whatever its size. A hardcoded copy only re-states the
+    // baseline's length, and goes red on provider additions that did not break
+    // anything.
     expect(
-      (
-        [
-          'gemini',
-          'codex',
-          'claude',
-          'kimi',
-          'grok',
-          'cursor',
-          'ollama',
-          'antigravity',
-          'pi'
-        ] as const
-      ).map((provider) => defaultProviderDescriptor(provider).runChannel)
-    ).toEqual([
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent',
-      'run-agent'
-    ])
+      PROVIDER_ADAPTER_REGISTRATION_IDS.map(
+        (provider) => defaultProviderDescriptor(provider).runChannel
+      )
+    ).toEqual(PROVIDER_ADAPTER_REGISTRATION_IDS.map(() => 'run-agent'))
   })
 
   it('enforces one adapter per provider and requires registered providers', () => {
@@ -125,7 +110,7 @@ describe('ProviderAdapters', () => {
     expect(() => registry.require('claude')).toThrow(/not registered/)
   })
 
-  it('can enforce the exact nine-provider registration baseline', () => {
+  it('can enforce the exact registration baseline', () => {
     const registry = createProviderAdapterRegistry(
       PROVIDER_ADAPTER_REGISTRATION_IDS.map((provider) => adapter(provider)),
       { requireCompleteProviderSet: true }
@@ -137,13 +122,22 @@ describe('ProviderAdapters', () => {
   })
 
   it('reports every missing adapter when complete registration is required', () => {
-    expect(() =>
-      createProviderAdapterRegistry([adapter('codex'), adapter('claude')], {
-        requireCompleteProviderSet: true
-      })
-    ).toThrow(
-      'Provider adapter registry is incomplete (missing: gemini, kimi, grok, cursor, ollama, antigravity, pi).'
+    const registered: ProviderId[] = ['codex', 'claude']
+    // The claim under test is "the report names *every* absentee, in baseline
+    // order" — not which identities happen to be in the baseline today. Spelling
+    // the absentees out froze the second fact into the first, so adding a
+    // provider failed this test with a diff that says nothing about adapters.
+    const expectedMissing = PROVIDER_ADAPTER_REGISTRATION_IDS.filter(
+      (provider) => !registered.includes(provider)
     )
+    expect(expectedMissing.length).toBeGreaterThan(0)
+
+    expect(() =>
+      createProviderAdapterRegistry(
+        registered.map((provider) => adapter(provider)),
+        { requireCompleteProviderSet: true }
+      )
+    ).toThrow(`missing: ${expectedMissing.join(', ')}`)
   })
 
   it('returns serializable descriptors without runtime functions', () => {
