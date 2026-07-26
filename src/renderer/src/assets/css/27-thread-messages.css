@@ -105,3 +105,77 @@
   border-color: var(--accent-warn, rgba(224, 158, 62, 0.55));
   color: var(--accent-warn, #e09e3e);
 }
+
+/* Send affordance. Warnings sit ABOVE the button on purpose: a caution the user
+ * reads after committing is a caution that did not work. */
+
+.thread-message-send {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thread-message-send-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-message-send-label {
+  font-size: 12px;
+  color: var(--text-dim, #8b8b8b);
+}
+
+.thread-message-send-select {
+  flex: 1;
+  min-width: 0;
+}
+
+.thread-message-send-body {
+  min-height: 76px;
+  resize: vertical;
+  font-size: 13px;
+  line-height: 1.5;
+}
+
+.thread-message-send-counter {
+  font-size: 11px;
+  color: var(--text-dim, #8b8b8b);
+  text-align: right;
+}
+
+.thread-message-send-counter[data-over='true'] {
+  color: var(--accent-danger, #d9584f);
+}
+
+.thread-message-send-wake {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.thread-message-send-warning {
+  font-size: 11px;
+  line-height: 1.45;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid var(--accent-warn, rgba(224, 158, 62, 0.45));
+  color: var(--accent-warn, #e09e3e);
+}
+
+.thread-message-send-outcome {
+  font-size: 12px;
+}
+
+.thread-message-send-outcome[data-tone='ok'] {
+  color: var(--accent-ok, #6bbf74);
+}
+
+.thread-message-send-outcome[data-tone='warn'] {
+  color: var(--accent-warn, #e09e3e);
+}
+
+.thread-message-send-outcome[data-tone='error'] {
+  color: var(--accent-danger, #d9584f);
+}

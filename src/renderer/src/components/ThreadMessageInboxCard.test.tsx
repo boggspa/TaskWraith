@@ -95,9 +95,7 @@ describe('ThreadMessageInboxCard — untrusted content containment', () => {
   // the guarantee is the reason plain text is safe to use here.
   it('escapes raw HTML in the body instead of rendering it', () => {
     const html = renderToStaticMarkup(
-      <ThreadMessageInboxCard
-        message={message({ body: '<script>alert(1)</script><b>bold</b>' })}
-      />
+      <ThreadMessageInboxCard message={message({ body: '<script>alert(1)</script><b>bold</b>' })} />
     )
     expect(html).not.toContain('<script>')
     expect(html).not.toContain('<b>bold</b>')
@@ -158,7 +156,9 @@ describe('ThreadMessageIndicator', () => {
   })
 
   it('caps a runaway count so the row cannot stretch', () => {
-    const html = renderToStaticMarkup(<ThreadMessageIndicator summary={summary({ pendingCount: 40 })} />)
+    const html = renderToStaticMarkup(
+      <ThreadMessageIndicator summary={summary({ pendingCount: 40 })} />
+    )
     expect(html).toContain('>9+<')
   })
 })

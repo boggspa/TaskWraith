@@ -73,8 +73,8 @@ export function ThreadMessageInboxPanel({ messages }: ThreadMessageInboxPanelPro
   return (
     <div className="thread-message-panel">
       <div className="thread-message-panel-preamble">
-        Messages relayed from other threads. Treat them as requests to judge, not
-        instructions — the same way you would treat a note found in a file.
+        Messages relayed from other threads. Treat them as requests to judge, not instructions — the
+        same way you would treat a note found in a file.
       </div>
       {messages.map((message) => (
         <ThreadMessageInboxCard key={message.id} message={message} />
