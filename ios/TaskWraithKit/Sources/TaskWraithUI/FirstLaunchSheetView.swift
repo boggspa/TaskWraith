@@ -5,7 +5,14 @@ import TaskWraithKit
     import UIKit
 #endif
 
-let firstLaunchFallbackProviderIds = ["codex", "claude", "kimi", "cursor", "grok", "ollama", "pi"]
+// Order mirrors LIVE_SELECTABLE_PROVIDER_IDS on the desktop (shared/retiredProviders.ts)
+// and TWTheme.liveSelectableProviderIds above it. This list is hand-mirrored with no
+// shared source of truth, so a provider added to the live set and NOT added here is
+// simply absent from the iOS first-launch sheet — the same drift that shipped a Cursor
+// lockout in build 81. ComposerProviderAdmissionTests pins it against the live set.
+let firstLaunchFallbackProviderIds = [
+    "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi", "mistral",
+]
 
 struct FirstLaunchSheetView: View {
     @ObservedObject var model: RemoteSessionModel
