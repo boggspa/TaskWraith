@@ -154,6 +154,12 @@ Additive change to the grant record: an optional `surfaceId`. `resolvePermission
 
 Net UX: one prompt still covers a whole drive session — it is just bound to one surface.
 
+**Why not `forcePrompt` instead?** There is a cheaper, already-tested mechanism: `mcpToolAlwaysPrompts` ([McpRouteGuards.ts:36](../src/main/mcp/McpRouteGuards.ts:36)) sets `forcePrompt`, which is checked *ahead of* every auto-approval path — Boss auto-approval returns null on it ([BossmanAutoApproval.ts:78](../src/main/BossmanAutoApproval.ts:78)) and the trusted-session write path defers to it. It is one line, touches no shared type, and is the strongest available statement of "no standing grant, trusted session or session-YOLO may ever silence this". The appearance feature chose exactly this for `theme_tokens_set` over adding a service id.
+
+**It is the wrong tool here, and the reason is the shape of the work.** A drive session performs hundreds of actions; a modal per click is unusable, and an unusable gate is worse than a correctly-scoped one because people route around it. That is the same reasoning that ruled out cloning `canvasEval`'s per-call receipt for actuation (§3). The user *should* be able to say "yes, drive this surface" once — the defect was never that `canvasInteraction` is grantable, it is that the grant names no surface. So scope the grant; don't abolish it.
+
+The two mechanisms are not exclusive, and `canvas_eval` uses both: always-prompts *and* non-grantable. `forcePrompt` remains the right answer for the consequential-action subset in §7, where the per-call cost is the point.
+
 ### 3.3 Instance epoch (new primitive)
 
 There is **no TaskWraith instance identifier anywhere** in the MCP or approval path. `appRunId` is `provider-timestamp-random` ([RunRoute.ts:10](../src/main/run/RunRoute.ts:10)) with no instance component; `ApprovalLedgerRecord` has no instance field; the broker request payload has none. The only instance-ish artifacts are implicit — the per-process broker token ([index.ts:2345](../src/main/index.ts:2345)) and the `userData`-derived socket path.
@@ -304,6 +310,21 @@ Concretely, for each tier:
 - **Tier 5 (general desktop):** the invariant is the reason Tier 5 needs its own risk acceptance rather than inheriting Tier 4's. A general screen-and-input capability can reach our own chrome by construction, so it would need a positive exclusion enforced at the executor, and that exclusion is only as good as its window-identity check.
 
 The user-presence guard (§5.1) is *not* a substitute. It stops the agent talking over a human; it does nothing about an agent driving chrome while the human is away, which is precisely the unattended case AppDrive is for.
+
+### 6a.1 The rule has already caught something
+
+Recorded so this reads as a tested invariant rather than an untested aspiration.
+
+The appearance-customisation feature planned a "Tier 3" that would load TaskWraith's own renderer into a Canvas as a sandboxed preview, so an agent could rehearse a restyle against a copy instead of the real chrome. Checked against §6a, it collapsed into two variants with no safe-and-useful middle:
+
+- **With a preload** it is a second live copy of the app with real IPC, and `canvas_click` reaches real chrome through the front door — a direct violation.
+- **Without a preload** `window.api` is undefined and the renderer dies on mount — safe and useless.
+
+**The useful version is precisely the dangerous one.** A third path (a mock-IPC harness serving canned data, essentially Storybook) is safe and genuinely useful, but it is a large build that drifts from reality the moment anyone adds an IPC surface.
+
+**Tier 3 was cancelled, not deferred**, and the premise turned out to be weak independently: the feature's live-apply broadcast means the *user* sees a restyle instantly, and for a taste decision the human is the better feedback loop than an agent screenshotting a copy. So no canvas ever hosts our renderer, and §6a stays structurally true rather than policy-true — the stronger form.
+
+The secondary threat that motivated the conditions is worth keeping even though this particular design is gone: a pixel-identical screenshot of an app state that never happened is **evidence forgery**, and it doesn't need to *be* the app to work — it only needs to look like it. If a self-preview is ever revisited, the load-bearing condition is that any watermark or preview chrome must be stamped **main-side at capture time** (in `screenshot()` after `capturePage`), never in the page, because `canvas_eval` can strip anything the page contains. And `validateCanvasUrl` must stay http(s)-only — a `file://`/`app://` carve-out would weaken the SSRF guard for *every* canvas, so a non-http source wants a separate driver kind, ideally one where `evaluate` is unsupported.
 
 ## 7. Consequential-action confirmation
 
@@ -476,6 +497,10 @@ This codebase punishes incomplete seam sweeps — `canvasInteraction` and `canva
 ## 13. Open questions for the next session
 
 1. Does `grokToolKindToService` sit on the live path for canvas tools, or do Grok canvas calls always route through the MCP-bridge preview? Needs runtime tracing.
-2. How exactly do the `ToolClassTaxonomy` read-only block and `PLAN_INSTRUMENT_ADVERTISE_TOOLS` compose for a `workspace_write` tool under `plan`? `canvas_click` is both, so the answer exists in the tree — confirm it rather than infer.
+2. ~~How do the class axis and `PLAN_INSTRUMENT_ADVERTISE_TOOLS` compose?~~ **ANSWERED 2026-07-26, verified at the source.** They are two orthogonal layers that AND, and the class axis does **not** gate the plan tier at all:
+   - `classifyTool(name) === 'workspace_write'` feeds exactly two consumers — `isReadOnlyBlockedTool` ([ToolClassTaxonomy.ts:330](../src/main/ToolClassTaxonomy.ts:330)), which is the **read_only deny**, and `isMutatingTaskWraithMcpTool` ([McpRouteGuards.ts:17](../src/main/mcp/McpRouteGuards.ts:17)), which is the **unrouted-mutation guard** (a mutating bridge call with no run/chat route is rejected outright, `:69` and `:106`).
+   - `PLAN_INSTRUMENT_ADVERTISE_TOOLS` ([McpAutoAllowedTools.ts:246](../src/main/mcp/McpAutoAllowedTools.ts:246)) is **bridge visibility only**. Plan-tier safety comes from the main-side service gate (`canvasInteraction: 'ask'`), backed by the `SAFETY INVARIANT` test at [McpAutoAllowedTools.test.ts:287](../src/main/mcp/McpAutoAllowedTools.test.ts:287) asserting no plan instrument is also in `MCP_AUTO_ALLOWED_TOOLS`.
+
+   Being `workspace_write` therefore neither adds nor removes anything under `plan`. **Trap for new verbs:** `PLAN_INSTRUMENT_ADVERTISE_TOOLS` is a `.filter()` over three hard-coded literals plus `MEDIA_EDITING_TOOLS`, so a new verb is not picked up automatically and must be added by name. It fails safe (forget it → invisible to plan seats, not silently permitted), but the invariant test only iterates that derived list, so a new verb inherits the not-auto-allowed guarantee **only once added** — add to both or neither.
 3. Should Tier 1's loopback fence be origin-based (`isLoopbackHost`) or Run-attempt-based (only URLs `detectedUrls` produced)? Run-attempt-based is tighter and ties the lease to a build under test, which is the QA framing — but it forbids driving a hand-typed `localhost` URL.
 4. Sandbox posture for the process under test — real seatbelt profile, or documented non-containment?
