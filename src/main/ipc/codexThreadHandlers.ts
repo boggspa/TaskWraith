@@ -1,6 +1,6 @@
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
 import type { AgentThreadForkCapability, ChatRecord, ProviderId } from '../store/types'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 
 type ThreadListParams = {
   limit?: number
@@ -152,7 +152,7 @@ function forkCapability(
       detail: 'Creates a provider-native Codex thread fork through thread/fork.'
     }
   }
-  if (!isLiveSelectableProvider(provider)) {
+  if (!isLiveSelectableProvider(provider) && provider !== ANTIGRAVITY_PROVIDER_ID) {
     return {
       provider,
       label: 'Fork unavailable',
@@ -163,6 +163,10 @@ function forkCapability(
       detail: `${providerDisplayName(provider)} is retained for historical records only.`
     }
   }
+  // Capability describes the fork mechanism, not conditional-provider
+  // admission. AntiGravity's emulated fork still crosses the injected
+  // createEmulatedFork boundary, where ChatService enforces the configured
+  // in-app lane before any sibling chat or run can be created.
   return {
     provider,
     label: 'Emulated fork',

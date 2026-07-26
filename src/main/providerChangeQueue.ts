@@ -39,7 +39,7 @@
  */
 
 import type { ChatRecord, ProviderId } from './store/types'
-import { isLiveSelectableProvider } from '../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isRetiredProvider } from '../shared/retiredProviders'
 
 /** Metadata key under `chat.providerMetadata` that holds a queued switch. */
 export const PENDING_PROVIDER_CHANGE_KEY = 'pendingProviderChange'
@@ -69,7 +69,8 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'grok' ||
     value === 'cursor' ||
     value === 'ollama' ||
-    value === 'pi'
+    value === 'pi' ||
+    value === ANTIGRAVITY_PROVIDER_ID
   )
 }
 
@@ -182,8 +183,11 @@ export function applyPendingProviderChangeOnFinalize(chat: ChatRecord): ChatReco
   const pending = readPendingProviderChange(chat)
   if (!pending) return chat
   // Pending changes are executable control state, not historical attribution.
-  // Never promote a provider that is retained only for decode/render.
-  if (!isLiveSelectableProvider(pending.provider)) {
+  // The queue/persistence boundary owns dynamic admission before this pure
+  // finalize helper receives the record. Preserve an already-admitted
+  // conditional AntiGravity change, but never promote a provider retained only
+  // for historical decode/render.
+  if (isRetiredProvider(pending.provider)) {
     return clearPendingProviderChange(chat)
   }
   return applyProviderChange(chat, pending)

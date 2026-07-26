@@ -5453,7 +5453,9 @@ export class EnsembleOrchestrator {
       sourceRunId: runId,
       queuedAt: this.deps.nowIso(),
       makeParticipantId: () =>
-        `agent-roster-${this.deps.now().toString(36)}-${++participantSequence}`
+        `agent-roster-${this.deps.now().toString(36)}-${++participantSequence}`,
+      isProviderSelectable: (provider) =>
+        selectableProviderIds(this.deps.getSettings()).includes(provider)
     })
     if (!resolution.ok) {
       if (resolution.error === 'not_authorized') {

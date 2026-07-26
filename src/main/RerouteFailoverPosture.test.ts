@@ -140,4 +140,41 @@ describe('selectFailoverTarget', () => {
       })
     ).toBe('codex')
   })
+
+  it('accepts AntiGravity only as an explicitly preferred, dynamically admitted target', () => {
+    expect(
+      selectFailoverTarget({
+        failedProvider: 'claude',
+        liveProviders: ['codex', 'antigravity'],
+        isPaused: () => false,
+        preferred: 'antigravity'
+      })
+    ).toBe('antigravity')
+
+    expect(
+      selectFailoverTarget({
+        failedProvider: 'claude',
+        liveProviders: ['codex'],
+        isPaused: () => false,
+        preferred: 'antigravity'
+      })
+    ).toBe('codex')
+  })
+
+  it('does not silently choose AntiGravity from the automatic fallback order', () => {
+    expect(
+      selectFailoverTarget({
+        failedProvider: 'claude',
+        liveProviders: ['antigravity', 'codex'],
+        isPaused: () => false
+      })
+    ).toBe('codex')
+    expect(
+      selectFailoverTarget({
+        failedProvider: 'claude',
+        liveProviders: ['antigravity'],
+        isPaused: () => false
+      })
+    ).toBeNull()
+  })
 })

@@ -142,6 +142,11 @@ export interface BuildEnsembleRosterPresetApplyInput {
   sourceRunId?: string
   queuedAt: string
   makeParticipantId: () => string
+  /**
+   * Main-owned, settings-aware offer predicate. Conditional providers must use
+   * their consent/credential wall here rather than the static live set alone.
+   */
+  isProviderSelectable?: (provider: ProviderId) => boolean
 }
 
 function fail(
@@ -165,9 +170,10 @@ function normalizedFanoutPolicy(preset: EnsembleRosterPreset): EnsembleFanoutPol
 }
 
 function validatePortableParticipant(
-  participant: EnsembleRosterParticipantSnapshot
+  participant: EnsembleRosterParticipantSnapshot,
+  isProviderSelectable: (provider: ProviderId) => boolean
 ): Extract<BuildEnsembleRosterPresetApplyResult, { ok: false }> | null {
-  if (!isLiveSelectableProvider(participant.provider)) {
+  if (!isProviderSelectable(participant.provider)) {
     return fail(
       'provider_unavailable',
       `Roster preset import rejected: ${participant.provider} is not a live selectable provider.`
@@ -304,7 +310,10 @@ export function buildEnsembleRosterPresetApply(
     )
   }
   for (const participant of preset.participants) {
-    const validation = validatePortableParticipant(participant)
+    const validation = validatePortableParticipant(
+      participant,
+      input.isProviderSelectable ?? isLiveSelectableProvider
+    )
     if (validation) return validation
   }
 

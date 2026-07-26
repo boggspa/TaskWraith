@@ -440,6 +440,63 @@ describe('ChatService', () => {
     expect(store.saveChat).toHaveBeenCalledWith(saved)
   })
 
+  it('preserves a newly queued AntiGravity change only after dynamic API-key admission', () => {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    const current = makeChat({ provider: 'claude', providerMetadata: {} })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+    const incoming = {
+      ...current,
+      providerMetadata: {
+        pendingProviderChange: {
+          provider: 'antigravity' as const,
+          queuedAt: '2026-07-19T00:00:00.000Z'
+        }
+      }
+    }
+
+    expect(() => new ChatService(deps).saveChat(incoming)).toThrow(
+      'antigravity is unavailable for new chats or delegated runs.'
+    )
+    expect(store.saveChat).not.toHaveBeenCalled()
+
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    try {
+      const saved = new ChatService(deps).saveChat(incoming)
+      expect(saved.providerMetadata?.pendingProviderChange).toMatchObject({
+        provider: 'antigravity'
+      })
+      expect(store.saveChat).toHaveBeenCalledWith(saved)
+    } finally {
+      resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    }
+  })
+
+  it('preserves an already-admitted canonical AntiGravity queue entry if credentials later change', () => {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+    const current = makeChat({
+      provider: 'claude',
+      providerMetadata: {
+        pendingProviderChange: {
+          provider: 'antigravity',
+          queuedAt: '2026-07-19T00:00:00.000Z'
+        }
+      }
+    })
+    const store = makeStatefulStore(current)
+    const { deps } = makeDeps({ appStore: store })
+
+    const saved = new ChatService(deps).saveChat({
+      ...current,
+      title: 'Queue remains visible'
+    })
+
+    expect(saved.providerMetadata?.pendingProviderChange).toEqual(
+      current.providerMetadata?.pendingProviderChange
+    )
+    expect(store.saveChat).toHaveBeenCalledWith(saved)
+  })
+
   it('clears canonical historical pending-provider control state on save', () => {
     const current = makeChat({
       provider: 'claude',

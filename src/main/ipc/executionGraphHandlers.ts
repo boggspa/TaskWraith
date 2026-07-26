@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto'
 import { ipcMain, type IpcMainInvokeEvent } from 'electron'
-import { isLiveSelectableProvider } from '../../shared/retiredProviders'
+import { ANTIGRAVITY_PROVIDER_ID, isLiveSelectableProvider } from '../../shared/retiredProviders'
 import {
   compileExecutionGraphRevision,
   stableExecutionGraphStringify
@@ -183,9 +183,17 @@ function clientRequestId(value: unknown): string {
 }
 
 function providerId(value: unknown): ProviderId {
-  if (typeof value !== 'string' || !isLiveSelectableProvider(value)) {
+  if (
+    typeof value !== 'string' ||
+    (!isLiveSelectableProvider(value) && value !== ANTIGRAVITY_PROVIDER_ID)
+  ) {
     throw new Error('Execution provider is invalid or retired.')
   }
+  // This is structural parsing, not AntiGravity admission. New Stack commands
+  // still pass through `prepareQueueJob`, whose main-owned runtime admission
+  // accepts the conditional provider only when its in-app lane is configured.
+  // An exact committed retry may return its durable receipt before consulting
+  // today's mutable configuration, but cannot create new work.
   return value as ProviderId
 }
 

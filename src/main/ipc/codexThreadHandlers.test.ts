@@ -77,6 +77,11 @@ describe('registerCodexThreadHandlers', () => {
       kind: 'emulated',
       requiresLinkedSession: false
     })
+    await expect(handlerFor('fork:get-capability')({}, 'antigravity')).resolves.toMatchObject({
+      provider: 'antigravity',
+      kind: 'emulated',
+      requiresLinkedSession: false
+    })
     await expect(handlerFor('fork:get-capability')({}, 'gemini')).resolves.toMatchObject({
       provider: 'gemini',
       kind: 'unsupported'
@@ -202,6 +207,51 @@ describe('registerCodexThreadHandlers', () => {
       sourceProviderThreadId: 'provider-thread-1',
       sourceModel: 'sonnet'
     })
+  })
+
+  it('lets the authoritative chat-creation boundary admit an AntiGravity emulated fork', async () => {
+    const { deps } = createDeps()
+    deps.createEmulatedFork = vi.fn(
+      () =>
+        ({
+          appChatId: 'antigravity-fork-1',
+          title: 'AntiGravity fork',
+          parentChatId: 'chat-1'
+        }) as any
+    )
+    registerCodexThreadHandlers(deps)
+
+    await expect(
+      handlerFor('fork-agent-thread')({}, 'antigravity', 'chat-1', {
+        chatId: 'chat-1',
+        model: 'gemini-2.5-pro'
+      })
+    ).resolves.toMatchObject({
+      ok: true,
+      provider: 'antigravity',
+      kind: 'emulated',
+      chatId: 'antigravity-fork-1'
+    })
+    expect(deps.createEmulatedFork).toHaveBeenCalledWith({
+      provider: 'antigravity',
+      chatId: 'chat-1',
+      sourceProviderThreadId: undefined,
+      sourceModel: 'gemini-2.5-pro'
+    })
+  })
+
+  it('propagates AntiGravity admission rejection from the authoritative chat boundary', async () => {
+    const { deps } = createDeps()
+    deps.createEmulatedFork = vi.fn(() => {
+      throw new Error('antigravity is unavailable for new chats or delegated runs')
+    })
+    registerCodexThreadHandlers(deps)
+
+    await expect(
+      handlerFor('fork-agent-thread')({}, 'antigravity', 'chat-1', {
+        chatId: 'chat-1'
+      })
+    ).rejects.toThrow('antigravity is unavailable for new chats or delegated runs')
   })
 
   it('binds detached emulated forks to the owned chat and linked provider session', async () => {

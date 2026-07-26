@@ -1282,6 +1282,12 @@ function fenceSavedProviderAdmission(incoming: ChatRecord, current: ChatRecord |
   if (incomingPending && !isLiveSelectableProvider(incomingPending.provider)) {
     const currentPending = current ? readPendingProviderChange(current) : null
     if (currentPending?.provider !== incomingPending.provider) assertLiveProviderId(incomingPending.provider)
+    // A conditional AntiGravity switch that reaches this point was either
+    // admitted just above against the configured API-key lane or already
+    // existed in canonical state. Preserve that user-authored control state so
+    // turn-end finalization can apply it. Current run dispatch still performs
+    // its own credential admission; this does not widen the static offer set.
+    if (incomingPending.provider === ANTIGRAVITY_PROVIDER_ID) return incoming
     // An old queued switch is actionable runtime control, not identity needed
     // for transcript rendering. Clear it on the first accepted historical save.
     return clearPendingProviderChange(incoming)

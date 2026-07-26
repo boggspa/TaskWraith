@@ -343,6 +343,29 @@ describe('EnsembleRosterPresetApply', () => {
     expect(result).toMatchObject({ ok: false, error: 'boss_provider_mismatch' })
   })
 
+  it('uses the main-owned conditional-provider predicate for roster admission', () => {
+    const source = preset()
+    source.participants[2].provider = 'antigravity'
+
+    const admitted = buildEnsembleRosterPresetApply({
+      chat: soloChat('codex'),
+      preset: source,
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      makeParticipantId: idFactory('boss', 'captain', 'antigravity'),
+      isProviderSelectable: (provider) => provider !== 'gemini'
+    })
+    expect(admitted.ok).toBe(true)
+
+    const walled = buildEnsembleRosterPresetApply({
+      chat: soloChat('codex'),
+      preset: source,
+      queuedAt: '2026-07-12T12:00:00.000Z',
+      makeParticipantId: idFactory('unused'),
+      isProviderSelectable: (provider) => provider !== 'gemini' && provider !== 'antigravity'
+    })
+    expect(walled).toMatchObject({ ok: false, error: 'provider_unavailable' })
+  })
+
   it('lets an existing Boss load a preset and preserves the authority seat ids', () => {
     const chat = ensembleChat()
     const result = buildEnsembleRosterPresetApply({

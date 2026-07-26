@@ -131,6 +131,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
         {
           id: String(record.id),
           runId: record.runId as string,
+          provider: record.provider as RunQueueJob['provider'],
           ...(runtimeProfileId ? { runtimeProfileId } : {})
         }
       )
@@ -329,6 +330,79 @@ describe('registerExecutionGraphHandlers', () => {
     expect(appendInput?.objective).toBe(
       (savedContent?.request as { prompt?: unknown } | undefined)?.prompt
     )
+  })
+
+  it('accepts AntiGravity only when main-owned queue preparation admits its configured lane', () => {
+    const deps = createDeps()
+    registerExecutionGraphHandlers(deps)
+
+    handlerFor('execution-runs:append-stack-step')(
+      {},
+      {
+        clientRequestId: 'renderer-antigravity-one',
+        workspaceId: 'workspace-one',
+        rootChatId: 'chat-one',
+        provider: 'antigravity',
+        stepTitle: 'Inspect with AntiGravity',
+        objective: 'Inspect this change.',
+        request: { prompt: 'Inspect this change.' }
+      }
+    )
+
+    expect(deps.prepareQueueJob).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'antigravity' }),
+      expect.any(Object)
+    )
+    expect(deps.coordinator.appendStackStep).toHaveBeenCalledWith(
+      expect.objectContaining({ provider: 'antigravity' })
+    )
+  })
+
+  it('propagates conditional AntiGravity admission rejection before creating Stack work', () => {
+    const deps = createDeps()
+    deps.prepareQueueJob = vi.fn(() => {
+      throw new Error('antigravity is unavailable for new runs')
+    })
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          clientRequestId: 'renderer-antigravity-rejected',
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'antigravity',
+          stepTitle: 'Inspect with AntiGravity',
+          objective: 'Inspect this change.',
+          request: { prompt: 'Inspect this change.' }
+        }
+      )
+    ).toThrow('antigravity is unavailable for new runs')
+    expect(deps.repository.saveRunTemplate).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
+  })
+
+  it('keeps historical Gemini invalid before main-owned queue preparation', () => {
+    const deps = createDeps()
+    registerExecutionGraphHandlers(deps)
+
+    expect(() =>
+      handlerFor('execution-runs:append-stack-step')(
+        {},
+        {
+          clientRequestId: 'renderer-gemini-rejected',
+          workspaceId: 'workspace-one',
+          rootChatId: 'chat-one',
+          provider: 'gemini',
+          stepTitle: 'Inspect with Gemini',
+          objective: 'Inspect this change.',
+          request: { prompt: 'Inspect this change.' }
+        }
+      )
+    ).toThrow('Execution provider is invalid or retired.')
+    expect(deps.prepareQueueJob).not.toHaveBeenCalled()
+    expect(deps.coordinator.appendStackStep).not.toHaveBeenCalled()
   })
 
   it('rejects an objective that diverges from the canonical prepared prompt', () => {

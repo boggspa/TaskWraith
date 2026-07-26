@@ -55,6 +55,22 @@ describe('readPendingProviderChange', () => {
     })
     expect(hasPendingProviderChange(c)).toBe(true)
   })
+
+  it('parses an already-admitted conditional AntiGravity change', () => {
+    const c = chat({
+      providerMetadata: {
+        [PENDING_PROVIDER_CHANGE_KEY]: {
+          provider: 'antigravity',
+          providerMetadata: { antigravityRuntimeMode: 'gemini-api' }
+        }
+      }
+    })
+
+    expect(readPendingProviderChange(c)).toEqual({
+      provider: 'antigravity',
+      providerMetadata: { antigravityRuntimeMode: 'gemini-api' }
+    })
+  })
 })
 
 describe('queueProviderChange (running path)', () => {
@@ -254,6 +270,26 @@ describe('applyPendingProviderChangeOnFinalize (turn-end)', () => {
     expect(finalized.provider).toBe('claude')
     expect(finalized.linkedProviderSessionId).toBe('sess-claude')
     expect(finalized.providerMetadata?.selectedModelType).toBeUndefined()
+    expect(hasPendingProviderChange(finalized)).toBe(false)
+  })
+
+  it('applies an already-admitted queued AntiGravity switch without widening the static offer set', () => {
+    const queued = queueProviderChange(
+      chat({ provider: 'claude', linkedProviderSessionId: 'sess-claude' }),
+      {
+        provider: 'antigravity',
+        providerMetadata: {
+          antigravityRuntimeMode: 'gemini-api',
+          selectedModelType: 'gemini-2.5-pro'
+        }
+      }
+    )
+
+    const finalized = applyPendingProviderChangeOnFinalize(queued)
+
+    expect(finalized.provider).toBe('antigravity')
+    expect(finalized.linkedProviderSessionId).toBeUndefined()
+    expect(finalized.providerMetadata?.antigravityRuntimeMode).toBe('gemini-api')
     expect(hasPendingProviderChange(finalized)).toBe(false)
   })
 })
