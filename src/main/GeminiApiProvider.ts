@@ -224,7 +224,25 @@ export interface GeminiApiProviderDeps {
   usageModelId?: string
   /** `runtime` field stamped on init/result events. Defaults to 'api-sdk'. */
   runtimeLabel?: string
-  runManager: Pick<RunManager<any>, 'attachAbortController' | 'finish'>
+  runManager: Pick<
+    RunManager<any>,
+    | 'attachAbortController'
+    | 'canAdmitTransport'
+    | 'confirmTerminalStatus'
+    | 'finish'
+    | 'get'
+    | 'getClaimedTerminalStatus'
+  >
+  /** Main-owned history/persistence authority for this exact provider run. */
+  isRunPersistenceAuthorized?: (provider: ProviderId, route: AgentRunRoute) => boolean
+  /**
+   * Publishes an exact operation before the in-process SDK transport adopts
+   * the run. Its settlement remains live through terminal projection/finish.
+   */
+  beginTransportOperation?: (runId: string) => {
+    readonly settlement: Promise<void>
+    readonly markTransportClosed: () => void
+  }
   getSettings: () => AppSettings
   getGeminiAuthProfiles: () => GeminiAuthProfile[]
   getDefaultGeminiAuthProfileId: () => string | null
@@ -348,6 +366,75 @@ function syntheticApiSessionId(route: AgentRunRoute): string {
   return `${API_SESSION_ID_PREFIX}${route.appChatId || route.appRunId || 'unknown'}`
 }
 
+/**
+ * The AbortSignal owns cancellation of the SDK request itself. The RunManager
+ * check is an independent lifecycle fence: a graph terminal claim can make a
+ * run ineligible before an async SDK/tool boundary observes the abort.
+ */
+function geminiApiRunMayContinue(
+  route: AgentRunRoute,
+  deps: GeminiApiProviderDeps,
+  signal: AbortSignal
+): boolean {
+  if (signal.aborted) return false
+  if (!route.appRunId) return true
+  if (!deps.runManager.canAdmitTransport(route.appRunId, true)) return false
+  if (deps.isRunPersistenceAuthorized) {
+    try {
+      if (!deps.isRunPersistenceAuthorized(deps.providerTag ?? 'gemini', route)) return false
+    } catch {
+      return false
+    }
+  }
+  return true
+}
+
+function settleGeminiApiTerminal(input: {
+  sender: Electron.WebContents
+  tag: ProviderId
+  route: AgentRunRoute
+  deps: GeminiApiProviderDeps
+  status: Extract<RunSessionStatus, 'completed' | 'failed' | 'cancelled'>
+  exitCode: number
+  projectBeforeExit?: () => void
+}): void {
+  const status =
+    input.deps.runManager.getClaimedTerminalStatus(input.route.appRunId) ?? input.status
+  try {
+    input.projectBeforeExit?.()
+  } finally {
+    try {
+      input.deps.sendAgentCompatExit(input.sender, input.tag, input.exitCode, input.route)
+    } finally {
+      try {
+        input.deps.runManager.finish(input.route.appRunId, status)
+      } finally {
+        input.deps.runManager.confirmTerminalStatus(input.route.appRunId, status)
+      }
+    }
+  }
+}
+
+function terminalizeGeminiApiCancellation(
+  sender: Electron.WebContents,
+  tag: ProviderId,
+  route: AgentRunRoute,
+  deps: GeminiApiProviderDeps
+): void {
+  const status = deps.runManager.getClaimedTerminalStatus(route.appRunId) ?? 'cancelled'
+  // 130 = 128 + SIGINT; matches the convention CLI-killed runs use so the
+  // renderer's "Stopped" treatment kicks in. Preserve a pre-existing failed
+  // graph claim instead of projecting it as a user cancellation.
+  settleGeminiApiTerminal({
+    sender,
+    tag,
+    route,
+    deps,
+    status,
+    exitCode: status === 'cancelled' ? 130 : 1
+  })
+}
+
 function selectGeminiAuthProfile(
   payload: AgentRunPayload,
   deps: GeminiApiProviderDeps
@@ -462,7 +549,11 @@ function chunkText(chunk: any): string {
 async function loadImageParts(
   imagePaths: ReadonlyArray<string>,
   client: any,
-  deps: GeminiApiProviderDeps
+  deps: GeminiApiProviderDeps,
+  requestControl: {
+    readonly abortSignal: AbortSignal
+    readonly mayContinue: () => boolean
+  }
 ): Promise<GeminiContentPart[]> {
   if (!imagePaths.length) return []
   const reader =
@@ -479,6 +570,7 @@ async function loadImageParts(
     })
   const parts: GeminiContentPart[] = []
   for (const imagePath of imagePaths) {
+    if (!requestControl.mayContinue()) break
     if (!imagePath || typeof imagePath !== 'string') continue
     const mimeType = sniffImageMimeType(imagePath)
     if (!mimeType) {
@@ -489,11 +581,13 @@ async function loadImageParts(
     try {
       bytes = await reader(imagePath)
     } catch (error) {
+      if (!requestControl.mayContinue()) break
       console.warn(
         `[GeminiApiProvider] Image read threw for ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
       )
       continue
     }
+    if (!requestControl.mayContinue()) break
     if (!bytes) continue
     if (bytes.length <= INLINE_IMAGE_MAX_BYTES) {
       parts.push({
@@ -517,8 +611,9 @@ async function loadImageParts(
     try {
       const uploaded = await client.files.upload({
         file: imagePath,
-        config: { mimeType }
+        config: { mimeType, abortSignal: requestControl.abortSignal }
       })
+      if (!requestControl.mayContinue()) break
       const fileUri = typeof uploaded?.uri === 'string' ? uploaded.uri : ''
       if (!fileUri) {
         console.warn(`[GeminiApiProvider] files.upload returned no uri for ${imagePath}; skipping.`)
@@ -531,6 +626,7 @@ async function loadImageParts(
         }
       })
     } catch (error) {
+      if (!requestControl.mayContinue()) break
       console.warn(
         `[GeminiApiProvider] files.upload failed for ${imagePath}: ${error instanceof Error ? error.message : String(error)}`
       )
@@ -729,9 +825,16 @@ export async function tryRunGeminiApi(
     // system and geminiApiRuntime gate deliberately do not participate.
     const auth = deps.resolveAuthOverride()
     if (!auth.ok) {
-      deps.sendAgentCompatError(event.sender, tag, auth.error, normalizedRoute)
-      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-      deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
+      settleGeminiApiTerminal({
+        sender: event.sender,
+        tag,
+        route: normalizedRoute,
+        deps,
+        status: 'failed',
+        exitCode: 1,
+        projectBeforeExit: () =>
+          deps.sendAgentCompatError(event.sender, tag, auth.error, normalizedRoute)
+      })
       return true
     }
     apiKey = auth.apiKey
@@ -749,472 +852,641 @@ export async function tryRunGeminiApi(
       // Profile exists but the key didn't decrypt (likely safeStorage
       // unavailability). Surface a useful error instead of silently
       // falling back so the user knows their profile is misconfigured.
-      deps.sendAgentCompatError(
-        event.sender,
+      settleGeminiApiTerminal({
+        sender: event.sender,
         tag,
-        `Gemini API profile "${profile.label}" has no usable API key; check Settings.`,
-        normalizedRoute
-      )
-      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-      deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
+        route: normalizedRoute,
+        deps,
+        status: 'failed',
+        exitCode: 1,
+        projectBeforeExit: () =>
+          deps.sendAgentCompatError(
+            event.sender,
+            tag,
+            `Gemini API profile "${profile.label}" has no usable API key; check Settings.`,
+            normalizedRoute
+          )
+      })
       return true
     }
     apiKey = decrypted
   }
 
+  // SDK discovery is still shared provider setup. Keep the coordinator's
+  // starting owner (and its setup signal) intact so an unavailable SDK can
+  // fall through to CLI without falsely adopting API lifecycle ownership.
+  const setupSignal = payload.providerSetupAbortSignal ?? new AbortController().signal
+  if (!geminiApiRunMayContinue(normalizedRoute, deps, setupSignal)) {
+    terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+    return true
+  }
+
   // Load SDK (allow test override).
   const sdk = await (deps.loadSdk || loadOptionalGeminiSdk)()
+  if (!geminiApiRunMayContinue(normalizedRoute, deps, setupSignal)) {
+    terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+    return true
+  }
   const GoogleGenAI = sdk?.GoogleGenAI || sdk?.default?.GoogleGenAI
   if (typeof GoogleGenAI !== 'function') {
     // SDK missing in this environment — defer to CLI.
     return false
   }
 
-  // Set up cancellation: bind an AbortController to the run so the
-  // existing 'Stop' button (which routes through runManager.cancel)
-  // aborts the stream mid-flight. Mirrors tryRunClaudeSdk's pattern.
-  const controller = new AbortController()
-  if (normalizedRoute.appRunId) {
-    deps.runManager.attachAbortController(normalizedRoute.appRunId, controller)
-  }
-
-  const model = resolveGeminiApiModel(payload.model)
-  const sessionId = syntheticApiSessionId(normalizedRoute)
-
-  // Emit `init` so the renderer's stream adapter starts the run.
-  deps.sendAgentCompatLine(
-    event.sender,
-    tag,
-    {
-      type: 'init',
-      session_id: sessionId,
-      model,
-      timestamp: new Date().toISOString(),
-      provider: tag,
-      runtime: runtimeLabel,
-      fallback: false
-    },
-    normalizedRoute
-  )
-
-  let client: any
-  try {
-    client = new GoogleGenAI({ apiKey })
-  } catch (error) {
-    const message = `Failed to initialise Gemini API client: ${error instanceof Error ? error.message : String(error)}`
-    deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
-    deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-    deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
-    return true
-  }
-
-  if (deps.prepareToolContext) {
-    try {
-      await deps.prepareToolContext(event.sender, payload, normalizedRoute, sessionId)
-      if (normalizedRoute.appRunId) {
-        deps.runManager.attachAbortController(normalizedRoute.appRunId, controller)
+  let transportOperation:
+    | {
+        readonly settlement: Promise<void>
+        readonly markTransportClosed: () => void
       }
+    | undefined
+  if (normalizedRoute.appRunId && deps.beginTransportOperation) {
+    try {
+      transportOperation = deps.beginTransportOperation(normalizedRoute.appRunId)
     } catch (error) {
-      const message = `Failed to prepare Gemini API tool context: ${error instanceof Error ? error.message : String(error)}`
-      deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
-      deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-      deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
+      settleGeminiApiTerminal({
+        sender: event.sender,
+        tag,
+        route: normalizedRoute,
+        deps,
+        status: 'failed',
+        exitCode: 1,
+        projectBeforeExit: () =>
+          deps.sendAgentCompatError(
+            event.sender,
+            tag,
+            `Gemini API transport ownership could not be acquired: ${
+              error instanceof Error ? error.message : String(error)
+            }`,
+            normalizedRoute
+          )
+      })
       return true
     }
   }
 
-  // Phase M1 Step 5: multi-turn history replay.
-  // The API path is stateless per request — there's no `--resume` token
-  // — so we read the chat's prior `ChatMessage[]` and prepend them as
-  // Gemini `Content[]` before the current user prompt. This is what
-  // gives "what's 2+2?" → "double that" the context to answer correctly.
-  // When `getChat` is absent (older tests, or when running without a
-  // chat record), or when the payload has no `appChatId` (global
-  // ad-hoc run, etc.), we degrade gracefully to a single-turn request
-  // — the same behaviour Steps 2–4 had.
-  //
-  // ENSEMBLE SEAT TURNS NEVER REPLAY: the orchestrator's composed prompt
-  // already embeds the tagged shared transcript (plus any seat compaction
-  // summary), so replaying `chat.messages` on top would double-inject the
-  // entire conversation — once as peer-tagged material, once as raw
-  // user/model turns claiming the seat itself said everything. Seats run
-  // single-turn on the composed prompt, exactly like the other
-  // injected-context seats (kimi/grok).
-  const isEnsembleSeatTurn = Boolean(payload.ensembleRun)
-  const priorChat =
-    deps.getChat && payload.appChatId && !isEnsembleSeatTurn
-      ? deps.getChat(payload.appChatId)
-      : null
-  const contents: any[] = buildGeminiTurnContents(priorChat, payload.prompt)
+  const controller = new AbortController()
+  let abortFromSetup: (() => void) | undefined
+  try {
+    // The API transport exists only after SDK discovery succeeds. Adopt the
+    // exact RunManager session now and bridge any setup abort that raced this
+    // synchronous handoff into the request-owned controller.
+    abortFromSetup = (): void => controller.abort()
+    if (setupSignal.aborted) {
+      controller.abort()
+    } else {
+      setupSignal.addEventListener('abort', abortFromSetup, { once: true })
+    }
+    if (normalizedRoute.appRunId) {
+      deps.runManager.attachAbortController(normalizedRoute.appRunId, controller)
+    }
+    if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+      terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+      return true
+    }
 
-  // Phase M1 Step 7: image input. Load + classify each path into a
-  // Gemini content part (inlineData for ≤20MB, fileData via files.upload
-  // for larger). We deliberately only attach images to the CURRENT user
-  // turn — replayed history is text-only since older image paths are
-  // typically stale or already shrunk into a tool result. The model
-  // sees images for the in-flight turn, which matches what the CLI
-  // path does via `--include-directories`.
-  //
-  // Image parts go BEFORE the text part (Gemini's convention: visual
-  // context first, then the prompt that references it).
-  const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
-  if (imagePaths.length) {
-    const imageParts = await loadImageParts(imagePaths, client, deps)
-    if (imageParts.length) {
-      const lastTurn = contents[contents.length - 1]
-      if (lastTurn && lastTurn.role === 'user' && Array.isArray(lastTurn.parts)) {
-        lastTurn.parts = [...imageParts, ...lastTurn.parts]
+    const model = resolveGeminiApiModel(payload.model)
+    const sessionId = syntheticApiSessionId(normalizedRoute)
+
+    // Emit `init` so the renderer's stream adapter starts the run.
+    deps.sendAgentCompatLine(
+      event.sender,
+      tag,
+      {
+        type: 'init',
+        session_id: sessionId,
+        model,
+        timestamp: new Date().toISOString(),
+        provider: tag,
+        runtime: runtimeLabel,
+        fallback: false
+      },
+      normalizedRoute
+    )
+
+    let client: any
+    try {
+      client = new GoogleGenAI({ apiKey })
+    } catch (error) {
+      if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+        terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+        return true
+      }
+      const message = `Failed to initialise Gemini API client: ${error instanceof Error ? error.message : String(error)}`
+      settleGeminiApiTerminal({
+        sender: event.sender,
+        tag,
+        route: normalizedRoute,
+        deps,
+        status: 'failed',
+        exitCode: 1,
+        projectBeforeExit: () =>
+          deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+      })
+      return true
+    }
+
+    if (deps.prepareToolContext) {
+      try {
+        await deps.prepareToolContext(event.sender, payload, normalizedRoute, sessionId)
+        if (normalizedRoute.appRunId) {
+          deps.runManager.attachAbortController(normalizedRoute.appRunId, controller)
+        }
+      } catch (error) {
+        if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+          terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+          return true
+        }
+        const message = `Failed to prepare Gemini API tool context: ${error instanceof Error ? error.message : String(error)}`
+        settleGeminiApiTerminal({
+          sender: event.sender,
+          tag,
+          route: normalizedRoute,
+          deps,
+          status: 'failed',
+          exitCode: 1,
+          projectBeforeExit: () =>
+            deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+        })
+        return true
       }
     }
-  }
-
-  // Phase M1 Step 3: function-calling tool declarations.
-  // Translate the TaskWraith MCP tool surface into Gemini's FunctionDeclaration
-  // shape ONCE per run (the tool list is stable across rounds, and the
-  // converter is pure so the cost is trivial anyway). Empty array
-  // disables function calling — model can only emit text.
-  const mcpTools = deps.getMcpToolDefinitions()
-  const functionDeclarations = mcpTools.length ? buildGeminiFunctionDeclarations(mcpTools) : []
-  const generateConfig =
-    functionDeclarations.length > 0 ? { tools: [{ functionDeclarations }] } : undefined
-
-  const startedAt = Date.now()
-  let lastUsage: Record<string, number> | null = null
-  let aborted = false
-
-  // Phase M1 Step 3: outer round loop. Each iteration consumes one
-  // model response stream. If the model emits function calls, we
-  // dispatch them, append the `model` turn (with the calls) and a
-  // `user` turn (with the responses) to `contents`, and continue. We
-  // exit the loop when:
-  //   - A round produces no function calls (= final answer).
-  //   - The user cancels mid-stream (aborted = true).
-  //   - We hit MAX_TOOL_ROUNDS (runaway tool-use guard).
-  // The cap is intentionally generous; sane agent loops settle in
-  // 1-5 rounds. We surface an error event on cap-hit rather than
-  // silently emitting partial output, so the user sees something
-  // actionable in the chat.
-  let round = 0
-  for (; round < MAX_TOOL_ROUNDS; round++) {
-    if (controller.signal.aborted) {
-      aborted = true
-      break
+    if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+      terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+      return true
     }
 
-    const pendingFunctionCalls: PendingFunctionCall[] = []
-    // Reasoning (`thought: true`) for this round, accumulated and re-emitted as
-    // a single growing reasoning note so it streams into the live activity
-    // viewport instead of being dropped.
-    let roundThinking = ''
-    let roundThinkingEmitted = false
-    const roundThinkingId = `gemini-thinking-${normalizedRoute.appRunId || 'run'}-${round}`
-    try {
-      const stream = await client.models.generateContentStream(
-        generateConfig ? { model, contents, config: generateConfig } : { model, contents }
-      )
-      for await (const chunk of stream) {
-        if (controller.signal.aborted) {
+    // Phase M1 Step 5: multi-turn history replay.
+    // The API path is stateless per request — there's no `--resume` token
+    // — so we read the chat's prior `ChatMessage[]` and prepend them as
+    // Gemini `Content[]` before the current user prompt. This is what
+    // gives "what's 2+2?" → "double that" the context to answer correctly.
+    // When `getChat` is absent (older tests, or when running without a
+    // chat record), or when the payload has no `appChatId` (global
+    // ad-hoc run, etc.), we degrade gracefully to a single-turn request
+    // — the same behaviour Steps 2–4 had.
+    //
+    // ENSEMBLE SEAT TURNS NEVER REPLAY: the orchestrator's composed prompt
+    // already embeds the tagged shared transcript (plus any seat compaction
+    // summary), so replaying `chat.messages` on top would double-inject the
+    // entire conversation — once as peer-tagged material, once as raw
+    // user/model turns claiming the seat itself said everything. Seats run
+    // single-turn on the composed prompt, exactly like the other
+    // injected-context seats (kimi/grok).
+    const isEnsembleSeatTurn = Boolean(payload.ensembleRun)
+    const priorChat =
+      deps.getChat && payload.appChatId && !isEnsembleSeatTurn
+        ? deps.getChat(payload.appChatId)
+        : null
+    const contents: any[] = buildGeminiTurnContents(priorChat, payload.prompt)
+
+    // Phase M1 Step 7: image input. Load + classify each path into a
+    // Gemini content part (inlineData for ≤20MB, fileData via files.upload
+    // for larger). We deliberately only attach images to the CURRENT user
+    // turn — replayed history is text-only since older image paths are
+    // typically stale or already shrunk into a tool result. The model
+    // sees images for the in-flight turn, which matches what the CLI
+    // path does via `--include-directories`.
+    //
+    // Image parts go BEFORE the text part (Gemini's convention: visual
+    // context first, then the prompt that references it).
+    const imagePaths = Array.isArray(payload.imagePaths) ? payload.imagePaths : []
+    if (imagePaths.length) {
+      const imageParts = await loadImageParts(imagePaths, client, deps, {
+        abortSignal: controller.signal,
+        mayContinue: () => geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)
+      })
+      if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+        terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+        return true
+      }
+      if (imageParts.length) {
+        const lastTurn = contents[contents.length - 1]
+        if (lastTurn && lastTurn.role === 'user' && Array.isArray(lastTurn.parts)) {
+          lastTurn.parts = [...imageParts, ...lastTurn.parts]
+        }
+      }
+    }
+
+    // Phase M1 Step 3: function-calling tool declarations.
+    // Translate the TaskWraith MCP tool surface into Gemini's FunctionDeclaration
+    // shape ONCE per run (the tool list is stable across rounds, and the
+    // converter is pure so the cost is trivial anyway). Empty array
+    // disables function calling — model can only emit text.
+    const mcpTools = deps.getMcpToolDefinitions()
+    const functionDeclarations = mcpTools.length ? buildGeminiFunctionDeclarations(mcpTools) : []
+    const generateConfig = {
+      abortSignal: controller.signal,
+      ...(functionDeclarations.length > 0 ? { tools: [{ functionDeclarations }] } : {})
+    }
+
+    const startedAt = Date.now()
+    let lastUsage: Record<string, number> | null = null
+    let aborted = false
+
+    // Phase M1 Step 3: outer round loop. Each iteration consumes one
+    // model response stream. If the model emits function calls, we
+    // dispatch them, append the `model` turn (with the calls) and a
+    // `user` turn (with the responses) to `contents`, and continue. We
+    // exit the loop when:
+    //   - A round produces no function calls (= final answer).
+    //   - The user cancels mid-stream (aborted = true).
+    //   - We hit MAX_TOOL_ROUNDS (runaway tool-use guard).
+    // The cap is intentionally generous; sane agent loops settle in
+    // 1-5 rounds. We surface an error event on cap-hit rather than
+    // silently emitting partial output, so the user sees something
+    // actionable in the chat.
+    let round = 0
+    for (; round < MAX_TOOL_ROUNDS; round++) {
+      if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+        aborted = true
+        break
+      }
+
+      const pendingFunctionCalls: PendingFunctionCall[] = []
+      // Reasoning (`thought: true`) for this round, accumulated and re-emitted as
+      // a single growing reasoning note so it streams into the live activity
+      // viewport instead of being dropped.
+      let roundThinking = ''
+      let roundThinkingEmitted = false
+      const roundThinkingId = `gemini-thinking-${normalizedRoute.appRunId || 'run'}-${round}`
+      try {
+        const stream = await client.models.generateContentStream({
+          model,
+          contents,
+          config: generateConfig
+        })
+        if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
           aborted = true
           break
         }
-        const thought = chunkThoughtText(chunk)
-        if (thought) {
-          if (!roundThinkingEmitted) {
+        for await (const chunk of stream) {
+          if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+            aborted = true
+            break
+          }
+          const thought = chunkThoughtText(chunk)
+          if (thought) {
+            if (!roundThinkingEmitted) {
+              deps.sendAgentCompatLine(
+                event.sender,
+                tag,
+                {
+                  type: 'tool_use',
+                  tool_id: roundThinkingId,
+                  tool_name: 'gemini_thinking',
+                  kind: 'think',
+                  parameters: { title: 'Thinking' },
+                  provider: tag
+                },
+                normalizedRoute
+              )
+              roundThinkingEmitted = true
+            }
+            roundThinking += thought
             deps.sendAgentCompatLine(
               event.sender,
               tag,
               {
-                type: 'tool_use',
+                type: 'tool_result',
                 tool_id: roundThinkingId,
                 tool_name: 'gemini_thinking',
-                kind: 'think',
-                parameters: { title: 'Thinking' },
+                status: 'success',
+                output: roundThinking,
                 provider: tag
               },
               normalizedRoute
             )
-            roundThinkingEmitted = true
           }
-          roundThinking += thought
-          deps.sendAgentCompatLine(
-            event.sender,
-            tag,
-            {
-              type: 'tool_result',
-              tool_id: roundThinkingId,
-              tool_name: 'gemini_thinking',
-              status: 'success',
-              output: roundThinking,
-              provider: tag
-            },
-            normalizedRoute
-          )
+          const text = chunkText(chunk)
+          if (text) {
+            deps.sendAgentCompatLine(
+              event.sender,
+              tag,
+              { type: 'content', text, provider: tag },
+              normalizedRoute
+            )
+          }
+          const calls = chunkFunctionCalls(chunk)
+          if (calls.length) {
+            for (const call of calls) pendingFunctionCalls.push(call)
+          }
+          const usage = chunkUsage(chunk)
+          if (usage) lastUsage = usage
         }
-        const text = chunkText(chunk)
-        if (text) {
-          deps.sendAgentCompatLine(
-            event.sender,
-            tag,
-            { type: 'content', text, provider: tag },
-            normalizedRoute
-          )
-        }
-        const calls = chunkFunctionCalls(chunk)
-        if (calls.length) {
-          for (const call of calls) pendingFunctionCalls.push(call)
-        }
-        const usage = chunkUsage(chunk)
-        if (usage) lastUsage = usage
-      }
-    } catch (error) {
-      if (controller.signal.aborted) {
-        aborted = true
-      } else {
-        const message = `Gemini API stream failed: ${error instanceof Error ? error.message : String(error)}`
-        deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
-        deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-        deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
-        return true
-      }
-    }
-
-    if (aborted) break
-
-    // No function calls this round → model emitted its final answer.
-    if (pendingFunctionCalls.length === 0) break
-
-    // Dispatch each pending function call through the host-side
-    // executor and accumulate the response parts for the next turn.
-    // `executeGeminiMcpTool` (via deps.executeMcpTool) already emits
-    // tool_use + tool_result events and handles approval gates, so
-    // we just relay the result back to the model. We DO NOT emit
-    // additional tool_use / tool_result here — that would double-up
-    // in the renderer.
-    // The signature rides on the PART, beside `functionCall` — not inside it.
-    // Rebuilding the model turn from name+args alone is what made Gemini 3.x
-    // reject the NEXT request with "Function call is missing a
-    // thought_signature in functionCall parts"; the model turn we synthesise
-    // has to be faithful to the one it actually produced.
-    const modelParts: any[] = pendingFunctionCalls.map((call) => ({
-      functionCall: {
-        ...(call.id ? { id: call.id } : {}),
-        name: call.name,
-        args: call.args
-      },
-      ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
-    }))
-    const responseParts: any[] = []
-    for (const call of pendingFunctionCalls) {
-      // Re-check abort BEFORE each dispatch so a cancel mid-tool-loop
-      // (e.g. user clicked Stop while the executor is awaiting an
-      // approval modal) exits cleanly without spinning through every
-      // queued call. The executor itself may take a long time when
-      // it's gated on user approval.
-      if (controller.signal.aborted) {
-        aborted = true
-        break
-      }
-      let result: GeminiApiMcpExecutionResult
-      try {
-        result = await deps.executeMcpTool(call.name, call.args, normalizedRoute)
       } catch (error) {
-        // Defensive: a thrown executor never happens in production
-        // (executeGeminiMcpTool catches everything), but tests and
-        // future refactors could regress this. Convert to an error
-        // result so the loop can still feed something back to the
-        // model rather than dying mid-turn.
-        result = {
-          text: `Tool execution threw: ${error instanceof Error ? error.message : String(error)}`,
-          isError: true
+        if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+          aborted = true
+        } else {
+          const message = `Gemini API stream failed: ${error instanceof Error ? error.message : String(error)}`
+          settleGeminiApiTerminal({
+            sender: event.sender,
+            tag,
+            route: normalizedRoute,
+            deps,
+            status: 'failed',
+            exitCode: 1,
+            projectBeforeExit: () =>
+              deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+          })
+          return true
         }
       }
-      // Also re-check after each dispatch — the user could have
-      // cancelled WHILE the executor was awaiting (long-running
-      // shells, approval modals, etc.).
-      if (controller.signal.aborted) {
+
+      if (aborted || !geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
         aborted = true
         break
       }
-      // Gemini expects `response` to be a JSON object, not a raw
-      // string. Wrap the text + error flag in a small object so the
-      // model can disambiguate. The exact key (`output` for success,
-      // `error` for failure) follows Gemini's published convention.
-      const responseObject: Record<string, unknown> = result.isError
-        ? { error: result.text }
-        : { output: result.text }
-      responseParts.push({
-        functionResponse: {
+
+      // No function calls this round → model emitted its final answer.
+      if (pendingFunctionCalls.length === 0) break
+
+      // Dispatch each pending function call through the host-side
+      // executor and accumulate the response parts for the next turn.
+      // `executeGeminiMcpTool` (via deps.executeMcpTool) already emits
+      // tool_use + tool_result events and handles approval gates, so
+      // we just relay the result back to the model. We DO NOT emit
+      // additional tool_use / tool_result here — that would double-up
+      // in the renderer.
+      // The signature rides on the PART, beside `functionCall` — not inside it.
+      // Rebuilding the model turn from name+args alone is what made Gemini 3.x
+      // reject the NEXT request with "Function call is missing a
+      // thought_signature in functionCall parts"; the model turn we synthesise
+      // has to be faithful to the one it actually produced.
+      const modelParts: any[] = pendingFunctionCalls.map((call) => ({
+        functionCall: {
           ...(call.id ? { id: call.id } : {}),
           name: call.name,
-          response: responseObject
+          args: call.args
+        },
+        ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
+      }))
+      const responseParts: any[] = []
+      for (const call of pendingFunctionCalls) {
+        // Re-check lifecycle authority BEFORE each dispatch so a cancel or
+        // graph terminal claim mid-tool-loop exits cleanly. The executor itself
+        // may be waiting on a long-running shell or approval modal.
+        if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+          aborted = true
+          break
         }
-      })
-    }
-
-    if (aborted) break
-
-    contents.push({ role: 'model', parts: modelParts })
-    contents.push({ role: 'user', parts: responseParts })
-    // Loop continues — next iteration calls generateContentStream
-    // with the updated contents.
-  }
-
-  if (aborted) {
-    // 130 = 128 + SIGINT; matches the convention CLI-killed runs use
-    // so the renderer's "Stopped" treatment kicks in.
-    deps.sendAgentCompatExit(event.sender, tag, 130, normalizedRoute)
-    deps.runManager.finish(normalizedRoute.appRunId, 'cancelled' as RunSessionStatus)
-    return true
-  }
-
-  // Cap exhausted without the model producing a final text-only
-  // response → emit an actionable error rather than pretending success.
-  // We still emit the result event so the renderer can render
-  // duration / partial stats, but with status:error + a useful
-  // message in the error stream.
-  if (round >= MAX_TOOL_ROUNDS) {
-    const message = `Gemini API: model exceeded ${MAX_TOOL_ROUNDS} tool-use rounds without producing a final answer (possible loop).`
-    deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
-    deps.sendAgentCompatExit(event.sender, tag, 1, normalizedRoute)
-    deps.runManager.finish(normalizedRoute.appRunId, 'failed' as RunSessionStatus)
-    return true
-  }
-
-  // Phase M1 Step 5: pin the synthetic `api://<appChatId>` id onto the
-  // chat record so the renderer's continuity UI ("Resuming session …",
-  // session-coloured chat icon, etc.) sees this turn as part of a
-  // logically-linked session even though the API runtime is stateless.
-  // We do this only on success (not on aborted/error paths) so a
-  // failed first turn doesn't leave a stale "session linked" marker.
-  // Idempotency rules + the cli://-overwrite case live in the dep
-  // implementation; see `geminiApiProviderDeps()` in index.ts.
-  // Ensemble seat turns skip it: the chat-level linkedProviderSessionId is
-  // SOLO continuity state — a seat writing `api://<chatId>` there would
-  // clobber the ensemble chat's own identity (per-seat continuity lives on
-  // EnsembleParticipant.linkedProviderSessionId via the orchestrator).
-  if (deps.saveChatLinkedSessionId && normalizedRoute.appChatId && !isEnsembleSeatTurn) {
-    try {
-      deps.saveChatLinkedSessionId(normalizedRoute.appChatId, sessionId)
-    } catch {
-      // Best-effort: a save failure shouldn't crash the run after the
-      // model already streamed a successful answer. The next turn will
-      // try again.
-    }
-  }
-
-  const durationMs = Date.now() - startedAt
-
-  // Phase M1 Step 8: route the API's `usageMetadata` into the host-side
-  // `AppStore.recordUsage` so the renderer's usage card + quota
-  // tracking surfaces it the same way it does for the CLI path. We do
-  // this from the provider (not the renderer) for two reasons:
-  //   1. The renderer's `extractUsageCountsFromCandidate` doesn't know
-  //      about the Gemini API's `promptTokenCount`/`candidatesTokenCount`
-  //      key shape — it sniffs `input_tokens`/`prompt_tokens`/etc.
-  //      Doing the mapping here keeps the renderer provider-agnostic.
-  //   2. Tracking lives behind the dep, so existing back-compat tests
-  //      that omit `recordUsage` still pass — the call is a no-op when
-  //      the dep is absent.
-  // We swallow any thrown error so a flaky disk doesn't crash the run.
-  const recordUsage = deps.recordUsage
-  const appRunId = normalizedRoute.appRunId
-  const appChatId = normalizedRoute.appChatId
-  let usageAlreadyRecorded = false
-  if (recordUsage && appRunId && appChatId) {
-    usageAlreadyRecorded = true
-    try {
-      const reportedInputTokens = lastUsage?.promptTokenCount ?? 0
-      const cacheReadInputTokens = lastUsage?.cachedContentTokenCount ?? 0
-      const inputTokens = Math.max(0, reportedInputTokens - cacheReadInputTokens)
-      const outputTokens = lastUsage?.candidatesTokenCount ?? 0
-      const thoughtsTokens = lastUsage?.thoughtsTokenCount ?? 0
-      const totalTokens =
-        lastUsage?.totalTokenCount ?? reportedInputTokens + outputTokens + thoughtsTokens
-      const workspaceId =
-        priorChat?.workspaceId ||
-        (priorChat?.scope === 'global' ? '__taskwraith_global_chats__' : '') ||
-        ''
-      recordUsage({
-        provider: tag,
-        workspaceId,
-        chatId: appChatId,
-        runId: appRunId,
-        usageKind: 'run',
-        // The AntiGravity lane records the full wire id so API-spend
-        // aggregation's rate-table keys match; gemini keeps the bare model.
-        model: deps.usageModelId ?? model,
-        inputTokens,
-        outputTokens,
-        totalTokens,
-        ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
-        durationMs
-      })
-    } catch {
-      // Best-effort: usage tracking failure must not fail the run.
-    }
-  }
-
-  // Phase M1 Step 9: one-time migration banner. A chat that previously
-  // ran on the CLI (signal: `linkedGeminiSessionId` set) and is taking
-  // its FIRST turn through the API path gets a synthetic system message
-  // explaining the runtime swap. The gate is "`linkedGeminiSessionId`
-  // present AND `linkedProviderSessionId` was NOT an `api://...` id
-  // before this run" — exactly the case where Step 5's persistence
-  // helper just transitioned the chat from CLI-flavoured continuity to
-  // API-flavoured continuity. Subsequent API turns find the field
-  // already starts with `api://` and so the gate stays closed (one
-  // notice per chat lifetime).
-  //
-  // Best-effort: the notice is a UX courtesy, not a correctness
-  // requirement, so a save failure here is swallowed.
-  if (
-    deps.appendChatSystemMessage &&
-    normalizedRoute.appChatId &&
-    priorChat &&
-    priorChat.linkedGeminiSessionId &&
-    !(priorChat.linkedProviderSessionId || '').startsWith('api://')
-  ) {
-    try {
-      const noticeRunId = normalizedRoute.appRunId || 'unknown'
-      deps.appendChatSystemMessage(normalizedRoute.appChatId, {
-        id: `gemini-api-migration-${noticeRunId}`,
-        role: 'system',
-        content:
-          'This chat is now running via the Gemini API runtime. Its CLI session id is preserved for fallback.',
-        timestamp: new Date().toISOString(),
-        runId: normalizedRoute.appRunId,
-        metadata: { kind: 'geminiApiMigrationNotice' }
-      })
-    } catch {
-      // Best-effort: notice append failure shouldn't fail the run.
-    }
-  }
-
-  // Final `result` event carries the usage block so the renderer's
-  // run-finished handler can render duration / token stats inline with
-  // the chat. `durationMs` is captured above so the Step-8 recordUsage
-  // call and this stats payload agree on the same elapsed value
-  // (otherwise the persisted row and the on-screen number could drift
-  // by a few ms — small, but easy to avoid).
-  deps.sendAgentCompatLine(
-    event.sender,
-    tag,
-    {
-      type: 'result',
-      status: 'success',
-      stats: {
-        ...geminiUsageMetadataToStats(lastUsage || {}, durationMs, {
-          alreadyRecorded: usageAlreadyRecorded
+        let result: GeminiApiMcpExecutionResult
+        try {
+          result = await deps.executeMcpTool(call.name, call.args, normalizedRoute)
+        } catch (error) {
+          // Defensive: a thrown executor never happens in production
+          // (executeGeminiMcpTool catches everything), but tests and
+          // future refactors could regress this. Convert to an error
+          // result so the loop can still feed something back to the
+          // model rather than dying mid-turn.
+          result = {
+            text: `Tool execution threw: ${error instanceof Error ? error.message : String(error)}`,
+            isError: true
+          }
+        }
+        // Also re-check after each dispatch — the user could have
+        // cancelled WHILE the executor was awaiting (long-running
+        // shells, approval modals, etc.).
+        if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+          aborted = true
+          break
+        }
+        // Gemini expects `response` to be a JSON object, not a raw
+        // string. Wrap the text + error flag in a small object so the
+        // model can disambiguate. The exact key (`output` for success,
+        // `error` for failure) follows Gemini's published convention.
+        const responseObject: Record<string, unknown> = result.isError
+          ? { error: result.text }
+          : { output: result.text }
+        responseParts.push({
+          functionResponse: {
+            ...(call.id ? { id: call.id } : {}),
+            name: call.name,
+            response: responseObject
+          }
         })
-      },
-      provider: tag,
-      runtime: runtimeLabel,
-      providerThreadId: sessionId,
-      fallback: false
-    },
-    normalizedRoute
-  )
-  deps.sendAgentCompatExit(event.sender, tag, 0, normalizedRoute)
-  deps.runManager.finish(normalizedRoute.appRunId, 'completed' as RunSessionStatus)
-  return true
+      }
+
+      if (aborted || !geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+        aborted = true
+        break
+      }
+
+      contents.push({ role: 'model', parts: modelParts })
+      contents.push({ role: 'user', parts: responseParts })
+      if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+        aborted = true
+        break
+      }
+      // Loop continues — next iteration calls generateContentStream
+      // with the updated contents.
+    }
+
+    if (aborted) {
+      terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+      return true
+    }
+
+    // Cap exhausted without the model producing a final text-only
+    // response → emit an actionable error rather than pretending success.
+    // We still emit the result event so the renderer can render
+    // duration / partial stats, but with status:error + a useful
+    // message in the error stream.
+    if (round >= MAX_TOOL_ROUNDS) {
+      const message = `Gemini API: model exceeded ${MAX_TOOL_ROUNDS} tool-use rounds without producing a final answer (possible loop).`
+      settleGeminiApiTerminal({
+        sender: event.sender,
+        tag,
+        route: normalizedRoute,
+        deps,
+        status: 'failed',
+        exitCode: 1,
+        projectBeforeExit: () =>
+          deps.sendAgentCompatError(event.sender, tag, message, normalizedRoute)
+      })
+      return true
+    }
+
+    // Phase M1 Step 5: pin the synthetic `api://<appChatId>` id onto the
+    // chat record so the renderer's continuity UI ("Resuming session …",
+    // session-coloured chat icon, etc.) sees this turn as part of a
+    // logically-linked session even though the API runtime is stateless.
+    // We do this only on success (not on aborted/error paths) so a
+    // failed first turn doesn't leave a stale "session linked" marker.
+    // Idempotency rules + the cli://-overwrite case live in the dep
+    // implementation; see `geminiApiProviderDeps()` in index.ts.
+    // Ensemble seat turns skip it: the chat-level linkedProviderSessionId is
+    // SOLO continuity state — a seat writing `api://<chatId>` there would
+    // clobber the ensemble chat's own identity (per-seat continuity lives on
+    // EnsembleParticipant.linkedProviderSessionId via the orchestrator).
+    if (deps.saveChatLinkedSessionId && normalizedRoute.appChatId && !isEnsembleSeatTurn) {
+      try {
+        deps.saveChatLinkedSessionId(normalizedRoute.appChatId, sessionId)
+      } catch {
+        // Best-effort: a save failure shouldn't crash the run after the
+        // model already streamed a successful answer. The next turn will
+        // try again.
+      }
+    }
+
+    const durationMs = Date.now() - startedAt
+
+    // Phase M1 Step 8: route the API's `usageMetadata` into the host-side
+    // `AppStore.recordUsage` so the renderer's usage card + quota
+    // tracking surfaces it the same way it does for the CLI path. We do
+    // this from the provider (not the renderer) for two reasons:
+    //   1. The renderer's `extractUsageCountsFromCandidate` doesn't know
+    //      about the Gemini API's `promptTokenCount`/`candidatesTokenCount`
+    //      key shape — it sniffs `input_tokens`/`prompt_tokens`/etc.
+    //      Doing the mapping here keeps the renderer provider-agnostic.
+    //   2. Tracking lives behind the dep, so existing back-compat tests
+    //      that omit `recordUsage` still pass — the call is a no-op when
+    //      the dep is absent.
+    // We swallow any thrown error so a flaky disk doesn't crash the run.
+    const recordUsage = deps.recordUsage
+    const appRunId = normalizedRoute.appRunId
+    const appChatId = normalizedRoute.appChatId
+    let usageAlreadyRecorded = false
+    if (recordUsage && appRunId && appChatId) {
+      usageAlreadyRecorded = true
+      try {
+        const reportedInputTokens = lastUsage?.promptTokenCount ?? 0
+        const cacheReadInputTokens = lastUsage?.cachedContentTokenCount ?? 0
+        const inputTokens = Math.max(0, reportedInputTokens - cacheReadInputTokens)
+        const outputTokens = lastUsage?.candidatesTokenCount ?? 0
+        const thoughtsTokens = lastUsage?.thoughtsTokenCount ?? 0
+        const totalTokens =
+          lastUsage?.totalTokenCount ?? reportedInputTokens + outputTokens + thoughtsTokens
+        const workspaceId =
+          priorChat?.workspaceId ||
+          (priorChat?.scope === 'global' ? '__taskwraith_global_chats__' : '') ||
+          ''
+        recordUsage({
+          provider: tag,
+          workspaceId,
+          chatId: appChatId,
+          runId: appRunId,
+          usageKind: 'run',
+          // The AntiGravity lane records the full wire id so API-spend
+          // aggregation's rate-table keys match; gemini keeps the bare model.
+          model: deps.usageModelId ?? model,
+          inputTokens,
+          outputTokens,
+          totalTokens,
+          ...(cacheReadInputTokens > 0 ? { cacheReadInputTokens } : {}),
+          durationMs
+        })
+      } catch {
+        // Best-effort: usage tracking failure must not fail the run.
+      }
+    }
+
+    // Phase M1 Step 9: one-time migration banner. A chat that previously
+    // ran on the CLI (signal: `linkedGeminiSessionId` set) and is taking
+    // its FIRST turn through the API path gets a synthetic system message
+    // explaining the runtime swap. The gate is "`linkedGeminiSessionId`
+    // present AND `linkedProviderSessionId` was NOT an `api://...` id
+    // before this run" — exactly the case where Step 5's persistence
+    // helper just transitioned the chat from CLI-flavoured continuity to
+    // API-flavoured continuity. Subsequent API turns find the field
+    // already starts with `api://` and so the gate stays closed (one
+    // notice per chat lifetime).
+    //
+    // Best-effort: the notice is a UX courtesy, not a correctness
+    // requirement, so a save failure here is swallowed.
+    if (
+      deps.appendChatSystemMessage &&
+      normalizedRoute.appChatId &&
+      priorChat &&
+      priorChat.linkedGeminiSessionId &&
+      !(priorChat.linkedProviderSessionId || '').startsWith('api://')
+    ) {
+      try {
+        const noticeRunId = normalizedRoute.appRunId || 'unknown'
+        deps.appendChatSystemMessage(normalizedRoute.appChatId, {
+          id: `gemini-api-migration-${noticeRunId}`,
+          role: 'system',
+          content:
+            'This chat is now running via the Gemini API runtime. Its CLI session id is preserved for fallback.',
+          timestamp: new Date().toISOString(),
+          runId: normalizedRoute.appRunId,
+          metadata: { kind: 'geminiApiMigrationNotice' }
+        })
+      } catch {
+        // Best-effort: notice append failure shouldn't fail the run.
+      }
+    }
+
+    // Final `result` event carries the usage block so the renderer's
+    // run-finished handler can render duration / token stats inline with
+    // the chat. `durationMs` is captured above so the Step-8 recordUsage
+    // call and this stats payload agree on the same elapsed value
+    // (otherwise the persisted row and the on-screen number could drift
+    // by a few ms — small, but easy to avoid).
+    settleGeminiApiTerminal({
+      sender: event.sender,
+      tag,
+      route: normalizedRoute,
+      deps,
+      status: 'completed',
+      exitCode: 0,
+      projectBeforeExit: () =>
+        deps.sendAgentCompatLine(
+          event.sender,
+          tag,
+          {
+            type: 'result',
+            status: 'success',
+            stats: {
+              ...geminiUsageMetadataToStats(lastUsage || {}, durationMs, {
+                alreadyRecorded: usageAlreadyRecorded
+              })
+            },
+            provider: tag,
+            runtime: runtimeLabel,
+            providerThreadId: sessionId,
+            fallback: false
+          },
+          normalizedRoute
+        )
+    })
+    return true
+  } catch (error) {
+    const currentStatus = deps.runManager.get(normalizedRoute.appRunId)?.status
+    if (
+      currentStatus === 'completed' ||
+      currentStatus === 'failed' ||
+      currentStatus === 'cancelled'
+    ) {
+      // A terminal projector may throw after settleGeminiApiTerminal has
+      // already published exit and closed RunManager ownership. Preserve that
+      // diagnostic behavior without manufacturing a second terminal outcome.
+      throw error
+    }
+    if (!geminiApiRunMayContinue(normalizedRoute, deps, controller.signal)) {
+      terminalizeGeminiApiCancellation(event.sender, tag, normalizedRoute, deps)
+      return true
+    }
+    settleGeminiApiTerminal({
+      sender: event.sender,
+      tag,
+      route: normalizedRoute,
+      deps,
+      status: 'failed',
+      exitCode: 1,
+      projectBeforeExit: () =>
+        deps.sendAgentCompatError(
+          event.sender,
+          tag,
+          `Gemini API lifecycle failed after transport adoption: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          normalizedRoute
+        )
+    })
+    return true
+  } finally {
+    if (abortFromSetup) setupSignal.removeEventListener('abort', abortFromSetup)
+    transportOperation?.markTransportClosed()
+    await transportOperation?.settlement
+  }
 }

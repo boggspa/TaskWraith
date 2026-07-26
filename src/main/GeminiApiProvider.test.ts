@@ -74,6 +74,9 @@ function makeDeps(overrides: {
   // `migrationNotices` so tests can assert presence/absence by reading
   // that array directly).
   appendChatSystemMessage?: (chatId: string, message: ChatMessage) => void
+  runAdmitted?: (runId: string | undefined) => boolean
+  runPersistenceAuthorized?: (provider: string, route: AgentRunRoute) => boolean
+  beginTransportOperation?: GeminiApiProviderDeps['beginTransportOperation']
 }): {
   deps: GeminiApiProviderDeps
   lines: SendLineCall[]
@@ -154,11 +157,24 @@ function makeDeps(overrides: {
     },
     runManager: {
       attachAbortController: () => undefined,
+      canAdmitTransport: (runId) => overrides.runAdmitted?.(runId) ?? true,
+      confirmTerminalStatus: () => undefined,
+      get: (runId) => {
+        if (!runId) return undefined
+        const latestFinish = finishes[finishes.length - 1]
+        return {
+          runId,
+          status: latestFinish?.status ?? 'running'
+        } as any
+      },
+      getClaimedTerminalStatus: () => undefined,
       finish: (runId, status) => {
         finishes.push({ runId, status })
         return undefined
       }
     },
+    isRunPersistenceAuthorized: overrides.runPersistenceAuthorized,
+    beginTransportOperation: overrides.beginTransportOperation,
     getSettings: () => baseSettings,
     getGeminiAuthProfiles: () => overrides.profiles || [],
     getDefaultGeminiAuthProfileId: () => overrides.defaultProfileId ?? null,
@@ -427,10 +443,67 @@ describe('GeminiApiProvider (Phase M1 Step 2)', () => {
       defaultProfileId: 'profile-1',
       loadSdk: async () => null
     })
+    const attachAbortController = vi.fn()
+    deps.runManager.attachAbortController = attachAbortController
     await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(false)
     // No init emitted yet because we bail before constructing the client.
     expect(lines).toEqual([])
     expect(errors).toEqual([])
+    expect(attachAbortController).not.toHaveBeenCalled()
+  })
+
+  it('uses the shared setup signal during deferred SDK discovery without adopting API ownership', async () => {
+    const setupController = new AbortController()
+    let finishSdkDiscovery!: (sdk: null) => void
+    const sdkDiscovery = new Promise<null>((resolve) => {
+      finishSdkDiscovery = resolve
+    })
+    const { deps, exits, finishes } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: () => sdkDiscovery
+    })
+    const attachAbortController = vi.fn()
+    deps.runManager.attachAbortController = attachAbortController
+
+    const run = tryRunGeminiApi(
+      stubEvent,
+      { ...basePayload, providerSetupAbortSignal: setupController.signal },
+      baseRoute,
+      deps
+    )
+    setupController.abort()
+    finishSdkDiscovery(null)
+
+    await expect(run).resolves.toBe(true)
+    expect(attachAbortController).not.toHaveBeenCalled()
+    expect(exits).toEqual([{ provider: 'gemini', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
+  })
+
+  it('rechecks main-owned persistence authority after deferred SDK discovery', async () => {
+    let finishSdkDiscovery!: (sdk: any) => void
+    const sdkDiscovery = new Promise<any>((resolve) => {
+      finishSdkDiscovery = resolve
+    })
+    let persistenceAuthorized = true
+    const beginTransportOperation = vi.fn()
+    const { deps, exits, finishes } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: () => sdkDiscovery,
+      runPersistenceAuthorized: () => persistenceAuthorized,
+      beginTransportOperation
+    })
+
+    const run = tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+    persistenceAuthorized = false
+    finishSdkDiscovery(await fakeSdk([])())
+
+    await expect(run).resolves.toBe(true)
+    expect(beginTransportOperation).not.toHaveBeenCalled()
+    expect(exits).toEqual([{ provider: 'gemini', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
   })
 
   it('streams text chunks as content events and emits init + result + exit', async () => {
@@ -470,6 +543,68 @@ describe('GeminiApiProvider (Phase M1 Step 2)', () => {
     expect(errors).toEqual([])
     expect(exits).toEqual([{ provider: 'gemini', code: 0 }])
     expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
+  })
+
+  it('settles API ownership even when the terminal result projector throws', async () => {
+    let settleTransport!: () => void
+    const transportSettlement = new Promise<void>((resolve) => {
+      settleTransport = resolve
+    })
+    const markTransportClosed = vi.fn(() => settleTransport())
+    const { deps, exits, finishes } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: fakeSdk([{ text: 'done' }]),
+      beginTransportOperation: () => ({
+        settlement: transportSettlement,
+        markTransportClosed
+      })
+    })
+    const sendLine = deps.sendAgentCompatLine
+    deps.sendAgentCompatLine = (sender, provider, payload, route) => {
+      if (payload?.type === 'result') throw new Error('terminal projector failed')
+      sendLine(sender, provider, payload, route)
+    }
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).rejects.toThrow(
+      'terminal projector failed'
+    )
+    expect(exits).toEqual([{ provider: 'gemini', code: 0 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'completed' }])
+    expect(markTransportClosed).toHaveBeenCalledOnce()
+  })
+
+  it('terminalizes adopted API ownership when init projection throws', async () => {
+    let settleTransport!: () => void
+    const transportSettlement = new Promise<void>((resolve) => {
+      settleTransport = resolve
+    })
+    const markTransportClosed = vi.fn(() => settleTransport())
+    const { deps, errors, exits, finishes } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: fakeSdk([{ text: 'unused' }]),
+      beginTransportOperation: () => ({
+        settlement: transportSettlement,
+        markTransportClosed
+      })
+    })
+    const sendLine = deps.sendAgentCompatLine
+    deps.sendAgentCompatLine = (sender, provider, payload, route) => {
+      if (payload?.type === 'init') throw new Error('init projector detached')
+      sendLine(sender, provider, payload, route)
+    }
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(errors).toEqual([
+      {
+        provider: 'gemini',
+        error: 'Gemini API lifecycle failed after transport adoption: init projector detached'
+      }
+    ])
+    expect(exits).toEqual([{ provider: 'gemini', code: 1 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'failed' }])
+    expect(markTransportClosed).toHaveBeenCalledOnce()
   })
 
   it('extracts text from candidates.parts when chunk.text is empty', async () => {
@@ -663,8 +798,10 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
       mcpTools: []
     })
     await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
-    // Function calling disabled → no config block at all.
-    expect(callsRef[0].config).toBeUndefined()
+    // Function calling is disabled, while the request-owned abort signal still
+    // reaches the SDK's supported GenerateContentConfig surface.
+    expect(callsRef[0].config?.tools).toBeUndefined()
+    expect(callsRef[0].config?.abortSignal).toBeInstanceOf(AbortSignal)
   })
 
   it('dispatches a function call, feeds the response back, and emits final text', async () => {
@@ -1529,13 +1666,16 @@ describe('GeminiApiProvider (Phase M1 Step 7 — image input)', () => {
     const oversized = Buffer.alloc(21 * 1024 * 1024, 0xab)
     // Build a custom SDK that also records files.upload calls so we can
     // assert the mime-type passed through.
-    const uploadCalls: Array<{ file: string; mimeType: string }> = []
-    const streamCalls: Array<{ contents: any[] }> = []
+    const uploadCalls: Array<{ file: string; mimeType: string; abortSignal: AbortSignal }> = []
+    const streamCalls: Array<{ contents: any[]; abortSignal: AbortSignal }> = []
     const loader = async () => ({
       GoogleGenAI: class {
         models = {
           generateContentStream: async (params: any) => {
-            streamCalls.push({ contents: JSON.parse(JSON.stringify(params.contents)) })
+            streamCalls.push({
+              contents: JSON.parse(JSON.stringify(params.contents)),
+              abortSignal: params.config?.abortSignal
+            })
             return (async function* () {
               yield { text: 'uploaded' }
             })()
@@ -1545,7 +1685,8 @@ describe('GeminiApiProvider (Phase M1 Step 7 — image input)', () => {
           upload: async (params: any) => {
             uploadCalls.push({
               file: params.file,
-              mimeType: params.config?.mimeType
+              mimeType: params.config?.mimeType,
+              abortSignal: params.config?.abortSignal
             })
             return { uri: `gs://fake-bucket/${params.file.split('/').pop()}` }
           }
@@ -1565,11 +1706,13 @@ describe('GeminiApiProvider (Phase M1 Step 7 — image input)', () => {
       deps
     )
     expect(uploadCalls).toHaveLength(1)
-    expect(uploadCalls[0]).toEqual({
+    expect(uploadCalls[0]).toMatchObject({
       file: '/tmp/huge.png',
       mimeType: 'image/png'
     })
+    expect(uploadCalls[0].abortSignal).toBeInstanceOf(AbortSignal)
     expect(streamCalls).toHaveLength(1)
+    expect(streamCalls[0].abortSignal).toBe(uploadCalls[0].abortSignal)
     const lastTurn = streamCalls[0].contents[streamCalls[0].contents.length - 1]
     expect(lastTurn.parts).toHaveLength(2)
     expect(lastTurn.parts[0].fileData).toEqual({
@@ -2014,17 +2157,20 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
   })
 
   it('cancels under the tag with exit 130 when aborted mid-stream', async () => {
-    let abortController: { abort: () => void } | null = null
+    const abortController: { current: AbortController | null } = { current: null }
+    let requestSignal: AbortSignal | undefined
     const { deps, exits, finishes } = antigravityDeps({
       loadSdk: async () => ({
         GoogleGenAI: class {
           models = {
-            generateContentStream: async () =>
-              (async function* () {
+            generateContentStream: async (params: any) => {
+              requestSignal = params.config?.abortSignal
+              return (async function* () {
                 yield { text: 'first' }
-                abortController?.abort()
+                abortController.current?.abort()
                 yield { text: 'second' }
               })()
+            }
           }
         }
       })
@@ -2033,12 +2179,147 @@ describe('GeminiApiProvider (combined-mode AntiGravity parameterization)', () =>
     deps.runManager = {
       ...deps.runManager,
       attachAbortController: (runId, controller) => {
-        abortController = controller
+        abortController.current = controller as AbortController
         return originalAttach(runId, controller)
       }
     }
 
     await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+    expect(requestSignal).toBe(abortController.current?.signal)
+    expect(exits).toEqual([{ provider: 'antigravity', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
+  })
+
+  it('passes the owned signal to a pending SDK request and classifies its abort as Stop', async () => {
+    const abortController: { current: AbortController | null } = { current: null }
+    let requestSignal: AbortSignal | undefined
+    let releaseRequestStarted: () => void = () => {}
+    const requestStarted = new Promise<void>((resolve) => {
+      releaseRequestStarted = resolve
+    })
+    const { deps, errors, exits, finishes } = antigravityDeps({
+      loadSdk: async () => ({
+        GoogleGenAI: class {
+          models = {
+            generateContentStream: async (params: any) => {
+              requestSignal = params.config?.abortSignal
+              releaseRequestStarted()
+              return await new Promise((_resolve, reject) => {
+                const rejectAbort = () => reject(new Error('request aborted'))
+                if (requestSignal?.aborted) rejectAbort()
+                else requestSignal?.addEventListener('abort', rejectAbort, { once: true })
+              })
+            }
+          }
+        }
+      })
+    })
+    const originalAttach = deps.runManager.attachAbortController
+    deps.runManager = {
+      ...deps.runManager,
+      attachAbortController: (runId, controller) => {
+        abortController.current = controller as AbortController
+        return originalAttach(runId, controller)
+      }
+    }
+
+    const run = tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+    await requestStarted
+    abortController.current?.abort()
+    await expect(run).resolves.toBe(true)
+
+    expect(requestSignal).toBe(abortController.current?.signal)
+    expect(errors).toEqual([])
+    expect(exits).toEqual([{ provider: 'antigravity', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
+  })
+
+  it('passes the owned signal to files.upload and does not start inference after Stop', async () => {
+    const oversized = Buffer.alloc(21 * 1024 * 1024, 0xab)
+    const abortController: { current: AbortController | null } = { current: null }
+    let uploadSignal: AbortSignal | undefined
+    let releaseUploadStarted: () => void = () => {}
+    const uploadStarted = new Promise<void>((resolve) => {
+      releaseUploadStarted = resolve
+    })
+    const generateContentStream = vi.fn(async () =>
+      (async function* () {
+        yield { text: 'must not stream' }
+      })()
+    )
+    const { deps, exits, finishes } = antigravityDeps({
+      readImageFile: async () => oversized,
+      loadSdk: async () => ({
+        GoogleGenAI: class {
+          models = { generateContentStream }
+          files = {
+            upload: async (params: any) => {
+              uploadSignal = params.config?.abortSignal
+              releaseUploadStarted()
+              return await new Promise((_resolve, reject) => {
+                const rejectAbort = () => reject(new Error('upload aborted'))
+                if (uploadSignal?.aborted) rejectAbort()
+                else uploadSignal?.addEventListener('abort', rejectAbort, { once: true })
+              })
+            }
+          }
+        }
+      })
+    })
+    const originalAttach = deps.runManager.attachAbortController
+    deps.runManager = {
+      ...deps.runManager,
+      attachAbortController: (runId, controller) => {
+        abortController.current = controller as AbortController
+        return originalAttach(runId, controller)
+      }
+    }
+
+    const run = tryRunGeminiApi(
+      stubEvent,
+      { ...basePayload, imagePaths: ['/tmp/huge.png'] },
+      baseRoute,
+      deps
+    )
+    await uploadStarted
+    abortController.current?.abort()
+    await expect(run).resolves.toBe(true)
+
+    expect(uploadSignal).toBe(abortController.current?.signal)
+    expect(generateContentStream).not.toHaveBeenCalled()
+    expect(exits).toEqual([{ provider: 'antigravity', code: 130 }])
+    expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
+  })
+
+  it('honours a terminal claim after an awaited tool and never opens the next SDK round', async () => {
+    let runAdmitted = true
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          candidates: [
+            {
+              content: {
+                parts: [{ functionCall: { name: 'read_file', args: { path: 'a.ts' } } }]
+              }
+            }
+          ]
+        }
+      ],
+      [{ text: 'must not stream' }]
+    ])
+    const { deps, exits, finishes } = antigravityDeps({
+      loadSdk: loader,
+      runAdmitted: () => runAdmitted,
+      mcpTools: [{ name: 'read_file', description: 'Read a file', inputSchema: {} }],
+      executeMcpTool: async () => {
+        runAdmitted = false
+        return { text: 'late result', isError: false }
+      }
+    })
+
+    await expect(tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)).resolves.toBe(true)
+
+    expect(callsRef).toHaveLength(1)
     expect(exits).toEqual([{ provider: 'antigravity', code: 130 }])
     expect(finishes).toEqual([{ runId: 'run-1', status: 'cancelled' }])
   })
