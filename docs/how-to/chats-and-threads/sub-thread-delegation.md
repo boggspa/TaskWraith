@@ -12,7 +12,7 @@ Open a chat's overflow menu in the sidebar and choose **Delegate to a sub-thread
 
 ## How to use it
 1. In the sidebar, open the overflow menu on a chat and select **Delegate to a sub-thread**.
-2. Pick a selectable, currently admitted provider and write the delegation prompt. Packaged source-ahead Kimi has no commissioned runtime tuple, so it remains unavailable until the qualification roster is populated; credentials alone do not admit it.
+2. Pick a selectable, currently admitted provider and write the delegation prompt. Kimi's structural ACP admission runs in every build; an admitted binary without a reviewed roster tuple is labelled `unattested-development`, while credentials alone do not bypass the structural checks.
 3. Leave **Return result to parent on completion** checked if you want the typed terminal result returned to this parent as an untrusted card.
 4. Confirm to spawn the sub-thread. It inherits the parent's workspace and appears under the parent in the sidebar. Manual sidebar delegation does not currently append a parent transcript delegation card; an approved agent-driven spawn/recall does.
 5. Open the child from the sidebar. For an agent-driven delegation card, **Open beside** / **Open drawer** shows it next to the parent, while **Open main** switches to it.

@@ -22,10 +22,16 @@ catalogue SVG links to the PNGs here rather than embedding or re-encoding them.
 - Label requested derivatives explicitly and retain their source relationship,
   transform, hash, and alpha verification in the manifest.
 - Keep official light/dark variants when supplied.
-- Include all eight canonical provider ids. Gemini is labelled historical
-  because it is retained for old chats but retired for new runs; Cursor is live
-  again under Path-B managed containment. Canonical identity still does not
-  imply every provider is admitted on every package (see Kimi packaged roster).
+- Track all nine stable provider identities. This sourced raster catalogue
+  contains eight; Pi uses the runtime-native
+  `src/renderer/src/assets/provider-logos/provider-logo-pi.svg`. The seven
+  static-live providers are Codex, Claude, Kimi, Cursor, Grok, Ollama, and Pi;
+  AntiGravity is conditionally offered, and Gemini is labelled historical
+  because it is retained for old chats but retired for new runs. Cursor's live
+  membership is a user-approved product decision; Path-B containment is
+  separate runtime assurance. Canonical identity still does not imply runtime
+  admission: structurally admitted Kimi runs without a reviewed roster tuple
+  are labelled `unattested-development`.
 - Omit Ensemble: it is a TaskWraith orchestration concept, not an external
   provider with an official provider logo.
 

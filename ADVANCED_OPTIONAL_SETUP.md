@@ -18,9 +18,9 @@ tool-capable providers.
 | Feature | External setup | Maturity |
 | --- | --- | --- |
 | Ollama local models | Install Ollama and pull at least one supported model. | Supported optional path |
-| Kimi | Use `kimi login` (device-code OAuth) or configure a provider key directly in `~/.kimi-code/config.toml`. The key saved in TaskWraith Settings is usage-query-only and is not supplied to ACP. Credentials do not qualify the runtime, and there is no non-ACP fallback. | Setup supported; packaged source-ahead runtime blocked until an exact tuple is commissioned |
+| Kimi | Use `kimi login` (device-code OAuth) or configure a provider key directly in `~/.kimi-code/config.toml`. The key saved in TaskWraith Settings is usage-query-only and is not supplied to ACP. Credentials do not qualify the runtime, and there is no non-ACP fallback. | Setup supported; structural ACP admission runs in every build, with unreviewed admitted runs labelled `unattested-development` |
 | Claude API-key mode | Paste an Anthropic API key instead of using Claude Code login. | Supported optional auth mode |
-| Cursor | Install `cursor-agent` and run `cursor-agent login`. | Supported managed provider with native and TaskWraith tools |
+| Cursor | Install `cursor-agent` and run `cursor-agent login`. | Supported live provider; current Path-B route has native and TaskWraith tools |
 | Image generation | Enable the tool and paste an OpenAI or xAI image API key. | Optional, off by default |
 | iOS Remote | Install the companion app, pair it with the Mac, optionally add Tailscale for off-LAN access. | Working beta / TestFlight phased |
 | Screen Watch | Grant macOS window/screen capture permission when attaching a window. | Optional advanced surface |
