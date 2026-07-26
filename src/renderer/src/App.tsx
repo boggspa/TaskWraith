@@ -60,6 +60,7 @@ import {
 } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
+import { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
 import {
   buildHostCompactionSummaryPrompt,
   CONTEXT_AUTO_COMPACT_COOLDOWN_MS,
@@ -4107,6 +4108,13 @@ function App(): React.JSX.Element {
     if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
+    // Pi was missing here and fell through to `[]`, so its picker group was
+    // permanently empty ("Loading models…" is this picker's EMPTY state, not a
+    // pending one) no matter how many upstream keys were stored. Main already
+    // filters the catalog to upstreams that actually have a key — an unkeyed
+    // row could never run — so this deliberately does NOT fall back to the full
+    // static list: an empty group means "no keys yet", which is true.
+    if (provider === 'pi') return agentModelsByProvider.pi || []
     return []
   }
 
@@ -4128,6 +4136,17 @@ function App(): React.JSX.Element {
       )
     }
     if (provider === 'antigravity') return configuredAntigravityModels[0]?.id || 'cli-default'
+    // Without this, a Pi seat's default fell through to GEMINI_DEFAULT_MODEL —
+    // a Gemini id on a Pi run. `isDefault` is only set on the deepseek row, so
+    // a user who keyed only Mistral gets their first real model instead.
+    if (provider === 'pi') {
+      const piModels = agentModelsByProvider.pi || []
+      return (
+        piModels.find((model) => model.isDefault)?.id ||
+        piModels[0]?.id ||
+        PI_DEFAULT_MODEL_WIRE_ID
+      )
+    }
     return GEMINI_DEFAULT_MODEL
   }
 
@@ -6203,7 +6222,13 @@ function App(): React.JSX.Element {
               ? models.map((model) => ({ ...model, label: model.label || model.id }))
               : provider === 'claude'
                 ? CLAUDE_DEFAULT_MODELS
-                : CODEX_DEFAULT_MODELS
+                : // An empty Pi catalog is a legitimate answer — main returns only
+                  // upstreams with a stored key, so zero keys means zero models.
+                  // Substituting the Codex list here would file GPT rows under
+                  // Pi, which is worse than the empty group it replaced.
+                  provider === 'pi'
+                  ? []
+                  : CODEX_DEFAULT_MODELS
       if (provider === 'codex') {
         setCodexModels(normalized)
       } else {

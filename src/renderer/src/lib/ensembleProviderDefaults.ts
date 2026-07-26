@@ -219,7 +219,7 @@ const PI_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'qwen-token-plan/qwen3.8-max-preview', label: 'Qwen3.8 Max Preview' },
   { id: 'minimax/MiniMax-M3', label: 'MiniMax M3' },
   { id: 'minimax/MiniMax-M2.7', label: 'MiniMax M2.7' },
-  { id: 'mistral/devstral-2512', label: 'Devstral 2' },
+  { id: 'mistral/devstral-2512', label: 'Devstral 2512' },
   { id: 'mistral/mistral-medium-3.5', label: 'Mistral Medium 3.5' },
   { id: 'groq/openai/gpt-oss-120b', label: 'GPT-OSS 120B (Groq)' },
   { id: 'groq/qwen/qwen3-32b', label: 'Qwen3 32B (Groq)' },

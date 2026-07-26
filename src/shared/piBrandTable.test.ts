@@ -195,6 +195,29 @@ describe('iOS PiBrandTable twin', () => {
   })
 })
 
+describe('the renderer ensemble-editor mirror', () => {
+  // A FOURTH hand-maintained copy of this catalog (main, shared, iOS, and the
+  // ensemble seat editor). It had already gone stale — carrying "Devstral 2"
+  // after the other three moved to "Devstral 2512" — which is exactly the drift
+  // that puts two different names for one model in front of the same user.
+  const source = readFileSync(
+    join(process.cwd(), 'src/renderer/src/lib/ensembleProviderDefaults.ts'),
+    'utf8'
+  )
+  const block = source.slice(source.indexOf('const PI_MODELS'))
+  const listed = [
+    ...block.slice(0, block.indexOf('\n]')).matchAll(/\{ id: '([^']+)', label: '([^']+)' \}/g)
+  ]
+
+  it('lists every catalogued model exactly once', () => {
+    expect(listed.map((m) => m[1]).sort()).toEqual(Object.keys(PI_MODEL_LABELS).sort())
+  })
+
+  it.each(Object.entries(PI_MODEL_LABELS))('labels %s identically to the catalog', (id, label) => {
+    expect(listed.find((m) => m[1] === id)?.[2]).toBe(label)
+  })
+})
+
 describe('Pi hue classes are actually painted', () => {
   // A theme TOKEN is only half of a hue: the surface has to carry a rule that
   // reads it. `resolveProviderHueClass` shipped returning `mistral` before any

@@ -70,6 +70,14 @@ export const PI_MODEL_LABELS: Readonly<Record<string, string>> = {
 }
 
 /**
+ * The seat's default wire id. Lives here rather than in `main/pi/PiModels`
+ * because the renderer needs a floor for "Pi is selected but no upstream key is
+ * stored yet", and it may not import from main. `PiModels` re-exports it, so
+ * there is exactly one literal.
+ */
+export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
+
+/**
  * Split a Pi wire id on the FIRST slash: upstream vs pi model id.
  *
  * Splitting on the LAST slash silently breaks Groq, whose ids carry a SECOND

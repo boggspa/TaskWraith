@@ -57,7 +57,7 @@ export const PI_STATIC_MODELS: readonly PiModelDefinition[] = [
   { wireId: 'cerebras/gpt-oss-120b', upstream: 'cerebras', modelId: 'gpt-oss-120b', label: 'GPT-OSS 120B (Cerebras)', contextWindow: 131_072, maxOutputTokens: 40_960, thinking: true, images: false }
 ]
 
-export const PI_DEFAULT_MODEL_WIRE_ID = 'deepseek/deepseek-v4-flash'
+export { PI_DEFAULT_MODEL_WIRE_ID } from '../../shared/piBrandTable'
 
 /**
  * Split a wire id on the FIRST slash: upstream vs pi model id.
