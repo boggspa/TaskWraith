@@ -259,7 +259,7 @@ Commands:
     }
   )
 
-  it('does not admit any fingerprint scope for disabled Cursor', () => {
+  it('does not use brittle fingerprint admission scopes for live Cursor', () => {
     const tuple = {
       version: '2026.07.16-test',
       capabilityFingerprint: 'sha256:capabilities',

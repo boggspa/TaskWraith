@@ -1,8 +1,10 @@
 import type { UserMcpLaunchServer } from '../UserMcpServers'
 import type { EffectiveRunPermissions } from '../store/types'
 
-// Historical/qualification-only policy helpers. Production starts no managed
-// Cursor process; these functions do not establish an admissible runtime mode.
+// Cursor Path-B policy helpers. The signed run posture decides whether the
+// TaskWraith broker may attach; it does not decide whether Cursor itself is
+// selectable. A posture-denied or failed broker attachment leaves the managed
+// Cursor launch on its native-tool stack under the pinned OS sandbox.
 
 type CursorEffectivePermissions = Pick<EffectiveRunPermissions, 'agenticServices'>
 
@@ -17,14 +19,18 @@ export function cursorMcpToolsDenied(
   return effectivePermissions?.agenticServices?.mcpTools === 'deny'
 }
 
-/** Historical write-path invariant; production Cursor is unconditionally disabled. */
+/**
+ * Legacy broker-dependent qualification invariant. Production Path-B does not
+ * call this helper: its write seat may continue native-only under the sandbox
+ * when the governed broker is posture-denied or cannot attach.
+ */
 export function assertCursorWriteMcpPosture(
   writeCapable: boolean,
   effectivePermissions: CursorEffectivePermissions | null | undefined
 ): void {
   if (writeCapable && cursorMcpToolsDenied(effectivePermissions)) {
     throw new Error(
-      'The signed run posture denies MCP tools, but Cursor write mode requires the contained TaskWraith MCP broker.'
+      'The signed run posture denies MCP tools, so this broker-dependent Cursor qualification posture cannot run.'
     )
   }
 }

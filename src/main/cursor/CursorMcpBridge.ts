@@ -10,13 +10,15 @@
 // The CR-net probes proved native Cursor web tools (webSearch/webFetch) are
 // hard-rejected ("User Rejected") in headless `-p`, and that the
 // `permissions.allow` token matcher does NOT govern them. The OQ#2 spike first
-// proved the web-only path. The historical qualification design used a
-// workspace-local `.cursor/mcp.json`; production no longer writes or attaches
-// it because neither Plan nor tool transport is qualified.
+// proved the web-only path. The historical qualification design tried to
+// register the broker only in workspace `.cursor/mcp.json`, which never reached
+// Cursor's durable approval. Production now registers the broker globally,
+// enables it by name, and writes a transient workspace config only to isolate
+// project servers and apply the current seat's allow/deny rules.
 //
 // This module is PURE (no Electron / no fs) so it's unit-testable: it owns the
-// qualification MCP server source plus pure config/allow-rule builders. No
-// production Electron lifecycle calls them.
+// legacy qualification builders plus the production global-entry, profile, and
+// merge helpers called by the Electron launch lifecycle.
 
 import {
   isPlanAdvertisedTool,

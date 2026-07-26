@@ -1,17 +1,16 @@
-// Pure builder for the Cursor Agent CLI argv (`cursor-agent -p …`). No Electron
+// Pure builders for the Cursor Agent CLI argv (`cursor-agent -p …`). No Electron
 // imports — unit-testable. Mirrors GrokCliArgs.
 //
 // LOAD-BEARING SAFETY:
-//   * A bare `cursor-agent -p` has write+shell and uses them UNMEDIATED. So we
-//     NEVER spawn a production Cursor run. Authenticated startup can preload
-//     account/team hooks, managed skills/plugins, and MCP before a turn, even
-//     with private roots, excluded workspace context, and plan mode.
-//   * This builder is retained for hermetic argv tests and non-production
-//     qualification work only; it is not a production admission boundary.
-//   * `--force` remains behind an explicit containment-attestation input. No
-//     production caller currently supplies that attestation. `--yolo` is never
-//     emitted. `--approve-mcps` is never emitted because it approves Cursor's
-//     aggregate MCP catalogue rather than one TaskWraith-owned server.
+//   * A bare `cursor-agent -p` has write+shell and uses them without TaskWraith
+//     per-tool mediation. Production therefore calls only the Path-B
+//     `buildContainedCursor*Argv` builders below, which hard-pin
+//     `--sandbox enabled`, skip worktree setup, and guard the prompt with `--`.
+//   * The older `buildCursorCliArgs` family remains for hermetic qualification
+//     tests and is not the production launch boundary.
+//   * Production emits `--force` only after the TaskWraith broker was registered,
+//     enabled by name, and fenced by transient workspace rules. `--yolo` and
+//     `--approve-mcps` are never emitted.
 //   * Only TaskWraith-exposed Cursor model ids are forwarded. Cursor-proxied
 //     native-provider models are still dropped unless explicitly listed here.
 
@@ -22,8 +21,9 @@ import type { EffectiveRunPermissions } from '../store/types'
 import { cursorMcpToolsDenied } from './CursorMcpPolicy'
 
 /**
- * Classify a requested legacy/qualification argv posture. This does not make
- * either posture admissible for a production Cursor process.
+ * Classify a requested Cursor posture. The legacy builder below also uses this
+ * helper, while production Path-B uses it to choose its contained read/write
+ * argv and broker profile.
  */
 export function cursorWriteCapable(approvalMode: string | null | undefined): boolean {
   return typeof approvalMode === 'string' && approvalMode.trim() !== '' && approvalMode !== 'plan'
@@ -43,8 +43,8 @@ export interface BuildCursorCliArgsInput {
    * bridge approval/force flag even if a stale caller claims a bridge is live. */
   effectivePermissions?: Pick<EffectiveRunPermissions, 'agenticServices'> | null
   /**
-   * Qualification-only exact-version containment input. Production admission
-   * is disabled before this builder is reached.
+   * Qualification-only exact-version containment input. Production Path-B uses
+   * the separate contained builders below and never relies on this flag.
    */
   containmentAttested?: boolean
   /** Add exact-build flags that suppress provider project config/context. */
@@ -52,11 +52,12 @@ export interface BuildCursorCliArgsInput {
   /**
    * Legacy/qualification-only bridge input (a per-run
    * `.cursor/mcp.json` registering the full brokered TaskWraith MCP server was
-   * written, with matching `Mcp(<server>:<tool>)` allow rules). Adds
-   * `--approve-mcps` so the bridge's tools don't block on the interactive
-   * MCP-approval prompt. Only ever set for write-capable runs (default mode);
-   * plan mode executes no MCP tools. Ignored without `containmentAttested`.
-   * No production caller may set this.
+   * written, with matching `Mcp(<server>:<tool>)` allow rules). Enables the
+   * legacy builder's bridge-active path; that path may add `--force`, but never
+   * aggregate `--approve-mcps`. Only set for write-capable qualification runs
+   * (default mode); plan mode executes no MCP tools. Ignored without
+   * `containmentAttested`. Production Path-B performs its own global broker
+   * setup and calls the contained builders instead.
    */
   webBridgeActive?: boolean
   /**
@@ -69,8 +70,8 @@ export interface BuildCursorCliArgsInput {
    * offers no write/shell tool at all), which is strictly more restrictive than
    * a write seat. Set only by the caller after it wrote the containment config.
    * Ignored for write-capable runs (which use the full bridge via
-   * `webBridgeActive`). Suppresses `--mode plan` only when attested. No
-   * production caller may set this.
+   * `webBridgeActive`). Suppresses `--mode plan` only when attested. Production
+   * Path-B expresses the same distinction through its contained builder inputs.
    */
   readOnlyBridgeActive?: boolean
   /**
@@ -78,8 +79,8 @@ export interface BuildCursorCliArgsInput {
    * headlessly (see the `--force` note in buildCursorCliArgs). Default (undefined)
    * = ON whenever the bridge is active. Set to `false` to withhold it (the MCP
    * tools then get rejected, the pre-fix behavior). Only ever has effect when the
-   * bridge is active — never adds `--force` to a bare/plan run. Production
-   * Cursor admission is disabled and must never reach this branch.
+   * bridge is active — never adds `--force` to a bare/plan run. Production uses
+   * the separate `forceAllowMcpTools` input on the contained builders.
    */
   forceAllowTools?: boolean
 }
@@ -89,9 +90,8 @@ export interface BuildCursorProviderCliArgsInput extends BuildCursorCliArgsInput
   /** True when the read-only safe-subset broker was set up for this run (only
    *  ever true when `taskWraithMcpActive` is false — the two are exclusive). */
   taskWraithReadOnlyMcpActive?: boolean
-  /** Gate for `--force` (see forceAllowTools). Historical bridge-era input; the
-   *  hard-disabled cursorForceMcpEnabled() switch that fed it was deleted, and
-   *  the live contained argv never emits `--force`. */
+  /** Gate for `--force` (see forceAllowTools) on this legacy wrapper. Production
+   *  Path-B has a separate bridge-success gate on the contained argv builders. */
   forceAllowMcpTools?: boolean
 }
 
@@ -112,7 +112,7 @@ function resolveCursorModelArg(input: {
 
 export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   const mcpToolsDenied = cursorMcpToolsDenied(input.effectivePermissions)
-  // Production admission rejects Cursor before this qualification-only builder.
+  // Production Path-B does not call this qualification-only builder.
   // Independently clamp absent attestation so stale bridge booleans cannot
   // produce an uncontained default-mode argv in tests or future probes.
   const containmentAttested = input.containmentAttested === true
@@ -150,8 +150,8 @@ export function buildCursorCliArgs(input: BuildCursorCliArgsInput): string[] {
   }
   if (bridgeActive) {
     // Cursor has no single-server approve flag. Never use `--approve-mcps`,
-    // which approves the aggregate catalogue. This qualification-only branch
-    // is unreachable from production while Cursor admission is disabled.
+    // which approves the aggregate catalogue. Production reaches its own
+    // bridge-success-gated `--force` path in buildContainedCursorArgv instead.
     if (input.forceAllowTools !== false) {
       args.push('--force')
     }
@@ -215,8 +215,8 @@ export interface BuildContainedCursorReadOnlyArgvInput {
 /**
  * Production read-only Cursor launch surface (Path B: real ~/.cursor login +
  * native OS sandbox). Unlike the legacy/qualification `buildCursorCliArgs`, this
- * argv is what `runCursorProvider` actually spawns once a binary clears
- * `admitCursorRuntime`. Its containment is LOAD-BEARING:
+ * argv is what `runCursorProvider` actually spawns after binary resolution and
+ * optional governed-broker setup. Its containment is LOAD-BEARING:
  *   * `--sandbox enabled` hard-pins the native Seatbelt OS sandbox — live
  *     validated to block writes to the user's HOME even with write+shell — and
  *     is the universal impact bound for any startup-executed account code. It is
@@ -250,6 +250,14 @@ function buildContainedCursorArgv(
   readOnlyMode: 'ask' | 'plan' | null,
   forceAllowMcpTools?: boolean
 ): string[] {
+  // Preserve an already-resolved concrete Cursor Grok variant from the shared
+  // Path-B launch plan. The generic provider normalizer intentionally collapses
+  // such variants to the base `grok-4.5` id, but remains the fallback that
+  // coerces leaked foreign ids onto Cursor's concrete default.
+  const modelArg = input.model
+    ? resolveCursorGrok45CliModelId({ model: input.model }) ||
+      normalizeCliProviderModel('cursor', input.model)
+    : null
   return [
     '-p',
     '--output-format',
@@ -263,7 +271,7 @@ function buildContainedCursorArgv(
     // caller set up the TaskWraith broker bridge for this run (see
     // forceAllowMcpTools). Never `--yolo`/`--approve-mcps`.
     ...(forceAllowMcpTools === true ? ['--force'] : []),
-    ...(input.model ? ['--model', normalizeCliProviderModel('cursor', input.model)] : []),
+    ...(modelArg ? ['--model', modelArg] : []),
     '--workspace',
     input.workspace,
     // End-of-options guard. cursor-agent parses options INTERSPERSED (live-

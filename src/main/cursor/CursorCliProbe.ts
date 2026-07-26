@@ -11,9 +11,11 @@
 // CR3 first confirmed that bare `cursor-agent -p` writes/runs shell unmediated.
 // A later exact-build review found that authenticated startup can also preload
 // account/team hooks, skills, plugins, and MCP before a turn despite Plan mode
-// and local isolation flags. Production therefore starts no Cursor prompt
-// process. This unauthenticated/private-root probe remains inert inventory, not
-// containment evidence.
+// and local isolation flags. Production does not use this probe as an admission
+// boundary; it launches Cursor through the separate Path-B contained argv with
+// `--sandbox enabled`, and attaches the governed broker when setup succeeds.
+// This unauthenticated/private-root probe remains inert inventory, not
+// containment evidence for that live launch.
 
 export interface CursorModel {
   id: string
@@ -60,9 +62,9 @@ export interface CursorProbeDeps {
 }
 
 /**
- * Cursor model ids retained for configuration/inventory compatibility
- * (historically confirmed via `cursor-agent models`). They do not imply that
- * source-ahead TaskWraith can start a managed Cursor run.
+ * Cursor model ids retained for live selection and inventory compatibility
+ * (historically confirmed via `cursor-agent models`). The list controls model
+ * normalization; it is not an attestation of the live Path-B containment.
  */
 export const CURSOR_COMPOSER_MODELS: readonly CursorModel[] = [
   { id: 'composer-2.5', label: 'Composer 2.5' },
