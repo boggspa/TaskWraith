@@ -114,20 +114,43 @@ describe('jsonSchemaToGeminiSchema', () => {
     expect(warnSpy).not.toHaveBeenCalled()
   })
 
-  it('coerces oneOf to the first variant and emits a warning', () => {
+  it('preserves oneOf as a real anyOf union instead of flattening it', () => {
+    // Previously coerced to {type:'STRING'} + a warning, on the premise that
+    // FunctionDeclaration cannot express unions. It can: `Schema.anyOf` is on
+    // the same Schema used by FunctionDeclaration.parameters, and Gemini reads
+    // `oneOf` as `anyOf`. Flattening silently narrowed real tool params.
     const result = jsonSchemaToGeminiSchema({
       oneOf: [{ type: 'string' }, { type: 'integer' }]
     })
-    expect(result).toEqual({ type: 'STRING' })
-    expect(warnSpy).toHaveBeenCalled()
-    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/oneOf\/anyOf\/allOf/)
+    expect(result).toEqual({ anyOf: [{ type: 'STRING' }, { type: 'INTEGER' }] })
+    expect(warnSpy).not.toHaveBeenCalled()
   })
 
-  it('coerces anyOf the same way as oneOf', () => {
+  it('keeps the parent description on the union wrapper', () => {
     const result = jsonSchemaToGeminiSchema({
-      anyOf: [{ type: 'number' }, { type: 'null' }]
+      anyOf: [{ type: 'string' }, { type: 'array', items: { type: 'string' } }],
+      description: 'One alias or several.'
     })
-    expect(result?.type).toBe('NUMBER')
+    expect(result).toEqual({
+      anyOf: [{ type: 'STRING' }, { type: 'ARRAY', items: { type: 'STRING' } }],
+      description: 'One alias or several.'
+    })
+  })
+
+  it('emits a lone usable branch directly rather than a one-member union', () => {
+    const result = jsonSchemaToGeminiSchema({
+      anyOf: [{ type: 'number' }, { $ref: '#/definitions/X' }]
+    })
+    expect(result).toEqual({ type: 'NUMBER' })
+  })
+
+  it('still coerces allOf, which is an intersection anyOf cannot express', () => {
+    const result = jsonSchemaToGeminiSchema({
+      allOf: [{ type: 'string' }, { description: 'also this' }]
+    })
+    expect(result?.type).toBe('STRING')
+    expect(result?.anyOf).toBeUndefined()
+    expect(warnSpy.mock.calls[0]?.[0]).toMatch(/allOf|intersection/)
   })
 
   it('handles type: ["string", "null"] as nullable STRING', () => {

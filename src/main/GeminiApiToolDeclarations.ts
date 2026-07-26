@@ -27,11 +27,24 @@
  *   - `additionalProperties` stripped — Gemini's schema validator rejects
  *     it. Same goes for OpenAPI-isms Gemini doesn't model (`format`,
  *     `pattern`, etc. — left out of the output by omission).
- *   - `oneOf` / `anyOf` / `allOf`: Gemini's `FunctionDeclaration` doesn't
- *     accept unions, so we coerce to the first variant's shape and warn.
- *     This is intentionally lossy: model gets one branch instead of
- *     erroring out at request time. TaskWraith's MCP tools currently don't
- *     use unions, so the warning is mostly a tripwire for future schemas.
+ *   - `oneOf` / `anyOf`: emitted as a real `anyOf` union. `Schema.anyOf` is
+ *     part of the same `Schema` the API uses for
+ *     `FunctionDeclaration.parameters`, and Gemini reads `oneOf` as `anyOf`.
+ *     This corrects an earlier premise that unions were inexpressible: they
+ *     were being flattened to the first variant, which silently narrowed live
+ *     tool params (`ensemble_fanout.writeScopes` documents an object-of-arrays
+ *     but the model was shown STRING; `ensemble_send.to` lost its array form).
+ *     The old "mostly a tripwire, our tools don't use unions" note was wrong
+ *     on both counts — two tools use them, and it fired on every build.
+ *     CAVEAT: Google lists `anyOf` among the supported function-declaration
+ *     attributes, but flags Gemini 2.0 Flash as not supporting it. No 2.0
+ *     model reaches this path — the discovered catalogue starts at 2.5 — so
+ *     this is recorded rather than guarded. If a 2.0-era id ever returns, a
+ *     400 naming `anyOf` is the signal to gate this per model.
+ *   - `allOf`: still coerced to the first variant, with the warning kept. It
+ *     is an INTERSECTION, so emitting it as `anyOf` would invert the meaning;
+ *     there is no faithful Gemini encoding, and losing it loudly beats
+ *     misrepresenting it quietly.
  *   - `type: ['string', 'null']` → `{ type: 'STRING', nullable: true }`.
  *     Multi-type arrays coerce to the first non-null entry.
  *   - `$ref` / deeply nested unions: drop the property, log a warning.
@@ -52,7 +65,17 @@ export type GeminiSchemaType = 'OBJECT' | 'STRING' | 'NUMBER' | 'INTEGER' | 'BOO
 /** Output shape — minimal Gemini `Schema` clone. Real SDK accepts a
  *  wider surface, but we never emit more than this. */
 export interface GeminiSchema {
-  type: GeminiSchemaType
+  /**
+   * Optional ONLY so an `anyOf` wrapper can omit it — a union has no single
+   * type. Every non-union schema still sets it.
+   */
+  type?: GeminiSchemaType
+  /**
+   * Real union. `Schema.anyOf` is part of the same `Schema` the API uses for
+   * `FunctionDeclaration.parameters`, and Gemini interprets `oneOf` as `anyOf`,
+   * so a union no longer has to be flattened to one variant.
+   */
+  anyOf?: GeminiSchema[]
   description?: string
   properties?: Record<string, GeminiSchema>
   items?: GeminiSchema
@@ -111,6 +134,19 @@ function resolveType(raw: unknown): { type: GeminiSchemaType; nullable: boolean 
   return null
 }
 
+/** Branches of a genuine union (`oneOf` / `anyOf`) — NOT `allOf`, which is an
+ *  intersection. Returns null when neither key holds a usable array. */
+function pickUnionBranches(schema: Record<string, unknown>): Record<string, unknown>[] | null {
+  for (const key of ['anyOf', 'oneOf']) {
+    const variants = schema[key]
+    if (Array.isArray(variants)) {
+      const usable = variants.filter(isPlainObject)
+      if (usable.length > 0) return usable
+    }
+  }
+  return null
+}
+
 /** Pick the first variant of a `oneOf` / `anyOf` / `allOf` union as the
  *  schema's representative shape. Returns `null` if the union is empty
  *  or contains no plain-object variants. */
@@ -137,15 +173,44 @@ function pickUnionVariant(schema: Record<string, unknown>): unknown | null {
 export function jsonSchemaToGeminiSchema(input: unknown): GeminiSchema | undefined {
   if (!isPlainObject(input)) return undefined
 
-  // Resolve unions first so the rest of the function operates on a
-  // single shape. We warn ONCE per union — recursing into nested
-  // properties handles the rest.
+  // A real union survives as `anyOf`. Gemini interprets `oneOf` as `anyOf`, and
+  // both live on the same `Schema` used by `FunctionDeclaration.parameters`, so
+  // the old flatten-to-first-variant was lossy for no reason: `ensemble_fanout`
+  // documents "participant aliases as keys with path/glob arrays" for
+  // `writeScopes` while the model was shown `type: STRING`, and
+  // `ensemble_send.to` lost its array form entirely.
+  //
+  // `allOf` is deliberately NOT included: it is an intersection, so emitting it
+  // as `anyOf` would invert the meaning. It keeps the first-variant coercion and
+  // the warning, which is still honestly lossy.
+  const unionVariants = pickUnionBranches(input)
+  if (unionVariants) {
+    const converted = unionVariants
+      .map((variant) => jsonSchemaToGeminiSchema(variant))
+      .filter((variant): variant is GeminiSchema => Boolean(variant))
+    if (converted.length > 1) {
+      const union: GeminiSchema = { anyOf: converted }
+      // The parent carries the human-facing text; variants rarely do.
+      if (typeof input.description === 'string') union.description = input.description
+      if (typeof input.nullable === 'boolean') union.nullable = input.nullable
+      return union
+    }
+    // One usable branch is not a union — emit it directly rather than wrapping.
+    if (converted.length === 1) {
+      const only = { ...converted[0] }
+      if (typeof input.description === 'string') only.description = input.description
+      return only
+    }
+  }
+
+  // Remaining union form: `allOf`, or a union whose branches were all
+  // unconvertible. Coerce to the first variant and stay noisy about it.
   let working: Record<string, unknown> = input
   if ('oneOf' in input || 'anyOf' in input || 'allOf' in input) {
     const picked = pickUnionVariant(input)
     if (picked && isPlainObject(picked)) {
       console.warn(
-        '[GeminiApiToolDeclarations] oneOf/anyOf/allOf union coerced to first variant — Gemini FunctionDeclaration does not support schema unions.'
+        '[GeminiApiToolDeclarations] allOf/unconvertible union coerced to first variant — Gemini FunctionDeclaration cannot express an intersection.'
       )
       // Merge the union variant's fields on top of the parent (e.g. if
       // the parent already specified `description`, prefer the parent).
