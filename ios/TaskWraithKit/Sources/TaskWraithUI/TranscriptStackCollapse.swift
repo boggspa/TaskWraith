@@ -15,13 +15,22 @@ public struct TWCollapsedStackSummary: Equatable, Sendable {
     public let rowCount: Int
 }
 
+/// True when the row carries a card that must never be folded away into a
+/// one-line summary. A fan-out lane result and a provider run failure join the
+/// original four for different reasons: the fan-out card IS the only thing
+/// attributing a lane to its seat, and a failure folded into "Used 3 tools"
+/// would hide an error behind a summary that reads like success.
+private func twCarriesUnfoldableCard(_ row: RemoteThreadSnapshot.Row) -> Bool {
+    row.agentQuestion != nil || row.proposedPlan != nil || row.participantHealth != nil
+        || row.subThreadReturn != nil || row.fanoutResult != nil || row.runFailure != nil
+}
+
 /// A row that carries ONLY a thinking trace (no answer body, no cards) —
 /// absorbable into a settled stack alongside tool rows.
 public func twIsThinkingOnlyRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard let preview = row.thinking?.preview, !preview.isEmpty else { return false }
     guard (row.preview ?? "").isEmpty else { return false }
-    return row.agentQuestion == nil && row.proposedPlan == nil && row.participantHealth == nil
-        && row.subThreadReturn == nil
+    return !twCarriesUnfoldableCard(row)
 }
 
 /// Rows that may fold into a settled activity stack: tool rows (same gate as
@@ -29,8 +38,7 @@ public func twIsThinkingOnlyRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
 /// cards keep their full rendering.
 public func twCanCollapseIntoStack(_ row: RemoteThreadSnapshot.Row) -> Bool {
     if (row.role == "tool" || row.kind == "tool") && (row.toolSummary?.activityCount ?? 0) > 0 {
-        return row.agentQuestion == nil && row.proposedPlan == nil && row.participantHealth == nil
-            && row.subThreadReturn == nil
+        return !twCarriesUnfoldableCard(row)
     }
     return twIsThinkingOnlyRow(row)
 }
@@ -43,9 +51,7 @@ public func twIsPlainSystemNoticeRow(_ row: RemoteThreadSnapshot.Row) -> Bool {
     guard row.role == "system" || row.kind == "system" else { return false }
     guard let preview = row.preview, !preview.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
     else { return false }
-    guard row.agentQuestion == nil, row.proposedPlan == nil, row.participantHealth == nil,
-        row.subThreadReturn == nil
-    else { return false }
+    guard !twCarriesUnfoldableCard(row) else { return false }
     guard (row.toolSummary?.activityCount ?? 0) == 0 else { return false }
     guard (row.thinking?.preview ?? "").isEmpty else { return false }
     guard (row.media ?? []).isEmpty, (row.imageThumbnails ?? []).isEmpty,

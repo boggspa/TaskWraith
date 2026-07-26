@@ -519,6 +519,56 @@ export interface RemoteAgentQuestion {
   context?: string
 }
 
+/** Structured identity for an ensemble FAN-OUT lane result — the desktop
+ * EnsembleFanoutResultCard's header data, projected so the phone renders the
+ * same distinct lane card (glyph, lane label, provider badge, role, model,
+ * order) instead of folding the lane into an ordinary assistant bubble.
+ *
+ * DELIBERATELY header-only. The desktop card renders `ensembleFanoutTranscript
+ * Parts` — content and tool blocks INTERLEAVED in the order the lane produced
+ * them. That structure does not survive the wire cheaply, so the phone flattens
+ * it: prose rides the row `preview`, tool calls ride `toolSummary`, and the card
+ * renders activity above prose (the same chronology iOS already uses for
+ * thinking traces). `partCount` carries the real interleave depth so the card
+ * can SAY it flattened rather than silently reorder the lane.
+ *
+ * No `displayHueClass`: unlike the participant-health card (whose hue is frozen
+ * at stamp time), the desktop card resolves its accent LIVE from (provider,
+ * model) via `resolveProviderHueClass`, and iOS has the same resolver — so
+ * shipping the pair and resolving on the phone is exact parity, not a guess. */
+export interface RemoteEnsembleFanoutResult {
+  laneId?: string
+  /** Lane write-intent — drives the "Writer / Reader / Fan-out lane" label. */
+  intent?: 'read' | 'write' | 'none'
+  provider?: ProviderId
+  role?: string
+  model?: string
+  order?: number
+  /** Interleaved content/tool parts the desktop card renders in order. Present
+   * only when the lane actually interleaved (> 1), so the phone can note the
+   * flattening; absent for single-part lanes where flattening is lossless. */
+  partCount?: number
+}
+
+/** Structured provider run failure — the desktop ProviderRunFailureCard's
+ * stderr snippet, projected so the phone renders the same alert card instead of
+ * a bare error row. The renderer already bounds this hard at source
+ * (`buildProviderRunFailureSnippet`: ≤6 lines, ≤600 chars each), so projecting
+ * it whole is cheap; the caps here are defence against a hand-written or future
+ * metadata shape, not an expected trim. */
+export interface RemoteRunFailure {
+  provider?: ProviderId
+  /** Pre-composed "Provider / Role failed · exit 1" — already carries the
+   * ensemble seat, so the card needs no separate role field. */
+  headline: string
+  exitCode?: number
+  failureAt?: string
+  lines: Array<{ text: string; timestamp?: string }>
+  /** Actionable next step (e.g. the /compact escape hatch on a context wall),
+   * rendered as a distinct footer row outside the stderr body. */
+  hint?: string
+}
+
 export interface RemoteThreadRowMedia {
   id: string
   kind: TranscriptMediaKind
@@ -608,6 +658,14 @@ export interface RemoteThreadRow {
    * card (the same prompt the top attention banner shows) so remote clients can
    * answer it in place, matching the desktop AgentQuestionCard. */
   agentQuestion?: RemoteAgentQuestion
+  /** Present for an ensemble fan-out lane result — drives the distinct lane card
+   * (desktop EnsembleFanoutResultCard parity). The row stays kind 'assistant' so
+   * clients without the card still render a provider-tinted bubble. */
+  fanoutResult?: RemoteEnsembleFanoutResult
+  /** Present for a provider run failure — drives the stderr alert card (desktop
+   * ProviderRunFailureCard parity). The row stays kind 'error' so clients without
+   * the card still render the failure text in the error style. */
+  runFailure?: RemoteRunFailure
   /** Present for rows that need the user — drives the remote action UI. */
   attention?: {
     kind: RemoteAttentionKind
@@ -1019,7 +1077,11 @@ function detectMessageAttention(message: ChatMessage): RemoteAttentionKind | nul
 }
 
 function buildToolSummary(message: ChatMessage): RemoteThreadRow['toolSummary'] | undefined {
-  if (message.role !== 'tool') return undefined
+  // Ordinary tool rows, PLUS ensemble fan-out lane results. A fan-out result is
+  // an ASSISTANT message that carries its lane's tool activities on itself (the
+  // desktop card renders them inline via ActivityStack); without this widening
+  // the phone dropped every fan-out tool call on the floor and showed prose only.
+  if (message.role !== 'tool' && !isFanoutResultMessage(message)) return undefined
   const activities = message.toolActivities || []
   if (activities.length === 0) return undefined
   let running = 0
@@ -1295,6 +1357,83 @@ function buildGuestReply(
     speaker = role ? `${label} / ${role}` : label
   }
   return { summary, speaker }
+}
+
+/** Mirrors the renderer's `isEnsembleFanoutResultMessage` predicate exactly: an
+ * assistant participant message stamped with a non-empty lane id. Shared by the
+ * card builder and the tool-summary widening so a row can never get fan-out
+ * tool activities without the fan-out card that frames them (or vice versa). */
+function isFanoutResultMessage(message: ChatMessage): boolean {
+  if (message.role !== 'assistant') return false
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'ensembleParticipant') return false
+  const laneId = metadata.ensembleLaneId
+  return typeof laneId === 'string' && laneId.trim().length > 0
+}
+
+function buildFanoutResult(message: ChatMessage): RemoteEnsembleFanoutResult | undefined {
+  if (!isFanoutResultMessage(message)) return undefined
+  const metadata = message.metadata as Record<string, unknown>
+  const laneId = stringField(metadata.ensembleLaneId, 120)
+  if (!laneId) return undefined
+  const result: RemoteEnsembleFanoutResult = { laneId }
+  const intent = metadata.ensembleLaneIntent
+  if (intent === 'read' || intent === 'write' || intent === 'none') result.intent = intent
+  const provider = providerField(metadata.ensembleProvider)
+  if (provider) result.provider = provider
+  const role = stringField(metadata.ensembleRole, 80)
+  if (role) result.role = role
+  const model = stringField(metadata.ensembleModel, 120)
+  if (model) result.model = model
+  const order = metadata.ensembleOrder
+  if (typeof order === 'number' && Number.isFinite(order)) {
+    result.order = Math.trunc(order)
+  }
+  const parts = metadata.ensembleFanoutTranscriptParts
+  if (Array.isArray(parts) && parts.length > 1) result.partCount = parts.length
+  return result
+}
+
+/** Upper bounds on a projected stderr snippet. The renderer already clamps to
+ * 6 lines / 600 chars; these only stop a malformed or future metadata shape
+ * from turning one failed run into an unbounded snapshot. */
+const REMOTE_RUN_FAILURE_MAX_LINES = 8
+const REMOTE_RUN_FAILURE_LINE_MAX_CHARS = 600
+
+function buildRunFailure(message: ChatMessage): RemoteRunFailure | undefined {
+  const metadata = message.metadata as Record<string, unknown> | undefined
+  if (metadata?.kind !== 'providerRunFailure') return undefined
+  const provider = providerField(metadata.provider)
+  const exitCode =
+    typeof metadata.exitCode === 'number' && Number.isFinite(metadata.exitCode)
+      ? Math.trunc(metadata.exitCode)
+      : undefined
+  const lines: RemoteRunFailure['lines'] = []
+  if (Array.isArray(metadata.lines)) {
+    for (const raw of metadata.lines) {
+      if (lines.length >= REMOTE_RUN_FAILURE_MAX_LINES) break
+      if (!raw || typeof raw !== 'object') continue
+      const record = raw as Record<string, unknown>
+      const text = stringField(record.text, REMOTE_RUN_FAILURE_LINE_MAX_CHARS)
+      if (!text) continue
+      const timestamp = stringField(record.timestamp, 40)
+      lines.push(timestamp ? { text, timestamp } : { text })
+    }
+  }
+  // Headline is the card's only always-present label, so never let a missing
+  // stamp render a blank alert — rebuild the desktop's own fallback wording.
+  const providerLabel = provider ? PROVIDER_LABELS[provider] : 'Provider'
+  const headline =
+    stringField(metadata.headline, 200) ??
+    (exitCode === 130 ? `${providerLabel} cancelled` : `${providerLabel} failed`)
+  const failure: RemoteRunFailure = { headline, lines }
+  if (provider) failure.provider = provider
+  if (exitCode !== undefined) failure.exitCode = exitCode
+  const failureAt = stringField(metadata.failureAt, 40) ?? stringField(message.timestamp, 40)
+  if (failureAt) failure.failureAt = failureAt
+  const hint = stringField(metadata.hint, 400)
+  if (hint) failure.hint = hint
+  return failure
 }
 
 /** Generous body cap for a projected plan — large enough that the overwhelming
@@ -1657,6 +1796,10 @@ function buildRow(
   if (proposedPlan) row.proposedPlan = proposedPlan
   const agentQuestion = buildAgentQuestion(message)
   if (agentQuestion) row.agentQuestion = agentQuestion
+  const fanoutResult = buildFanoutResult(message)
+  if (fanoutResult) row.fanoutResult = fanoutResult
+  const runFailure = buildRunFailure(message)
+  if (runFailure) row.runFailure = runFailure
   if (attentionKind) {
     row.attention = {
       kind: attentionKind,

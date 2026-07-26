@@ -847,6 +847,193 @@ describe('RemoteThreadProjection', () => {
     })
   })
 
+  describe('fanoutResult', () => {
+    const lane = (overrides: Record<string, unknown> = {}, rest: Partial<ChatMessage> = {}) =>
+      msg(1, {
+        id: 'lane-a',
+        role: 'assistant',
+        content: 'Lane output body.',
+        metadata: {
+          kind: 'ensembleParticipant',
+          ensembleLaneId: 'lane-a',
+          ensembleLaneIntent: 'write',
+          ensembleProvider: 'claude',
+          ensembleRole: 'Reviewer',
+          ensembleModel: 'claude-opus-5',
+          ensembleOrder: 2,
+          ...overrides
+        },
+        ...rest
+      })
+
+    it('projects the desktop fan-out card header while staying an assistant row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [lane()])
+      expect(snap.rows[0]).toMatchObject({
+        id: 'lane-a',
+        // Clients WITHOUT the card must still get a provider-tinted bubble.
+        kind: 'assistant',
+        fanoutResult: {
+          laneId: 'lane-a',
+          intent: 'write',
+          provider: 'claude',
+          role: 'Reviewer',
+          model: 'claude-opus-5',
+          order: 2
+        }
+      })
+      // Lane prose rides the ordinary preview — the card is header-only.
+      expect(snap.rows[0].preview).toBe('Lane output body.')
+    })
+
+    it('carries the fan-out lane tool activities the phone used to drop', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        lane({}, {
+          toolActivities: [
+            activity({ id: 'a1', toolName: 'read', displayName: 'Read', category: 'read', filePath: 'src/a.ts' }),
+            activity({ id: 'a2', toolName: 'shell', displayName: 'Shell' })
+          ]
+        })
+      ])
+      expect(snap.rows[0].toolSummary).toMatchObject({ activityCount: 2, status: 'success' })
+      expect(snap.rows[0].toolSummary?.tools?.map((t) => t.name)).toEqual(['Read', 'Shell'])
+    })
+
+    it('leaves an ordinary assistant row without a lane id alone (no card, no tool summary)', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, {
+          id: 'plain',
+          role: 'assistant',
+          content: 'Plain reply.',
+          metadata: { kind: 'ensembleParticipant', ensembleProvider: 'claude' },
+          toolActivities: [activity({ id: 'a1' })]
+        })
+      ])
+      expect(snap.rows[0].fanoutResult).toBeUndefined()
+      // The tool-summary widening is scoped to fan-out; a normal assistant row
+      // must not start sprouting tool cards.
+      expect(snap.rows[0].toolSummary).toBeUndefined()
+    })
+
+    it('drops an unrecognised intent rather than guessing a write posture', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        lane({ ensembleLaneIntent: 'sideways' })
+      ])
+      expect(snap.rows[0].fanoutResult?.laneId).toBe('lane-a')
+      expect(snap.rows[0].fanoutResult?.intent).toBeUndefined()
+    })
+
+    it('reports partCount only when the lane actually interleaved', () => {
+      const single = project({ kind: 'latestN', n: 10 }, [
+        lane({ ensembleFanoutTranscriptParts: [{ kind: 'content', id: 'p1', messageIds: ['m1'], content: 'x' }] })
+      ])
+      expect(single.rows[0].fanoutResult?.partCount).toBeUndefined()
+      const many = project({ kind: 'latestN', n: 10 }, [
+        lane({
+          ensembleFanoutTranscriptParts: [
+            { kind: 'content', id: 'p1', messageIds: ['m1'], content: 'x' },
+            { kind: 'tools', id: 'p2', messageIds: ['m2'], toolActivities: [] },
+            { kind: 'content', id: 'p3', messageIds: ['m3'], content: 'y' }
+          ]
+        })
+      ])
+      expect(many.rows[0].fanoutResult?.partCount).toBe(3)
+    })
+
+    it('ignores a blank lane id and a non-assistant role', () => {
+      const blank = project({ kind: 'latestN', n: 10 }, [lane({ ensembleLaneId: '   ' })])
+      expect(blank.rows[0].fanoutResult).toBeUndefined()
+      const tool = project({ kind: 'latestN', n: 10 }, [lane({}, { role: 'tool' })])
+      expect(tool.rows[0].fanoutResult).toBeUndefined()
+    })
+  })
+
+  describe('runFailure', () => {
+    const fail = (overrides: Record<string, unknown> = {}) =>
+      msg(1, {
+        id: 'fail-1',
+        role: 'error',
+        content: '[time] Claude / Reviewer run failed (exit 1)\n---\nboom',
+        metadata: {
+          kind: 'providerRunFailure',
+          provider: 'claude',
+          exitCode: 1,
+          failureAt: '2026-05-28T11:59:00.000Z',
+          headline: 'Claude / Reviewer failed · exit 1',
+          lines: [
+            { text: 'boom', timestamp: '2026-05-28T11:58:59.000Z' },
+            { text: 'stack trace line' }
+          ],
+          ...overrides
+        }
+      })
+
+    it('projects the stderr card while staying an error row', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [fail()])
+      expect(snap.rows[0]).toMatchObject({
+        id: 'fail-1',
+        // Clients WITHOUT the card still render the failure in the error style.
+        kind: 'error',
+        runFailure: {
+          provider: 'claude',
+          headline: 'Claude / Reviewer failed · exit 1',
+          exitCode: 1,
+          failureAt: '2026-05-28T11:59:00.000Z',
+          lines: [
+            { text: 'boom', timestamp: '2026-05-28T11:58:59.000Z' },
+            { text: 'stack trace line' }
+          ]
+        }
+      })
+    })
+
+    it('carries the actionable hint separately from the stderr dump', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        fail({ hint: 'Context window exhausted — run /compact to shrink this session.' })
+      ])
+      expect(snap.rows[0].runFailure?.hint).toContain('/compact')
+    })
+
+    it('rebuilds a headline when the stamp is missing, cancelled and failed alike', () => {
+      const failed = project({ kind: 'latestN', n: 10 }, [fail({ headline: undefined })])
+      expect(failed.rows[0].runFailure?.headline).toBe('Claude failed')
+      const cancelled = project({ kind: 'latestN', n: 10 }, [
+        fail({ headline: undefined, exitCode: 130 })
+      ])
+      expect(cancelled.rows[0].runFailure?.headline).toBe('Claude cancelled')
+      // No provider stamp either — still never a blank alert.
+      const unknown = project({ kind: 'latestN', n: 10 }, [
+        fail({ headline: undefined, provider: undefined })
+      ])
+      expect(unknown.rows[0].runFailure?.headline).toBe('Provider failed')
+    })
+
+    it('bounds a malformed line list and skips empty entries', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        fail({
+          lines: [
+            ...Array.from({ length: 20 }, (_, i) => ({ text: `line ${i}` })),
+            { text: '   ' },
+            null
+          ]
+        })
+      ])
+      expect(snap.rows[0].runFailure?.lines).toHaveLength(8)
+      expect(snap.rows[0].runFailure?.lines.every((line) => line.text.trim())).toBe(true)
+    })
+
+    it('falls back to the message timestamp when failureAt is absent', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [fail({ failureAt: undefined })])
+      expect(snap.rows[0].runFailure?.failureAt).toBe(snap.rows[0].timestamp)
+    })
+
+    it('does not project a run failure without the metadata kind', () => {
+      const snap = project({ kind: 'latestN', n: 10 }, [
+        msg(1, { id: 'e', role: 'error', content: 'plain error', metadata: { provider: 'claude' } })
+      ])
+      expect(snap.rows[0].runFailure).toBeUndefined()
+    })
+  })
+
   describe('aroundRow', () => {
     it('windows plus/minus radius around the target, bounded to 2*radius+1', () => {
       const snap = project({ kind: 'aroundRow', rowId: 'm5', radius: 2 })

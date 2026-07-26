@@ -3319,6 +3319,294 @@ struct ContextCompactionSummaryCard: View {
     }
 }
 
+/// Header chrome for an ensemble fan-out lane result (desktop
+/// EnsembleFanoutResultCard parity): lane glyph, lane label, provider badge,
+/// role, model chip, participant order. HEADER only — the lane's prose and
+/// tool calls ride the ordinary row body beneath it, framed by
+/// ``TWFanoutCardChrome``.
+///
+/// The accent is the PARTICIPANT's, not the thread's: a fan-out round mixes
+/// seats, so a lane tinted with the pane provider would attribute one seat's
+/// output to another. `brandProviderKey` resolves (provider, model) the same
+/// way the desktop's `resolveProviderHueClass` does, so an Ollama-backed lane
+/// wears its upstream brand.
+struct EnsembleFanoutResultHeader: View {
+    let fanout: RemoteThreadSnapshot.Row.FanoutResult
+    /// Model chip from the row's speaker tag ("Provider / Role (Model)"), so
+    /// the badge matches every other transcript row's chip. Falls back to the
+    /// raw projected model id when the speaker carries no "(Model)" suffix.
+    let modelChip: String?
+
+    private var accent: Color { TWTheme.providerAccent(fanout.brandProviderKey) }
+
+    private var providerLabel: String {
+        TWTheme.providerLabel(fanout.provider, modelId: fanout.model, modelLabel: fanout.model)
+    }
+
+    /// Desktop `laneLabel()`. An unrecognised intent (older or newer Mac) falls
+    /// back to the generic label rather than guessing a write posture.
+    private var laneLabel: String {
+        switch fanout.intent {
+        case "write": return "Writer fan-out"
+        case "read": return "Reader fan-out"
+        default: return "Fan-out lane"
+        }
+    }
+
+    private var role: String {
+        let value = fanout.role?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        return value.isEmpty ? providerLabel : value
+    }
+
+    private var badge: String? {
+        if let modelChip, !modelChip.isEmpty { return modelChip }
+        let raw = fanout.model?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard !raw.isEmpty else { return nil }
+        return raw.count > 22 ? String(raw.prefix(20)) + "…" : raw
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Image(systemName: "arrow.turn.right.down")
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(accent)
+                    .accessibilityHidden(true)
+                Text(laneLabel)
+                    .font(.caption2.weight(.semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .lineLimit(1)
+                Spacer(minLength: 4)
+                if let order = fanout.order {
+                    Text("#\(order)")
+                        .font(.caption2.weight(.semibold))
+                        .monospacedDigit()
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .padding(.horizontal, 5)
+                        .padding(.vertical, 2)
+                        .background(TWTheme.surface3, in: Capsule())
+                        .accessibilityLabel("Participant order \(order)")
+                }
+            }
+            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                Text(providerLabel)
+                    .font(.caption2.weight(.bold))
+                    .foregroundStyle(accent)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(accent.opacity(0.14), in: Capsule())
+                Text(role)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                if let badge {
+                    Text(badge)
+                        .font(.caption2)
+                        .foregroundStyle(TWTheme.textTertiary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .accessibilityLabel("Model \(badge)")
+                }
+                Spacer(minLength: 0)
+            }
+            // Honesty note, not decoration: the desktop card interleaves the
+            // lane's content and tool blocks in production order, which the
+            // wire flattens to prose + a tool group. Say so rather than let a
+            // reordered lane read as the order it actually ran in.
+            if let partCount = fanout.partCount, partCount > 1 {
+                Text("\(partCount) parts, shown flattened")
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textMuted)
+            }
+        }
+    }
+}
+
+/// Card chrome wrapping a whole fan-out row body (desktop
+/// `.ensemble-fanout-result-card`). Always applied with an `enabled` flag
+/// rather than branched at the call site: an `if` would give the row two
+/// different view identities, re-mounting every MarkdownLite body the moment a
+/// lane's card data lands mid-stream.
+struct TWFanoutCardChrome: ViewModifier {
+    let enabled: Bool
+    let accent: Color
+
+    func body(content: Content) -> some View {
+        content
+            .padding(enabled ? 10 : 0)
+            .background(
+                LinearGradient(
+                    colors: enabled
+                        ? [accent.opacity(0.13), TWTheme.surface1.opacity(0.72)]
+                        : [.clear, .clear],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                ),
+                in: RoundedRectangle(cornerRadius: 12)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 12)
+                    .strokeBorder(enabled ? accent.opacity(0.5) : .clear, lineWidth: 1.2)
+            )
+    }
+}
+
+/// Provider run failure (desktop ProviderRunFailureCard parity): "stderr"
+/// kicker, headline, the timestamped stderr lines in monospace, and the
+/// actionable hint as a distinct amber footer outside the dump.
+///
+/// Exit 130 is a user STOP, not a fault — it takes the amber cancelled
+/// treatment (desktop `.is-cancelled`) so a deliberate stop never reads as a
+/// crash in the transcript.
+struct ProviderRunFailureCard: View {
+    let failure: RemoteThreadSnapshot.Row.RunFailure
+    let onCopy: (String) -> Void
+    let onAddToPrompt: ((String) -> Void)?
+
+    private var cancelled: Bool { failure.exitCode == 130 }
+    private var accent: Color { cancelled ? TWTheme.statusAttention : TWTheme.statusFailed }
+    private var lines: [RemoteThreadSnapshot.Row.RunFailure.Line] { failure.lines ?? [] }
+
+    private var headline: String {
+        let value = failure.headline?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        guard value.isEmpty else { return value }
+        let label = TWTheme.providerLabel(failure.provider)
+        return cancelled ? "\(label) cancelled" : "\(label) failed"
+    }
+
+    private var failureCaption: String? {
+        guard let failureAt = failure.failureAt else { return nil }
+        return TWTranscriptTimestampFormat.footerCaption(iso: failureAt)
+    }
+
+    /// What copy / add-to-prompt hand over: the same shape the desktop card
+    /// copies (timestamped lines, then the hint).
+    private var copyText: String {
+        var parts = [headline]
+        parts.append(
+            contentsOf: lines.map { line in
+                guard let timestamp = line.timestamp,
+                    let caption = TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
+                else { return line.text }
+                return "[\(caption)] \(line.text)"
+            })
+        if let hint = failure.hint, !hint.isEmpty { parts.append(hint) }
+        return parts.joined(separator: "\n")
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            header
+            if !lines.isEmpty {
+                ToolActivityViewport(
+                    maxHeight: 180,
+                    fadeHeight: 32,
+                    expandLabel: "Expand stderr",
+                    collapseLabel: "Collapse stderr"
+                ) {
+                    VStack(alignment: .leading, spacing: 6) {
+                        ForEach(lines) { line in
+                            failureLine(line)
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        TWTheme.surface2.opacity(0.5),
+                        in: RoundedRectangle(cornerRadius: 8))
+                }
+            }
+            if let hint = failure.hint, !hint.isEmpty {
+                Text(hint)
+                    .font(.caption2)
+                    .foregroundStyle(TWTheme.textPrimary)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(
+                        TWTheme.statusAttention.opacity(0.10),
+                        in: RoundedRectangle(cornerRadius: 8)
+                    )
+                    .overlay(
+                        RoundedRectangle(cornerRadius: 8)
+                            .strokeBorder(TWTheme.statusAttention.opacity(0.45), lineWidth: 1)
+                    )
+            }
+            MessageActionsBar(
+                isPinned: false,
+                onCopy: { onCopy(copyText) },
+                onAddToPrompt: onAddToPrompt.map { handler in { handler(copyText) } },
+                onTogglePin: nil,
+                onOpenSideChat: nil
+            )
+        }
+        .padding(10)
+        .background(
+            LinearGradient(
+                colors: [accent.opacity(0.12), TWTheme.surface1.opacity(0.72)],
+                startPoint: .topLeading,
+                endPoint: .bottomTrailing
+            ),
+            in: RoundedRectangle(cornerRadius: 12)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 12)
+                .strokeBorder(accent.opacity(0.58), lineWidth: 1.2)
+        )
+        .accessibilityElement(children: .contain)
+        .accessibilityLabel(headline)
+    }
+
+    private var header: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text("STDERR")
+                .font(.system(size: 9, weight: .bold))
+                .kerning(0.8)
+                .foregroundStyle(accent)
+                .padding(.horizontal, 6)
+                .padding(.vertical, 2)
+                .background(accent.opacity(0.12), in: Capsule())
+                .overlay(Capsule().strokeBorder(accent.opacity(0.36), lineWidth: 1))
+                .accessibilityHidden(true)
+            Text(headline)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(TWTheme.textPrimary)
+                .lineLimit(2)
+            Spacer(minLength: 4)
+            if let failureCaption {
+                Text(failureCaption)
+                    .font(.caption2)
+                    .monospacedDigit()
+                    .foregroundStyle(TWTheme.textTertiary)
+            }
+        }
+    }
+
+    private func failureLine(_ line: RemoteThreadSnapshot.Row.RunFailure.Line) -> some View {
+        HStack(alignment: .top, spacing: 8) {
+            if let timestamp = line.timestamp,
+                let caption = TWTranscriptTimestampFormat.footerCaption(iso: timestamp)
+            {
+                Text(caption)
+                    .font(.system(size: 10, design: .monospaced))
+                    .monospacedDigit()
+                    .foregroundStyle(TWTheme.textTertiary)
+                    .fixedSize()
+            }
+            Text(line.text)
+                .font(.system(size: 11, design: .monospaced))
+                .foregroundStyle(TWTheme.textPrimary.opacity(0.92))
+                .fixedSize(horizontal: false, vertical: true)
+                .textSelection(.enabled)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+    }
+}
+
 /// Compact always-visible message action strip — desktop MessageActionsChip
 /// parity for iOS (copy / add-to-prompt / pin / open side chat).
 struct MessageActionsBar: View {
@@ -3406,8 +3694,11 @@ struct ThreadRowView: View, Equatable {
     private var isUser: Bool { row.role == "user" }
     private var isTool: Bool { row.role == "tool" || row.kind == "tool" }
     private var showExpand: Bool {
+        // Fan-out is deliberately absent: its lane prose IS the row preview, so
+        // a clipped lane must stay expandable. The failure card is self-
+        // contained (the row body is just the copy text it already renders).
         row.truncated == true && !hasParticipantHealthCard && !hasProposedPlanCard
-            && !hasAgentQuestionCard && !hasContextCompactionCard
+            && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard
     }
     private var hasParticipantHealthCard: Bool {
         !(row.participantHealth?.entries?.isEmpty ?? true)
@@ -3419,16 +3710,28 @@ struct ThreadRowView: View, Equatable {
         ContextCompactionSummaryCard.matches(
             preview: row.preview, role: row.role, kind: row.kind)
     }
+    /// Fan-out is a FRAME, not a replacement: the header renders above the
+    /// ordinary body (tools + prose + media), all of it inside the lane card.
+    private var hasFanoutResultCard: Bool { row.fanoutResult != nil }
+    /// The failure card OWNS its row — headline, stderr lines, hint and its own
+    /// action bar — so every ordinary body branch stands down beneath it.
+    private var hasRunFailureCard: Bool { row.runFailure != nil }
+    private var fanoutAccent: Color {
+        guard let fanout = row.fanoutResult else { return accentColor }
+        return TWTheme.providerAccent(fanout.brandProviderKey)
+    }
 
     var body: some View {
         HStack(alignment: .top, spacing: 8) {
             AgentTranscriptLeadingMark(
                 identity: activeAgentIdentity,
                 fallbackAccent: accentColor,
-                hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard)
+                hidden: isUser || hasParticipantHealthCard || hasContextCompactionCard
+                    || hasFanoutResultCard || hasRunFailureCard)
             VStack(alignment: .leading, spacing: 4) {
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
                     && !hasAgentQuestionCard && !hasContextCompactionCard
+                    && !hasFanoutResultCard && !hasRunFailureCard
                 {
                     HStack(spacing: 0) {
                         Text(label)
@@ -3442,7 +3745,19 @@ struct ThreadRowView: View, Equatable {
                         }
                     }
                 }
-                if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
+                // The lane header REPLACES the plain label line and frames the
+                // ordinary body below it — prose and tool calls still render
+                // through their own branches, now inside the lane card.
+                if let fanout = row.fanoutResult {
+                    EnsembleFanoutResultHeader(fanout: fanout, modelChip: settledRowModelChip)
+                }
+                if let failure = row.runFailure {
+                    ProviderRunFailureCard(
+                        failure: failure,
+                        onCopy: { copyText($0) },
+                        onAddToPrompt: { model.requestComposerAppend($0, threadId: threadId) }
+                    )
+                } else if let agentQuestion = row.agentQuestion, agentQuestion.promptId != nil {
                     AgentQuestionRow(model: model, question: agentQuestion)
                 } else if hasContextCompactionCard {
                     ContextCompactionSummaryCard(preview: row.preview ?? "")
@@ -3492,7 +3807,8 @@ struct ThreadRowView: View, Equatable {
                 // so an image attached to the plan turn can't render orphaned
                 // beneath the card. Guard every branch — gating only the first
                 // would fall through to the else-ifs.
-                if !hasProposedPlanCard, !hasAgentQuestionCard, let media = row.media, !media.isEmpty
+                if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
+                    let media = row.media, !media.isEmpty
                 {
                     #if canImport(UIKit)
                         TranscriptMediaStrip(
@@ -3500,7 +3816,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(media.count)
                     #endif
-                } else if !hasProposedPlanCard, !hasAgentQuestionCard,
+                } else if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let thumbs = row.imageThumbnails, !thumbs.isEmpty
                 {
                     #if canImport(UIKit)
@@ -3508,7 +3824,7 @@ struct ThreadRowView: View, Equatable {
                     #else
                         imageAttachmentChip(thumbs.count)
                     #endif
-                } else if !hasProposedPlanCard, !hasAgentQuestionCard,
+                } else if !hasProposedPlanCard, !hasAgentQuestionCard, !hasRunFailureCard,
                     let count = row.imageAttachmentCount, count > 0
                 {
                     imageAttachmentChip(count)
@@ -3519,7 +3835,7 @@ struct ThreadRowView: View, Equatable {
                 // existing expandRow path when host-truncated. Renders ABOVE
                 // the answer body, mirroring desktop chronology.
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard,
+                    && !hasAgentQuestionCard && !hasRunFailureCard,
                     let thinking = row.thinking,
                     let thinkingText = thinking.preview, !thinkingText.isEmpty
                 {
@@ -3531,7 +3847,7 @@ struct ThreadRowView: View, Equatable {
                         })
                 }
                 if !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-                    && !hasAgentQuestionCard && !hasContextCompactionCard,
+                    && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard,
                     let preview = row.preview, !preview.isEmpty
                 {
                     VStack(alignment: .leading, spacing: 4) {
@@ -3590,7 +3906,9 @@ struct ThreadRowView: View, Equatable {
                     .buttonStyle(.plain)
                     .disabled(isExpanding)
                 }
-            }            .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .modifier(TWFanoutCardChrome(enabled: hasFanoutResultCard, accent: fanoutAccent))
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
         .padding(.vertical, 5)
     }
@@ -3628,7 +3946,7 @@ struct ThreadRowView: View, Equatable {
     /// their own surface (plans, questions, health, pure tool chips).
     private var showsMessageActionChrome: Bool {
         !hasParticipantHealthCard && !hasSubThreadReturnCard && !hasProposedPlanCard
-            && !hasAgentQuestionCard && !hasContextCompactionCard && !isTool
+            && !hasAgentQuestionCard && !hasContextCompactionCard && !hasRunFailureCard && !isTool
             && (row.role == "user" || row.role == "assistant" || row.kind == "assistant"
                 || row.kind == "user" || row.kind == "message")
     }

@@ -1567,6 +1567,60 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
             public let context: String?
         }
         public let agentQuestion: AgentQuestion?
+        /// Ensemble fan-out lane identity — the desktop EnsembleFanoutResult
+        /// Card's header data, so a lane result reads as its own card rather
+        /// than an ordinary assistant bubble. HEADER ONLY by design: the
+        /// desktop card renders content and tool blocks INTERLEAVED, which the
+        /// wire flattens (prose → `preview`, tools → `toolSummary`).
+        /// `partCount` is the real interleave depth, present only when the
+        /// lane actually interleaved, so the card can say it flattened.
+        /// No hue field: the accent resolves LIVE from (provider, model) here
+        /// exactly as it does on the desktop.
+        public struct FanoutResult: Codable, Sendable, Equatable {
+            public let laneId: String?
+            /// "read" / "write" / "none" — an optional String, never an enum,
+            /// so an unknown intent from a newer Mac degrades to the generic
+            /// "Fan-out lane" label instead of failing the whole row decode.
+            public let intent: String?
+            public let provider: String?
+            public let role: String?
+            public let model: String?
+            public let order: Int?
+            public let partCount: Int?
+
+            /// Provider key for `TWTheme.providerAccent` / `providerLabel` —
+            /// mirrors the desktop's `resolveProviderHueClass(provider, model)`
+            /// so an Ollama-backed lane wears its upstream brand (Qwen →
+            /// Alibaba purple) rather than generic Ollama green.
+            public var brandProviderKey: String {
+                OllamaDisplayBrands.providerHueClass(provider: provider, modelId: model)
+            }
+        }
+        public let fanoutResult: FanoutResult?
+        /// Provider run failure (stderr snippet) — the desktop
+        /// ProviderRunFailureCard's data. The row stays role/kind "error", so
+        /// a client without the card still renders the failure text in the
+        /// error style; with it, the phone gets the same kicker + headline +
+        /// timestamped lines + hint.
+        public struct RunFailure: Codable, Sendable, Equatable {
+            public let provider: String?
+            /// Pre-composed on the Mac ("Claude / Reviewer failed · exit 1") —
+            /// already carries the ensemble seat, so there is no role field.
+            public let headline: String?
+            public let exitCode: Int?
+            public let failureAt: String?
+            public let lines: [Line]?
+            public let hint: String?
+
+            public struct Line: Codable, Sendable, Equatable, Identifiable {
+                public let text: String
+                public let timestamp: String?
+                /// Stable within one card: stderr lines are de-duplicated Mac
+                /// side, so text alone identifies a row.
+                public var id: String { (timestamp ?? "") + text }
+            }
+        }
+        public let runFailure: RunFailure?
     }
     public struct RunSummary: Codable, Sendable, Equatable {
         public let runId: String?

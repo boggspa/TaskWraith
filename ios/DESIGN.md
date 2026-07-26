@@ -1067,6 +1067,39 @@ Verified baseline for this entry: iOS project `CURRENT_PROJECT_VERSION` = 82
 `package.json` while CHANGELOG already records 1.8.8 — use the changelog /
 ship baseline as the design-doc desktop pin.
 
+## v0.45 — transcript row-vocabulary closure (2026-07-26)
+
+An audit of transcript presentation across the two platforms found the row
+*vocabulary* was the only real gap worth closing — markdown engine, typography,
+projection caps, and platform chrome are deliberate divergences, but two desktop
+card kinds had no iOS counterpart at all and fell through to generic rows:
+
+- **Ensemble fan-out lane result** (`EnsembleFanoutResultCard`) rendered as a
+  plain assistant bubble, and — worse — the lane's tool activities were dropped
+  entirely, because `buildToolSummary` only projected tool calls for `role ===
+  'tool'` messages while a fan-out result is an ASSISTANT message carrying its
+  own activities. Fixed: `RemoteThreadRow.fanoutResult` carries the header
+  identity (lane id, intent, provider, role, model, order) and the tool-summary
+  predicate now admits fan-out rows. iOS renders `EnsembleFanoutResultHeader`
+  plus `TWFanoutCardChrome` framing the ordinary body.
+- **Provider run failure** (`ProviderRunFailureCard`) rendered as a bare error
+  row. Fixed: `RemoteThreadRow.runFailure` carries the stderr snippet (headline,
+  exit code, timestamped lines, hint) and iOS renders the matching alert card,
+  amber for the exit-130 cancelled case so a deliberate stop never reads as a
+  crash.
+
+Both rows keep their original `kind` (`assistant` / `error`), so a client
+without the cards still gets a provider-tinted bubble or an error-styled row.
+Both are added to the settled-stack collapse guards — a failure folded into
+"Used 3 tools" would hide an error behind a summary that reads like success.
+
+**Known, deliberate degradation:** the desktop fan-out card renders
+`ensembleFanoutTranscriptParts` — content and tool blocks INTERLEAVED in
+production order. The wire flattens that (prose → `preview`, tools →
+`toolSummary`), so iOS shows activity above prose. `partCount` rides the card so
+the header can say the lane was flattened rather than silently reorder it.
+Restoring true interleave needs a parts-array on the wire — deferred.
+
 ## Current follow-ups
 
 1. Define the confirmation and elevation contract for `workflowDelete` before
@@ -1077,6 +1110,8 @@ ship baseline as the design-doc desktop pin.
    diff review, and larger workflow/ensemble controls.
 4. Continue device QA across offline Demo Mode, paired LAN, paired Tailscale,
    foreground reconnect, APNs wake, image attachments, and settings persistence.
+5. Real-device visual QA for the v0.45 fan-out and run-failure cards (wire,
+   fold, and decode are unit-covered; the rendered look is not).
 
 ## Non-goals
 
