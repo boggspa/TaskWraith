@@ -478,6 +478,94 @@ describe('createApprovalOrchestration — security guard sequence (faked deps)',
     void pending
   })
 
+  it('(i1) carries the target surface into BOTH the grant check and the pending record', async () => {
+    // The canvasId used to be lost between request and response: the pending
+    // record kept provider/service/workspace/runId only, so an "allow for
+    // session" could only ever be minted unscoped — i.e. meaning every canvas.
+    // Both ends have to see the surface for a scoped grant to exist at all.
+    const order: string[] = []
+    const deps = makeDeps(order)
+    // getApprovalService returns a fresh object per call, so pin a stable spy to
+    // observe what the pending record is actually registered with.
+    const registerGeminiTool = vi.fn((_approvalId: string, _info: Record<string, unknown>) => {
+      order.push('registerGeminiTool')
+    })
+    deps.getApprovalService = vi.fn(() => ({
+      registerGeminiTool,
+      registerMain: vi.fn()
+    })) as never
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'canvasInteraction',
+      '/repo',
+      request({
+        preview: {
+          kind: 'tool',
+          toolName: 'canvas_click',
+          params: { canvasId: 'canvas-the-user-approved', ref: 'e1' }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    // Request side: the grant lookup is scoped, so a grant held for another
+    // canvas cannot satisfy this one.
+    expect(vi.mocked(deps.permissionService.resolvePermission).mock.calls[0]?.[5]).toBe(
+      'canvas-the-user-approved'
+    )
+    // Response side: the id survives to where the grant is written.
+    expect(registerGeminiTool.mock.calls[0]?.[1]).toMatchObject({
+      surfaceId: 'canvas-the-user-approved'
+    })
+    void pending
+  })
+
+  it('(i2) keeps canvas_fill typed values transient — the durable sinks never retain them', async () => {
+    // The canvas preview passes the tool's raw args through as preview.params so
+    // the human can see what is about to be typed. That payload is ALSO written
+    // to the durable run-event store and the approval ledger, so the typed value
+    // was retained indefinitely — while the catalogue told models it is never
+    // recorded. Same live-vs-durable split canvas_eval uses.
+    const order: string[] = []
+    const deps = makeDeps(order)
+    const typed = 'TYPED-SECRET-VALUE'
+
+    const pending = createApprovalOrchestration(deps)(
+      sender,
+      'claude',
+      'canvasInteraction',
+      '/repo',
+      request({
+        preview: {
+          kind: 'tool',
+          toolName: 'canvas_fill',
+          params: { canvasId: 'canvas-1', ref: 'e2', value: typed }
+        }
+      })
+    )
+    await Promise.resolve()
+
+    const livePayload = vi.mocked(deps.safeSendToSender).mock.calls[0]?.[2] as any
+    const durableRunPayload = vi.mocked(deps.appendDurableRunEventForRoute).mock.calls[0]?.[5] as any
+    const durableLedgerPayload = vi.mocked(deps.recordApprovalLedgerRequest).mock.calls[0]?.[2] as any
+
+    // The human still sees exactly what will be typed.
+    expect(livePayload.preview.params.value).toBe(typed)
+    // Nothing durable retains it.
+    expect(JSON.stringify(durableRunPayload)).not.toContain(typed)
+    expect(JSON.stringify(durableLedgerPayload)).not.toContain(typed)
+    // The key survives so a reader can still tell a value was supplied.
+    expect(durableRunPayload.preview.params.value).toBe('[redacted]')
+    expect(durableRunPayload.preview.params.valueRedacted).toBe(true)
+    // Non-secret targeting metadata is untouched — this is a value redaction,
+    // not a blanket scrub that would gut the audit trail.
+    expect(durableRunPayload.preview.params.ref).toBe('e2')
+    expect(durableRunPayload.preview.params.canvasId).toBe('canvas-1')
+    void pending
+  })
+
   it('(j) blocks canvas_eval before registration when the host receipt is missing or mismatched', async () => {
     const order: string[] = []
     const deps = makeDeps(order)

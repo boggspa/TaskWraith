@@ -34,6 +34,39 @@ export interface ApprovalPromptReceipt {
 }
 
 /**
+ * Strip `canvas_fill`'s typed value from a DURABLE approval payload.
+ *
+ * The canvas preview passes the tool's raw args through as `preview.params` so
+ * the human can see what is about to be typed — correct for the live prompt, but
+ * that payload is also written to the durable run-event store and the approval
+ * ledger, so whatever the agent typed was retained there indefinitely. The
+ * catalogue tells models the typed value is never recorded; that was true of the
+ * canvas audit log (which deliberately logs only the target) and not of this
+ * path.
+ *
+ * Same live-vs-durable split canvas_eval already uses: the human sees the real
+ * thing in a transient prompt, the permanent record keeps only the shape of it.
+ * The key is preserved rather than deleted so a reader can still tell a value
+ * was supplied.
+ */
+function redactCanvasFillValueForDurableStorage<T>(payload: T): T {
+  if (!isRecord(payload)) return payload
+  const redactParams = (node: unknown): unknown => {
+    if (!isRecord(node)) return node
+    if (node.toolName !== 'canvas_fill') return node
+    if (!isRecord(node.params) || typeof node.params.value !== 'string') return node
+    return {
+      ...node,
+      params: { ...node.params, value: '[redacted]', valueRedacted: true }
+    }
+  }
+  const next: Record<string, unknown> = { ...payload }
+  if (isRecord(next.preview)) next.preview = redactParams(next.preview)
+  if (isRecord(next.params)) next.params = redactParams(next.params)
+  return next as T
+}
+
+/**
  * ApprovalOrchestration — M3-3b orchestration-facade extraction (per
  * `design-m3-3b-spec`). This is the TRUST CHOKE POINT: every non-Codex-native
  * agentic-service approval (Gemini/Claude/Kimi tool prompts, host commands,
@@ -340,6 +373,16 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       request.preview && typeof request.preview === 'object' && !Array.isArray(request.preview)
         ? request.preview.toolName
         : undefined
+    // The exact surface this request targets, read out of the preview the human
+    // is shown — so the grant can only ever mean the window they actually saw.
+    // Same shape as the canvas_eval exact-script read further down; the preview
+    // is the one place that carries the tool's own args this far.
+    const requestSurfaceId = ((): string | undefined => {
+      const preview = isRecord(request.preview) ? request.preview : null
+      const params = preview && isRecord(preview.params) ? preview.params : null
+      const canvasId = params && typeof params.canvasId === 'string' ? params.canvasId.trim() : ''
+      return canvasId || undefined
+    })()
     const networkBlockedTool = deps.networkAccessBlockedToolName(
       previewToolName,
       effectivePermissions
@@ -374,7 +417,8 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
       service,
       workspacePath,
       request.runId,
-      effectiveSettings
+      effectiveSettings,
+      requestSurfaceId
     )
     const { policy, workspaceGrantAllowed, sessionGrantAllowed, decision } = resolution
     // Universal read-only shell fast path: a pure `git status` / `git diff` /
@@ -656,6 +700,10 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         service,
         workspacePath,
         runId: request.runId,
+        // Carried so an "allow for session" can be bound to the surface the user
+        // was looking at. Without it the canvasId is lost between request and
+        // response, and the grant reverts to meaning "every canvas".
+        ...(requestSurfaceId ? { surfaceId: requestSurfaceId } : {}),
         // The same strings the desktop modal shows, so a paired device is
         // deciding on the same facts rather than a generic placeholder.
         title,
@@ -718,11 +766,13 @@ export function createApprovalOrchestration(deps: RequestAgenticServiceApprovalD
         },
         actions
       }
-      const durableApprovalPayload = canvasEvalApprovalPayloadForDurableStorage(
-        service,
-        approvalPayload,
-        approvalId,
-        canvasEvalApproval || undefined
+      const durableApprovalPayload = redactCanvasFillValueForDurableStorage(
+        canvasEvalApprovalPayloadForDurableStorage(
+          service,
+          approvalPayload,
+          approvalId,
+          canvasEvalApproval || undefined
+        )
       )
       const durableCanvasPreview = isRecord(durableApprovalPayload.preview)
         ? durableApprovalPayload.preview
