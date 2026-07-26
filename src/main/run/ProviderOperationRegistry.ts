@@ -22,6 +22,56 @@ export class ProviderOperationRegistry {
   }
 }
 
+export interface ForceKillableProviderProcess {
+  readonly exitCode?: number | null
+  kill(signal?: unknown): unknown
+}
+
+/**
+ * A bounded escalation for opaque CLI transports whose ordinary SIGTERM can
+ * be ignored. The exact close callback clears the run-keyed timer; otherwise
+ * the same child receives SIGKILL after the grace period.
+ */
+export class ProviderProcessTerminationBackstop {
+  private readonly timers = new Map<string, ReturnType<typeof setTimeout>>()
+
+  constructor(private readonly graceMs: number) {
+    if (!Number.isFinite(graceMs) || graceMs < 0) {
+      throw new Error('Provider termination grace must be a non-negative duration.')
+    }
+  }
+
+  arm(runId: string, process: ForceKillableProviderProcess): void {
+    const id = runId.trim()
+    if (!id) throw new Error('Provider termination backstop requires an exact run id.')
+    this.clear(id)
+    const timer = setTimeout(() => {
+      this.timers.delete(id)
+      if (process.exitCode !== null && process.exitCode !== undefined) return
+      try {
+        process.kill('SIGKILL')
+      } catch {
+        // The exact close callback remains authoritative if the process raced
+        // this escalation or the host could no longer signal it.
+      }
+    }, this.graceMs)
+    timer.unref?.()
+    this.timers.set(id, timer)
+  }
+
+  clear(runId: string | undefined): void {
+    const id = runId?.trim()
+    if (!id) return
+    const timer = this.timers.get(id)
+    if (timer) clearTimeout(timer)
+    this.timers.delete(id)
+  }
+
+  has(runId: string): boolean {
+    return this.timers.has(runId.trim())
+  }
+}
+
 /** Re-evaluate launch authority after an awaited setup/preflight boundary.
  * Before RunManager registration there may be no session to authorize yet;
  * after registration, the exact persistence authority is mandatory. */
@@ -31,6 +81,28 @@ export function providerTransportAdmissionStillAuthorized(input: {
   persistenceAuthorized: boolean
 }): boolean {
   return !input.historyBlocked && (!input.sessionExists || input.persistenceAuthorized)
+}
+
+/**
+ * Final post-await launch fence. A provider transport needs all three
+ * independent authorities at the same instant: an unclaimed active
+ * RunManager owner, durable persistence authority, and a live setup signal.
+ */
+export function providerTransportLaunchStillAuthorized(input: {
+  historyBlocked: boolean
+  persistenceAuthorized: boolean
+  runAdmitted: boolean
+  setupSignal?: AbortSignal
+}): boolean {
+  return (
+    input.runAdmitted &&
+    !input.setupSignal?.aborted &&
+    providerTransportAdmissionStillAuthorized({
+      historyBlocked: input.historyBlocked,
+      sessionExists: true,
+      persistenceAuthorized: input.persistenceAuthorized
+    })
+  )
 }
 
 export interface ProviderTransportCloseOperation {

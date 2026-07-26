@@ -4,7 +4,9 @@ import {
   createProviderTerminalProjectionOperation,
   createProviderTransportCloseOperation,
   providerTransportAdmissionStillAuthorized,
+  providerTransportLaunchStillAuthorized,
   ProviderOperationRegistry,
+  ProviderProcessTerminationBackstop,
   waitForProviderOperationSettlement
 } from './ProviderOperationRegistry'
 
@@ -37,13 +39,12 @@ describe('ProviderOperationRegistry', () => {
     registry.track('claude-run', transport.operation)
 
     let historyJoinSettled = false
-    const historyJoin = waitForProviderOperationSettlement(
-      registry.get('claude-run')!,
-      1_000
-    ).then((settled) => {
-      historyJoinSettled = settled
-      return settled
-    })
+    const historyJoin = waitForProviderOperationSettlement(registry.get('claude-run')!, 1_000).then(
+      (settled) => {
+        historyJoinSettled = settled
+        return settled
+      }
+    )
 
     await Promise.resolve()
     expect(historyJoinSettled).toBe(false)
@@ -180,12 +181,81 @@ describe('ProviderOperationRegistry', () => {
     expect(spawn).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['terminal claim', { runAdmitted: false }],
+    ['history fence', { historyBlocked: true }],
+    ['persistence fence', { persistenceAuthorized: false }],
+    ['setup cancellation', { setupSignal: AbortSignal.abort() }]
+  ] as const)('denies final launch when the %s revokes authority', (_label, override) => {
+    expect(
+      providerTransportLaunchStillAuthorized({
+        historyBlocked: false,
+        persistenceAuthorized: true,
+        runAdmitted: true,
+        ...override
+      })
+    ).toBe(false)
+  })
+
+  it('admits final launch only while every authority remains live', () => {
+    expect(
+      providerTransportLaunchStillAuthorized({
+        historyBlocked: false,
+        persistenceAuthorized: true,
+        runAdmitted: true,
+        setupSignal: new AbortController().signal
+      })
+    ).toBe(true)
+  })
+
   it('rejects duplicate and empty run identities', () => {
     const registry = new ProviderOperationRegistry()
     registry.track('run-a', new Promise<void>(() => {}))
 
     expect(() => registry.track('run-a', Promise.resolve())).toThrow('already tracked')
     expect(() => registry.track('  ', Promise.resolve())).toThrow('exact run id')
+  })
+})
+
+describe('ProviderProcessTerminationBackstop', () => {
+  it('escalates one exact live child and is cleared by close evidence', async () => {
+    vi.useFakeTimers()
+    try {
+      const backstop = new ProviderProcessTerminationBackstop(4_000)
+      const first = { exitCode: null as number | null, kill: vi.fn() }
+      backstop.arm('run-first', first)
+
+      await vi.advanceTimersByTimeAsync(3_999)
+      expect(first.kill).not.toHaveBeenCalled()
+      expect(backstop.has('run-first')).toBe(true)
+
+      backstop.clear('run-first')
+      await vi.advanceTimersByTimeAsync(1)
+      expect(first.kill).not.toHaveBeenCalled()
+      expect(backstop.has('run-first')).toBe(false)
+
+      const second = { exitCode: null as number | null, kill: vi.fn() }
+      backstop.arm('run-second', second)
+      await vi.advanceTimersByTimeAsync(4_000)
+      expect(second.kill).toHaveBeenCalledOnce()
+      expect(second.kill).toHaveBeenCalledWith('SIGKILL')
+      expect(backstop.has('run-second')).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('does not signal a child that already has an exit code', async () => {
+    vi.useFakeTimers()
+    try {
+      const backstop = new ProviderProcessTerminationBackstop(100)
+      const process = { exitCode: 0 as number | null, kill: vi.fn() }
+      backstop.arm('run-closed', process)
+      await vi.advanceTimersByTimeAsync(100)
+      expect(process.kill).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })
 
