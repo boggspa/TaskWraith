@@ -148,7 +148,13 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['pi', 'mistral', 'claude', 'antigravity', 'kimi'])
+    expect(groups.map((g) => g.provider)).toEqual([
+      'pi',
+      'mistral',
+      'claude',
+      'antigravity',
+      'kimi'
+    ])
     expect(groups.map((g) => g.label)).toEqual(['Pi', 'Mistral', 'Claude', 'AntiGravity', 'Kimi'])
 
     const pi = groups.find((g) => g.provider === 'pi')
