@@ -1,9 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  MAX_PENDING_THREAD_MESSAGES,
   MAX_RETAINED_THREAD_MESSAGE_LEDGER_IDS,
   MAX_THREAD_MESSAGE_CHARS,
   THREAD_MESSAGE_SCHEMA_VERSION,
   acknowledgeThreadMessages,
+  classifyThreadMessageEnqueue,
   createThreadMessageEvent,
   emptyThreadMessageInbox,
   enqueueThreadMessage,
@@ -150,6 +152,55 @@ describe('enqueueThreadMessage', () => {
     )
     expect(inbox.pending).toHaveLength(0)
   })
+
+  // A full inbox must REFUSE, not evict: dropping the oldest would let a chatty
+  // sender flush a queue it does not own before the target ever reads it.
+  it('refuses past the pending cap instead of dropping the oldest', () => {
+    let inbox = emptyThreadMessageInbox('chat-b')
+    for (let index = 0; index < MAX_PENDING_THREAD_MESSAGES + 5; index += 1) {
+      inbox = enqueueThreadMessage(inbox, event({ id: `m-${index}` })!)
+    }
+    expect(inbox.pending).toHaveLength(MAX_PENDING_THREAD_MESSAGES)
+    expect(inbox.pending[0].id).toBe('m-0')
+    expect(classifyThreadMessageEnqueue(inbox, event({ id: 'later' })!)).toBe('inbox-full')
+  })
+
+  it('frees capacity again once messages are acknowledged', () => {
+    let inbox = emptyThreadMessageInbox('chat-b')
+    for (let index = 0; index < MAX_PENDING_THREAD_MESSAGES; index += 1) {
+      inbox = enqueueThreadMessage(inbox, event({ id: `m-${index}` })!)
+    }
+    inbox = acknowledgeThreadMessages(inbox, ['m-0'])
+    expect(classifyThreadMessageEnqueue(inbox, event({ id: 'later' })!)).toBe('accepted')
+  })
+})
+
+describe('classifyThreadMessageEnqueue', () => {
+  // The reason reported to a sender must never disagree with what the queue did.
+  it.each([
+    ['accepted', 'chat-b', (inbox: ReturnType<typeof emptyThreadMessageInbox>) => inbox],
+    [
+      'duplicate',
+      'chat-b',
+      (inbox: ReturnType<typeof emptyThreadMessageInbox>) => enqueueThreadMessage(inbox, event()!)
+    ],
+    [
+      'already-delivered',
+      'chat-b',
+      (inbox: ReturnType<typeof emptyThreadMessageInbox>) =>
+        acknowledgeThreadMessages(enqueueThreadMessage(inbox, event()!), ['msg-1'])
+    ],
+    [
+      'wrong-destination',
+      'chat-other',
+      (inbox: ReturnType<typeof emptyThreadMessageInbox>) => inbox
+    ]
+  ] as const)('reports %s and matches enqueue', (expected, toChatId, prepare) => {
+    const inbox = prepare(emptyThreadMessageInbox(toChatId))
+    const outcome = classifyThreadMessageEnqueue(inbox, event()!)
+    expect(outcome).toBe(expected)
+    expect(enqueueThreadMessage(inbox, event()!) === inbox).toBe(outcome !== 'accepted')
+  })
 })
 
 describe('acknowledgeThreadMessages', () => {
@@ -215,6 +266,23 @@ describe('normalizeThreadMessageInbox', () => {
     expect(decoded.pending[0].trust).toBe('untrusted-thread-message')
     expect(decoded.pending[0].toChatId).toBe('chat-b')
     expect(decoded.deliveredIds).toEqual(['kept'])
+  })
+
+  it('caps an over-budget stored queue, keeping the oldest entries', () => {
+    const total = MAX_PENDING_THREAD_MESSAGES + 10
+    const decoded = normalizeThreadMessageInbox(
+      {
+        schemaVersion: THREAD_MESSAGE_SCHEMA_VERSION,
+        deliveredIds: [],
+        pending: Array.from({ length: total }, (_unused, index) => ({
+          ...BASE,
+          id: `m-${index}`
+        }))
+      },
+      'chat-b'
+    )
+    expect(decoded.pending).toHaveLength(MAX_PENDING_THREAD_MESSAGES)
+    expect(decoded.pending[0].id).toBe('m-0')
   })
 })
 

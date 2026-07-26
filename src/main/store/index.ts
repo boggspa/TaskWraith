@@ -284,6 +284,18 @@ import {
   type SubThreadMailboxLedger
 } from '../SubThreadMailbox'
 import {
+  acknowledgeThreadMessagesInLedger,
+  enqueueThreadMessageInLedger,
+  normalizeThreadMessageLedger,
+  pendingThreadMessageInboxes,
+  purgeThreadMessageChats,
+  residualThreadMessageChats,
+  threadMessageInboxFor,
+  type ThreadMessageDeliveryOutcome,
+  type ThreadMessageLedger
+} from '../ThreadMessageLedger'
+import type { ThreadMessageEvent, ThreadMessageInbox } from '../../shared/threadMessage'
+import {
   isTerminalWorkflowExecutionStatus,
   nextLocalDayBoundaryIso,
   normalizeWorkflowTrigger,
@@ -485,6 +497,7 @@ const legacyUserDataDirs = ['TaskWraith'].map((dirName) =>
 const chatsDir = path.join(userDataPath, 'chats')
 const chatListIndexPath = path.join(userDataPath, 'chat-list-index.json')
 const subThreadMailboxesPath = path.join(userDataPath, 'subthread-mailboxes.json')
+const threadMessagesPath = path.join(userDataPath, 'thread-messages.json')
 const CHAT_LIST_INDEX_VOLATILE_REFRESH_INTERVAL_MS = 2000
 const auditRunsPath = path.join(userDataPath, 'audit-runs.json')
 const introspectionRunsPath = path.join(userDataPath, 'introspection-runs.json')
@@ -567,6 +580,7 @@ type HistoryDeletionStep =
   | 'approval-ledger'
   | 'message-feedback'
   | 'sub-thread-mailboxes'
+  | 'thread-messages'
   | 'run-events'
   | 'run-artifacts'
   | 'kimi-seat-state'
@@ -583,6 +597,9 @@ const HISTORY_DELETION_STEPS: readonly HistoryDeletionStep[] = [
   'approval-ledger',
   'message-feedback',
   'sub-thread-mailboxes',
+  // A queued peer message is a resurrection source: it would enter a live thread's
+  // context after the chat that sent it was erased.
+  'thread-messages',
   'run-events',
   'run-artifacts',
   'kimi-seat-state',
@@ -3413,6 +3430,14 @@ function readSubThreadMailboxLedger(): SubThreadMailboxLedger {
 
 function writeSubThreadMailboxLedger(ledger: SubThreadMailboxLedger): void {
   writeJson(subThreadMailboxesPath, normalizeSubThreadMailboxLedger(ledger))
+}
+
+function readThreadMessageLedger(): ThreadMessageLedger {
+  return normalizeThreadMessageLedger(readJson<unknown>(threadMessagesPath, {}))
+}
+
+function writeThreadMessageLedger(ledger: ThreadMessageLedger): void {
+  writeJson(threadMessagesPath, normalizeThreadMessageLedger(ledger))
 }
 
 /** Atomic raw-text write (temp + rename), for the jsonl-line compaction rewrite
@@ -6695,6 +6720,31 @@ export class AppStore {
       }
       return
     }
+    if (step === 'thread-messages') {
+      if (intent.kind === 'global') {
+        removePathStrict(threadMessagesPath, 'thread message history')
+        return
+      }
+      const value = readJsonStrictIfPresent(threadMessagesPath)
+      if (value === null) return
+      const stored = objectRecord(value)
+      if (!stored || !objectRecord(stored.inboxes)) {
+        throw new Error('Thread message ledger is invalid.')
+      }
+      // Removes the inboxes OF the target chats and any queued message FROM them,
+      // so an undelivered message cannot outlive the chat that sent it.
+      const purged = purgeThreadMessageChats(normalizeThreadMessageLedger(value), intent.chatIds)
+      if (Object.keys(purged.ledger.inboxes).length === 0) {
+        removePathStrict(threadMessagesPath, 'thread message history')
+      } else if (purged.changed) {
+        writeThreadMessageLedger(purged.ledger)
+      }
+      const residual = residualThreadMessageChats(readThreadMessageLedger(), intent.chatIds)
+      if (residual.length > 0) {
+        throw new Error(`Thread message history still references ${residual.join(', ')}.`)
+      }
+      return
+    }
     if (step === 'run-events') {
       if (intent.kind === 'global') {
         removePathStrict(runEventsDir, 'run event history directory')
@@ -7201,6 +7251,64 @@ export class AppStore {
       return
     }
     writeSubThreadMailboxLedger(ledger)
+  }
+
+  // Durable peer thread-to-thread inbox, keyed by RECEIVING chat. Held outside
+  // ChatRecord for the same reason as the sub-thread mailbox — bodies must not
+  // inflate chat-list projections — and additionally because a main-owned chat
+  // field that misses `saveChat`'s strip-and-remerge is erased by the next
+  // renderer save without an error.
+  static getThreadMessageInbox(chatId: string): ThreadMessageInbox {
+    return threadMessageInboxFor(readThreadMessageLedger(), chatId)
+  }
+
+  static getPendingThreadMessageInboxes(): ThreadMessageInbox[] {
+    return pendingThreadMessageInboxes(readThreadMessageLedger())
+  }
+
+  /**
+   * Durable chokepoint for an inbound message. Permission is S3's job; what is
+   * enforced HERE is that the destination exists, because a message queued for a
+   * chat that never existed can never be delivered or seen and would accumulate
+   * as unreachable content.
+   */
+  static enqueueThreadMessage(event: ThreadMessageEvent): {
+    outcome: ThreadMessageDeliveryOutcome
+    inbox: ThreadMessageInbox
+  } {
+    this.assertHistoryMutationAllowed({
+      operation: 'Thread message enqueue',
+      chatIds: [event.fromChatId, event.toChatId],
+      workspaceIds: [
+        this.getChat(event.fromChatId)?.workspaceId,
+        this.getChat(event.toChatId)?.workspaceId
+      ]
+    })
+    const ledger = readThreadMessageLedger()
+    if (!this.getChat(event.toChatId)) {
+      return { outcome: 'unknown-target', inbox: threadMessageInboxFor(ledger, event.toChatId) }
+    }
+    const result = enqueueThreadMessageInLedger(ledger, event)
+    if (result.outcome === 'accepted') writeThreadMessageLedger(result.ledger)
+    return { outcome: result.outcome, inbox: result.inbox }
+  }
+
+  /**
+   * Called AFTER the bodies have entered the target's provider context, so a
+   * crash mid-turn re-delivers rather than silently dropping.
+   */
+  static acknowledgeThreadMessages(
+    chatId: string,
+    ids: readonly string[]
+  ): { acknowledgedIds: string[]; inbox: ThreadMessageInbox } {
+    this.assertHistoryMutationAllowed({
+      operation: 'Thread message acknowledgement',
+      chatIds: [chatId],
+      workspaceIds: [this.getChat(chatId)?.workspaceId]
+    })
+    const result = acknowledgeThreadMessagesInLedger(readThreadMessageLedger(), chatId, ids)
+    if (result.acknowledgedIds.length > 0) writeThreadMessageLedger(result.ledger)
+    return { acknowledgedIds: result.acknowledgedIds, inbox: result.inbox }
   }
 
   // Usage

@@ -34,6 +34,15 @@ export const MAX_THREAD_MESSAGE_CHARS = 12_000
 /** Bounded so a long-lived chat's ledger cannot grow without limit. */
 export const MAX_RETAINED_THREAD_MESSAGE_LEDGER_IDS = 256
 
+/**
+ * Cap on undelivered messages per inbox. Two reasons, both load-bearing once the
+ * inbox is durable: an unbounded queue is an unbounded synchronous write on the
+ * main process, and a full inbox must REFUSE new messages rather than evict old
+ * ones — dropping the oldest would let a chatty sender flush a queue it does not
+ * own before the target ever reads it.
+ */
+export const MAX_PENDING_THREAD_MESSAGES = 64
+
 /** Display-only origin label cap; long titles are truncated, never rejected. */
 export const MAX_THREAD_MESSAGE_TITLE_CHARS = 120
 
@@ -50,6 +59,18 @@ export type ThreadMessageDelivery = 'queue' | 'wake'
 
 /** Fixed marker so a receiving seat can always tell relayed content apart. */
 export type ThreadMessageTrust = 'untrusted-thread-message'
+
+/**
+ * Why an enqueue did or did not land. A refusal must be reportable to the sender:
+ * a silent drop looks identical to a successful send, which is how a queue
+ * quietly stops delivering.
+ */
+export type ThreadMessageEnqueueOutcome =
+  | 'accepted'
+  | 'duplicate'
+  | 'already-delivered'
+  | 'wrong-destination'
+  | 'inbox-full'
 
 export interface ThreadMessageEvent {
   readonly id: string
@@ -239,23 +260,39 @@ export function normalizeThreadMessageInbox(value: unknown, toChatId: string): T
   return {
     toChatId,
     schemaVersion: THREAD_MESSAGE_SCHEMA_VERSION,
-    pending,
+    // Oldest-wins on overflow, matching the live refusal: a stored queue that is
+    // over budget must not be able to displace messages that arrived first.
+    pending: pending.slice(0, MAX_PENDING_THREAD_MESSAGES),
     deliveredIds: deliveredIds.slice(-MAX_RETAINED_THREAD_MESSAGE_LEDGER_IDS)
   }
 }
 
 /**
- * Append a message. Idempotent on id against BOTH the pending queue and the
- * delivered ledger, so a retried send cannot re-deliver something the target has
- * already consumed.
+ * Decide whether a message may join the queue. Idempotent on id against BOTH the
+ * pending queue and the delivered ledger, so a retried send cannot re-deliver
+ * something the target has already consumed.
+ */
+export function classifyThreadMessageEnqueue(
+  inbox: ThreadMessageInbox,
+  event: ThreadMessageEvent
+): ThreadMessageEnqueueOutcome {
+  if (event.toChatId !== inbox.toChatId) return 'wrong-destination'
+  if (inbox.deliveredIds.includes(event.id)) return 'already-delivered'
+  if (inbox.pending.some((pending) => pending.id === event.id)) return 'duplicate'
+  if (inbox.pending.length >= MAX_PENDING_THREAD_MESSAGES) return 'inbox-full'
+  return 'accepted'
+}
+
+/**
+ * Append a message, or return the inbox untouched. Defined in terms of
+ * `classifyThreadMessageEnqueue` so the reason reported to a sender can never
+ * disagree with what the queue actually did.
  */
 export function enqueueThreadMessage(
   inbox: ThreadMessageInbox,
   event: ThreadMessageEvent
 ): ThreadMessageInbox {
-  if (event.toChatId !== inbox.toChatId) return inbox
-  if (inbox.deliveredIds.includes(event.id)) return inbox
-  if (inbox.pending.some((pending) => pending.id === event.id)) return inbox
+  if (classifyThreadMessageEnqueue(inbox, event) !== 'accepted') return inbox
   return { ...inbox, pending: [...inbox.pending, event] }
 }
 
