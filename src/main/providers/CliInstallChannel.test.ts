@@ -21,9 +21,9 @@ describe('detectCliInstallChannel', () => {
     // The trap: npm's global prefix commonly lives under /opt/homebrew, so any
     // "is it under the Homebrew prefix?" test calls an npm install Homebrew and
     // emits `brew upgrade` for a package brew has never heard of.
-    expect(detectCliInstallChannel('/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js')).toBe(
-      'npm'
-    )
+    expect(
+      detectCliInstallChannel('/opt/homebrew/lib/node_modules/@openai/codex/bin/codex.js')
+    ).toBe('npm')
   })
 
   it('classifies a Homebrew formula separately from a cask', () => {
@@ -40,9 +40,9 @@ describe('detectCliInstallChannel', () => {
   })
 
   it('handles Windows-style separators', () => {
-    expect(detectCliInstallChannel('C:\\Users\\x\\AppData\\npm\\node_modules\\@openai\\codex')).toBe(
-      'npm'
-    )
+    expect(
+      detectCliInstallChannel('C:\\Users\\x\\AppData\\npm\\node_modules\\@openai\\codex')
+    ).toBe('npm')
   })
 })
 
@@ -55,7 +55,11 @@ describe('cliUpgradeCommand', () => {
       '@openai/codex@latest'
     ])
     expect(
-      cliUpgradeCommand({ channel: 'homebrew-cask', npmPackage: '@openai/codex', brewToken: 'codex' })
+      cliUpgradeCommand({
+        channel: 'homebrew-cask',
+        npmPackage: '@openai/codex',
+        brewToken: 'codex'
+      })
     ).toEqual(['brew', 'upgrade', '--cask', 'codex'])
     expect(
       cliUpgradeCommand({

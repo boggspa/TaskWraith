@@ -43,8 +43,7 @@ describe('reserved worktree namespaces', () => {
    * against the allocators' own source.
    */
   it('stays in step with the allocators that mint these names', () => {
-    const read = (path: string): string =>
-      readFileSync(new URL(path, import.meta.url), 'utf8')
+    const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
     const sources = [
       read('../main/run/ThreadWorktreeBinding.ts'),
       read('../main/run/FanoutWorktreeAllocation.ts')

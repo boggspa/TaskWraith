@@ -79,10 +79,7 @@ describe('single tone authority', () => {
   const read = (path: string): string => readFileSync(new URL(path, import.meta.url), 'utf8')
 
   it('is the only tone→class mapping either transcript surface uses', () => {
-    for (const path of [
-      '../components/ActivityStack.tsx',
-      '../components/CompactToolTrace.tsx'
-    ]) {
+    for (const path of ['../components/ActivityStack.tsx', '../components/CompactToolTrace.tsx']) {
       const source = read(path)
       expect(source).toContain("from '../lib/diffToneClass'")
       expect(source).toContain('diffToneLineClass(')

@@ -44,7 +44,9 @@ export const RESERVED_BRANCH_MESSAGE =
  * `fanout-x` would collide on disk even though they differ as strings.
  */
 export function isReservedWorktreeName(name: string | null | undefined): boolean {
-  const value = String(name || '').trim().toLowerCase()
+  const value = String(name || '')
+    .trim()
+    .toLowerCase()
   if (!value) return false
   return RESERVED_WORKTREE_NAME_PREFIXES.some((prefix) => value.startsWith(prefix))
 }
@@ -56,7 +58,9 @@ export function isReservedWorktreeName(name: string | null | undefined): boolean
  * invites exactly the confusion the namespace exists to prevent.
  */
 export function isReservedBranchName(branch: string | null | undefined): boolean {
-  const value = String(branch || '').trim().toLowerCase()
+  const value = String(branch || '')
+    .trim()
+    .toLowerCase()
   if (!value) return false
   return RESERVED_BRANCH_PREFIXES.some((prefix) => value.startsWith(prefix))
 }

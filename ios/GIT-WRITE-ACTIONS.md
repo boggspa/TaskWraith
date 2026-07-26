@@ -20,7 +20,7 @@ The `path` leg exists for the **desktop**, where a human picked a folder in a
 file dialog and can see what is already there. Neither is true of a phone. An
 absolute path arriving from a remote device is a filesystem write target chosen
 by the client — precisely the shape the workspace allowlist exists to prevent.
-The workspace grant says "you may write *this repo*", not "you may create
+The workspace grant says "you may write _this repo_", not "you may create
 directories wherever you name".
 
 ## The contract
@@ -39,7 +39,7 @@ field would redirect a caller somewhere it did not ask for; refusing tells it
 the field is not part of the contract. Pinned by
 `BridgeActionPayload.test.ts` → "REFUSES a payload carrying a path rather than
 ignoring it", and at the router level by "never routes a worktree payload that
-carries a destination path" (which also asserts the same request *without* the
+carries a destination path" (which also asserts the same request _without_ the
 path is accepted, so the denial is provably the path and nothing else).
 
 **3. The Mac derives the destination.**
@@ -67,9 +67,9 @@ surface shows the resolved path verbatim.
 TaskWraith allocates worktrees automatically in two places, and **both re-adopt
 an existing one by matching Git** rather than by remembering they made it:
 
-| Allocator | worktree name | branch |
-|---|---|---|
-| `ThreadWorktreeBinding` | `thread-<hint>-<digest>` | `taskwraith/thread-…` |
+| Allocator                  | worktree name            | branch                |
+| -------------------------- | ------------------------ | --------------------- |
+| `ThreadWorktreeBinding`    | `thread-<hint>-<digest>` | `taskwraith/thread-…` |
 | `FanoutWorktreeAllocation` | `fanout-<hint>-<digest>` | `taskwraith/fanout-…` |
 
 That re-adoption makes these names load-bearing. A hand-created worktree landing
@@ -89,16 +89,16 @@ collide on disk even though they differ as strings.
 
 ## Capabilities
 
-| Action | Capability | Why |
-|---|---|---|
-| `gitBranches` | `diffReview` | a plain repo read, same tier as `gitSnapshot` |
-| `gitCheckout` | `fileWrite` | rewrites the working tree exactly as a commit does; never leaves the machine |
-| `gitCreateBranch` | `fileWrite` | writes a ref into the repo |
-| `gitCreateWorktree` | `fileWrite` | see the note below |
-| `githubWatchPr` | `diffReview` | a standing PR *read* subscription must take the capability that gates the one-shot reads; `pin` alone must not buy polling |
+| Action              | Capability   | Why                                                                                                                        |
+| ------------------- | ------------ | -------------------------------------------------------------------------------------------------------------------------- |
+| `gitBranches`       | `diffReview` | a plain repo read, same tier as `gitSnapshot`                                                                              |
+| `gitCheckout`       | `fileWrite`  | rewrites the working tree exactly as a commit does; never leaves the machine                                               |
+| `gitCreateBranch`   | `fileWrite`  | writes a ref into the repo                                                                                                 |
+| `gitCreateWorktree` | `fileWrite`  | see the note below                                                                                                         |
+| `githubWatchPr`     | `diffReview` | a standing PR _read_ subscription must take the capability that gates the one-shot reads; `pin` alone must not buy polling |
 
 **Note on `gitCreateWorktree` and the workspace boundary.** The destination is a
-*sibling* of the repository, not a child — outside the workspace root the
+_sibling_ of the repository, not a child — outside the workspace root the
 `fileWrite` grant nominally covers. That is unavoidable (git refuses a worktree
 nested inside its own repo) and is judged within the grant because the location
 is Mac-chosen and bounded to the worktree root, and the content is a checkout of

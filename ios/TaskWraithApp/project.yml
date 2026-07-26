@@ -7,7 +7,7 @@ name: TaskWraith
 options:
   bundleIdPrefix: com.taskwraith
   deploymentTarget:
-    iOS: "17.0"
+    iOS: '17.0'
   createIntermediateGroups: true
 packages:
   TaskWraithKit:
@@ -31,8 +31,8 @@ targets:
       path: Generated/Info.plist
       properties:
         CFBundleDisplayName: TaskWraith
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleShortVersionString: '$(MARKETING_VERSION)'
+        CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
         # Export compliance: the companion implements app-level E2EE with
         # standard CryptoKit algorithms (AES-256-GCM, Curve25519, HKDF-SHA-256)
         # and no proprietary crypto. App Store Connect's encryption questionnaire
@@ -67,8 +67,8 @@ targets:
           - UIInterfaceOrientationPortraitUpsideDown
           - UIInterfaceOrientationLandscapeLeft
           - UIInterfaceOrientationLandscapeRight
-        NSCameraUsageDescription: "TaskWraith uses the camera to scan the pairing QR code shown on your Mac."
-        NSLocalNetworkUsageDescription: "TaskWraith connects to the pairing relay on your local network to reach your Mac."
+        NSCameraUsageDescription: 'TaskWraith uses the camera to scan the pairing QR code shown on your Mac.'
+        NSLocalNetworkUsageDescription: 'TaskWraith connects to the pairing relay on your local network to reach your Mac.'
         # ATS: NO global bypass. Apple's scoped local-networking exception
         # covers LAN, unqualified/.local names, and IPv4/IPv6 literals. The
         # client further restricts ws:// to LAN + Tailscale's 100.64/10 range;
@@ -81,7 +81,7 @@ targets:
       properties:
         # Debug/device builds use sandbox APNs. Release archives embed
         # production so TestFlight/App Store builds can receive pushes.
-        aps-environment: "$(APS_ENVIRONMENT)"
+        aps-environment: '$(APS_ENVIRONMENT)'
         # Shared with the Notification Service Extension so it can read the
         # paired-host store (each host's push-agreement key) + the identity seed
         # to decrypt rich pushes. MUST match TWPushKeyAccess in TaskWraithKit.
@@ -100,17 +100,17 @@ targets:
         # before running on a physical device.
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8CZML8FK2D
-        CURRENT_PROJECT_VERSION: "84"
-        MARKETING_VERSION: "0.1.0"
-        SWIFT_VERSION: "6.0"
+        CURRENT_PROJECT_VERSION: '84'
+        MARKETING_VERSION: '0.1.0'
+        SWIFT_VERSION: '6.0'
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         # Alternate app icons (theme-aware: each appiconset carries its own
         # Default/Dark/Tinted appearances, auto-rendered by iOS). INCLUDE_ALL
         # stops the optimizer stripping alternates (which makes
         # supportsAlternateIcons false). Mirror: src/shared/iconVariants.ts.
-        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: "AppIcon-WWDC26 AppIcon-Monoline AppIcon-Glass"
-        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: "YES"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        ASSETCATALOG_COMPILER_ALTERNATE_APPICON_NAMES: 'AppIcon-WWDC26 AppIcon-Monoline AppIcon-Glass'
+        ASSETCATALOG_COMPILER_INCLUDE_ALL_APPICON_ASSETS: 'YES'
+        TARGETED_DEVICE_FAMILY: '1,2'
       configs:
         Debug:
           APS_ENVIRONMENT: development
@@ -131,8 +131,8 @@ targets:
       path: NotificationService/Info.plist
       properties:
         CFBundleDisplayName: TaskWraith Notifications
-        CFBundleShortVersionString: "$(MARKETING_VERSION)"
-        CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
+        CFBundleShortVersionString: '$(MARKETING_VERSION)'
+        CFBundleVersion: '$(CURRENT_PROJECT_VERSION)'
         NSExtension:
           NSExtensionPointIdentifier: com.apple.usernotifications.service
           NSExtensionPrincipalClass: $(PRODUCT_MODULE_NAME).NotificationService
@@ -149,10 +149,10 @@ targets:
         CODE_SIGN_STYLE: Automatic
         DEVELOPMENT_TEAM: 8CZML8FK2D
         # MUST track the app's version/build — App Store rejects a mismatch.
-        CURRENT_PROJECT_VERSION: "84"
-        MARKETING_VERSION: "0.1.0"
-        SWIFT_VERSION: "6.0"
-        TARGETED_DEVICE_FAMILY: "1,2"
+        CURRENT_PROJECT_VERSION: '84'
+        MARKETING_VERSION: '0.1.0'
+        SWIFT_VERSION: '6.0'
+        TARGETED_DEVICE_FAMILY: '1,2'
   TaskWraithUITests:
     type: bundle.ui-testing
     platform: iOS
@@ -164,7 +164,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.uitests
         CODE_SIGN_STYLE: Automatic
-        SWIFT_VERSION: "6.0"
+        SWIFT_VERSION: '6.0'
         # Test bundles have no committed Info.plist; simulator ad-hoc signing
         # requires one, so let Xcode synthesize it.
         GENERATE_INFOPLIST_FILE: YES
@@ -179,7 +179,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.taskwraith.companion.tests
         CODE_SIGN_STYLE: Automatic
-        SWIFT_VERSION: "6.0"
+        SWIFT_VERSION: '6.0'
         GENERATE_INFOPLIST_FILE: YES
 schemes:
   TaskWraith:
