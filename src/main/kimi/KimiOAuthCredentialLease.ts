@@ -186,12 +186,18 @@ async function fsyncDirectory(path: string): Promise<void> {
 async function assertPrivateDirectory(path: string): Promise<string> {
   const stat = await nodeFs.lstat(path)
   const currentUid = typeof process.getuid === 'function' ? process.getuid() : undefined
-  if (
-    !stat.isDirectory() ||
-    stat.isSymbolicLink() ||
-    (currentUid !== undefined && stat.uid !== currentUid)
-  ) {
-    throw new Error('Kimi OAuth authority path is not a private real directory.')
+  if (!stat.isDirectory() || stat.isSymbolicLink()) {
+    throw new Error(`Kimi OAuth authority path is not a real directory: ${path}`)
+  }
+  if (currentUid !== undefined && stat.uid !== currentUid) {
+    // In practice this, not the per-file owner check, is what a `sudo kimi`
+    // run trips: sudo creates the whole tree as root, so the directory fails
+    // before any artefact is opened. The remedy belongs on the error the user
+    // actually sees.
+    throw new Error(
+      `Kimi OAuth authority directory is owned by uid ${stat.uid}, not you (uid ${currentUid}). ` +
+        `If you ran the Kimi CLI under sudo, remove ~/.kimi-code and sign in again without it: ${path}`
+    )
   }
   await nodeFs.chmod(path, PRIVATE_DIRECTORY_MODE)
   const privateStat = await nodeFs.lstat(path)
@@ -201,7 +207,7 @@ async function assertPrivateDirectory(path: string): Promise<string> {
     (process.platform !== 'win32' && (privateStat.mode & 0o077) !== 0) ||
     privateStat.isSymbolicLink()
   ) {
-    throw new Error('Kimi OAuth authority directory is not mode 0700.')
+    throw new Error(`Kimi OAuth authority directory could not be set to mode 0700: ${path}`)
   }
   return nodeFs.realpath(path)
 }
@@ -215,28 +221,73 @@ async function ensurePrivateDirectory(path: string): Promise<string> {
   return assertPrivateDirectory(path)
 }
 
+/**
+ * Read one of the user's pre-existing Kimi Code credential artefacts.
+ *
+ * Two different failures were conflated here, and the distinction matters:
+ *
+ *  - **Genuinely unsafe** — the file is not ours (another uid), is a symlink,
+ *    is hardlinked from somewhere else, or changed identity between `open` and
+ *    `lstat`. Each of those is a way for someone else to substitute or observe
+ *    the credential, and none is repairable by us. Still refuses.
+ *
+ *  - **Merely loose permissions** — our own regular, single-linked file that
+ *    happens to be group/other-readable, which is just what the Kimi CLI writes
+ *    under a default `umask 022`. This is REPAIRED to 0600 rather than refused.
+ *
+ * Refusing the second case was pure friction: it did not make the credential
+ * any more private — the file sat there 0644 either way — it only stopped a
+ * user who was already signed in to both the CLI and the web from using the
+ * seat at all. Worse, nothing here ever repaired file modes (only directories),
+ * so each re-login rewrote the file at the same mode and failed identically,
+ * forever, behind a message that named none of this. Tightening the mode is the
+ * privacy-INCREASING action; refusing was privacy-neutral and user-hostile.
+ *
+ * Note this applies only to artefacts the USER owns in `~/.kimi-code`. The
+ * private-mode invariants on TaskWraith's own isolated home and boundary
+ * (KimiAcpHome, KimiProductionContainment) are a separate matter and stay hard:
+ * we create those, so a loose mode there is our bug, not the user's setup.
+ */
 async function readPrivateFileWithin(root: string, path: string): Promise<Buffer> {
   const [rootReal, parentReal] = await Promise.all([
     nodeFs.realpath(root),
     nodeFs.realpath(join(path, '..'))
   ])
   if (!pathIsWithin(rootReal, parentReal)) {
-    throw new Error('Kimi OAuth credential artefact escaped its private root.')
+    throw new Error(`Kimi OAuth credential artefact escaped its private root: ${path}`)
   }
   const handle = await nodeFs.open(path, constants.O_RDONLY | constants.O_NOFOLLOW)
   try {
     const [opened, pathStat] = await Promise.all([handle.stat(), nodeFs.lstat(path)])
     const currentUid = typeof process.getuid === 'function' ? process.getuid() : undefined
-    if (
-      opened.dev !== pathStat.dev ||
-      opened.ino !== pathStat.ino ||
-      !opened.isFile() ||
-      pathStat.isSymbolicLink() ||
-      opened.nlink !== 1 ||
-      (currentUid !== undefined && opened.uid !== currentUid) ||
-      (process.platform !== 'win32' && (opened.mode & 0o077) !== 0)
-    ) {
-      throw new Error('Kimi OAuth credential artefact is not a private regular file.')
+    if (opened.dev !== pathStat.dev || opened.ino !== pathStat.ino) {
+      throw new Error(`Kimi OAuth credential artefact changed identity while opening: ${path}`)
+    }
+    if (!opened.isFile() || pathStat.isSymbolicLink()) {
+      throw new Error(`Kimi OAuth credential artefact is not a regular file: ${path}`)
+    }
+    if (opened.nlink !== 1) {
+      throw new Error(
+        `Kimi OAuth credential artefact is hardlinked from ${opened.nlink} paths, so tightening ` +
+          `its permissions would not protect it: ${path}`
+      )
+    }
+    if (currentUid !== undefined && opened.uid !== currentUid) {
+      throw new Error(
+        `Kimi OAuth credential artefact is owned by uid ${opened.uid}, not you (uid ${currentUid}). ` +
+          `If you ran the Kimi CLI under sudo, remove ~/.kimi-code and sign in again without it: ${path}`
+      )
+    }
+    // Loose-but-ours: tighten in place and carry on.
+    if (process.platform !== 'win32' && (opened.mode & 0o077) !== 0) {
+      await handle.chmod(PRIVATE_FILE_MODE)
+      const reStat = await handle.stat()
+      if ((reStat.mode & 0o077) !== 0) {
+        throw new Error(
+          `Kimi OAuth credential artefact could not be tightened to 0600 (still ` +
+            `${(reStat.mode & 0o777).toString(8)}): ${path}`
+        )
+      }
     }
     return await handle.readFile()
   } finally {
@@ -394,12 +445,24 @@ export class KimiOAuthCredentialAuthority {
           lease: this.createLease(authorityRoot, record, snapshots)
         }
       })
-    } catch {
+    } catch (error) {
+      // This used to swallow the cause entirely. Roughly eight distinct
+      // failures reach here — bad mode, wrong owner, hardlink, symlink, absent
+      // home, escaped boundary, unwritable authority directory — and reporting
+      // all of them as "could not establish the credential authority" made the
+      // seat undiagnosable from a log: the one thing the user needed to know
+      // was the one thing not said. Every throw above now carries its own
+      // sentence and the offending path, so pass it through.
+      const detail = error instanceof Error ? error.message.trim() : String(error ?? '').trim()
+      const missingHome = isErrno(error, 'ENOENT')
       return {
         ok: false,
         reason: 'error',
-        message:
-          'TaskWraith could not establish the private Kimi OAuth credential authority. Managed OAuth execution was not started.'
+        message: missingHome
+          ? 'TaskWraith could not find your Kimi Code credentials (~/.kimi-code). Sign in with the Kimi CLI first, then retry.'
+          : `TaskWraith could not establish the private Kimi OAuth credential authority${
+              detail ? `: ${detail}` : '.'
+            }`
       }
     }
   }

@@ -528,3 +528,81 @@ describe('KimiOAuthCredentialAuthority', () => {
     await restarted.cleanup()
   }, 20_000)
 })
+
+describe('first-time setup: the user already signed in to the CLI', () => {
+  const ARTEFACTS = ['credentials/kimi-code.json', 'oauth/kimi-code', 'device_id'] as const
+
+  it.skipIf(process.platform === 'win32').each(ARTEFACTS)(
+    'tightens a umask-022 %s instead of refusing the seat',
+    async (relative) => {
+      // The reported failure: a fresh `kimi` login writes its credentials 0644
+      // under a default umask, and EVERY artefact was checked, so a loose
+      // device_id alone was enough to fail a seat whose credential was fine.
+      // Nothing repaired file modes, so re-logging-in reproduced it forever.
+      const f = await fixture()
+      const target = join(f.sourceHome, ...relative.split('/'))
+      await fs.chmod(target, 0o644)
+
+      const result = await authority({ pid: 501, instanceId: 'fresh' }).acquire(request(f))
+
+      expect(result.ok).toBe(true)
+      const tightened = await fs.stat(target)
+      expect(tightened.mode & 0o077).toBe(0)
+    }
+  )
+
+  it.skipIf(process.platform === 'win32')(
+    'still refuses a tree owned by another user, and points at sudo',
+    async () => {
+      // The sudo-once case. Not repairable and not ours to adopt — sudo creates
+      // the whole tree as root, so the DIRECTORY check trips before any
+      // artefact is opened, which is why the remedy lives on that error.
+      const f = await fixture()
+      const authorityUnderTest = new KimiOAuthCredentialAuthority({
+        pid: 502,
+        instanceId: 'foreign',
+        isProcessAlive: () => false
+      })
+      const realGetuid = process.getuid
+      // Claim to be a different uid than the fixture's owner.
+      Object.defineProperty(process, 'getuid', { value: () => -12345, configurable: true })
+      try {
+        const result = await authorityUnderTest.acquire(request(f))
+        expect(result.ok).toBe(false)
+        if (result.ok) return
+        expect(result.message).toContain('owned by uid')
+        expect(result.message).toContain('sudo')
+      } finally {
+        Object.defineProperty(process, 'getuid', { value: realGetuid, configurable: true })
+      }
+    }
+  )
+
+  it('names the missing home rather than blaming the credential authority', async () => {
+    const f = await fixture()
+    await fs.rm(f.sourceHome, { recursive: true, force: true })
+
+    const result = await authority({ pid: 503, instanceId: 'nohome' }).acquire(request(f))
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).toContain('Sign in with the Kimi CLI first')
+  })
+
+  it('surfaces the underlying reason instead of one opaque sentence', async () => {
+    // Regression pin for the diagnosability defect itself: whatever the cause,
+    // the message must carry more than the bare prefix it used to end at.
+    const f = await fixture()
+    await fs.rm(join(f.sourceHome, 'credentials', 'kimi-code.json'))
+    await fs.mkdir(join(f.sourceHome, 'credentials', 'kimi-code.json'), { mode: 0o700 })
+
+    const result = await authority({ pid: 504, instanceId: 'weird' }).acquire(request(f))
+
+    expect(result.ok).toBe(false)
+    if (result.ok) return
+    expect(result.message).not.toBe(
+      'TaskWraith could not establish the private Kimi OAuth credential authority. Managed OAuth execution was not started.'
+    )
+    expect(result.message).toContain('kimi-code.json')
+  })
+})
