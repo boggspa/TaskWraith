@@ -19,7 +19,22 @@ export interface ProviderBrandLogoSource {
   dark?: string
 }
 
-export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<Record<ProviderId, ProviderBrandLogoSource>> = {
+// NOTE: intentionally `Partial` — unlike every other Record<ProviderId, ...> in
+// this codebase, this one must NOT be widened to force a `mistral` entry with
+// a fabricated import. No first-party Mistral brand asset has been sourced
+// yet (checked both this runtime folder and the source catalogue at
+// design-assets/provider-logos/, which still documents only nine tracked
+// provider identities). Until one is sourced through that same pipeline —
+// official brand pack, transparent PNG, entry in
+// design-assets/provider-logos/provider-logos.manifest.json, byte-identical
+// copy vendored here as `provider-logo-mistral.png` (or `.svg`, matching
+// Pi's treatment) — omitting the `mistral` key is correct: consumers
+// (`resolveProviderBrandLogoSource`, `ProviderBrandLogo`) already treat a
+// missing entry as "fall back to the generic `ProviderGlyph` mnemonic," which
+// already tints correctly via the existing `--provider-mistral-color` token.
+export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<
+  Partial<Record<ProviderId, ProviderBrandLogoSource>>
+> = {
   gemini: { light: geminiLogo },
   codex: { light: codexLogo },
   claude: { light: claudeLogo },
@@ -31,6 +46,7 @@ export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<Record<ProviderId, ProviderBr
   // and successful connection expose the provider.
   antigravity: { light: antigravityLogo },
   pi: { light: piLogo }
+  // mistral: intentionally absent — see the file-level note above.
 }
 
 export function providerBrandLogoKey(provider?: ProviderBrandLogoId): string {

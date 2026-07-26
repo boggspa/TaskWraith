@@ -54,6 +54,8 @@ function inferKindFromProvider(provider: ProviderId): ChildAgentKind {
       return 'grok-agent'
     case 'cursor':
       return 'cursor-agent'
+    case 'mistral':
+      return 'mistral-agent'
     default:
       return 'gemini-subagent'
   }
@@ -68,6 +70,10 @@ function inferInteractivity(kind: ChildAgentKind): ChildAgentInteractivity {
       return 'observe-only'
     case 'grok-agent':
     case 'claude-task':
+    // The Vibe lane opens a fresh session per turn and holds no persistent
+    // seat, so a Mistral child thread is one-shot like Grok's, not observed
+    // across turns like Kimi's swarm.
+    case 'mistral-agent':
     case 'gemini-subagent':
     case 'manual':
     default:

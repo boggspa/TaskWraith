@@ -74,7 +74,14 @@ export const API_SPEND_PROVIDER_ORDER: ProviderId[] = [
   // what `buildApiSpendAggregation` gates on (`allowed.has(provider)`), so the
   // card rendered a Pi row that could only ever read zero. These two rosters
   // must move in lockstep.
-  'pi'
+  'pi',
+  // The Mistral Vibe seat runs on a plan subscription, so — like
+  // claude/codex/grok/cursor above and unlike the antigravity key lane or Pi —
+  // its cost is a projected API-equivalent, never a real invoice. It is priced
+  // per-model (the seat's two models are 25x apart on output), so a Mistral row
+  // reading zero here means the model-aware estimator in MistralUsage.ts is not
+  // reaching the usage record, not that the seat is free.
+  'mistral'
 ]
 
 /** Aggregated token + cost totals for one provider over one window. */

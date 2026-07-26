@@ -70,6 +70,7 @@ function isProviderId(value: unknown): value is ProviderId {
     value === 'cursor' ||
     value === 'ollama' ||
     value === 'pi' ||
+    value === 'mistral' ||
     value === ANTIGRAVITY_PROVIDER_ID
   )
 }

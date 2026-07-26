@@ -14,6 +14,7 @@ const getProviderLabel = (provider: ProviderId): string => {
   // composer placeholder) called the provider "Gemini".
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
+  if (provider === 'mistral') return 'Mistral'
   return 'Gemini'
 }
 

@@ -149,7 +149,8 @@ const PROVIDER_IDS = new Set([
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ])
 const PERMISSION_PRESET_IDS = new Set([
   'read_only',

@@ -166,6 +166,41 @@ export interface GrokLaunchControls {
   readonly fallbackPolicy: 'forbid'
 }
 
+export interface MistralLaunchControls {
+  /** Mistral Vibe is ACP-only — `vibe-acp`. There is no second transport. */
+  readonly transport: 'acp'
+  /** The Vibe ACP session mode actually selected via session/set_mode. `plan`
+   *  and `chat` are Vibe's read-only modes; `auto-approve` bypasses every tool
+   *  gate, so which one ran is authority-relevant, not cosmetic. */
+  readonly sessionMode: 'default' | 'plan' | 'accept-edits' | 'auto-approve' | 'chat'
+  readonly readOnlySeat: boolean
+  /** `initialize` never advertises `clientCapabilities.fs` — the ACP core never
+   *  wires onInboundRequest, so an advertised fs capability would be answered
+   *  -32601. Bound as a literal so re-advertising it is a seal-visible change. */
+  readonly clientFsCapability: 'none'
+  /** vibe-acp accepts stdio MCP servers directly in session/new, so this seat
+   *  uses the Grok-style direct attachment and never a loopback HTTP gateway. */
+  readonly taskWraithMcpAttachmentMode: 'acp-session' | 'none'
+  /**
+   * WHICH CREDENTIAL THE CHILD WAS SPAWNED WITH — the security fact this seat
+   * exists to bind. Vibe resolves auth from MISTRAL_API_KEY FIRST and only then
+   * falls back to the plan-backed browser sign-in. That same env var is Pi's
+   * upstream key (PiModelPolicy.PI_UPSTREAM_KEY_ENV.mistral), so an unscrubbed
+   * env silently moves the run onto the user's metered API billing line instead
+   * of their subscription — a different credential, a different bill, no error.
+   * `plan-oauth` is the only lane this seat is supposed to use.
+   */
+  readonly credentialLane: 'plan-oauth' | 'byok-api-key'
+  /** True when MISTRAL_API_KEY was explicitly deleted from the child env. A seal
+   *  showing `credentialLane: 'plan-oauth'` with this false is incoherent and
+   *  must fail verification rather than be trusted. */
+  readonly apiKeyEnvScrubbed: boolean
+  readonly model: string
+  readonly nativeDenyRulesSha256: string
+  readonly promptPreambleSha256: string
+  readonly fallbackPolicy: 'forbid'
+}
+
 export interface CursorLaunchControls {
   readonly transport: 'cursor-agent-stream-json'
   readonly reasoningEffort: string | null
@@ -210,6 +245,7 @@ export interface ProviderLaunchControlsByProvider {
   readonly claude: ClaudeLaunchControls
   readonly kimi: KimiLaunchControls
   readonly grok: GrokLaunchControls
+  readonly mistral: MistralLaunchControls
   readonly cursor: CursorLaunchControls
   readonly ollama: OllamaLaunchControls
   readonly pi: PiLaunchControls
@@ -221,6 +257,7 @@ export interface ProviderRuntimeIdentityByProvider {
   readonly claude: CliRuntimeIdentityAuthority
   readonly kimi: CliRuntimeIdentityAuthority
   readonly grok: CliRuntimeIdentityAuthority
+  readonly mistral: CliRuntimeIdentityAuthority
   readonly cursor: CliRuntimeIdentityAuthority
   readonly ollama: HttpRuntimeIdentityAuthority
   readonly pi: CliRuntimeIdentityAuthority
@@ -343,6 +380,19 @@ export const PROVIDER_LAUNCH_CONTROL_FIELDS = {
     promptPreambleSha256: true,
     fallbackPolicy: true
   } satisfies Record<keyof GrokLaunchControls, true>,
+  mistral: {
+    transport: true,
+    sessionMode: true,
+    readOnlySeat: true,
+    clientFsCapability: true,
+    taskWraithMcpAttachmentMode: true,
+    credentialLane: true,
+    apiKeyEnvScrubbed: true,
+    model: true,
+    nativeDenyRulesSha256: true,
+    promptPreambleSha256: true,
+    fallbackPolicy: true
+  } satisfies Record<keyof MistralLaunchControls, true>,
   cursor: {
     transport: true,
     reasoningEffort: true,
@@ -579,6 +629,8 @@ function normalizeControls(
       return normalizeKimiControls(value)
     case 'grok':
       return normalizeGrokControls(value)
+    case 'mistral':
+      return normalizeMistralControls(value)
     case 'cursor':
       return normalizeCursorControls(value)
     case 'ollama':
@@ -735,6 +787,50 @@ function normalizeGrokControls(value: unknown): GrokLaunchControls {
     nativeDenyRulesSha256: sha256(record.nativeDenyRulesSha256, 'Grok deny rules digest'),
     promptPreambleSha256: sha256(record.promptPreambleSha256, 'Grok prompt preamble digest'),
     fallbackPolicy: oneOf(record.fallbackPolicy, ['forbid'], 'Grok fallback policy')
+  }
+}
+
+function normalizeMistralControls(value: unknown): MistralLaunchControls {
+  const record = exactObject(
+    value,
+    Object.keys(PROVIDER_LAUNCH_CONTROL_FIELDS.mistral),
+    'Mistral controls'
+  )
+  const credentialLane = oneOf(
+    record.credentialLane,
+    ['plan-oauth', 'byok-api-key'],
+    'Mistral credential lane'
+  )
+  const apiKeyEnvScrubbed = boolean(record.apiKeyEnvScrubbed, 'Mistral API key env scrub')
+  // A seal claiming the subscription lane while admitting the API key was left
+  // in the child env describes two different billing lanes at once. Vibe prefers
+  // the env var, so the scrub is the ONLY thing that makes `plan-oauth` true.
+  // Refuse the record rather than mint authority for an incoherent launch.
+  if (credentialLane === 'plan-oauth' && !apiKeyEnvScrubbed) {
+    throw new Error(
+      'Mistral credential lane is plan-oauth but MISTRAL_API_KEY was not scrubbed from the child env: Vibe resolves the env key ahead of the plan sign-in, so this launch would have billed the API key.'
+    )
+  }
+  return {
+    transport: oneOf(record.transport, ['acp'], 'Mistral transport'),
+    sessionMode: oneOf(
+      record.sessionMode,
+      ['default', 'plan', 'accept-edits', 'auto-approve', 'chat'],
+      'Mistral session mode'
+    ),
+    readOnlySeat: boolean(record.readOnlySeat, 'Mistral read-only seat'),
+    clientFsCapability: oneOf(record.clientFsCapability, ['none'], 'Mistral client fs capability'),
+    taskWraithMcpAttachmentMode: oneOf(
+      record.taskWraithMcpAttachmentMode,
+      ['acp-session', 'none'],
+      'Mistral TaskWraith MCP attachment mode'
+    ),
+    credentialLane,
+    apiKeyEnvScrubbed,
+    model: nonEmptyText(record.model, 'Mistral model'),
+    nativeDenyRulesSha256: sha256(record.nativeDenyRulesSha256, 'Mistral deny rules digest'),
+    promptPreambleSha256: sha256(record.promptPreambleSha256, 'Mistral prompt preamble digest'),
+    fallbackPolicy: oneOf(record.fallbackPolicy, ['forbid'], 'Mistral fallback policy')
   }
 }
 

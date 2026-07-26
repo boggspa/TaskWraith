@@ -101,7 +101,8 @@ const PROVIDER_TRANSPORT: Record<ProviderId, ProviderAdapterTransport> = {
   cursor: 'cursor-cli',
   ollama: 'ollama-http',
   antigravity: 'antigravity-cli',
-  pi: 'pi-cli'
+  pi: 'pi-cli',
+  mistral: 'mistral-vibe-acp'
 }
 
 interface InspectorProps {

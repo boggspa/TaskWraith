@@ -948,6 +948,60 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
       }
     ]
+  },
+  // Mistral seat (ProviderId 'mistral'): the Vibe CLI over ACP, plan-backed
+  // OAuth sign-in — NOT the Pi BYOK `mistral/*` upstream rows above (those
+  // are a distinct identity; see the `mistral` PiUpstreamId note in
+  // store/types.ts). Bare (no-slash) model ids so they can't collide with
+  // Pi's `mistral/<model>` wire ids. Like Grok/Kimi, TaskWraith drives this
+  // through a subscription, not the Mistral API directly, so these rates are
+  // a PROJECTED API-equivalent — same published figures as the Pi upstream's
+  // `mistral/mistral-medium-3.5` and `mistral/devstral-2512` rows, since both
+  // lanes reach the same underlying models.
+  mistral: {
+    provider: 'mistral',
+    pricingUrl: 'https://mistral.ai/pricing',
+    models: [
+      {
+        modelId: 'mistral-medium-3.5',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 7.5,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Vibe CLI default model. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing. First row = fallback rate for unknown mistral ids.'
+      },
+      {
+        modelId: 'mistral-vibe-cli-latest',
+        inputUsdPerMillion: 1.5,
+        outputUsdPerMillion: 7.5,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Wire id alias for mistral-medium-3.5 — some Vibe CLI events report this id instead of the display name.'
+      },
+      {
+        modelId: 'devstral-small',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.3,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          "Read from the Vibe CLI's own bundled catalog (vibe/core/config/vibe_schema.py DEFAULT_MODELS: devstral-small-latest, input_price=0.1, output_price=0.3), which is authoritative over the marketing page. Do NOT copy the $0.40/$2.00 figure — that is Devstral 2, a DIFFERENT and larger model from Devstral 2 Small. PROJECTED API-equivalent for the plan-backed subscription lane, not actual billing."
+      },
+      {
+        // The `local` catalog entry runs against a local llamacpp server and is
+        // priced at zero, so ACP omits `cost` from usage_update entirely for it.
+        // Registered explicitly so it resolves to genuinely-free rather than
+        // falling back to models[0] and being charged at the medium-3.5 rate.
+        modelId: 'devstral',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'https://mistral.ai/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Local llamacpp lane (catalog alias `local`), zero-priced. Vibe emits no cost for it; the quota estimator treats a missing cost as 0 rather than fabricating one.'
+      }
+    ]
   }
 }
 
@@ -1102,7 +1156,8 @@ const providerIds = new Set<ProviderId>([
   // table would fail parsing wholesale — parsePersistedProviderRateProbe
   // returns null for the ENTIRE cache on any unknown provider id.
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ])
 
 function isProviderId(value: unknown): value is ProviderId {

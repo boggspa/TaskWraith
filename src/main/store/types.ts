@@ -188,6 +188,25 @@ export type ComposerStyle =
 // hosted models). It IS live-selectable and remains visible before setup; with
 // zero configured upstream keys it has zero runnable models and reports setup
 // guidance rather than being removed from the picker.
+// `mistral` is the Mistral Vibe seat: a CLI agent lane driving `vibe-acp` over
+// ACP, plan-backed by the user's Mistral sign-in. It is live-selectable.
+//
+// READ THIS BEFORE TOUCHING ANYTHING SPELLED 'mistral'. There are TWO distinct
+// identities sharing that one runtime string:
+//   * ProviderId 'mistral'    — this seat. Mistral's Vibe AGENT CLI.
+//   * PiUpstreamId 'mistral'  — a Pi BYOK upstream (src/main/pi/PiModelPolicy),
+//                               keyed on MISTRAL_API_KEY, serving Mistral's API
+//                               MODELS as `mistral/<model>` wire ids.
+// TypeScript separates them only where BOTH sides are typed; every untyped
+// `string` boundary (CSS hue classes, iOS Theme.swift, substring inference,
+// IPC arg specs) sees one indistinguishable token. A site that means the seat
+// must never match a `/`-containing Pi wire id, and vice versa.
+//
+// The Pi upstream is a DELIBERATE, DOCUMENTED exception to the "never a second
+// door" rule — see the note at PiModelPolicy's PiUpstreamId. It is kept because
+// the two reach different products (API models vs the agent CLI), and because a
+// one-off overlap does not create the circumvention incentive that blanket
+// second-door support would.
 export type ProviderId =
   | 'gemini'
   | 'codex'
@@ -198,6 +217,7 @@ export type ProviderId =
   | 'ollama'
   | 'antigravity'
   | 'pi'
+  | 'mistral'
 export type ProviderRerouteReason = 'provider-paused' | 'user-failover'
 export interface ProviderRunReroute {
   from: ProviderId
@@ -1883,6 +1903,7 @@ export type ProviderAdapterTransport =
   | 'ollama-http'
   | 'antigravity-cli'
   | 'pi-cli'
+  | 'mistral-vibe-acp'
 
 export type ProviderAdapterRunChannel = 'run-agent'
 
@@ -5667,6 +5688,7 @@ export type ChildAgentKind =
   | 'kimi-swarm'
   | 'grok-agent'
   | 'cursor-agent'
+  | 'mistral-agent'
   | 'gemini-subagent'
   | 'manual'
 export type ChildAgentInteractivity = 'interactive' | 'oneshot' | 'observe-only'

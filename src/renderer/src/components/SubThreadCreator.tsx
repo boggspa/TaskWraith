@@ -51,7 +51,9 @@ const PROVIDER_HELPERS: Record<Exclude<ProviderId, 'gemini'>, string> = {
   ollama: 'Local models over HTTP with the curated TaskWraith gateway tool surface.',
   pi: 'Pi coding agent seat; BYOK access to DeepSeek, GLM, Qwen, MiniMax, Mistral and open-weights hosts.',
   antigravity:
-    'Conditionally admitted AntiGravity seat using its configured agy CLI or Gemini API lane.'
+    'Conditionally admitted AntiGravity seat using its configured agy CLI or Gemini API lane.',
+  mistral:
+    "Mistral's Vibe CLI seat; plan-backed sign-in, ACP tool routing through the TaskWraith gateway in default (write) mode."
 }
 
 function buildSubThreadProviderOptions(

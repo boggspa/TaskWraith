@@ -365,7 +365,8 @@ const VALID_BROKER_PARENT_PROVIDERS = new Set<ProviderId>([
   // tool calls resolve their parent from the run session; without this entry
   // resolveBrokerParentProvider would coerce those calls back to 'gemini'
   // and the session-keyed context/authority lookups would miss.
-  'antigravity'
+  'antigravity',
+  'mistral'
 ])
 const BRIDGE_LOG_MAX_BYTES = 1_048_576
 const BRIDGE_LOG_MAX_LINE_CHARS = 32_768

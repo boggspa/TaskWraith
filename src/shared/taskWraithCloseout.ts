@@ -48,7 +48,8 @@ export function closeoutProviderFromMetadata(
     provider === 'grok' ||
     provider === 'cursor' ||
     provider === 'ollama' ||
-    provider === 'pi'
+    provider === 'pi' ||
+    provider === 'mistral'
     ? provider
     : null
 }

@@ -18,7 +18,8 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   cursor: 'Cursor',
   ollama: 'Ollama',
   antigravity: 'Antigravity',
-  pi: 'Pi'
+  pi: 'Pi',
+  mistral: 'Mistral'
 }
 
 const MAX_MESSAGE_CHARS = 4000

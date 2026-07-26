@@ -78,7 +78,8 @@ const PROVIDERS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'pi'
+  'pi',
+  'mistral'
 ])
 
 const MAX_TEXT = 2000

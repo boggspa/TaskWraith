@@ -198,6 +198,7 @@ function getDefaultEnsembleModel(provider: ProviderId): string {
   if (provider === 'grok') return 'grok-4.5'
   if (provider === 'cursor') return 'composer-2.5-fast'
   if (provider === 'ollama') return 'qwen3.5:9b'
+  if (provider === 'mistral') return 'devstral-small'
   return 'flash-lite'
 }
 

@@ -58,9 +58,11 @@ import { buildClaudeSealEvidence } from './SealEvidenceClaude'
 import { buildCursorSealEvidence } from './SealEvidenceCursor'
 import { buildGrokSealEvidence } from './SealEvidenceGrok'
 import { buildKimiSealEvidence } from './SealEvidenceKimi'
+import { buildMistralSealEvidence } from './SealEvidenceMistral'
 import { buildOllamaSealEvidence } from './SealEvidenceOllama'
 import { hasScheduledSealEvidenceProducer } from './ScheduledSealCoverage'
 import { grokWriteCapable } from '../grok/GrokCliArgs'
+import { scrubMistralCredentialEnv } from '../mistral/MistralCliArgs'
 import { cursorWriteCapable } from '../cursor/CursorCliArgs'
 import { ollamaAdvertisedToolNames } from '../ollama/OllamaToolTiers'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
@@ -712,6 +714,57 @@ export class ScheduledOccurrenceSealService {
       }
     }
 
+    if (provider === 'mistral') {
+      const spawnEnv = createResolvedProviderEnv(
+        {
+          FORCE_COLOR: '0',
+          NO_COLOR: '1',
+          TASKWRAITH_PARENT_PROVIDER: 'mistral',
+          TASKWRAITH_RUN_ID: ownerRunId,
+          TASKWRAITH_CHAT_ID: task.chatId,
+          TASKWRAITH_WORKSPACE_PATH: task.workspacePath
+        },
+        resolved.binaryPath as string,
+        this.deps.cliRuntimeDeps,
+        runtimeProfile ?? undefined
+      )
+      // createResolvedProviderEnv inherits the parent environment, and
+      // scrubCliEnv's secret list knows nothing about Mistral. An inherited
+      // MISTRAL_API_KEY (the same var Pi exports for its `mistral` upstream)
+      // is resolved by Vibe AHEAD of the plan sign-in, so leaving it in place
+      // would silently move an unattended run onto the user's metered BYOK
+      // billing line. The scrub happens here, before the evidence builder sees
+      // the env, because the builder derives `apiKeyEnvScrubbed` from what it
+      // is handed rather than trusting a claim.
+      const resolvedEnv = mistralScrubbedSpawnEnv(spawnEnv)
+      const evidence = await buildMistralSealEvidence(deps, {
+        model: composed.model,
+        promptEnvelope,
+        thinkingLevel: composed.reasoningEffort,
+        binaryPath: resolved.binaryPath as string,
+        resolvedEnv,
+        approvalMode,
+        effectivePermissions: permissions,
+        // TODO: there is no `mistralMcpServerEntry` dep on this service, so the
+        // Vibe seat currently seals with NO TaskWraith MCP surface. vibe-acp
+        // accepts stdio MCP servers directly in session/new (the Grok-style
+        // direct path, no loopback HTTP bridge), so wiring this is a matter of
+        // adding the entry closure alongside `grokMcpServerEntry` — until then
+        // an advertised profile would be a claim the launch could not honour.
+        taskWraithMcpAdvertised: false,
+        taskWraithMcpProfileId: null,
+        mcpServerEntry: null,
+        capabilityContract,
+        userMcpConfiguration
+      })
+      return {
+        evidence,
+        effectiveBinary: evidence.runtime.executableRealPath,
+        effectivePersistence: 'ephemeral',
+        resolvedEnv
+      }
+    }
+
     if (provider !== 'cursor') {
       return assertUnreachableScheduledSealProvider(provider)
     }
@@ -785,7 +838,8 @@ const SCHEDULED_SEAL_EVIDENCE_PROVIDERS = {
   kimi: true,
   grok: true,
   cursor: true,
-  ollama: true
+  ollama: true,
+  mistral: true
 } as const satisfies Record<LiveProviderLaunchId, true>
 
 function isScheduledSealEvidenceProvider(provider: ProviderId): provider is LiveProviderLaunchId {
@@ -799,6 +853,22 @@ function requireScheduledSealEvidenceProvider(provider: ProviderId): LiveProvide
     )
   }
   return provider
+}
+
+/**
+ * scrubMistralCredentialEnv deletes keys, so every surviving value is a string;
+ * it is typed `string | undefined` only because its input type is. Narrow back
+ * to the `Record<string, string>` the launch-authority env shape requires
+ * instead of casting, so a future scrub that blanks rather than deletes cannot
+ * smuggle an `undefined` into the sealed environment digest.
+ */
+function mistralScrubbedSpawnEnv(env: Record<string, string>): Record<string, string> {
+  const scrubbed = scrubMistralCredentialEnv(env)
+  const next: Record<string, string> = {}
+  for (const [key, value] of Object.entries(scrubbed)) {
+    if (typeof value === 'string') next[key] = value
+  }
+  return next
 }
 
 function assertUnreachableScheduledSealProvider(provider: never): never {

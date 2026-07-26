@@ -257,7 +257,7 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
 
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
- * preamble (gemini/claude/kimi/codex/grok/cursor). Plan-mode/read-only runs
+ * preamble (gemini/claude/kimi/codex/grok/cursor/mistral). Plan-mode/read-only runs
  * never reach these preambles, so this only governs runs that can actually
  * mutate the workspace. Encodes the inner read→edit→verify loop the way
  * Cursor/Cline/Codex/Devin do: read first, verify after, never fake a pass.
@@ -304,7 +304,8 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   if (
     (args.provider === 'kimi' && !args.nativeSessionResume) ||
     args.provider === 'grok' ||
-    args.provider === 'cursor'
+    args.provider === 'cursor' ||
+    args.provider === 'mistral'
   ) {
     return true
   }
@@ -415,6 +416,7 @@ function providerDisplayName(provider: unknown, fallback = 'Sub-thread'): string
   if (provider === 'gemini') return 'Gemini'
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
+  if (provider === 'mistral') return 'Mistral'
   return fallback
 }
 
@@ -994,7 +996,8 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     compactionSummary?.text &&
     ((provider === 'kimi' && !nativeKimiSessionResume) ||
       provider === 'grok' ||
-      provider === 'cursor')
+      provider === 'cursor' ||
+      provider === 'mistral')
       ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
       : ''
   const kimiNeedsContextInjection = provider === 'kimi' && !nativeKimiSessionResume
@@ -1014,6 +1017,17 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // for every turn and clears providerSessionId before launch. Preserve chat
   // continuity by supplying the bounded host transcript on every solo turn.
   const cursorNeedsContextInjection = provider === 'cursor'
+  // Mistral Vibe over ACP. Note the difference from Grok: `vibe-acp` DOES
+  // advertise `loadSession: true` and implements session/load, session/resume
+  // and session/fork, so unlike Grok this is not a protocol limitation. Our
+  // lane simply does not use them — every turn spawns a fresh `vibe-acp` and
+  // opens a new `session/new`, so there is no provider-side history to defer
+  // to and the host must re-inject. UNCONDITIONAL for that reason, and
+  // deliberately not gated on `!resumeSessionId`: a stored session id from a
+  // prior turn is not resumed by this lane, so honouring it would produce a
+  // context-blind turn that *looks* resumed. If the lane ever adopts
+  // session/load, this becomes conditional and this comment must change with it.
+  const mistralNeedsContextInjection = provider === 'mistral'
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
@@ -1028,6 +1042,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     kimiNeedsContextInjection ||
     grokNeedsContextInjection ||
     cursorNeedsContextInjection ||
+    mistralNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
     ollamaNeedsContextInjection
@@ -1075,7 +1090,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
         ? `Context turns: ${contextTurnsApplied} (Grok: appending compact conversation context because the ACP transport opens a fresh session each turn)`
         : cursorNeedsContextInjection
           ? `Context turns: ${contextTurnsApplied} (Cursor: appending compact conversation context because Path-B opens a fresh contained process each turn)`
-          : codexNeedsContextInjection
+          : mistralNeedsContextInjection
+            ? `Context turns: ${contextTurnsApplied} (Mistral: appending compact conversation context because the Vibe ACP lane opens a fresh session each turn)`
+            : codexNeedsContextInjection
             ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
             : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
               ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'

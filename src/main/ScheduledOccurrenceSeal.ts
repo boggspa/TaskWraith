@@ -36,6 +36,7 @@ import {
   type CodexLaunchControls,
   type CursorLaunchControls,
   type GrokLaunchControls,
+  type MistralLaunchControls,
   type KimiLaunchControls,
   type OllamaLaunchControls,
   type ProviderLaunchAuthorityInput
@@ -70,7 +71,8 @@ const PROVIDER_IDS = {
   cursor: true,
   ollama: true,
   antigravity: true,
-  pi: true
+  pi: true,
+  mistral: true
 } as const satisfies Record<ProviderId, true>
 
 const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
@@ -1139,6 +1141,38 @@ function assertProviderPostureControls(
       }
       if (controls.webSearchEnabled) {
         throw new TypeError('Scheduled Grok launches cannot enable provider web search.')
+      }
+      return
+    }
+    case 'mistral': {
+      const controls = launch.controls as MistralLaunchControls
+      if (controls.readOnlySeat !== readOnly) {
+        throw new TypeError('Mistral read-only control does not match the signed posture.')
+      }
+      // Vibe's five ACP session modes are the actual enforcement surface, so the
+      // mode must agree with the posture rather than merely sit alongside it.
+      // `plan` and `chat` are Vibe's read-only modes; note that `plan` is NOT
+      // write-free — it writes its plan artifact to $VIBE_HOME/plans — but it
+      // performs no workspace mutation, which is what `readOnly` governs here.
+      const readOnlyModes: readonly MistralLaunchControls['sessionMode'][] = ['plan', 'chat']
+      const isReadOnlyMode = readOnlyModes.includes(controls.sessionMode)
+      if (isReadOnlyMode !== readOnly) {
+        throw new TypeError('Mistral session mode does not match the signed posture.')
+      }
+      // `auto-approve` answers every tool request without a gate. An unattended
+      // scheduled occurrence is precisely the context where that must never be
+      // reachable, regardless of posture.
+      if (controls.sessionMode === 'auto-approve') {
+        throw new TypeError('Scheduled Mistral launches cannot use the auto-approve session mode.')
+      }
+      // The seat is a subscription lane. If a scheduled launch were minted on
+      // the BYOK key it would bill the user's metered API line instead of their
+      // plan — silently, because Vibe prefers MISTRAL_API_KEY over the plan
+      // sign-in and reports no error either way.
+      if (controls.credentialLane !== 'plan-oauth' || !controls.apiKeyEnvScrubbed) {
+        throw new TypeError(
+          'Scheduled Mistral launches must run on the plan-backed sign-in with MISTRAL_API_KEY scrubbed from the child env.'
+        )
       }
       return
     }

@@ -111,8 +111,24 @@ export interface RemoteFirstLaunchStateInput {
   providerSetup?: readonly TaskWraithPluginActivatedProviderSetup[]
 }
 
-const PROVIDER_ORDER: ProviderId[] = ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi']
-const OPTIONAL_PROVIDERS = new Set<ProviderId>(['kimi', 'cursor', 'grok', 'ollama', 'pi'])
+const PROVIDER_ORDER: ProviderId[] = [
+  'codex',
+  'claude',
+  'kimi',
+  'cursor',
+  'grok',
+  'ollama',
+  'pi',
+  'mistral'
+]
+const OPTIONAL_PROVIDERS = new Set<ProviderId>([
+  'kimi',
+  'cursor',
+  'grok',
+  'ollama',
+  'pi',
+  'mistral'
+])
 
 const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   gemini: 'Gemini is retired for new runs. Existing Gemini chats remain visible in history.',
@@ -131,7 +147,9 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   // surfaced. Real onboarding copy lives in the buried Settings card slice.
   antigravity: 'Antigravity.',
   pi:
-    'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.'
+    'Pi coding agent with bring-your-own-key access to DeepSeek, GLM, Qwen, MiniMax, Mistral, Groq and Cerebras models.',
+  mistral:
+    "Mistral's Vibe CLI agent over ACP. Sign in with your Mistral plan on the Mac — no API key required."
 }
 
 const SETUP_HINTS: Record<ProviderId, string> = {
@@ -147,7 +165,8 @@ const SETUP_HINTS: Record<ProviderId, string> = {
   ollama: 'On your Mac, install Ollama, start the service, then pull a supported model.',
   // Opt-in provider; not in PROVIDER_ORDER, so this placeholder is not surfaced.
   antigravity: '',
-  pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.'
+  pi: 'On your Mac, install the Pi CLI, then add at least one upstream API key in TaskWraith Settings.',
+  mistral: 'On your Mac, install the Vibe CLI (vibe-acp) if needed, then sign in with your Mistral plan.'
 }
 
 export function buildRemoteFirstLaunchState(
@@ -427,5 +446,7 @@ function providerLabel(provider: ProviderId): string {
       return 'Gemini'
     case 'antigravity':
       return 'Antigravity'
+    case 'mistral':
+      return 'Mistral'
   }
 }

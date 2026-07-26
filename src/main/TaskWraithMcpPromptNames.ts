@@ -34,5 +34,6 @@ function providerDisplayName(provider: ProviderId): string {
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'AntiGravity'
   if (provider === 'pi') return 'Pi'
+  if (provider === 'mistral') return 'Mistral'
   return String(provider)
 }

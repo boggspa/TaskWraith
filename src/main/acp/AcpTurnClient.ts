@@ -99,6 +99,19 @@ export interface AcpTurnOptions {
    * resumed turn.
    */
   resumeConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  /**
+   * Config selections to apply to a FRESHLY opened session, after session/new
+   * and before the prompt.
+   *
+   * Distinct from `resumeConfigOptions`, which only re-asserts settings a
+   * provider persisted in its own session. This is for providers that expose no
+   * other way to configure a run: Mistral Vibe's `vibe-acp` has no CLI surface
+   * at all (`[-h] [-v] [--setup]`), so its model AND its permission mode can
+   * only be selected here. Without it a Vibe seat silently inherits whatever
+   * `active_model` sits in the user's global ~/.vibe/config.toml, and a
+   * read-only seat never leaves the write-capable `default` mode.
+   */
+  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
   cwd: string
   /** Spawns the provider's ACP stdio process (injected for testability). */
   spawnProcess: () => AcpChildProcess
@@ -426,8 +439,12 @@ export function runAcpTurn(options: AcpTurnOptions): AcpTurnHandle {
       options.onEvent({ type: 'init', sessionId })
       options.onSessionReady?.({ sessionId, resumed, fallbackFromResume })
     }
-    if (resumed && options.resumeConfigOptions?.length) {
-      resumeConfigQueue = options.resumeConfigOptions
+    // A resumed session re-asserts what the provider persisted; a fresh one
+    // applies the run's chosen configuration. Both drain through the same queue
+    // and both end at sendPromptOnce().
+    const requestedConfig = resumed ? options.resumeConfigOptions : options.sessionConfigOptions
+    if (requestedConfig?.length) {
+      resumeConfigQueue = requestedConfig
         .map((option) => ({
           configId: nonEmptyString(option.configId),
           value: nonEmptyString(option.value)

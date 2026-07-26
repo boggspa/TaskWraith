@@ -150,6 +150,7 @@ import type {
 import type { AntigravityGeminiApiDiscoveryOutcome } from '../main/antigravity/AntigravityGeminiApiDiscoveryOutcome'
 import type { NativeCapabilitySnapshot } from '../main/NativeCapabilities'
 import type { GrokUsageSnapshot } from '../main/grok/GrokUsage'
+import type { MistralQuotaSnapshot } from '../main/mistral/MistralQuotaStore'
 import type { AppShellStatsSnapshot } from '../main/services/AppShellStatsService'
 import type { SessionCheckpointRecord } from '../main/checkpoints/SessionCheckpoint'
 import type {
@@ -680,6 +681,8 @@ declare global {
       getCodexUsageSnapshot: (options?: { force?: boolean }) => Promise<any>
       getExternalUsage: (options?: { force?: boolean }) => Promise<UsageRecord[]>
       probeGrokUsage: () => Promise<GrokUsageSnapshot>
+      /** Locally accumulated Mistral burn estimate; null until the seat has run. */
+      getMistralQuotaEstimate: () => Promise<MistralQuotaSnapshot | null>
       gitSnapshot: (payload: {
         workspacePath?: string
         repoPath?: string

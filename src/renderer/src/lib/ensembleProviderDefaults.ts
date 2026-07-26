@@ -442,6 +442,15 @@ export function getDefaultEnsembleParticipantConfig(
         model: 'deepseek/deepseek-v4-flash',
         permissionPresetId: 'default'
       }
+    case 'mistral':
+      // Must stay in lockstep with getDefaultEnsembleModel in
+      // src/main/EnsembleDefaults.ts — these two seeds diverging is how a
+      // participant ends up configured differently depending on which surface
+      // created it.
+      return {
+        model: 'devstral-small',
+        permissionPresetId: 'default'
+      }
     default:
       return {
         model: 'gpt-5.5',
@@ -475,6 +484,8 @@ export function getDefaultEnsembleRoleName(provider: ProviderId): string {
       return 'AntiGravity'
     case 'pi':
       return 'Pi'
+    case 'mistral':
+      return 'Mistral'
     default:
       return 'Gemini'
   }

@@ -72,7 +72,12 @@ export const DEFAULT_APPROVAL_TIMEOUT_POLICY: ApprovalTimeoutPolicy = {
     // Opt-in antigravity has no approval flow yet; keep the record complete.
     antigravity: 120_000,
     // Pi has no approval prompts (tool-allowlist posture); record completeness.
-    pi: 120_000
+    pi: 120_000,
+    // Mistral's Vibe CLI ships write-capable in its 'default' approval mode
+    // (unlike Grok's still-read-only G3 posture), so approvals genuinely fire.
+    // Mirror Kimi's real mid-tier window rather than the Claude/Gemini
+    // "record completeness" placeholder used by providers with no live flow yet.
+    mistral: 60_000
   },
   mainTimeoutMs: 60_000,
   perKindOverridesMs: {

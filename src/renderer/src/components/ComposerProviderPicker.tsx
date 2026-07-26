@@ -116,7 +116,8 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   cursor: 'Cursor Agent CLI',
   ollama: 'Local Ollama HTTP',
   antigravity: 'Antigravity CLI',
-  pi: 'Pi CLI (BYOK)'
+  pi: 'Pi CLI (BYOK)',
+  mistral: 'Mistral Vibe CLI'
 }
 
 /** User-facing offer-policy reason for a retired or not-yet-configured provider. */

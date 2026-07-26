@@ -18,7 +18,8 @@ export const SCHEDULED_SEAL_EVIDENCE_PROVIDER_IDS = Object.freeze([
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ] as const satisfies readonly ProviderId[])
 
 export function hasScheduledSealEvidenceProducer(provider: ProviderId): boolean {

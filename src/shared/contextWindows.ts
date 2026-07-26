@@ -13,6 +13,7 @@ export type ContextWindowProviderId =
   | 'ollama'
   | 'antigravity'
   | 'pi'
+  | 'mistral'
 
 const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   // Gemini
@@ -45,6 +46,14 @@ const CONTEXT_WINDOWS_BY_MODEL: Record<string, number> = {
   'minimax/MiniMax-M2.7': 204_800,
   'mistral/devstral-2512': 262_144,
   'mistral/mistral-medium-3.5': 262_144,
+  // Mistral seat (ProviderId 'mistral', the Vibe CLI over ACP) — NOT the Pi
+  // BYOK upstream rows directly above. Bare (no-slash) ids, so they can't
+  // collide with the `mistral/<model>` Pi wire ids. The CLI's display model
+  // (`mistral-medium-3.5`) and its raw wire id (`mistral-vibe-cli-latest`)
+  // both need a row since either spelling may show up on a run.
+  'mistral-medium-3.5': 262_144,
+  'mistral-vibe-cli-latest': 262_144,
+  'devstral-small': 262_144,
   'groq/openai/gpt-oss-120b': 131_072,
   'groq/qwen/qwen3-32b': 131_072,
   'cerebras/zai-glm-4.7': 131_072,
@@ -145,7 +154,10 @@ const PROVIDER_FALLBACK_WINDOW: Record<ContextWindowProviderId, number> = {
   antigravity: 1_048_576,
   // Pi's default model (DeepSeek V4) carries a 1M window; per-model entries
   // below cover the smaller GLM/Mistral/Groq rows so this floor rarely fires.
-  pi: 1_000_000
+  pi: 1_000_000,
+  // Mistral Vibe CLI seat — both its models sit at 262_144; see the
+  // `mistral-medium-3.5` / `devstral-small` rows above.
+  mistral: 262_144
 }
 
 const CONTEXT_WINDOW_PROVIDER_IDS: ReadonlySet<string> = new Set(

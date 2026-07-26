@@ -1,5 +1,9 @@
 export const TASKWRAITH_PLUGIN_MANIFEST_SCHEMA_VERSION = 1
 
+// NOTE: this union has drifted — it is missing `antigravity` and `pi`, which
+// were added to ProviderId without being mirrored here. Left as-is rather than
+// silently changing plugin-manifest behaviour for those two seats; fix wants its
+// own change. `mistral` is added because the seat is being introduced now.
 export type TaskWraithPluginProviderId =
   | 'gemini'
   | 'codex'
@@ -8,6 +12,7 @@ export type TaskWraithPluginProviderId =
   | 'grok'
   | 'cursor'
   | 'ollama'
+  | 'mistral'
 export type TaskWraithPluginAgenticServiceId =
   | 'shellCommands'
   | 'fileChanges'

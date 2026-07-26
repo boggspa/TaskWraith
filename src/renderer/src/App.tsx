@@ -2052,7 +2052,8 @@ function App(): React.JSX.Element {
       cursor: 120_000,
       ollama: 120_000,
       antigravity: 120_000,
-      pi: 120_000
+      pi: 120_000,
+      mistral: 60_000
     },
     mainAuthorityMs: 60_000
   })
@@ -2333,7 +2334,8 @@ function App(): React.JSX.Element {
     cursor: [],
     ollama: [],
     antigravity: [],
-    pi: []
+    pi: [],
+    mistral: []
   })
   const usageSummarySignatureRef = useRef('')
   const usageRecordsSignatureRef = useRef('')
@@ -8427,9 +8429,29 @@ function App(): React.JSX.Element {
         normalized.includes('o5')
       )
         return 'codex'
+      // Mistral Vibe SEAT ids only, and the slash test is load-bearing. The Pi
+      // seat serves Mistral's API models under `<upstream>/<model>` wire ids
+      // (`mistral/devstral-2512`, `mistral/mistral-medium-3.5`) — a different
+      // provider wearing the same brand word. Matching those here would
+      // relabel every Pi-on-Mistral run as the Vibe seat in Model Comparisons.
+      // Seat ids are always bare: `mistral-medium-3.5`, `mistral-vibe-cli-latest`,
+      // `devstral-small`.
+      if (
+        !normalized.includes('/') &&
+        (normalized.includes('mistral') || normalized.includes('devstral'))
+      )
+        return 'mistral'
       return 'gemini'
     }
 
+    // Every live ProviderId, so a record that already CARRIES a provider is
+    // trusted rather than being handed to `inferUsageProvider`'s keyword guess.
+    // `pi`, `antigravity` and `mistral` were previously absent, which meant Pi
+    // and AntiGravity usage records — despite being correctly tagged at write
+    // time — fell through to inference and were relabelled by model-name
+    // substring. That is also what makes the Mistral seat safe here: a Pi run on
+    // `mistral/devstral-2512` now resolves as `pi` from its own field and never
+    // reaches the keyword matcher at all.
     const isKnownProvider = (provider: unknown): provider is ProviderId =>
       provider === 'gemini' ||
       provider === 'codex' ||
@@ -8437,7 +8459,10 @@ function App(): React.JSX.Element {
       provider === 'kimi' ||
       provider === 'grok' ||
       provider === 'cursor' ||
-      provider === 'ollama'
+      provider === 'ollama' ||
+      provider === 'antigravity' ||
+      provider === 'pi' ||
+      provider === 'mistral'
 
     if (loadUsageRecords) {
       const runAggregateMap = new Map<string, ModelUsageAggregate>()

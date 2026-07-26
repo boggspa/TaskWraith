@@ -507,7 +507,8 @@ const RUN_CONTROL_PROVIDER_IDS: readonly ProviderId[] = [
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ]
 
 export function createWorkspaceToolExecutors(

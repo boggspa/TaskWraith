@@ -14,7 +14,8 @@ function metadataProvider(value: unknown): ProviderId | null {
     value === 'kimi' ||
     value === 'grok' ||
     value === 'cursor' ||
-    value === 'ollama'
+    value === 'ollama' ||
+    value === 'mistral'
   ) {
     return value
   }

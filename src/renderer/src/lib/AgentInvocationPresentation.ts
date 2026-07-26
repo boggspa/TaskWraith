@@ -14,6 +14,9 @@ export function providerDisplayName(provider?: ProviderId | string): string {
   if (provider === 'cursor') return 'Cursor'
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'gemini') return 'Gemini'
+  if (provider === 'antigravity') return 'AntiGravity'
+  if (provider === 'pi') return 'Pi'
+  if (provider === 'mistral') return 'Mistral'
   return 'Agent'
 }
 

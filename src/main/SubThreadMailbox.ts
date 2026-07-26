@@ -99,7 +99,8 @@ const PROVIDERS = new Set<ProviderId>([
   'grok',
   'cursor',
   'ollama',
-  'pi'
+  'pi',
+  'mistral'
 ])
 const OUTCOMES = new Set<SubThreadMailboxOutcome>([
   'done',

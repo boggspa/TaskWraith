@@ -37,7 +37,10 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   // real transport wiring lands with the runtime slice).
   antigravity: 'cli',
   // Pi is a spawned CLI; auth is BYOK env keys, never an interactive login.
-  pi: 'cli'
+  pi: 'cli',
+  // Mistral's Vibe CLI (`vibe-acp`) is a spawned local CLI, same family as
+  // Grok/Kimi/Cursor — plan-backed sign-in happens in the CLI itself.
+  mistral: 'cli'
 }
 
 const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -55,7 +58,11 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // No runtime/approval flow yet (opt-in provider).
   antigravity: false,
   // Pi ships no permission prompts; posture is enforced via its tool allowlist.
-  pi: false
+  pi: false,
+  // Mistral's Vibe CLI is write-capable in its 'default' approval mode (unlike
+  // Grok's still-read-only G3 posture), so its tool calls genuinely route
+  // through TaskWraith's main approval gate — same as Kimi.
+  mistral: true
 }
 
 const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
@@ -76,7 +83,10 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   // No TaskWraith MCP gateway for the opt-in provider yet.
   antigravity: false,
   // Pi has no MCP support (extensions are its plugin story); no bridge in v1.
-  pi: false
+  pi: false,
+  // Mistral's Vibe CLI talks ACP directly (like Grok/Cursor); it has no
+  // TaskWraith-managed authenticated HTTP MCP gateway the way Kimi does.
+  mistral: false
 }
 
 export function buildProviderAuthStatusV2(input: ProviderAuthStatusV2Input): ProviderAuthStatusV2 {

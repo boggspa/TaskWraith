@@ -759,7 +759,8 @@ const SETTINGS_PROVIDER_ORDER: ProviderId[] = [
   'cursor',
   'grok',
   'ollama',
-  'pi'
+  'pi',
+  'mistral'
 ]
 
 const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
@@ -771,7 +772,8 @@ const SETTINGS_PROVIDER_LABELS: Record<ProviderId, string> = {
   cursor: 'Cursor',
   ollama: 'Ollama',
   antigravity: 'Antigravity',
-  pi: 'Pi'
+  pi: 'Pi',
+  mistral: 'Mistral'
 }
 
 export type UserMcpServerFormState = {

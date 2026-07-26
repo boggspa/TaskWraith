@@ -8,6 +8,7 @@ import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
+import { MISTRAL_BINARY_NAME } from '../mistral/MistralCliArgs'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
@@ -103,6 +104,12 @@ export function providerBinaryName(provider: ProviderId): string {
   if (provider === 'claude') return 'claude'
   // Managed Path-B launches resolve and spawn the official Cursor CLI.
   if (provider === 'cursor') return 'cursor-agent'
+  // Mistral Vibe ships TWO binaries side by side: `vibe` (an interactive TUI)
+  // and `vibe-acp` (the ACP stdio server). Falling through to the provider id
+  // would search PATH for `mistral`, which does not exist at all; picking
+  // `vibe` instead would be worse, because it waits on a terminal a managed run
+  // does not have and hangs the turn rather than failing it.
+  if (provider === 'mistral') return MISTRAL_BINARY_NAME
   return provider
 }
 
@@ -252,7 +259,7 @@ export function createCliEnv(
  * is actually handed to spawn, including its per-run routing identity.
  */
 export function createCliProviderRunEnv(input: {
-  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'pi'
+  provider: 'claude' | 'kimi' | 'grok' | 'cursor' | 'pi' | 'mistral'
   command: string
   appRunId: string | null | undefined
   appChatId: string | null | undefined
@@ -759,7 +766,13 @@ export async function getAgentStatusSnapshotDirect(
     }
     return deps.getCodexStatusSnapshot()
   }
-  if (provider === 'claude' || provider === 'kimi' || provider === 'grok' || provider === 'pi') {
+  if (
+    provider === 'claude' ||
+    provider === 'kimi' ||
+    provider === 'grok' ||
+    provider === 'pi' ||
+    provider === 'mistral'
+  ) {
     // Route live local CLIs to generic status instead of the Gemini-shaped
     // snapshot below.
     return getCliProviderStatus(provider, deps)

@@ -17,6 +17,7 @@ export type RunItemEventProvider =
   | 'ollama'
   | 'antigravity'
   | 'pi'
+  | 'mistral'
 
 export type RunItemEventKind =
   | 'run/started'

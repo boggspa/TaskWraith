@@ -58,6 +58,12 @@ export function providerLabel(provider: ProviderId | undefined): string {
       return 'Cursor'
     case 'ollama':
       return 'Ollama'
+    case 'antigravity':
+      return 'AntiGravity'
+    case 'pi':
+      return 'Pi'
+    case 'mistral':
+      return 'Mistral'
     default:
       return provider
   }

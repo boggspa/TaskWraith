@@ -58,7 +58,12 @@ const SPEND_PROVIDER_ORDER: ProviderId[] = [
   'kimi',
   'grok',
   'cursor',
-  'antigravity'
+  'antigravity',
+  // The Mistral Vibe seat runs on a plan subscription, so its rows are
+  // projected API-equivalent like claude/codex/grok/cursor rather than a real
+  // billing basis. Omitting it dropped Mistral spend from the iOS/remote view
+  // while the desktop card showed it.
+  'mistral'
 ]
 
 const SPEND_WINDOWS: ReadonlyArray<{ id: SpendWindowId; label: string; durationMs: number }> = [

@@ -40,7 +40,10 @@ const ALL_PROVIDERS: Array<ProviderId | 'all'> = [
   'kimi',
   'grok',
   'cursor',
-  'ollama'
+  'ollama',
+  'pi',
+  'antigravity',
+  'mistral'
 ]
 const ALL_STATUSES: ApprovalLedgerStatus[] = [
   'pending',
@@ -67,6 +70,7 @@ const PROVIDER_LABELS: Record<ProviderId, string> = {
   cursor: 'Cursor',
   ollama: 'Ollama',
   antigravity: 'Antigravity',
+  mistral: 'Mistral',
   pi: 'Pi'
 }
 

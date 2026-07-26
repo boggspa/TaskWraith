@@ -14,6 +14,11 @@ import {
   isCursorGrok45ModelId
 } from '../../shared/grok45Models'
 import { activeCodexModelRows, isCodexModelRetired } from '../../shared/codexModelLifecycle'
+import {
+  MISTRAL_DEFAULT_MODEL,
+  MISTRAL_MODEL_MEDIUM,
+  normalizeMistralModel
+} from '../mistral/MistralCliArgs'
 import { PI_DEFAULT_MODEL_WIRE_ID, PI_STATIC_MODELS } from '../pi/PiModels'
 import { PI_UPSTREAM_LABELS } from '../pi/PiModelPolicy'
 
@@ -679,6 +684,32 @@ const GROK_STATIC_MODELS = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
+// Mistral Vibe seat rows. Sourced from the CLI's own bundled catalogue
+// (vibe/core/config/vibe_schema.py DEFAULT_MODELS, v2.22.0), which exposes each
+// model under an ALIAS over ACP while storing a canonical name internally — the
+// aliases are what `session/set_config_option` accepts, so aliases are the ids.
+//
+// devstral-small leads and is the default rather than the flagship: graded
+// head-to-head on an identical task with a known-correct answer, it was ~26x
+// cheaper, used fewer turns, AND was the one that got the answer right.
+//
+// Vibe's third catalogue entry, `local`, is a llamacpp backend on
+// 127.0.0.1:8080. It is deliberately absent: local inference is Ollama's lane
+// here, and listing it would put a permanently-dead row in the picker for every
+// user without their own llama-server running.
+const MISTRAL_STATIC_MODELS = [
+  {
+    id: MISTRAL_DEFAULT_MODEL,
+    label: 'Devstral Small',
+    description: '256K context - coding-tuned, $0.10/$0.30 per Mtok',
+    isDefault: true
+  },
+  {
+    id: MISTRAL_MODEL_MEDIUM,
+    label: 'Mistral Medium 3.5',
+    description: '256K context - flagship, $1.50/$7.50 per Mtok'
+  }
+]
 const CURSOR_STATIC_MODELS = [
   { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
@@ -795,7 +826,9 @@ export function getStaticProviderModels(
                 ? GROK_STATIC_MODELS
                 : provider === 'cursor'
                   ? CURSOR_STATIC_MODELS
-                  : provider === 'pi'
+                  : provider === 'mistral'
+                    ? MISTRAL_STATIC_MODELS
+                    : provider === 'pi'
                     ? PI_STATIC_MODEL_ROWS
                     : provider === 'antigravity'
                     // Official agy-CLI rows stay discovery-owned (S4), but the
@@ -851,6 +884,19 @@ export function normalizeCliProviderModel(provider: ProviderId, model?: string |
   if (provider === 'gemini') {
     if (!trimmed || lowered === 'cli-default' || lowered === 'default') return GEMINI_DEFAULT_MODEL
     return trimmed
+  }
+  if (provider === 'mistral') {
+    // Delegated so the seat has exactly ONE model normalizer. It clamps rather
+    // than passing unknown ids through, which is stricter than grok/gemini for
+    // two reasons: an unrecognised id is rejected by
+    // `session/set_config_option` mid-turn (leaving the session silently on
+    // whatever the model default was), and a `mistral/<model>` wire id
+    // belonging to the Pi BYOK upstream — a DIFFERENT provider that merely
+    // shares the string 'mistral' — must never be forwarded here.
+    if (!trimmed || lowered === 'cli-default' || lowered === 'default') {
+      return MISTRAL_DEFAULT_MODEL
+    }
+    return normalizeMistralModel(trimmed)
   }
   if (provider === 'pi') {
     // Unknown ids clamp to the curated default: the wall in PiModelPolicy is

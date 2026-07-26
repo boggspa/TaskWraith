@@ -276,6 +276,26 @@ function glyphBody(provider: string): ReactElement {
           <circle className="provider-glyph-dot" cx="17.8" cy="6.2" r=".7" />
         </>
       )
+    // Mistral's mark is a blocky banded square — three stacked bands, the outer
+    // two broken into columns. Rendered with the FILLED `dot` class rather than
+    // the stroked line/accent classes: at the 16px these actually render in
+    // pickers, a 1.75-wide stroke around a 4-unit block closes the gaps and the
+    // whole thing collapses into a smudge. Codex is the precedent for a
+    // fill-only glyph. The hue is shared with Pi's Mistral upstream via
+    // --provider-mistral-color; only the shape distinguishes the seat, which is
+    // the intended split — same brand, different door.
+    case 'mistral':
+      return (
+        <>
+          <path className="provider-glyph-dot" d="M4.6 5.4h4v4h-4Z" />
+          <path className="provider-glyph-dot" d="M10 5.4h4v4h-4Z" />
+          <path className="provider-glyph-dot" d="M15.4 5.4h4v4h-4Z" />
+          <path className="provider-glyph-dot" d="M4.6 10h14.8v4H4.6Z" />
+          <path className="provider-glyph-dot" d="M4.6 14.6h4v4h-4Z" />
+          <path className="provider-glyph-dot" d="M10 14.6h4v4h-4Z" />
+          <path className="provider-glyph-dot" d="M15.4 14.6h4v4h-4Z" />
+        </>
+      )
     default:
       return (
         <>
