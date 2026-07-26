@@ -68,7 +68,14 @@ describe('buildCodexStatusSnapshot', () => {
       authState: 'missing',
       requiresOpenaiAuth: true
     })
-    expect(snapshot.error).toMatch(/private TaskWraith Codex home/i)
+    // Pin the SUBSTANCE, not one phrase. A user signed in to the codex CLI,
+    // the web, and seeing their plan will read "sign-in required" as a
+    // TaskWraith bug unless the message says why their CLI login does not
+    // carry: the private home, the ~/.codex one it is NOT, and the in-app
+    // route that targets the right one.
+    expect(snapshot.error).toMatch(/private Codex home/i)
+    expect(snapshot.error).toMatch(/~\/\.codex/)
+    expect(snapshot.error).toMatch(/Settings → Providers → Codex/)
   })
 
   it('keeps a private-home account runnable', () => {

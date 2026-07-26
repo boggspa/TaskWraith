@@ -53,8 +53,16 @@ export function buildCodexStatusSnapshot(input: CodexStatusSnapshotInput): any {
     ...(requiresOpenaiAuth
       ? {
           setupRequired: true,
+          // Says WHY a CLI login does not count. TaskWraith runs Codex against
+          // its own CODEX_HOME under userData, so `codex login` in a terminal
+          // authenticates ~/.codex and leaves this home untouched — and nothing
+          // migrates auth between them (only session rollouts move). Users who
+          // are signed in to the CLI, the web, and see their plan read the old
+          // wording as a bug in TaskWraith, because it names the remedy without
+          // naming the cause. The in-app button is not merely a convenience: it
+          // is the only flow that sets CODEX_HOME before running the sign-in.
           error:
-            'TaskWraith Codex sign-in is required. Open Settings → Providers → Codex to sign in to the private TaskWraith Codex home.'
+            'TaskWraith Codex sign-in is required. TaskWraith keeps its own private Codex home, separate from the ~/.codex one the codex CLI signs into — so signing in from a terminal does not sign in here. Use Settings → Providers → Codex → Sign in, which runs the sign-in against TaskWraith’s home.'
         }
       : {}),
     version: input.version,
