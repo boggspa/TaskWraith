@@ -717,8 +717,16 @@ describe('CursorWorkspaceConfigLeaseCoordinator', () => {
 
   it('makes recursive same-lease release fail fast without splitting receipts', async () => {
     const coordinator = new CursorWorkspaceConfigLeaseCoordinator()
-    let lease!: Awaited<ReturnType<typeof coordinator.acquire>>
-    lease = await coordinator.acquire({
+    // Annotated rather than inferred: `onLastRelease` closes over `lease`, so
+    // an un-annotated initializer would be circular ("referenced directly or
+    // indirectly in its own initializer"). The annotation breaks that cycle,
+    // which is what the old `let lease!` was really for — not reassignment.
+    // `const` is safe because the closure is only INVOKED by `release()`, long
+    // after this declaration completes, so the TDZ has closed by then. If that
+    // ever stopped being true the test would fail rather than pass hollowly:
+    // a TDZ ReferenceError surfaces as a cleanup message that does not contain
+    // 'cannot acquire another lease', which the assertion below requires.
+    const lease: Awaited<ReturnType<typeof coordinator.acquire>> = await coordinator.acquire({
       resourceKey: '/workspace',
       configurationKey: cursorWorkspaceConfigurationKey('write'),
       install: async () => ({
