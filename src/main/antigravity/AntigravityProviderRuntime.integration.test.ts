@@ -1,56 +1,90 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { MainSourceProbe } from '../mainSourceProbe.testutil'
 
 const indexSource = readFileSync(new URL('../index.ts', import.meta.url), 'utf8')
 const constantsSource = readFileSync(new URL('../index.constants.ts', import.meta.url), 'utf8')
-
-function between(startMarker: string, endMarker: string): string {
-  const start = indexSource.indexOf(startMarker)
-  const end = indexSource.indexOf(endMarker, start + startMarker.length)
-  expect(start).toBeGreaterThanOrEqual(0)
-  expect(end).toBeGreaterThan(start)
-  return indexSource.slice(start, end)
-}
+const probe = new MainSourceProbe('src/main/index.ts', new URL('../index.ts', import.meta.url))
 
 describe('AntiGravity S3 runtime integration', () => {
-  it('delegates combined-mode dispatch then keeps official agy launch on the shared stream lifecycle', () => {
-    const dispatch = between(
-      'async function runAntigravityProvider(',
-      'async function runAntigravityAgyProvider('
-    )
-    expect(dispatch).toContain('dispatchAntigravityCombinedMode(event, payload, {')
+  it('delegates combined-mode dispatch to the shared gemini-api runtime', () => {
+    const dispatch = probe.fn('runAntigravityProvider')
+
+    expect(probe.callsTo(dispatch, 'dispatchAntigravityCombinedMode')).toHaveLength(1)
     // The gemini-api lane registers its own RunManager session (no child
     // process registers one for it) and delegates the run to the agentic
     // Gemini API runtime under provider 'antigravity'.
-    expect(dispatch).toContain("registerRunSession(\n        'antigravity',")
-    expect(dispatch).toContain('runGeminiApiAgentTurn:')
-    expect(dispatch).toContain('tryRunGeminiApi(')
-    expect(dispatch).toContain('antigravityGeminiApiAgentDeps(wireModel)')
-    expect(dispatch).toContain('runAgyProvider: runAntigravityAgyProvider')
-    expect(dispatch).not.toContain('prepareAntigravityProviderLaunch')
+    const register = probe.callsTo(dispatch, 'registerRunSession')
+    expect(register).toHaveLength(1)
+    expect(probe.argText(register[0], 0)).toBe("'antigravity'")
 
-    const agy = between(
-      'async function runAntigravityAgyProvider(',
-      '// Grok is a first-class provider'
-    )
-    expect(agy).toContain('prepareAntigravityProviderLaunch({')
-    expect(agy).toContain('settings: AppStore.getSettings()')
+    const combined = probe.callsTo(dispatch, 'dispatchAntigravityCombinedMode')[0]
+    expect(probe.propText(combined, 2, 'runGeminiApiAgentTurn')).not.toBeNull()
+    expect(probe.propText(combined, 2, 'runAgyProvider')).toBe('runAntigravityAgyProvider')
+    expect(probe.callsTo(dispatch, 'tryRunGeminiApi')).toHaveLength(1)
+    expect(probe.callsTo(dispatch, 'antigravityGeminiApiAgentDeps')).toHaveLength(1)
+    // Launch preparation belongs to the agy lane alone.
+    expect(probe.callsTo(dispatch, 'prepareAntigravityProviderLaunch')).toHaveLength(0)
+  })
+
+  it('launches official agy with a resumable conversation and no permission bypass', () => {
+    const agy = probe.fn('runAntigravityAgyProvider')
+
+    const prepare = probe.callsTo(agy, 'prepareAntigravityProviderLaunch')
+    expect(prepare).toHaveLength(1)
+    expect(probe.propText(prepare[0], 0, 'settings')).toBe('AppStore.getSettings()')
     // Resumption: the prior conversation goes in, and the id agy actually used
     // is re-learned from its own receipt after the turn. Both halves are
     // required — passing an id agy does not recognise silently starts a fresh
     // conversation, so without the re-read a stale id would strand the chat.
-    expect(agy).toContain('conversationId: payload.providerSessionId')
-    expect(agy).toContain('payload.providerSessionId = launch.resumedConversationId')
-    expect(agy).toContain('resolveExitSessionId: () => readAgyConversationReceipt(payload.workspace)')
-    expect(agy).not.toContain('payload.providerSessionId = null')
-    expect(agy).toContain("runCliProviderProcess(event, 'antigravity'")
-    expect(agy).toContain('resolvedEnv: launch.env')
-    expect(agy).toContain("runManager.finish(route.appRunId, 'failed')")
-    expect(agy).toContain("sendAgentCompatError(event.sender, 'antigravity'")
-    expect(agy).toContain("sendAgentCompatExit(event.sender, 'antigravity', 1, route)")
-    expect(agy).not.toContain('resolveCliProviderBinary')
-    expect(agy).not.toContain('--dangerously-skip-permissions')
-    expect(agy).not.toContain('--new-project')
+    expect(probe.propText(prepare[0], 0, 'conversationId')).toBe('payload.providerSessionId')
+    expect(probe.assignmentsTo(agy, 'payload.providerSessionId')).toEqual([
+      'launch.resumedConversationId'
+    ])
+
+    const run = probe.callsTo(agy, 'runCliProviderProcess')
+    expect(run).toHaveLength(1)
+    expect(probe.argText(run[0], 1)).toBe("'antigravity'")
+    expect(probe.propText(run[0], 5, 'resolvedEnv')).toBe('launch.env')
+    expect(probe.propText(run[0], 5, 'resolveExitSessionId')).toBe(
+      '() => readAgyConversationReceipt(payload.workspace)'
+    )
+
+    // The binary comes from the prepared launch, never re-resolved here.
+    expect(probe.callsTo(agy, 'resolveCliProviderBinary')).toHaveLength(0)
+    // Literal argv content — a string check is the right tool for these.
+    expect(probe.text(agy)).not.toContain('--dangerously-skip-permissions')
+    expect(probe.text(agy)).not.toContain('--new-project')
+  })
+
+  it('settles a setup failure rather than leaving the run unfinished', () => {
+    // Previously asserted as a literal `runManager.finish(route.appRunId,
+    // 'failed')` inside this function. That call moved into the shared
+    // settlement helper without any change to what a failed setup does, so the
+    // old assertion failed while the guarantee held. Follow the delegation
+    // instead of pinning the mechanism.
+    const agy = probe.fn('runAntigravityAgyProvider')
+    const settle = probe.callsTo(agy, 'settleVisibleProviderSetupFailure')
+    expect(settle).toHaveLength(1)
+    expect(probe.propText(settle[0], 0, 'provider')).toBe("'antigravity'")
+    expect(probe.propText(settle[0], 0, 'setupRequired')).toBe('true')
+    expect(probe.propText(settle[0], 0, 'fallback')).toBe('false')
+
+    // And the helper it delegates to still does both halves: project the
+    // failure to the renderer, and finish the run as failed. Without the
+    // second, a setup failure leaves a run that Stop can never settle.
+    const helper = probe.fn('settleVisibleProviderSetupFailure')
+    expect(probe.callsTo(helper, 'projectVisibleProviderSetupFailure')).toHaveLength(1)
+    const finish = probe.callsTo(helper, 'settleProviderRunWithoutTransport')
+    expect(finish).toHaveLength(1)
+    expect(probe.argText(finish[0], 2)).toBe("'failed'")
+
+    // The renderer-visible half: an error line and a non-zero exit.
+    const project = probe.fn('projectVisibleProviderSetupFailure')
+    expect(probe.callsTo(project, 'sendAgentCompatError')).toHaveLength(1)
+    const exit = probe.callsTo(project, 'sendAgentCompatExit')
+    expect(exit).toHaveLength(1)
+    expect(probe.argText(exit[0], 2)).toBe('input.exitCode ?? 1')
   })
 
   it('binds the dedicated Gemini API secret store only after app ready', () => {
