@@ -236,6 +236,24 @@ interface CombinedModelPickerProps {
   /** Accessible name override for caller-specific picker compositions. */
   dialogAriaLabel?: string
   onOpenChange?: (open: boolean) => void
+  /**
+   * Fires as the popover closes, carrying the row the user last
+   * highlighted — by hover or by keyboard, the two share `modelHighlight`.
+   *
+   * Deliberately reports the highlight unconditionally rather than
+   * trying to detect "closed without selecting" in here. Both a click
+   * and a keyboard Enter land on the highlighted row, so a selection
+   * and a dismissal look identical at this layer; the caller can tell
+   * them apart for free by comparing the reported row against whatever
+   * model is actually selected once the close has settled. Comparing
+   * outcomes beats tracking intent, and it can't race the parent's
+   * selection state the way an internal flag would.
+   *
+   * Note the picker re-homes `modelHighlight` onto the selected model
+   * every time it opens, so opening and immediately closing reports the
+   * already-selected row — which the caller reads as "no signal".
+   */
+  onCloseWithHighlight?: (highlighted: UnifiedModelEntry | null) => void
 }
 
 type CombinedModelPickerColumn = 'provider' | 'model' | 'reasoning'
@@ -958,7 +976,8 @@ export function CombinedModelPicker({
   topContent,
   popoverClassName,
   dialogAriaLabel,
-  onOpenChange
+  onOpenChange,
+  onCloseWithHighlight
 }: CombinedModelPickerProps): React.JSX.Element {
   const unifiedProviderGroups = providerGroups || []
   const isUnifiedProviderPicker = unifiedProviderGroups.length > 0
@@ -986,6 +1005,7 @@ export function CombinedModelPicker({
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const popoverRef = useRef<HTMLDivElement | null>(null)
   const onOpenChangeRef = useRef(onOpenChange)
+  const onCloseWithHighlightRef = useRef(onCloseWithHighlight)
   const unifiedModelRowRefs = useRef<Map<number, HTMLButtonElement>>(new Map())
   const [open, setOpen] = useState(false)
   const [position, setPosition] = useState<{ left: number; top: number } | null>(null)
@@ -1009,7 +1029,35 @@ export function CombinedModelPicker({
   }, [onOpenChange])
 
   useEffect(() => {
+    onCloseWithHighlightRef.current = onCloseWithHighlight
+  }, [onCloseWithHighlight])
+
+  /**
+   * Snapshot of the highlighted row. Kept in a ref so the close effect
+   * below doesn't need `modelHighlight` as a dep — listing it there
+   * would re-run the close check on every arrow-key press.
+   *
+   * This effect is declared BEFORE the open/close effect on purpose:
+   * effects fire in declaration order within a commit, so when a
+   * highlight move and a close land together the snapshot is already
+   * current by the time the close reads it.
+   */
+  const highlightSnapshotRef = useRef<UnifiedModelEntry | null>(null)
+  useEffect(() => {
+    highlightSnapshotRef.current = isUnifiedProviderPicker
+      ? (unifiedModelEntries[modelHighlight] ?? null)
+      : null
+  }, [isUnifiedProviderPicker, unifiedModelEntries, modelHighlight])
+
+  const wasOpenRef = useRef(false)
+  useEffect(() => {
     onOpenChangeRef.current?.(open)
+    // The highlight-reset effect only runs while open, so `modelHighlight`
+    // still holds the last row the user was on by the time we get here.
+    if (wasOpenRef.current && !open) {
+      onCloseWithHighlightRef.current?.(highlightSnapshotRef.current)
+    }
+    wasOpenRef.current = open
   }, [open])
 
   useEffect(() => {

@@ -4249,6 +4249,25 @@
   will-change: transform;
 }
 
+/*
+ * Greyed-out prefill suggestion. Dimmed via `color` alone — NOT via
+ * `font-weight` or `font-style`, for the advance-width reason spelled
+ * out on `.composer-mention-token` below. The ghost is currently only
+ * painted into an EMPTY composer, so nothing of the user's sits after
+ * it to be pushed out of alignment; the moment that gate is relaxed to
+ * allow a ghost after typed text, a weight or slant here would drift
+ * the two layers apart character by character. Keep it upright and
+ * regular-weight.
+ *
+ * `--text-tertiary` sits far enough back that the suggestion never
+ * competes with real draft text, while staying legible on both
+ * appearances.
+ */
+.composer-textarea-highlight .composer-ghost-suggestion {
+  color: var(--text-tertiary, var(--text-secondary));
+  opacity: 0.72;
+}
+
 .composer-textarea-highlight .composer-mention-token {
   /*
    * 1.0.4 — NO `font-weight: 700` here. Bold glyphs have wider

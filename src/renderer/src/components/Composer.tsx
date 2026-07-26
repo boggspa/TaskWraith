@@ -1,4 +1,4 @@
-import React, { memo, useEffect, useLayoutEffect, useRef, useState } from 'react'
+import React, { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import {
   MAX_ACTIVE_GOAL_OBJECTIVE_CHARS,
   computeGoalRuntimeTiming
@@ -32,6 +32,9 @@ import type {
 import { CombinedPermissionsPicker } from '../components/CombinedPermissionsPicker'
 import type { PermissionOption } from '../components/CombinedPermissionsPicker'
 import { ComposerHighlightOverlay } from '../components/ComposerHighlightOverlay'
+import { useComposerSuggestion } from '../hooks/useComposerSuggestion'
+import type { ComposerSuggestionModel } from '../lib/composerSuggestion'
+import { failedLanesFromChat } from '../lib/composerSuggestionInputs'
 import { ComposerLinkPreviewStrip } from '../components/ComposerLinkPreviewStrip'
 import { ComposerPlusPicker } from '../components/ComposerPlusPicker'
 import type { ComposerPlusPickerSection } from '../components/ComposerPlusPicker'
@@ -839,6 +842,44 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
   const hasSendablePromptContent =
     hasAttachmentPromptContent(prompt, imageAttachments) || hasProjectReferenceContext
   const [scheduledNowMs, setScheduledNowMs] = useState(() => Date.now())
+
+  /**
+   * Model the user highlighted in the picker and then closed out of
+   * without committing to. Set by the picker's `onCloseWithHighlight`
+   * (which compares against the model actually selected once the close
+   * settles, so a real selection never lands here), and cleared on
+   * send.
+   */
+  const [consideredModel, setConsideredModel] = useState<ComposerSuggestionModel | null>(null)
+
+  /**
+   * Failed seats in the last settled round. Derived from `currentChat`
+   * rather than a new prop: the round state already rides along on the
+   * chat record, so no App.tsx composer mount needs re-threading.
+   * Memoised because the extraction walks the lane map and the seat
+   * list, and this component re-renders on every keystroke.
+   */
+  const composerFailedLanes = useMemo(
+    () => failedLanesFromChat(currentChat),
+    [currentChat]
+  )
+
+  /** v1 prefill: template-driven ghost text into an EMPTY composer only. */
+  const composerSuggestion = useComposerSuggestion({
+    chatId: currentComposerChatId,
+    draft: prompt,
+    busy: Boolean(isCurrentChatRunning),
+    hasPriorTurn: Boolean(
+      currentChat?.messages?.some((message) => message.role === 'assistant')
+    ),
+    consideredModel,
+    selectedModelKey: contextModelId ? `${currentProvider}:${contextModelId}` : null,
+    failedLanes: composerFailedLanes,
+    uncommittedFileCount: primaryGitSnapshot?.counts?.changed ?? 0,
+    branch: primaryGitSnapshot?.detached ? null : (primaryGitSnapshot?.branch ?? null)
+  })
+  const composerGhostText = composerSuggestion.ghostText
+
   const [seatChangeNoticeRoundKey, setSeatChangeNoticeRoundKey] = useState<string | null>(null)
   const [dismissedSeatChangeNoticeRoundKey, setDismissedSeatChangeNoticeRoundKey] = useState<
     string | null
@@ -2650,12 +2691,18 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                     <div
                       className={`composer-textarea-wrap${voiceCaptureState.isRecording ? ' is-voice-recording' : ''}`}
                     >
-                      {composerHasMention && (
+                      {/* A ghost suggestion needs the overlay even with no
+                          mention to highlight. Safe to mount without the
+                          `has-mention-overlay` class in that case: a ghost is
+                          only offered into an empty composer, so there is no
+                          textarea text for the overlay to double-paint. */}
+                      {(composerHasMention || Boolean(composerGhostText)) && (
                         <ComposerHighlightOverlay
                           value={prompt}
                           participants={currentComposerMentionParticipants}
                           textareaRef={composerTextareaRef}
                           syncEpoch={composerOverlaySyncEpoch}
+                          ghostText={composerGhostText}
                         />
                       )}
                       <textarea
@@ -2729,11 +2776,45 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             }
                           }
                         }}
-                        placeholder={composerPlaceholder}
+                        // The ghost occupies the same empty-composer space the
+                        // placeholder does; showing both stacks two greyed
+                        // strings on top of each other.
+                        placeholder={composerGhostText ? '' : composerPlaceholder}
                         aria-label={composerAriaLabel}
                         rows={1}
                         disabled={!currentChat || (!isCurrentGlobalChat && !currentWorkspace)}
                         onKeyDown={(e) => {
+                          // Prefill keys, bound ONLY while a ghost is live so
+                          // Tab keeps its normal focus-advance behaviour and
+                          // Escape keeps reaching whatever else wants it the
+                          // rest of the time. A ghost is only ever offered
+                          // into an empty, idle composer, so neither key can
+                          // be stolen from a popover or a running turn here.
+                          if (composerGhostText && !e.nativeEvent.isComposing) {
+                            if (
+                              e.key === 'Tab' &&
+                              !e.shiftKey &&
+                              !e.metaKey &&
+                              !e.ctrlKey &&
+                              !e.altKey
+                            ) {
+                              const accepted = composerSuggestion.accept()
+                              if (accepted) {
+                                e.preventDefault()
+                                // The ONLY point an unaccepted suggestion
+                                // becomes real text. Everything upstream of
+                                // this line keeps it in the overlay, out of
+                                // the draft store.
+                                setChatPromptDraft(currentComposerChatId, accepted)
+                                return
+                              }
+                            }
+                            if (e.key === 'Escape') {
+                              e.preventDefault()
+                              composerSuggestion.dismiss()
+                              return
+                            }
+                          }
                           if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                             e.preventDefault()
                             if (currentProviderRunUnavailableReason) return
@@ -2784,6 +2865,11 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                             pickerParticipantMentionsByChatIdRef.current.delete(
                               currentComposerChatId
                             )
+                            // A picker glance is only about the turn it
+                            // followed. Once a new message is away it's stale,
+                            // so it must not resurface as a suggestion against
+                            // whatever comes back next.
+                            setConsideredModel(null)
                           }
                         }}
                       />
@@ -3818,6 +3904,30 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                                 fastModeEnabled={fastModeEnabledForProvider}
                                 onToggleFastMode={handleToggleFastMode}
                                 disabled={false}
+                                onCloseWithHighlight={(highlighted) => {
+                                  // The picker reports the highlighted row on
+                                  // every close. A committed selection lands
+                                  // on that same row, so the two are told
+                                  // apart here by outcome: if the row the user
+                                  // was on IS now the active model, they chose
+                                  // it and there's nothing to suggest.
+                                  if (!highlighted) {
+                                    setConsideredModel(null)
+                                    return
+                                  }
+                                  const key = `${highlighted.provider}:${highlighted.option.id}`
+                                  if (
+                                    key === `${effectiveProvider}:${effectiveSelectedModel}` ||
+                                    highlighted.option.disabled
+                                  ) {
+                                    setConsideredModel(null)
+                                    return
+                                  }
+                                  setConsideredModel({
+                                    label: highlighted.option.label,
+                                    key
+                                  })
+                                }}
                               />
                               {!ensembleBinding &&
                                 effectiveSelectedModel === 'custom' &&

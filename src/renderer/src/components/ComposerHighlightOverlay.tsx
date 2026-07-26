@@ -32,6 +32,18 @@ interface ComposerHighlightOverlayProps {
    * like `"codex|dark|welcome"` instead of hashing into an int.
    */
   syncEpoch: string | number
+  /**
+   * Greyed-out prefill suggestion painted after `value`, in the same
+   * glyph metrics as the textarea, so it reads as unwritten
+   * continuation of the user's own text rather than a separate chip.
+   * `Tab` in the composer commits it to the draft.
+   *
+   * This layer is the ONLY place an unaccepted suggestion exists.
+   * It is never written back through `onChange`, so it cannot reach
+   * the draft store and cannot be mistaken for typed text on the next
+   * chat open — see `useComposerSuggestion`.
+   */
+  ghostText?: string | null
 }
 
 /**
@@ -68,7 +80,8 @@ export function ComposerHighlightOverlay({
   value,
   participants,
   textareaRef,
-  syncEpoch
+  syncEpoch,
+  ghostText
 }: ComposerHighlightOverlayProps): React.JSX.Element {
   const segments = tokeniseMentions(value, participants || [])
   const overlayRef = useRef<HTMLDivElement>(null)
@@ -231,7 +244,11 @@ export function ComposerHighlightOverlay({
       observer?.disconnect()
       if (rafId !== null) cancelAnimationFrame(rafId)
     }
-  }, [textareaRef, syncEpoch, value])
+    // `ghostText` joins the deps because it adds painted lines the
+    // textarea itself doesn't have, so it can change the content
+    // layer's height without any corresponding textarea resize for
+    // the ResizeObserver to catch.
+  }, [textareaRef, syncEpoch, value, ghostText])
 
   return (
     <div ref={overlayRef} className="composer-textarea-highlight" aria-hidden="true">
@@ -265,6 +282,11 @@ export function ComposerHighlightOverlay({
             </span>
           )
         })}
+        {ghostText ? (
+          <span className="composer-ghost-suggestion" data-testid="composer-ghost-suggestion">
+            {ghostText}
+          </span>
+        ) : null}
         {/* Trailing newline so the overlay's last line gets line-height
             treatment even when `value` ends with `\n`. textareas treat
             a trailing newline as a real line; pre-wrap divs would
