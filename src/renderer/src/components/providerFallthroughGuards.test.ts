@@ -67,9 +67,23 @@ describe('main/renderer model-catalogue agreement', () => {
 
   it('marks exactly one default, and the same one, on both sides', () => {
     // A catalogue that agrees on membership but disagrees on `isDefault` seeds
-    // a different model depending on which side answered.
-    const mainDefault = getStaticProviderModels('mistral').find((model) => model.isDefault)?.id
-    const rendererDefault = MISTRAL_DEFAULT_MODELS.find((model) => model.isDefault)?.id
+    // a different model depending on which side answered — so this assertion is
+    // the more valuable half and must not be weakened to compile.
+    //
+    // `getStaticProviderModels` returns a UNION across provider row shapes and
+    // not every member declares `isDefault`, so a bare `model.isDefault` does
+    // not typecheck. Narrowed with an `in` check rather than cast through
+    // `any`: a cast would keep the test green while quietly removing the thing
+    // that makes it meaningful.
+    const defaultIdOf = (models: readonly { id: string }[]): string | undefined => {
+      for (const model of models) {
+        if ('isDefault' in model && model.isDefault === true) return model.id
+      }
+      return undefined
+    }
+
+    const mainDefault = defaultIdOf(getStaticProviderModels('mistral'))
+    const rendererDefault = defaultIdOf(MISTRAL_DEFAULT_MODELS)
     expect(mainDefault).toBeTruthy()
     expect(rendererDefault).toBe(mainDefault)
   })
