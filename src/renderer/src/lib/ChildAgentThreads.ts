@@ -68,11 +68,11 @@ function inferInteractivity(kind: ChildAgentKind): ChildAgentInteractivity {
       return 'interactive'
     case 'kimi-swarm':
       return 'observe-only'
+    // `mistral-agent` belongs in this group because the Vibe lane opens a fresh
+    // session per turn and holds no persistent seat — one-shot like Grok's, not
+    // observed across turns like Kimi's swarm.
     case 'grok-agent':
     case 'claude-task':
-    // The Vibe lane opens a fresh session per turn and holds no persistent
-    // seat, so a Mistral child thread is one-shot like Grok's, not observed
-    // across turns like Kimi's swarm.
     case 'mistral-agent':
     case 'gemini-subagent':
     case 'manual':
