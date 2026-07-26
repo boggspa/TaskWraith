@@ -62,9 +62,8 @@ export function ActivityReportingSettings(): React.JSX.Element {
           Product observation
         </h4>
         <p className="settings-hint">
-          Optional, privacy-minimised activity reporting helps measure release adoption, update
-          health, and an approximate live app count. It is never used for advertising or individual
-          profiling.
+          Privacy-minimised activity reporting helps measure release adoption, update health, and an
+          approximate live app count. It is never used for advertising or individual profiling.
         </p>
       </div>
 
@@ -83,11 +82,16 @@ export function ActivityReportingSettings(): React.JSX.Element {
           onChange={(event) => updateEnabled(event.target.checked)}
         />
       </label>
+      <p className="settings-hint" role="note">
+        TaskWraith enables this minimal reporting by default to help the maintainer understand
+        demand and sustain the free, open-source project. You can switch it off at any time; doing
+        so does not limit any feature.
+      </p>
 
       {!endpointConfigured && (
         <p className="settings-hint" role="status">
-          This build has no TaskWraith activity endpoint configured, so it sends no activity
-          reports. A preference saved by another build can still be turned off here.
+          This build has no TaskWraith activity endpoint configured, so it sends no activity reports
+          even when the preference is on. You can still switch the preference off here.
         </p>
       )}
       {error && (

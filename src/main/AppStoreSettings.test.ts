@@ -42,6 +42,14 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.getSettings().autoUpdateEnabled).toBe(false)
   })
 
+  it('defaults product observation to enabled but preserves an explicit opt-out', () => {
+    expect(AppStore.getSettings().activityReportingEnabled).toBe(true)
+
+    AppStore.updateSettings({ activityReportingEnabled: false })
+
+    expect(AppStore.getSettings().activityReportingEnabled).toBe(false)
+  })
+
   it('writes settings with restrictive owner-only permissions', () => {
     const settingsPath = `${userDataPath}/settings.json`
     fs.writeFileSync(settingsPath, JSON.stringify({ autoUpdateEnabled: true }), { mode: 0o666 })

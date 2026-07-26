@@ -1968,7 +1968,9 @@ const defaultSettings: AppSettings = {
   iosRemoteManualRelayUrl: '',
   codexSandboxFallback: 'ask_rerun',
   autoUpdateEnabled: true,
-  activityReportingEnabled: false,
+  // Product observation defaults on, but an explicit user opt-out is durable.
+  // Endpoint-less builds remain network-silent regardless of this preference.
+  activityReportingEnabled: true,
   updateChannel: 'stable',
   approvalTimeouts: {
     enabled: true,
