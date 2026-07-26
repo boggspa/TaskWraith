@@ -28,7 +28,7 @@ import {
 import type {
   CanvasActionInput,
   CanvasActResult,
-  CanvasActStaleReason,
+  CanvasActRefusalReason,
   CanvasActVerification,
   CanvasConsoleEntry,
   CanvasConsoleLevel,
@@ -82,6 +82,59 @@ const DEFAULT_INSPECT_STYLES = [
   'width',
   'height'
 ]
+
+/**
+ * Fields that hold a secret. Deliberately not just `input[type=password]`:
+ *
+ * A masked password field already renders as dots, so its pixels leak little.
+ * The real exposure is a field whose secret is VISIBLE — a "show password"
+ * toggle flips type to text, autofilled credentials land in plain inputs, and
+ * one-time codes are almost always type=text. Matching on `autocomplete` catches
+ * those regardless of type, and `data-tw-secret` is an escape hatch for app
+ * authors. Masked fields are covered too: harmless, and it also hides the value
+ * LENGTH, which is a real if minor signal.
+ *
+ * This matters because canvas partitions are ephemeral, so the user re-enters
+ * credentials INSIDE the agent-drivable surface, and frames leave the machine
+ * whenever a hosted provider is driving.
+ */
+const SECRET_FIELD_SELECTOR =
+  'input[type=password], input[autocomplete*="password"], input[autocomplete="one-time-code"], [data-tw-secret]'
+
+// Paints an opaque box over every secret field, returning how many it covered.
+// Returns 0 without touching the DOM when there is nothing to hide, so the
+// common screenshot path costs one probe and causes no visible flicker.
+// Exported for CanvasWebDriverActScript.test.ts — see actScript's note.
+export const REDACT_SECRETS_SCRIPT = `(() => {
+  const sel = ${JSON.stringify(SECRET_FIELD_SELECTOR)};
+  let nodes = [];
+  try { nodes = Array.prototype.slice.call(document.querySelectorAll(sel)); } catch (e) { return 0; }
+  const boxes = [];
+  for (const el of nodes) {
+    const r = el.getBoundingClientRect();
+    if (r.width > 0 && r.height > 0) boxes.push(r);
+  }
+  if (boxes.length === 0) return 0;
+  const old = document.getElementById('__twSecretRedaction');
+  if (old) old.remove();
+  const layer = document.createElement('div');
+  layer.id = '__twSecretRedaction';
+  layer.style.cssText = 'position:fixed;top:0;left:0;width:100%;height:100%;z-index:2147483647;pointer-events:none;';
+  for (const r of boxes) {
+    const box = document.createElement('div');
+    box.style.cssText = 'position:fixed;background:#111827;border:1px solid #6b7280;' +
+      'left:' + r.left + 'px;top:' + r.top + 'px;width:' + r.width + 'px;height:' + r.height + 'px;';
+    layer.appendChild(box);
+  }
+  document.documentElement.appendChild(layer);
+  return boxes.length;
+})()`
+
+export const CLEAR_SECRET_REDACTION_SCRIPT = `(() => {
+  const layer = document.getElementById('__twSecretRedaction');
+  if (layer) layer.remove();
+  return true;
+})()`
 
 // Structural + explicit-label identity for one element. Recorded per ref at
 // snapshot time and RECOMPUTED before every actuation, so a ref that now points
@@ -234,7 +287,8 @@ function inspectScript(args: { ref?: string; selector?: string; styles?: string[
 //   1. the element is still attached (`isConnected`),
 //   2. its recomputed identity still matches the snapshot's (ref path only),
 //   3. its centre still hit-tests to itself (i.e. it is not covered).
-// Any failure refuses WITHOUT dispatching and reports `staleReason`.
+// Any failure refuses WITHOUT dispatching and reports `refusalReason`. A
+// credential field is refused outright on the same path.
 //
 // POSTCONDITION: a cheap document+target digest is taken either side of the
 // dispatch so the result can say whether anything actually moved. Synchronous
@@ -256,7 +310,7 @@ export function actScript(action: CanvasActionInput): string {
     ${TARGET_IDENTITY_FN}
     const refuse = (reason, message, found) => ({
       ok: false, found: found === true, action: a.kind, executed: false,
-      verified: 'unknown', staleReason: reason, message: message
+      verified: 'unknown', refusalReason: reason, message: message
     });
     let el = null;
     let byRef = false;
@@ -335,6 +389,16 @@ export function actScript(action: CanvasActionInput): string {
         return refuse('not_fillable', 'Target is not a fillable field.', true);
       }
       const itype = (el.getAttribute('type') || '').toLowerCase();
+      // Never type a credential. The user re-authenticates inside this very
+      // surface (partitions are ephemeral) and the frames go to whichever
+      // provider is driving, so the agent must not be the thing that handles
+      // secrets — refuse rather than redact, and let the human type it.
+      const autofill = (el.getAttribute('autocomplete') || '').toLowerCase();
+      if (itype === 'password' || autofill.indexOf('password') >= 0 ||
+          autofill === 'one-time-code' || el.hasAttribute('data-tw-secret')) {
+        return refuse('secret_field',
+          'Refusing to type into a credential field. Ask the user to enter this value themselves.', true);
+      }
       try { el.focus(); } catch (e) {}
       if (tag === 'INPUT' && (itype === 'checkbox' || itype === 'radio')) {
         const want = a.value === 'true' || a.value === 'checked' || a.value === '1' || a.value === 'on';
@@ -671,17 +735,39 @@ export class CanvasWebDriver implements CanvasDriver {
 
   async screenshot(): Promise<CanvasFrame> {
     const wc = this.requireSurface().webContents
-    const image = await wc.capturePage()
-    const png = image.toPNG()
-    const size = image.getSize()
-    return {
-      mimeType: 'image/png',
-      data: png.toString('base64'),
-      width: size.width,
-      height: size.height,
-      byteLength: png.byteLength,
-      hash: createHash('sha256').update(png).digest('hex'),
-      capturedAt: new Date().toISOString()
+    // Snapshots already redact secret input VALUES, but a screenshot captures the
+    // rendered field, so it needs its own guard. Paint over the secrets first,
+    // and always take the overlay back down — a frame that fails to capture must
+    // not leave the user's page defaced.
+    let secretsRedacted = 0
+    try {
+      secretsRedacted = Number(await wc.executeJavaScript(REDACT_SECRETS_SCRIPT, true)) || 0
+    } catch {
+      // A page that refuses the probe still gets captured; treat as none found.
+      secretsRedacted = 0
+    }
+    try {
+      const image = await wc.capturePage()
+      const png = image.toPNG()
+      const size = image.getSize()
+      return {
+        mimeType: 'image/png',
+        data: png.toString('base64'),
+        width: size.width,
+        height: size.height,
+        byteLength: png.byteLength,
+        hash: createHash('sha256').update(png).digest('hex'),
+        capturedAt: new Date().toISOString(),
+        ...(secretsRedacted > 0 ? { secretsRedacted } : {})
+      }
+    } finally {
+      if (secretsRedacted > 0) {
+        try {
+          await wc.executeJavaScript(CLEAR_SECRET_REDACTION_SCRIPT, true)
+        } catch {
+          // Window may have gone away mid-capture; the overlay dies with it.
+        }
+      }
     }
   }
 
@@ -734,7 +820,7 @@ export class CanvasWebDriver implements CanvasDriver {
       action: 'click' | 'fill'
       executed?: boolean
       verified?: CanvasActVerification
-      staleReason?: CanvasActStaleReason
+      refusalReason?: CanvasActRefusalReason
       message?: string
     }
     return {

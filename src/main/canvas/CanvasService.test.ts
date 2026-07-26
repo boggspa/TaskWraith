@@ -100,7 +100,7 @@ class FakeDriver implements CanvasDriver {
       found,
       executed: found,
       verified: found ? 'changed' : 'unknown',
-      ...(found ? {} : { staleReason: 'not_found' as const }),
+      ...(found ? {} : { refusalReason: 'not_found' as const }),
       ref: action.ref,
       selector: action.selector
     }

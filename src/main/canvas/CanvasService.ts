@@ -832,7 +832,7 @@ export class CanvasService implements CanvasController {
         // precondition.
         executed: result.executed,
         verified: result.verified,
-        ...(result.staleReason ? { staleReason: result.staleReason } : {})
+        ...(result.refusalReason ? { refusalReason: result.refusalReason } : {})
       })
       this.assertLiveAfterAwait(canvasId, session, ctx, kind)
       return result

@@ -112,6 +112,12 @@ export interface CanvasFrame {
   /** sha256 of the raw bytes — what audit records (never the bytes). */
   hash: string
   capturedAt: string
+  /**
+   * Number of credential fields painted over before capture. Frames leave the
+   * machine when a hosted provider is driving, so the caller (and the audit
+   * trail) should be able to see that the redaction ran.
+   */
+  secretsRedacted?: number
 }
 
 export interface CanvasElementDetail {
@@ -137,9 +143,9 @@ export interface CanvasActionInput {
 
 /**
  * Why an actuation refused. Every one of these means NOTHING WAS DISPATCHED —
- * the precondition failed before the element was touched.
+ * the check failed before the element was touched.
  */
-export type CanvasActStaleReason =
+export type CanvasActRefusalReason =
   /** No element resolved from ref/selector/xy. */
   | 'not_found'
   /**
@@ -151,6 +157,11 @@ export type CanvasActStaleReason =
   | 'occluded'
   /** The element cannot accept a fill (not a field, or a file input). */
   | 'not_fillable'
+  /**
+   * The target is a credential field. Never retried, never worked around: the
+   * human types their own secrets. See SECRET_FIELD_SELECTOR in CanvasWebDriver.
+   */
+  | 'secret_field'
 
 /** Did the page move around the dispatch? See `CanvasActResult.verified`. */
 export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
@@ -167,7 +178,7 @@ export interface CanvasActResult {
    * This exists because `ok`/`found` could not express "we touched nothing":
    * `el.click()` on a detached node does not throw, so a re-rendered-away ref
    * used to report `{ ok: true, found: true }` while the screen never changed.
-   * A refused precondition is always `executed: false` with a `staleReason`.
+   * A refused precondition is always `executed: false` with a `refusalReason`.
    */
   executed: boolean
   /**
@@ -181,7 +192,7 @@ export interface CanvasActResult {
    */
   verified: CanvasActVerification
   /** Set only when `executed` is false. */
-  staleReason?: CanvasActStaleReason
+  refusalReason?: CanvasActRefusalReason
   message?: string
   /**
    * URL/title at action completion. NB: a click that triggers a navigation may

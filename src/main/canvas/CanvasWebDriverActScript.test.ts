@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { actScript } from './CanvasWebDriver'
+import { actScript, CLEAR_SECRET_REDACTION_SCRIPT, REDACT_SECRETS_SCRIPT } from './CanvasWebDriver'
 import type { CanvasActionInput } from './canvasTypes'
 
 /**
@@ -33,6 +33,7 @@ interface StubElement {
   rect: { left: number; top: number; width: number; height: number }
   readonly childElementCount: number
   getAttribute(name: string): string | null
+  hasAttribute(name: string): boolean
   contains(other: unknown): boolean
   getBoundingClientRect(): {
     left: number
@@ -77,6 +78,9 @@ function makeElement(
     },
     getAttribute(name) {
       return Object.prototype.hasOwnProperty.call(el.attrs, name) ? el.attrs[name] : null
+    },
+    hasAttribute(name) {
+      return Object.prototype.hasOwnProperty.call(el.attrs, name)
     },
     contains(other) {
       if (other === el) return true
@@ -123,7 +127,7 @@ interface ActOutcome {
   action: string
   executed: boolean
   verified: 'changed' | 'unchanged' | 'unknown'
-  staleReason?: string
+  refusalReason?: string
   message?: string
 }
 
@@ -227,7 +231,7 @@ describe('canvas actuation preconditions', () => {
 
     expect(result.ok).toBe(false)
     expect(result.executed).toBe(false)
-    expect(result.staleReason).toBe('stale_target')
+    expect(result.refusalReason).toBe('stale_target')
     expect(button.clicks).toBe(0)
     expect(button.dispatched).toEqual([])
   })
@@ -243,7 +247,7 @@ describe('canvas actuation preconditions', () => {
     )
 
     expect(result.executed).toBe(false)
-    expect(result.staleReason).toBe('stale_target')
+    expect(result.refusalReason).toBe('stale_target')
     expect(button.clicks).toBe(0)
   })
 
@@ -257,7 +261,7 @@ describe('canvas actuation preconditions', () => {
     )
 
     expect(result.executed).toBe(true)
-    expect(result.staleReason).toBeUndefined()
+    expect(result.refusalReason).toBeUndefined()
     expect(button.clicks).toBe(1)
   })
 
@@ -269,7 +273,7 @@ describe('canvas actuation preconditions', () => {
 
     expect(result.executed).toBe(false)
     expect(result.found).toBe(true)
-    expect(result.staleReason).toBe('occluded')
+    expect(result.refusalReason).toBe('occluded')
     expect(button.clicks).toBe(0)
   })
 
@@ -289,7 +293,7 @@ describe('canvas actuation preconditions', () => {
     expect(result.ok).toBe(false)
     expect(result.found).toBe(false)
     expect(result.executed).toBe(false)
-    expect(result.staleReason).toBe('not_found')
+    expect(result.refusalReason).toBe('not_found')
   })
 
   it('reports verified:changed when the page reacts synchronously', () => {
@@ -316,6 +320,52 @@ describe('canvas actuation preconditions', () => {
     expect(result.verified).toBe('unchanged')
   })
 
+  describe('credential fields', () => {
+    // Canvas partitions are ephemeral, so the user re-authenticates INSIDE the
+    // agent-drivable surface, and frames leave the machine when a hosted provider
+    // is driving. The agent must not be the thing that handles secrets.
+    const cases: Array<[string, Record<string, string>]> = [
+      ['type=password', { type: 'password' }],
+      ['revealed password (autocomplete)', { type: 'text', autocomplete: 'current-password' }],
+      ['new-password', { type: 'text', autocomplete: 'new-password' }],
+      ['one-time-code', { type: 'text', autocomplete: 'one-time-code' }],
+      ['author opt-out marker', { type: 'text', 'data-tw-secret': '' }]
+    ]
+
+    for (const [label, attrs] of cases) {
+      it(`refuses to fill ${label}`, () => {
+        const input = makeElement('input', { attrs, value: '' })
+        const result = runAct({ kind: 'fill', ref: 'e1', value: 'hunter2' }, { refElement: input })
+
+        expect(result.ok).toBe(false)
+        expect(result.executed).toBe(false)
+        expect(result.refusalReason).toBe('secret_field')
+        // Neither written nor focused — no keystroke path at all.
+        expect(input.value).toBe('')
+        expect(input.focuses).toBe(0)
+      })
+    }
+
+    it('still fills an ordinary text field', () => {
+      const input = makeElement('input', { attrs: { type: 'text' }, value: '' })
+      const result = runAct({ kind: 'fill', ref: 'e1', value: 'hello' }, { refElement: input })
+
+      expect(result.executed).toBe(true)
+      expect(input.value).toBe('hello')
+    })
+
+    it('does not refuse a username field just because it sits next to a password', () => {
+      const input = makeElement('input', {
+        attrs: { type: 'text', autocomplete: 'username' },
+        value: ''
+      })
+      const result = runAct({ kind: 'fill', ref: 'e1', value: 'ada' }, { refElement: input })
+
+      expect(result.executed).toBe(true)
+      expect(input.value).toBe('ada')
+    })
+  })
+
   it('detects a change when the interaction mutates the target', () => {
     const input = makeElement('input', { attrs: { type: 'text' }, value: '' })
     const result = runAct({ kind: 'fill', ref: 'e2', value: 'hello' }, { refElement: input })
@@ -330,7 +380,7 @@ describe('canvas actuation preconditions', () => {
     const result = runAct({ kind: 'fill', ref: 'e3', value: 'x' }, { refElement: div })
 
     expect(result.executed).toBe(false)
-    expect(result.staleReason).toBe('not_fillable')
+    expect(result.refusalReason).toBe('not_fillable')
   })
 
   it('does not scroll a target that is already in view', () => {
@@ -345,5 +395,115 @@ describe('canvas actuation preconditions', () => {
     runAct({ kind: 'click', ref: 'e1' }, { refElement: button })
 
     expect(button.scrolls).toBe(1)
+  })
+})
+
+/**
+ * Screenshot-side credential protection. Snapshots already redact secret input
+ * VALUES, but a screenshot captures the rendered field, so it needs its own
+ * guard — and frames leave the machine whenever a hosted provider is driving.
+ */
+describe('screenshot secret redaction', () => {
+  interface FakeNode {
+    tagName: string
+    style: { cssText: string }
+    id: string
+    children: FakeNode[]
+    removed?: boolean
+    appendChild(child: FakeNode): FakeNode
+    remove(): void
+  }
+
+  function node(tagName = 'div'): FakeNode {
+    const n: FakeNode = {
+      tagName,
+      style: { cssText: '' },
+      id: '',
+      children: [],
+      appendChild(child) {
+        n.children.push(child)
+        return child
+      },
+      remove() {
+        n.removed = true
+      }
+    } as FakeNode & { removed?: boolean }
+    return n
+  }
+
+  function runRedaction(fields: Array<{ width: number; height: number }>): {
+    count: number
+    layer: FakeNode | null
+    selector: string
+  } {
+    let selector = ''
+    const root = node('html')
+    const byId = new Map<string, FakeNode>()
+    const doc = {
+      querySelectorAll: (sel: string) => {
+        selector = sel
+        return fields.map((f) => ({
+          getBoundingClientRect: () => ({
+            left: 10,
+            top: 20,
+            width: f.width,
+            height: f.height
+          })
+        }))
+      },
+      getElementById: (id: string) => byId.get(id) ?? null,
+      createElement: (tagName: string) => node(tagName),
+      documentElement: root
+    }
+    const evaluate = new Function('document', `return ${REDACT_SECRETS_SCRIPT}`)
+    const count = evaluate(doc) as number
+    const layer = root.children[0] ?? null
+    if (layer) byId.set('__twSecretRedaction', layer)
+    return { count, layer, selector }
+  }
+
+  it('paints one opaque box per visible secret field', () => {
+    const { count, layer } = runRedaction([
+      { width: 200, height: 30 },
+      { width: 160, height: 30 }
+    ])
+
+    expect(count).toBe(2)
+    expect(layer?.children).toHaveLength(2)
+    // Opaque fill, not merely a blur or an outline.
+    expect(layer?.children[0]?.style.cssText).toContain('background:#111827')
+    expect(layer?.children[0]?.style.cssText).toContain('left:10px')
+  })
+
+  it('matches revealed and one-time-code fields, not just type=password', () => {
+    const { selector } = runRedaction([{ width: 10, height: 10 }])
+
+    expect(selector).toContain('input[type=password]')
+    expect(selector).toContain('autocomplete*="password"')
+    expect(selector).toContain('one-time-code')
+    expect(selector).toContain('data-tw-secret')
+  })
+
+  it('touches nothing when the page has no secret fields', () => {
+    // No overlay means no flicker on the overwhelmingly common screenshot.
+    const { count, layer } = runRedaction([])
+
+    expect(count).toBe(0)
+    expect(layer).toBeNull()
+  })
+
+  it('ignores zero-size fields so a hidden input cannot inflate the count', () => {
+    const { count } = runRedaction([{ width: 0, height: 0 }])
+
+    expect(count).toBe(0)
+  })
+
+  it('the teardown script removes the overlay by id', () => {
+    const layer = node('div')
+    const doc = { getElementById: (id: string) => (id === '__twSecretRedaction' ? layer : null) }
+    const evaluate = new Function('document', `return ${CLEAR_SECRET_REDACTION_SCRIPT}`)
+
+    expect(evaluate(doc)).toBe(true)
+    expect((layer as FakeNode & { removed?: boolean }).removed).toBe(true)
   })
 })
