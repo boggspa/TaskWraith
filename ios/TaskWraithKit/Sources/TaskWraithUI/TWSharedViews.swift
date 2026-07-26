@@ -10039,6 +10039,168 @@ public struct ComposerDiffPill: View {
     }
 }
 
+/// Third floating chip above the composer: which workspace and branch this
+/// thread is pointed at, plus the git state the diff pill does NOT carry.
+///
+/// Deliberately complementary rather than duplicative. `ComposerDiffPill` owns
+/// commits-AHEAD, files changed and ±lines; this owns the things it has no room
+/// for — where you are (workspace, branch) and what is in your way (behind
+/// count, an in-progress merge/rebase, conflicts).
+///
+/// Wide viewports only. On a portrait phone the row has no width to spare and
+/// two chips is already the limit.
+///
+/// The workspace picker is OPTIONAL and off by default. A thread's workspace is
+/// only choosable before its first turn (`ThreadEmptyWelcomeCanvas` owns that);
+/// a live thread cannot be repointed, so from the transcript this chip is a
+/// readout. The picker exists for hosts that legitimately can switch.
+///
+/// NOTE: no pull-request state. The iOS models carry no PR/checks data at all
+/// (`GitWorkspaceSnapshot` stops at remoteUrl), so a PR chip would need a bridge
+/// change first. Branch + upstream is the honest subset available today.
+public struct ComposerWorkspacePill: View {
+    let workspaceName: String?
+    let branch: String?
+    let behind: Int
+    let mergeState: String?
+    let conflicts: Int
+    /// Empty disables the picker and the chip renders as a plain readout.
+    let workspaceOptions: [(id: String, name: String)]
+    let primaryWorkspaceId: String?
+    var onSelectWorkspace: ((String) -> Void)? = nil
+    var glassNamespace: Namespace.ID? = nil
+
+    public init(
+        workspaceName: String?,
+        branch: String?,
+        behind: Int = 0,
+        mergeState: String? = nil,
+        conflicts: Int = 0,
+        workspaceOptions: [(id: String, name: String)] = [],
+        primaryWorkspaceId: String? = nil,
+        onSelectWorkspace: ((String) -> Void)? = nil,
+        glassNamespace: Namespace.ID? = nil
+    ) {
+        self.workspaceName = workspaceName
+        self.branch = branch
+        self.behind = max(0, behind)
+        self.mergeState = mergeState
+        self.conflicts = max(0, conflicts)
+        self.workspaceOptions = workspaceOptions
+        self.primaryWorkspaceId = primaryWorkspaceId
+        self.onSelectWorkspace = onSelectWorkspace
+        self.glassNamespace = glassNamespace
+    }
+
+    /// Nothing to say without at least a workspace or a branch.
+    public var hasContent: Bool {
+        !(workspaceName ?? "").isEmpty || !(branch ?? "").isEmpty
+    }
+
+    private var isObstructed: Bool { conflicts > 0 || (mergeState?.isEmpty == false) }
+
+    /// Conflicts outrank a plain in-progress merge; behind is the mild case.
+    private var accentIntensity: Double {
+        if conflicts > 0 { return 1 }
+        if mergeState?.isEmpty == false { return 0.7 }
+        return behind > 0 ? min(0.6, Double(behind) / 40) : 0
+    }
+
+    private var accentColor: Color {
+        conflicts > 0 ? TWTheme.statusFailed : TWTheme.statusAttention
+    }
+
+    private var canSwitch: Bool { onSelectWorkspace != nil && workspaceOptions.count > 1 }
+
+    public var body: some View {
+        Group {
+            if canSwitch {
+                Menu {
+                    Section("Workspace") {
+                        ForEach(workspaceOptions, id: \.id) { option in
+                            Button {
+                                onSelectWorkspace?(option.id)
+                            } label: {
+                                if option.id == primaryWorkspaceId {
+                                    Label(option.name, systemImage: "checkmark")
+                                } else {
+                                    Text(option.name)
+                                }
+                            }
+                        }
+                    }
+                } label: {
+                    chipBody
+                }
+                .buttonStyle(.plain)
+            } else {
+                chipBody
+            }
+        }
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel(accessibilityText)
+        .accessibilityHint(canSwitch ? "Switch the thread's workspace." : "")
+    }
+
+    private var chipBody: some View {
+        HStack(spacing: 6) {
+            if let workspaceName, !workspaceName.isEmpty {
+                Image(systemName: "folder")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Text(workspaceName)
+                    .font(.caption.weight(.semibold))
+                    .foregroundStyle(TWTheme.textSecondary)
+                    // The branch is the more specific fact, so the workspace
+                    // name is what yields when the row is tight.
+                    .layoutPriority(-1)
+            }
+
+            if let branch, !branch.isEmpty {
+                Image(systemName: "arrow.trianglehead.branch")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(TWTheme.textTertiary)
+                Text(branch)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(TWTheme.textPrimary)
+            }
+
+            if behind > 0 {
+                NumericTickText(
+                    "↓ \(behind)",
+                    value: Double(behind),
+                    font: .caption.weight(.semibold).monospacedDigit(),
+                    color: TWTheme.statusAttention)
+            }
+
+            if isObstructed {
+                Image(
+                    systemName: conflicts > 0
+                        ? "exclamationmark.triangle.fill" : "arrow.triangle.merge"
+                )
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(accentColor)
+            }
+        }
+        .lineLimit(1)
+        .composerFloatingPillChrome(
+            accent: accentColor,
+            accentIntensity: accentIntensity,
+            glassID: glassNamespace == nil ? nil : "tw.composer.pill.workspace",
+            glassNamespace: glassNamespace)
+    }
+
+    private var accessibilityText: String {
+        var parts: [String] = []
+        if let workspaceName, !workspaceName.isEmpty { parts.append("Workspace \(workspaceName)") }
+        if let branch, !branch.isEmpty { parts.append("Branch \(branch)") }
+        if behind > 0 { parts.append("\(behind) behind") }
+        if let mergeState, !mergeState.isEmpty { parts.append("\(mergeState) in progress") }
+        if conflicts > 0 { parts.append("\(conflicts) conflict\(conflicts == 1 ? "" : "s")") }
+        return parts.joined(separator: ", ")
+    }
+}
+
 /// Side chats tab — the thread's isolated/guest side chats, plus creation.
 struct SideChatsPanel: View {
     @ObservedObject var model: RemoteSessionModel

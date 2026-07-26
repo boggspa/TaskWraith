@@ -237,6 +237,12 @@ struct ThreadDetailView: View {
     /// typing.
     private var compactHeight: Bool { verticalSizeClass == .compact }
 
+    /// Wide enough for a third above-composer chip: an iPad, or a phone on its
+    /// side. Both readings are needed — a landscape phone stays COMPACT width,
+    /// so `horizontalSizeClass == .regular` alone would miss the very case that
+    /// has spare horizontal room.
+    private var wideViewport: Bool { hSizeClass == .regular || compactHeight }
+
     /// Roster presentation, hoisted so the popover can hang off the toolbar
     /// button (where it anchors correctly) rather than the outer view.
     private var rosterPresentedBinding: Binding<Bool> {
@@ -1842,6 +1848,33 @@ struct ThreadDetailView: View {
                         // composer collapses, so this row restores them.
                         HStack(spacing: 8) {
                             Spacer(minLength: 0)
+                            // Order is left-to-right by scope: WHERE you are
+                            // (workspace + branch), WHAT changed there (diff),
+                            // then WHAT you can do about it (tools). The widest
+                            // and least volatile chip leads; the action cluster
+                            // sits nearest the composer's own controls.
+                            //
+                            // Wide viewports only — a portrait phone has no
+                            // width for a third chip.
+                            //
+                            // READOUT, no picker: a thread's workspace is only
+                            // choosable before its first turn, on
+                            // ThreadEmptyWelcomeCanvas (which owns
+                            // `switchPrimaryWorkspace`). A live thread cannot be
+                            // repointed, and the telemetry rail does not offer
+                            // it either — so this states the workspace rather
+                            // than pretending to change it.
+                            if wideViewport {
+                                let workspacePill = ComposerWorkspacePill(
+                                    workspaceName: model.workspaceName(for: primaryWorkspaceId),
+                                    branch: primaryGitSnapshot?.branch,
+                                    behind: primaryGitSnapshot?.behind ?? 0,
+                                    mergeState: primaryGitSnapshot?.mergeState,
+                                    conflicts: primaryGitSnapshot?.conflicts ?? 0,
+                                    glassNamespace: composerPillGlass
+                                )
+                                if workspacePill.hasContent { workspacePill }
+                            }
                             CachedComposerDiffPill(
                                 model: model,
                                 workspaceId: primaryWorkspaceId,
