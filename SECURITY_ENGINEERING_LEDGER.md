@@ -18,12 +18,16 @@ current release pointer.
 **2026-07-26 v1.9.0 paperwork boundary:** the latest published baseline is
 **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
-release-paperwork commits following it. This is a mutable source-ahead snapshot,
-not a freeze: concurrent dirty work is excluded, every per-entry
-verify/`Block` disposition remains in force, and the exact integrated candidate
-must be re-recorded and verified before a release claim. References use stable
-symbols and test names rather than line numbers. Do not add secrets, raw
-scripts, or weaponized payloads to this file or its verification artifacts.
+release-paperwork commits following it. The requested 30-minute refresh reached
+feature tip `8ff7bdbdf` (**196 commits** past the tag), after Mistral Vibe,
+agent theme tokens, Canvas actuation hardening, and provider-registry
+completeness diagnostics landed in committed slices.
+This is still a mutable source-ahead snapshot, not a freeze: concurrent dirty
+work and three foreign ship holds remain, every per-entry verify/`Block`
+disposition stays in force, and the exact integrated candidate must be
+re-recorded and verified before a release claim. References use stable symbols
+and test names rather than line numbers. Do not add secrets, raw scripts, or
+weaponized payloads to this file or its verification artifacts.
 
 ## Working rules
 
@@ -80,12 +84,29 @@ finding above:
   homes, launch authority, model policy, and native-tool posture. This extends
   the provider surface, so secret-boundary and exact-launch evidence still
   belong in the final candidate verification.
+- Mistral Vibe is now a tenth stable provider identity and a live ACP seat
+  backed by the user's Mistral plan, distinct from Pi's metered `mistral/*`
+  upstream. The seat selects only Vibe's gated `plan`/`default` modes, scrubs
+  inherited Mistral API credentials, and injects host-composed context into
+  each fresh session. Scheduled launch evidence still reports blocked
+  production wiring until session-mode acknowledgement and the final
+  provider-visible steered prompt are bound; do not translate that receipt
+  into provider removal.
 - Office codecs operate on bounded document formats, while Outlook device-code
   access is limited to reading mail/calendar context, saving drafts, and
   creating personal time blocks. Release prose must not imply send-mail or
   invite authority; external message and event text remains untrusted.
+- Agent-accessed appearance customisation is a typed token-data channel, not a
+  CSS/code channel. `theme_tokens_set` remains write-classified; selectors,
+  URLs, calculations, provider identity, focus rings, and approval geometry are
+  excluded and renderer-side validation re-checks persisted values.
+- Canvas actuation now serializes interactions per surface, refuses stale
+  targets and stale human-input epochs, keeps credential fields human-only,
+  preserves an in-progress sketch stroke, and refuses to act while recent
+  real input says the user is driving. The exact candidate still needs its
+  recorded Canvas audit/lifecycle verification.
 - Provider run management now records additive lifecycle assurance across all
-  nine stable provider identities: immutable launch plans, isolated homes,
+  ten stable provider identities: immutable launch plans, isolated homes,
   launch evidence, cancellation/settlement, and signed-posture checks improve
   receipts without being used as a provider-admission gate.
 
