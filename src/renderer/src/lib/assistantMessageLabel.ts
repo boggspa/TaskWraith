@@ -1,6 +1,6 @@
 import { reasoningDisplayLabel, shortModelName } from './composerChipFormat'
 import { humaniseModelId } from './modelDisplayName'
-import { resolveOllamaDisplayBrand } from './ollamaDisplayBrand'
+import { resolveOllamaDisplayBrand, resolveProviderHueClass } from './ollamaDisplayBrand'
 import { getProviderLabel } from './providerLabels'
 import type {
   ChatMessage,
@@ -242,7 +242,14 @@ const formatAssistantMessageLabel = (
   return withPooledIdentity({
     label: role ? `${getProviderLabel(provider)} / ${role}` : getProviderLabel(provider),
     provider,
-    providerClass: provider,
+    // Resolve the brand-spoof hue rather than tinting by the raw provider id.
+    // A Pi run's wire id names the BYOK upstream serving it
+    // (`deepseek/deepseek-v4-pro`), so attribution tinted `provider-pi` loses
+    // the brand the user actually picked — the seat chip and model picker
+    // already spoof it, and the transcript was the odd one out. The resolver
+    // returns the provider id unchanged when there is no spoof, so every other
+    // provider keeps exactly the hue it had.
+    providerClass: resolveProviderHueClass(provider, ensembleModel),
     modelBadge: modelBadge || null
   })
 }
