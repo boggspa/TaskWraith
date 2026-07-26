@@ -206,21 +206,23 @@ always did rather than failing a launch that would otherwise have worked.
 
 ### Product observation says exactly what it counts
 
-TaskWraith now has a public privacy notice and an explicit, off-by-default
-activity-reporting control under **Settings → Safety & Privacy**. When a build
-has a first-party endpoint configured and the user opts in, it sends at most
-one no-ID check-in per UTC day: schema, event, day, app version, operating-system
-family, processor family, and release channel. The control shows that complete
-contract in the app. Prompts, workspaces, provider choices, usage, and stable
-installation identifiers are outside it; builds without an endpoint send
-nothing.
+TaskWraith now has a public privacy notice and a visible, user-disableable
+activity-reporting control under **Settings → Safety & Privacy**. Builds with a
+first-party endpoint enable the minimal report by default to help understand
+demand and sustain the free, open-source project; users can switch it off at any
+time without losing features. It sends at most one no-ID check-in per UTC day:
+schema, event, day, app version, operating-system family, processor family, and
+release channel. The control shows that complete contract in the app. Prompts,
+workspaces, provider choices, usage, and stable installation identifiers are
+outside it; builds without an endpoint send nothing.
 
-The same opt-in can now power an approximate **apps online now** gauge without
+The same setting can now power an approximate **apps online now** gauge without
 creating a session history. Each running app renews a random, process-only
 lease; the receiver holds it in RAM for 150 seconds, returns only the aggregate
 unexpired count, and never writes lease values, renewals, start/end times, or
-durations to its analytics database. Opting out stops renewals and retracts the
-lease when reachable; a crashed or disconnected app simply ages out.
+durations to its analytics database. Switching the setting off stops renewals
+and retracts the lease when reachable; a crashed or disconnected app simply
+ages out.
 
 That boundary also changes how adoption is described. GitHub release requests,
 update-manifest checks, repository traffic, App Store aggregates, and optional

@@ -111,8 +111,15 @@ verification steps, and known limits. Optional features that require outside
 accounts, local services, or macOS permissions are covered in
 [ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md). [SAFETY.md](SAFETY.md)
 and [SECURITY.md](SECURITY.md) contain the engineering guardrails and release
-baseline. [PRIVACY.md](PRIVACY.md) explains platform aggregates, optional
-privacy-minimised activity reporting, and the exact no-content data boundary.
+baseline.
+
+Electron builds configured with TaskWraith's first-party activity endpoint
+enable privacy-minimised product observation by default to help sustain the
+free, open-source project. It sends only the fixed no-content contract and can
+be switched off at any time under **Settings → Safety & Privacy** without
+losing features. Builds without an endpoint send nothing. [PRIVACY.md](PRIVACY.md)
+explains platform aggregates, retention, user choices, and the exact data
+boundary.
 
 <table>
   <tr>

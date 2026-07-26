@@ -2,7 +2,7 @@
 
 **Effective:** 26 July 2026
 
-**Version:** 1.0
+**Version:** 1.1
 
 ## The short version
 
@@ -11,11 +11,14 @@ and run records are stored on your device by default. The prompts, files, and
 tool context needed for a run still go to the AI provider or local runtime you
 choose.
 
-TaskWraith uses privacy-minimised, opt-in activity reporting and
-platform-provided aggregate analytics only to understand adoption, see an
-approximate current live-app count, prioritise supported platforms, and verify
-release and update health. Product observation does not include the content of
-your work and is not used for advertising or individual profiling.
+Electron builds configured with a first-party activity endpoint enable
+privacy-minimised product observation by default. You can switch it off at any
+time in **Settings → Safety & Privacy** without losing any feature. TaskWraith
+uses these reports and platform-provided aggregate analytics only to understand
+adoption, see an approximate current live-app count, prioritise supported
+platforms, and verify release and update health. Product observation does not
+include the content of your work and is not used for advertising or individual
+profiling.
 
 ## Who is responsible
 
@@ -51,18 +54,22 @@ users who agreed to share analytics and may be estimated, suppressed, or
 privacy-adjusted. TaskWraith does not relabel any of these figures as unique
 active users.
 
-### Optional TaskWraith activity reporting
+### TaskWraith activity reporting
 
-Some builds can offer **Share privacy-minimised activity and live presence** in
-**Settings → Safety & Privacy**. It is off by default. If a build has no
-TaskWraith activity endpoint configured, reporting cannot be enabled and the
-app sends no activity data; a preference saved by another build can still be
-turned off.
+Electron builds with a first-party endpoint enable **Share privacy-minimised
+activity and live presence** by default. The control is always available under
+**Settings → Safety & Privacy**, and an explicit choice to switch it off
+persists across restarts and updates. Turning it off does not limit any core
+TaskWraith feature.
+
+If a build has no TaskWraith activity endpoint configured, it sends no activity
+data even when the stored preference is on. The preference can still be
+switched off in that build.
 
 #### Daily check-in
 
-When you turn the setting on, TaskWraith sends at most one daily check-in per
-UTC day from that installation. The check-in has one fixed schema:
+While the setting is on, TaskWraith sends at most one daily check-in per UTC
+day from that installation. The check-in has one fixed schema:
 
 | Field                   | Example      | Why it is included                             |
 | ----------------------- | ------------ | ---------------------------------------------- |
@@ -102,8 +109,8 @@ maintainer dashboard receives only the aggregate number of unexpired leases,
 the time of that aggregate observation, and the expiry window; it cannot read
 the lease values.
 
-This gauge answers approximately **how many opted-in TaskWraith app processes
-are online now**, never who they are. Multiple app instances can count
+This gauge answers approximately **how many reporting-enabled TaskWraith app
+processes are online now**, never who they are. Multiple app instances can count
 separately, network loss can briefly undercount, and a closed or crashed app can
 remain in the gauge until its lease expires. The gauge is not retained as a
 session timeline.
@@ -136,7 +143,8 @@ Product-observation information is used only to:
 - measure adoption of supported releases;
 - identify broken release assets or update feeds;
 - plan distribution capacity; and
-- gauge whether continued maintenance and product work are useful.
+- gauge whether continued maintenance and product work on the free,
+  open-source project are useful.
 
 It is not sold, rented, used for advertising, combined with data-broker
 profiles, or used to make automated decisions about a person.
@@ -186,9 +194,19 @@ profiles, or used to make automated decisions about a person.
 
 ## Legal basis, sharing, and transfers
 
-Optional TaskWraith activity reporting is based on your consent: it is
-disabled until you actively turn it on, and you can withdraw that choice at any
-time.
+Where a limited activity report or transient connection metadata constitutes
+personal data, the maintainer relies on legitimate interests in understanding
+adoption, maintaining compatible releases, operating the activity endpoint,
+and deciding where continued work on the free, open-source project is useful.
+That assessment is bounded by the fixed no-content schema, the absence of a
+stable installation identifier, immediate aggregation, short retention,
+RAM-only live leases, no advertising or profiling, and a prominent control that
+stops future reporting without reducing app functionality.
+
+TaskWraith's price and open-source licence are context for that maintenance
+purpose; they do not remove privacy rights or themselves constitute consent.
+You can object to future TaskWraith activity reporting at any time by switching
+it off under **Settings → Safety & Privacy**.
 
 Information may be processed by GitHub for repository hosting, releases, and
 updates; Apple for App Store distribution and reports; the AI providers and
@@ -201,9 +219,14 @@ session-replay service under this notice.
 ## Your choices and rights
 
 Depending on where you live, you may have rights to be informed, access,
-correct, delete, restrict, or object to processing; to withdraw consent; and to
-complain to a data-protection authority. UK users can contact the
+correct, delete, restrict, or object to processing; to withdraw consent where a
+separate processing activity relies on it; and to complain to a data-protection
+authority. UK users can contact the
 [Information Commissioner's Office](https://ico.org.uk/make-a-complaint/).
+
+The in-app switch is the immediate way to object to and stop future TaskWraith
+activity reports. It also retracts the current volatile live lease when the
+receiver is reachable.
 
 Because an activity check-in contains no installation or account identifier,
 the maintainer will usually be unable to locate an earlier aggregate as
@@ -215,5 +238,6 @@ stop future reporting by turning the setting off.
 TaskWraith will update this notice before materially expanding product
 observation, including adding a linkable identifier, a new event category or
 purpose, longer retention, or a new analytics recipient. A change that could
-distinguish the same installation over time requires a new disclosure and
-consent decision; it will not be introduced as a silent schema change.
+distinguish the same installation over time requires a fresh privacy review,
+new disclosure, and consent where applicable; it will not be introduced as a
+silent schema change.

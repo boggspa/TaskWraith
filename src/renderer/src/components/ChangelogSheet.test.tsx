@@ -301,6 +301,8 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('theme_tokens_set')
     expect(entry.releaseNotes).toContain('Every provider leaves a clearer receipt')
     expect(entry.releaseNotes).toContain('The phone keeps the same map')
+    expect(entry.releaseNotes).toContain('enable the minimal report by default')
+    expect(entry.releaseNotes).toContain('users can switch it off at any')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {
