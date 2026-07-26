@@ -3647,11 +3647,30 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   flex-wrap: wrap;
 }
 
+/* Three tracks with an explicit yield order, because the provider filter grows
+ * every time a provider ships (10 tabs at Pi/AntiGravity) while the totals do
+ * not. The middle track used to be a bare `auto`: an auto track sizes to
+ * max-content and will not shrink, so once the tabs outgrew the row the filter
+ * ran straight over the 24h/7D/90D chips.
+ *
+ * Yield order, tightest first:
+ *   chips  — `minmax(max-content, 1fr)`: NEVER yield. A clipped token total is
+ *            a WRONG number ("6.16B" reading as "6.1"), which is worse than any
+ *            layout compromise. The 1fr max keeps it symmetric with the title
+ *            track so the filter still sits centred whenever there IS room.
+ *   filter — `minmax(0, auto)`: yields first and scrolls inside its pill, so
+ *            every provider stays reachable rather than being cut off.
+ *   title  — `minmax(0, 1fr)`: ellipsises last, it is the most recoverable loss.
+ *
+ * Deliberately NOT a container query dropping the filter to its own row: that
+ * costs a row on every heatmap card on the welcome screen, which is measured by
+ * the welcome fit ladder. */
 .usage-heatmap--with-provider-filter .usage-heatmap-header {
   display: grid;
-  grid-template-columns: minmax(120px, 1fr) auto minmax(160px, 1fr);
+  grid-template-columns: minmax(0, 1fr) minmax(0, auto) minmax(max-content, 1fr);
   column-gap: 10px;
   row-gap: 5px;
+  align-items: center;
 }
 
 .usage-heatmap-title {
@@ -3667,6 +3686,11 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
 .usage-heatmap--with-provider-filter .usage-heatmap-title {
   margin-right: 0;
   min-width: 0;
+  /* Ellipsis rather than overflow — the title is the designated last yielder,
+   * so it has to degrade cleanly instead of pushing the row wider. */
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .usage-heatmap-provider-filter {
@@ -3675,10 +3699,30 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   align-items: center;
   gap: 2px;
   max-width: 100%;
+  /* Pairs with the `minmax(0, auto)` track: without it the flex box refuses to
+   * go below max-content and the track minimum wins anyway. */
+  min-width: 0;
   padding: 1px;
   border-radius: 999px;
   background: color-mix(in srgb, var(--text-primary) 5%, transparent);
-  overflow: hidden;
+  /* Scroll, don't clip. A provider tab that scrolls off is still reachable; one
+   * that is clipped is gone. The scrollbar is hidden because a real one inside a
+   * 17px pill is taller than the pill.
+   *
+   * No edge-fade mask here on purpose: a mask applies whether or not the pill
+   * actually overflows, so at the common widths where everything fits it would
+   * fade the ACTIVE tab's own tinted background at the ends — an artifact on
+   * every card, to hint at scrolling that mostly isn't needed. */
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+  overscroll-behavior-x: contain;
+}
+
+.usage-heatmap-provider-filter::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 .usage-heatmap-provider-filter-tab {
@@ -3763,11 +3807,15 @@ html:has(:is(.first-launch-sheet-backdrop, .bug-report-sheet-backdrop, .changelo
   justify-content: flex-end;
   gap: 6px;
   margin-left: auto;
+  /* The three totals are one unit — they wrap or shrink together or not at all,
+   * never mid-number. */
+  flex-wrap: nowrap;
+  white-space: nowrap;
 }
 
 .usage-heatmap--with-provider-filter .usage-heatmap-chips {
-  min-width: 0;
   margin-left: 0;
+  justify-self: end;
 }
 
 .usage-heatmap-chip {
