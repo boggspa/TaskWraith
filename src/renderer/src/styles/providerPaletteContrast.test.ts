@@ -35,7 +35,17 @@ const STATIC_PROVIDER_COLORS = {
   liquid: '#D72D82',
   nvidia: '#538200',
   openbmb: '#E22B17',
-  poolside: '#0C8194'
+  poolside: '#0C8194',
+  // Pi seat + its BYOK upstream brands. `pi` was absent from this map entirely,
+  // which is why it shipped at #C25E4C — 4.20 contrast on white, under the AA
+  // floor — without this gate noticing. The sub-provider hues had the same gap.
+  pi: '#68768C',
+  deepseek: '#4E6AEE',
+  zai: '#177DAA',
+  minimax: '#C044A4',
+  mistral: '#D44404',
+  cerebras: '#BB584A',
+  groq: '#088482'
 } as const
 
 const PROVIDER_ALIASES = {
@@ -137,4 +147,45 @@ describe('provider palette contrast', () => {
     }
   })
 
+  /**
+   * The hand-written map above is a MIRROR contract — it pins specific hexes so
+   * theme.css, iOS and the RGB triplets cannot drift apart. But it was also the
+   * only thing feeding the AA check, so a colour simply absent from it was never
+   * contrast-tested at all. `pi` was missing, and shipped at 4.20 on white —
+   * under the AA floor — for exactly that reason. Six Pi sub-provider hues had
+   * the same gap.
+   *
+   * So the AA check no longer trusts the hand-list: it discovers every literal
+   * `--provider-*-color: #hex;` in theme.css and asserts on all of them. A new
+   * provider colour is now contrast-tested the moment it is declared, whether or
+   * not anyone remembers this file. Aliases (`var(--provider-x-color)`) are
+   * skipped by construction — the regex only matches literal hexes, and the
+   * alias's target is checked on its own.
+   */
+  it('contrast-tests EVERY provider colour declared in theme.css, not just the listed ones', () => {
+    const declared = [...themeCss.matchAll(/--provider-([a-z0-9-]+)-color:\s*(#[0-9A-Fa-f]{6});/g)]
+    const seen = new Map<string, string>()
+    for (const [, provider, hex] of declared) seen.set(provider, hex.toUpperCase())
+
+    // Guard the discovery itself: a regex that silently matched nothing would
+    // make this whole test vacuous.
+    expect(seen.size).toBeGreaterThanOrEqual(Object.keys(STATIC_PROVIDER_COLORS).length)
+
+    for (const [provider, hex] of seen) {
+      expect(contrastAgainstWhite(hex), `${provider} (${hex}) on white`).toBeGreaterThanOrEqual(4.5)
+      expect(contrastAgainstBlack(hex), `${provider} (${hex}) on black`).toBeGreaterThanOrEqual(4.5)
+    }
+  })
+
+  it('has no provider colour that the mirror map silently omits', () => {
+    // Not a contrast check — a completeness one. Every literal provider colour
+    // should be in STATIC_PROVIDER_COLORS so the theme.css/iOS/RGB mirrors stay
+    // enumerable. Listed here as an explicit, reviewable exception set rather
+    // than left implicit.
+    const declared = new Set(
+      [...themeCss.matchAll(/--provider-([a-z0-9-]+)-color:\s*#[0-9A-Fa-f]{6};/g)].map((m) => m[1])
+    )
+    const missing = [...declared].filter((p) => !(p in STATIC_PROVIDER_COLORS)).sort()
+    expect(missing).toEqual([])
+  })
 })
