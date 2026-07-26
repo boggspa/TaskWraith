@@ -258,7 +258,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Read-only plans can run `git status`')
   })
 
-  it('bundles the current 1.8.9 release notes (narrative format)', () => {
+  it('bundles the frozen 1.8.9 release notes (narrative format)', () => {
     const entry = resolveChangelogEntry({ currentVersion: '1.8.9' }, null)
     expect(entry).toMatchObject({
       version: '1.8.9',
@@ -274,6 +274,24 @@ describe('ChangelogSheet', () => {
     // Wrap-safe: the source hard-wraps between "Work" and "Session".
     expect(entry.releaseNotes).toContain('Session mode retires in favor of the primitives')
     expect(entry.releaseNotes).toContain('folds instead of jumping')
+  })
+
+  it('bundles the current 1.9.0 release notes (narrative format)', () => {
+    const entry = resolveChangelogEntry({ currentVersion: '1.9.0' }, null)
+    expect(entry).toMatchObject({
+      version: '1.9.0',
+      releaseDate: '2026-07-26'
+    })
+    // 1.9.0 continues the story format and evolves 1.8.9's separate rooms
+    // into a connected workshop. Pin the user-facing beats, not taxonomy.
+    expect(entry.releaseNotes).toContain('connects those rooms into a')
+    expect(entry.releaseNotes).toContain('Branches come back as candidates')
+    expect(entry.releaseNotes).toContain('isolated worktree')
+    expect(entry.releaseNotes).toContain('Threads can knock on another door')
+    expect(entry.releaseNotes).toContain('Office dock')
+    expect(entry.releaseNotes).toContain('Pi opens the model bench')
+    expect(entry.releaseNotes).toContain('Every provider leaves a clearer receipt')
+    expect(entry.releaseNotes).toContain('The phone keeps the same map')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

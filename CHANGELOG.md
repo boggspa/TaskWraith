@@ -6,6 +6,113 @@ orchestration, local history, and workspace authority stay on your machine,
 while selected cloud providers still receive the prompt and run context needed
 to answer.
 
+## 1.9.0 - 2026-07-26
+
+If 1.8.9 gave every agent **room to work**, 1.9.0 connects those rooms into a
+workshop. Parallel lanes can return work you choose to keep, top-level threads
+can leave one another durable notes, and the dock can hold the documents,
+canvases, mail, and calendar context around the code. A new Pi seat opens a
+broader model bench, while the same local authority still decides what each
+seat may touch.
+
+### Branches come back as candidates
+
+Write-capable fan-out lanes can now ask for an **isolated worktree** instead of
+sharing the checkout. Each lane forks from the committed workspace boundary,
+returns a durable candidate, and appears in a Compare dock where its patch can
+be inspected and promoted deliberately. The composer exposes that choice as an
+Isolate toggle, while `ensemble_await` and `ensemble_lane_result` give agent-run
+workflows a real join-and-read step rather than making a synthesizer scrape the
+panel transcript.
+
+Git work is easier to follow before and after the fan-out. Main owns a
+per-thread workflow marker, the sidebar groups marked threads under Git with
+their true repository name, and worktree patches have explicit capture/apply
+contracts. Read-only postures can inspect `git status`, `git diff`, and
+`git log` without an approval card, so review lanes can gather evidence without
+borrowing mutation authority.
+
+### Threads can knock on another door
+
+Top-level threads gain **peer messages**: a durable, permission-gated inbox for
+passing a note to another task without pretending the two provider sessions
+share context. A message enters the target's next turn exactly once, visibly
+labelled as untrusted relayed content; an optional wake remains a separate,
+more privileged choice. Exact ids and unambiguous titles resolve in main, the
+startup sweep catches queued delivery, and user- plus agent-originated sends
+converge on the same authority.
+
+The Peers dock makes that path visible on desktop, and the paired iPhone/iPad
+companion can read the inbox, send a reply, and show the same pending indicator.
+Sub-thread return still flows child to parent; peer messaging is the deliberate
+sideways path between independent top-level tasks.
+
+### The dock becomes a desk
+
+A new **Office dock** brings focused editors for Word documents, spreadsheets,
+slide decks, calendars, and mail drafts into the workspace. TaskWraith can
+round-trip DOCX, XLSX, PPTX, and ICS through bounded local codecs, preserve
+deck speaker notes and document images, import dropped files, and open or reveal
+grant-covered documents outside the workspace without turning a reference into
+silent access.
+
+An optional Outlook connector uses Microsoft's device-code sign-in to read
+mail and calendar context, save email drafts, and create personal time blocks.
+It deliberately has no send-mail permission, refuses invite-producing attendee
+creation, bounds Graph responses, and treats message/event text as untrusted
+third-party content. Canvas work also joins the right dock with sketch embeds
+and chat-scoped list/close controls, so visual and document context can stay
+beside the thread that owns it.
+
+### Pi opens the model bench
+
+**Pi** joins as a first-class coding-agent seat with isolated runtime homes and
+bring-your-own-key access to DeepSeek, Z.ai/GLM, Qwen, MiniMax, Mistral, Groq,
+and Cerebras models. Each upstream has its own key boundary, model names,
+pricing row, spend attribution, and brand hue; pickers show only configured
+upstreams, and desktop plus iOS carry the same provider/model map. The New
+Additions card now leads with that upstream lineup.
+
+AntiGravity becomes steadier at the same time: conversations resume, successful
+model discovery is cached, unservable catalogue rows are filtered, Gemini 3.x
+thought signatures survive tool replay, and schema unions stay real unions.
+Denied services remain denied, cache reads are disclosed, and throttling is
+distinguished from a genuinely empty allowance.
+
+### Every provider leaves a clearer receipt
+
+Run management now measures lifecycle assurance across all nine stable provider
+identities without turning maturity into provider admission. Immutable launch
+plans, per-run homes, exact transport close/kill joins, cancellation
+settlement, launch evidence, signed posture validation, and honest capability
+reports land provider by provider. Missing assurance produces a receipt or
+warning and the safest compatible mode; it does not silently hide a seat the
+user chose.
+
+That same discipline reaches smaller authority edges: peer-thread wakes,
+fan-out candidates, provider capability projection, grant expiry, and review
+or compaction runs all re-check the scope they are about to use. `canvas_eval`
+is available as an approval-visible instrument in Plan rather than disappearing
+behind a silent deny.
+
+### The phone keeps the same map
+
+iOS gains the full-colour Ensemble identity, anchored participant editors,
+Pi's provider/model branding, and a compact single-row Ensemble composer that
+adapts to landscape and short viewports. Above-composer pills stay reachable
+while typing; fan-out lane results and provider-run failures get native cards;
+the workspace/branch pill opens a Git surface for branch, checkout, and PR-watch
+actions; and the Peers inspector carries cross-thread messages. Pairing
+reconnects no longer flap the app back to the setup screen.
+
+Across both apps, provider rows use cleaner labels, pickers stop calling an
+empty model list “loading,” compact tool foldouts retain their diff accents,
+and Codex authentication reports revoked credentials honestly, leases the
+credential TaskWraith actually uses, and upgrades that installed runtime
+instead of a different copy. New doctrine-integrity and formatting-ratchet
+gates keep future agent work from turning documentation or unrelated source
+into collateral churn.
+
 ## 1.8.9 - 2026-07-24
 
 If 1.8.8 was about who can sit at the table, 1.8.9 is about giving everyone at
