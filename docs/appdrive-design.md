@@ -229,7 +229,11 @@ Pick one (`'boss' | 'captain'` reads better in UI and matches the user-facing la
 
 A whole-surface revision that bumps on any DOM mutation **will livelock** — polling, websockets, animations and blinking carets mean it never settles and the agent never lands an action. (Same shape as the SwiftUI one-ULP geometry oscillation that wedged first frames.) Split them:
 
-**Clock A — `inputEpoch` (user intent, authoritative, main-side).** Bumped by `webContents.on('before-input-event')` on the canvas surface plus a page-world `pointerdown`/`wheel` listener. Main-side is the trustworthy signal; the page-world listener is a supplement, not the source of truth. Every actuation carries `expectedInputEpoch`; mismatch → `{ok:false, reason:'stale_input_epoch'}` and the agent re-observes. Additionally `userActiveUntil = now + 1500ms` on any user input; an actuation attempted inside that window is refused with `reason:'user_active'`. **The user always wins.**
+**Clock A — user presence and freshness (authoritative, main-side).** *Implemented; corrected from the original sketch.* Use `webContents.on('input-event')`, **not** `before-input-event` — the latter is keyboard-only, and a mouse click is precisely the interaction we must not talk over. `input-event` is a main-process hook on the real OS input pipeline, so it covers mouse, wheel and touch, a page cannot forge or suppress it, and **no page-world listener is needed at all**. It also cannot self-trigger: synthetic DOM events dispatched through `executeJavaScript` never enter the input pipeline (we deliberately never use `sendInputEvent`).
+
+Two separate values fall out of it:
+- **presence** — `userActiveUntil = now + 1500ms`; any actuation inside that window is refused `user_active` without injecting anything. `mouseMove` is excluded, or a parked cursor would lock the agent out forever.
+- **freshness** — a monotonic `inputEpoch`, stamped onto every snapshot. A caller may echo it back as `expectedInputEpoch` and have the action refused `stale_input_epoch` if the human touched the page since. Opt-in: omit it to act on the live page.
 
 **Clock B — per-target precondition (not a counter).** At snapshot time each ref records a `targetIdentity` digest over `{tagName, role, accessibleName, ordinal selector path}`. Before dispatch, the injected script asserts:
 
@@ -256,7 +260,7 @@ Note `CanvasActResult.action` duplicates the `CanvasActionInput['kind']` union r
 ### 5.3 Serialization and takeover
 
 - **Per-canvas async mutex** so actuations serialize. `chargeInteraction` is a counter and stays one; the mutex is separate.
-- **Drop `el.focus()` from the click path** — it is a focus steal and unnecessary for a click. Keep it for `fill`/`type`, refused while the user is active.
+- **KEEP `el.focus()` on the click path** — reversed from the original plan. A synthetic click has no default action, so `focus()` is what makes focus-driven widgets (menus, comboboxes) work at all; removing it would break them to solve a problem the presence guard already covers. The harm was the agent stealing the caret *while the user was typing*, and an agent that cannot act while the user is active cannot do that.
 - **`scrollIntoView`** becomes conditional: skip when the element is already in view, to stop the agent yanking the viewport under a reading user.
 - **Sketch (D4):** `sketchUpdate` gains `expectedUpdatedAt` and is refused outright while a stroke is in flight (page-side `draft !== null`).
 

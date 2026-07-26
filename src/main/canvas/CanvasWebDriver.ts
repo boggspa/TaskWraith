@@ -98,6 +98,29 @@ const DEFAULT_INSPECT_STYLES = [
  * credentials INSIDE the agent-drivable surface, and frames leave the machine
  * whenever a hosted provider is driving.
  */
+/**
+ * Input types that mean a human is actively working in the surface. `mouseMove`
+ * is excluded on purpose — a cursor resting over the page is not an interaction,
+ * and treating it as one would let a parked pointer block the agent forever.
+ */
+const USER_PRESENCE_INPUT_TYPES: ReadonlySet<string> = new Set([
+  'keyDown',
+  'keyUp',
+  'char',
+  'mouseDown',
+  'mouseUp',
+  'mouseWheel',
+  'gestureScrollBegin',
+  'touchStart'
+])
+
+/**
+ * How long after a human interaction the surface stays theirs. Long enough to
+ * cover the gap between keystrokes in a word, short enough that an agent is not
+ * locked out by someone who glanced at the page and left.
+ */
+const USER_ACTIVE_GRACE_MS = 1500
+
 const SECRET_FIELD_SELECTOR =
   'input[type=password], input[autocomplete*="password"], input[autocomplete="one-time-code"], [data-tw-secret]'
 
@@ -507,6 +530,10 @@ export class CanvasWebDriver implements CanvasDriver {
   // navigation await can create/re-adopt a surface after history was cleared.
   private lifecycleGeneration = 0
   private closeRequested = false
+  /** Bumped by every human interaction; see attachUserInputWatch. */
+  private inputEpoch = 0
+  /** Epoch-ms until which the human owns the surface. */
+  private userActiveUntil = 0
 
   constructor(sessionId: string, deps: CanvasWebDriverDeps = {}) {
     // In-memory partition (no "persist:" prefix) — isolated, ephemeral session.
@@ -572,6 +599,7 @@ export class CanvasWebDriver implements CanvasDriver {
       })
     })
     this.attachNetwork(wc)
+    this.attachUserInputWatch(wc)
     surface.onClosed(() => {
       if (this.surface === surface) this.surface = null
     })
@@ -645,6 +673,31 @@ export class CanvasWebDriver implements CanvasDriver {
       // Best effort — older Electron.
     }
     ses.on('will-download', (event) => event.preventDefault())
+  }
+
+  /**
+   * Tracks real human input into the surface so the agent can be told to stand
+   * down, and so it can detect that the page moved under it.
+   *
+   * Uses `input-event` rather than `before-input-event`: the latter is keyboard
+   * only, and a mouse click is exactly the interaction we must not talk over.
+   * This is a MAIN-process hook on the real OS input pipeline, so a page cannot
+   * suppress or forge it. It also means the agent cannot trip its own guard —
+   * synthetic DOM events dispatched through executeJavaScript never enter the
+   * input pipeline (we deliberately do not use sendInputEvent anywhere).
+   */
+  private attachUserInputWatch(wc: WebContents): void {
+    try {
+      wc.on('input-event', (_event, input) => {
+        const type = String((input as { type?: unknown })?.type ?? '')
+        if (!USER_PRESENCE_INPUT_TYPES.has(type)) return
+        this.inputEpoch += 1
+        this.userActiveUntil = Date.now() + USER_ACTIVE_GRACE_MS
+      })
+    } catch {
+      // Older Electron without 'input-event'. The guard then never engages;
+      // the element preconditions and the serialization lock still apply.
+    }
   }
 
   private attachNetwork(wc: WebContents): void {
@@ -730,7 +783,9 @@ export class CanvasWebDriver implements CanvasDriver {
       CanvasElementTree,
       'capturedAt'
     >
-    return { ...result, capturedAt: new Date().toISOString() }
+    // Stamp the human-interaction counter the tree was captured at, so the caller
+    // can pin its plan to this observation via expectedInputEpoch.
+    return { ...result, capturedAt: new Date().toISOString(), inputEpoch: this.inputEpoch }
   }
 
   async screenshot(): Promise<CanvasFrame> {
@@ -814,6 +869,52 @@ export class CanvasWebDriver implements CanvasDriver {
   async act(action: CanvasActionInput): Promise<CanvasActResult> {
     const surface = this.requireSurface()
     const wc = surface.webContents
+
+    // The human always wins. Two separate clocks, deliberately:
+    //
+    // `userActiveUntil` is presence — someone is working in this surface right
+    // now, so do not talk over them (this, not stripping el.focus(), is the real
+    // fix for the agent stealing focus mid-typing: a synthetic click has no
+    // default action, so focus() is what makes focus-driven widgets work at all,
+    // and removing it would break menus to solve a problem the guard covers).
+    //
+    // `inputEpoch` is freshness — the caller can pin the observation its plan was
+    // built on and have the action refused if the page moved since. Note this is
+    // NOT a DOM revision: a counter driven by DOM mutation would never settle on
+    // a page with polling or animation, and the agent could never land anything.
+    // Element-level staleness is handled separately, in actScript.
+    const refuse = (
+      refusalReason: 'user_active' | 'stale_input_epoch',
+      message: string
+    ): CanvasActResult => ({
+      ok: false,
+      action: action.kind,
+      found: false,
+      executed: false,
+      verified: 'unknown',
+      refusalReason,
+      message,
+      ref: action.ref,
+      selector: action.selector,
+      url: wc.getURL(),
+      title: surface.getTitle()
+    })
+    if (Date.now() < this.userActiveUntil) {
+      return refuse(
+        'user_active',
+        'The user is interacting with this canvas. Wait for them to finish, then re-snapshot.'
+      )
+    }
+    if (
+      typeof action.expectedInputEpoch === 'number' &&
+      action.expectedInputEpoch !== this.inputEpoch
+    ) {
+      return refuse(
+        'stale_input_epoch',
+        `The user has interacted with this canvas since your snapshot (expected epoch ${action.expectedInputEpoch}, now ${this.inputEpoch}). Re-snapshot before acting.`
+      )
+    }
+
     const result = (await wc.executeJavaScript(actScript(action), true)) as {
       ok: boolean
       found: boolean

@@ -586,7 +586,12 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           if (!ref && !selector && (x === undefined || y === undefined)) {
             return fail(toolName, 'Provide a `ref`, a `selector`, or both `x` and `y`.')
           }
-          const result = await controller.click(needsId(), { kind: 'click', ref, selector, x, y }, ctx)
+          const expectedInputEpoch = asOptNumber(args.expectedInputEpoch)
+          const result = await controller.click(
+            needsId(),
+            { kind: 'click', ref, selector, x, y, expectedInputEpoch },
+            ctx
+          )
           return jsonResult({
             ...result,
             ...(result.url ? { url: redactUrlQuery(result.url) } : {}),
@@ -600,7 +605,13 @@ export function createCanvasToolExecutors(deps: CanvasToolExecutorDeps): CanvasT
           if (typeof args.value !== 'string') return fail(toolName, '`value` (string) is required.')
           const result = await controller.fill(
             needsId(),
-            { kind: 'fill', ref, selector, value: args.value },
+            {
+              kind: 'fill',
+              ref,
+              selector,
+              value: args.value,
+              expectedInputEpoch: asOptNumber(args.expectedInputEpoch)
+            },
             ctx
           )
           return jsonResult({

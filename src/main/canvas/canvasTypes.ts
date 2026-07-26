@@ -100,6 +100,12 @@ export interface CanvasElementTree {
   nodeCount: number
   /** True when the walk hit the node cap — the tree is partial (document order). */
   truncated: boolean
+  /**
+   * Human-interaction counter for this surface at capture time. Echo it back as
+   * `expectedInputEpoch` on a subsequent action to have that action refused if
+   * the user touched the page in between.
+   */
+  inputEpoch?: number
 }
 
 export interface CanvasFrame {
@@ -139,6 +145,13 @@ export interface CanvasActionInput {
   x?: number
   y?: number
   value?: string
+  /**
+   * The `inputEpoch` from the snapshot this action was planned against. When
+   * supplied and no longer current — i.e. the human has touched the surface since
+   * — the action is refused instead of executed against a page the caller has not
+   * seen. Omit to act on the live page regardless.
+   */
+  expectedInputEpoch?: number
 }
 
 /**
@@ -162,6 +175,16 @@ export type CanvasActRefusalReason =
    * human types their own secrets. See SECRET_FIELD_SELECTOR in CanvasWebDriver.
    */
   | 'secret_field'
+  /**
+   * A human is interacting with the surface right now. Transient — wait, then
+   * re-snapshot. The user always wins.
+   */
+  | 'user_active'
+  /**
+   * The caller pinned an `expectedInputEpoch` and the human has interacted since.
+   * The observation the plan was built on is stale; re-snapshot.
+   */
+  | 'stale_input_epoch'
 
 /** Did the page move around the dispatch? See `CanvasActResult.verified`. */
 export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
