@@ -1396,6 +1396,7 @@ export function getProviderName(provider?: ProviderId) {
   if (provider === 'ollama') return 'Ollama'
   if (provider === 'antigravity') return 'Antigravity'
   if (provider === 'pi') return 'Pi'
+  if (provider === 'mistral') return 'Mistral'
   return 'Gemini'
 }
 

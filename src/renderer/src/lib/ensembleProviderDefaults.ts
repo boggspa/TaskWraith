@@ -184,6 +184,15 @@ const GROK_MODELS: CombinedModelPickerModelOption[] = [
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ]
 
+/** Mistral Vibe seat models. BARE ids only — a `mistral/<model>` id belongs to
+ *  Pi's BYOK upstream, a different provider that shares the brand word.
+ *  devstral-small leads because it is the seat default. Mirrors
+ *  MISTRAL_SEAT_MODELS and the contextWindows registrations. */
+const MISTRAL_MODELS: CombinedModelPickerModelOption[] = [
+  { id: 'devstral-small', label: 'Devstral Small' },
+  { id: 'mistral-medium-3.5', label: 'Mistral Medium 3.5' }
+]
+
 // Cursor model catalog — backs live Path-B Cursor seats and decodes stored
 // historical ensemble seats.
 const CURSOR_MODELS: CombinedModelPickerModelOption[] = [
@@ -858,6 +867,19 @@ export function getEnsembleModelDefaults(provider: ProviderId): EnsembleModelDef
         defaultReasoning: '',
         fastModeCapableModelIds: new Set<string>(),
         defaultModelId: 'deepseek/deepseek-v4-flash'
+      }
+    case 'mistral':
+      // Without this case the switch fell to `default:`, which returns an EMPTY
+      // modelOptions list — so selecting Mistral for an ensemble participant
+      // offered zero models and seeded Codex's `gpt-5.5` as the default id. The
+      // two sibling switches in this file already had their mistral branches,
+      // which is exactly why the gap was invisible.
+      return {
+        modelOptions: MISTRAL_MODELS,
+        reasoningOptions: [],
+        defaultReasoning: '',
+        fastModeCapableModelIds: new Set<string>(),
+        defaultModelId: 'devstral-small'
       }
     default:
       return {
