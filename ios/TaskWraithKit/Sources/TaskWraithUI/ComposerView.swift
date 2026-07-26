@@ -703,7 +703,21 @@ struct Composer: View {
             // text on its own line, then a thin action strip with model +
             // approval + trailing send controls. Regular-width keeps the
             // single-row cluster (model/approval stay in the separate band).
-            if foldsControlsIntoInput {
+            // Ensemble is deliberately excluded from the two-row fold and falls
+            // through to the single-row branch below.
+            //
+            // That second row exists to carry the model picker, pending-provider
+            // pill, approval control and schedule button — and every one of them
+            // is `!card.isEnsemble`-gated, because an ensemble's models come from
+            // the roster, not a composer chip. So for an ensemble the row holds
+            // nothing but a Spacer and the trailing send cluster, which the
+            // single-row branch already places inline with the input. It was a
+            // whole row of height (~34pt) buying nothing.
+            //
+            // The two branches are content-identical for an ensemble: same
+            // photos button, caret, input, queue button, context donut and
+            // primary action, with the picker/schedule suppressed either way.
+            if foldsControlsIntoInput && !card.isEnsemble {
                 VStack(alignment: .leading, spacing: 6) {
                     HStack(alignment: .bottom, spacing: 8) {
                         #if canImport(UIKit)
