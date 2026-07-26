@@ -79,8 +79,8 @@ surface you approved**, not to every preview opened afterwards in the same run
 — an agent can enumerate a chat's canvases, so an unscoped grant reached
 windows you never saw a prompt for. Because a workspace-wide "interact with any
 preview, in any chat, until revoked" grant is not a scope anyone can
-meaningfully consent to, that tier is gone; a grant persisted by an older build
-is inert rather than honoured.
+meaningfully consent to, it can no longer authorize an interaction; a broader
+grant persisted by an older build is inert rather than honoured.
 
 Relatedly, and worth stating plainly: when an agent asked to type into a field,
 the approval record kept the text it was about to type, and that record reached
