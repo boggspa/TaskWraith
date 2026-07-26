@@ -2495,9 +2495,23 @@
 }
 
 .settings-safety-summary-card,
-.settings-safety-surface-card,
 .settings-safety-provider-card {
   display: grid;
+  gap: 6px;
+  padding: 10px;
+}
+
+/*
+  Surface cards lay out as a flex column rather than a grid. The surface grid
+  stretches every card in a row to the tallest one, and a grid child soaks up
+  that slack: the action button (min-height only, no fixed height) rendered
+  taller in the shorter cards, so no two buttons in a row matched. Flex keeps
+  the button at its intrinsic pill height and sends the slack to its auto top
+  margin instead — see the action rule below.
+*/
+.settings-safety-surface-card {
+  display: flex;
+  flex-direction: column;
   gap: 6px;
   padding: 10px;
 }
@@ -2595,7 +2609,9 @@
 }
 
 .settings-safety-surface-card .segmented-control-action {
-  justify-self: start;
+  flex: 0 0 auto;
+  align-self: flex-start;
+  margin-top: auto;
 }
 
 .settings-safety-provider-card {
