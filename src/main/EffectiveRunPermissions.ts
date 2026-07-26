@@ -80,7 +80,10 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   mediaEditing: 'deny',
   // Media recording (future capture) is non-grantable — denied under both.
   mediaRecording: 'deny',
-  // Arbitrary canvas_eval is RCE — never available under read_only OR plan.
+  // Arbitrary canvas_eval is RCE. It is an INSTRUMENT (ask under `plan`), but
+  // stays DENY here: read_only's load-bearing property is that it offers no
+  // elevation path at all, so a read_only seat may not even ask to reach a
+  // code-execution boundary.
   canvasEval: 'deny'
 }
 
@@ -107,8 +110,17 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   mediaEditing: 'ask',
   // Capture is non-grantable — denied under plan too.
   mediaRecording: 'deny',
-  // Arbitrary canvas_eval is RCE — never available under plan.
-  canvasEval: 'deny'
+  // Instrument: canvas_eval permitted under plan via human approval. It was
+  // hard-denied here, which made it SILENTLY unavailable in the posture most
+  // likely to want it — plan is the reviewing/inspecting posture, and eval is
+  // sometimes the only way to express a check the structured canvas verbs
+  // cannot. ASK is not a weakening: `canvasEval` is non-grantable
+  // (`isNonGrantableService`), so no grant, preset or Trusted Session can ever
+  // promote this to an automatic allow — it re-prompts on EVERY call, the
+  // script is shown only on the transient desktop approval, and
+  // `preserveExplicitDeny` still lets the global kill switch force it back to
+  // deny. Deliberately NOT relaxed under read_only; see that map.
+  canvasEval: 'ask'
 }
 
 export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPreset> = {
