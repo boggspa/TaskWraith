@@ -245,6 +245,7 @@ import {
   codexProviderOperationId,
   codexTerminalMethodMatchesAdmission,
   CodexThreadAdmissionRegistry,
+  waitForCodexThreadAdmission,
   type CodexThreadAdmissionHistoryHold,
   type CodexThreadAdmissionReservation
 } from './codex/CodexThreadAdmission'
@@ -515,9 +516,15 @@ import {
   createProviderTerminalProjectionOperation,
   createProviderTransportCloseOperation,
   providerTransportAdmissionStillAuthorized,
+  providerTransportLaunchStillAuthorized,
   ProviderOperationRegistry,
   waitForProviderOperationSettlement
 } from './run/ProviderOperationRegistry'
+import {
+  acquireProviderRunLifecycleOwnership,
+  createProviderRunLifecycleOwnershipDependencies,
+  settleProviderRunWithoutTransport
+} from './run/ProviderRunLifecycleOwnership'
 import {
   DEFAULT_HOST_COMMAND_KILL_GRACE_MS,
   HostCommandOperationRegistry,
@@ -1669,6 +1676,7 @@ import { evaluatePlanArtifactWrite } from './PlanArtifactWritePolicy'
 import { ChatUpdateDeliveryCoordinator } from './ChatUpdateDeliveryCoordinator'
 import { RendererResponsivenessTracker } from './RendererResponsivenessTracker'
 import { AntigravityGeminiApiSecretStore } from './antigravity/AntigravityGeminiApiSecretStore'
+import { startAntigravityGeminiApiSeatSummary } from './antigravity/AntigravityGeminiApiSeatCompactionLifecycle'
 import { OutlookCredentialStore } from './outlook/OutlookCredentialStore'
 import { OutlookConnectorService } from './outlook/OutlookConnectorService'
 import { systemTimeZone } from '../shared/office/zonedTime'
@@ -2543,6 +2551,28 @@ function providerRunPersistenceAuthorized(
     return false
   const current = currentProviderRunPersistenceAuthority(appChatId, session.workspacePath)
   return Boolean(current && historyClearAdmissionGate.authorizeRunPersistence(expected, current))
+}
+
+function providerTransportLaunchAuthorized(
+  provider: ProviderId,
+  payload: AgentRunPayload,
+  route: AgentRunRoute
+): boolean {
+  return providerTransportLaunchStillAuthorized({
+    historyBlocked: historyClearAdmissionBlocked(
+      route.appRunId,
+      payload.workspace,
+      route.appChatId
+    ),
+    persistenceAuthorized: providerRunPersistenceAuthorized(provider, route),
+    runAdmitted: runManager.canAdmitTransport(route.appRunId, true),
+    setupSignal: payload.providerSetupAbortSignal
+  })
+}
+
+function settleDeniedProviderTransportLaunch(route: AgentRunRoute): void {
+  if (!route.appRunId) return
+  settleProviderRunWithoutTransport(runManager, route.appRunId)
 }
 
 function releaseProviderRunPersistenceAuthority(appRunId: string | undefined): void {
@@ -22630,7 +22660,8 @@ async function compactCliSeatContext(payload: {
           return runAntigravityGeminiApiSeatSummary({
             prompt,
             model: identity.model,
-            timeoutMs
+            timeoutMs,
+            reservation: payload.reservation
           })
         }
         const args = buildGrokCliArgs({
@@ -22855,7 +22886,8 @@ async function compactProviderContextForReservedRequest(
     if (
       !participant.linkedProviderSessionId &&
       payload.provider !== 'kimi' &&
-      payload.provider !== 'grok'
+      payload.provider !== 'grok' &&
+      payload.provider !== 'antigravity'
     ) {
       return {
         ok: false,
@@ -26754,6 +26786,7 @@ async function runAntigravityGeminiApiSeatSummary(input: {
   prompt: string
   model?: string
   timeoutMs: number
+  reservation: MaintenanceCompactionReservation
 }): Promise<{ ok: boolean; text: string; error?: string }> {
   const wireModel =
     typeof input.model === 'string' && input.model.trim()
@@ -26767,46 +26800,26 @@ async function runAntigravityGeminiApiSeatSummary(input: {
   const auth = deps.resolveAuthOverride()
   if (!auth.ok) return { ok: false, text: '', error: auth.error }
   const sdk = deps.loadSdk ? await deps.loadSdk() : null
-  if (!sdk) {
+  const GoogleGenAI = sdk?.GoogleGenAI
+  if (typeof GoogleGenAI !== 'function') {
     return { ok: false, text: '', error: 'Gemini API SDK is unavailable.' }
   }
-  const work = (async (): Promise<{ ok: boolean; text: string; error?: string }> => {
-    const client = new sdk.GoogleGenAI({ apiKey: auth.apiKey })
-    const stream = await client.models.generateContentStream({
-      model: bareModel,
-      contents: [{ role: 'user', parts: [{ text: input.prompt }] }]
-    })
-    let text = ''
-    for await (const chunk of stream) {
-      const parts = chunk?.candidates?.[0]?.content?.parts
-      if (Array.isArray(parts)) {
-        for (const part of parts) {
-          if (part && part.thought !== true && typeof part.text === 'string') text += part.text
-        }
-      } else if (typeof chunk?.text === 'string') {
-        text += chunk.text
-      }
-    }
-    const trimmed = text.trim()
-    return trimmed
-      ? { ok: true, text: trimmed }
-      : { ok: false, text: '', error: 'Summarize turn returned no text.' }
-  })()
-  const timeout = new Promise<{ ok: boolean; text: string; error?: string }>((resolve) =>
-    setTimeout(
-      () =>
-        resolve({
-          ok: false,
-          text: '',
-          error: `Summarize turn timed out after ${Math.round(input.timeoutMs / 1000)}s.`
-        }),
-      input.timeoutMs
-    )
-  )
+  if (!maintenanceCompactionRegistry.beginNativeActivity(input.reservation)) {
+    return { ok: false, text: '', error: 'Compaction was cancelled for history deletion.' }
+  }
+  const operation = startAntigravityGeminiApiSeatSummary({
+    GoogleGenAI,
+    apiKey: auth.apiKey,
+    model: bareModel,
+    prompt: input.prompt,
+    timeoutMs: input.timeoutMs,
+    cancellationSignal: input.reservation.signal
+  })
   try {
-    return await Promise.race([work, timeout])
-  } catch (error) {
-    return { ok: false, text: '', error: error instanceof Error ? error.message : String(error) }
+    return await operation.result
+  } finally {
+    await operation.terminal
+    maintenanceCompactionRegistry.endNativeActivity(input.reservation)
   }
 }
 
@@ -42792,35 +42805,78 @@ if (isGeminiMcpBridgeProcess) {
           params,
           (left, right) => canonicalPath(left) === canonicalPath(right)
         )
-        const route = routeWithRunId('codex', params)
+        const signedRunPayload = params?.signedRunPayload
+        if (!isRecord(signedRunPayload)) {
+          throw new Error('Native review requires a main-composed signed run payload.')
+        }
+        const claimedSignature =
+          typeof signedRunPayload.effectivePermissionsSignature === 'string'
+            ? signedRunPayload.effectivePermissionsSignature.trim()
+            : ''
+        const reviewDispatchPayload = normalizeAgentRunPayload(
+          {
+            ...signedRunPayload,
+            provider: 'codex',
+            scope: 'workspace',
+            workspace: reviewWorkspacePath,
+            model: normalizeCodexModel(params?.model)
+          },
+          agentRunNormalizerDeps
+        )
+        if (
+          !claimedSignature ||
+          reviewDispatchPayload.effectivePermissionsSignature !== claimedSignature ||
+          reviewDispatchPayload.appRunId !== params.appRunId ||
+          reviewDispatchPayload.appChatId !== params.appChatId ||
+          reviewDispatchPayload.approvalMode !== 'plan' ||
+          reviewDispatchPayload.workflowMode !== 'normal' ||
+          reviewDispatchPayload.effectivePermissions?.readOnly !== true ||
+          reviewDispatchPayload.effectivePermissions.approvalMode !== 'plan'
+        ) {
+          throw new Error('Native review permission posture failed main verification.')
+        }
+        const route = routeWithRunId('codex', reviewDispatchPayload)
         const reviewRunId = route.appRunId
         if (reviewRunId && executionGraphOwnsOrAnchorsRunId(reviewRunId)) {
           throw new Error('Native review cannot reuse a graph-owned run identity.')
         }
-        const reviewDispatchPayload = {
-          provider: 'codex',
-          scope: 'workspace',
-          workspace: reviewWorkspacePath,
-          prompt: 'TaskWraith native review',
-          ...route
-        } as AgentRunPayload
         const reviewDispatchReservation = reserveProviderDispatchForPayload(reviewDispatchPayload)
         let resolveReviewInvocation!: () => void
         const reviewInvocationCompletion = new Promise<void>((resolve) => {
           resolveReviewInvocation = resolve
         })
-        const reviewAdmissionReservation = codexThreadAdmissionRegistry.reserve({
-          threadId,
-          kind: 'review',
-          scope: {
-            appChatId: route.appChatId || '',
-            workspaceId: AppStore.getChat(route.appChatId || '')?.workspaceId,
-            joinAfterRelease: () => reviewInvocationCompletion
-          }
-        })
+        let lifecycleOwnership: ReturnType<
+          typeof acquireProviderRunLifecycleOwnership
+        > | null = null
+        let reviewAdmissionReservation: CodexThreadAdmissionReservation | null = null
         let reviewAdmissionMayBeLive = false
         try {
-          if (!(await reviewAdmissionReservation.waitUntilAcquired())) {
+          promoteProviderRunPersistenceAuthority(
+            reviewDispatchPayload,
+            reviewDispatchReservation
+          )
+          lifecycleOwnership = acquireProviderRunLifecycleOwnership(
+            event.sender,
+            reviewDispatchPayload,
+            route,
+            providerRunLifecycleOwnershipDeps
+          )
+          reviewAdmissionReservation = codexThreadAdmissionRegistry.reserve({
+            threadId,
+            kind: 'review',
+            scope: {
+              appChatId: route.appChatId || '',
+              workspaceId: AppStore.getChat(route.appChatId || '')?.workspaceId,
+              joinAfterRelease: () => reviewInvocationCompletion
+            }
+          })
+          const admitted = await waitForCodexThreadAdmission(reviewAdmissionReservation, {
+            signal: lifecycleOwnership.setupAbortSignal,
+            isTerminalClaimed: () =>
+              Boolean(runManager.getClaimedTerminalStatus(lifecycleOwnership!.runId))
+          })
+          if (!admitted) {
+            lifecycleOwnership.settleIfUnclaimed('cancelled')
             throw new Error('Native review admission was cancelled before setup.')
           }
           if (
@@ -42831,17 +42887,27 @@ if (isGeminiMcpBridgeProcess) {
             )
           ) {
             reviewAdmissionReservation.releaseBeforeAdmission()
+            lifecycleOwnership.settleIfUnclaimed('cancelled')
             throw new Error('Native review authority was revoked while awaiting admission.')
           }
           const client = getCodexClient()
           try {
-            await client.ensureStarted(app.getVersion())
+            await client.ensureStarted(app.getVersion(), {
+              signal: lifecycleOwnership.setupAbortSignal,
+              assertCanStart: (boundary) => {
+                if (!runManager.canAdmitTransport(lifecycleOwnership!.runId, true)) {
+                  throw new CodexAppServerStartupAbortedError(boundary)
+                }
+              }
+            })
           } catch (error) {
             reviewAdmissionReservation.releaseBeforeAdmission()
+            if (error instanceof CodexAppServerStartupAbortedError) {
+              lifecycleOwnership.settleIfUnclaimed('cancelled')
+            }
             throw error
           }
-          promoteProviderRunPersistenceAuthority(reviewDispatchPayload, reviewDispatchReservation)
-          const model = normalizeCodexModel(params?.model)
+          const model = reviewDispatchPayload.model || normalizeCodexModel(params?.model)
           const reviewState = createCodexRunState(
             event.sender,
             threadId,
@@ -42849,7 +42915,8 @@ if (isGeminiMcpBridgeProcess) {
             reviewWorkspacePath,
             reviewWorkspacePath,
             'workspace',
-            route
+            route,
+            reviewDispatchPayload
           )
           reviewState.usagePromptText =
             typeof params?.usagePromptText === 'string' ? params.usagePromptText : undefined
@@ -42857,6 +42924,7 @@ if (isGeminiMcpBridgeProcess) {
           reviewState.admissionReservation = reviewAdmissionReservation
           const sessionBeforeReviewRegistration = runManager.get(route.appRunId)
           if (
+            !runManager.canAdmitTransport(lifecycleOwnership.runId, true) ||
             !providerTransportAdmissionStillAuthorized({
               historyBlocked: historyClearAdmissionBlocked(
                 route.appRunId,
@@ -42898,6 +42966,7 @@ if (isGeminiMcpBridgeProcess) {
             throw new Error('Native review could not reserve its exact run identity.')
           }
           if (
+            !runManager.canAdmitTransport(lifecycleOwnership.runId, true) ||
             !providerTransportAdmissionStillAuthorized({
               historyBlocked: historyClearAdmissionBlocked(
                 route.appRunId,
@@ -43040,8 +43109,12 @@ if (isGeminiMcpBridgeProcess) {
             throw error
           }
         } finally {
-          if (!reviewAdmissionMayBeLive) reviewAdmissionReservation.releaseBeforeAdmission()
+          if (!reviewAdmissionMayBeLive) reviewAdmissionReservation?.releaseBeforeAdmission()
+          lifecycleOwnership?.settleIfUnclaimed()
           releaseProviderDispatchReservation(reviewDispatchReservation)
+          if (reviewRunId && !runManager.get(reviewRunId)) {
+            releaseProviderRunPersistenceAuthority(reviewRunId)
+          }
           resolveReviewInvocation()
         }
       }
@@ -43257,6 +43330,175 @@ if (isGeminiMcpBridgeProcess) {
       artifactStore: projectReferenceArtifactStore
     })
     projectReferenceContextAuditServiceRef = projectReferenceContextAuditService
+    const providerRunLifecycleOwnershipDeps =
+      createProviderRunLifecycleOwnershipDependencies({
+        registerStartingSession: (input) =>
+          registerRunSession(
+            input.provider,
+            input.sender as Electron.WebContents,
+            input.route,
+            input.workspacePath,
+            input.state,
+            input.providerSessionId,
+            false,
+            'starting',
+            input.setupAbortController
+          ),
+        runManager
+      })
+    const authorizeProviderLifecycleStart = (
+      payload: AgentRunPayload,
+      reservation: object | undefined
+    ): void => {
+      const providerReservation = reservation as ProviderDispatchReservation | undefined
+      validateProviderDispatchReservation(payload, providerReservation)
+      const appRunId = payload.appRunId?.trim()
+      if (!appRunId) throw new Error('Provider dispatch requires an exact app run id.')
+      if (runManager.get(appRunId)) {
+        throw new Error('Provider dispatch run identity already has a lifecycle owner.')
+      }
+      const candidate = AppStore.getRunQueueJob(appRunId)
+      const durableClaim = executionGraphDurableClaimForRun(appRunId)
+      if (executionGraphAnchorClaimsForRun(appRunId).length > 0) {
+        throw new Error('A live Stack anchor run identity cannot start another transport.')
+      }
+      if (!candidate?.executionGraph && !durableClaim) {
+        promoteProviderRunPersistenceAuthority(payload, providerReservation!)
+        return
+      }
+      if (!candidate?.executionGraph || !durableClaim) {
+        throw new Error('Execution graph adapter authority is missing its exact durable twin.')
+      }
+      const admission = executionGraphAdapterAdmissions.get(appRunId)
+      if (!admission || !executionGraphDispatchesInFlight.has(appRunId)) {
+        throw new Error('Execution graph adapter dispatch lacks one-shot main authority.')
+      }
+      const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+      const binding = job.executionGraph!
+      const admittedPrompt = sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt, {
+        advertised: payload.taskWraithMcpAdvertised === true,
+        coreProfile: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        gatewayProfile: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        injectCoreNote: payload.provider !== 'claude' || !payload.providerSessionId,
+        injectGatewayNote: payload.provider !== 'claude' || !payload.providerSessionId,
+        targetProvider: payload.provider
+      })
+      if (
+        job.status !== 'starting' ||
+        admission.executionId !== binding.executionId ||
+        admission.activationId !== binding.activationId ||
+        admission.attemptId !== binding.attemptId ||
+        admission.runTemplateRef !== binding.runTemplateRef ||
+        durableClaim.projection.executionId !== admission.executionId ||
+        durableClaim.attempt.id !== admission.attemptId ||
+        payload.provider !== admission.payload.provider ||
+        payload.appChatId !== admission.payload.appChatId ||
+        payload.scope !== 'workspace' ||
+        !payload.workspace ||
+        !admission.payload.workspace ||
+        canonicalPath(payload.workspace) !== canonicalPath(admission.payload.workspace) ||
+        payload.prompt !== admittedPrompt
+      ) {
+        throw new Error('Execution graph adapter dispatch identity changed before lifecycle start.')
+      }
+      const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
+      if (
+        resolution.provider !== payload.provider ||
+        resolution.reroute ||
+        payload.providerReroute
+      ) {
+        throw new Error('Execution graph attempts cannot be rerouted after composition.')
+      }
+      promoteProviderRunPersistenceAuthority(payload, providerReservation!)
+    }
+    const authorizeProviderAdapterLaunch = (
+      payload: AgentRunPayload,
+      reservation: object | undefined
+    ): void => {
+      validateProviderDispatchReservation(
+        payload,
+        reservation as ProviderDispatchReservation | undefined
+      )
+      const appRunId = payload.appRunId?.trim()
+      if (!appRunId) throw new Error('Provider dispatch requires an exact app run id.')
+      const session = runManager.get(appRunId)
+      const lifecycleState = isRecord(session?.state) ? session.state : null
+      const setupAbortController = session?.abortController as AbortController | undefined
+      if (
+        !session ||
+        session.status !== 'starting' ||
+        session.provider !== payload.provider ||
+        session.appChatId !== payload.appChatId ||
+        lifecycleState?.lifecycleOwner !== 'run-coordinator' ||
+        lifecycleState.provider !== payload.provider ||
+        lifecycleState.appRunId !== appRunId ||
+        setupAbortController?.signal !== payload.providerSetupAbortSignal ||
+        !runManager.canAdmitTransport(appRunId, true) ||
+        !providerRunPersistenceAuthorized(payload.provider, {
+          appRunId,
+          appChatId: payload.appChatId
+        })
+      ) {
+        throw new Error('Provider dispatch lost its exact coordinator lifecycle before launch.')
+      }
+      const candidate = AppStore.getRunQueueJob(appRunId)
+      const durableClaim = executionGraphDurableClaimForRun(appRunId)
+      if (!candidate?.executionGraph && !durableClaim) return
+      if (!candidate?.executionGraph || !durableClaim) {
+        throw new Error('Execution graph adapter authority is missing its exact durable twin.')
+      }
+      const admission = executionGraphAdapterAdmissions.get(appRunId)
+      const adapterContext = executionGraphAdapterContext.getStore()
+      const token = providerAdapterInvocationTokens.get(appRunId)
+      if (
+        !admission ||
+        !token ||
+        !executionGraphDispatchesInFlight.has(appRunId) ||
+        adapterContext?.appRunId !== appRunId ||
+        adapterContext.token !== token ||
+        adapterContext.admission !== admission
+      ) {
+        throw new Error('Execution graph adapter dispatch lacks one-shot main authority.')
+      }
+      const { job } = resolveExecutionGraphQueueAuthority(appRunId)
+      const binding = job.executionGraph!
+      const admittedPrompt = sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt, {
+        advertised: payload.taskWraithMcpAdvertised === true,
+        coreProfile: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        gatewayProfile: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
+        injectCoreNote: payload.provider !== 'claude' || !payload.providerSessionId,
+        injectGatewayNote: payload.provider !== 'claude' || !payload.providerSessionId,
+        targetProvider: payload.provider
+      })
+      if (
+        job.status !== 'active' ||
+        admission.executionId !== binding.executionId ||
+        admission.activationId !== binding.activationId ||
+        admission.attemptId !== binding.attemptId ||
+        admission.runTemplateRef !== binding.runTemplateRef ||
+        durableClaim.projection.executionId !== admission.executionId ||
+        durableClaim.attempt.id !== admission.attemptId ||
+        payload.provider !== admission.payload.provider ||
+        payload.appChatId !== admission.payload.appChatId ||
+        payload.scope !== 'workspace' ||
+        !payload.workspace ||
+        !admission.payload.workspace ||
+        canonicalPath(payload.workspace) !== canonicalPath(admission.payload.workspace) ||
+        payload.prompt !== admittedPrompt ||
+        !session.workspacePath ||
+        canonicalPath(session.workspacePath) !== canonicalPath(payload.workspace)
+      ) {
+        throw new Error('Execution graph adapter dispatch identity changed before launch.')
+      }
+      const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
+      if (
+        resolution.provider !== payload.provider ||
+        resolution.reroute ||
+        payload.providerReroute
+      ) {
+        throw new Error('Execution graph attempts cannot be rerouted after composition.')
+      }
+    }
     const runCoordinator = new RunCoordinator({
       normalizePayload: (raw) => normalizeAgentRunPayload(raw, agentRunNormalizerDeps),
       routeWithRunId,
@@ -43271,91 +43513,50 @@ if (isGeminiMcpBridgeProcess) {
           reservation as ProviderDispatchReservation | undefined
         )
       },
-      authorizeBeforeAdapterRun: (payload, reservation) => {
-        const providerReservation = reservation as ProviderDispatchReservation | undefined
-        validateProviderDispatchReservation(payload, providerReservation)
-        const appRunId = payload.appRunId?.trim()
-        if (!appRunId) throw new Error('Provider dispatch requires an exact app run id.')
-        const candidate = AppStore.getRunQueueJob(appRunId)
-        const durableClaim = executionGraphDurableClaimForRun(appRunId)
-        if (executionGraphAnchorClaimsForRun(appRunId).length > 0) {
-          throw new Error('A live Stack anchor run identity cannot start another transport.')
-        }
-        if (!candidate?.executionGraph && !durableClaim) {
-          promoteProviderRunPersistenceAuthority(payload, providerReservation!)
-          return
-        }
-        if (!candidate?.executionGraph || !durableClaim) {
-          throw new Error('Execution graph adapter authority is missing its exact durable twin.')
-        }
-        const admission = executionGraphAdapterAdmissions.get(appRunId)
-        if (!admission || !executionGraphDispatchesInFlight.has(appRunId)) {
-          throw new Error('Execution graph adapter dispatch lacks one-shot main authority.')
-        }
-        const { job } = resolveExecutionGraphQueueAuthority(appRunId)
-        const binding = job.executionGraph!
-        const admittedPrompt = sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt, {
-          advertised: payload.taskWraithMcpAdvertised === true,
-          coreProfile: isCoreTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-          gatewayProfile: isGatewayTaskWraithMcpProfile(payload.taskWraithMcpProfileId),
-          injectCoreNote: payload.provider !== 'claude' || !payload.providerSessionId,
-          injectGatewayNote: payload.provider !== 'claude' || !payload.providerSessionId,
-          targetProvider: payload.provider
-        })
-        if (
-          job.status !== 'starting' ||
-          admission.executionId !== binding.executionId ||
-          admission.activationId !== binding.activationId ||
-          admission.attemptId !== binding.attemptId ||
-          admission.runTemplateRef !== binding.runTemplateRef ||
-          durableClaim.projection.executionId !== admission.executionId ||
-          durableClaim.attempt.id !== admission.attemptId ||
-          payload.provider !== admission.payload.provider ||
-          payload.appChatId !== admission.payload.appChatId ||
-          payload.scope !== 'workspace' ||
-          !payload.workspace ||
-          !admission.payload.workspace ||
-          canonicalPath(payload.workspace) !== canonicalPath(admission.payload.workspace) ||
-          payload.prompt !== admittedPrompt ||
-          runManager.get(appRunId)
-        ) {
-          throw new Error('Execution graph adapter dispatch identity changed before launch.')
-        }
-        const resolution = resolveProviderDispatch(AppStore.getSettings(), payload.provider)
-        if (
-          resolution.provider !== payload.provider ||
-          resolution.reroute ||
-          payload.providerReroute
-        ) {
-          throw new Error('Execution graph attempts cannot be rerouted after composition.')
-        }
-        promoteProviderRunPersistenceAuthority(payload, providerReservation!)
-      },
+      authorizeBeforeAdapterRun: authorizeProviderAdapterLaunch,
       releaseDispatchReservation: releaseProviderDispatchReservation,
-      runAdapter: async (adapter, event, payload) => {
+      runWithLifecycleOwnership: async (event, payload, reservation, run) => {
         const appRunId = payload.appRunId?.trim()
         const admission = appRunId ? executionGraphAdapterAdmissions.get(appRunId) : undefined
-        if (!appRunId) {
-          await adapter.run({ event, payload })
-          return
-        }
+        if (!appRunId) throw new Error('Provider lifecycle ownership requires an exact run id.')
         if (providerAdapterInvocationTokens.has(appRunId)) {
           throw new Error('A provider adapter invocation already owns this run identity.')
         }
         const token = Object.freeze({})
         providerAdapterInvocationTokens.set(appRunId, token)
-        let adapterOperation: Promise<void> | null = null
+        let adapterJoinOperation: Promise<void> | null = null
         try {
-          adapterOperation = Promise.resolve(
+          const dispatchOperation = Promise.resolve(
             executionGraphAdapterContext.run(
               { appRunId, token, ...(admission ? { admission } : {}) },
-              () => adapter.run({ event, payload })
+              async () => {
+                authorizeProviderLifecycleStart(payload, reservation)
+                const route = routeWithRunId(payload.provider, payload)
+                const ownership = acquireProviderRunLifecycleOwnership(
+                  event.sender,
+                  payload,
+                  route,
+                  providerRunLifecycleOwnershipDeps
+                )
+                try {
+                  return await run()
+                } finally {
+                  ownership.settleIfUnclaimed()
+                }
+              }
             )
           )
-          providerAdapterRunsInFlight.set(appRunId, adapterOperation)
-          await adapterOperation
+          adapterJoinOperation = dispatchOperation.then(
+            () => undefined,
+            () => undefined
+          )
+          providerAdapterRunsInFlight.set(appRunId, adapterJoinOperation)
+          return await dispatchOperation
         } finally {
-          if (adapterOperation && providerAdapterRunsInFlight.get(appRunId) === adapterOperation) {
+          if (
+            adapterJoinOperation &&
+            providerAdapterRunsInFlight.get(appRunId) === adapterJoinOperation
+          ) {
             providerAdapterRunsInFlight.delete(appRunId)
           }
           if (providerAdapterInvocationTokens.get(appRunId) === token) {
