@@ -270,6 +270,28 @@ const GROK_DEFAULT_MODELS = [
   },
   { id: 'grok-composer-2.5-fast', label: 'Grok Composer 2.5 Fast' }
 ] satisfies CodexModelOption[]
+// Mistral Vibe seat catalog. BARE ids only — a `mistral/<model>` id belongs to
+// Pi's BYOK upstream, a DIFFERENT provider that shares the brand word, and is
+// served through the `pi` group in this same picker.
+//
+// devstral-small leads and is the default: graded head-to-head it was ~26x
+// cheaper and more accurate on lane work. Note the two are NOT equivalent —
+// only mistral-medium-3.5 has thinking + vision; the seat's provider-level
+// `imageAttachments` is false because the default model has none.
+const MISTRAL_DEFAULT_MODEL = 'devstral-small'
+const MISTRAL_DEFAULT_MODELS = [
+  {
+    id: MISTRAL_DEFAULT_MODEL,
+    label: 'Devstral Small',
+    description: '256K context - coding-tuned',
+    isDefault: true
+  },
+  {
+    id: 'mistral-medium-3.5',
+    label: 'Mistral Medium 3.5',
+    description: '256K context - flagship'
+  }
+] satisfies CodexModelOption[]
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
 const CURSOR_DEFAULT_MODELS = [
@@ -423,6 +445,8 @@ export {
   GEMINI_DEFAULT_MODEL,
   GROK_DEFAULT_MODEL,
   GROK_DEFAULT_MODELS,
+  MISTRAL_DEFAULT_MODEL,
+  MISTRAL_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,

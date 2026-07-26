@@ -20,8 +20,10 @@
 
 import { describe, expect, it } from 'vitest'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../../../shared/retiredProviders'
+import { getStaticProviderModels } from '../../../main/providers/StaticProviderModels'
 import { getProviderName } from './Sidebar'
 import { getEnsembleModelDefaults } from '../lib/ensembleProviderDefaults'
+import { MISTRAL_DEFAULT_MODELS } from '../lib/providerModelDefaults'
 
 describe('provider display-name fallthrough', () => {
   it('is not vacuous — the roster it iterates is real', () => {
@@ -45,6 +47,31 @@ describe('provider display-name fallthrough', () => {
     // other half of this bug class, and it reads as correct at a glance.
     const names = LIVE_SELECTABLE_PROVIDER_IDS.map((provider) => getProviderName(provider))
     expect(new Set(names).size).toBe(names.length)
+  })
+})
+
+describe('main/renderer model-catalogue agreement', () => {
+  // The composer picker does NOT read main's catalogue — the renderer keeps its
+  // own copy in providerModelDefaults.ts and App.tsx dispatches to it. So main
+  // can resolve a provider's models perfectly while the picker shows "No models
+  // available", which is exactly what shipped: every main-side test passed, the
+  // seat was selectable, and it had no model to pick. Only driving the UI found
+  // it. This asserts the two sides agree for the static-catalogue seats.
+  it('serves the same Mistral models on both sides of the boundary', () => {
+    const mainIds = getStaticProviderModels('mistral').map((model) => model.id)
+    const rendererIds = MISTRAL_DEFAULT_MODELS.map((model) => model.id)
+    expect(mainIds.length).toBeGreaterThan(0)
+    expect(rendererIds.length).toBeGreaterThan(0)
+    expect([...rendererIds].sort()).toEqual([...mainIds].sort())
+  })
+
+  it('marks exactly one default, and the same one, on both sides', () => {
+    // A catalogue that agrees on membership but disagrees on `isDefault` seeds
+    // a different model depending on which side answered.
+    const mainDefault = getStaticProviderModels('mistral').find((model) => model.isDefault)?.id
+    const rendererDefault = MISTRAL_DEFAULT_MODELS.find((model) => model.isDefault)?.id
+    expect(mainDefault).toBeTruthy()
+    expect(rendererDefault).toBe(mainDefault)
   })
 })
 

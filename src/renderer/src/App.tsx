@@ -265,6 +265,8 @@ import {
   GEMINI_DEFAULT_MODEL,
   GROK_DEFAULT_MODEL,
   GROK_DEFAULT_MODELS,
+  MISTRAL_DEFAULT_MODEL,
+  MISTRAL_DEFAULT_MODELS,
   CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,
   isGeminiModelId,
@@ -4130,6 +4132,14 @@ function App(): React.JSX.Element {
     // row could never run — so this deliberately does NOT fall back to the full
     // static list: an empty group means "no keys yet", which is true.
     if (provider === 'pi') return agentModelsByProvider.pi || []
+    // Mistral is a STATIC catalogue, unlike Pi directly above: the Vibe seat's
+    // two models are fixed in the CLI's own bundled config and need no key
+    // discovery, so returning [] here would mean "no models" permanently rather
+    // than "no keys yet". Without this branch the picker rendered a MISTRAL
+    // group reading "No models available" and the seat could not be used at all
+    // — main's getStaticProviderModels('mistral') was correct the whole time;
+    // the catalogue simply never reached the renderer.
+    if (provider === 'mistral') return MISTRAL_DEFAULT_MODELS
     return []
   }
 
@@ -4162,6 +4172,10 @@ function App(): React.JSX.Element {
         PI_DEFAULT_MODEL_WIRE_ID
       )
     }
+    // Same trap the Pi comment above records, one provider later: without this
+    // a Mistral seat's default fell through to GEMINI_DEFAULT_MODEL — a Gemini
+    // id on a Mistral run.
+    if (provider === 'mistral') return MISTRAL_DEFAULT_MODEL
     return GEMINI_DEFAULT_MODEL
   }
 
