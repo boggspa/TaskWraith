@@ -52,7 +52,7 @@ export const SIDEBAR_HIERARCHY_SECTION_LABELS: Record<SidebarHierarchySectionId,
   ensembles: 'Ensembles',
   workspaces: 'Workspaces',
   chats: 'Chats',
-  shared: 'Shared'
+  shared: 'People'
 }
 
 const STORAGE_KEY = 'taskwraith-sidebar-hierarchy-order'

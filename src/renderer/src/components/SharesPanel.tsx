@@ -200,7 +200,7 @@ export function SharesPanelView({
       <div className="shares-panel-header">
         <label className="settings-label">People</label>
         <div className="settings-hint">
-          Chats you&apos;ve shared with human collaborators. Each collaborator joins over an
+          Chats you&apos;ve invited people into. Each person joins over an
           out-of-band invite and a one-time security code; you can stop a share at any time.
           Collaborator contributions are host-reviewed — nothing reaches the AI unless you
           insert it as a draft and send it yourself.

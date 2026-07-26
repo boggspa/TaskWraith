@@ -1719,7 +1719,7 @@ function SidebarChatRowInner({
           isRunning,
           needsInput,
           lastRunStatus,
-          prefix: 'Shared'
+          prefix: 'People'
         }
       : {
           chatId: chat.appChatId,
@@ -2809,7 +2809,7 @@ export function SharesFooterPopover({
   return (
     <SidebarFooterPopover
       title="People"
-      ariaLabel="Active shared chats"
+      ariaLabel="Active People chats"
       navLabel="Manage shares"
       onNav={onOpenSettings}
     >
@@ -4717,10 +4717,10 @@ export function Sidebar({
                         setNewMenuSharedOpen((current) => !current)
                       }}
                       aria-expanded={newMenuSharedOpen}
-                      title="Show shared chat options"
+                      title="Show People chat options"
                     >
                       <PeopleSymbolIcon />
-                      <span className="sidebar-new-menu-item-label">Shared...</span>
+                      <span className="sidebar-new-menu-item-label">People...</span>
                       <span className="sidebar-new-menu-chevron" aria-hidden>
                         <ChevronSymbolIcon isExpanded={newMenuSharedOpen} />
                       </span>
@@ -4752,7 +4752,7 @@ export function Sidebar({
                       setNewMenuWorkflowTemplatesOpen(false)
                       onJoinSharedChat()
                     }}
-                    title="Join a shared chat — paste an invite to follow along"
+                    title="Join a People chat — paste an invite to follow along"
                   >
                     <PeopleSymbolIcon />
                     <span className="sidebar-new-menu-item-label">Join a People Chat</span>
@@ -6182,8 +6182,8 @@ export function Sidebar({
                         expandSidebarSection('shared')
                         setSharedCreateMenuOpen((current) => !current)
                       }}
-                      title="Choose shared chat type"
-                      aria-label="Choose shared chat type"
+                      title="Choose People chat type"
+                      aria-label="Choose People chat type"
                       aria-expanded={sharedCreateMenuOpen}
                       aria-haspopup="menu"
                     >
@@ -6253,7 +6253,7 @@ export function Sidebar({
                   {visibleSharedChats.length === 0 && !isSidebarSearchActive && (
                     <div className="sidebar-empty-state sidebar-empty-state--ghost">
                       <PeopleSymbolIcon />
-                      <strong>No shared chats</strong>
+                      <strong>No People chats</strong>
                       <span>Hit + above to invite people.</span>
                     </div>
                   )}

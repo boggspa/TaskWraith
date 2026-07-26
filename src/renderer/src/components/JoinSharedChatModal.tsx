@@ -229,7 +229,7 @@ export function JoinSharedChatModal({
 
   const requestLeave = useCallback(() => {
     if (step === 'viewing' || step === 'sas') {
-      if (!window.confirm('Leave this shared chat?')) return
+      if (!window.confirm('Leave this People chat?')) return
     }
     leaveAndClose()
   }, [leaveAndClose, step])
@@ -326,7 +326,7 @@ export function JoinSharedChatModal({
       setStep('sas')
       setConnectionState('connecting')
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not connect to the shared chat.')
+      setError(e instanceof Error ? e.message : 'Could not connect to the People chat.')
       setConnectionState('disconnected')
       void window.api.humanCollaborationCollaboratorLeave?.()
       setStep('paste')
@@ -429,14 +429,14 @@ export function JoinSharedChatModal({
         className="creative-approval-modal join-shared-chat-modal"
         role="dialog"
         aria-modal="true"
-        aria-label="Join a shared chat"
+        aria-label="Join a People chat"
         onMouseDown={(event) => event.stopPropagation()}
       >
         <div className="creative-approval-modal-eyebrow">Collaborate · People</div>
 
         {step === 'paste' || step === 'connecting' ? (
           <>
-            <h2 className="creative-approval-modal-title">Join a shared chat</h2>
+            <h2 className="creative-approval-modal-title">Join a People chat</h2>
             <div className={connectionClassName}>Connection: {connectionLabel}</div>
             <p className="creative-approval-modal-description">
               Paste the invite the host shared with you, then verify the 6-digit code together.
@@ -451,7 +451,7 @@ export function JoinSharedChatModal({
                   onClick={() => void handleReconnect()}
                   disabled={busy || step === 'connecting'}
                 >
-                  Reconnect to your last shared chat
+                  Reconnect to your last People chat
                 </PillButton>
               </div>
             )}

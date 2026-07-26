@@ -45,7 +45,7 @@ export function HostAdmissionBannerCard({
       <div className="host-admission-banner" role="status">
         <div className="host-admission-banner-body">
           <div className="host-admission-banner-text">
-            <strong>{entry.displayName}</strong> is reconnecting to this shared chat from their
+            <strong>{entry.displayName}</strong> is reconnecting to this People chat from their
             previously verified device. No code check is needed.
           </div>
         </div>
@@ -67,7 +67,7 @@ export function HostAdmissionBannerCard({
     <div className="host-admission-banner" role="status">
       <div className="host-admission-banner-body">
         <div className="host-admission-banner-text">
-          <strong>{entry.displayName}</strong> is joining this shared chat. Confirm this code
+          <strong>{entry.displayName}</strong> is joining this People chat. Confirm this code
           matches what they see before they accept:
         </div>
         <div

@@ -949,7 +949,7 @@ describe('Sidebar shared chat create options', () => {
     const html = renderSidebar([], { onCreateSharedChat: () => {} })
 
     expect(html).toContain('sidebar-shared-section')
-    expect(html).toContain('aria-label="Choose shared chat type"')
+    expect(html).toContain('aria-label="Choose People chat type"')
   })
 
   it('renders shared chats with the standard chat row action affordance', () => {
@@ -999,7 +999,7 @@ describe('Sidebar shared chat create options', () => {
     )
 
     expect(html).not.toContain('Archived shared thread')
-    expect(html).toContain('No shared chats')
+    expect(html).toContain('No People chats')
   })
 })
 
