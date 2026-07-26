@@ -148,8 +148,8 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['pi', 'claude', 'antigravity', 'kimi'])
-    expect(groups.map((g) => g.label)).toEqual(['Pi', 'Claude', 'AntiGravity', 'Kimi'])
+    expect(groups.map((g) => g.provider)).toEqual(['pi', 'mistral', 'claude', 'antigravity', 'kimi'])
+    expect(groups.map((g) => g.label)).toEqual(['Pi', 'Mistral', 'Claude', 'AntiGravity', 'Kimi'])
 
     const pi = groups.find((g) => g.provider === 'pi')
     // One row per BYOK upstream, each spoofing its own brand hue — the classes
@@ -167,6 +167,19 @@ describe('notification registry', () => {
       expect(model.accentProvider).toBeTruthy()
     }
     expect(newAdditions?.body).toContain('The Pi seat arrives')
+
+    const mistral = groups.find((g) => g.provider === 'mistral')
+    // Mistral's own Vibe seat, distinct from the `mistral/*` BYOK rows Pi
+    // serves. Unlike the Pi rows these carry NO accentProvider — every model
+    // here really is this provider, so the group's own hue is correct.
+    expect(mistral?.models.map((m) => m.name)).toEqual(['Devstral Small', 'Mistral Medium 3.5'])
+    for (const model of mistral?.models ?? []) {
+      expect(model.accentProvider).toBeUndefined()
+      // `devstral-2` is the RETIRED ALIAS for mistral-medium-3.5, so a row
+      // named "Devstral 2" would advertise the wrong model entirely.
+      expect(model.name).not.toMatch(/devstral\s*-?\s*2\b/i)
+    }
+    expect(newAdditions?.body).toContain('Vibe coding agent')
 
     const claude = groups.find((g) => g.provider === 'claude')
     expect(claude?.models).toEqual([

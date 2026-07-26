@@ -127,7 +127,7 @@ export function activeAppNotifications(args: {
 /** Stable id for the current "New Additions" card — bump the date suffix (and
  *  never reuse this exact id) when the lineup below changes, so a user who
  *  already dismissed the old lineup sees the refreshed one. */
-export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-26'
+export const NEW_ADDITIONS_NOTIFICATION_ID = 'new-additions-2026-07-26b'
 
 /** Always-on carousel notices. Currently just the "New Additions" model-launch
  *  card — replace/extend this list the next time a significant provider or
@@ -137,7 +137,7 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
     id: NEW_ADDITIONS_NOTIFICATION_ID,
     kind: 'addition',
     title: 'New Additions',
-    body: 'The Pi seat arrives — one bring-your-own-key provider fronting DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, and Cerebras, each model wearing its own upstream brand. Claude Opus 5 brings near-Fable 5 intelligence at half the price with Fast mode, AntiGravity offers Gemini 3.6 Flash, 3.5 Flash, and 3.5 Flash-Lite through your own Gemini API key, and Kimi K3 is available now.',
+    body: 'The Pi seat arrives — one bring-your-own-key provider fronting DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, and Cerebras, each model wearing its own upstream brand. Mistral joins as a seat in its own right, running its Vibe coding agent on your Mistral plan. Claude Opus 5 brings near-Fable 5 intelligence at half the price with Fast mode, AntiGravity runs Gemini 3.x through your own Gemini API key, and Kimi K3 is available now.',
     dismissible: true,
     groups: [
       {
@@ -183,6 +183,27 @@ export const PINNED_APP_NOTIFICATIONS: readonly AppNotification[] = [
             name: 'GLM-4.7 (Cerebras)',
             blurb: 'Open weights at Cerebras speed, with GPT-OSS 120B on the same key.',
             accentProvider: 'cerebras'
+          }
+        ]
+      },
+      {
+        // Mistral's OWN seat — the Vibe coding agent, run on your Mistral plan
+        // — NOT the `mistral/*` BYOK rows Pi serves above. Both appear on this
+        // card at once, and that overlap is a deliberate, documented exception
+        // (see the note above `ProviderId` in main/store/types.ts); do not
+        // "fix" it by dropping either one. No per-row `accentProvider` here:
+        // unlike the Pi rows, every model below genuinely IS this provider, so
+        // the group's own Mistral hue is the correct accent.
+        provider: 'mistral',
+        label: 'Mistral',
+        models: [
+          {
+            name: 'Devstral Small',
+            blurb: 'A fast, frugal 262K coding model — the better default for lane work.'
+          },
+          {
+            name: 'Mistral Medium 3.5',
+            blurb: 'The 262K flagship: high thinking and image input, on your Mistral plan.'
           }
         ]
       },
