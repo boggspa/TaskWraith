@@ -83,9 +83,8 @@ export function ActivityReportingSettings(): React.JSX.Element {
         />
       </label>
       <p className="settings-hint" role="note">
-        TaskWraith enables this minimal reporting by default to help the maintainer understand
-        demand and sustain the free, open-source project. You can switch it off at any time; doing
-        so does not limit any feature.
+        TaskWraith leaves this off until you affirmatively choose Share here or during first launch.
+        You can withdraw that choice at any time; doing so does not limit any feature.
       </p>
 
       {!endpointConfigured && (
