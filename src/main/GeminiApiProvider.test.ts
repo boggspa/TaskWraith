@@ -711,6 +711,143 @@ describe('GeminiApiProvider (Phase M1 Step 3 — function calling)', () => {
     expect(texts).toEqual(['Got it.'])
   })
 
+  // Live 400 on 2026-07-25 with gemini-3.5-flash:
+  //   "Function call is missing a thought_signature in functionCall parts...
+  //    function call `default_api:find_files`, position 2"
+  // 3.x thinking models attach an opaque signature to the function-call PART
+  // and require it echoed back verbatim; the replayed model turn was rebuilt
+  // from name+args only, so every 3.x tool loop died on the SECOND request.
+  it('echoes a thought signature back on the replayed model turn', async () => {
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          // Real SDK chunks carry BOTH: the flattened convenience getter and
+          // the raw parts. Only the parts hold the signature.
+          functionCalls: [{ id: 'call-1', name: 'read_file', args: { path: 'README.md' } }],
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { id: 'call-1', name: 'read_file', args: { path: 'README.md' } },
+                    thoughtSignature: 'sig-abc123'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      [{ text: 'Got it.' }]
+    ])
+    const { deps } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'file contents here', isError: false })
+    })
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+
+    const modelPart = callsRef[1].contents[1].parts[0]
+    expect(modelPart.functionCall.name).toBe('read_file')
+    // Sibling of functionCall, not a field inside it.
+    expect(modelPart.thoughtSignature).toBe('sig-abc123')
+    expect(modelPart.functionCall.thoughtSignature).toBeUndefined()
+  })
+
+  it('recovers the signature when only the raw parts are present', async () => {
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { name: 'read_file', args: { path: 'a.txt' } },
+                    thoughtSignature: 'sig-parts-only'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      [{ text: 'done' }]
+    ])
+    const { deps } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'ok', isError: false })
+    })
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+    expect(callsRef[1].contents[1].parts[0].thoughtSignature).toBe('sig-parts-only')
+  })
+
+  it('zips signatures positionally across multiple calls in one chunk', async () => {
+    const { loader, callsRef } = scriptedSdk([
+      [
+        {
+          functionCalls: [
+            { name: 'read_file', args: { path: 'a.txt' } },
+            { name: 'read_file', args: { path: 'b.txt' } }
+          ],
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    functionCall: { name: 'read_file', args: { path: 'a.txt' } },
+                    thoughtSignature: 'sig-a'
+                  },
+                  {
+                    functionCall: { name: 'read_file', args: { path: 'b.txt' } },
+                    thoughtSignature: 'sig-b'
+                  }
+                ]
+              }
+            }
+          ]
+        }
+      ],
+      [{ text: 'done' }]
+    ])
+    const { deps } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'ok', isError: false })
+    })
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+    const parts = callsRef[1].contents[1].parts
+    expect(parts.map((p: { thoughtSignature?: string }) => p.thoughtSignature)).toEqual([
+      'sig-a',
+      'sig-b'
+    ])
+  })
+
+  it('omits the key entirely for 2.5-era models that emit no signature', async () => {
+    // Sending `thoughtSignature: undefined` would serialise as an explicit null
+    // on some transports; the key must simply be absent.
+    const { loader, callsRef } = scriptedSdk([
+      [{ functionCalls: [{ name: 'read_file', args: { path: 'a.txt' } }] }],
+      [{ text: 'done' }]
+    ])
+    const { deps } = makeDeps({
+      profiles: [makeApiKeyProfile()],
+      defaultProfileId: 'profile-1',
+      loadSdk: loader,
+      mcpTools: [makeMcpTool('read_file')],
+      executeMcpTool: async () => ({ text: 'ok', isError: false })
+    })
+    await tryRunGeminiApi(stubEvent, basePayload, baseRoute, deps)
+    expect('thoughtSignature' in callsRef[1].contents[1].parts[0]).toBe(false)
+  })
+
   it('prepares the host tool context before dispatching API function calls', async () => {
     const order: string[] = []
     const { loader } = scriptedSdk([

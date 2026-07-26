@@ -102,7 +102,18 @@ export interface GeminiContent {
 
 export type GeminiContentPart =
   | { text: string }
-  | { functionCall: { name: string; args: Record<string, unknown> } }
+  /**
+   * `thoughtSignature` is a sibling of `functionCall`, NOT a field inside it.
+   * Gemini 3.x thinking models attach it to the part and require it echoed
+   * back verbatim on the replayed model turn; omitting it fails the next
+   * request with `400 ... missing a thought_signature in functionCall parts`.
+   * This union previously had no slot for it, which is how the round trip
+   * silently dropped it. Optional because 2.5-era models never emit one.
+   */
+  | {
+      functionCall: { name: string; args: Record<string, unknown> }
+      thoughtSignature?: string
+    }
   | { functionResponse: { name: string; response: { result?: unknown; error?: string } } }
   | { inlineData: { mimeType: string; data: string } }
   | { fileData: { fileUri: string; mimeType: string } }

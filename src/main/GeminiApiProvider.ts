@@ -562,11 +562,20 @@ function chunkUsage(chunk: any): Record<string, number> | null {
 
 /** Shape of a function-call slot the model emitted during a turn. We
  *  keep `id` optional because the SDK populates it only when the model
- *  emits one (newer models do, 2.0 Flash sometimes omits it). */
+ *  emits one (newer models do, 2.0 Flash sometimes omits it).
+ *
+ *  `thoughtSignature` is the opaque token Gemini 3.x thinking models attach
+ *  to a function-call PART. It MUST be echoed back verbatim on the model turn
+ *  we rebuild, or the next request fails with
+ *  `400 Function call is missing a thought_signature in functionCall parts`.
+ *  2.5 never required it, so this only bites once a 3.x model uses tools —
+ *  text-only turns pass either way. See
+ *  https://ai.google.dev/gemini-api/docs/thought-signatures */
 interface PendingFunctionCall {
   id?: string
   name: string
   args: Record<string, unknown>
+  thoughtSignature?: string
 }
 
 /** Extract any function calls from a single streamed chunk. The SDK
@@ -578,6 +587,27 @@ interface PendingFunctionCall {
 function chunkFunctionCalls(chunk: any): PendingFunctionCall[] {
   if (!chunk) return []
   const out: PendingFunctionCall[] = []
+  // `thoughtSignature` lives on the PART, as a sibling of `functionCall` — and
+  // the `functionCalls` getter flattens to the call objects, dropping it. So
+  // harvest signatures from the raw parts first and zip them onto whichever
+  // extraction path wins; otherwise the preferred (getter) path would always
+  // lose them and every 3.x tool loop would 400 on the following request.
+  const signatures: Array<string | undefined> = []
+  try {
+    const rawParts = chunk.candidates?.[0]?.content?.parts
+    if (Array.isArray(rawParts)) {
+      for (const part of rawParts) {
+        if (part?.functionCall && typeof part.functionCall.name === 'string') {
+          signatures.push(
+            typeof part.thoughtSignature === 'string' ? part.thoughtSignature : undefined
+          )
+        }
+      }
+    }
+  } catch {
+    // Defensive: shape weirdness must not cost us the calls themselves.
+  }
+
   const fromGetter = chunk.functionCalls
   if (Array.isArray(fromGetter)) {
     for (const call of fromGetter) {
@@ -588,7 +618,10 @@ function chunkFunctionCalls(chunk: any): PendingFunctionCall[] {
           args:
             call.args && typeof call.args === 'object' && !Array.isArray(call.args)
               ? (call.args as Record<string, unknown>)
-              : {}
+              : {},
+          // Positional zip: the getter flattens the same parts in order, so
+          // index N of one is index N of the other.
+          thoughtSignature: signatures[out.length]
         })
       }
     }
@@ -606,7 +639,9 @@ function chunkFunctionCalls(chunk: any): PendingFunctionCall[] {
             args:
               call.args && typeof call.args === 'object' && !Array.isArray(call.args)
                 ? (call.args as Record<string, unknown>)
-                : {}
+                : {},
+            thoughtSignature:
+              typeof part.thoughtSignature === 'string' ? part.thoughtSignature : undefined
           })
         }
       }
@@ -955,12 +990,18 @@ export async function tryRunGeminiApi(
     // we just relay the result back to the model. We DO NOT emit
     // additional tool_use / tool_result here — that would double-up
     // in the renderer.
+    // The signature rides on the PART, beside `functionCall` — not inside it.
+    // Rebuilding the model turn from name+args alone is what made Gemini 3.x
+    // reject the NEXT request with "Function call is missing a
+    // thought_signature in functionCall parts"; the model turn we synthesise
+    // has to be faithful to the one it actually produced.
     const modelParts: any[] = pendingFunctionCalls.map((call) => ({
       functionCall: {
         ...(call.id ? { id: call.id } : {}),
         name: call.name,
         args: call.args
-      }
+      },
+      ...(call.thoughtSignature ? { thoughtSignature: call.thoughtSignature } : {})
     }))
     const responseParts: any[] = []
     for (const call of pendingFunctionCalls) {
