@@ -4840,6 +4840,38 @@ public final class RemoteSessionModel: ObservableObject {
         return pr
     }
 
+    /// Queue a peer thread message for another thread on the Mac.
+    ///
+    /// QUEUE-ONLY by construction: the Mac's gate denies a remote wake outright, so
+    /// there is no wake parameter here and none on the wire. The message lands in
+    /// the target thread's inbox and reaches its model on that thread's next turn.
+    ///
+    /// `idempotencyKey` should be minted ONCE per composed message and reused across
+    /// retries, so a retap after a timeout is recognised rather than queued twice.
+    /// Returns the Mac's own outcome text; a refusal arrives as
+    /// `RemoteFileActionError.denied` carrying the store's reason (queue full,
+    /// unknown target, policy deny) rather than a generic failure.
+    @discardableResult
+    public func sendThreadMessage(
+        workspaceId: String, fromThreadId: String, toThreadId: String, message: String,
+        idempotencyKey: String
+    ) async throws -> String {
+        let ack = try await requestFileAction(
+            BridgeAction.threadMessage(
+                workspaceId: workspaceId, threadId: fromThreadId, toThreadId: toThreadId,
+                message: message, idempotencyKey: idempotencyKey),
+            timeoutMs: 20_000)
+        return ack.message ?? "Message queued."
+    }
+
+    /// Threads this device may address from `fromThreadId`. Display convenience
+    /// only — the Mac re-checks scope, policy and the gate on every send.
+    public func threadMessageTargets(fromThreadId: String) -> [ThreadMessageTarget] {
+        let sender = taskCards.first { $0.id == fromThreadId || $0.threadId == fromThreadId }
+        return ThreadMessageTargets.candidates(
+            cards: taskCards, fromThreadId: fromThreadId, fromWorkspaceId: sender?.workspaceId)
+    }
+
     private func requestFileAction(
         _ params: [String: Any], timeoutMs: Int = 12_000
     ) async throws -> BridgeActionAck {

@@ -5167,6 +5167,13 @@ public struct ThreadInspector: View {
     /// so it persists across the thread's `.id()` remount and theme teardown
     /// instead of resetting to Changes each time (desktop per-chat-surface parity).
     private var tab: Int { model.inspectorTabByThread[threadId] ?? 0 }
+    /// The peer-inbox count rides the segment label, because a segmented control has
+    /// nowhere to hang a badge. Capped so a runaway inbox cannot stretch the
+    /// control and squeeze the other five segments.
+    private var peersSegmentLabel: String {
+        ThreadMessageBadge.segmentLabel(
+            count: model.threadSnapshots[threadId]?.threadMessageInbox?.count ?? 0)
+    }
     private var tabBinding: Binding<Int> {
         Binding(
             get: { model.inspectorTabByThread[threadId] ?? 0 },
@@ -5182,6 +5189,7 @@ public struct ThreadInspector: View {
                 Text("Side chats").tag(2)
                 Text("Notes").tag(3)
                 Text("Usage").tag(4)
+                Text(peersSegmentLabel).tag(5)
             }
             .pickerStyle(.segmented)
             .padding(12)
@@ -5219,6 +5227,8 @@ public struct ThreadInspector: View {
                             }
                         } else if tab == 4 {
                             UsagePanel(model: model, threadId: threadId)
+                        } else if tab == 5 {
+                            ThreadMessagePeersPanel(model: model, threadId: threadId)
                         } else {
                             NotesPanel(model: model, threadId: threadId)
                         }
