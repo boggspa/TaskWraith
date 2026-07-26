@@ -237,6 +237,11 @@ struct ThreadDetailView: View {
     /// typing.
     private var compactHeight: Bool { verticalSizeClass == .compact }
 
+    /// Roster presentation, hoisted so the popover can hang off the toolbar
+    /// button (where it anchors correctly) rather than the outer view.
+    private var rosterPresentedBinding: Binding<Bool> {
+        Binding(get: { model.rosterPresented }, set: { model.rosterPresented = $0 })
+    }
     @State private var followUp = ""
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
@@ -2393,6 +2398,25 @@ struct ThreadDetailView: View {
                     .buttonStyle(.plain)
                     .accessibilityLabel("Open Roster")
                     .accessibilityHint("Opens the ensemble participant roster.")
+                    // Anchored HERE, on the button, not on the outer view.
+                    // A popover attached further up the chain anchors to that
+                    // container's bounds — it rendered mid-screen over the
+                    // sidebar with no arrow, reading as a floating slab rather
+                    // than something the Roster button opened.
+                    .popover(isPresented: rosterPresentedBinding) {
+                        if let wsId = card?.workspaceId {
+                            EnsembleRosterSheet(
+                                model: model, threadId: taskId, workspaceId: wsId
+                            )
+                            // Sizes the popover only; nil is a no-op, so the
+                            // phone's sheet is left to the platform.
+                            .frame(
+                                width: hSizeClass == .regular ? 420 : nil,
+                                height: hSizeClass == .regular ? 620 : nil)
+                            .presentationCompactAdaptation(.sheet)
+                            .twSheetLiquidGlass(detents: [.large])
+                        }
+                    }
                 }
             }
             // T2 — full-transcript export. The markdown comes from the Mac's
@@ -2437,12 +2461,6 @@ struct ThreadDetailView: View {
                 .buttonStyle(.plain)
                 .accessibilityLabel("Open Inspector")
                 .accessibilityHint("Opens the thread inspector sidebar.")
-            }
-        }
-        .sheet(isPresented: Binding(get: { model.rosterPresented }, set: { model.rosterPresented = $0 })) {
-            if let wsId = card?.workspaceId {
-                EnsembleRosterSheet(model: model, threadId: taskId, workspaceId: wsId)
-                    .twSheetLiquidGlass(detents: [.large])
             }
         }
         .sheet(item: $renameSheetContext) { context in
