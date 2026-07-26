@@ -11,6 +11,34 @@ describe('RunManager', () => {
     expect(canStartRunTransport(undefined, false)).toBe(true)
   })
 
+  it('does not admit a transport after a terminal claim on an active run', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'grok', status: 'starting' })
+
+    expect(manager.canAdmitTransport('run-1', true)).toBe(true)
+    manager.claimTerminalStatus('run-1', 'cancelled', { requireConfirmation: true })
+
+    expect(manager.get('run-1')?.status).toBe('starting')
+    expect(manager.canAdmitTransport('run-1', true)).toBe(false)
+  })
+
+  it('denies a failed claim on a running run without affecting another identity', () => {
+    const manager = new RunManager()
+    manager.create({ runId: 'run-1', provider: 'claude', status: 'running' })
+    manager.create({ runId: 'run-2', provider: 'claude', status: 'running' })
+    manager.claimTerminalStatus('run-1', 'failed', { requireConfirmation: true })
+
+    expect(manager.canAdmitTransport('run-1', true)).toBe(false)
+    expect(manager.canAdmitTransport('run-2', true)).toBe(true)
+  })
+
+  it('preserves optional pre-registration admission semantics without a run id', () => {
+    const manager = new RunManager()
+
+    expect(manager.canAdmitTransport(undefined, false)).toBe(true)
+    expect(manager.canAdmitTransport(undefined, true)).toBe(false)
+  })
+
   it('indexes sessions by run id, provider, chat, and provider session id', () => {
     const manager = new RunManager()
     const first = manager.create({
@@ -182,6 +210,36 @@ describe('RunManager', () => {
 
     expect(manager.get('run-1')?.status).toBe('cancelled')
     expect(manager.getClaimedTerminalStatus('run-1')).toBeUndefined()
+  })
+
+  it('kills a process attached after an active run received a terminal claim', () => {
+    const manager = new RunManager()
+    const kill = vi.fn()
+    manager.create({ runId: 'run-1', provider: 'pi', status: 'starting' })
+    manager.claimTerminalStatus('run-1', 'cancelled', { requireConfirmation: true })
+
+    manager.attachProcess('run-1', { kill })
+
+    expect(kill).toHaveBeenCalledOnce()
+    expect(manager.get('run-1')).toMatchObject({
+      status: 'starting',
+      process: undefined
+    })
+  })
+
+  it('aborts a controller attached after an active run received a terminal claim', () => {
+    const manager = new RunManager()
+    const abort = vi.fn()
+    manager.create({ runId: 'run-1', provider: 'antigravity', status: 'starting' })
+    manager.claimTerminalStatus('run-1', 'cancelled', { requireConfirmation: true })
+
+    manager.attachAbortController('run-1', { abort })
+
+    expect(abort).toHaveBeenCalledOnce()
+    expect(manager.get('run-1')).toMatchObject({
+      status: 'starting',
+      abortController: undefined
+    })
   })
 
   it('defers a claimed terminal status until the transport confirms it', () => {

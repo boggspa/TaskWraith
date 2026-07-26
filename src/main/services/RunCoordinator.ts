@@ -77,6 +77,17 @@ export interface RunCoordinatorDeps {
   ) => void | Promise<void>
   /** Always release a reservation after preflight/dispatch settles. */
   releaseDispatchReservation?: (reservation: object) => void
+  /**
+   * Establish exact cancellable lifecycle ownership before shared preflight.
+   * Production binds this to RunManager and keeps the returned operation live
+   * across every preflight/reference await through provider settlement.
+   */
+  runWithLifecycleOwnership?: (
+    event: RunDispatchEvent,
+    payload: AgentRunPayload,
+    reservation: object | undefined,
+    run: () => Promise<DispatchResult>
+  ) => Promise<DispatchResult>
   /** Optional main-owned adapter invocation context for provenance fencing. */
   runAdapter?: (
     adapter: ProviderAdapter,
@@ -160,8 +171,7 @@ export class RunCoordinator {
     outerDispatchReservation?: object
   ): Promise<DispatchResult> {
     const ownsDispatchReservation = outerDispatchReservation === undefined
-    const dispatchReservation =
-      outerDispatchReservation ?? this.deps.reserveDispatch?.(payload)
+    const dispatchReservation = outerDispatchReservation ?? this.deps.reserveDispatch?.(payload)
     try {
       const normalizedPayload = this.deps.normalizePayload(payload)
       normalizedPayload.appRunId = this.deps.routeWithRunId(
@@ -180,82 +190,96 @@ export class RunCoordinator {
           route,
           dispatchReservation
         )
-        this.deps.sendExit(
-          event.sender,
-          normalizedPayload.provider,
-          -1,
-          route,
-          dispatchReservation
-        )
+        this.deps.sendExit(event.sender, normalizedPayload.provider, -1, route, dispatchReservation)
         return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
       }
-      const adapter = this.deps.getAdapter(normalizedPayload.provider)
-      try {
-        this.deps.prepareReferenceContext?.(normalizedPayload)
-      } catch (error) {
-        const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
-        const message = error instanceof Error ? error.message : String(error)
-        this.deps.sendError(
-          event.sender,
-          normalizedPayload.provider,
-          message,
-          route,
-          dispatchReservation
-        )
-        this.deps.sendExit(
-          event.sender,
-          normalizedPayload.provider,
-          -1,
-          route,
-          dispatchReservation
-        )
-        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
-      }
-      if (
-        !(await this.deps.ensureProviderRunPreflight(
+      const declinedResult = (): DispatchResult => ({
+        dispatched: false,
+        appRunId: normalizedPayload.appRunId ?? ''
+      })
+      const lifecycleCancelled = (): boolean =>
+        normalizedPayload.providerSetupAbortSignal?.aborted === true
+      const dispatchWithLifecycleOwnership = async (): Promise<DispatchResult> => {
+        if (lifecycleCancelled()) return declinedResult()
+        const adapter = this.deps.getAdapter(normalizedPayload.provider)
+        try {
+          this.deps.prepareReferenceContext?.(normalizedPayload)
+        } catch (error) {
+          const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+          const message = error instanceof Error ? error.message : String(error)
+          this.deps.sendError(
+            event.sender,
+            normalizedPayload.provider,
+            message,
+            route,
+            dispatchReservation
+          )
+          this.deps.sendExit(
+            event.sender,
+            normalizedPayload.provider,
+            -1,
+            route,
+            dispatchReservation
+          )
+          return declinedResult()
+        }
+        const preflightAccepted = await this.deps.ensureProviderRunPreflight(
           event.sender,
           normalizedPayload,
           dispatchReservation
-        ))
-      ) {
-        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
-      }
-      try {
-        await this.deps.authorizeBeforeReferenceCapture?.(
-          normalizedPayload,
-          dispatchReservation
         )
-        await this.deps.captureReferenceContext?.(normalizedPayload)
-      } catch (error) {
-        const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
-        const message = error instanceof Error ? error.message : String(error)
-        this.deps.sendError(
-          event.sender,
-          normalizedPayload.provider,
-          message,
-          route,
-          dispatchReservation
-        )
-        this.deps.sendExit(
-          event.sender,
-          normalizedPayload.provider,
-          -1,
-          route,
-          dispatchReservation
-        )
-        return { dispatched: false, appRunId: normalizedPayload.appRunId ?? '' }
+        if (!preflightAccepted || lifecycleCancelled()) return declinedResult()
+        try {
+          await this.deps.authorizeBeforeReferenceCapture?.(normalizedPayload, dispatchReservation)
+          if (lifecycleCancelled()) return declinedResult()
+          await this.deps.captureReferenceContext?.(normalizedPayload)
+        } catch (error) {
+          if (lifecycleCancelled()) return declinedResult()
+          const route = this.deps.routeWithRunId(normalizedPayload.provider, normalizedPayload)
+          const message = error instanceof Error ? error.message : String(error)
+          this.deps.sendError(
+            event.sender,
+            normalizedPayload.provider,
+            message,
+            route,
+            dispatchReservation
+          )
+          this.deps.sendExit(
+            event.sender,
+            normalizedPayload.provider,
+            -1,
+            route,
+            dispatchReservation
+          )
+          return declinedResult()
+        }
+        if (lifecycleCancelled()) return declinedResult()
+        try {
+          await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload, dispatchReservation)
+        } catch (error) {
+          if (lifecycleCancelled()) return declinedResult()
+          throw error
+        }
+        if (lifecycleCancelled()) return declinedResult()
+        if (this.deps.runAdapter) {
+          await this.deps.runAdapter(adapter, event, normalizedPayload)
+        } else {
+          await adapter.run({ event, payload: normalizedPayload })
+        }
+        return {
+          dispatched: true,
+          appRunId: normalizedPayload.appRunId ?? '',
+          effectiveWorkspacePath: normalizedPayload.workspace
+        }
       }
-      await this.deps.authorizeBeforeAdapterRun?.(normalizedPayload, dispatchReservation)
-      if (this.deps.runAdapter) {
-        await this.deps.runAdapter(adapter, event, normalizedPayload)
-      } else {
-        await adapter.run({ event, payload: normalizedPayload })
-      }
-      return {
-        dispatched: true,
-        appRunId: normalizedPayload.appRunId ?? '',
-        effectiveWorkspacePath: normalizedPayload.workspace
-      }
+      return this.deps.runWithLifecycleOwnership
+        ? await this.deps.runWithLifecycleOwnership(
+            event,
+            normalizedPayload,
+            dispatchReservation,
+            dispatchWithLifecycleOwnership
+          )
+        : await dispatchWithLifecycleOwnership()
     } finally {
       if (ownsDispatchReservation && dispatchReservation) {
         this.deps.releaseDispatchReservation?.(dispatchReservation)

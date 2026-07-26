@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import {
+  PROVIDER_ADAPTER_REGISTRATION_IDS,
   createProviderAdapterRegistry,
   defaultProviderDescriptor,
   providerAdapterDescriptor,
@@ -8,7 +9,7 @@ import {
 import type { ProviderAdapter } from './ProviderAdapters'
 import type { ProviderId } from './store/types'
 
-function adapter(provider: 'gemini' | 'codex'): ProviderAdapter {
+function adapter(provider: ProviderId): ProviderAdapter {
   return {
     ...defaultProviderDescriptor(provider),
     run: async () => {},
@@ -43,7 +44,7 @@ describe('ProviderAdapters', () => {
     // pre-1.0.4-AC was that approval titles hardcoded "Gemini"
     // even when Codex / Claude / Kimi was the parent provider on a
     // cross-provider MCP call. Verifying the label is correct for
-    // all four providers locks in the contract that fix relies on.
+    // every provider identity locks in the contract that fix relies on.
     expect(providerLabel('gemini')).toBe('Gemini')
     expect(providerLabel('codex')).toBe('Codex')
     expect(providerLabel('claude')).toBe('Claude')
@@ -52,10 +53,16 @@ describe('ProviderAdapters', () => {
     expect(providerLabel('cursor')).toBe('Cursor')
     expect(providerLabel('ollama')).toBe('Ollama')
     expect(providerLabel('antigravity')).toBe('AntiGravity')
+    expect(providerLabel('pi')).toBe('Pi')
     expect(defaultProviderDescriptor('antigravity')).toMatchObject({
       provider: 'antigravity',
       transport: 'antigravity-cli',
       capabilities: { sessionResumption: false }
+    })
+    expect(defaultProviderDescriptor('pi')).toMatchObject({
+      provider: 'pi',
+      transport: 'pi-cli',
+      capabilities: { sessionResumption: true }
     })
     expect(defaultProviderDescriptor('codex')).toMatchObject({
       provider: 'codex',
@@ -76,10 +83,22 @@ describe('ProviderAdapters', () => {
       }
     })
     expect(
-      (['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const).map(
-        (provider) => defaultProviderDescriptor(provider).runChannel
-      )
+      (
+        [
+          'gemini',
+          'codex',
+          'claude',
+          'kimi',
+          'grok',
+          'cursor',
+          'ollama',
+          'antigravity',
+          'pi'
+        ] as const
+      ).map((provider) => defaultProviderDescriptor(provider).runChannel)
     ).toEqual([
+      'run-agent',
+      'run-agent',
       'run-agent',
       'run-agent',
       'run-agent',
@@ -106,6 +125,27 @@ describe('ProviderAdapters', () => {
     expect(() => registry.require('claude')).toThrow(/not registered/)
   })
 
+  it('can enforce the exact nine-provider registration baseline', () => {
+    const registry = createProviderAdapterRegistry(
+      PROVIDER_ADAPTER_REGISTRATION_IDS.map((provider) => adapter(provider)),
+      { requireCompleteProviderSet: true }
+    )
+
+    expect(registry.list().map((entry) => entry.provider)).toEqual(
+      PROVIDER_ADAPTER_REGISTRATION_IDS
+    )
+  })
+
+  it('reports every missing adapter when complete registration is required', () => {
+    expect(() =>
+      createProviderAdapterRegistry([adapter('codex'), adapter('claude')], {
+        requireCompleteProviderSet: true
+      })
+    ).toThrow(
+      'Provider adapter registry is incomplete (missing: gemini, kimi, grok, cursor, ollama, antigravity, pi).'
+    )
+  })
+
   it('returns serializable descriptors without runtime functions', () => {
     const descriptor = providerAdapterDescriptor(adapter('codex'))
 
@@ -128,7 +168,9 @@ describe('defaultProviderDescriptor capabilities', () => {
     'kimi',
     'grok',
     'cursor',
-    'ollama'
+    'ollama',
+    'antigravity',
+    'pi'
   ]
 
   for (const provider of allProviders) {
@@ -217,7 +259,8 @@ describe('defaultProviderDescriptor capabilities', () => {
     expect(descriptor.features.providerManagedMcp).toBe(true)
     expect(descriptor.features.nativeThreadTools).toBe(true)
     expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
-    expect(descriptor.capabilities.sessionResumption).toBe(true)
+    expect(descriptor.capabilities.contextInjection).toBe(true)
+    expect(descriptor.capabilities.sessionResumption).toBe(false)
     expect(descriptor.capabilityCaveats).toContainEqual(
       expect.objectContaining({
         id: 'cursor-sandbox-partial',
@@ -229,9 +272,12 @@ describe('defaultProviderDescriptor capabilities', () => {
 
   it('pins Grok mode-scoped TaskWraith bridge caveat', () => {
     const descriptor = defaultProviderDescriptor('grok')
+    expect(descriptor.features.persistentSessions).toBe(false)
     expect(descriptor.features.agentBenchMcpBridge).toBe(false)
     expect(descriptor.features.workspaceGrants).toBe(true)
     expect(descriptor.capabilities.approvalModes).toEqual(['plan', 'default'])
+    expect(descriptor.capabilities.contextInjection).toBe(true)
+    expect(descriptor.capabilities.sessionResumption).toBe(false)
 
     const caveat = descriptor.capabilityCaveats?.find(
       (entry) => entry.id === 'grok-taskwraith-bridge-write-mode-only'

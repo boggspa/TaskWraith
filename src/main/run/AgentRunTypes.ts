@@ -106,13 +106,22 @@ export interface AgentRunPayload {
   taskWraithMcpAdvertised?: boolean
   /** Main-owned CAS basis for the eventual provider-session receipt write. */
   taskWraithMcpProfileFence?: TaskWraithMcpProfileFenceState
+  /**
+   * Main-owned cancellation signal for provider setup before an exact
+   * transport handle exists. Assigned only by the shared lifecycle owner after
+   * normalization and final dispatch authorization; never accepted as incoming
+   * renderer authority.
+   */
+  providerSetupAbortSignal?: AbortSignal
   runtimeWorktree?: RuntimeWorktreeIntent
   effectivePermissions?: EffectiveRunPermissions
   /**
    * HMAC over the run's permission posture (`approvalMode` +
    * `effectivePermissions`), stamped by the main-side producer that
    * built this payload and verified at the `normalizeAgentRunPayload`
-   * trust boundary. Transport-only: it is NOT stored in session state.
+   * trust boundary. The shared lifecycle owner retains it with the normalized
+   * posture in RunManager state before provider setup begins; providers must
+   * preserve that snapshot when replacing their transport-specific state.
    * Absent / invalid on a payload that carries `effectivePermissions`
    * triggers a downgrade to a read-only run; absent on a raised
    * `approvalMode` caps the run to prompt-on-action. See

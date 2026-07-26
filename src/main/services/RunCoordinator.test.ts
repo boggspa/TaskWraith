@@ -3,6 +3,8 @@ import { RunCoordinator, type RunCoordinatorDeps, type RunDispatchEvent } from '
 import type { ProviderId } from '../store/types'
 import type { ProviderAdapter } from '../ProviderAdapters'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import { RunManager } from '../RunManager'
+import { acquireProviderRunLifecycleOwnership } from '../run/ProviderRunLifecycleOwnership'
 
 /**
  * Phase B1 — unit tests for the RunCoordinator extraction.
@@ -130,10 +132,7 @@ describe('RunCoordinator', () => {
       return true
     })
 
-    const result = await new RunCoordinator(deps).dispatch(
-      { ...samplePayload },
-      makeFakeEvent()
-    )
+    const result = await new RunCoordinator(deps).dispatch({ ...samplePayload }, makeFakeEvent())
 
     expect(result).toMatchObject({
       dispatched: true,
@@ -171,6 +170,93 @@ describe('RunCoordinator', () => {
 
     await new RunCoordinator(deps).dispatch(samplePayload, makeFakeEvent())
     expect(order).toEqual(['prepare', 'preflight', 'capture', 'adapter'])
+  })
+
+  it('owns deferred preflight cancellation and never captures references or invokes the adapter', async () => {
+    const order: string[] = []
+    const manager = new RunManager()
+    let enterPreflight!: () => void
+    const preflightEntered = new Promise<void>((resolve) => {
+      enterPreflight = resolve
+    })
+    let finishPreflight!: (accepted: boolean) => void
+    const preflightFinished = new Promise<boolean>((resolve) => {
+      finishPreflight = resolve
+    })
+    const captureReferenceContext = vi.fn()
+    const { deps, adapter, spies } = makeDeps({
+      applyRuntimeProfileToPayload: (payload) => {
+        order.push('runtime-profile')
+        return payload
+      },
+      prepareReferenceContext: () => {
+        order.push('prepare-reference')
+      },
+      captureReferenceContext,
+      runWithLifecycleOwnership: async (event, payload, _reservation, run) => {
+        order.push('lifecycle-owner')
+        const route = deps.routeWithRunId(payload.provider, payload)
+        const ownership = acquireProviderRunLifecycleOwnership(event.sender, payload, route, {
+          registerStartingSession: (input) =>
+            manager.create({
+              runId: input.route.appRunId!,
+              provider: input.provider,
+              appChatId: input.route.appChatId,
+              workspacePath: input.workspacePath,
+              providerSessionId: input.providerSessionId ?? undefined,
+              sender: input.sender,
+              abortController: input.setupAbortController,
+              state: input.state,
+              status: 'starting'
+            }),
+          getSession: (runId) => manager.get(runId),
+          settleUnclaimedSession: (runId, status) => {
+            manager.finish(runId, status)
+          }
+        })
+        try {
+          return await run()
+        } finally {
+          ownership.settleIfUnclaimed()
+        }
+      }
+    })
+    spies.ensureProviderRunPreflight.mockImplementation(async () => {
+      order.push('preflight')
+      enterPreflight()
+      return preflightFinished
+    })
+
+    const dispatch = new RunCoordinator(deps).dispatch(
+      { ...samplePayload, appRunId: undefined },
+      makeFakeEvent()
+    )
+    await preflightEntered
+
+    const session = manager.get('run-fixed')
+    expect(order).toEqual(['runtime-profile', 'lifecycle-owner', 'prepare-reference', 'preflight'])
+    expect(session?.status).toBe('starting')
+    expect(session?.state).toMatchObject({
+      lifecycleOwner: 'run-coordinator',
+      provider: 'gemini',
+      appRunId: 'run-fixed',
+      appChatId: 'chat-1'
+    })
+    expect(session?.abortController).toBeDefined()
+    const setupSignal = (session?.abortController as AbortController).signal
+
+    expect(manager.claimTerminalStatus('run-fixed', 'cancelled')).toBeDefined()
+    expect(manager.cancel('run-fixed')).toBe(true)
+    expect(setupSignal.aborted).toBe(true)
+    finishPreflight(true)
+
+    await expect(dispatch).resolves.toEqual({
+      dispatched: false,
+      appRunId: 'run-fixed'
+    })
+    expect(captureReferenceContext).not.toHaveBeenCalled()
+    expect(adapter.run).not.toHaveBeenCalled()
+    expect(manager.get('run-fixed')?.status).toBe('cancelled')
   })
 
   it('revalidates outer dispatch authority before materializing reference bytes', async () => {

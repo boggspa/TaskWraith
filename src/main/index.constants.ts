@@ -49,6 +49,11 @@ export const LIGHT_THEME_POPOUT_BACKDROPS: Record<string, string> = {
   alabaster: '#f4f3ef'
 }
 
+/**
+ * Internal lifecycle/cleanup inventory for every stable provider identity.
+ * This list deliberately includes conditional and retired providers; it must
+ * never drive offer, picker, or run admission.
+ */
 export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   'gemini',
   'codex',
@@ -57,8 +62,6 @@ export const RUN_MANAGER_PROVIDERS: ProviderId[] = [
   'grok',
   'cursor',
   'ollama',
-  // Internal lifecycle inventory only. Offer/picker admission remains the
-  // settings-aware gate plus the post-connection snapshot, never this list.
   'antigravity',
   'pi'
 ]

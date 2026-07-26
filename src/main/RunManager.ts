@@ -155,6 +155,17 @@ export class RunManager<TState = unknown> {
     return runId ? this.sessionsByRunId.get(runId) : undefined
   }
 
+  /**
+   * Final launch fence for an exact run identity. Active status alone is not
+   * sufficient: execution-graph cancellation records a terminal claim while
+   * retaining the starting/running session until provider close evidence
+   * joins. No new transport may cross that claimed-terminal boundary.
+   */
+  canAdmitTransport(runId: string | undefined, requireExistingRun = false): boolean {
+    if (runId && this.terminalStatusClaims.has(runId)) return false
+    return canStartRunTransport(this.get(runId)?.status, requireExistingRun)
+  }
+
   getByProvider(provider: ProviderId): RunSession<TState>[] {
     return [...(this.runIdsByProvider.get(provider) || [])]
       .map((runId) => this.sessionsByRunId.get(runId))
@@ -241,11 +252,15 @@ export class RunManager<TState = unknown> {
 
   attachProcess(runId: string, process: KillableProcess): RunSession<TState> | undefined {
     const session = this.sessionsByRunId.get(runId)
-    if (session && isTerminalRunSessionStatus(session.status)) {
+    if (
+      session &&
+      (isTerminalRunSessionStatus(session.status) || this.terminalStatusClaims.has(runId))
+    ) {
       try {
         process.kill()
       } catch {
-        // The run remains terminal even if the late process already exited.
+        // The terminal claim remains authoritative even if the late process
+        // already exited.
       }
       return session
     }
@@ -257,11 +272,15 @@ export class RunManager<TState = unknown> {
     abortController: AbortableController
   ): RunSession<TState> | undefined {
     const session = this.sessionsByRunId.get(runId)
-    if (session && isTerminalRunSessionStatus(session.status)) {
+    if (
+      session &&
+      (isTerminalRunSessionStatus(session.status) || this.terminalStatusClaims.has(runId))
+    ) {
       try {
         abortController.abort()
       } catch {
-        // The run remains terminal even if the controller was already disposed.
+        // The terminal claim remains authoritative even if the controller was
+        // already disposed.
       }
       return session
     }

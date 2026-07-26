@@ -3,6 +3,14 @@ import type {
   ProviderCapabilityContract,
   ProviderId
 } from './store/types'
+import { PROVIDER_RUN_MANAGEMENT_IDS } from './run/ProviderRunManagementMatrix'
+
+/**
+ * Exact adapter-registration baseline. The registry can enforce this set at
+ * the production construction site without exposing it as an offer/admission
+ * list; conditional and retired identities remain intentionally included.
+ */
+export const PROVIDER_ADAPTER_REGISTRATION_IDS = PROVIDER_RUN_MANAGEMENT_IDS
 
 export interface ProviderRunContext<TPayload = unknown, TEvent = unknown> {
   event: TEvent
@@ -12,6 +20,15 @@ export interface ProviderRunContext<TPayload = unknown, TEvent = unknown> {
 export interface ProviderCapabilityRequest {
   workspacePath?: string
   approvalMode?: string
+}
+
+export interface ProviderAdapterRegistryOptions {
+  /**
+   * Require one adapter for every stable provider identity and reject
+   * unaccounted identities. Partial registries remain useful in unit tests, so
+   * production opts into this assertion explicitly at its construction site.
+   */
+  requireCompleteProviderSet?: boolean
 }
 
 export interface ProviderAdapter<
@@ -28,9 +45,15 @@ export interface ProviderAdapter<
 export class ProviderAdapterRegistry<TPayload = unknown, TEvent = unknown> {
   private adapters = new Map<ProviderId, ProviderAdapter<TPayload, TEvent>>()
 
-  constructor(adapters: ProviderAdapter<TPayload, TEvent>[]) {
+  constructor(
+    adapters: ProviderAdapter<TPayload, TEvent>[],
+    options: ProviderAdapterRegistryOptions = {}
+  ) {
     for (const adapter of adapters) {
       this.register(adapter)
+    }
+    if (options.requireCompleteProviderSet) {
+      this.assertCompleteProviderSet()
     }
   }
 
@@ -60,6 +83,22 @@ export class ProviderAdapterRegistry<TPayload = unknown, TEvent = unknown> {
   descriptors(): ProviderAdapterDescriptor[] {
     return this.list().map((adapter) => providerAdapterDescriptor(adapter))
   }
+
+  private assertCompleteProviderSet(): void {
+    const expected = new Set<ProviderId>(PROVIDER_ADAPTER_REGISTRATION_IDS)
+    const missing = PROVIDER_ADAPTER_REGISTRATION_IDS.filter(
+      (provider) => !this.adapters.has(provider)
+    )
+    const unaccounted = [...this.adapters.keys()].filter((provider) => !expected.has(provider))
+    if (missing.length === 0 && unaccounted.length === 0) return
+    const detail = [
+      missing.length > 0 ? `missing: ${missing.join(', ')}` : '',
+      unaccounted.length > 0 ? `unaccounted: ${unaccounted.join(', ')}` : ''
+    ]
+      .filter(Boolean)
+      .join('; ')
+    throw new Error(`Provider adapter registry is incomplete (${detail}).`)
+  }
 }
 
 export function providerAdapterDescriptor(
@@ -85,9 +124,10 @@ export function providerAdapterDescriptor(
 }
 
 export function createProviderAdapterRegistry<TPayload = unknown, TEvent = unknown>(
-  adapters: ProviderAdapter<TPayload, TEvent>[]
+  adapters: ProviderAdapter<TPayload, TEvent>[],
+  options: ProviderAdapterRegistryOptions = {}
 ): ProviderAdapterRegistry<TPayload, TEvent> {
-  return new ProviderAdapterRegistry(adapters)
+  return new ProviderAdapterRegistry(adapters, options)
 }
 
 export function providerLabel(provider: ProviderId): string {
@@ -198,14 +238,10 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
     }
   }
   if (provider === 'grok') {
-    // First-class Grok. G6 landed persistent sessions (headless `--resume`);
-    // G5c landed file-write mode (`acceptEdits` + Edit/Write, diff/PR-reviewed —
-    // `approvalModes: ['plan','default']`). Still NO app-managed per-tool
-    // approval cards. The full TaskWraith MCP bridge is mode-scoped: read-only
-    // runs stay safe-subset/provider-delegated unless separately enabled, while
-    // write-capable ACP runs auto-inject the governed bridge. Without this
-    // branch grok would inherit the Claude default below, advertising
-    // providerManagedMcp it does not have.
+    // First-class Grok. Production uses a fresh ACP session for each turn and
+    // host-feeds bounded conversation context; the old headless `--resume`
+    // descriptor no longer describes the launch path. Write-capable ACP turns
+    // can inject the governed bridge, while per-tool approval remains hybrid.
     return {
       provider,
       label: providerLabel(provider),
@@ -213,7 +249,7 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
       runChannel: 'run-agent',
       capabilitySource: 'provider',
       features: {
-        persistentSessions: true,
+        persistentSessions: false,
         appManagedApprovals: false,
         // Grok native tools + TaskWraith MCP both route through PermissionService
         // / requestAgenticServiceApproval, so per-provider workspace grants apply.
@@ -228,8 +264,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         reasoningEffort: true,
         speedTiers: [],
         imageAttachments: false,
-        contextInjection: false,
-        sessionResumption: true,
+        contextInjection: true,
+        sessionResumption: false,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       },
@@ -270,8 +306,8 @@ export function defaultProviderDescriptor(provider: ProviderId): ProviderAdapter
         reasoningEffort: true,
         speedTiers: ['fast'],
         imageAttachments: false,
-        contextInjection: false,
-        sessionResumption: true,
+        contextInjection: true,
+        sessionResumption: false,
         perThreadMcp: false,
         assistantTextStreaming: 'token'
       },
