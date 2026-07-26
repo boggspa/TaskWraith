@@ -102,13 +102,12 @@ const STATIC_CAPABILITIES: StaticCacheCapability[] = [
     provider: 'cursor',
     label: 'Cursor',
     transport: 'cli-opaque',
-    guaranteeTier: 'unsupported',
-    guaranteeLabel: 'Unsupported',
+    guaranteeTier: 'best-effort',
+    guaranteeLabel: 'Best effort',
     detail:
-      'Historical Cursor usage may still decode cache metadata. Cursor managed runs and cache controls are unavailable while startup containment remains unqualified.',
+      'Managed Cursor runs use an opaque cursor-agent CLI transport. TaskWraith records cache tokens when emitted but cannot force provider-side caching or control cache breakpoints.',
     controllable: false,
-    supportsModeControl: false,
-    retired: true
+    supportsModeControl: false
   },
   {
     provider: 'ollama',

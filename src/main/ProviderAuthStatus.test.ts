@@ -260,7 +260,17 @@ describe('buildProviderAuthStatusV2 — kimi', () => {
 
 describe('buildProviderAuthStatusV2 — schema invariants', () => {
   it('never returns the legacy "unknown" authState for any provider', () => {
-    const providers = ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'] as const
+    const providers = [
+      'gemini',
+      'codex',
+      'claude',
+      'kimi',
+      'grok',
+      'cursor',
+      'ollama',
+      'antigravity',
+      'pi'
+    ] as const
     for (const provider of providers) {
       const presentAndUnknown = buildProviderAuthStatusV2({
         provider,
@@ -270,6 +280,18 @@ describe('buildProviderAuthStatusV2 — schema invariants', () => {
       expect(presentAndUnknown.authState).not.toBe('unknown')
       const absent = buildProviderAuthStatusV2({ provider, available: false })
       expect(absent.authState).not.toBe('unknown')
+    }
+  })
+
+  it('does not describe Cursor, AntiGravity, or Pi with Kimi-specific auth reasons', () => {
+    for (const provider of ['cursor', 'antigravity', 'pi'] as const) {
+      const result = buildProviderAuthStatusV2({
+        provider,
+        available: true,
+        rawAuthState: 'unknown'
+      })
+      expect(result.authState).toBe('not-observable')
+      expect(result.authReason).not.toContain('Kimi')
     }
   })
 

@@ -257,8 +257,8 @@ export class ComposerService {
     }
 
     // Live default for a provider-less compose (was `|| 'gemini'`). Historical
-    // Gemini and Cursor records remain decodable, but retired or security-
-    // unavailable providers are rejected before any new run is composed.
+    // Gemini records remain decodable, but retired providers are rejected before
+    // a new run is composed. Cursor is live and passes this same canonical check.
     const requestedProvider = assertLiveProviderId(
       input.provider || chat.provider || DEFAULT_PROVIDER
     )

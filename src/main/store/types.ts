@@ -174,17 +174,20 @@ export type ComposerStyle =
   | 'alabaster'
 // ProviderId is a stable persistence/decode identity, not a promise that a
 // provider is currently selectable or runnable. Historical records keep every
-// id; `shared/retiredProviders.ts` owns the canonical offer/run set. Cursor is
-// live-selectable; its contained managed launch is governed at runtime rather
-// than by a static executable-fingerprint gate.
+// id; `shared/retiredProviders.ts` owns the canonical static offer set while
+// provider-specific gates own conditional admission. Cursor is live-selectable;
+// its contained managed launch is governed at runtime rather than by a static
+// executable-fingerprint gate.
 // `antigravity` is a DISTINCT opt-in provider id (never a Gemini revival). It is
 // always a known/decode id, but offer/run eligibility is gated by
 // isAntigravityOptInEnabled(settings) — it is deliberately NOT in
-// LIVE_SELECTABLE_PROVIDER_IDS, any provider ORDER, FirstLaunch, or offer list.
+// LIVE_SELECTABLE_PROVIDER_IDS. Dynamically admitted offer/reporting surfaces
+// may include it only after the authoritative consent/credential wall succeeds.
 // `pi` is the Pi coding agent seat: BYOK env-key upstreams only, model surface
 // scoped by src/main/pi/PiModelPolicy (never a second door to first-party
-// hosted models). It IS live-selectable; with zero configured upstream keys it
-// has zero models and the configured-provider snapshot hides it.
+// hosted models). It IS live-selectable and remains visible before setup; with
+// zero configured upstream keys it has zero runnable models and reports setup
+// guidance rather than being removed from the picker.
 export type ProviderId =
   | 'gemini'
   | 'codex'

@@ -18,6 +18,10 @@ import { TASKWRAITH_MCP_TOOLS } from './TaskWraithMcpTools'
 import { GATEWAY_MCP_ADVERTISE_TOOLS } from './mcp/McpToolProfiles'
 import { agenticServicesDenyWrites } from './AgenticServiceWriteClamp'
 import { providerLabel } from './ProviderAdapters'
+import {
+  resolvePiNativeToolPosture,
+  type PiNativeToolEffectivePermissions
+} from './pi/PiNativeToolPosture'
 import { buildUserMcpLaunchServers } from './UserMcpServers'
 
 export const TASKWRAITH_GEMINI_MCP_TOOLS = TASKWRAITH_MCP_TOOLS
@@ -71,6 +75,11 @@ interface BuildProviderCapabilityContractInput {
   >
   workspacePath?: string
   approvalMode?: string
+  /**
+   * Main-verified run posture when reporting a concrete run. When absent, the
+   * capability snapshot uses current service settings as its downgrade source.
+   */
+  effectivePermissions?: PiNativeToolEffectivePermissions | null
   status?: unknown
   mcpStatus?: unknown
   geminiMcpBridgeStatus?: GeminiMcpBridgeStatus | null
@@ -596,13 +605,11 @@ function approvalContract(
     // and there is no per-tool bridge back to TaskWraith. The allowlist mirrors
     // PI_READ_ONLY_TOOLS / PI_WRITE_TOOLS in pi/PiCliArgs.ts.
     //
-    // The write condition mirrors runPiProvider EXACTLY (`approvalMode ===
-    // 'default'`), which is stricter than the house convention used by Cursor
-    // and agy (any mode except 'plan'): under Pi, acceptEdits gets read-only
-    // tools. Reported rather than "fixed" here — widening it would grant write
-    // capability the user has not asked for, and this contract must describe
-    // what the runtime does, not what it arguably should.
-    const piWriteCapable = requestedMode === 'default'
+    // `effectiveMode` is produced by the same downgrade-only helper as launch
+    // evidence and production dispatch. Under Pi, every non-default mode and
+    // every signed read-only/service-deny posture receives the read-only
+    // allowlist.
+    const piWriteCapable = effectiveMode === 'default'
     return {
       requestedMode,
       effectiveMode,
@@ -647,9 +654,10 @@ function approvalContract(
 
 /**
  * Providers with no per-tool approval bridge can only honour a denied
- * shell/file service at launch, by giving up write capability. Shared with the
- * launch path via `agenticServicesDenyWrites` so the reported mode and the
- * launched mode cannot disagree.
+ * shell/file service at launch, by giving up write capability. AntiGravity
+ * uses this settings projection; Pi uses `resolvePiNativeToolPosture` below so
+ * its capability report, signed seal posture, and launched native allowlist
+ * share the same stricter decision.
  */
 function effectiveNoBridgeMode(requestedMode: string, services: AgenticServicesSettings): string {
   if (requestedMode === 'plan') return requestedMode
@@ -661,6 +669,7 @@ export function buildProviderCapabilityContract({
   settings,
   workspacePath,
   approvalMode = 'default',
+  effectivePermissions,
   status,
   mcpStatus,
   geminiMcpBridgeStatus,
@@ -670,25 +679,29 @@ export function buildProviderCapabilityContract({
   const warnings: ProviderCapabilityWarning[] = []
   const label = providerLabel(provider)
   const requestedMode = approvalMode || 'default'
-  // Cursor is always available: there is no per-build fingerprint gate (it was
-  // brittle — provider auto-updates broke the exact-SHA match). Containment lives
-  // on the run itself (runCursorProvider's contained --sandbox argv), not in an
-  // availability gate.
-  const cursorSecurityUnavailable = false
+  const piNativeToolPosture = resolvePiNativeToolPosture({
+    approvalMode: requestedMode,
+    effectivePermissions:
+      effectivePermissions ??
+      ({
+        agenticServices: {
+          shellCommands: services.shellCommands,
+          fileChanges: services.fileChanges
+        }
+      } satisfies PiNativeToolEffectivePermissions)
+  })
   const effectiveMode =
     // Both lack a per-tool approval bridge, so a denied shell/file service can
     // only be honoured by dropping write capability at launch. AntiGravity was
     // missing from this clamp: the setting reported as enforced while the run
     // still received `--mode accept-edits`.
-    provider === 'gemini' || provider === 'antigravity'
-      ? effectiveNoBridgeMode(requestedMode, services)
-      : cursorSecurityUnavailable
-        ? 'unavailable'
+    provider === 'pi'
+      ? piNativeToolPosture.effectiveMode
+      : provider === 'gemini' || provider === 'antigravity'
+        ? effectiveNoBridgeMode(requestedMode, services)
         : requestedMode
   const statusRecord = asRecord(status)
-  const cursorSecurityUnavailableMessage =
-    'Cursor managed runs are disabled until an exact-build containment canary covers provider-managed account/team hooks, skills, plugins, and MCP startup sources.'
-  const setupRequired = Boolean(statusRecord.setupRequired) || cursorSecurityUnavailable
+  const setupRequired = Boolean(statusRecord.setupRequired)
   const explicitlyUnavailable = statusRecord.available === false || setupRequired
 
   const availability = {
@@ -708,11 +721,7 @@ export function buildProviderCapabilityContract({
       typeof statusRecord.binaryTeamId === 'string' ? statusRecord.binaryTeamId : undefined,
     binaryAuthority:
       typeof statusRecord.binaryAuthority === 'string' ? statusRecord.binaryAuthority : undefined,
-    error: cursorSecurityUnavailable
-      ? cursorSecurityUnavailableMessage
-      : typeof statusRecord.error === 'string'
-        ? statusRecord.error
-        : undefined
+    error: typeof statusRecord.error === 'string' ? statusRecord.error : undefined
   }
 
   if (explicitlyUnavailable) {
@@ -1172,6 +1181,17 @@ export function buildProviderCapabilityContract({
         )
       )
     }
+  }
+
+  if (provider === 'pi' && requestedMode !== effectiveMode) {
+    warnings.push(
+      warning(
+        'pi-native-tools-downgraded',
+        'warning',
+        'Pi native tools adjusted',
+        'Pi write tools require exact default mode and a signed posture that is not read-only and does not deny shell commands or file changes. This run will use Pi’s read-only native tool allowlist.'
+      )
+    )
   }
 
   const networkAccess = networkCapability(services.networkAccess)

@@ -225,19 +225,21 @@ function configuredProviderProbes(
 }
 
 /**
- * The set of providers the user has actually set up ("logged in + activated") —
- * used to seed a new ensemble's default roster with only usable providers
- * instead of all six.
+ * The set of statically offered providers the user has actually set up
+ * ("logged in + activated") — used to seed a new ensemble's default roster
+ * with usable providers. Conditional AntiGravity admission is joined by the
+ * caller from its authoritative consent/credential-backed catalog.
  *
- *  - claude / codex / gemini: gated by their auth field in settings.
+ *  - claude / codex: gated by their auth field in settings.
  *  - kimi: roster discovery checks an installed binary plus OAuth/provider-key
  *    authentication once after first paint. This is presentation only; the
  *    exact runtime is still structurally admitted again before execution.
  *  - grok / cursor: no settings auth (CLI-based), so we probe the CLI the
  *    same way the runner resolves it — a non-null binary path means present
- *    and runnable. Cursor is live again (Path-B contained `--sandbox` runs,
- *    see retiredProviders.ts); seeding is presence-only, and the run path
- *    still enforces the containment qualification at dispatch.
+ *    and runnable. Cursor seeding is presence-only; the live Path-B run
+ *    constructs its contained `--sandbox` launch plan at dispatch and reports
+ *    broker attachment separately. Management assurance does not decide offer
+ *    membership.
  *
  * Async because the local-provider probes use filesystem/network I/O. The
  * production caller prewarms a staggered session snapshot after first paint;

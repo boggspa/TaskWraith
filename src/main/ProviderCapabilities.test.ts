@@ -62,18 +62,89 @@ describe('ProviderCapabilities', () => {
       expect(contract.approvals.notes.join(' ')).not.toContain('Claude')
       expect(contract.approvals.providerMode).toContain('write tool allowlist')
       expect(contract.approvals.inAppApprovals).toBe(false)
+      expect(
+        contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
+      ).toBeUndefined()
     })
 
-    // Mirrors runPiProvider's `approvalMode === 'default'`, which is stricter
-    // than the house convention (any mode except 'plan'). If the runtime is ever
-    // widened to match Cursor/agy, this test must change with it — the contract
-    // must not claim a tool set the launch does not use.
+    // Pi's exact-default baseline is stricter than the house convention (any
+    // mode except 'plan'); the signed posture can only narrow it further. If
+    // the runtime is ever intentionally widened, this test must change with it
+    // — the contract must not claim a tool set the launch does not use.
     it.each(['plan', 'acceptEdits', 'auto_edit'])(
       'reports the read-only allowlist for %s',
       (approvalMode) => {
-        expect(piContract(approvalMode).approvals.providerMode).toContain(
-          'read-only tool allowlist'
+        const approvals = piContract(approvalMode).approvals
+        expect(approvals.effectiveMode).toBe('plan')
+        expect(approvals.providerMode).toContain('read-only tool allowlist')
+        const downgradeWarning = piContract(approvalMode).warnings.find(
+          (warning) => warning.id === 'pi-native-tools-downgraded'
         )
+        if (approvalMode === 'plan') expect(downgradeWarning).toBeUndefined()
+        else expect(downgradeWarning).toMatchObject({ severity: 'warning' })
+      }
+    )
+
+    it.each([
+      [
+        'read-only',
+        {
+          readOnly: true,
+          agenticServices: { shellCommands: 'allow' as const, fileChanges: 'allow' as const }
+        }
+      ],
+      [
+        'shell-command deny',
+        {
+          readOnly: false,
+          agenticServices: { shellCommands: 'deny' as const, fileChanges: 'allow' as const }
+        }
+      ],
+      [
+        'file-change deny',
+        {
+          readOnly: false,
+          agenticServices: { shellCommands: 'allow' as const, fileChanges: 'deny' as const }
+        }
+      ]
+    ])(
+      'reports default mode as read-only for a signed %s posture',
+      (_label, effectivePermissions) => {
+        const contract = buildProviderCapabilityContract({
+          provider: 'pi',
+          settings: settings(),
+          approvalMode: 'default',
+          effectivePermissions,
+          status: { provider: 'pi', available: true }
+        })
+
+        expect(contract.approvals.requestedMode).toBe('default')
+        expect(contract.approvals.effectiveMode).toBe('plan')
+        expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+        expect(
+          contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
+        ).toMatchObject({ severity: 'warning' })
+      }
+    )
+
+    it.each([
+      ['shell commands', { ...defaultServices, shellCommands: 'deny' as const }],
+      ['file changes', { ...defaultServices, fileChanges: 'deny' as const }]
+    ])(
+      'uses current service settings to downgrade capability reporting for %s',
+      (_label, services) => {
+        const contract = buildProviderCapabilityContract({
+          provider: 'pi',
+          settings: settings(services),
+          approvalMode: 'default',
+          status: { provider: 'pi', available: true }
+        })
+
+        expect(contract.approvals.effectiveMode).toBe('plan')
+        expect(contract.approvals.providerMode).toContain('read-only tool allowlist')
+        expect(
+          contract.warnings.find((warning) => warning.id === 'pi-native-tools-downgraded')
+        ).toMatchObject({ severity: 'warning' })
       }
     )
   })

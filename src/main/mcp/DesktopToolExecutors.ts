@@ -376,9 +376,9 @@ function assertProviderId(value: unknown): ProviderId {
 }
 
 function availableProviderIds(): ProviderId[] {
-  // Offer/sweep list for MCP desktop tools — excludes retired Gemini and
-  // security-unavailable Cursor so an agent can neither target nor sweep them.
-  // `assertProviderId` above still accepts canonical ids for compatibility decode.
+  // Offer/sweep list for MCP desktop tools. It follows the canonical live set,
+  // including managed Cursor Path-B, while `assertProviderId` above still
+  // accepts known historical ids for compatibility decode.
   return [...LIVE_SELECTABLE_PROVIDER_IDS]
 }
 

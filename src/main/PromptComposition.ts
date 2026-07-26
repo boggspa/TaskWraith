@@ -257,7 +257,7 @@ export const TASKWRAITH_RECON_STEER_NOTE = [
 
 /**
  * Shared edit-discipline note appended to every write-capable cloud-provider
- * preamble (gemini/claude/kimi/codex/grok). Plan-mode/read-only runs
+ * preamble (gemini/claude/kimi/codex/grok/cursor). Plan-mode/read-only runs
  * never reach these preambles, so this only governs runs that can actually
  * mutate the workspace. Encodes the inner read→edit→verify loop the way
  * Cursor/Cline/Codex/Devin do: read first, verify after, never fake a pass.
@@ -299,10 +299,13 @@ function shouldInjectTaskWraithRuntimePreamble(args: {
   taskWraithMcpAdvertised: boolean
   nativeSessionResume?: boolean
 }): boolean {
-  if (args.provider === 'cursor') return false
   if (args.isGlobalRun || args.approvalMode === 'plan') return false
   if (!args.taskWraithMcpAdvertised) return false
-  if ((args.provider === 'kimi' && !args.nativeSessionResume) || args.provider === 'grok') {
+  if (
+    (args.provider === 'kimi' && !args.nativeSessionResume) ||
+    args.provider === 'grok' ||
+    args.provider === 'cursor'
+  ) {
     return true
   }
   if (
@@ -822,8 +825,8 @@ export interface ComposeRunPromptInput {
    * Host-side compaction summary stored on the chat (ChatRecord field of the
    * same name). Injected as a "Prior session summary" block for providers
    * whose cross-turn context is host-fed: cold Kimi ACP and Grok on every turn
-   * (their context IS the injected block). Source-ahead Cursor starts no managed
-   * session. Only exact, resolvable
+   * (their context IS the injected block). Path-B Cursor also opens a fresh
+   * contained process each turn, so its continuity is host-fed. Only exact, resolvable
    * `contiguous_prompt_prefix` provenance may prune recent transcript rows;
    * legacy timestamps and bounded/session summaries remain non-pruning. A
    * native Kimi ACP resume carries its compacted history provider-side and does
@@ -935,9 +938,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
     ? isCoreTaskWraithMcpProfile(input.taskWraithMcpProfileId)
     : shouldUseCoreMcpProfile(provider, normalizeCliProviderModel(provider, nextModel))
   const gatewayMcpProfile = isGatewayTaskWraithMcpProfile(input.taskWraithMcpProfileId)
-  // Cursor managed runs are unavailable. Clamp stale callers here as well as
-  // at admission so no generated prompt advertises broker aliases or tools.
-  const taskWraithMcpAdvertised = provider !== 'cursor' && input.taskWraithMcpAdvertised !== false
+  const taskWraithMcpAdvertised = input.taskWraithMcpAdvertised !== false
   const nativeKimiSessionResume =
     provider === 'kimi' && Boolean(input.nativeSessionResume && resumeSessionId)
 
@@ -991,7 +992,9 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   ) as ChatMessage[]
   const compactionSummaryBlock =
     compactionSummary?.text &&
-    ((provider === 'kimi' && !nativeKimiSessionResume) || provider === 'grok')
+    ((provider === 'kimi' && !nativeKimiSessionResume) ||
+      provider === 'grok' ||
+      provider === 'cursor')
       ? `Prior session summary (context was compacted ${compactionSummary.createdAt}):\n${compactionSummary.text}`
       : ''
   const kimiNeedsContextInjection = provider === 'kimi' && !nativeKimiSessionResume
@@ -1007,6 +1010,10 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   // ensemble Grok — that path builds its own tagged transcript via EnsemblePrompt
   // and never reaches composeRunPrompt.)
   const grokNeedsContextInjection = provider === 'grok' && grokAcpEnabled()
+  // Path-B Cursor deliberately starts a fresh contained cursor-agent process
+  // for every turn and clears providerSessionId before launch. Preserve chat
+  // continuity by supplying the bounded host transcript on every solo turn.
+  const cursorNeedsContextInjection = provider === 'cursor'
   const geminiNeedsContextInjection = provider === 'gemini' && !resumeSessionId
   const codexNeedsContextInjection =
     provider === 'codex' && !resumeSessionId && !codexModelChangedAfterWork
@@ -1020,6 +1027,7 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
   const shouldAppendContextForRun =
     kimiNeedsContextInjection ||
     grokNeedsContextInjection ||
+    cursorNeedsContextInjection ||
     geminiNeedsContextInjection ||
     codexNeedsContextInjection ||
     ollamaNeedsContextInjection
@@ -1065,17 +1073,19 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
       ? 'Context turns: 0 (resuming Kimi Code ACP session context)'
       : grokNeedsContextInjection
         ? `Context turns: ${contextTurnsApplied} (Grok: appending compact conversation context because the ACP transport opens a fresh session each turn)`
-        : codexNeedsContextInjection
-          ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
-          : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-            ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
-            : ollamaNeedsContextInjection
-              ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
-              : provider !== 'gemini'
-                ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-                : resumeSessionId
-                  ? 'Context turns: 0 (resuming Gemini CLI session context)'
-                  : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+        : cursorNeedsContextInjection
+          ? `Context turns: ${contextTurnsApplied} (Cursor: appending compact conversation context because Path-B opens a fresh contained process each turn)`
+          : codexNeedsContextInjection
+            ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
+            : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+              ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
+              : ollamaNeedsContextInjection
+                ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
+                : provider !== 'gemini'
+                  ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+                  : resumeSessionId
+                    ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                    : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined

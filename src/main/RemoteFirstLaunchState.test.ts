@@ -154,7 +154,10 @@ describe('buildRemoteFirstLaunchState', () => {
       statusText: 'Managed runtime unavailable'
     })
     expect(kimi?.detail).toContain('bounded startup probes')
-    expect(kimi?.detail).toContain('does not bypass')
+    expect(kimi?.detail).toContain('Structural ACP admission is always enabled')
+    expect(kimi?.detail).toContain('credentials do not bypass')
+    expect(kimi?.detail).toContain('unattested-development')
+    expect(kimi?.detail).not.toContain('reviewed tuple')
     expect(JSON.stringify(kimi)).not.toContain('/Users/alice')
   })
 

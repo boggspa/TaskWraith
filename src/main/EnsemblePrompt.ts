@@ -977,9 +977,10 @@ export function buildEnsembleParticipantPrompt(input: BuildEnsemblePromptInput):
       )
     : null
   // Host-side SEAT compaction: current Kimi/Grok seats can carry a durable
-  // bounded summary. Historical Cursor records may retain an older summary for
-  // decode/render only; no source-ahead Cursor compaction runs. Inject the block
-  // ABOVE the transcript and fund it from the seat's transcript char budget.
+  // bounded summary. Cursor Path-B is live, but is not a host-seat compaction
+  // provider; historical Cursor records may still retain an older summary for
+  // decode/render. Inject the block ABOVE the transcript and fund it from the
+  // seat's transcript char budget.
   // Only exact contiguous-prefix provenance may prune transcript rows; bounded
   // or legacy summaries fail open.
   const seatCompactionSummary = input.participant.contextCompactionSummary

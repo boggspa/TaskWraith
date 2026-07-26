@@ -175,10 +175,9 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
       }
     ]
   },
-  // Historical/external Cursor reporting. Source-ahead TaskWraith starts no
-  // managed Cursor process, but retained run records and IDE-native activity
-  // can still appear in usage views. Public Fast-tier pricing is used only as
-  // a conservative API-equivalent estimate, never as a dispatch claim.
+  // Live Path-B, historical, and external Cursor reporting can all appear in
+  // usage views. Public Fast-tier pricing is used only as a conservative
+  // API-equivalent estimate, never as a claim about the user's Cursor billing.
   cursor: {
     provider: 'cursor',
     pricingUrl: 'https://cursor.com/docs/models-and-pricing',

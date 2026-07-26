@@ -20,9 +20,14 @@
 export const RETIRED_PROVIDER_IDS: ReadonlySet<string> = new Set<string>(['gemini'])
 
 /**
- * Canonical offer/run set. Known ids omitted here remain valid for historical
- * decode and rendering, but must not be used to create or dispatch new work.
- * Cursor is live again: Path-B runs use the contained `--sandbox` argv.
+ * Canonical STATIC offer/run set. Known ids omitted here may still be offered
+ * through an independently authorized conditional path (currently
+ * AntiGravity), or may be retained only for historical decode/rendering
+ * (currently Gemini). Never infer either state from absence here alone.
+ *
+ * Membership is product intent, independent of run-management maturity.
+ * Cursor's Path-B containment is additive assurance and does not decide
+ * whether Cursor is offered.
  */
 export const LIVE_SELECTABLE_PROVIDER_IDS = [
   'codex',

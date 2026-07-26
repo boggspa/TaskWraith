@@ -67,10 +67,10 @@ describe('PromptCachePolicy', () => {
         }),
         expect.objectContaining({
           provider: 'cursor',
-          guaranteeTier: 'unsupported',
-          retired: true,
+          guaranteeTier: 'best-effort',
+          retired: undefined,
           defaultMode: 'off',
-          detail: expect.stringContaining('managed runs and cache controls are unavailable')
+          detail: expect.stringContaining('opaque cursor-agent CLI transport')
         }),
         expect.objectContaining({
           provider: 'gemini',

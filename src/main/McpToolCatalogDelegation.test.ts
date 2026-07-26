@@ -17,7 +17,7 @@ describe('delegate_to_subthread MCP schema', () => {
       expect.arrayContaining(['low', 'medium', 'high', 'xhigh', 'max', 'ultracode'])
     )
     // Path-B Cursor is a live selectable seat; parents may spawn/recall a Cursor
-    // child even though Cursor itself is not a TaskWraith MCP seat.
+    // child, and a broker-active Cursor parent can use this same governed tool.
     expect(properties?.provider?.enum).toContain('cursor')
     expect(properties?.reasoningEffort?.description).toMatch(/codex.*claude.*kimi.*grok/i)
     expect(properties?.kimiThinking?.description).toMatch(/kimi/i)

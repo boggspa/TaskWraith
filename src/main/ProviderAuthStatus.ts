@@ -28,8 +28,8 @@ const TRANSPORT_BY_PROVIDER: Record<ProviderId, ProviderAuthTransport> = {
   kimi: 'cli',
   // Grok (gated, G3) runs via the local headless CLI stream.
   grok: 'cli',
-  // Historical Cursor auth records used the headless CLI transport. Source-ahead
-  // TaskWraith starts no Cursor process.
+  // Managed Cursor Path-B runs spawn the official headless Cursor CLI and use
+  // its real CLI-owned login.
   cursor: 'cli',
   // Ollama runs through the local HTTP API rather than a cloud auth flow.
   ollama: 'http',
@@ -47,7 +47,8 @@ const APPROVAL_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   kimi: true,
   // Read-only G3 has no approval flow yet (G5 will add write-capable runs).
   grok: false,
-  // Cursor managed runs are disabled before launch.
+  // False means native Cursor tool calls are not individually mediated by the
+  // main approval callback. Brokered TaskWraith calls still use the main gate.
   cursor: false,
   // Phase 1 local chat is read-only/no-tools.
   ollama: false,
@@ -67,7 +68,8 @@ const MCP_STATUS_SUPPORT_BY_PROVIDER: Record<ProviderId, boolean> = {
   kimi: true,
   // No TaskWraith MCP for Grok until G5.
   grok: false,
-  // Cursor has no source-ahead MCP status surface because no process starts.
+  // Cursor can attach the TaskWraith broker per run, but the CLI exposes no safe
+  // structured probe for that run-local attachment state.
   cursor: false,
   // Ollama exposes a TaskWraith-local read-only tool loop through the adapter.
   ollama: true,
@@ -195,6 +197,72 @@ function deriveAuthState(
 
   if (provider === 'ollama') {
     return { authState: 'authenticated' }
+  }
+
+  if (provider === 'cursor') {
+    const normalized = String(rawAuthState || '')
+      .trim()
+      .toLowerCase()
+    if (
+      normalized === 'authenticated' ||
+      normalized === 'oauth' ||
+      normalized === 'api-key'
+    ) {
+      return { authState: 'authenticated' }
+    }
+    if (
+      normalized === 'missing' ||
+      normalized === 'unauthenticated' ||
+      normalized === 'not authenticated' ||
+      normalized === 'not logged in'
+    ) {
+      return {
+        authState: 'missing',
+        authReason: 'Cursor CLI reports no current login'
+      }
+    }
+    return {
+      authState: 'not-observable',
+      authReason: 'Cursor CLI credential state was not exposed by the status probe'
+    }
+  }
+
+  if (provider === 'antigravity') {
+    if (rawAuthState === 'api-key' || rawAuthState === 'authenticated') {
+      return { authState: 'authenticated' }
+    }
+    if (rawAuthState === 'consent-required' || rawAuthState === 'missing') {
+      return {
+        authState: 'missing',
+        authReason:
+          rawAuthState === 'consent-required'
+            ? 'AntiGravity consent and credentials are required'
+            : 'AntiGravity credentials are missing'
+      }
+    }
+    return {
+      authState: 'not-observable',
+      authReason: 'AntiGravity credential state was not exposed by the selected transport'
+    }
+  }
+
+  if (provider === 'pi') {
+    const normalized = String(rawAuthState || '')
+      .trim()
+      .toLowerCase()
+    if (normalized === 'api-key' || normalized === 'authenticated') {
+      return { authState: 'authenticated' }
+    }
+    if (normalized === 'missing') {
+      return {
+        authState: 'missing',
+        authReason: 'Pi has no configured upstream API key'
+      }
+    }
+    return {
+      authState: 'not-observable',
+      authReason: 'Pi upstream key state was not exposed by the status probe'
+    }
   }
 
   // Managed Kimi ACP auth is observed from the admitted runtime's CURRENT

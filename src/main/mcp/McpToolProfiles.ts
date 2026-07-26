@@ -180,14 +180,16 @@ export const FULL_MCP_ADVERTISE_TOOLS = Object.freeze([
 ] as const satisfies readonly TaskWraithMcpToolName[])
 
 /**
- * The Cursor-hosted Grok 4.5 catalogue historically rejected large MCP
- * surfaces before a turn started. Keep the named profile for decoding pinned
- * sessions and for compatible constrained-model routes; source-ahead
- * TaskWraith starts no managed Cursor process.
+ * The Cursor-hosted Grok 4.5 catalogue rejects large MCP surfaces before a turn
+ * starts. Managed Cursor Path-B runs therefore use this named core profile for
+ * those constrained models when the governed broker attaches; compatible
+ * constrained-model routes and historical pinned receipts use the same stable
+ * definition.
  *
  * This is deliberately a named profile rather than `slice(0, N)`: additions to
  * the full catalog cannot silently change which capabilities constrained live
- * models receive. Historical Cursor profile receipts remain decode-only.
+ * models receive. Historical Cursor profile receipts remain decodable without
+ * changing the live profile.
  */
 export const CORE_MCP_TOOL_BUDGET = 60
 

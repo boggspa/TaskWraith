@@ -594,7 +594,7 @@ describe('composeRunPrompt sub-thread returns', () => {
     )
   })
 
-  it('never advertises TaskWraith MCP tools to the unqualified Cursor transport', () => {
+  it('advertises the governed broker to a managed Path-B Cursor turn', () => {
     const result = composeRunPrompt({
       provider: 'cursor',
       finalPrompt: 'Create a test file.',
@@ -606,9 +606,9 @@ describe('composeRunPrompt sub-thread returns', () => {
       providerLabel: 'Cursor'
     })
 
-    expect(result.contextualPrompt).not.toContain('TaskWraith runtime note')
-    expect(result.contextualPrompt).not.toContain('taskwraith__apply_patch')
-    expect(result.contextualPrompt).not.toContain('mcp_taskwraith-broker')
+    expect(result.contextualPrompt).toContain('TaskWraith runtime note')
+    expect(result.contextualPrompt).toContain('taskwraith__apply_patch')
+    expect(result.contextualPrompt).toContain('native Cursor tools')
     expect(result.contextualPrompt).toContain('Create a test file.')
   })
 
@@ -802,7 +802,7 @@ describe('composeRunPrompt sub-thread returns', () => {
   })
 
   it('preserves the read → edit → verify contract in compact cloud preambles', () => {
-    for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'grok'] as const) {
+    for (const provider of ['gemini', 'claude', 'kimi', 'codex', 'grok', 'cursor'] as const) {
       const result = composeRunPrompt({
         provider,
         finalPrompt: 'Make the change.',
@@ -1106,7 +1106,7 @@ describe('image-tool discoverability (PR5)', () => {
     })
     expect(coldCursor.contextualPrompt).not.toContain('Image tools are also available over MCP')
     expect(coldCursor.contextualPrompt).not.toContain('open_workspace_file')
-    expect(coldCursor.contextualPrompt).not.toContain('read_file')
+    expect(coldCursor.contextualPrompt).toContain('read_file')
 
     const resumedGrok = composeRunPrompt({
       provider: 'grok',
@@ -1438,7 +1438,7 @@ describe('composeRunPrompt host-compaction summary injection', () => {
     }
   })
 
-  it('does not manufacture a Cursor runtime prompt for the unavailable provider', () => {
+  it('host-feeds compacted continuity to each fresh contained Cursor process', () => {
     const base = {
       provider: 'cursor' as const,
       finalPrompt: 'Continue the work.',
@@ -1451,9 +1451,13 @@ describe('composeRunPrompt host-compaction summary injection', () => {
       contextCompactionSummary: summary
     }
     const fresh = composeRunPrompt(base)
-    expect(fresh.contextualPrompt).toBe('Continue the work.')
+    expect(fresh.contextualPrompt).toContain(summary.text)
+    expect(fresh.contextualPrompt).toContain('FRESH detail after the compaction.')
+    expect(fresh.contextualPrompt).toContain('Current user request:\nContinue the work.')
     const resumed = composeRunPrompt({ ...base, resumeSessionId: 'cursor-session-2' })
-    expect(resumed.contextualPrompt).toBe('Continue the work.')
+    expect(resumed.contextualPrompt).toContain(summary.text)
+    expect(resumed.contextualPrompt).toContain('FRESH detail after the compaction.')
+    expect(resumed.contextualPrompt).toContain('Current user request:\nContinue the work.')
   })
 
   it('never injects into a verbatim slash dispatch', () => {

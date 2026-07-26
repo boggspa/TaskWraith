@@ -121,7 +121,7 @@ const PROVIDER_DESCRIPTIONS: Record<ProviderId, string> = {
   claude:
     'Anthropic Claude Code for careful reasoning and edits. OAuth or API-key setup happens on the Mac.',
   kimi:
-    'Moonshot Kimi over admitted ACP. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml; neither bypasses runtime admission.',
+    'Moonshot Kimi over structurally admitted ACP. Structural admission is always enabled; compatible unreviewed runtimes are labelled unattested-development. Managed credentials come from the current Kimi Code OAuth login or a provider key in ~/.kimi-code/config.toml and do not bypass compatibility checks.',
   cursor:
     'Cursor Composer via the Cursor CLI. Sign in on the Mac with cursor-agent login; runs use a contained OS sandbox.',
   grok: 'xAI Grok runs through its local CLI. TaskWraith does not read Grok credentials remotely.',
@@ -140,7 +140,7 @@ const SETUP_HINTS: Record<ProviderId, string> = {
     'Install Codex if needed, then use TaskWraith’s Codex sign-in. Its private Codex home stays separate from the Codex app history.',
   claude: 'On your Mac, open TaskWraith Settings or run the Claude auth flow.',
   kimi:
-    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml, then confirm the exact runtime is admitted. The key saved in TaskWraith Settings is usage-only.',
+    'On your Mac, use `kimi login` or configure a provider key in ~/.kimi-code/config.toml. TaskWraith always applies stable identity, bounded startup, and ACP compatibility checks; admitted unreviewed runtimes are labelled unattested-development. The key saved in TaskWraith Settings is usage-only.',
   cursor:
     'On your Mac, install cursor-agent if needed, then run cursor-agent login in Terminal.',
   grok: 'On your Mac, install the Grok CLI and finish xAI/Grok sign-in there.',
@@ -295,7 +295,7 @@ function deriveProviderStatus(
         kind: 'notObservable',
         text: 'Managed runtime unavailable',
         detail:
-          'Kimi Code is installed, but this runtime has not passed TaskWraith’s admission checks: a stable binary identity, successful bounded startup probes, and the ACP-only transport posture are required before any managed Kimi process starts. OAuth login or an API key does not bypass these checks.'
+          'Kimi Code is installed, but its stable binary identity, bounded startup probes, or ACP compatibility checks failed. Structural ACP admission is always enabled; credentials do not bypass these checks. Compatible unreviewed runtimes are labelled unattested-development.'
       }
     }
     return {
