@@ -35,7 +35,7 @@ boundaries, topology decision guide, and recommended small Ensemble panels.
 TaskWraith's most experimental surface is **Ensemble Threads**: shared work
 sessions where multiple AI agents participate in the same conversation instead
 of living in separate tabs. A thread can include up to twenty named participants
-across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, and local Ollama, each
+across Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, and local Ollama, each
 with its own model, role, order, and permission posture.
 
 Kimi seats additionally require runtime admission: structural checks (stable
@@ -44,11 +44,12 @@ enabled, packaged builds included. While the reviewed qualification roster is
 empty, admitted runs are labelled `unattested-development`; that labelling
 cannot qualify a release.
 
-Managed **Cursor** is live: sign in with `cursor-agent`, then use it in solo
-chats, Ensembles, and delegated work. Cursor can use its native tools alongside
-TaskWraith tools, with the selected permission posture and workspace Tool Grants
-applying wherever TaskWraith mediates. The provider-native boundary is explained
-in [Trust & Safety](TRUST_AND_SAFETY.md).
+**Cursor** is in the user-approved live set. Its current Path-B route signs in
+with `cursor-agent` and works in solo chats, Ensembles, and delegated work.
+Cursor can use its native tools alongside TaskWraith tools, with the selected
+permission posture and workspace Tool Grants applying wherever TaskWraith
+mediates. The provider-native boundary is explained in
+[Trust & Safety](TRUST_AND_SAFETY.md).
 
 This is not just provider switching. Ensemble participants see the same
 transcript, can build on each other's work, hand off deliberately, run
@@ -150,15 +151,22 @@ baseline.
 - **Workspace Safety**: Workspace selection, trust-state visibility, approval
   modes, and run-scoped safety state before agents operate on local files.
 - **Provider Runs**: Integrated run surfaces for Codex, Claude, AntiGravity
-  (bring-your-own Gemini API key), Kimi, Cursor, Grok, and **local Ollama**
+  (bring-your-own Gemini API key), Kimi, Cursor, Grok, Pi, and **local Ollama**
   (curated Qwen, Gemma, GPT-OSS, and Poolside presets).
-  Kimi's integrated surface is admission-dependent: the current source-ahead
-  packaged roster contains no commissioned runtime tuple, so credentials or a
-  visible picker row alone cannot make it runnable.
-  Managed Cursor signs in normally and works in solo chats, Ensembles, and
-  delegated runs with native tools plus TaskWraith tools. The historical
-  standalone Gemini provider remains readable but retired for new runs; it is
-  distinct from the live, opt-in AntiGravity integration.
+  Kimi's integrated surface is admission-dependent: every build applies
+  structural identity, bounded-probe, and ACP-posture checks. The current
+  source-ahead reviewed roster is empty, so structurally admitted runs are
+  labelled `unattested-development`; credentials or a visible picker row alone
+  do not bypass structural admission.
+  Cursor's current Path-B route signs in normally and works in solo chats,
+  Ensembles, and delegated runs with native tools plus TaskWraith tools. The
+  historical standalone Gemini provider remains readable but retired for new
+  runs; it is distinct from the live, opt-in AntiGravity integration.
+  Run management is provider-neutral: the lifecycle inventory covers all nine
+  stable provider identities and every admitted turn crosses the shared signed
+  posture boundary. Availability remains a separate product decision; missing
+  broker, provenance, or scheduled-seal evidence is reported as a limited or
+  unsealed run and does not by itself remove a provider.
   Provider names describe compatible integrations only — CLIs and accounts stay
   user-installed. See the [Model Catalogue](MODEL_CATALOGUE.md)
   for the curated model rows, reasoning controls, and Fast-tier semantics.

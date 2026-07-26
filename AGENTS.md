@@ -149,7 +149,15 @@ Rules, in priority order:
    not drift — do not "fix" it. Every gate reads
    `isLiveSelectableProvider(p) || (p === '<id>' && <condition>)`, so promoting
    one short-circuits its condition and silently deletes the wall.
-5. **Doctrine is executable.** Future sessions obey what this file, the
+5. **Run management is additive assurance, never provider admission.** Measure
+   lifecycle and signed-posture coverage across all nine stable `ProviderId`
+   identities, independently of whether a provider is live, conditional, or
+   retired. Missing broker mediation, launch-seal evidence, provenance, or
+   another stronger management layer must produce an honest per-run
+   warning/receipt and the safest compatible mode; it must not hide, retire,
+   disable, or otherwise punish the provider. Keep improving toward 9/9 without
+   deriving `LIVE_SELECTABLE_PROVIDER_IDS` from management maturity.
+6. **Doctrine is executable.** Future sessions obey what this file, the
    README, the ledger, and the positioning docs assert. Never write "X is
    blocked/unavailable" unless the code enforces it *and* the user approved
    it; when a capability is re-enabled, sweep the doctrine the same day.
@@ -499,9 +507,10 @@ broker setup succeeds.
 The current embedded Kimi qualification roster is empty, so Kimi admission
 runs in explicitly labelled `unattested-development` mode — structural
 identity/probe/posture checks, always enabled, packaged builds included — and
-that labelling cannot qualify a release; only a reviewed roster tuple can. Gemini is
-historical/retired for new runs. **Managed Cursor is live again (Path-B):**
-TaskWraith starts a contained `cursor-agent` process with hard-pinned
+that labelling cannot qualify a release; only a reviewed roster tuple can.
+Gemini is historical/retired for new runs. **Cursor is in the user-approved
+live set; its current production route is managed Path-B:** TaskWraith starts a
+contained `cursor-agent` process with hard-pinned
 `--sandbox enabled` and seat-routed read-only vs write argv. Path-B keeps native
 Cursor tools under the OS sandbox and also registers a TaskWraith-owned gateway
 broker. Brokered calls use TaskWraith policy, approval cards, and workspace
@@ -817,20 +826,23 @@ unshipped until it appears in the next release notes:
   one-shot ACP transport; `TASKWRAITH_GROK_ACP=0` now makes Grok unavailable
   instead of reopening the retired headless path, and persistent Grok seat
   processes remain hard-disabled. Grok keeps its native shell/file tools
-  alongside the brokered `taskwraith` surface. When its exact runtime tuple is
-  admitted, Kimi Code reaches the gateway over ACP through a per-run
+  alongside the brokered `taskwraith` surface. When it passes structural ACP
+  runtime admission, Kimi Code reaches the gateway through a per-run
   Electron-main local HTTP bridge because ACP `session/new` rejects stdio MCP
   servers; its native session files persist separately in the durable isolated
-  seat. The source-ahead packaged roster is currently empty. Ollama
+  seat. A reviewed tuple upgrades the evidence label; without one, an admitted
+  run is labelled `unattested-development`. The source-ahead packaged roster is
+  currently empty. Ollama
   runs a TaskWraith-controlled local tool loop with parity where local
   capability exists, governed by the same signed permission posture and
   approval gates. Gemini is retained for historical chats and decode paths
   only. See `src/main/ProviderCapabilities.ts` and
   `src/main/mcp/McpSessionProfileFence.ts`.
-- **Managed Cursor Path-B (shipped in v1.8.5; residual risk still disclosed)** — Cursor is live
-  in `LIVE_SELECTABLE_PROVIDER_IDS` again. TaskWraith always-enables managed
-  Cursor (no brittle per-build fingerprint gate on the production spawn path)
-  and contains it with hard-pinned `--sandbox enabled` argv builders:
+- **Managed Cursor Path-B (shipped in v1.8.5; residual risk still disclosed)** —
+  Cursor's membership in `LIVE_SELECTABLE_PROVIDER_IDS` is a user-approved
+  product decision, independent of run-management maturity. Its current
+  production route has no brittle per-build fingerprint gate and contains
+  Cursor with hard-pinned `--sandbox enabled` argv builders:
   read-only vs write-capable shapes are routed by seat permission. Production
   never emits bare uncontained `cursor-agent`, sandbox-disabled, yolo,
   approve-all-MCP, or resume-token argv; `--force` is emitted only after the

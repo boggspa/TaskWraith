@@ -33,7 +33,7 @@ Responsible for the UI:
    (including paused-provider failover and retired-provider fallback), applies
    active goal context, and starts the selected provider command, SDK,
    app-server, or Ollama harness. Architecturally supported selectable provider
-   ids are Codex, Claude, AntiGravity, Kimi, Cursor, Grok, and local Ollama, but
+   ids are Codex, Claude, AntiGravity, Kimi, Cursor, Grok, Pi, and local Ollama, but
    a run still requires provider-specific admission. The older standalone
    Gemini provider id is retained for historical chats/configuration and decode
    paths only; AntiGravity is the live Gemini API/CLI integration. Managed
@@ -55,10 +55,16 @@ Responsible for the UI:
    rather than an exact reviewed tuple. See
    [`docs/kimi-code-acp-migration.md`](docs/kimi-code-acp-migration.md).
 3. Main process reads provider events and tool calls using the provider adapter.
-4. Sensitive actions route through TaskWraith policy, approval ledgers, and
-   workspace confinement before execution.
-5. Main process sends normalized events via IPC to Renderer.
-6. Renderer updates transcript, activity, diff, usage, goal, and audit state.
+4. Every admitted provider turn crosses the shared signed-posture normalizer
+   and host lifecycle inventory. Stronger layers such as per-tool mediation,
+   binary provenance, and scheduled launch seals are reported independently;
+   missing one does not alter provider selectability.
+5. Sensitive actions that cross a TaskWraith tool boundary route through
+   TaskWraith policy, approval ledgers, and workspace confinement before
+   execution. Provider-native actions remain bounded by the provider-specific
+   launch contract described above.
+6. Main process sends normalized events via IPC to Renderer.
+7. Renderer updates transcript, activity, diff, usage, goal, and audit state.
 
 ## Agent Orchestration
 

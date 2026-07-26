@@ -34,9 +34,11 @@ weaponized payloads to this file or its verification artifacts.
 - Do not delete an entry when work lands. Add a dated update, preserve the
   original evidence, and link the regression or live-verification artifact.
 - A named owner must replace `Unassigned` before remediation begins.
-- `Block` means the finding must be disproved, remediated, and verified before
-  the next public release candidate is approved, or the affected capability
-  must remain unavailable.
+- `Block` is release-only authority: the finding must be disproved, remediated,
+  verified, or explicitly accepted by the informed user before the next public
+  release candidate is approved. It does not authorize an engineer or agent to
+  hide, remove, or narrow the affected capability; capability changes still
+  require the user's explicit approval under `AGENTS.md`.
 
 | ID | Finding | Severity | Status | Owner | Release disposition |
 | --- | --- | --- | --- | --- | --- |
@@ -49,7 +51,7 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-007 | Canvas operations and live surfaces can outlive run cancellation or scoped history erasure | High | Remediated | TaskWraith maintainers — Canvas lifecycle | Source candidate accepted; verify the exact integrated scoped-erasure matrix before release |
 | TW-SEC-2026-008 | Kimi production containment had check/use races around workspace config and client filesystem authority | High | Remediated | TaskWraith maintainers — Kimi runtime | Verify the exact integrated production composition and live native trace before clearing the block |
 | TW-SEC-2026-009 | Concurrent Kimi OAuth refresh and writeback was not serialized or crash-replayable | Medium | Remediated | TaskWraith maintainers — Kimi authentication | Source candidate accepted; packaged Kimi now admits as labelled unattested-development (2026-07-21 update) — reviewed qualification remains externally commissioned |
-| TW-SEC-2026-010 | Unknown Kimi runtime builds lacked an enforced normal-seat admission fence | High | Remediated | TaskWraith maintainers — Provider qualification | Source candidate accepted for managed ACP seats; scheduled Kimi stays sealed-off, while packaged Kimi admits as labelled unattested-development pending reviewed qualification (2026-07-21 update) |
+| TW-SEC-2026-010 | Unknown Kimi runtime builds lacked an enforced normal-seat admission fence | High | Remediated | TaskWraith maintainers — Provider qualification | Source candidate accepted for managed ACP seats; scheduled Kimi remains available with an explicit unsealed receipt until its exact launch-plan handoff is wired, while packaged Kimi admits as labelled unattested-development pending reviewed qualification (2026-07-21 update) |
 | TW-SEC-2026-011 | Provider diagnostics exposed live broker bearer tokens and local prompt/path data | High | Remediated | TaskWraith maintainers — MCP bridge and Kimi ACP diagnostics | Source candidate and focused bridge suite accepted; whole-tree and exact packaged verification remain pending |
 | TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
