@@ -6,6 +6,22 @@ import {
   TASKWRAITH_CODEX_PROTECTED_STATE_ENTRIES,
   taskWraithCodexHomePath
 } from '../codex/CodexHome'
+import {
+  cliUpgradeCommand,
+  detectCliInstallChannel,
+  unknownInstallChannelMessage
+} from '../providers/CliInstallChannel'
+
+/** Best-effort realpath. A failure classifies as 'unknown', which refuses to
+ *  guess rather than upgrading the wrong copy. */
+function resolveRealPath(deps: ProviderTerminalHandlersDeps, binaryPath: string): string {
+  if (!deps.realpathSync) return binaryPath
+  try {
+    return deps.realpathSync(binaryPath)
+  } catch {
+    return binaryPath
+  }
+}
 
 type TerminalAction = 'login' | 'logout' | 'upgrade'
 
@@ -34,6 +50,10 @@ export interface ProviderTerminalHandlersDeps {
   writeFileSync: (path: string, data: string, options?: { mode?: number }) => void
   chmodSync: (path: string, mode: number) => void
   getPlatform: () => NodeJS.Platform
+  /** Resolve a binary past its symlink so the install channel is visible.
+   *  Optional: when absent the raw path is classified, which simply yields
+   *  'unknown' for a symlinked install rather than guessing wrong. */
+  realpathSync?: (path: string) => string
 }
 
 function shQuote(value: string): string {
@@ -65,10 +85,27 @@ async function openProviderAuthTerminal(
     if (provider === 'codex') {
       label = 'Codex'
       const resolved = await deps.resolveCliProviderBinary('codex')
-      commandParts =
-        action === 'upgrade'
-          ? ['npm', 'install', '-g', '@openai/codex@latest']
-          : [resolved.binaryPath || 'codex', action]
+      if (action === 'upgrade') {
+        // Upgrade the install we actually RUN. This was a hardcoded npm
+        // command, which silently installs a second copy when the resolved
+        // binary came from a Homebrew cask — reporting success while the
+        // executed binary stays put, so version-gated model errors persist
+        // through any number of "successful" upgrades.
+        const binaryPath = resolved.binaryPath || 'codex'
+        const realPath = resolveRealPath(deps, binaryPath)
+        const channel = detectCliInstallChannel(realPath)
+        const upgrade = cliUpgradeCommand({
+          channel,
+          npmPackage: '@openai/codex',
+          brewToken: 'codex'
+        })
+        if (!upgrade) {
+          return { ok: false, error: unknownInstallChannelMessage('Codex', realPath || binaryPath) }
+        }
+        commandParts = upgrade
+      } else {
+        commandParts = [resolved.binaryPath || 'codex', action]
+      }
       if (action !== 'upgrade') {
         codexHome = taskWraithCodexHomePath(deps.getUserDataPath())
         postscript = `${actionLabel} finished (exit $status). Close this window, return to TaskWraith, and refresh provider status.`

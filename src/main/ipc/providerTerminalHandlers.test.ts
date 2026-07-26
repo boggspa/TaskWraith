@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { join } from 'path'
+import { basename, join } from 'path'
 import { ipcMain } from 'electron'
 import type { ResolvedProviderBinary } from '../providers/CliProviderRuntime'
 import { registerProviderTerminalHandlers } from './providerTerminalHandlers'
@@ -46,6 +46,12 @@ function createDeps() {
   const deps = {
     resolveCliProviderBinary: vi.fn(async (provider: string) =>
       createResolved(`/usr/local/bin/${provider}`)
+    ),
+    // Upgrade must target the install we actually run, so the handler follows
+    // the symlink. Default to the npm layout — the real-world shape on the
+    // machine that reported the "upgraded three times, still stale" bug.
+    realpathSync: vi.fn(
+      (path: string) => `/opt/homebrew/lib/node_modules/@openai/codex/bin/${basename(path)}.js`
     ),
     getUserDataPath: vi.fn(() => userDataPath),
     openPath: vi.fn(async () => ''),
@@ -376,6 +382,44 @@ describe('registerProviderTerminalHandlers', () => {
     expect(deps.resolveCliProviderBinary).not.toHaveBeenCalled()
     expect(deps.mkdirSync).not.toHaveBeenCalled()
     expect(deps.writeFileSync).not.toHaveBeenCalled()
+    expect(deps.openPath).not.toHaveBeenCalled()
+  })
+})
+
+describe('codex upgrade targets the install it actually runs', () => {
+  it('uses brew for a Homebrew-cask install instead of npm', async () => {
+    // The reported failure: npm was hardcoded, so a cask user "upgraded"
+    // three times while the executed binary never moved, and version-gated
+    // models kept refusing.
+    const { deps, loginDir } = createDeps()
+    deps.realpathSync.mockReturnValue(
+      '/opt/homebrew/Caskroom/codex/0.144.0/codex-aarch64-apple-darwin'
+    )
+    registerProviderTerminalHandlers(deps)
+
+    await expect(handlerFor('provider:open-upgrade-terminal')({}, 'codex')).resolves.toEqual({
+      ok: true
+    })
+    const script = deps.writeFileSync.mock.calls.find((call: unknown[]) =>
+      String(call[0]).startsWith(join(loginDir, 'codex-upgrade'))
+    )?.[1]
+    expect(String(script)).toContain("'brew' 'upgrade' '--cask' 'codex'")
+    expect(String(script)).not.toContain('npm')
+  })
+
+  it('refuses rather than guessing when the channel is unrecognisable', async () => {
+    const { deps } = createDeps()
+    deps.realpathSync.mockReturnValue('/usr/local/bin/codex')
+    registerProviderTerminalHandlers(deps)
+
+    const result = (await handlerFor('provider:open-upgrade-terminal')({}, 'codex')) as {
+      ok: boolean
+      error?: string
+    }
+    expect(result.ok).toBe(false)
+    expect(result.error).toContain('/usr/local/bin/codex')
+    // Nothing was launched — an upgrade that silently targets a different copy
+    // is worse than none.
     expect(deps.openPath).not.toHaveBeenCalled()
   })
 })
