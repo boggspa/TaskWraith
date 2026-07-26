@@ -283,6 +283,32 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(resolved.agenticServices.shellCommands).toBe('workspace')
   })
 
+  it('does not sign malformed or expired workspace grants into the run posture', () => {
+    for (const expiresAt of ['not-a-date', '2000-01-01T00:00:00.000Z']) {
+      const resolved = resolveEffectiveRunPermissions({
+        provider: 'codex',
+        workspacePath: '/repo',
+        settings: settings({
+          agenticWorkspaceGrants: [
+            {
+              id: `workspace-grant-${expiresAt}`,
+              provider: 'codex',
+              workspacePath: '/repo',
+              service: 'shellCommands',
+              createdAt: '2026-05-24T00:00:00.000Z',
+              updatedAt: '2026-05-24T00:00:00.000Z',
+              expiresAt
+            }
+          ]
+        }),
+        presetId: 'default'
+      })
+
+      expect(resolved.workspaceGrantServiceIds).toEqual([])
+      expect(resolved.agenticServices.shellCommands).toBe('ask')
+    }
+  })
+
   it('lets participant denies override workspace grants', () => {
     const resolved = resolveEffectiveRunPermissions({
       provider: 'codex',

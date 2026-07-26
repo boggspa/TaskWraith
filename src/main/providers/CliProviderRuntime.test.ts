@@ -1,3 +1,4 @@
+import { promises as fs } from 'fs'
 import { describe, it, expect, vi } from 'vitest'
 import {
   applyRuntimeProfileToPayload,
@@ -517,13 +518,20 @@ describe('Cursor CLI status/version (un-gated: normal provider)', () => {
 
 describe('Pi CLI status', () => {
   it('keeps Pi on its own generic CLI status path instead of the Gemini fallback', async () => {
-    await expect(
-      getAgentStatusSnapshotDirect('pi', {
-        env: { PATH: '' },
-        getRuntimeProfiles: () => [],
-        getSettings: () => ({}) as AppSettings
-      })
-    ).resolves.toMatchObject({ provider: 'pi' })
+    const stat = vi
+      .spyOn(fs, 'stat')
+      .mockRejectedValue(Object.assign(new Error('ENOENT'), { code: 'ENOENT' }))
+    try {
+      await expect(
+        getAgentStatusSnapshotDirect('pi', {
+          env: { PATH: '' },
+          getRuntimeProfiles: () => [],
+          getSettings: () => ({}) as AppSettings
+        })
+      ).resolves.toMatchObject({ provider: 'pi' })
+    } finally {
+      stat.mockRestore()
+    }
   })
 })
 

@@ -440,7 +440,10 @@ function workspaceGrantServiceIdsFor(
   for (const grant of grants) {
     if (grant.provider !== provider) continue
     if (!grant.workspacePath || resolve(grant.workspacePath) !== normalizedWorkspace) continue
-    if (grant.expiresAt && Date.parse(grant.expiresAt) <= Date.now()) continue
+    if (grant.expiresAt) {
+      const expiresAt = Date.parse(grant.expiresAt)
+      if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) continue
+    }
     // Non-grantable services: stale/forged workspace grants must never promote
     // these above a per-action prompt. PermissionService enforces the same for
     // session grants.

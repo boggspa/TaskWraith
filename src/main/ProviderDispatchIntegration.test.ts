@@ -85,6 +85,34 @@ describe('provider dispatch integration', () => {
     expect(terminate.indexOf('session.process?.kill()')).toBeLessThan(
       terminate.indexOf('runManager.finish(runId, terminalStatus)')
     )
+    for (const provider of ['gemini', 'pi', 'antigravity', 'claude', 'cursor', 'codex']) {
+      expect(terminate).toContain(`provider === '${provider}'`)
+    }
+    expect(terminate).toContain('providerProcessTerminationBackstop.arm(runId, exactProcess)')
+  })
+
+  it('projects Pi and AntiGravity setup failures before no-transport settlement', () => {
+    const setupFailure = sourceBetween(
+      'function projectVisibleProviderSetupFailure(',
+      'function runCliProviderProcess('
+    )
+    const pi = sourceBetween('async function runPiProvider(', '// 1.0.6-G4/G6 — Grok over ACP')
+    const antigravity = sourceBetween(
+      'async function runAntigravityAgyProvider(',
+      '// Grok is a first-class provider'
+    )
+
+    expect(setupFailure.indexOf('sendAgentCompatError(')).toBeLessThan(
+      setupFailure.indexOf('sendAgentCompatLine(')
+    )
+    expect(setupFailure.indexOf('sendAgentCompatLine(')).toBeLessThan(
+      setupFailure.indexOf('sendAgentCompatExit(')
+    )
+    expect(setupFailure.indexOf('sendAgentCompatExit(')).toBeLessThan(
+      setupFailure.indexOf('settleProviderRunWithoutTransport(')
+    )
+    expect(pi).toContain('settleVisibleProviderSetupFailure({')
+    expect(antigravity).toContain('settleVisibleProviderSetupFailure({')
   })
 
   it('publishes the shared terminal exit when a Claude SDK budget abort blocks fallback', () => {
