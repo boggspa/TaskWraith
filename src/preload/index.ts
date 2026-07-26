@@ -871,6 +871,48 @@ const api = {
       error?: string
     }>,
 
+  // Peer thread-to-thread messages (S8). All three channels are main-renderer-only
+  // by the IPC allowlist's fail-closed default; `thread-message:send` additionally
+  // proves main-renderer authority in main, because a send from here is recorded as
+  // user-authored and a user-composed message skips the approval prompt.
+  threadMessageTargets: (fromChatId: string) =>
+    ipcRenderer.invoke('thread-message:targets', fromChatId) as Promise<
+      Array<{ chatId: string; title: string; workspaceId: string | null; crossWorkspace: boolean }>
+    >,
+  threadMessageInbox: (chatId: string) =>
+    ipcRenderer.invoke('thread-message:inbox', chatId) as Promise<{
+      summary: {
+        toChatId: string
+        pendingCount: number
+        hasWakeRequest: boolean
+        oldestPendingAt: number | null
+        senders: string[]
+      }
+      pending: Array<{
+        id: string
+        fromChatId: string
+        fromChatTitle: string
+        origin: 'user' | 'agent'
+        body: string
+        requestedDelivery: 'queue' | 'wake'
+        createdAt: number
+        truncated?: boolean
+      }>
+    }>,
+  sendThreadMessage: (payload: {
+    fromChatId: string
+    toChatId: string
+    message: string
+    wake?: boolean
+    idempotencyKey?: string
+  }) =>
+    ipcRenderer.invoke('thread-message:send', payload) as Promise<{
+      ok: boolean
+      outcome?: string
+      messageId?: string
+      error?: string
+    }>,
+
   // Phase K1: open external URLs / file paths from transcript markdown
   // clicks. Replaces the bare `<a href>` flow that would otherwise let
   // Electron navigate the BrowserWindow itself, unloading the bundled

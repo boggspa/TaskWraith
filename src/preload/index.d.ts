@@ -1144,6 +1144,40 @@ declare global {
         pollId: string
         choice: string
       }) => Promise<{ ok: boolean; error?: string }>
+      threadMessageTargets: (fromChatId: string) => Promise<
+        Array<{
+          chatId: string
+          title: string
+          workspaceId: string | null
+          crossWorkspace: boolean
+        }>
+      >
+      threadMessageInbox: (chatId: string) => Promise<{
+        summary: {
+          toChatId: string
+          pendingCount: number
+          hasWakeRequest: boolean
+          oldestPendingAt: number | null
+          senders: string[]
+        }
+        pending: Array<{
+          id: string
+          fromChatId: string
+          fromChatTitle: string
+          origin: 'user' | 'agent'
+          body: string
+          requestedDelivery: 'queue' | 'wake'
+          createdAt: number
+          truncated?: boolean
+        }>
+      }>
+      sendThreadMessage: (payload: {
+        fromChatId: string
+        toChatId: string
+        message: string
+        wake?: boolean
+        idempotencyKey?: string
+      }) => Promise<{ ok: boolean; outcome?: string; messageId?: string; error?: string }>
       openExternalOrPath: (href: string) => Promise<{ ok: boolean; error?: string }>
       revealPathInFinder: (path: string) => Promise<{ ok: boolean; error?: string }>
       revealMediaAsset: (sha256: string, mimeType: string) => Promise<{ ok: boolean }>

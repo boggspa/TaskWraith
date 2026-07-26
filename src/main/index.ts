@@ -1173,6 +1173,7 @@ import {
   isThreadMessageMcpToolName
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
+import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
 import {
   annotateRecallCitations,
   formatRecallCitation,
@@ -40691,6 +40692,27 @@ if (isGeminiMcpBridgeProcess) {
           ok: false,
           message: 'Ensemble orchestrator is not available.'
         }
+    })
+
+    // Peer thread-to-thread messages. `thread-message:send` records the message as
+    // user-authored, and a user-composed message skips the approval prompt, so the
+    // handler proves main-renderer authority before accepting that claim.
+    registerThreadMessageHandlers({
+      isMainRendererSender,
+      assertSenderChatScope: (event, chatId) => assertRendererChatScope(event, chatId),
+      getChat: (chatId) => AppStore.getChat(chatId),
+      listChats: () => AppStore.getChats(),
+      getThreadMessageInbox: (chatId) => AppStore.getThreadMessageInbox(chatId),
+      enqueueThreadMessage: (event) => AppStore.enqueueThreadMessage(event),
+      resolveServicePolicy: () =>
+        AppStore.getSettings().agenticServices?.threadMessage ?? 'ask',
+      mintThreadMessageId: (fromChatId, toChatId, nonce) =>
+        createThreadMessageId(fromChatId, toChatId, nonce),
+      now: () => Date.now(),
+      broadcastThreadMessageInboxChanged: (chatId) => {
+        const chat = AppStore.getChat(chatId)
+        if (chat) saveAndBroadcastChat(chat)
+      }
     })
 
     // Settings
