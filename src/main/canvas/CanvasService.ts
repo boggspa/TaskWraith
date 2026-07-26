@@ -774,7 +774,12 @@ export class CanvasService implements CanvasController {
     this.emit(canvasId, 'interaction', ctx, {
       action: 'click',
       ...canvasTargetAudit(args),
-      found: result.found
+      found: result.found,
+      // Whether the interaction actually landed is the audit-relevant fact —
+      // `found` alone cannot distinguish a click from a refused precondition.
+      executed: result.executed,
+      verified: result.verified,
+      ...(result.staleReason ? { staleReason: result.staleReason } : {})
     })
     return result
   }
@@ -792,7 +797,10 @@ export class CanvasService implements CanvasController {
     this.emit(canvasId, 'interaction', ctx, {
       action: 'fill',
       ...canvasTargetAudit(args),
-      found: result.found
+      found: result.found,
+      executed: result.executed,
+      verified: result.verified,
+      ...(result.staleReason ? { staleReason: result.staleReason } : {})
     })
     return result
   }

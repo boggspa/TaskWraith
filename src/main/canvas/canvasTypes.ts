@@ -135,12 +135,53 @@ export interface CanvasActionInput {
   value?: string
 }
 
+/**
+ * Why an actuation refused. Every one of these means NOTHING WAS DISPATCHED —
+ * the precondition failed before the element was touched.
+ */
+export type CanvasActStaleReason =
+  /** No element resolved from ref/selector/xy. */
+  | 'not_found'
+  /**
+   * The ref resolved, but the element is detached or no longer matches the
+   * identity recorded for it at snapshot time. Re-snapshot and retry.
+   */
+  | 'stale_target'
+  /** The element's centre hit-tests to something else — it is covered. */
+  | 'occluded'
+  /** The element cannot accept a fill (not a field, or a file input). */
+  | 'not_fillable'
+
+/** Did the page move around the dispatch? See `CanvasActResult.verified`. */
+export type CanvasActVerification = 'changed' | 'unchanged' | 'unknown'
+
 export interface CanvasActResult {
   ok: boolean
   action: 'click' | 'fill'
   ref?: string
   selector?: string
   found: boolean
+  /**
+   * True ONLY when the interaction was actually dispatched at the target.
+   *
+   * This exists because `ok`/`found` could not express "we touched nothing":
+   * `el.click()` on a detached node does not throw, so a re-rendered-away ref
+   * used to report `{ ok: true, found: true }` while the screen never changed.
+   * A refused precondition is always `executed: false` with a `staleReason`.
+   */
+  executed: boolean
+  /**
+   * Whether the page changed SYNCHRONOUSLY around the dispatch.
+   *
+   * `'unchanged'` does NOT mean the action failed — async re-renders, network
+   * round-trips and navigations all settle after `executeJavaScript` resolves.
+   * It means the action is UNCONFIRMED. Treat it as a possible no-op and
+   * re-snapshot rather than immediately retrying the same action, which is how
+   * a single misfire turns into a destructive retry loop.
+   */
+  verified: CanvasActVerification
+  /** Set only when `executed` is false. */
+  staleReason?: CanvasActStaleReason
   message?: string
   /**
    * URL/title at action completion. NB: a click that triggers a navigation may

@@ -93,10 +93,14 @@ class FakeDriver implements CanvasDriver {
     return viewport
   }
   async act(action: CanvasActionInput): Promise<CanvasActResult> {
+    const found = action.ref !== 'missing'
     return {
-      ok: action.ref !== 'missing',
+      ok: found,
       action: action.kind,
-      found: action.ref !== 'missing',
+      found,
+      executed: found,
+      verified: found ? 'changed' : 'unknown',
+      ...(found ? {} : { staleReason: 'not_found' as const }),
       ref: action.ref,
       selector: action.selector
     }

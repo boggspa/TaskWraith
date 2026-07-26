@@ -28,6 +28,8 @@ import {
 import type {
   CanvasActionInput,
   CanvasActResult,
+  CanvasActStaleReason,
+  CanvasActVerification,
   CanvasConsoleEntry,
   CanvasConsoleLevel,
   CanvasDriver,
@@ -81,13 +83,44 @@ const DEFAULT_INSPECT_STYLES = [
   'height'
 ]
 
+// Structural + explicit-label identity for one element. Recorded per ref at
+// snapshot time and RECOMPUTED before every actuation, so a ref that now points
+// at a rebuilt or detached node is refused instead of clicked.
+//
+// Deliberately EXCLUDES textContent. Live text (counters, timers, unread
+// badges) would churn the digest and make a healthy control permanently
+// un-actionable; explicit labels and structure are stable. The asymmetry is
+// intentional: a false "stale" costs one wasted re-observe, a false "fresh"
+// clicks the wrong element.
+//
+// NOTE: template literal — every regex backslash is DOUBLED so it survives into
+// the evaluated page JS (`\\s` here → `\s` in the page).
+const TARGET_IDENTITY_FN = `
+  const __twIdentity = (el) => {
+    if (!el || el.nodeType !== 1) return '';
+    const label = (el.getAttribute('aria-label') || el.getAttribute('alt') ||
+      el.getAttribute('title') || el.getAttribute('placeholder') || '')
+      .replace(/\\s+/g, ' ').trim().slice(0, 80);
+    let path = '', n = el, depth = 0;
+    while (n && n.nodeType === 1 && depth < 6) {
+      const p = n.parentElement;
+      let idx = 0;
+      if (p) { for (const s of p.children) { if (s === n) break; if (s.tagName === n.tagName) idx++; } }
+      path = '/' + n.tagName + '[' + idx + ']' + path;
+      n = p; depth++;
+    }
+    return el.tagName + '|' + (el.getAttribute('role') || '') + '|' +
+      (el.getAttribute('type') || '') + '|' + label + '|' + path;
+  };`
+
 // Injected DOM-walk that assigns stable refs (e1, e2, …), stashes the elements
 // on window.__twCanvas__.refs for canvas_inspect, and returns a compact tree.
 // NOTE: this is a template literal — every regex backslash is DOUBLED so it
 // survives into the evaluated JS string (`\\s` here → `\s` in the page).
 const SNAPSHOT_SCRIPT = `(() => {
   const MAX_NODES = 400, TEXT_TRUNCATE = 200;
-  const reg = (window.__twCanvas__ = { refs: {}, seq: 0 });
+  const reg = (window.__twCanvas__ = { refs: {}, ids: {}, seq: 0 });
+  ${TARGET_IDENTITY_FN}
   let count = 0;
   const truncate = (s) => { s = (s || '').replace(/\\s+/g, ' ').trim(); return s.length > TEXT_TRUNCATE ? s.slice(0, TEXT_TRUNCATE) + '\\u2026' : s; };
   const isVisible = (el) => {
@@ -136,7 +169,7 @@ const SNAPSHOT_SCRIPT = `(() => {
     if (!mine && childNodes.length === 0) return null;
     if (!mine && childNodes.length === 1) return childNodes[0];
     const ref = 'e' + (++reg.seq);
-    reg.refs[ref] = el; count++;
+    reg.refs[ref] = el; reg.ids[ref] = __twIdentity(el); count++;
     const r = el.getBoundingClientRect();
     const node = { ref, tag: el.tagName.toLowerCase(), role: el.getAttribute('role') || implicitRole(el),
       bbox: [Math.round(r.x), Math.round(r.y), Math.round(r.width), Math.round(r.height)] };
@@ -159,7 +192,7 @@ const SNAPSHOT_SCRIPT = `(() => {
   // Freeze the ref map so a malicious page cannot reassign refs[eN] to point a
   // later canvas_click/canvas_inspect at an attacker-chosen element. (The next
   // snapshot replaces window.__twCanvas__ wholesale, so this is per-snapshot.)
-  try { Object.freeze(reg.refs); Object.freeze(reg); } catch (e) {}
+  try { Object.freeze(reg.refs); Object.freeze(reg.ids); Object.freeze(reg); } catch (e) {}
   return { url: location.href, title: document.title,
     viewport: { width: window.innerWidth, height: window.innerHeight }, root,
     nodeCount: reg.seq, truncated: count >= MAX_NODES };
@@ -191,7 +224,25 @@ function inspectScript(args: { ref?: string; selector?: string; styles?: string[
 // P1 click/fill. Resolves an element by ref (preferred), selector, or x/y, then
 // performs a realistic interaction. Fill uses the native value setter +
 // input/change events so React's controlled inputs notice the change.
-function actScript(action: CanvasActionInput): string {
+//
+// PRECONDITIONS (added 2026-07-26). A ref resolved out of the frozen snapshot
+// registry is NOT proof the element is still real: `el.click()` on a detached
+// node does not throw, `scrollIntoView` no-ops, and the old contract returned
+// `{ ok: true, found: true }` for a node that had been re-rendered away. The
+// agent then re-observed, saw no change, and tried harder — a silent-empty-
+// success loop against a live app. Every actuation now asserts, in order:
+//   1. the element is still attached (`isConnected`),
+//   2. its recomputed identity still matches the snapshot's (ref path only),
+//   3. its centre still hit-tests to itself (i.e. it is not covered).
+// Any failure refuses WITHOUT dispatching and reports `staleReason`.
+//
+// POSTCONDITION: a cheap document+target digest is taken either side of the
+// dispatch so the result can say whether anything actually moved. Synchronous
+// only — see the `verified` doc comment on CanvasActResult.
+// Exported for CanvasWebDriverActScript.test.ts: the preconditions live inside
+// the injected page script, so the only honest way to test them is to evaluate
+// the generated source against a DOM stub. There is no jsdom in this project.
+export function actScript(action: CanvasActionInput): string {
   const a = JSON.stringify({
     kind: action.kind,
     ref: action.ref ?? null,
@@ -202,16 +253,86 @@ function actScript(action: CanvasActionInput): string {
   })
   return `(() => {
     const a = ${a};
+    ${TARGET_IDENTITY_FN}
+    const refuse = (reason, message, found) => ({
+      ok: false, found: found === true, action: a.kind, executed: false,
+      verified: 'unknown', staleReason: reason, message: message
+    });
     let el = null;
-    if (a.ref && window.__twCanvas__ && window.__twCanvas__.refs) el = window.__twCanvas__.refs[a.ref] || null;
+    let byRef = false;
+    if (a.ref && window.__twCanvas__ && window.__twCanvas__.refs) {
+      el = window.__twCanvas__.refs[a.ref] || null;
+      byRef = Boolean(el);
+    }
     if (!el && a.selector) { try { el = document.querySelector(a.selector); } catch (e) { el = null; } }
     if (!el && a.x != null && a.y != null) el = document.elementFromPoint(a.x, a.y);
-    if (!el) return { ok: false, found: false, action: a.kind, message: 'Element not found.' };
-    if (typeof el.scrollIntoView === 'function') { try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {} }
+    if (!el) return refuse('not_found', 'Element not found.', false);
+
+    // 1. Still attached? A detached node accepts clicks silently.
+    if (el.isConnected === false) {
+      return refuse('stale_target', 'Target is no longer attached to the document; re-run canvas_snapshot.', false);
+    }
+    // 2. Still the same element this ref described?
+    if (byRef && window.__twCanvas__.ids) {
+      const expected = window.__twCanvas__.ids[a.ref];
+      if (expected && __twIdentity(el) !== expected) {
+        return refuse('stale_target', 'Target changed since the snapshot that produced this ref; re-run canvas_snapshot.', false);
+      }
+    }
+
+    const inView = () => {
+      const r = el.getBoundingClientRect();
+      return r.bottom > 0 && r.right > 0 && r.top < window.innerHeight && r.left < window.innerWidth;
+    };
+    if (!inView() && typeof el.scrollIntoView === 'function') {
+      try { el.scrollIntoView({ block: 'center', inline: 'center' }); } catch (e) {}
+    }
+
+    // 3. Does the centre still belong to us? Covered controls silently eat the
+    //    click in a real browser, so refuse rather than pretend it landed.
+    const rect = el.getBoundingClientRect();
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    if (rect.width > 0 && rect.height > 0 && cx >= 0 && cy >= 0 &&
+        cx <= window.innerWidth && cy <= window.innerHeight) {
+      let hit = null;
+      try { hit = document.elementFromPoint(cx, cy); } catch (e) { hit = null; }
+      if (hit && hit !== el && !el.contains(hit) && !hit.contains(el)) {
+        return refuse('occluded', 'Target centre is covered by another element; dismiss the overlay or scroll it into the clear.', true);
+      }
+    }
+
+    const digest = () => {
+      let doc = '';
+      try {
+        doc = location.href + '|' + (document.title || '') + '|' +
+          (document.body ? document.body.childElementCount : 0);
+      } catch (e) { doc = 'err'; }
+      let target = '';
+      try {
+        target = el.isConnected === false ? 'detached'
+          : (el.parentElement ? el.parentElement.childElementCount : -1) + ':' +
+            el.childElementCount + ':' +
+            (typeof el.value === 'string' ? el.value.length : -1) + ':' +
+            (el.checked === true ? 1 : 0) + ':' +
+            (el.getAttribute('aria-expanded') || '') + ':' +
+            String(el.className || '').length;
+      } catch (e) { target = 'err'; }
+      return doc + '||' + target;
+    };
+    const before = digest();
+    const settle = (found, message) => {
+      const after = digest();
+      return {
+        ok: true, found: found, action: a.kind, executed: true,
+        verified: after === before ? 'unchanged' : 'changed',
+        ...(message ? { message: message } : {})
+      };
+    };
+
     if (a.kind === 'fill') {
       const tag = el.tagName;
       if (tag !== 'INPUT' && tag !== 'TEXTAREA' && tag !== 'SELECT') {
-        return { ok: false, found: true, action: 'fill', message: 'Target is not a fillable field.' };
+        return refuse('not_fillable', 'Target is not a fillable field.', true);
       }
       const itype = (el.getAttribute('type') || '').toLowerCase();
       try { el.focus(); } catch (e) {}
@@ -220,26 +341,25 @@ function actScript(action: CanvasActionInput): string {
         el.checked = want;
         el.dispatchEvent(new Event('input', { bubbles: true }));
         el.dispatchEvent(new Event('change', { bubbles: true }));
-        return { ok: true, found: true, action: 'fill', message: 'checked=' + want };
+        return settle(true, 'checked=' + want);
       }
       if (tag === 'INPUT' && itype === 'file') {
-        return { ok: false, found: true, action: 'fill', message: 'File inputs cannot be set programmatically.' };
+        return refuse('not_fillable', 'File inputs cannot be set programmatically.', true);
       }
       const next = a.value == null ? '' : String(a.value);
       const desc = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), 'value');
       if (desc && desc.set) desc.set.call(el, next); else el.value = next;
       el.dispatchEvent(new Event('input', { bubbles: true }));
       el.dispatchEvent(new Event('change', { bubbles: true }));
-      return { ok: true, found: true, action: 'fill' };
+      return settle(true);
     }
     try { el.focus(); } catch (e) {}
-    const r = el.getBoundingClientRect();
-    const opts = { bubbles: true, cancelable: true, view: window, clientX: r.left + r.width / 2, clientY: r.top + r.height / 2 };
+    const opts = { bubbles: true, cancelable: true, view: window, clientX: cx, clientY: cy };
     el.dispatchEvent(new MouseEvent('mousedown', opts));
     el.dispatchEvent(new MouseEvent('mouseup', opts));
     if (typeof el.click === 'function') { try { el.click(); } catch (e) { el.dispatchEvent(new MouseEvent('click', opts)); } }
     else el.dispatchEvent(new MouseEvent('click', opts));
-    return { ok: true, found: true, action: 'click' };
+    return settle(true);
   })()`
 }
 
@@ -612,10 +732,17 @@ export class CanvasWebDriver implements CanvasDriver {
       ok: boolean
       found: boolean
       action: 'click' | 'fill'
+      executed?: boolean
+      verified?: CanvasActVerification
+      staleReason?: CanvasActStaleReason
       message?: string
     }
     return {
       ...result,
+      // Fail honest: an injected result missing these is treated as "we cannot
+      // claim this ran", never as a success.
+      executed: result.executed === true,
+      verified: result.verified ?? 'unknown',
       ref: action.ref,
       selector: action.selector,
       url: wc.getURL(),

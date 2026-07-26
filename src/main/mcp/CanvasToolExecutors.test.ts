@@ -58,6 +58,8 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       ok: true,
       action: 'click',
       found: true,
+      executed: true,
+      verified: 'changed',
       ref: args.ref,
       selector: args.selector
     }),
@@ -65,6 +67,8 @@ function fakeController(over: Partial<CanvasController> = {}): CanvasController 
       ok: true,
       action: 'fill',
       found: true,
+      executed: true,
+      verified: 'changed',
       ref: args.ref,
       selector: args.selector
     }),
