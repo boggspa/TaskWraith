@@ -132,31 +132,32 @@ public enum OllamaDisplayBrands {
     /// `deepseek`), or `nil` when the id is malformed or names an upstream this
     /// build does not surface — callers then fall back to the `pi` seat colour.
     ///
-    /// Twin of `shared/piBrandTable.ts`; keep the two in lockstep. Splits on the
-    /// FIRST slash: Groq ids carry a SECOND one (`groq/openai/gpt-oss-120b`), so
-    /// splitting on the last silently mis-brands every Groq model.
-    /// `qwen-token-plan` maps to the existing `qwen` class on purpose.
+    /// Delegates to `PiBrandTable` so the hue and the brand LABEL cannot
+    /// disagree about which upstreams exist: this used to inline its own list of
+    /// upstream ids, which is exactly the kind of second copy that drifts.
     public static func piUpstreamHueClass(modelId: String?) -> String? {
-        let wire = (modelId ?? "").trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let slash = wire.firstIndex(of: "/"), slash != wire.startIndex else { return nil }
-        let upstream = String(wire[wire.startIndex..<slash])
-        guard wire.index(after: slash) < wire.endIndex else { return nil }
-        switch upstream {
-        case "deepseek", "zai", "minimax", "mistral", "groq", "cerebras": return upstream
-        case "qwen-token-plan": return "qwen"
-        default: return nil
-        }
+        PiBrandTable.brand(forWireModelId: modelId)?.hueClass
     }
 
-    /// Spoofed upstream brand label for an Ollama-backed model (e.g. "Alibaba"),
-    /// or `nil` for non-Ollama providers / unbranded Ollama models. Mirrors the
-    /// desktop's `resolveProviderBrandLabel`.
+    /// Spoofed upstream brand label for a model whose provider id hides the
+    /// brand the user actually picked — "Alibaba" for an Ollama-hosted Qwen,
+    /// "Mistral" for a Pi run served by the Mistral API. `nil` for every other
+    /// provider, and for models of these two whose brand we cannot identify.
+    ///
+    /// Mirrors the desktop's `resolveProviderBrandLabel`, including its opt-in
+    /// contract: callers pair this with the plain `TWTheme.providerLabel`, so
+    /// surfaces that group models by seat or authenticate one keep saying "Pi" /
+    /// "Ollama". Do not fold this into `providerLabel(_:)`.
     public static func brandLabel(
         provider: String?, modelId: String? = nil, modelLabel: String? = nil
     ) -> String? {
-        guard (provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-            == "ollama"
-        else { return nil }
-        return resolve(modelId: modelId, modelLabel: modelLabel)?.providerLabel
+        let id = (provider ?? "").trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if id == "ollama" {
+            return resolve(modelId: modelId, modelLabel: modelLabel)?.providerLabel
+        }
+        if id == "pi" {
+            return PiBrandTable.brand(forWireModelId: modelId)?.label
+        }
+        return nil
     }
 }

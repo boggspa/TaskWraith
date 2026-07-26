@@ -4756,6 +4756,11 @@ public func twModelVariantLabel(provider: String?, model: String?) -> String? {
     {
         return brand.modelLabel
     }
+    // `ModelContextLengths` lists only the flagship Pi row per upstream, so the
+    // rest of the catalog fell through to the raw `<upstream>/<model>` wire id.
+    if providerKey == "pi", let label = PiBrandTable.modelLabel(forWireModelId: trimmed) {
+        return label
+    }
     return trimmed
 }
 

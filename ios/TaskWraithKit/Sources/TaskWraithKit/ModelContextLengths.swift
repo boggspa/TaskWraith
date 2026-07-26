@@ -96,7 +96,7 @@ public enum ModelContextLengths {
                 (id: "zai/glm-5.2",                 label: "GLM-5.2"),
                 (id: "qwen-token-plan/qwen3.7-max", label: "Qwen3.7 Max"),
                 (id: "minimax/MiniMax-M3",          label: "MiniMax M3"),
-                (id: "mistral/devstral-2512",       label: "Devstral 2"),
+                (id: "mistral/devstral-2512",       label: "Devstral 2512"),
             ]
         case "grok":
             return [

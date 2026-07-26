@@ -220,6 +220,15 @@ public enum TWTheme {
         case "poolside": return "Poolside"
         case "qwen": return "Qwen"
         case "ornith": return "Ornith"
+        // Pi BYOK upstreams. Present because a hue class is sometimes carried as
+        // an id (participant-health entries stamp `displayHueClass`), and the
+        // default branch below would title-case them into "Deepseek" / "Zai".
+        case "deepseek": return "DeepSeek"
+        case "zai": return "Z.ai"
+        case "minimax": return "MiniMax"
+        case "mistral": return "Mistral"
+        case "groq": return "Groq"
+        case "cerebras": return "Cerebras"
         case .some(let other): return other.prefix(1).uppercased() + other.dropFirst()
         case nil: return "Agent"
         }

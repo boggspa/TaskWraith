@@ -163,6 +163,38 @@ describe('Pi sub-provider palette', () => {
   })
 })
 
+describe('iOS PiBrandTable twin', () => {
+  // No codegen across the platform boundary. The accent map is already pinned
+  // above; these pin the LABELS, which are what the phone actually renders in
+  // the transcript header and participant chips. A brand or model added on the
+  // desktop and forgotten on the phone fails here rather than shipping a row
+  // that reads "Pi · mistral/devstral-2512".
+  const swift = readFileSync(
+    join(process.cwd(), 'ios/TaskWraithKit/Sources/TaskWraithKit/PiBrandTable.swift'),
+    'utf8'
+  )
+
+  it.each(Object.entries(PI_UPSTREAM_BRANDS))(
+    'mirrors the %s brand into Swift',
+    (upstream, brand) => {
+      expect(swift).toContain(
+        `"${upstream}": Brand(label: "${brand.label}", hueClass: "${brand.hueClass}")`
+      )
+    }
+  )
+
+  it.each(Object.entries(PI_MODEL_LABELS))('mirrors the %s label into Swift', (wireId, label) => {
+    expect(swift).toContain(`"${wireId}": "${label}"`)
+  })
+
+  it('surfaces no upstream or model the desktop does not', () => {
+    const swiftUpstreams = [...swift.matchAll(/^\s{8}"([a-z0-9-]+)": Brand\(/gm)].map((m) => m[1])
+    expect(swiftUpstreams.sort()).toEqual(Object.keys(PI_UPSTREAM_BRANDS).sort())
+    const swiftModels = [...swift.matchAll(/^\s{8}"([^"]+\/[^"]+)": "/gm)].map((m) => m[1])
+    expect(swiftModels.sort()).toEqual(Object.keys(PI_MODEL_LABELS).sort())
+  })
+})
+
 describe('Pi hue classes are actually painted', () => {
   // A theme TOKEN is only half of a hue: the surface has to carry a rule that
   // reads it. `resolveProviderHueClass` shipped returning `mistral` before any
