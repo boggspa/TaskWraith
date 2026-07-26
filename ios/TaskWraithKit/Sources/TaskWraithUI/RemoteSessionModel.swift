@@ -2144,6 +2144,7 @@ public final class RemoteSessionModel: ObservableObject {
         var windowStartIndex: Int?
         var hasMoreAbove: Bool?
         var hasMoreBelow: Bool?
+        var threadMessageInbox: RemoteThreadSnapshot.ThreadMessageInbox?
         init(_ s: RemoteThreadSnapshot) {
             threadId = s.threadId
             taskId = s.taskId
@@ -2162,6 +2163,7 @@ public final class RemoteSessionModel: ObservableObject {
             windowStartIndex = s.windowStartIndex
             hasMoreAbove = s.hasMoreAbove
             hasMoreBelow = s.hasMoreBelow
+            threadMessageInbox = s.threadMessageInbox
         }
         func build() -> RemoteThreadSnapshot {
             RemoteThreadSnapshot(
@@ -2172,7 +2174,7 @@ public final class RemoteSessionModel: ObservableObject {
                 showRunCompleteSummary: showRunCompleteSummary, notes: notes, pinnedRows: pinnedRows,
                 blackboardEntries: blackboardEntries, runSummaries: runSummaries,
                 windowStartIndex: windowStartIndex, hasMoreAbove: hasMoreAbove,
-                hasMoreBelow: hasMoreBelow)
+                hasMoreBelow: hasMoreBelow, threadMessageInbox: threadMessageInbox)
         }
     }
 
@@ -3867,7 +3869,8 @@ public final class RemoteSessionModel: ObservableObject {
             runSummaries: runSummaries,
             windowStartIndex: snapshot.windowStartIndex,
             hasMoreAbove: snapshot.hasMoreAbove,
-            hasMoreBelow: snapshot.hasMoreBelow)
+            hasMoreBelow: snapshot.hasMoreBelow,
+            threadMessageInbox: snapshot.threadMessageInbox)
     }
 
     private static func runSummaryIsHidden(
@@ -3950,7 +3953,11 @@ public final class RemoteSessionModel: ObservableObject {
             runSummaries: mergedRunSummaries(base: base, fallback: fallback),
             windowStartIndex: windowStartIndex,
             hasMoreAbove: windowStartIndex > 0,
-            hasMoreBelow: hasMoreBelow)
+            hasMoreBelow: hasMoreBelow,
+            // Same contract as the metadata merge: a present zero from the Mac
+            // clears the badge; absence (a row-window projection carries no inbox
+            // data) leaves the last known count alone.
+            threadMessageInbox: base.threadMessageInbox ?? fallback.threadMessageInbox)
     }
 
     private func mergedRunSummary(

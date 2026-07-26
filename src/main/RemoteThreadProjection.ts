@@ -2690,7 +2690,14 @@ export function projectRemoteThread(
     ...(blackboardEntries.length > 0 ? { blackboardEntries } : {}),
     ...(pinnedRows.length > 0 ? { pinnedRows } : {}),
     ...(runSummaries.length > 0 ? { runSummaries } : {}),
-    ...(opts.threadMessageInbox && opts.threadMessageInbox.pendingCount > 0
+    // Emitted whenever the CALLER supplied inbox data, including at zero. Unlike
+    // every neighbouring optional, absence here does not mean "empty" — it means
+    // "this projection does not carry inbox data" (the aroundRow sites pass
+    // nothing). Remote clients merge snapshots field-by-field with
+    // `incoming ?? existing`, so omitting a zero would leave a drained inbox
+    // showing its old count forever: messages clear on the target's next turn,
+    // and that turn's snapshot is exactly the one that would have to say so.
+    ...(opts.threadMessageInbox
       ? { threadMessageInbox: projectThreadMessageInbox(opts.threadMessageInbox) }
       : {})
   }

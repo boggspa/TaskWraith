@@ -26,7 +26,11 @@ public enum ThreadSnapshotMerge {
             runSummaries: incoming.runSummaries ?? existing.runSummaries,
             windowStartIndex: existing.windowStartIndex,
             hasMoreAbove: existing.hasMoreAbove,
-            hasMoreBelow: incoming.hasMoreBelow ?? existing.hasMoreBelow)
+            hasMoreBelow: incoming.hasMoreBelow ?? existing.hasMoreBelow,
+            // `??` is right here BECAUSE the Mac states an empty inbox rather than
+            // omitting it: a present zero clears the badge, and absence means this
+            // refresh carried no inbox data at all, so the old count stands.
+            threadMessageInbox: incoming.threadMessageInbox ?? existing.threadMessageInbox)
     }
 
     private static func preferIncomingRunSummary(

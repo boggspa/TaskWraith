@@ -2494,11 +2494,20 @@ describe('RemoteThreadSnapshot — peer thread-message inbox', () => {
     expect(JSON.stringify(snap.threadMessageInbox)).not.toMatch(/body|content|message/i)
   })
 
-  it('omits the field entirely when nothing is pending', () => {
+  // A drained inbox must be STATED, not implied by omission. Remote clients merge
+  // snapshots field-by-field with `incoming ?? existing`, and messages clear on the
+  // target thread's next turn — so if that turn's snapshot omitted the zero, the
+  // phone would show the old count forever. Absence is reserved for "this
+  // projection does not carry inbox data" (see the aroundRow case below).
+  it('states an empty inbox rather than omitting it', () => {
     const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
-      threadMessageInbox: inbox({ pendingCount: 0 })
+      threadMessageInbox: inbox({ pendingCount: 0, senders: [], oldestPendingAt: null })
     })
-    expect(snap.threadMessageInbox).toBeUndefined()
+    expect(snap.threadMessageInbox).toEqual({
+      pendingCount: 0,
+      hasWakeRequest: false,
+      senders: []
+    })
   })
 
   it('omits the field when the caller supplies nothing', () => {

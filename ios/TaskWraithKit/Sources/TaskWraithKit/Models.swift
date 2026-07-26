@@ -1719,6 +1719,40 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
     public let windowStartIndex: Int?
     public let hasMoreAbove: Bool?
     public let hasMoreBelow: Bool?
+    /// Peer thread-message inbox: how many messages other threads have queued for
+    /// this one, and who from. **Counts and sender names only — never bodies.** A
+    /// body is untrusted prose another agent wrote, and this app has no equivalent
+    /// of the Mac card's plain-text containment, so the Mac does not send them.
+    ///
+    /// Present-at-zero is meaningful: the Mac states a drained inbox rather than
+    /// omitting it, so `incoming ?? existing` merging clears the badge. Absent
+    /// means "this snapshot does not carry inbox data" (row-window refreshes),
+    /// which is why the merges below keep the existing value on absence.
+    public let threadMessageInbox: ThreadMessageInbox?
+    public struct ThreadMessageInbox: Codable, Sendable, Equatable {
+        public let pendingCount: Int?
+        public let hasWakeRequest: Bool?
+        /// Titles of the sending threads, capped Mac-side.
+        public let senders: [String]?
+        public let oldestPendingAt: Double?
+
+        public init(
+            pendingCount: Int? = nil,
+            hasWakeRequest: Bool? = nil,
+            senders: [String]? = nil,
+            oldestPendingAt: Double? = nil
+        ) {
+            self.pendingCount = pendingCount
+            self.hasWakeRequest = hasWakeRequest
+            self.senders = senders
+            self.oldestPendingAt = oldestPendingAt
+        }
+
+        /// Pending count, defaulting a missing field to zero so a partial decode
+        /// under-reports rather than inventing mail.
+        public var count: Int { max(0, pendingCount ?? 0) }
+        public var wantsWake: Bool { count > 0 && hasWakeRequest == true }
+    }
 
     public init(
         threadId: String? = nil,
@@ -1737,7 +1771,8 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         runSummaries: [RunSummary]? = nil,
         windowStartIndex: Int? = nil,
         hasMoreAbove: Bool? = nil,
-        hasMoreBelow: Bool? = nil
+        hasMoreBelow: Bool? = nil,
+        threadMessageInbox: ThreadMessageInbox? = nil
     ) {
         self.threadId = threadId
         self.taskId = taskId
@@ -1756,6 +1791,7 @@ public struct RemoteThreadSnapshot: Codable, Sendable, Equatable {
         self.windowStartIndex = windowStartIndex
         self.hasMoreAbove = hasMoreAbove
         self.hasMoreBelow = hasMoreBelow
+        self.threadMessageInbox = threadMessageInbox
     }
 }
 
@@ -2471,6 +2507,32 @@ public enum BridgeAction {
             "workspaceId": workspaceId, "threadId": threadId, "limit": limit,
         ]
         if let beforeRowId { payload["beforeRowId"] = beforeRowId }
+        return encode(payload)
+    }
+
+    /// Queue a peer thread message for another thread on the Mac.
+    ///
+    /// `toThreadId` is an EXACT thread id resolved on this device from the
+    /// projection — never a title. The Mac deliberately refuses to look a target up
+    /// by name for a remote caller, because an untrusted client must not get to say
+    /// "the thread called X" and have the Mac pick.
+    ///
+    /// There is no `wake` parameter and there must never be one: the Mac's gate
+    /// denies a remote wake outright, so the wire format does not express it. A
+    /// remote send can only QUEUE. Capability is `startTurn`, not `monitor`.
+    public static func threadMessage(
+        workspaceId: String, threadId: String, toThreadId: String, message: String,
+        idempotencyKey: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "threadMessage", "actionId": actionId,
+            "workspaceId": workspaceId, "threadId": threadId,
+            "toThreadId": toThreadId, "message": message,
+        ]
+        if let idempotencyKey, !idempotencyKey.isEmpty {
+            payload["idempotencyKey"] = idempotencyKey
+        }
         return encode(payload)
     }
 
