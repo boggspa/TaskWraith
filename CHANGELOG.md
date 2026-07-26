@@ -68,6 +68,9 @@ Agent-driven Canvas actions now fail closed when a target or human-input
 snapshot is stale, serialize per surface, and stand down while a human is driving.
 Credential fields remain human-only, in-progress sketch strokes survive agent
 updates, and the audit receipt is persisted before a liveness check can fail.
+Canvas drivers remain bound to their isolated surfaces and must never target
+TaskWraith's own consent chrome; pausing for recent human input is courtesy,
+not a substitute for that structural boundary.
 
 ### Pi opens the model bench
 

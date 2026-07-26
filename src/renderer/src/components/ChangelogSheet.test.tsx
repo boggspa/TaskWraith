@@ -290,6 +290,7 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('Threads can knock on another door')
     expect(entry.releaseNotes).toContain('Office dock')
     expect(entry.releaseNotes).toContain('stand down while a human is driving')
+    expect(entry.releaseNotes).toContain('must never target')
     expect(entry.releaseNotes).toContain('Pi opens the model bench')
     expect(entry.releaseNotes).toContain('Mistral gets its own door')
     expect(entry.releaseNotes).toContain('The workshop can wear your colours')
