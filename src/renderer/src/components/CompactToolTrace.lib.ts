@@ -1,6 +1,12 @@
 import type { ProviderId, ToolActivity } from '../../../main/store/types'
 import { isTodoToolName, parseTodoItemsFromActivity, summarizeTodoProgress } from '../../../main/TodoList'
-import { getToolDisplayName, prettyPrintJson, unwrapMcpEnvelope } from '../lib/ToolParser'
+import {
+  getToolDisplayName,
+  isWriteLikeToolName,
+  prettyPrintJson,
+  unwrapMcpEnvelope
+} from '../lib/ToolParser'
+import { looksLikeUnifiedDiff, type DiffTone } from '../lib/diffToneClass'
 import {
   extractHttpUrls,
   mergeLinkPresentationTargets,
@@ -228,6 +234,58 @@ function safeJsonStringify(value: unknown): string {
 export interface FoldoutSection {
   label: string
   body: string
+  /** Drives per-line +/- accenting. Absent ⇒ neutral (flat) rendering. */
+  tone?: DiffTone
+}
+
+/** Parameter keys an edit-class tool uses for its before/after payload —
+ *  mirrors the write branch of ActivityStack's `buildSanitizedDetail` so the
+ *  compact foldout and the full detail panel surface the SAME three blocks. */
+const EDIT_OLD_KEYS = ['old_string', 'oldString']
+const EDIT_NEW_KEYS = ['new_string', 'newString']
+const EDIT_CONTENT_KEYS = ['content', 'contents', 'file_text']
+const EDIT_PATCH_KEYS = ['patchPreview', 'patch_preview', 'patch', 'diff']
+
+function firstStringParam(params: Record<string, unknown>, keys: string[]): string {
+  for (const key of keys) {
+    const value = params[key]
+    if (typeof value === 'string' && value.trim()) return value
+  }
+  return ''
+}
+
+/**
+ * Diff-shaped sections for a write/edit tool, in the order the change reads:
+ * the patch, then what went out, then what came in.
+ *
+ * These are ADDITIVE to Input/Result/Timeline rather than a replacement. The
+ * raw `Input` JSON still carries the same strings, but escaped onto one line —
+ * unreadable as a change. This is the readable view of the same data, and it
+ * is the block the user actually came to the foldout for.
+ */
+function buildEditDiffSections(activity: ToolActivity): FoldoutSection[] {
+  const toolName = activity.toolName || ''
+  if (activity.category !== 'write' && !isWriteLikeToolName(toolName)) return []
+
+  const params = (activity.parameters || {}) as Record<string, unknown>
+  const sections: FoldoutSection[] = []
+
+  const patch = firstStringParam(params, EDIT_PATCH_KEYS)
+  if (patch) sections.push({ label: 'Patch preview', body: patch, tone: 'diff' })
+
+  const oldString = firstStringParam(params, EDIT_OLD_KEYS)
+  const newString = firstStringParam(params, EDIT_NEW_KEYS)
+  if (oldString) sections.push({ label: 'Removed', body: oldString, tone: 'deletion' })
+  if (newString) sections.push({ label: 'Added', body: newString, tone: 'addition' })
+
+  // Whole-file writes have no before-image; the content IS the addition. Only
+  // when there was no edit pair, so a replace doesn't render its payload twice.
+  if (!oldString && !newString) {
+    const content = firstStringParam(params, EDIT_CONTENT_KEYS)
+    if (content) sections.push({ label: 'Added content', body: content, tone: 'addition' })
+  }
+
+  return sections
 }
 
 export function buildFoldoutSections(activity: ToolActivity): FoldoutSection[] {
@@ -251,6 +309,8 @@ export function buildFoldoutSections(activity: ToolActivity): FoldoutSection[] {
     }
   }
 
+  sections.push(...buildEditDiffSections(activity))
+
   const params = activity.parameters || {}
   if (Object.keys(params).length > 0) {
     sections.push({ label: 'Input', body: safeJsonStringify(params) })
@@ -258,9 +318,14 @@ export function buildFoldoutSections(activity: ToolActivity): FoldoutSection[] {
 
   const resultText = getResultText(activity)
   if (resultText) {
+    const body = prettyPrintJson(unwrapMcpEnvelope(resultText))
+    // A provider that echoes the applied patch back as its result gets the
+    // same accenting as an explicit patch parameter — detected from the text,
+    // since the section label alone ("Result") says nothing about the shape.
     sections.push({
       label: 'Result',
-      body: prettyPrintJson(unwrapMcpEnvelope(resultText))
+      body,
+      ...(looksLikeUnifiedDiff(body) ? { tone: 'diff' as const } : {})
     })
   }
 

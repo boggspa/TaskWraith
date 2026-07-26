@@ -46,6 +46,7 @@ import { ToolFamilyIcon, toolNameToFamily, type ToolFamily } from './icons/ToolF
 import { CreativeTimelineDiffCard } from './CreativeTimelineDiffCard'
 import { creativeTimelineDiffModelFromActivity } from './CreativeTimelineDiffCardModel'
 import { CompactToolTrace } from './CompactToolTrace'
+import { diffToneLineClass } from '../lib/diffToneClass'
 import { LiveActivityViewport } from './LiveActivityViewport'
 import { MarkdownMessage } from './MarkdownMessage'
 import { MessageActionsChip } from './MessageActionsChip'
@@ -2132,32 +2133,6 @@ function ActivityTitle({
   )
 }
 
-function getDiffToneClass(line: string, tone: SanitizedDetail['previews'][number]['tone']): string {
-  const prefix = line[0]
-
-  if (tone === 'diff') {
-    if (prefix === '+' && !line.startsWith('+++')) return 'activity-diff-line-add'
-    if (prefix === '-' && !line.startsWith('---')) return 'activity-diff-line-delete'
-    return 'activity-diff-line-context'
-  }
-
-  if (tone === 'addition') {
-    if (!line) return 'activity-diff-line-context'
-    if (prefix === '-' && !line.startsWith('---')) return 'activity-diff-line-context'
-    if (prefix === '+' && !line.startsWith('+++')) return 'activity-diff-line-add'
-    return 'activity-diff-line-add'
-  }
-
-  if (tone === 'deletion') {
-    if (!line) return 'activity-diff-line-context'
-    if (prefix === '+' && !line.startsWith('+++')) return 'activity-diff-line-context'
-    if (prefix === '-' && !line.startsWith('---')) return 'activity-diff-line-delete'
-    return 'activity-diff-line-delete'
-  }
-
-  return 'activity-diff-line-context'
-}
-
 function isJsonLikeText(value: string): boolean {
   const trimmed = value.trim()
   if (!trimmed) return false
@@ -2244,7 +2219,7 @@ function ActivityPreview({ preview }: { preview: SanitizedDetail['previews'][num
       {cleanedContent.split('\n').map((line, index) => (
         <span
           key={`${index}-${line}`}
-          className={`activity-diff-line ${getDiffToneClass(line, preview.tone || 'neutral')}`}
+          className={`activity-diff-line ${diffToneLineClass(line, preview.tone || 'neutral')}`}
         >
           {line || ' '}
         </span>

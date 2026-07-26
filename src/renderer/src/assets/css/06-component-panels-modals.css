@@ -688,6 +688,19 @@
   overflow: auto;
 }
 
+/* Diff-toned foldout body. The lines are `.activity-diff-line*` spans — the
+ * SAME rules the full-density ActivityPreview uses — so compact density can't
+ * drift to its own red/green. Padding moves to the lines so each accent bar
+ * reaches the body edge instead of floating inside a gutter. */
+.compact-tool-trace-foldout-body.is-diff {
+  padding: 6px 4px;
+}
+
+.compact-tool-trace-foldout-body.is-diff .activity-diff-line {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+
 /* Balanced Native Glass: Electron vibrancy plus a stable Liquid Glass-style sidebar layer. */
 [data-appearance="native_glass"][data-reduce-transparency="false"] {
   --sidebar-glass-fill: rgba(24, 25, 24, 0.22);

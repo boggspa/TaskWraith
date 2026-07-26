@@ -211,6 +211,74 @@ describe('CompactToolTrace', () => {
     expect(labels).not.toContain('Input')
   })
 
+  // An edit's foldout used to render its patch as one flat `<pre>` while the
+  // full-density ActivityPreview accented the same +/- lines. These pin the
+  // diff-toned sections that close that gap.
+  describe('edit-tool diff sections', () => {
+    const editActivity = (parameters: Record<string, unknown>) =>
+      makeActivity({ toolName: 'replace', category: 'write', parameters })
+
+    it('tones the before/after pair of an edit as deletion and addition', () => {
+      const sections = buildFoldoutSections(
+        editActivity({
+          file_path: '/repo/src/foo.ts',
+          old_string: 'const a = 0',
+          new_string: 'const a = 1'
+        })
+      )
+      const removed = sections.find((section) => section.label === 'Removed')
+      const added = sections.find((section) => section.label === 'Added')
+      expect(removed).toMatchObject({ body: 'const a = 0', tone: 'deletion' })
+      expect(added).toMatchObject({ body: 'const a = 1', tone: 'addition' })
+    })
+
+    it('tones an explicit patch parameter as a diff', () => {
+      const sections = buildFoldoutSections(
+        editActivity({ file_path: '/repo/a.ts', patchPreview: '@@ -1 +1 @@\n-old\n+new' })
+      )
+      expect(sections.find((section) => section.label === 'Patch preview')).toMatchObject({
+        tone: 'diff'
+      })
+    })
+
+    it('tones a whole-file write as an addition, and never twice for a replace', () => {
+      const write = buildFoldoutSections(
+        makeActivity({ parameters: { file_path: '/repo/a.ts', content: 'hello' } })
+      )
+      expect(write.find((section) => section.label === 'Added content')).toMatchObject({
+        body: 'hello',
+        tone: 'addition'
+      })
+      // A replace already showed its payload as Removed/Added — the raw
+      // `content` key must not add a third, duplicate block.
+      const replace = buildFoldoutSections(
+        editActivity({ old_string: 'a', new_string: 'b', content: 'a' })
+      )
+      expect(replace.map((section) => section.label)).not.toContain('Added content')
+    })
+
+    it('accents a result that echoes back a unified diff, but not ordinary output', () => {
+      const echoed = buildFoldoutSections(
+        makeActivity({ resultSummary: '--- a/foo.ts\n+++ b/foo.ts\n-old\n+new' })
+      )
+      expect(echoed.find((section) => section.label === 'Result')?.tone).toBe('diff')
+      // The default fixture's result is "wrote 1 line" — flat, and must stay flat.
+      expect(buildFoldoutSections(makeActivity()).find((s) => s.label === 'Result')?.tone)
+        .toBeUndefined()
+    })
+
+    it('leaves non-write tools untoned', () => {
+      const sections = buildFoldoutSections(
+        makeActivity({
+          toolName: 'read_file',
+          category: 'read',
+          parameters: { file_path: '/repo/a.ts', content: 'file body' }
+        })
+      )
+      expect(sections.every((section) => section.tone === undefined)).toBe(true)
+    })
+  })
+
   it('reflects error status in both the status pill and the row data-status attribute', () => {
     const html = renderToStaticMarkup(
       <CompactToolTrace activity={makeActivity({ status: 'error', resultSummary: 'EACCES' })} />

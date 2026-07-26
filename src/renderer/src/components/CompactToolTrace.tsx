@@ -12,8 +12,14 @@ import {
   providerLabel,
   resolveProvider,
   splitCompactToolLabel,
-  statusLabel
+  statusLabel,
+  type FoldoutSection
 } from './CompactToolTrace.lib'
+import {
+  MAX_ACCENTED_DIFF_LINES,
+  diffToneLineClass,
+  isAccentedDiffTone
+} from '../lib/diffToneClass'
 import { ToolUrlBadge } from './ToolUrlBadge'
 import { TranscriptFileTarget } from './TranscriptFileTarget'
 
@@ -29,6 +35,41 @@ interface CompactToolTraceProps {
    * trace softens to a friendly summary ("Searched the web…") for web tools.
    * Softens, never hides: the foldout still carries the full raw output. */
   globalScope?: boolean
+}
+
+/**
+ * Foldout body. A diff-toned section renders one span per line so the +/-
+ * accents match the full-density `ActivityPreview` — at compact density the
+ * foldout used to flatten the very same patch to undifferentiated `--text-
+ * primary`, so an edit read as a diff in one density and as prose in the other.
+ *
+ * Untoned sections (Input JSON, Timeline, a non-diff Result) keep the single
+ * flat `<pre>`: they gain nothing from per-line nodes and pay a DOM node each.
+ * Over-long toned output falls back to flat for the same reason.
+ */
+function FoldoutBody({ section }: { section: FoldoutSection }) {
+  const lines = useMemo(() => {
+    if (!isAccentedDiffTone(section.tone)) return null
+    const split = section.body.split('\n')
+    return split.length > MAX_ACCENTED_DIFF_LINES ? null : split
+  }, [section.body, section.tone])
+
+  if (!lines) {
+    return <pre className="compact-tool-trace-foldout-body">{section.body}</pre>
+  }
+
+  return (
+    <pre className="compact-tool-trace-foldout-body is-diff">
+      {lines.map((line, index) => (
+        <span
+          key={`${index}-${line}`}
+          className={`activity-diff-line ${diffToneLineClass(line, section.tone)}`}
+        >
+          {line || ' '}
+        </span>
+      ))}
+    </pre>
+  )
 }
 
 export function CompactToolTrace({
@@ -188,7 +229,7 @@ export function CompactToolTrace({
           {sections.map((section) => (
             <div key={section.label} className="compact-tool-trace-foldout-section">
               <div className="compact-tool-trace-foldout-label">{section.label}</div>
-              <pre className="compact-tool-trace-foldout-body">{section.body}</pre>
+              <FoldoutBody section={section} />
             </div>
           ))}
         </div>
