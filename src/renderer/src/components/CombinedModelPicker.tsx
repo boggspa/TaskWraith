@@ -55,6 +55,27 @@ export type {
   CombinedModelPickerReasoningOption
 } from '../lib/combinedModelPickerTypes'
 
+/**
+ * Empty-state text for a provider group with no rows.
+ *
+ * This read "Loading models…" for every provider, which was never true: it is
+ * the EMPTY state, not a pending one, and nothing is still in flight by the
+ * time it renders. It sent someone hunting a phantom load when the real
+ * situation was "this seat has no models, and here is why" — which is exactly
+ * how an empty Pi group survived long enough to be reported as a bug.
+ *
+ * Pi and Ollama get a specific cause because theirs is knowable: Pi's catalog
+ * is filtered to upstreams with a stored key, and Ollama's comes from local
+ * discovery. Every other seat keeps a neutral line rather than inventing a
+ * reason we do not actually have.
+ */
+export function emptyProviderModelsLabel(provider?: string | null): string {
+  const id = typeof provider === 'string' ? provider.trim().toLowerCase() : ''
+  if (id === 'pi') return 'No models — add an upstream API key in Settings → Providers → Pi'
+  if (id === 'ollama') return 'No local models found — pull one with the Ollama CLI'
+  return 'No models available'
+}
+
 /** Format an ISO date (YYYY-MM-DD) as an English ordinal day + month name,
  * e.g. '2026-06-02' → '2nd June'. Returns the input unchanged on a malformed
  * value so a bad date can never crash the picker. Pure + side-effect free. */
@@ -1607,7 +1628,7 @@ export function CombinedModelPicker({
                 </div>
                 {group.modelOptions.length === 0 && (
                   <div className="composer-combined-picker-empty-provider">
-                    Loading models&hellip;
+                    {emptyProviderModelsLabel(group.provider)}
                   </div>
                 )}
                 {group.modelOptions.map((option, optionIndex) => {
@@ -1694,7 +1715,9 @@ export function CombinedModelPicker({
                   fontStyle: 'italic'
                 }}
               >
-                <span className="composer-combined-picker-row-label">Loading models&hellip;</span>
+                <span className="composer-combined-picker-row-label">
+                  {emptyProviderModelsLabel(provider)}
+                </span>
               </div>
             )}
             {visibleModelOptions.map((option, idx) => {

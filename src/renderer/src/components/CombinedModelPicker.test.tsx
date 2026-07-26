@@ -4,6 +4,7 @@ import { describe, expect, it } from 'vitest'
 import {
   CombinedModelPicker,
   CombinedModelPickerConfirmButton,
+  emptyProviderModelsLabel,
   flattenUnifiedProviderModels,
   getCombinedModelPickerResetSignature,
   resolveCombinedModelPickerResetState,
@@ -348,5 +349,32 @@ describe('CombinedModelPicker', () => {
 
     expect(afterCatalogRefreshOrProviderHover).toBe(beforeBrowse)
     expect(afterCommittedModelChange).not.toBe(beforeBrowse)
+  })
+})
+
+describe('emptyProviderModelsLabel', () => {
+  it('never claims to be loading', () => {
+    // The old text was "Loading models…" for every provider — the EMPTY state
+    // wearing a pending one's clothes. It cost a real debugging session: an
+    // empty Pi group read as "still fetching" rather than "there is nothing
+    // here", so nobody looked for the missing wiring behind it.
+    for (const provider of ['pi', 'ollama', 'codex', 'claude', undefined]) {
+      expect(emptyProviderModelsLabel(provider)).not.toMatch(/loading/i)
+    }
+  })
+
+  it('names the cause where the cause is actually knowable', () => {
+    // Pi's catalog is filtered to upstreams with a stored key, so an empty
+    // group means exactly one thing and the user can act on it.
+    expect(emptyProviderModelsLabel('pi')).toMatch(/API key/i)
+    expect(emptyProviderModelsLabel('pi')).toMatch(/Settings/)
+    expect(emptyProviderModelsLabel('ollama')).toMatch(/local/i)
+  })
+
+  it('stays neutral for seats whose empty reason we do not know', () => {
+    // Better a plain statement than an invented diagnosis.
+    expect(emptyProviderModelsLabel('claude')).toBe('No models available')
+    expect(emptyProviderModelsLabel(undefined)).toBe('No models available')
+    expect(emptyProviderModelsLabel('PI')).toMatch(/API key/i)
   })
 })
