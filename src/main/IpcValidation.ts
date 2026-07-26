@@ -431,6 +431,14 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   // field validation via optionalString/getChat.) This was previously
   // missing from the registry, so installIpcValidation threw
   // "No IPC schema registered" the moment any add flow fired.
+  // Peer thread messaging. The handlers re-derive and re-check every field
+  // themselves (sender scope, main-renderer proof, the send gate); these specs are
+  // the outer shape check that keeps them from being reached with the wrong arity
+  // or type at all. `nonEmptyString` rather than `string`: a blank chat id has no
+  // valid meaning on any of the three.
+  'thread-message:targets': ['nonEmptyString'],
+  'thread-message:inbox': ['nonEmptyString'],
+  'thread-message:send': ['object'],
   'external-path:pick-and-persist': ['object'],
   'external-path:revoke': ['object'],
   'probe-external-path': ['nonEmptyString'],
