@@ -219,11 +219,11 @@ struct ModelContextLengthsTests {
 
     // MARK: - Provider order
 
-    @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor, no ollama")
+    @Test("buildGroups() default: order is gemini/codex/claude/kimi/grok/cursor/pi, no ollama")
     func defaultProviderOrder() {
         let groups = ModelContextLengths.buildGroups()
         let providers = groups.map(\.provider)
-        #expect(providers == ["gemini", "codex", "claude", "kimi", "grok", "cursor"])
+        #expect(providers == ["gemini", "codex", "claude", "kimi", "grok", "cursor", "pi"])
     }
 
     // MARK: - Ollama inclusion
