@@ -407,6 +407,81 @@ describe('MainProcessActionExecutor workspace file actions', () => {
     expect(threadMediaFetchFn).toHaveBeenCalledWith(sample.threadMediaFetch)
   })
 
+  it('queues a thread message from a paired device as user-composed', async () => {
+    const sendThreadMessageFn = vi.fn(async () => ({ ok: true, outcome: 'accepted' }))
+    const executor = new MainProcessActionExecutor({ cancelRunFn: vi.fn(), sendThreadMessageFn })
+
+    await expect(
+      executor.executeThreadMessageSend({
+        kind: 'threadMessage',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        toThreadId: 't-2',
+        message: 'Byte pin is red.',
+        idempotencyKey: 'k1'
+      })
+    ).resolves.toMatchObject({ executed: true })
+    expect(sendThreadMessageFn).toHaveBeenCalledWith({
+      fromChatId: 't-1',
+      toChatId: 't-2',
+      message: 'Byte pin is red.',
+      idempotencyKey: 'k1'
+    })
+  })
+
+  // A phone that cannot tell "that thread's queue is full" from "that thread is
+  // gone" retries the wrong thing, so the store outcome is carried through.
+  it.each([
+    ['inbox-full', /inbox-full|full/],
+    ['unknown-target', /unknown-target|no longer/]
+  ])('reports the %s outcome rather than a generic failure', async (outcome, pattern) => {
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      sendThreadMessageFn: async () => ({ ok: false, outcome })
+    })
+    const result = await executor.executeThreadMessageSend({
+      kind: 'threadMessage',
+      workspaceId: 'ws-1',
+      threadId: 't-1',
+      toThreadId: 't-2',
+      message: 'hello'
+    })
+    expect(result.executed).toBe(false)
+    expect(result.message).toMatch(pattern)
+  })
+
+  it('surfaces a thread message callback failure as executed=false', async () => {
+    const executor = new MainProcessActionExecutor({
+      cancelRunFn: vi.fn(),
+      sendThreadMessageFn: async () => {
+        throw new Error('ledger frozen')
+      }
+    })
+    await expect(
+      executor.executeThreadMessageSend({
+        kind: 'threadMessage',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        toThreadId: 't-2',
+        message: 'hello'
+      })
+    ).resolves.toMatchObject({ executed: false, message: expect.stringContaining('ledger frozen') })
+  })
+
+  // Without the dep the action must still refuse honestly rather than ack.
+  it('stays notWired when no thread-message callback is supplied', async () => {
+    const executor = new MainProcessActionExecutor({ cancelRunFn: vi.fn() })
+    await expect(
+      executor.executeThreadMessageSend({
+        kind: 'threadMessage',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        toThreadId: 't-2',
+        message: 'hello'
+      })
+    ).resolves.toMatchObject({ executed: false })
+  })
+
   it('surfaces media fetch callback failures as executed=false', async () => {
     const executor = new MainProcessActionExecutor({
       cancelRunFn: vi.fn(),

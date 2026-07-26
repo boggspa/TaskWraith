@@ -2459,3 +2459,77 @@ describe('RemoteThreadProjection', () => {
     })
   })
 })
+
+
+describe('RemoteThreadSnapshot — peer thread-message inbox', () => {
+  const inbox = (over: Record<string, unknown> = {}) => ({
+    pendingCount: 2,
+    hasWakeRequest: false,
+    senders: ['Byte pin fix'],
+    oldestPendingAt: 1_700_000_000_000,
+    ...over
+  })
+
+  it('projects counts and sender names', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox()
+    })
+    expect(snap.threadMessageInbox).toEqual({
+      pendingCount: 2,
+      hasWakeRequest: false,
+      senders: ['Byte pin fix'],
+      oldestPendingAt: 1_700_000_000_000
+    })
+  })
+
+  // THE containment rule for this surface: the phone learns that messages are
+  // waiting and who from, never what they say. A body is untrusted prose another
+  // agent wrote, and the phone has no equivalent of the desktop card's plain-text
+  // rendering, so shipping bodies would put unrendered attacker-adjacent text on a
+  // surface not built to hold it.
+  it('never ships message bodies', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox()
+    })
+    expect(JSON.stringify(snap.threadMessageInbox)).not.toMatch(/body|content|message/i)
+  })
+
+  it('omits the field entirely when nothing is pending', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox({ pendingCount: 0 })
+    })
+    expect(snap.threadMessageInbox).toBeUndefined()
+  })
+
+  it('omits the field when the caller supplies nothing', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [])
+    expect(snap.threadMessageInbox).toBeUndefined()
+  })
+
+  it('flags a wake request', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox({ hasWakeRequest: true })
+    })
+    expect(snap.threadMessageInbox?.hasWakeRequest).toBe(true)
+  })
+
+  // Sender names come from another thread's title, so they are clipped and capped
+  // like any other projected label.
+  it('caps and clips sender names', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox({
+        pendingCount: 9,
+        senders: ['a'.repeat(500), 'two', 'three', 'four', 'five', 'six']
+      })
+    })
+    expect(snap.threadMessageInbox?.senders).toHaveLength(4)
+    expect(snap.threadMessageInbox?.senders[0].length).toBeLessThanOrEqual(120)
+  })
+
+  it('drops a missing oldest timestamp rather than emitting a zero', () => {
+    const snap = project({ kind: 'latestN', n: 2 }, [msg(0, { role: 'user' })], [], {
+      threadMessageInbox: inbox({ oldestPendingAt: null })
+    })
+    expect(snap.threadMessageInbox).not.toHaveProperty('oldestPendingAt')
+  })
+})

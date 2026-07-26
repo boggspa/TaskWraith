@@ -474,6 +474,22 @@ export interface RemoteParticipantHealthSummary {
   entries: RemoteParticipantHealthEntry[]
 }
 
+/**
+ * Peer thread-message inbox, projected for a phone. Counts and sender NAMES only —
+ * never bodies. A message body is untrusted prose another agent wrote, and the
+ * phone has no equivalent of the desktop card's containment (plain-text rendering,
+ * no markdown, escaped markup), so shipping bodies here would put unrendered
+ * attacker-adjacent text on a surface that has not been built to hold it. The
+ * phone shows that messages are waiting; reading them happens on the desktop.
+ */
+export interface RemoteThreadMessageInboxSummary {
+  pendingCount: number
+  hasWakeRequest: boolean
+  /** Display titles of the sending threads, capped. */
+  senders: string[]
+  oldestPendingAt?: number
+}
+
 export interface RemoteSubThreadReturnSummary {
   subThreadId?: string
   provider?: ProviderId
@@ -778,12 +794,49 @@ export interface RemoteThreadSnapshot {
   /** Per-run summaries (oldest→newest, capped) — remote clients interleave
    * Task-complete cards after each run's last transcript row. */
   runSummaries?: RemoteRunSummary[]
+  /** Waiting peer thread messages. Counts and sender names only — see the type. */
+  threadMessageInbox?: RemoteThreadMessageInboxSummary
   generatedAt: string
+}
+
+/** Sender names are display strings from another thread's title, so they are
+ *  clipped and capped exactly like any other projected label. */
+const MAX_REMOTE_THREAD_MESSAGE_SENDERS = 4
+
+function projectThreadMessageInbox(input: {
+  pendingCount: number
+  hasWakeRequest: boolean
+  senders: readonly string[]
+  oldestPendingAt: number | null
+}): RemoteThreadMessageInboxSummary {
+  const senders = input.senders
+    .map((sender) => sanitizePreview(sender, 80).preview)
+    .filter((sender) => sender.length > 0)
+    .slice(0, MAX_REMOTE_THREAD_MESSAGE_SENDERS)
+  return {
+    pendingCount: Math.max(0, Math.floor(input.pendingCount)),
+    hasWakeRequest: input.hasWakeRequest === true,
+    senders,
+    ...(typeof input.oldestPendingAt === 'number' && input.oldestPendingAt > 0
+      ? { oldestPendingAt: input.oldestPendingAt }
+      : {})
+  }
 }
 
 export interface RemoteProjectionOptions {
   /** Thread notes (chat.pinnedNotes) — projected onto snapshot.notes. */
   notes?: string
+  /**
+   * Caller-supplied peer-message inbox summary. Supplied rather than derived
+   * because the inbox lives in its own ledger, not on ChatRecord — the same
+   * reason `notes` and `blackboardEntries` come in this way.
+   */
+  threadMessageInbox?: {
+    pendingCount: number
+    hasWakeRequest: boolean
+    senders: readonly string[]
+    oldestPendingAt: number | null
+  }
   /** Structured shared notes. Today this is `chat.ensemble.blackboard`;
    * later solo/guest chats can populate the same projection field. */
   blackboardEntries?: BlackboardEntry[]
@@ -2636,7 +2689,10 @@ export function projectRemoteThread(
       : {}),
     ...(blackboardEntries.length > 0 ? { blackboardEntries } : {}),
     ...(pinnedRows.length > 0 ? { pinnedRows } : {}),
-    ...(runSummaries.length > 0 ? { runSummaries } : {})
+    ...(runSummaries.length > 0 ? { runSummaries } : {}),
+    ...(opts.threadMessageInbox && opts.threadMessageInbox.pendingCount > 0
+      ? { threadMessageInbox: projectThreadMessageInbox(opts.threadMessageInbox) }
+      : {})
   }
 
   if (opts.mode.kind === 'summaryOnly') {

@@ -552,6 +552,23 @@ function notWired(kind: string, id: string): BridgeActionExecutionResult {
  *     `run-agent` etc.).
  */
 export interface MainProcessActionExecutorDependencies {
+  /**
+   * Queue a peer thread message sent from a paired device. Returns the store
+   * outcome so the phone is told which state it hit — "that thread's queue is
+   * full" and "that thread is gone" need different retries.
+   *
+   * The action is recorded as USER-composed, which is the honest description: a
+   * human tapped send on an authenticated, paired, workspace-allowlisted device.
+   * The bridge payload has no `wake` field and the validator rejects the key, so
+   * this path can only ever queue — a phone-issued wake is refused by the gate
+   * anyway ('remote-wake'), and the wire format cannot express it.
+   */
+  sendThreadMessageFn?: (input: {
+    fromChatId: string
+    toChatId: string
+    message: string
+    idempotencyKey?: string
+  }) => Promise<{ ok: boolean; outcome?: string; error?: string }>
   /** Callback the executor uses to cancel a run. Same dispatch surface
    * the `cancel-agent-run` IPC handler uses. */
   cancelRunFn: (provider: string, runId: string) => Promise<unknown>
@@ -949,14 +966,39 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
     }
   }
 
-  // Phone-side contract is complete (payload validation, capability tier, mutating
-  // classification, routing); desktop execution lands with the thread_message
-  // registration. `notWired` is the honest interim — the phone gets an explicit
-  // refusal rather than an ack for a message that was never queued.
   async executeThreadMessageSend(
     action: BridgeThreadMessageSendAction
   ): Promise<BridgeActionExecutionResult> {
-    return notWired('threadMessage', action.toThreadId)
+    if (!this.deps.sendThreadMessageFn) {
+      return notWired('threadMessage', action.toThreadId)
+    }
+    try {
+      const result = await this.deps.sendThreadMessageFn({
+        fromChatId: action.threadId,
+        toChatId: action.toThreadId,
+        message: action.message,
+        ...(action.idempotencyKey ? { idempotencyKey: action.idempotencyKey } : {})
+      })
+      if (!result.ok) {
+        // Reported as executed:false with the store's own outcome, so the phone
+        // distinguishes a full queue from a vanished thread instead of retrying
+        // blind against a generic failure.
+        return {
+          executed: false,
+          message:
+            result.error ||
+            `Thread message not queued (${result.outcome || 'refused'}) for ${action.toThreadId}`
+        }
+      }
+      return {
+        executed: true,
+        message: `Thread message queued for ${action.toThreadId}`
+      }
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error)
+      this.log(`[BridgeActionExecutor] thread message failed: ${detail}`)
+      return { executed: false, message: `Thread message failed: ${detail}` }
+    }
   }
 
   async executeThreadSnapshotRequest(

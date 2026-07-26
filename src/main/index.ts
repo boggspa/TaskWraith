@@ -1186,6 +1186,7 @@ import {
   isThreadMessageMcpToolName
 } from './mcp/ThreadMessageToolExecutors'
 import { createThreadMessageId } from './ThreadMessageLedger'
+import { createThreadMessageEvent } from '../shared/threadMessage'
 import { registerThreadMessageHandlers } from './ipc/threadMessageHandlers'
 import { createThreadMessageWakeDispatcher } from './ThreadMessageWakeDispatcher'
 import {
@@ -35140,6 +35141,40 @@ if (isGeminiMcpBridgeProcess) {
         return { ok: true }
       }
       return new MainProcessActionExecutor({
+        // A paired device's human tapped send: authenticated, workspace-allowlisted,
+        // and recorded as user-composed. The bridge payload has no `wake` field, so
+        // this can only queue — a phone-issued wake is refused by the gate anyway.
+        sendThreadMessageFn: async ({ fromChatId, toChatId, message, idempotencyKey }) => {
+          const from = AppStore.getChat(fromChatId)
+          const to = AppStore.getChat(toChatId)
+          if (!from) return { ok: false, error: 'The sending thread no longer exists.' }
+          if (!to) return { ok: false, outcome: 'unknown-target', error: 'That thread no longer exists.' }
+          const policy = AppStore.getSettings().agenticServices?.threadMessage ?? 'ask'
+          if (policy === 'deny') {
+            return { ok: false, error: 'Thread messages are turned off in settings.' }
+          }
+          const event = createThreadMessageEvent({
+            id: createThreadMessageId(
+              fromChatId,
+              toChatId,
+              idempotencyKey || `bridge:${Date.now()}`
+            ),
+            fromChatId,
+            fromChatTitle: from.title || fromChatId,
+            toChatId,
+            origin: 'user',
+            body: message,
+            requestedDelivery: 'queue',
+            createdAt: Date.now()
+          })
+          if (!event) return { ok: false, error: 'That message could not be sent.' }
+          const { outcome } = AppStore.enqueueThreadMessage(event)
+          if (outcome === 'accepted') {
+            const chat = AppStore.getChat(toChatId)
+            if (chat) saveAndBroadcastChat(chat)
+          }
+          return { ok: outcome === 'accepted', outcome }
+        },
         cancelRunFn: async (provider, runId) => {
           // Unpark any approval/question the run is blocked on, mirroring the
           // desktop cancel-agent-run handler, so a parked run is fully torn down
