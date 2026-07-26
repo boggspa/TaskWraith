@@ -80,6 +80,10 @@ export class PermissionService {
         !grant.workspacePath
       )
         return false
+      if (grant.expiresAt) {
+        const expiresAt = Date.parse(grant.expiresAt)
+        if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) return false
+      }
       return resolve(grant.workspacePath) === normalizedWorkspace
     })
   }

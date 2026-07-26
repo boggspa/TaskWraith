@@ -3,7 +3,11 @@ import {
   parseResolvedProjectReferenceContext,
   serializeResolvedProjectReferenceContext
 } from '../shared/projectReferenceContext'
-import type { EffectiveRunPermissions, RunPermissionPostureSnapshot } from './store/types'
+import type {
+  AgenticServiceId,
+  EffectiveRunPermissions,
+  RunPermissionPostureSnapshot
+} from './store/types'
 import { isRecord, optionalString } from './settings/MainSanitizers'
 
 /**
@@ -537,13 +541,32 @@ function isAgenticServicesRecord(
 ): value is EffectiveRunPermissions['agenticServices'] {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return false
   const record = value as Record<string, unknown>
-  return (
-    isAgenticServicePolicy(record.shellCommands) &&
-    isAgenticServicePolicy(record.fileChanges) &&
-    isAgenticServicePolicy(record.mcpTools) &&
-    isAgenticServicePolicy(record.subThreadDelegation)
+  return EFFECTIVE_RUN_AGENTIC_SERVICE_IDS.every((service) =>
+    isAgenticServicePolicy(record[service])
   )
 }
+
+// The Record assertion makes this list fail the Node typecheck whenever a new
+// AgenticServiceId is added without extending signed-posture validation. A
+// correctly HMAC-signed but structurally incomplete map must not pass merely
+// because the older four core axes happen to be present.
+const EFFECTIVE_RUN_AGENTIC_SERVICE_ID_RECORD = {
+  shellCommands: true,
+  fileChanges: true,
+  externalPublish: true,
+  mcpTools: true,
+  subThreadDelegation: true,
+  canvasInteraction: true,
+  canvasEval: true,
+  crossThreadRead: true,
+  threadMessage: true,
+  mediaEditing: true,
+  mediaRecording: true
+} as const satisfies Record<AgenticServiceId, true>
+
+const EFFECTIVE_RUN_AGENTIC_SERVICE_IDS = Object.keys(
+  EFFECTIVE_RUN_AGENTIC_SERVICE_ID_RECORD
+) as AgenticServiceId[]
 
 function isAgenticServicePolicy(value: unknown): boolean {
   return value === 'ask' || value === 'workspace' || value === 'allow' || value === 'deny'

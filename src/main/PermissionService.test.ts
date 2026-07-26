@@ -117,6 +117,61 @@ describe('PermissionService', () => {
     ).toBe('allow')
   })
 
+  it('does not authorize an action from an expired or malformed workspace grant', () => {
+    const service = new PermissionService({
+      runManager: new RunManager(),
+      sessionGrants: new Set()
+    })
+    const grant = {
+      id: 'grant-expiring',
+      provider: 'gemini' as const,
+      service: 'shellCommands' as const,
+      workspacePath: '/repo',
+      createdAt: '2026-05-08T00:00:00.000Z',
+      updatedAt: '2026-05-08T00:00:00.000Z'
+    }
+
+    for (const expiresAt of ['2000-01-01T00:00:00.000Z', 'not-a-date']) {
+      const expiredSettings: AppSettings = {
+        ...settings,
+        agenticWorkspaceGrants: [{ ...grant, expiresAt }]
+      }
+      expect(service.hasWorkspaceGrant(expiredSettings, 'gemini', '/repo', 'shellCommands')).toBe(
+        false
+      )
+      expect(
+        service.resolvePermission('gemini', 'shellCommands', '/repo', undefined, expiredSettings)
+          .decision
+      ).toBe('ask')
+    }
+  })
+
+  it('continues to honor an unexpired workspace grant at action time', () => {
+    const service = new PermissionService({
+      runManager: new RunManager(),
+      sessionGrants: new Set()
+    })
+    const activeSettings: AppSettings = {
+      ...settings,
+      agenticWorkspaceGrants: [
+        {
+          id: 'grant-active',
+          provider: 'gemini',
+          service: 'shellCommands',
+          workspacePath: '/repo',
+          createdAt: '2026-05-08T00:00:00.000Z',
+          updatedAt: '2026-05-08T00:00:00.000Z',
+          expiresAt: '2999-01-01T00:00:00.000Z'
+        }
+      ]
+    }
+
+    expect(
+      service.resolvePermission('gemini', 'shellCommands', '/repo', undefined, activeSettings)
+        .decision
+    ).toBe('allow')
+  })
+
   it('applies approved actions while keeping declines non-approved', () => {
     const service = new PermissionService({
       runManager: new RunManager(),
