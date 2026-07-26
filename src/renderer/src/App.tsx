@@ -260,15 +260,12 @@ import {
   CLAUDE_DEFAULT_MODEL,
   CLAUDE_DEFAULT_MODELS,
   KIMI_DEFAULT_MODELS,
-  KIMI_DEFAULT_MODEL,
-  GEMINI_DEFAULT_MODELS,
-  GEMINI_DEFAULT_MODEL,
-  GROK_DEFAULT_MODEL,
-  GROK_DEFAULT_MODELS,
-  MISTRAL_DEFAULT_MODEL,
-  MISTRAL_DEFAULT_MODELS,
-  CURSOR_DEFAULT_MODELS,
   OLLAMA_DEFAULT_MODEL,
+  // The static catalogues (gemini/kimi/grok/cursor/mistral) are no longer
+  // imported individually — they are reached only through these two exhaustive
+  // helpers, so there is no longer a way to forget one here.
+  getStaticProviderModelOptions,
+  getStaticProviderDefaultModel,
   isGeminiModelId,
   isCodexModelId,
   isClaudeModelId,
@@ -4116,13 +4113,20 @@ function App(): React.JSX.Element {
         null
       : null
   const canCreateSideChatFromCurrent = Boolean(currentChat && !currentChatIsLinkedChild)
+  // Both dispatchers below peel off the STATE-BACKED providers and then hand
+  // the rest to the exhaustive switches in providerModelDefaults.ts. Nothing
+  // here falls through any more: the helpers take
+  // `Exclude<ProviderId, DynamicCatalogueProviderId>`, so adding a ProviderId
+  // without handling it either here or in that module fails `npm run typecheck`
+  // (the error lands on the `never` in the switch it is missing from — verified
+  // by adding a throwaway member to the union). That matters because the old
+  // terminal arms returned `[]` and, worse, GEMINI_DEFAULT_MODEL — a Gemini
+  // model id on another provider's run, which Pi and then Mistral both silently
+  // collected while looking correct in the picker. See that module's header
+  // comment for the full history.
   const getProviderModelOptions = (provider: ProviderId): CodexModelOption[] => {
     if (provider === 'codex') return codexModels
     if (provider === 'claude') return agentModelsByProvider.claude || CLAUDE_DEFAULT_MODELS
-    if (provider === 'kimi') return KIMI_DEFAULT_MODELS
-    if (provider === 'gemini') return GEMINI_DEFAULT_MODELS
-    if (provider === 'grok') return GROK_DEFAULT_MODELS
-    if (provider === 'cursor') return CURSOR_DEFAULT_MODELS
     if (provider === 'ollama') return mergeOllamaModelCatalog(agentModelsByProvider.ollama)
     if (provider === 'antigravity') return configuredAntigravityModels
     // Pi was missing here and fell through to `[]`, so its picker group was
@@ -4130,17 +4134,15 @@ function App(): React.JSX.Element {
     // pending one) no matter how many upstream keys were stored. Main already
     // filters the catalog to upstreams that actually have a key — an unkeyed
     // row could never run — so this deliberately does NOT fall back to the full
-    // static list: an empty group means "no keys yet", which is true.
+    // static list: an empty group means "no keys yet", which is true. Pi is
+    // therefore state-backed and CANNOT move to the static switch, where `[]`
+    // would instead mean "permanently unusable".
     if (provider === 'pi') return agentModelsByProvider.pi || []
-    // Mistral is a STATIC catalogue, unlike Pi directly above: the Vibe seat's
-    // two models are fixed in the CLI's own bundled config and need no key
-    // discovery, so returning [] here would mean "no models" permanently rather
-    // than "no keys yet". Without this branch the picker rendered a MISTRAL
-    // group reading "No models available" and the seat could not be used at all
-    // — main's getStaticProviderModels('mistral') was correct the whole time;
-    // the catalogue simply never reached the renderer.
-    if (provider === 'mistral') return MISTRAL_DEFAULT_MODELS
-    return []
+    // Everything else is a fixed catalogue (gemini/kimi/grok/cursor/mistral).
+    // Mistral belongs here rather than with Pi above: the Vibe seat's two
+    // models are fixed in the CLI's own bundled config and need no key
+    // discovery.
+    return getStaticProviderModelOptions(provider)
   }
 
   const getDefaultModelForProvider = (provider: ProviderId): string => {
@@ -4149,9 +4151,6 @@ function App(): React.JSX.Element {
     if (provider === 'codex')
       return codexModels.find((model) => model.isDefault)?.id || CODEX_DEFAULT_MODEL
     if (provider === 'claude') return CLAUDE_DEFAULT_MODEL
-    if (provider === 'kimi') return KIMI_DEFAULT_MODEL
-    if (provider === 'grok') return GROK_DEFAULT_MODEL
-    if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') {
       const ollamaModels = mergeOllamaModelCatalog(agentModelsByProvider.ollama)
       return (
@@ -4172,11 +4171,7 @@ function App(): React.JSX.Element {
         PI_DEFAULT_MODEL_WIRE_ID
       )
     }
-    // Same trap the Pi comment above records, one provider later: without this
-    // a Mistral seat's default fell through to GEMINI_DEFAULT_MODEL — a Gemini
-    // id on a Mistral run.
-    if (provider === 'mistral') return MISTRAL_DEFAULT_MODEL
-    return GEMINI_DEFAULT_MODEL
+    return getStaticProviderDefaultModel(provider)
   }
 
   const buildProviderMetadataFromEnsembleParticipant = (

@@ -15,6 +15,7 @@ import {
 } from '../channels/DiscordContextService'
 import { normalizeOllamaSessionMemory } from '../ollama/OllamaRunMemory'
 import { isOllamaRunProfileId } from '../ollama/OllamaRunProfiles'
+import { MISTRAL_DEFAULT_MODEL } from '../mistral/MistralCliArgs'
 import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import {
   approvalModeRank,
@@ -1109,22 +1110,52 @@ function getProviderLabel(provider: ProviderId): string {
   return 'Gemini'
 }
 
+// Main's half of the silent-fallthrough bug class the renderer closed in
+// providerModelDefaults.ts. This chain ended in `return 'flash-lite'`, so a
+// provider with no branch was handed A GEMINI MODEL ID ON ITS OWN RUN — and
+// `mistral` had no branch: `resolveRequestedModel` falls back here whenever a
+// run arrives with no selected/stored model, and index.ts forces this value as
+// `overrideModel` for every cross-provider verifier. Now exhaustive: `gemini`
+// is a real case and the `default` arm takes a `never`, so the next ProviderId
+// added to the union fails typecheck here instead of quietly running Gemini.
 export function getDefaultModelForProvider(provider: ProviderId): string {
-  if (provider === 'codex') return 'gpt-5.5'
-  if (provider === 'claude') return 'claude-sonnet-5'
-  if (provider === 'kimi') return 'kimi-k2.7-code'
-  if (provider === 'grok') return 'grok-4.5'
-  if (provider === 'cursor') return 'composer-2.5-fast'
-  if (provider === 'ollama') return 'qwen3:4b-instruct'
-  // A bare gemini token here would dodge the gemini-api candidate matcher and
-  // route a model-less AntiGravity run onto the ban-risk agy CLI lane. The
-  // wire-id default keeps it on the key lane (which fails visibly without a
-  // key) and is present in the static fallback catalogue.
-  if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
-  // Pi wire ids are `<upstream>/<model>`; the default must stay in the curated
-  // static catalogue (PiModels) so the policy wall and pickers agree.
-  if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
-  return 'flash-lite'
+  switch (provider) {
+    case 'codex':
+      return 'gpt-5.5'
+    case 'claude':
+      return 'claude-sonnet-5'
+    case 'kimi':
+      return 'kimi-k2.7-code'
+    case 'grok':
+      return 'grok-4.5'
+    case 'cursor':
+      return 'composer-2.5-fast'
+    case 'ollama':
+      return 'qwen3:4b-instruct'
+    // A bare gemini token here would dodge the gemini-api candidate matcher and
+    // route a model-less AntiGravity run onto the ban-risk agy CLI lane. The
+    // wire-id default keeps it on the key lane (which fails visibly without a
+    // key) and is present in the static fallback catalogue.
+    case 'antigravity':
+      return 'gemini-api:gemini-2.5-flash'
+    // Pi wire ids are `<upstream>/<model>`; the default must stay in the curated
+    // static catalogue (PiModels) so the policy wall and pickers agree.
+    case 'pi':
+      return 'deepseek/deepseek-v4-flash'
+    // Bare id — a `mistral/<model>` id belongs to Pi's BYOK upstream, which is a
+    // different provider that happens to share the brand word.
+    case 'mistral':
+      return MISTRAL_DEFAULT_MODEL
+    case 'gemini':
+      return 'flash-lite'
+    default: {
+      const unhandled: never = provider
+      throw new Error(
+        `[ComposerService] No default model for provider "${String(unhandled)}". Add a case — ` +
+          "falling through would dispatch another provider's model id on this run."
+      )
+    }
+  }
 }
 
 function getLastRequestedModelForProvider(

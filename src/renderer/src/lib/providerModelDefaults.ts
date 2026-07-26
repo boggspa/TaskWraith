@@ -1,5 +1,6 @@
 import { isPreviewModelPlaceholder } from '../../../shared/previewModelCatalog'
 import { activeCodexModelRows } from '../../../shared/codexModelLifecycle'
+import type { ProviderId } from '../../../main/store/types'
 import {
   CURSOR_GROK_45_BASE_MODEL_ID,
   GROK_45_DEFAULT_REASONING_EFFORT,
@@ -294,8 +295,9 @@ const MISTRAL_DEFAULT_MODELS = [
 ] satisfies CodexModelOption[]
 // Cursor model catalog — backs live Path-B Cursor selection and decodes
 // stored historical selections.
+const CURSOR_DEFAULT_MODEL = 'composer-2.5-fast'
 const CURSOR_DEFAULT_MODELS = [
-  { id: 'composer-2.5-fast', label: 'Composer 2.5 Fast', isDefault: true },
+  { id: CURSOR_DEFAULT_MODEL, label: 'Composer 2.5 Fast', isDefault: true },
   { id: 'composer-2.5', label: 'Composer 2.5' },
   {
     id: CURSOR_GROK_45_BASE_MODEL_ID,
@@ -376,6 +378,125 @@ const OLLAMA_DEFAULT_MODELS = [
   { id: 'custom', label: 'Custom model ID' }
 ] satisfies CodexModelOption[]
 const OLLAMA_DEFAULT_MODEL = OLLAMA_DEFAULT_MODELS[0].id
+
+// ---------------------------------------------------------------------------
+// Exhaustive static-catalogue dispatch (the composer picker's model lookups).
+//
+// App.tsx's `getProviderModelOptions` / `getDefaultModelForProvider` are
+// `if`-chains declared INSIDE the App component, and both used to end in a
+// silent terminal arm — `[]` and `GEMINI_DEFAULT_MODEL` respectively. Adding a
+// ProviderId to the union compiled cleanly and the new seat quietly got an
+// empty picker and, far worse, A GEMINI MODEL ID ON ITS OWN RUN. Two providers
+// fell in: Pi, and then Mistral one provider later, which reached a live dev
+// instance past typecheck, four guards and 16k+ tests because main's catalogue
+// was correct and type-level exhaustiveness stopped at this module's boundary.
+// A prose warning sat directly above the arm both times.
+//
+// The STATIC half of both dispatchers now lives here as a pure switch whose
+// `default` arm takes a `never`, so the next ProviderId added to the union
+// fails `npm run typecheck` — the error lands on the `never` in whichever
+// switch below is missing the case — instead of shipping a plausible wrong
+// answer. The providers in DYNAMIC_CATALOGUE_PROVIDER_IDS are absent by
+// design: their catalogues come from live component state (IPC-hydrated model
+// lists, the Ollama merge, the AntiGravity snapshot), so they cannot be
+// resolved from module scope and stay in the App closure — where the same
+// `never` check still forces them to be handled before reaching here.
+const DYNAMIC_CATALOGUE_PROVIDER_IDS = [
+  'codex',
+  'claude',
+  'ollama',
+  'antigravity',
+  'pi'
+] as const satisfies readonly ProviderId[]
+
+/** Providers whose picker catalogue is read from live App component state. */
+type DynamicCatalogueProviderId = (typeof DYNAMIC_CATALOGUE_PROVIDER_IDS)[number]
+/** Providers whose catalogue is a fixed, compile-time list in this module. */
+type StaticCatalogueProviderId = Exclude<ProviderId, DynamicCatalogueProviderId>
+
+const isDynamicCatalogueProvider = (provider: ProviderId): provider is DynamicCatalogueProviderId =>
+  (DYNAMIC_CATALOGUE_PROVIDER_IDS as readonly ProviderId[]).includes(provider)
+
+/**
+ * Terminal arm for both static dispatchers. Unreachable through a typed
+ * caller — that is what the `never` parameter buys — so reaching it at runtime
+ * means an untyped seam handed us a provider the catalogue has never heard of.
+ */
+function reportUnhandledProviderCatalogue<T>(
+  provider: never,
+  surface: string,
+  productionFallback: T
+): T {
+  const message =
+    `[providerModelDefaults] No ${surface} for provider "${String(provider)}". ` +
+    'Add a case to the static switch in providerModelDefaults.ts, or a branch to ' +
+    'the state-backed dispatcher in App.tsx. Do NOT let it fall through: a ' +
+    'wrong-but-plausible model id is exactly the failure this guard exists to stop.'
+  // Dev and test: fail loudly and immediately. This is the entire point — the
+  // bug class is defined by looking correct, so the guard must be impossible
+  // to read past.
+  if (import.meta.env.DEV) throw new Error(message)
+  // Production: never blank the renderer over it. Both dispatchers are reached
+  // through `any`-typed props (MainAppLayout.types.ts, Composer.tsx), so a
+  // corrupt persisted provider string can still arrive here in a shipped
+  // build. Log it, then return the honest EMPTY answer rather than another
+  // provider's data.
+  console.error(message)
+  return productionFallback
+}
+
+/**
+ * Fixed model catalogue for the providers that have one. Callers must peel off
+ * the state-backed providers first; the type makes that mandatory.
+ */
+function getStaticProviderModelOptions(provider: StaticCatalogueProviderId): CodexModelOption[] {
+  switch (provider) {
+    case 'gemini':
+      return GEMINI_DEFAULT_MODELS
+    case 'kimi':
+      return KIMI_DEFAULT_MODELS
+    case 'grok':
+      return GROK_DEFAULT_MODELS
+    case 'cursor':
+      return CURSOR_DEFAULT_MODELS
+    case 'mistral':
+      return MISTRAL_DEFAULT_MODELS
+    default:
+      // NOTE the semantics: `[]` here means "this provider has no catalogue at
+      // all", which is NOT the claim Pi's `[]` makes in App.tsx ("no upstream
+      // keys stored yet" — a true, recoverable state). Do not collapse the two.
+      return reportUnhandledProviderCatalogue<CodexModelOption[]>(
+        provider,
+        'static model catalogue',
+        []
+      )
+  }
+}
+
+/** Pinned default model id for each static-catalogue provider. */
+function getStaticProviderDefaultModel(provider: StaticCatalogueProviderId): string {
+  switch (provider) {
+    case 'gemini':
+      return GEMINI_DEFAULT_MODEL
+    case 'kimi':
+      return KIMI_DEFAULT_MODEL
+    case 'grok':
+      return GROK_DEFAULT_MODEL
+    case 'cursor':
+      return CURSOR_DEFAULT_MODEL
+    case 'mistral':
+      return MISTRAL_DEFAULT_MODEL
+    default:
+      // '' — never another provider's id, which is the precise damage this
+      // whole block exists to prevent. An empty string is falsy at every
+      // consumer: the ensemble path chains `|| getDefaultEnsembleParticipant-
+      // Config(provider).model`, and the composer paths hand it to main, whose
+      // `resolveRequestedModel` then applies THAT provider's own default. A
+      // Gemini id would instead be dispatched verbatim onto the foreign seat.
+      return reportUnhandledProviderCatalogue(provider, 'default model', '')
+  }
+}
+
 const GEMINI_MODEL_IDS = new Set(['auto', 'pro', 'flash', 'flash-lite', 'custom'])
 const CLAUDE_MODEL_IDS = new Set([
   'sonnet',
@@ -431,8 +552,13 @@ const resolveClaudeDefaultReasoningEffort = (model?: CodexModelOption | null): s
   return efforts[0]
 }
 
-export type { CodexModelOption }
+export type { CodexModelOption, DynamicCatalogueProviderId, StaticCatalogueProviderId }
 export {
+  DYNAMIC_CATALOGUE_PROVIDER_IDS,
+  isDynamicCatalogueProvider,
+  getStaticProviderModelOptions,
+  getStaticProviderDefaultModel,
+  CURSOR_DEFAULT_MODEL,
   CODEX_DEFAULT_MODELS,
   CODEX_DEFAULT_MODEL,
   CLAUDE_THINKING_EFFORTS,
