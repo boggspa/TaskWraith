@@ -4,7 +4,6 @@ import { normalizeProviderUsage } from '../ProviderRunStats'
 import { buildProviderCapabilityContract } from '../ProviderCapabilities'
 import { canonicalTaskWraithToolName } from '../TaskWraithMcpTools'
 import {
-  CAPABILITY_GATEWAY_TOOL_NAMES,
   gatewayToolDefinitions,
   isCapabilityGatewayToolName,
   type CapabilityGatewayToolName
@@ -26,44 +25,41 @@ import {
 import {
   appendOllamaTrajectoryEntry,
   compressOllamaMessagesWithWorkingMemory,
-  createEmptyOllamaSessionMemory,
   pruneOllamaSessionMemoryForPersist,
   shouldRollOllamaRunSummary,
   type OllamaSessionMemory
 } from './OllamaRunMemory'
-import {
-  ollamaOneToolAtATime,
-  ollamaPrefersJsonToolProtocol,
-  ollamaUsesCompactToolSchemas
-} from './OllamaModelProtocol'
+import { ollamaPrefersJsonToolProtocol } from './OllamaModelProtocol'
 import {
   createOllamaHarnessRunState,
   evaluateOllamaHarnessGate,
   ollamaEnsembleHarnessKickoffPrompt,
-  ollamaHarnessEnforced,
   ollamaHarnessKickoffPrompt,
   ollamaHarnessToolFollowUpPrompt,
   recordOllamaHarnessToolResult,
   type OllamaHarnessRunState
 } from './OllamaHarnessGates'
 import { summarizeOllamaToolResult } from './OllamaToolResultSummary'
-import { buildOllamaWorkspaceIndexBlock } from './OllamaWorkspaceIndex'
 import type { CanvasEvalApprovalReceipt } from '../canvas/canvasTypes'
+import type { OllamaPromptIntent } from './OllamaPromptIntent'
+import { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
+import { buildOllamaWorkspaceIndexBlock } from './OllamaWorkspaceIndex'
 import {
-  classifyOllamaPromptIntent,
-  extractOllamaCurrentRequestText,
-  type OllamaPromptIntent
-} from './OllamaPromptIntent'
-import {
-  ollamaLocalToolSystemPrompt,
-  ollamaModelFamilyTemperature,
-} from './OllamaModelProfiles'
-import {
-  resolveOllamaRunProfile,
-  resolveOllamaThinkingLevel
-} from './OllamaRunProfiles'
+  OLLAMA_TOOL_HELP_NAME,
+  mergeOllamaModelShow,
+  ollamaModelIdsMatch,
+  ollamaSessionMemoryKeyForParticipant,
+  ollamaToolCallFormatSchema,
+  resolveOllamaFinalLaunchPlan
+} from './OllamaLaunchPlan'
 
 export { ollamaLocalToolSystemPrompt } from './OllamaModelProfiles'
+export {
+  OLLAMA_TOOL_HELP_NAME,
+  extractOllamaShowContextLength,
+  ollamaModelSupportsNativeTools,
+  ollamaToolCallFormatSchema
+} from './OllamaLaunchPlan'
 import {
   OLLAMA_ADVERTISED_TOOL_NAMES,
   OLLAMA_KNOWN_TOOL_NAMES,
@@ -171,7 +167,14 @@ export interface OllamaProviderDeps {
     code: number | null,
     route?: AgentRunRoute | null
   ) => void
-  runManager: Pick<RunManager<any>, 'attachAbortController' | 'finish'>
+  runManager: Pick<
+    RunManager<any>,
+    | 'attachAbortController'
+    | 'canAdmitTransport'
+    | 'getClaimedTerminalStatus'
+    | 'finish'
+    | 'confirmTerminalStatus'
+  >
   emitProviderCapabilityWarnings?: (
     sender: Electron.WebContents,
     provider: 'ollama',
@@ -303,7 +306,6 @@ interface OllamaChatRetryCallbackInput {
 // Native-calling models receive the compact direct schemas inline. Legacy
 // tool_help remains a schema lookup, but hidden targets execute through
 // capability_invoke rather than widening the callable name surface.
-export const OLLAMA_TOOL_HELP_NAME = 'tool_help'
 type OllamaDirectToolName = (typeof OLLAMA_ADVERTISED_TOOL_NAMES)[number]
 export type OllamaCallableToolName =
   | OllamaDirectToolName
@@ -349,10 +351,7 @@ export interface OllamaToolRequest {
 }
 
 export function ollamaSessionMemoryKeyForRun(payload: AgentRunPayload): string | undefined {
-  const participantId = payload.ensembleRun?.participantId?.trim()
-  if (!participantId) return undefined
-  const safeParticipantId = participantId.replace(/[^a-zA-Z0-9_-]/g, '_').slice(0, 120)
-  return safeParticipantId ? `ensemble:${safeParticipantId}` : undefined
+  return ollamaSessionMemoryKeyForParticipant(payload.ensembleRun?.participantId) ?? undefined
 }
 
 const OLLAMA_TOOL_RESULT_MAX_CHARS = 8000
@@ -582,6 +581,24 @@ function isAbortLikeError(error: unknown): boolean {
   return errorName(error) === 'AbortError' || errorCauseCode(error) === 'ABORT_ERR'
 }
 
+type OllamaTransportLaunchAuthority = () => boolean
+
+class OllamaTransportLaunchDeniedError extends Error {
+  constructor() {
+    super('Ollama run cancelled before transport launch.')
+    this.name = 'AbortError'
+  }
+}
+
+function assertOllamaTransportLaunchAuthorized(
+  signal: AbortSignal,
+  launchAuthorized?: OllamaTransportLaunchAuthority
+): void {
+  if (signal.aborted || launchAuthorized?.() === false) {
+    throw new OllamaTransportLaunchDeniedError()
+  }
+}
+
 function isOllamaTransportError(error: unknown): boolean {
   if (isAbortLikeError(error)) return false
   const message = unknownErrorMessage(error).toLowerCase()
@@ -690,21 +707,6 @@ function modelDescription(model: OllamaTagModel): string | undefined {
     typeof details.context_length === 'number' ? `${details.context_length.toLocaleString()} ctx` : ''
   ].filter(Boolean)
   return pieces.length > 0 ? pieces.join(' · ') : undefined
-}
-
-function ollamaModelIdsMatch(a: string, b: string): boolean {
-  const left = a.trim().toLowerCase()
-  const right = b.trim().toLowerCase()
-  if (!left || !right) return false
-  if (left === right) return true
-  const withoutLatest = (value: string) => value.replace(/:latest$/, '')
-  if (withoutLatest(left) === withoutLatest(right)) return true
-  return (
-    (left === 'gpt-oss' && (right === 'gpt-oss:latest' || right === 'gpt-oss:20b')) ||
-    (right === 'gpt-oss' && (left === 'gpt-oss:latest' || left === 'gpt-oss:20b')) ||
-    ((left === 'ornith' || left === 'ornith:latest') && right === 'ornith:9b') ||
-    ((right === 'ornith' || right === 'ornith:latest') && left === 'ornith:9b')
-  )
 }
 
 export function normalizeOllamaModels(
@@ -905,13 +907,18 @@ export async function fetchOllamaModels(
 async function fetchOllamaModelShow(
   baseUrl: string,
   model: string,
-  options: { signal?: AbortSignal; timeoutMs?: number } = {}
+  options: {
+    signal?: AbortSignal
+    timeoutMs?: number
+    launchAuthorized?: OllamaTransportLaunchAuthority
+  } = {}
 ): Promise<OllamaModelShowInfo | null> {
   const timeoutMs = options.timeoutMs ?? 2_000
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), timeoutMs)
   const signal = options.signal || controller.signal
   try {
+    assertOllamaTransportLaunchAuthorized(signal, options.launchAuthorized)
     const response = await fetch(endpoint(baseUrl, '/api/show'), {
       method: 'POST',
       signal,
@@ -921,66 +928,15 @@ async function fetchOllamaModelShow(
     if (!response.ok) return null
     const parsed = (await response.json()) as OllamaModelShowInfo
     return parsed && typeof parsed === 'object' ? parsed : null
-  } catch {
+  } catch (error) {
+    // Status discovery treats an unavailable `/api/show` endpoint as optional,
+    // but a provider run's exact Stop/terminal signal must cross this helper
+    // instead of being mistaken for absent model metadata.
+    if (options.signal?.aborted || error instanceof OllamaTransportLaunchDeniedError) throw error
     return null
   } finally {
     clearTimeout(timer)
   }
-}
-
-function positiveInteger(value: unknown): number | undefined {
-  const numeric = typeof value === 'string' ? Number(value.trim()) : Number(value)
-  if (!Number.isFinite(numeric) || numeric < 2048) return undefined
-  return Math.floor(numeric)
-}
-
-export function extractOllamaShowContextLength(show: OllamaModelShowInfo | null | undefined): number | undefined {
-  const detailsContext = positiveInteger(show?.details?.context_length)
-  if (detailsContext) return detailsContext
-
-  const modelInfo = show?.model_info || {}
-  for (const [key, value] of Object.entries(modelInfo)) {
-    const normalizedKey = key.toLowerCase()
-    if (normalizedKey.endsWith('.context_length') || normalizedKey.endsWith('_context_length')) {
-      const contextLength = positiveInteger(value)
-      if (contextLength) return contextLength
-    }
-  }
-
-  const parameters = String(show?.parameters || '')
-  const match = parameters.match(/(?:^|\n)\s*num_ctx\s*[= ]\s*(\d+)\b/i)
-  return match ? positiveInteger(match[1]) : undefined
-}
-
-function mergeOllamaModelShow(
-  modelInfo: OllamaModelInfo | null,
-  show: OllamaModelShowInfo | null
-): OllamaModelInfo | null {
-  if (!modelInfo || !show) return modelInfo
-  const next: OllamaModelInfo = { ...modelInfo, show }
-  if (!next.contextLength) {
-    const contextLength = extractOllamaShowContextLength(show)
-    if (contextLength) next.contextLength = contextLength
-  }
-  if (!next.format && show.details?.format) next.format = show.details.format
-  if (!next.family && show.details?.family) next.family = show.details.family
-  if (!next.families && Array.isArray(show.details?.families)) {
-    next.families = show.details.families.filter(
-      (item): item is string => typeof item === 'string' && item.trim().length > 0
-    )
-  }
-  if (!next.parameterSize && show.details?.parameter_size) {
-    next.parameterSize = show.details.parameter_size
-  }
-  if (!next.quantizationLevel && show.details?.quantization_level) {
-    next.quantizationLevel = show.details.quantization_level
-  }
-  if (!next.capabilities && Array.isArray(show.capabilities)) {
-    next.capabilities = show.capabilities.filter(
-      (item): item is string => typeof item === 'string' && item.trim().length > 0
-    )
-  }
-  return next
 }
 
 async function enrichOllamaModelsWithShowInfo(
@@ -1063,25 +1019,6 @@ export async function getOllamaCapabilityContract(
           : 'Ollama tools require a workspace thread and enabled TaskWraith MCP/tool policy.'
     }
   })
-}
-
-function resolveRequestedOllamaModel(
-  payload: Pick<AgentRunPayload, 'model'>,
-  settings: Pick<AppSettings, 'ollamaDefaultModel'>,
-  models: OllamaModelInfo[]
-): string {
-  const resolveInstalled = (value: string): string => {
-    const target = value.trim()
-    if (!target) return ''
-    return models.find((model) => ollamaModelIdsMatch(model.id, target))?.id || target
-  }
-  const requested = String(payload.model || '').trim()
-  if (requested && !['cli-default', 'auto', 'default', 'custom'].includes(requested)) {
-    return resolveInstalled(requested)
-  }
-  const configured = String(settings.ollamaDefaultModel || '').trim()
-  if (configured) return resolveInstalled(configured)
-  return models.find((model) => model.isDefault)?.id || models[0]?.id || ''
 }
 
 /** Map an Ollama chat `done` chunk to canonical run stats (snake_case +
@@ -2041,12 +1978,17 @@ async function fetchOllamaChatResponseWithRetry(input: {
   baseUrl: string
   signal: AbortSignal
   request: Record<string, unknown>
+  launchAuthorized?: OllamaTransportLaunchAuthority
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
 }): Promise<Response> {
   const maxAttempts = OLLAMA_CHAT_TRANSPORT_RETRY_DELAYS_MS.length + 1
   let lastError: unknown
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
+      // This check and the fetch invocation are deliberately adjacent with no
+      // await between them. The AbortSignal owns cancellation after launch;
+      // RunManager's terminal claim owns admission before launch.
+      assertOllamaTransportLaunchAuthorized(input.signal, input.launchAuthorized)
       return await fetch(endpoint(input.baseUrl, '/api/chat'), {
         method: 'POST',
         signal: input.signal,
@@ -2121,13 +2063,6 @@ function shouldReleaseOllamaThinkingUpdate(input: {
   if (looksLikeOllamaPromptRestatement(thinking)) return false
   if (looksLikeDegenerateOllamaStub(thinking)) return false
   return thinking.length >= OLLAMA_DEGENERATE_STUB_MAX_CHARS || /[.!?\n]\s*$/.test(input.thinking)
-}
-
-// Exported for the scheduled-occurrence seal evidence layer (same dispatch
-// semantics: absent capability metadata defaults to native tool support).
-export function ollamaModelSupportsNativeTools(modelInfo?: OllamaModelInfo | null): boolean {
-  if (!modelInfo?.capabilities?.length) return true
-  return modelInfo.capabilities.some((capability) => capability.toLowerCase() === 'tools')
 }
 
 /**
@@ -2288,24 +2223,6 @@ export function validateOllamaToolArguments(
   return { ok: true }
 }
 
-export function ollamaToolCallFormatSchema(toolNames: readonly string[]): Record<string, unknown> {
-  const names = toolNames.filter((name) => typeof name === 'string' && name.length > 0)
-  return {
-    type: 'object',
-    properties: {
-      taskwraith_tool: {
-        type: 'object',
-        properties: {
-          ...(names.length ? { name: { type: 'string', enum: names } } : { name: { type: 'string' } }),
-          arguments: { type: 'object' }
-        },
-        required: ['name']
-      }
-    },
-    required: ['taskwraith_tool']
-  }
-}
-
 async function runOllamaChatTurn(input: {
   baseUrl: string
   model: string
@@ -2323,6 +2240,9 @@ async function runOllamaChatTurn(input: {
   // Exact compact callable names used by constrained decoding. Hidden target
   // names live inside capability_invoke arguments rather than this enum.
   formatToolNames?: string[]
+  /** Exact pre-resolved first-turn request body from OllamaFinalLaunchPlan. */
+  request?: Record<string, unknown>
+  launchAuthorized?: OllamaTransportLaunchAuthority
   onRetry?: (input: OllamaChatRetryCallbackInput) => void
   onContentDelta?: (input: OllamaChatTurnStreamCallbackInput) => void
   onThinkingUpdate?: (input: OllamaChatTurnThinkingCallbackInput) => void
@@ -2339,8 +2259,9 @@ async function runOllamaChatTurn(input: {
   const response = await fetchOllamaChatResponseWithRetry({
     baseUrl: input.baseUrl,
     signal: input.signal,
+    launchAuthorized: input.launchAuthorized,
     onRetry: input.onRetry,
-    request: {
+    request: input.request ?? {
       model: input.model,
       stream: true,
       messages: input.messages,
@@ -2487,14 +2408,63 @@ export async function runOllamaProvider(
   const baseUrl = normalizeOllamaBaseUrl(settings.ollamaBaseUrl)
   const controller = new AbortController()
   let memoryMonitor: ReturnType<typeof createOllamaMemoryMonitor> | null = null
+  let terminalStatus: RunSessionStatus = 'failed'
+  let terminalProjectionStarted = false
   deps.runManager.attachAbortController(route.appRunId!, controller)
+  const launchAuthorized = (): boolean =>
+    !controller.signal.aborted &&
+    deps.runManager.canAdmitTransport(route.appRunId, true)
 
   try {
-    const models = await fetchOllamaModels({ ...settings, ollamaBaseUrl: baseUrl }, {
-      signal: controller.signal
-    })
-    const model = resolveRequestedOllamaModel(payload, settings, models)
-    if (!model) {
+    const launchPlan = await resolveOllamaFinalLaunchPlan(
+      {
+        baseUrl,
+        requestedModel: payload.model,
+        configuredDefaultModel: settings.ollamaDefaultModel,
+        prompt: payload.prompt,
+        scope: payload.scope,
+        workspacePath: payload.workspace,
+        toolExecutionAvailable: Boolean(deps.executeTool),
+        mcpToolsPolicy: settings.agenticServices?.mcpTools,
+        configuredNetworkAccess: settings.agenticServices?.networkAccess,
+        effectiveNetworkAccess: payload.effectivePermissions?.networkAccess,
+        readOnly: payload.effectivePermissions?.readOnly === true,
+        ollamaRunProfile: payload.ollamaRunProfile,
+        taskWraithMcpAdvertised: payload.taskWraithMcpAdvertised,
+        taskWraithMcpProfileId: payload.taskWraithMcpProfileId,
+        chatId: route.appChatId || payload.appChatId,
+        ensemble: {
+          enabled: Boolean(payload.ensembleRun),
+          participantId: payload.ensembleRun?.participantId,
+          contextChars: payload.ensembleRun?.ensembleContextChars,
+          contextTurns: payload.ensembleRun?.ensembleContextTurns
+        }
+      },
+      {
+        loadInstalledModels: () =>
+          fetchOllamaModels(
+            { ...settings, ollamaBaseUrl: baseUrl },
+            { signal: controller.signal }
+          ),
+        loadModelShow: (model) =>
+          fetchOllamaModelShow(baseUrl, model, {
+            signal: controller.signal,
+            launchAuthorized
+          }),
+        modelLabel: humanizeOllamaModelId,
+        buildNativeToolDefinitions: (input) =>
+          ollamaNativeToolDefinitions('provider_parity', input),
+        getSessionMemory: (chatId, memoryKey) =>
+          deps.getOllamaSessionMemory?.(chatId, memoryKey),
+        prepareEnsemblePrompt: prepareOllamaEnsemblePromptForRuntime,
+        buildWorkspaceIndexBlock: buildOllamaWorkspaceIndexBlock,
+        buildOpeningMessages: buildOllamaOpeningMessages,
+        resolveNumCtx: resolveOllamaNumCtx
+      }
+    )
+    if (!launchPlan) {
+      terminalStatus = 'failed'
+      terminalProjectionStarted = true
       deps.sendAgentCompatError(
         event.sender,
         'ollama',
@@ -2502,15 +2472,34 @@ export async function runOllamaProvider(
         route
       )
       deps.sendAgentCompatExit(event.sender, 'ollama', 1, route)
-      deps.runManager.finish(route.appRunId, 'failed' as RunSessionStatus)
       return
     }
-    const modelLabel = humanizeOllamaModelId(model)
-    const taggedModelInfo = models.find((entry) => entry.id === model) || null
-    const modelInfo = mergeOllamaModelShow(
-      taggedModelInfo,
-      await fetchOllamaModelShow(baseUrl, model)
-    )
+    const {
+      installedModels: models,
+      model,
+      modelLabel,
+      toolProtocolEnabled,
+      toolControlTier,
+      runProfile,
+      nativeToolsSupported,
+      oneToolAtATime,
+      nativeToolDefinitions: nativeToolDefs,
+      availableToolNames,
+      formatToolNames,
+      temperature: modelTemperature,
+      thinkingLevel,
+      harnessEnabled
+    } = launchPlan
+    const modelInfo = launchPlan.modelManifest.merged
+    const ensembleRun = Boolean(payload.ensembleRun)
+    const chatId = route.appChatId || payload.appChatId
+    const memoryKey = launchPlan.memoryKey ?? undefined
+    let sessionMemory = JSON.parse(
+      JSON.stringify(launchPlan.sessionMemory)
+    ) as OllamaSessionMemory
+    const messages = JSON.parse(
+      JSON.stringify(launchPlan.openingMessages)
+    ) as OllamaChatMessage[]
     const preflightKey = ollamaModelPreflightKey(model, modelInfo)
     if (
       shouldRunOllamaModelPreflight(settings.ollamaModelPreflightAt, preflightKey) &&
@@ -2553,105 +2542,7 @@ export async function runOllamaProvider(
       route
     )
 
-    const toolProtocolEnabled =
-      Boolean(deps.executeTool && payload.workspace && payload.scope !== 'global') &&
-      settings.agenticServices?.mcpTools !== 'deny'
-    const ensembleRun = Boolean(payload.ensembleRun)
-    // Tier retirement (2026-07): the tool-control tier is gone — the surface is
-    // always full and approval is role-governed. A fixed 'provider_parity' value
-    // still feeds the family/harness prose and the (tier-agnostic) surface calls
-    // below. The run profile carries the per-model runtime tuning, decoupled from
-    // any tier.
-    const toolControlTier: OllamaToolControlTier = 'provider_parity'
-    const runProfile = resolveOllamaRunProfile(model, payload.ollamaRunProfile)
-    const nativeToolsSupported = ollamaModelSupportsNativeTools(modelInfo)
-    const compactToolSchemas =
-      ensembleRun ||
-      runProfile.compactToolSchemas === true ||
-      ollamaUsesCompactToolSchemas(model, modelInfo)
-    const runtimeNetworkAccess =
-      settings.agenticServices?.networkAccess === 'deny'
-        ? 'deny'
-        : payload.effectivePermissions?.networkAccess || settings.agenticServices?.networkAccess
-    // Read-only/plan seats hard-deny file-edit + shell tools (deny wins even over
-    // a grant), so drop them from the ADVERTISED surface — the model shouldn't be
-    // handed tools it can only get denied. The gateway still exposes eligible
-    // hidden read/plan targets on demand.
-    const runtimeReadOnly = payload.effectivePermissions?.readOnly === true
-    const nativeToolDefs = toolProtocolEnabled && nativeToolsSupported && runProfile.protocolMode !== 'json_only'
-      ? ollamaNativeToolDefinitions(toolControlTier, {
-          compact: compactToolSchemas,
-          networkAccess: runtimeNetworkAccess,
-          readOnly: runtimeReadOnly
-        })
-      : []
-    const availableToolNames =
-      nativeToolDefs.length > 0
-        ? nativeToolDefs.map((def) => def.function.name)
-        : toolProtocolEnabled
-          ? [
-              ...ollamaAdvertisedToolNames({ networkAccess: runtimeNetworkAccess, readOnly: runtimeReadOnly }),
-              ...CAPABILITY_GATEWAY_TOOL_NAMES,
-              OLLAMA_TOOL_HELP_NAME
-            ]
-          : []
-    // Keep constrained decoding on the same stable compact surface. Hidden
-    // names discovered through search/tool_help are arguments to
-    // capability_invoke, never new top-level callable names.
-    const formatToolNames = toolProtocolEnabled
-      ? [...availableToolNames]
-      : []
-    const modelTemperature = ollamaModelFamilyTemperature(model)
-    const thinkingLevel = resolveOllamaThinkingLevel(model, runProfile)
-    const chatId = route.appChatId || payload.appChatId
-    const memoryKey = ollamaSessionMemoryKeyForRun(payload)
-    const persistedMemory =
-      chatId && deps.getOllamaSessionMemory
-        ? deps.getOllamaSessionMemory(chatId, memoryKey)
-        : null
-    let sessionMemory =
-      persistedMemory && persistedMemory.modelId === model
-        ? persistedMemory
-        : createEmptyOllamaSessionMemory(model)
     let harnessState: OllamaHarnessRunState = createOllamaHarnessRunState()
-    const harnessEnabled = toolProtocolEnabled && ollamaHarnessEnforced(model)
-    let userPrompt = payload.prompt
-    if (ensembleRun) {
-      userPrompt = prepareOllamaEnsemblePromptForRuntime({
-        prompt: userPrompt,
-        modelId: model,
-        modelInfo,
-        contextCapTokens: runProfile.contextCapTokens,
-        configuredContextChars: payload.ensembleRun?.ensembleContextChars,
-        configuredContextTurns: payload.ensembleRun?.ensembleContextTurns,
-        toolsEnabled: toolProtocolEnabled
-      })
-    }
-    // Ensemble shells are always structured work; otherwise classify the live
-    // request (composition may have prepended context above the marker) so
-    // greetings and small talk skip the harness scaffold entirely.
-    const promptIntent: OllamaPromptIntent = ensembleRun
-      ? 'workspace'
-      : classifyOllamaPromptIntent(extractOllamaCurrentRequestText(userPrompt), {
-          ongoingWork: sessionMemory.toolTurnCount > 0
-        })
-    const workspaceIntent = promptIntent === 'workspace'
-    const workspaceIndexBlock =
-      toolProtocolEnabled && workspaceIntent && payload.workspace
-        ? buildOllamaWorkspaceIndexBlock(payload.workspace)
-        : ''
-    const messages: OllamaChatMessage[] = buildOllamaOpeningMessages({
-      toolProtocolEnabled,
-      harnessEnabled,
-      promptIntent,
-      toolControlTier,
-      networkAccess: runtimeNetworkAccess,
-      readOnly: runtimeReadOnly,
-      model,
-      workspaceIndexBlock,
-      userPrompt,
-      ensembleRun
-    })
     let lastDone: OllamaChatChunk | null = null
     let runUsageStats: Record<string, unknown> | undefined
     let toolCallCount = 0
@@ -2696,14 +2587,19 @@ export async function runOllamaProvider(
       return text
     }
     for (let turnIndex = 0; ; turnIndex += 1) {
+      assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
       if (consecutiveNonProductiveTurns >= OLLAMA_MAX_CONSECUTIVE_NON_PRODUCTIVE_TURNS) {
         emitOllamaContent(ollamaCeilingFinalizeContent({ ensembleRun }))
         break
       }
       const jsonToolFallback =
-        forceJsonToolFallback ||
-        runProfile.protocolMode === 'json_fallback' ||
-        (nativeToolDefs.length === 0 && toolProtocolEnabled && ollamaPrefersJsonToolProtocol(model, modelInfo))
+        turnIndex === 0
+          ? Object.prototype.hasOwnProperty.call(launchPlan.firstRequest, 'format')
+          : forceJsonToolFallback ||
+            runProfile.protocolMode === 'json_fallback' ||
+            (nativeToolDefs.length === 0 &&
+              toolProtocolEnabled &&
+              ollamaPrefersJsonToolProtocol(model, modelInfo))
       const numPredict = toolCallCount > 0 ? runProfile.numPredictFinal : runProfile.numPredictTool
       const reasoningId = `ollama-thinking-${route.appRunId || 'run'}-${turnIndex}`
       let streamedThinkingStarted = false
@@ -2766,6 +2662,8 @@ export async function runOllamaProvider(
         toolProtocolEnabled,
         availableToolNames,
         formatToolNames,
+        request: turnIndex === 0 ? launchPlan.firstRequest : undefined,
+        launchAuthorized,
         onRetry: ({ attempt, maxAttempts, delayMs, error }) => {
           deps.sendAgentCompatLine(
             event.sender,
@@ -2787,6 +2685,10 @@ export async function runOllamaProvider(
           emitOllamaThinkingUpdate(thinking)
         }
       })
+      // A response body can resolve re-entrantly with Stop/history-clear
+      // projection. Re-check the exact run before interpreting that resolved
+      // turn or dispatching any tool it requested.
+      assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
       for (const parseError of turn.parseErrors.slice(0, 3)) {
         deps.sendAgentCompatLine(
           event.sender,
@@ -2823,7 +2725,6 @@ export async function runOllamaProvider(
         : fallbackRequest
           ? [fallbackRequest]
           : []
-      const oneToolAtATime = runProfile.oneToolAtATime !== false && ollamaOneToolAtATime(model, modelInfo)
       if (oneToolAtATime && toolRequests.length > 1) {
         toolRequests = toolRequests.slice(0, 1)
       }
@@ -3037,11 +2938,22 @@ export async function runOllamaProvider(
               output: harnessGate.message || 'Harness gate blocked this tool call.'
             }
           } else {
-            const executeTool = () => deps.executeTool!(toolExecutionRequest)
+            const executeTool = () => {
+              // Host-command projection may synchronously trigger Stop before
+              // invoking this callback. Keep the final claim fence adjacent to
+              // the actual tool dispatch.
+              assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
+              return deps.executeTool!(toolExecutionRequest)
+            }
             toolResult = hostCommandProjection
               ? await hostCommandProjection.run(executeTool)
               : await executeTool()
           }
+          // Stop can land while a brokered/local tool is awaiting approval or
+          // completion. Do not publish its result into a new model turn, and
+          // do not allow the next `/api/chat` continuation to cross the
+          // already-claimed terminal boundary.
+          assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
           // Progress = a tool that ACTUALLY executed. A harness-gate block and an
           // arg-invalid (validationError) result are both pre-execution redirects
           // with their own repair message — no tool ran, so they count as
@@ -3196,6 +3108,9 @@ export async function runOllamaProvider(
 
     const hardwareStats = memoryMonitor ? await memoryMonitor.stop() : {}
     memoryMonitor = null
+    assertOllamaTransportLaunchAuthorized(controller.signal, launchAuthorized)
+    terminalStatus = 'completed'
+    terminalProjectionStarted = true
     deps.sendAgentCompatLine(
       event.sender,
       'ollama',
@@ -3213,18 +3128,32 @@ export async function runOllamaProvider(
       route
     )
     deps.sendAgentCompatExit(event.sender, 'ollama', 0, route)
-    deps.runManager.finish(route.appRunId, 'completed' as RunSessionStatus)
   } catch (error) {
+    // Terminal projectors are outside provider execution. If one throws, keep
+    // the outcome already selected and let the sole finally settlement run;
+    // do not recursively project a contradictory second terminal outcome.
+    if (terminalProjectionStarted) throw error
     if (memoryMonitor) {
       await memoryMonitor.stop().catch(() => {})
       memoryMonitor = null
     }
-    const aborted = controller.signal.aborted
-    const message = aborted
+    const aborted = controller.signal.aborted || isAbortLikeError(error)
+    const claimedTerminalStatus = deps.runManager.getClaimedTerminalStatus(route.appRunId)
+    terminalStatus = claimedTerminalStatus ?? (aborted ? 'cancelled' : 'failed')
+    terminalProjectionStarted = true
+    const cancelled = terminalStatus === 'cancelled'
+    const message = cancelled
       ? 'Ollama run cancelled.'
       : ollamaRunFailureMessage(error, baseUrl)
     deps.sendAgentCompatError(event.sender, 'ollama', message, route)
-    deps.sendAgentCompatExit(event.sender, 'ollama', aborted ? 130 : 1, route)
-    deps.runManager.finish(route.appRunId, aborted ? ('cancelled' as RunSessionStatus) : ('failed' as RunSessionStatus))
+    deps.sendAgentCompatExit(event.sender, 'ollama', cancelled ? 130 : 1, route)
+  } finally {
+    const effectiveTerminalStatus =
+      deps.runManager.getClaimedTerminalStatus(route.appRunId) ?? terminalStatus
+    try {
+      deps.runManager.finish(route.appRunId, effectiveTerminalStatus)
+    } finally {
+      deps.runManager.confirmTerminalStatus(route.appRunId, effectiveTerminalStatus)
+    }
   }
 }

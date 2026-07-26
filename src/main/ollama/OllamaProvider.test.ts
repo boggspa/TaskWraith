@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CAPABILITY_GATEWAY_TOOL_NAMES } from '../mcp/McpToolGateway'
 import { GATEWAY_MCP_DIRECT_TOOLS } from '../mcp/McpToolProfiles'
 import type { AgentRunPayload, AgentRunRoute } from '../run/AgentRunTypes'
+import { RunManager } from '../RunManager'
 import {
   buildOllamaOpeningMessages,
   humanizeOllamaModelId,
@@ -148,6 +149,10 @@ function makeProviderDeps(
     fetchMock?: ReturnType<typeof vi.fn>
     executeTool?: OllamaProviderDeps['executeTool']
     createHostCommandProjection?: OllamaProviderDeps['createHostCommandProjection']
+    canAdmitTransport?: (runId: string | undefined, requireExistingRun?: boolean) => boolean
+    claimedTerminalStatus?: (
+      runId: string | undefined
+    ) => 'failed' | 'cancelled' | undefined
     settings?: Record<string, unknown>
   } = {}
 ): {
@@ -217,10 +222,13 @@ function makeProviderDeps(
       },
       runManager: {
         attachAbortController: vi.fn(),
+        canAdmitTransport: vi.fn(overrides.canAdmitTransport || (() => true)),
+        getClaimedTerminalStatus: vi.fn(overrides.claimedTerminalStatus || (() => undefined)),
         finish: (runId, status) => {
           finishes.push({ runId, status })
           return undefined
-        }
+        },
+        confirmTerminalStatus: vi.fn()
       },
       emitProviderCapabilityWarnings: vi.fn(async () => undefined),
       executeTool: overrides.executeTool,
@@ -329,6 +337,471 @@ describe('prepareOllamaEnsemblePromptForRuntime', () => {
 })
 
 describe('runOllamaProvider streaming', () => {
+  it('passes the exact run AbortSignal to model discovery, show, and chat requests', async () => {
+    let attachedController: AbortController | undefined
+    const requestSignals = new Map<string, AbortSignal | null | undefined>()
+    const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {
+      const path = new URL(String(url)).pathname
+      requestSignals.set(path, init?.signal)
+      if (path === '/api/tags') {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (path === '/api/show') {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (path === '/api/chat') {
+        return ollamaStreamResponse([
+          JSON.stringify({ message: { role: 'assistant', content: 'Signal preserved.' } }),
+          JSON.stringify({ done: true, prompt_eval_count: 4, eval_count: 2 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps } = makeProviderDeps({ fetchMock })
+    ;(deps.runManager.attachAbortController as ReturnType<typeof vi.fn>).mockImplementation(
+      (_runId: string, controller: AbortController) => {
+        attachedController = controller
+      }
+    )
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(attachedController).toBeDefined()
+    expect(requestSignals.get('/api/tags')).toBe(attachedController?.signal)
+    expect(requestSignals.get('/api/show')).toBe(attachedController?.signal)
+    expect(requestSignals.get('/api/chat')).toBe(attachedController?.signal)
+    expect(deps.runManager.canAdmitTransport).toHaveBeenCalledWith('run-ollama-1', true)
+  })
+
+  it('does not launch model show or chat after the run gains a terminal claim', async () => {
+    let admitted = true
+    const requestPaths: string[] = []
+    const fetchMock = vi.fn(async (url: string) => {
+      const path = new URL(String(url)).pathname
+      requestPaths.push(path)
+      if (path === '/api/tags') {
+        admitted = false
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      canAdmitTransport: () => admitted
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(requestPaths).toEqual(['/api/tags'])
+    expect(errors).toEqual([
+      { provider: 'ollama', error: 'Ollama run cancelled.', route: baseRoute }
+    ])
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
+  })
+
+  it('does not launch the first chat request when Stop claims the run after show', async () => {
+    let admitted = true
+    let chatCalls = 0
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      canAdmitTransport: () => admitted
+    })
+    deps.emitProviderCapabilityWarnings = vi.fn(async () => {
+      admitted = false
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(0)
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
+  })
+
+  it('does not issue a tool-continuation chat after a terminal claim during tool execution', async () => {
+    let admitted = true
+    let chatCalls = 0
+    let resolveTool!: (result: { ok: boolean; output: string }) => void
+    const toolResult = new Promise<{ ok: boolean; output: string }>((resolve) => {
+      resolveTool = resolve
+    })
+    const executeTool = vi.fn(() => toolResult)
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"lifecycle","path":".","maxResults":5}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      canAdmitTransport: () => admitted,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      }
+    })
+    const runPromise = runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    await vi.waitFor(() => expect(executeTool).toHaveBeenCalledOnce())
+
+    admitted = false
+    resolveTool({ ok: true, output: 'src/main/lifecycle.ts:1: claimed' })
+    await runPromise
+
+    expect(chatCalls).toBe(1)
+    expect(
+      lines.some(
+        (line) =>
+          line.payload.type === 'tool_result' &&
+          line.payload.tool_name === 'workspace_search'
+      )
+    ).toBe(false)
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toContainEqual({ runId: 'run-ollama-1', status: 'cancelled' })
+  })
+
+  it('does not interpret a tool request after the resolved chat turn gains a terminal claim', async () => {
+    let admitted = true
+    let chatCalls = 0
+    const encoder = new TextEncoder()
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'must not run' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return {
+          ok: true,
+          status: 200,
+          body: {
+            async *[Symbol.asyncIterator]() {
+              yield encoder.encode(
+                `${JSON.stringify({
+                  message: {
+                    role: 'assistant',
+                    content:
+                      '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"resolved claim","path":".","maxResults":5}}}'
+                  }
+                })}\n`
+              )
+              yield encoder.encode(
+                `${JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })}\n`
+              )
+              admitted = false
+            }
+          }
+        }
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      canAdmitTransport: () => admitted,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      }
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(1)
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(lines.some((line) => line.payload.tool_name === 'workspace_search')).toBe(false)
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'cancelled' }])
+  })
+
+  it('rechecks a re-entrant terminal claim immediately before tool dispatch', async () => {
+    let admitted = true
+    let chatCalls = 0
+    const executeTool = vi.fn(async () => ({ ok: true, output: 'must not run' }))
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        chatCalls += 1
+        return ollamaStreamResponse([
+          JSON.stringify({
+            message: {
+              role: 'assistant',
+              content:
+                '{"taskwraith_tool":{"name":"workspace_search","arguments":{"query":"reentrant claim","path":".","maxResults":5}}}'
+            }
+          }),
+          JSON.stringify({ done: true, prompt_eval_count: 8, eval_count: 4 })
+        ])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, lines, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      executeTool,
+      canAdmitTransport: () => admitted,
+      settings: {
+        ollamaRunProfiles: {
+          'stream-model:latest': { protocolMode: 'json_only' }
+        }
+      }
+    })
+    const sendLine = deps.sendAgentCompatLine
+    deps.sendAgentCompatLine = (sender, provider, line, route) => {
+      sendLine(sender, provider, line, route)
+      if (line.type === 'tool_use' && line.tool_name === 'workspace_search') {
+        admitted = false
+      }
+    }
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(chatCalls).toBe(1)
+    expect(executeTool).not.toHaveBeenCalled()
+    expect(
+      lines.some(
+        (line) =>
+          line.payload.type === 'tool_result' &&
+          line.payload.tool_name === 'workspace_search'
+      )
+    ).toBe(false)
+    expect(exits).toEqual([{ provider: 'ollama', code: 130, route: baseRoute }])
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'cancelled' }])
+  })
+
+  it('settles a completed run exactly once when result projection throws', async () => {
+    const { deps, finishes } = makeProviderDeps()
+    const sendLine = deps.sendAgentCompatLine
+    deps.sendAgentCompatLine = (sender, provider, line, route) => {
+      if (line.type === 'result') throw new Error('result projection failed')
+      sendLine(sender, provider, line, route)
+    }
+
+    await expect(
+      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    ).rejects.toThrow('result projection failed')
+
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'completed' }])
+  })
+
+  it('settles a failed run exactly once when error projection throws', async () => {
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      if (String(url).endsWith('/api/show')) {
+        return jsonResponse({ details: { family: 'qwen' }, capabilities: ['tools'] })
+      }
+      if (String(url).endsWith('/api/chat')) {
+        return ollamaStreamResponse([JSON.stringify({ error: 'provider failed' })])
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, finishes } = makeProviderDeps({ fetchMock })
+    deps.sendAgentCompatError = () => {
+      throw new Error('error projection failed')
+    }
+
+    await expect(
+      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    ).rejects.toThrow('error projection failed')
+
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'failed' }])
+  })
+
+  it('settles a cancelled run exactly once when exit projection throws', async () => {
+    let admitted = true
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        admitted = false
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, finishes } = makeProviderDeps({
+      fetchMock,
+      canAdmitTransport: () => admitted
+    })
+    deps.sendAgentCompatExit = () => {
+      throw new Error('exit projection failed')
+    }
+
+    await expect(
+      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    ).rejects.toThrow('exit projection failed')
+
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'cancelled' }])
+  })
+
+  it('joins graph lifecycle settlement when terminal result projection throws', async () => {
+    const runManager = new RunManager()
+    runManager.create({
+      runId: 'run-ollama-1',
+      provider: 'ollama',
+      appChatId: 'chat-ollama-1',
+      status: 'running'
+    })
+    runManager.requireTerminalConfirmation('run-ollama-1')
+    const { deps } = makeProviderDeps()
+    deps.runManager = runManager
+    const sendLine = deps.sendAgentCompatLine
+    deps.sendAgentCompatLine = (sender, provider, line, route) => {
+      if (line.type === 'result') throw new Error('graph result projection failed')
+      sendLine(sender, provider, line, route)
+    }
+
+    await expect(
+      runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+    ).rejects.toThrow('graph result projection failed')
+
+    expect(runManager.get('run-ollama-1')?.status).toBe('completed')
+    expect(runManager.getTerminalJoinState('run-ollama-1')).toEqual({
+      required: false,
+      conflict: false
+    })
+  })
+
+  it('preserves a failed graph claim instead of projecting it as Stop', async () => {
+    let admitted = true
+    const fetchMock = vi.fn(async (url: string) => {
+      if (String(url).endsWith('/api/tags')) {
+        admitted = false
+        return jsonResponse({
+          models: [
+            {
+              name: 'stream-model:latest',
+              digest: 'digest-stream',
+              details: { family: 'qwen' },
+              capabilities: ['tools']
+            }
+          ]
+        })
+      }
+      throw new Error(`unexpected fetch ${url}`)
+    })
+    const { deps, errors, exits, finishes } = makeProviderDeps({
+      fetchMock,
+      canAdmitTransport: () => admitted,
+      claimedTerminalStatus: () => 'failed'
+    })
+
+    await runOllamaProvider(deps, stubEvent, basePayload, baseRoute)
+
+    expect(errors[0]?.error).toContain('cancelled before transport launch')
+    expect(exits).toEqual([{ provider: 'ollama', code: 1, route: baseRoute }])
+    expect(finishes).toEqual([{ runId: 'run-ollama-1', status: 'failed' }])
+  })
+
   it('uses the ensemble-aware harness kickoff for live ensemble dispatches', async () => {
     const chatBodies: string[] = []
     const fetchMock = vi.fn(async (url: string, init?: RequestInit) => {

@@ -1,0 +1,178 @@
+import { readFileSync } from 'node:fs'
+import { describe, expect, it, vi } from 'vitest'
+import {
+  resolveOllamaFinalLaunchPlan,
+  type ResolveOllamaFinalLaunchPlanInput
+} from './OllamaLaunchPlan'
+import type { OllamaChatMessage, OllamaNativeToolDefinition } from './OllamaProvider'
+
+const BASE_INPUT: ResolveOllamaFinalLaunchPlanInput = {
+  baseUrl: 'http://127.0.0.1:11434',
+  requestedModel: 'qwen3:4b-instruct:latest',
+  configuredDefaultModel: null,
+  prompt: 'Inspect the workspace.',
+  scope: 'workspace',
+  workspacePath: '/workspace',
+  toolExecutionAvailable: true,
+  mcpToolsPolicy: 'ask',
+  configuredNetworkAccess: 'allow',
+  effectiveNetworkAccess: 'deny',
+  readOnly: true,
+  ollamaRunProfile: 'provider_parity',
+  taskWraithMcpAdvertised: true,
+  taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+  chatId: 'chat-1',
+  ensemble: {
+    enabled: true,
+    participantId: 'reviewer / local',
+    contextChars: 12_000,
+    contextTurns: 8
+  }
+}
+
+const nativeDefinitions: OllamaNativeToolDefinition[] = [
+  {
+    type: 'function',
+    function: {
+      name: 'read_file',
+      description: 'Read a file.',
+      parameters: { type: 'object', properties: {} }
+    }
+  }
+]
+
+describe('OllamaFinalLaunchPlan', () => {
+  it('freezes the exact installed wire model, merged manifest, tools, keyed memory, and opening transcript', async () => {
+    const getSessionMemory = vi.fn(() => ({
+      modelId: 'qwen3:4b-instruct',
+      updatedAt: 123,
+      workingMemory: 'Already inspected package.json.',
+      toolTurnCount: 2,
+      trajectory: []
+    }))
+    const openingMessages: OllamaChatMessage[] = [
+      { role: 'system', content: 'sealed system prompt' },
+      { role: 'user', content: 'sealed ensemble prompt' }
+    ]
+
+    const plan = await resolveOllamaFinalLaunchPlan(BASE_INPUT, {
+      loadInstalledModels: async () => [
+        {
+          id: 'qwen3:4b-instruct',
+          label: 'Qwen 3 4B',
+          digest: 'sha256:model-tag'
+        }
+      ],
+      loadModelShow: async () => ({
+        details: {
+          family: 'qwen3',
+          parameter_size: '4B',
+          context_length: 32_768
+        },
+        capabilities: ['completion', 'tools']
+      }),
+      modelLabel: (model) => `Label: ${model}`,
+      buildNativeToolDefinitions: ({ compact, networkAccess, readOnly }) => {
+        expect({ compact, networkAccess, readOnly }).toEqual({
+          compact: true,
+          networkAccess: 'deny',
+          readOnly: true
+        })
+        return nativeDefinitions
+      },
+      getSessionMemory,
+      prepareEnsemblePrompt: () => 'sealed ensemble prompt',
+      buildWorkspaceIndexBlock: () => 'sealed workspace index',
+      buildOpeningMessages: () => openingMessages,
+      resolveNumCtx: () => 24_576
+    })
+
+    expect(plan).not.toBeNull()
+    expect(plan).toMatchObject({
+      schemaVersion: 1,
+      model: 'qwen3:4b-instruct',
+      modelLabel: 'Label: qwen3:4b-instruct',
+      toolProtocolEnabled: true,
+      taskWraithMcpAdvertised: true,
+      taskWraithMcpProfileId: 'taskwraith-gateway-v2',
+      nativeToolsSupported: true,
+      compactToolSchemas: true,
+      oneToolAtATime: false,
+      networkAccess: 'deny',
+      readOnly: true,
+      availableToolNames: ['read_file'],
+      formatToolNames: ['read_file'],
+      temperature: 0.25,
+      memoryKey: 'ensemble:reviewer___local',
+      promptIntent: 'workspace',
+      workspaceIndexBlock: 'sealed workspace index',
+      openingMessages
+    })
+    expect(plan?.firstRequest).toMatchObject({
+      model: 'qwen3:4b-instruct',
+      stream: true,
+      messages: openingMessages,
+      tools: nativeDefinitions,
+      keep_alive: '10m',
+      options: {
+        temperature: 0.25,
+        num_ctx: 24_576,
+        num_predict: 1536
+      }
+    })
+    expect(plan?.firstRequest).not.toHaveProperty('format')
+    expect(plan?.modelManifest.merged).toMatchObject({
+      id: 'qwen3:4b-instruct',
+      digest: 'sha256:model-tag',
+      family: 'qwen3',
+      parameterSize: '4B',
+      contextLength: 32_768,
+      capabilities: ['completion', 'tools']
+    })
+    expect(getSessionMemory).toHaveBeenCalledWith('chat-1', 'ensemble:reviewer___local')
+    expect(plan?.sessionMemory.workingMemory).toBe('Already inspected package.json.')
+    expect(Object.isFrozen(plan)).toBe(true)
+    expect(Object.isFrozen(plan?.modelManifest)).toBe(true)
+    expect(Object.isFrozen(plan?.nativeToolDefinitions)).toBe(true)
+    expect(Object.isFrozen(plan?.sessionMemory)).toBe(true)
+    expect(Object.isFrozen(plan?.openingMessages[0])).toBe(true)
+  })
+
+  it('records the effective wire fallback temperature', async () => {
+    const plan = await resolveOllamaFinalLaunchPlan(
+      {
+        ...BASE_INPUT,
+        requestedModel: 'qwen3-coder:32b',
+        ensemble: { enabled: false },
+        chatId: null
+      },
+      {
+        loadInstalledModels: async () => [{ id: 'qwen3-coder:32b', label: 'Qwen Coder 32B' }],
+        loadModelShow: async () => ({ capabilities: ['completion', 'tools'] }),
+        modelLabel: (model) => model,
+        buildNativeToolDefinitions: () => nativeDefinitions,
+        getSessionMemory: () => null,
+        prepareEnsemblePrompt: ({ prompt }) => prompt,
+        buildWorkspaceIndexBlock: () => '',
+        buildOpeningMessages: ({ userPrompt }) => [{ role: 'user', content: userPrompt }],
+        resolveNumCtx: () => 8192
+      }
+    )
+
+    expect(plan?.temperature).toBe(0.2)
+    expect(Object.isFrozen(plan)).toBe(true)
+  })
+
+  it('is the sole launch-fact resolver used by production dispatch', () => {
+    const source = readFileSync(new URL('./OllamaProvider.ts', import.meta.url), 'utf8')
+    const runSource = source.slice(source.indexOf('export async function runOllamaProvider'))
+
+    expect(runSource).toContain('const launchPlan = await resolveOllamaFinalLaunchPlan(')
+    expect(runSource).toContain('const modelInfo = launchPlan.modelManifest.merged')
+    expect(runSource).toContain('JSON.stringify(launchPlan.openingMessages)')
+    expect(runSource).toContain('request: turnIndex === 0 ? launchPlan.firstRequest : undefined')
+    expect(runSource).not.toContain('resolveRequestedOllamaModel(')
+    expect(runSource).not.toContain('resolveOllamaRunProfile(')
+    expect(runSource).not.toContain('ollamaModelFamilyTemperature(')
+  })
+})
