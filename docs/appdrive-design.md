@@ -285,6 +285,26 @@ Ephemeral partitions mean the user logs in inside the drivable surface, repeated
 
 ---
 
+## 6a. HARD INVARIANT — AppDrive never targets TaskWraith's own chrome
+
+**Agreed 2026-07-26 with the session building `theme_tokens_*` (agent-accessed appearance customisation), commit `eed45afa7`.** This is a cross-feature invariant: neither feature is dangerous alone, and the combination is.
+
+Their side of it: TaskWraith's approval and permission chrome is **ordinary DOM in the same document**, so its layout is a security surface — a mis-rendered elevation card is consent forgery that looks like the real gate. Their tool is therefore a strict data channel (allowlisted tokens, typed scalars, no CSS text) that deliberately cannot touch provider identity colours, focus rings, or approval-sheet geometry.
+
+Our side of it, stated as a rule rather than an implementation note:
+
+> **AppDrive must never be able to observe or actuate TaskWraith's own renderer — its main window, its approval sheets, its permission dialogs, or any surface that hosts consent UI.** Targets are limited to canvas surfaces, simulators and Run-owned application windows.
+
+The threat is the **product** of the two capabilities. An agent that can both restyle the chrome and click it can approve its own prompts: shift a decline button under the cursor, or make destructive text unreadable, then click Accept. Each capability is individually reviewable and jointly a complete consent bypass. Neither feature's own review would catch it, which is exactly why it is written down here.
+
+Concretely, for each tier:
+
+- **Tier 0–2 (canvas):** already satisfied structurally, not by policy. Each canvas is its own `WebContents` on an isolated ephemeral partition, and the driver only ever scripts *that* `webContents`. There is no path from a canvas verb to the host renderer, and `canvasEval` is confined the same way. The one thing that must never change: do not add a driver that resolves TaskWraith's own `webContents` as a target.
+- **Tier 4 (`window` driver):** this is where the invariant becomes load-bearing rather than free. A PID-bound window driver must **refuse TaskWraith's own process and windows**, by pid identity, not by title or bundle heuristics — titles are attacker-controlled. Fail closed on an unresolvable pid.
+- **Tier 5 (general desktop):** the invariant is the reason Tier 5 needs its own risk acceptance rather than inheriting Tier 4's. A general screen-and-input capability can reach our own chrome by construction, so it would need a positive exclusion enforced at the executor, and that exclusion is only as good as its window-identity check.
+
+The user-presence guard (§5.1) is *not* a substitute. It stops the agent talking over a human; it does nothing about an agent driving chrome while the human is away, which is precisely the unattended case AppDrive is for.
+
 ## 7. Consequential-action confirmation
 
 The lease answers "may you touch this surface". It cannot answer "should this particular click happen", and that is where judgment errors live.
