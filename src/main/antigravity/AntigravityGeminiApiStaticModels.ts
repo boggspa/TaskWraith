@@ -21,11 +21,26 @@ import { antigravityGeminiApiModelLabel } from './AntigravityGeminiApiModelNamin
  * and a stale id simply fails at dispatch with the kernel's normal API error
  * rather than silently hiding the provider.
  */
+/**
+ * Refreshed 2026-07-26 against a real key. The previous list was HALF DEAD,
+ * which is the worst possible state for a fallback — it exists so the provider
+ * still offers something when discovery fails, and two of its four rows could
+ * not run:
+ *   - `gemini-3.1-pro` was not in `models.list` at all (the real id is
+ *     `gemini-3.1-pro-preview`).
+ *   - `gemini-2.5-flash` 404s with "no longer available to new users".
+ * Every id below was verified present in live `models.list`, and
+ * `gemini-3.5-flash` additionally completed a real tool-using run.
+ *
+ * Keep these CURRENT rather than historical: a fallback naming a retired model
+ * is worse than a short list, because the failure lands at dispatch time on a
+ * user who had no other option to pick.
+ */
 const STATIC_MODEL_IDS: readonly string[] = [
-  'gemini-3.1-pro',
-  'gemini-3.1-flash-lite',
-  'gemini-2.5-pro',
-  'gemini-2.5-flash'
+  'gemini-3.6-flash',
+  'gemini-3.5-flash',
+  'gemini-3.1-pro-preview',
+  'gemini-3.1-flash-lite'
 ]
 
 /** Shared with live discovery so a fallback row is indistinguishable in the UI. */

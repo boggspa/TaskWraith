@@ -132,12 +132,43 @@ describe('discoverAuthenticatedAntigravityGeminiApiModels', () => {
     expect(list).not.toHaveBeenCalled()
   })
 
+  it('drops ids Google still advertises but no longer serves to new keys', async () => {
+    // gemini-2.5-flash / -flash-lite return 404 "no longer available to new
+    // users" on the FIRST call while models.list still reports them as
+    // generateContent-capable, so the capability filter cannot catch them and
+    // the picker offered a model that could not run (observed 2026-07-26).
+    const { client } = clientWithPager(
+      pager([
+        generateCapable('gemini-2.5-flash'),
+        generateCapable('gemini-2.5-flash-lite'),
+        generateCapable('gemini-2.5-pro'),
+        generateCapable('gemini-3.5-flash')
+      ])
+    )
+
+    const result = await discoverAuthenticatedAntigravityGeminiApiModels(
+      acceptedSettings,
+      depsFor(client)
+    )
+    expect(result.status).toBe('ok')
+    expect(result.models.map((model) => model.modelId)).toEqual([
+      // 2.5-pro survives deliberately: it answered 429 (quota exhausted), which
+      // says nothing about the model. Only a proven 404 justifies removal, so
+      // "the 2.5 family is retired" must NOT be inferred here.
+      'gemini-2.5-pro',
+      'gemini-3.5-flash'
+    ])
+  })
+
   it('discovers only authenticated, generate-capable Gemini models under the API namespace', async () => {
     const { client, list } = clientWithPager(
       pager(
         [
-          generateCapable('gemini-2.5-flash'),
-          generateCapable('gemini-2.5-flash'),
+          // Duplicated on purpose — this case pins dedup. Uses a LIVE id:
+          // gemini-2.5-flash is now filtered as retired, which would have made
+          // this assertion about the retirement list rather than about dedup.
+          generateCapable('gemini-3.5-flash'),
+          generateCapable('gemini-3.5-flash'),
           { name: 'models/gemini-2.5-pro', supportedGenerationMethods: ['generateContent'] },
           { name: 'models/gemini-2.5-flash-image', supportedActions: ['countTokens'] },
           generateCapable('gemma-4-31b-it'),
@@ -154,9 +185,10 @@ describe('discoverAuthenticatedAntigravityGeminiApiModels', () => {
       status: 'ok',
       models: [
         {
-          id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}gemini-2.5-flash`,
-          modelId: 'gemini-2.5-flash'
+          id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}gemini-3.5-flash`,
+          modelId: 'gemini-3.5-flash'
         },
+        // 2.5-pro stays: it answered 429 (quota), not 404 — it is alive.
         { id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}gemini-2.5-pro`, modelId: 'gemini-2.5-pro' },
         {
           id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}gemini-3-flash-preview`,

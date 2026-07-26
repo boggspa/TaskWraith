@@ -9,6 +9,24 @@ const DISCOVERY_PAGE_SIZE = 32
 const GEMINI_MODEL_ID = /^gemini-[a-z0-9][a-z0-9._-]{0,127}$/
 const GENERATE_CAPABLE_ACTIONS = new Set(['generateContent', 'generateContentStream'])
 
+/**
+ * Ids `models.list` still advertises as generate-capable but which 404 on the
+ * first call with "no longer available to new users". Google expresses that
+ * retirement NOWHERE in the listing — `supportedGenerationMethods` still names
+ * generateContent — so the capability filter below cannot catch them and the
+ * picker offers a model that cannot run.
+ *
+ * EVIDENCE-BASED, NOT A FAMILY RULE. Each id here was observed returning 404
+ * against a real key (2026-07-26). Notably `gemini-2.5-pro` is NOT listed: it
+ * answered 429 (quota), i.e. it is alive — so "the 2.5 family is retired" would
+ * have been wrong. Only add an id after seeing its 404; a 429 proves nothing
+ * about the model, only about the key's quota. If Google revives one, delete it.
+ */
+const RETIRED_MODEL_IDS: ReadonlySet<string> = new Set([
+  'gemini-2.5-flash',
+  'gemini-2.5-flash-lite'
+])
+
 export interface AntigravityGeminiApiDiscoveredModel {
   /** Namespaced route token. It must never be mistaken for an official agy model ID. */
   readonly id: `${typeof ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}${string}`
@@ -197,6 +215,7 @@ function normalizeGenerateCapableGeminiModel(
   if (name !== value.name || !name.startsWith('models/')) return null
   const modelId = name.slice('models/'.length)
   if (!GEMINI_MODEL_ID.test(modelId) || !hasGenerateCapability(value)) return null
+  if (RETIRED_MODEL_IDS.has(modelId)) return null
   return {
     id: `${ANTIGRAVITY_GEMINI_API_MODEL_PREFIX}${modelId}`,
     modelId
