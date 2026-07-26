@@ -207,14 +207,15 @@ always did rather than failing a launch that would otherwise have worked.
 ### Product observation says exactly what it counts
 
 TaskWraith now has a public privacy notice and a visible, user-disableable
-activity-reporting control under **Settings → Safety & Privacy**. Builds with a
-first-party endpoint enable the minimal report by default to help understand
-demand and sustain the free, open-source project; users can switch it off at any
-time without losing features. It sends at most one no-ID check-in per UTC day:
-schema, event, day, app version, operating-system family, processor family, and
-release channel. The control shows that complete contract in the app. Prompts,
-workspaces, provider choices, usage, and stable installation identifiers are
-outside it; builds without an endpoint send nothing.
+activity-reporting control under **Settings → Safety & Privacy**. A clear
+first-launch choice now keeps first-party observation off until the user
+affirmatively selects **Share minimal activity**; **Don't share** is equally
+prominent and neither choice removes a feature. When enabled, it sends at most
+one no-ID check-in per UTC day: schema, event, day, app version,
+operating-system family, processor family, and release channel. Both controls
+show that complete contract in the app. Prompts, workspaces, provider choices,
+usage, and stable installation identifiers are outside it; builds without an
+endpoint send nothing.
 
 The same setting can now power an approximate **apps online now** gauge without
 creating a session history. Each running app renews a random, process-only

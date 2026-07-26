@@ -301,8 +301,9 @@ describe('ChangelogSheet', () => {
     expect(entry.releaseNotes).toContain('theme_tokens_set')
     expect(entry.releaseNotes).toContain('Every provider leaves a clearer receipt')
     expect(entry.releaseNotes).toContain('The phone keeps the same map')
-    expect(entry.releaseNotes).toContain('enable the minimal report by default')
-    expect(entry.releaseNotes).toContain('users can switch it off at any')
+    expect(entry.releaseNotes).toContain('keeps first-party observation off')
+    expect(entry.releaseNotes).toContain('Share minimal activity')
+    expect(entry.releaseNotes).toContain('neither choice removes a feature')
   })
 
   it('formats full changelog arrays from electron-updater metadata', () => {

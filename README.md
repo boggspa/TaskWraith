@@ -114,12 +114,12 @@ and [SECURITY.md](SECURITY.md) contain the engineering guardrails and release
 baseline.
 
 Electron builds configured with TaskWraith's first-party activity endpoint
-enable privacy-minimised product observation by default to help sustain the
-free, open-source project. It sends only the fixed no-content contract and can
-be switched off at any time under **Settings → Safety & Privacy** without
-losing features. Builds without an endpoint send nothing. [PRIVACY.md](PRIVACY.md)
-explains platform aggregates, retention, user choices, and the exact data
-boundary.
+leave privacy-minimised product observation off until you affirmatively choose
+**Share** during first launch or under **Settings → Safety & Privacy**. The
+choice is optional, sends only the fixed no-content contract, can be withdrawn
+at any time, and never affects app features. Builds without an endpoint send
+nothing. [PRIVACY.md](PRIVACY.md) explains platform aggregates, retention,
+user choices, and the exact data boundary.
 
 <table>
   <tr>

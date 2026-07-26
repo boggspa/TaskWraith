@@ -1,8 +1,8 @@
 # TaskWraith Privacy Notice
 
-**Effective:** 26 July 2026
+**Effective:** 27 July 2026
 
-**Version:** 1.1
+**Version:** 1.2
 
 ## The short version
 
@@ -11,10 +11,11 @@ and run records are stored on your device by default. The prompts, files, and
 tool context needed for a run still go to the AI provider or local runtime you
 choose.
 
-Electron builds configured with a first-party activity endpoint enable
-privacy-minimised product observation by default. You can switch it off at any
-time in **Settings → Safety & Privacy** without losing any feature. TaskWraith
-uses these reports and platform-provided aggregate analytics only to understand
+Electron builds configured with a first-party activity endpoint do not send
+first-party product-observation reports unless you affirmatively choose
+**Share** during first launch or in **Settings → Safety & Privacy**. You can
+withdraw that choice at any time without losing any feature. TaskWraith uses
+these reports and platform-provided aggregate analytics only to understand
 adoption, see an approximate current live-app count, prioritise supported
 platforms, and verify release and update health. Product observation does not
 include the content of your work and is not used for advertising or individual
@@ -56,11 +57,14 @@ active users.
 
 ### TaskWraith activity reporting
 
-Electron builds with a first-party endpoint enable **Share privacy-minimised
-activity and live presence** by default. The control is always available under
-**Settings → Safety & Privacy**, and an explicit choice to switch it off
-persists across restarts and updates. Turning it off does not limit any core
-TaskWraith feature.
+Electron builds with a first-party endpoint leave **Share privacy-minimised
+activity and live presence** off until you affirmatively choose it. First launch
+offers **Share minimal activity** and **Don't share** with equal prominence,
+before any first-party activity report is sent. Closing the sheet without
+choosing Share leaves reporting off. The same control is always available under
+**Settings → Safety & Privacy**, and either choice persists across restarts and
+updates. Declining or later withdrawing does not limit any core TaskWraith
+feature.
 
 If a build has no TaskWraith activity endpoint configured, it sends no activity
 data even when the stored preference is on. The preference can still be
@@ -194,19 +198,23 @@ profiles, or used to make automated decisions about a person.
 
 ## Legal basis, sharing, and transfers
 
-Where a limited activity report or transient connection metadata constitutes
-personal data, the maintainer relies on legitimate interests in understanding
-adoption, maintaining compatible releases, operating the activity endpoint,
-and deciding where continued work on the free, open-source project is useful.
-That assessment is bounded by the fixed no-content schema, the absence of a
-stable installation identifier, immediate aggregation, short retention,
-RAM-only live leases, no advertising or profiling, and a prominent control that
-stops future reporting without reducing app functionality.
+TaskWraith relies on your consent for first-party activity check-ins and
+live-presence requests. Reporting starts only after you affirmatively choose
+Share. You can withdraw consent at any time under **Settings → Safety &
+Privacy**; withdrawal stops future reports and does not affect any app feature.
+It does not undo aggregate processing already completed before withdrawal.
 
-TaskWraith's price and open-source licence are context for that maintenance
-purpose; they do not remove privacy rights or themselves constitute consent.
-You can object to future TaskWraith activity reporting at any time by switching
-it off under **Settings → Safety & Privacy**.
+The maintainer relies on legitimate interests to use platform-provided
+aggregate release and repository statistics, and to operate and secure the
+activity endpoint when you have asked the app to contact it. Those interests
+are bounded by the fixed no-content schema, the absence of a stable installation
+identifier, immediate aggregation, short retention, RAM-only live leases, and
+no advertising or profiling. Legitimate interests are not used to continue
+optional TaskWraith reporting after you withdraw consent.
+
+TaskWraith's price and open-source licence are context for the maintenance
+purpose; they do not remove privacy rights, require you to share data, or
+themselves constitute consent.
 
 Information may be processed by GitHub for repository hosting, releases, and
 updates; Apple for App Store distribution and reports; the AI providers and
@@ -219,14 +227,13 @@ session-replay service under this notice.
 ## Your choices and rights
 
 Depending on where you live, you may have rights to be informed, access,
-correct, delete, restrict, or object to processing; to withdraw consent where a
-separate processing activity relies on it; and to complain to a data-protection
-authority. UK users can contact the
+correct, delete, restrict, or object to processing; to withdraw consent; and to
+complain to a data-protection authority. UK users can contact the
 [Information Commissioner's Office](https://ico.org.uk/make-a-complaint/).
 
-The in-app switch is the immediate way to object to and stop future TaskWraith
-activity reports. It also retracts the current volatile live lease when the
-receiver is reachable.
+The in-app switch is the immediate way to withdraw consent and stop future
+TaskWraith activity reports. It also retracts the current volatile live lease
+when the receiver is reachable.
 
 Because an activity check-in contains no installation or account identifier,
 the maintainer will usually be unable to locate an earlier aggregate as
