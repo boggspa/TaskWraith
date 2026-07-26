@@ -1093,16 +1093,16 @@ function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptRes
           : mistralNeedsContextInjection
             ? `Context turns: ${contextTurnsApplied} (Mistral: appending compact conversation context because the Vibe ACP lane opens a fresh session each turn)`
             : codexNeedsContextInjection
-            ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
-            : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
-              ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
-              : ollamaNeedsContextInjection
-                ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
-                : provider !== 'gemini'
-                  ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
-                  : resumeSessionId
-                    ? 'Context turns: 0 (resuming Gemini CLI session context)'
-                    : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
+              ? `Context turns: ${contextTurnsApplied} (Codex: no resumable app-server thread; sending compact context + current request)`
+              : provider === 'ollama' && ollamaPromptIntent !== 'workspace'
+                ? 'Context turns: 0 (Ollama: conversational turn; skipping compact workspace context)'
+                : ollamaNeedsContextInjection
+                  ? `Context turns: ${contextTurnsApplied} (Ollama: model-aware local context; ${contextBudget.maxBlockChars} char cap)`
+                  : provider !== 'gemini'
+                    ? `Context turns: 0 (${providerLabel} provider/session history is authoritative when available)`
+                    : resumeSessionId
+                      ? 'Context turns: 0 (resuming Gemini CLI session context)'
+                      : `Context turns: ${contextTurnsApplied} (sending compact context + current request)`
 
   let codexHandoffApplied: ComposeRunPromptResult['codexHandoffApplied'] | undefined
   let uiNoticeMessage: string | undefined

@@ -46,8 +46,7 @@ describe('usage heatmap header layout', () => {
     css.match(
       /\.usage-heatmap--with-provider-filter\s+\.usage-heatmap-header\s*\{([^}]*)\}/
     )?.[1] ?? ''
-  const filterRule =
-    css.match(/\n\.usage-heatmap-provider-filter\s*\{([^}]*)\}/)?.[1] ?? ''
+  const filterRule = css.match(/\n\.usage-heatmap-provider-filter\s*\{([^}]*)\}/)?.[1] ?? ''
 
   it('gives the totals a max-content floor so a token number can never be clipped', () => {
     expect(headerRule).toMatch(/grid-template-columns:[^;]*minmax\(max-content,\s*1fr\)/)
