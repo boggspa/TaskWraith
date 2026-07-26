@@ -1,7 +1,13 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import {
+  TASKWRAITH_CORE_MCP_PROFILE_NOTE,
+  sanitizeTaskWraithMcpPromptClaims
+} from './PromptComposition'
+import { MainSourceProbe } from './mainSourceProbe.testutil'
 
 const source = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const probe = new MainSourceProbe('src/main/index.ts', new URL('./index.ts', import.meta.url))
 
 function between(start: string, end: string): string {
   const startIndex = source.indexOf(start)
@@ -29,18 +35,17 @@ describe('execution graph main integration', () => {
     expect(dispatcher).toContain('composeMainOwnedExecutionGraphAttempt(appRunId)')
     const adapterDispatch = dispatcher.indexOf('const result = await runCoordinator.dispatch(')
     expect(adapterDispatch).toBeGreaterThanOrEqual(0)
-    expect(dispatcher.indexOf('registerExecutionGraphRunTranscript')).toBeLessThan(
-      adapterDispatch
-    )
-    expect(dispatcher).toMatch(
-      /const result = await runCoordinator\.dispatch\(\s*entry\.payload,/
-    )
+    expect(dispatcher.indexOf('registerExecutionGraphRunTranscript')).toBeLessThan(adapterDispatch)
+    expect(dispatcher).toMatch(/const result = await runCoordinator\.dispatch\(\s*entry\.payload,/)
     expect(dispatcher).toContain('recordPreSessionDispatchFailure')
     expect(dispatcher).toContain('releaseExclusiveChatDispatch(exclusiveReservation)')
   })
 
   it('commits the exact transcript result before graph settlement and queue projection', () => {
-    const listener = between('runManager.onChange((event) => {', 'function recoverSubThreadWorkerQueues')
+    const listener = between(
+      'runManager.onChange((event) => {',
+      'function recoverSubThreadWorkerQueues'
+    )
 
     expect(listener).toContain('sealExecutionGraphRunTranscript(')
     expect(listener).toContain('onRunSessionChange(')
@@ -53,7 +58,10 @@ describe('execution graph main integration', () => {
   })
 
   it('does not punish an ordinary anchor run when Stack evidence is rejected', () => {
-    const listener = between('runManager.onChange((event) => {', 'function recoverSubThreadWorkerQueues')
+    const listener = between(
+      'runManager.onChange((event) => {',
+      'function recoverSubThreadWorkerQueues'
+    )
     const attemptRejection = listener.indexOf(
       "if (graphOwnedRun && graphDisposition !== 'accepted')"
     )
@@ -147,9 +155,7 @@ describe('execution graph main integration', () => {
     expect(transcript).toContain('prompt: args.entry.payload.prompt')
     const adapterDispatch = dispatcher.indexOf('const result = await runCoordinator.dispatch(')
     expect(adapterDispatch).toBeGreaterThanOrEqual(0)
-    expect(dispatcher.indexOf('graphOwnedComposerInput(appRunId)')).toBeLessThan(
-      adapterDispatch
-    )
+    expect(dispatcher.indexOf('graphOwnedComposerInput(appRunId)')).toBeLessThan(adapterDispatch)
   })
 
   it('defers eager terminal projection for graph attempts and every tracked exact transport', () => {
@@ -262,14 +268,47 @@ describe('execution graph main integration', () => {
   })
 
   it('admits the exact main-owned MCP profile prompt normalization', () => {
-    const admission = between(
-      'authorizeBeforeAdapterRun: (payload, reservation) => {',
-      'runAdapter: async (adapter, event, payload) => {'
-    )
+    // Anchored on the declared name, not on the shape of its call site. The
+    // previous version sliced from the literal
+    // `authorizeBeforeAdapterRun: (payload, reservation) => {`; extracting that
+    // inline arrow to a named function broke the test without changing any
+    // behaviour it claimed to protect.
+    const authorize = probe.fn('authorizeProviderAdapterLaunch')
 
-    expect(admission).toContain(
-      'sanitizeTaskWraithMcpPromptClaims(admission.payload.prompt'
+    const sanitizeCalls = probe.callsTo(authorize, 'sanitizeTaskWraithMcpPromptClaims')
+    expect(sanitizeCalls).toHaveLength(1)
+    expect(probe.argText(sanitizeCalls[0], 0)).toBe('admission.payload.prompt')
+
+    // The admitted prompt is re-derived through the sanitizer and the payload
+    // is compared against THAT. Comparing against the raw admitted prompt is
+    // the regression this guards — see the behavioural test below for why.
+    expect(probe.comparesStrictly(authorize, 'payload.prompt', 'admittedPrompt')).toBe(true)
+    expect(probe.comparesStrictly(authorize, 'payload.prompt', 'admission.payload.prompt')).toBe(
+      false
     )
-    expect(admission).not.toContain('payload.prompt !== admission.payload.prompt')
+  })
+
+  it('re-derives the admitted prompt because the raw one no longer matches', () => {
+    // The wiring assertion above is only worth having if the sanitizer actually
+    // changes the prompt — otherwise raw and sanitized compare equal and the
+    // "wrong" comparison would be harmless. This runs the real function on a
+    // real composed prompt, so the structural claim rests on measured behaviour
+    // rather than on the assumption that the call matters.
+    const composed = `${TASKWRAITH_CORE_MCP_PROFILE_NOTE}\n\nSummarize the diff.`
+    const sanitizeOptions = {
+      advertised: true,
+      coreProfile: false,
+      gatewayProfile: false,
+      injectCoreNote: false,
+      injectGatewayNote: false,
+      targetProvider: 'codex' as const
+    }
+
+    const admitted = sanitizeTaskWraithMcpPromptClaims(composed, sanitizeOptions)
+
+    expect(admitted).not.toBe(composed)
+    // So a raw `payload.prompt !== admission.payload.prompt` would reject a
+    // legitimate dispatch with "identity changed before launch".
+    expect(admitted).toBe(sanitizeTaskWraithMcpPromptClaims(admitted, sanitizeOptions))
   })
 })
