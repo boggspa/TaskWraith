@@ -547,4 +547,51 @@ describe('ScopedHistoryDeletionCoordinator', () => {
     expect(deps.clearTranscriptMedia).toHaveBeenCalledOnce()
     expect(deps.commitDelete).toHaveBeenCalledOnce()
   })
+
+  it('bounds the quiescence wait so a sink that never quiesces cannot park the run gate', async () => {
+    // Reproduces the 2026-07-26 stall: a sink whose close never settles left the
+    // durable intent on disk, and `durableHistoryDeletionBlocks` reads that file
+    // — so every new run was refused until the app restarted.
+    const neverCloses = deferred()
+    const deps = createDeps({
+      quiescenceDeadlineMs: 25,
+      beginBackgroundProcessDeletion: vi.fn(() => ({ completion: neverCloses.promise }))
+    })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+
+    await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/did not quiesce within 25ms/)
+    // Rejecting is what lets the caller roll back its holds, including the
+    // admission gate. Nothing durable may have been touched.
+    expect(deps.commitDelete).not.toHaveBeenCalled()
+    expect(deps.commitTruncate).not.toHaveBeenCalled()
+  })
+
+  it('refuses to commit when a sink quiesces AFTER the deadline released the holds', async () => {
+    // The deadline cannot cancel the awaits, so a slow sink can still arrive at
+    // the commit — by which point the caller has rolled back every hold.
+    // Committing there would erase history with nothing holding it.
+    const slowClose = deferred()
+    const deps = createDeps({
+      quiescenceDeadlineMs: 25,
+      beginBackgroundProcessDeletion: vi.fn(() => ({ completion: slowClose.promise }))
+    })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+
+    await expect(coordinator.run('chat', 'chat-a')).rejects.toThrow(/did not quiesce/)
+    expect(deps.commitDelete).not.toHaveBeenCalled()
+
+    // The sink finally closes, long after the operation was abandoned.
+    slowClose.resolve()
+    await new Promise((resolve) => setTimeout(resolve, 30))
+    expect(deps.commitDelete).not.toHaveBeenCalled()
+  })
+
+  it('leaves the backstop off when a caller supplies its own bound', async () => {
+    // A non-positive deadline disables the race entirely; proves the guard is
+    // opt-out rather than silently clamped to some minimum.
+    const deps = createDeps({ quiescenceDeadlineMs: 0 })
+    const coordinator = new ScopedHistoryDeletionCoordinator(deps)
+    await coordinator.run('chat', 'chat-a')
+    expect(deps.commitDelete).toHaveBeenCalledOnce()
+  })
 })

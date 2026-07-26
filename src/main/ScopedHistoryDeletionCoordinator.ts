@@ -57,6 +57,11 @@ export interface ScopedHistoryDeletionCoordinatorDeps {
   /** Releases the process admission hold only after the outer commit. */
   endBackgroundProcessDeletion?: (hold: ScopedHistoryBackgroundProcessHold) => void
   /** Persists the correlated usage intent and raises append admission synchronously. */
+  /** Upper bound on the quiescence phase; defaults to
+   *  DEFAULT_QUIESCENCE_DEADLINE_MS. Injectable so tests can drive the timeout
+   *  path without waiting two minutes. A non-finite or <= 0 value disables the
+   *  backstop entirely — only for a caller that has its own bound. */
+  quiescenceDeadlineMs?: number
   beginUsageHistoryMutation: (preparation: HistoryDeletionPreparation) => unknown
   /** Resolves only after every usage artifact in the frozen scope is purged. */
   purgeUsageHistoryStrict: (preparation: HistoryDeletionPreparation, hold: unknown) => Promise<void>
@@ -103,7 +108,32 @@ interface RetainedOperation {
   maintenanceCompactionHold?: { value: unknown }
   backgroundProcessHold?: { value: ScopedHistoryBackgroundProcessHold }
   usageHistoryHold?: { value: unknown }
+  /** Set once the quiescence deadline has fired for this operation. The awaits
+   *  it was blocked on are NOT cancelled — they may still settle later — so the
+   *  commit re-checks this before touching anything durable. */
+  deadlineExceeded?: boolean
 }
+
+/**
+ * Upper bound on the quiescence phase.
+ *
+ * Every external sink must go quiet before a deletion commits, and each of
+ * those waits was previously unbounded. A sink that never reports quiet left
+ * the operation parked forever: its durable intent stayed on disk, and
+ * `durableHistoryDeletionBlocks` reads that file, so NEW RUNS WERE REFUSED
+ * until the app restarted and startup recovery replayed it. Observed
+ * 2026-07-26 — an intent whose `completedQuiescenceTargetIds` never advanced
+ * past empty.
+ *
+ * The bound converts a hang into a rejection, which the caller already handles:
+ * it rolls back every acquired hold, including the admission gate, so runs are
+ * admitted again. Fail-closed admission is the correct default for a
+ * destructive operation; the defect was the unbounded wait in front of it, not
+ * the gate. Generous on purpose — a legitimate global clear closes canvases and
+ * cancels ensemble rounds, and a deadline that fires during honest work would
+ * be worse than the stall it prevents.
+ */
+export const DEFAULT_QUIESCENCE_DEADLINE_MS = 120_000
 
 export interface ScopedHistoryDeletionResult {
   chatIds: string[]
@@ -367,7 +397,58 @@ export class ScopedHistoryDeletionCoordinator {
     // the first provider/Canvas/graph/media await.
     for (const chatId of preparation.chatIds) this.deps.revokeChatAuthority(chatId)
 
-    return this.settleAndCommit(kind, rootChatId, retained, completed, canvasTargetsByChat)
+    return this.withQuiescenceDeadline(
+      retained,
+      this.settleAndCommit(kind, rootChatId, retained, completed, canvasTargetsByChat)
+    )
+  }
+
+  /**
+   * Bound the quiescence phase. A hang becomes a rejection, which the caller
+   * already knows how to handle — it rolls back every acquired hold, releasing
+   * the admission gate so runs are admitted again instead of being refused
+   * until the next app launch.
+   *
+   * Deliberately does NOT cancel the underlying work: these are external sinks
+   * mid-close, and abandoning them half-way is worse than letting them finish
+   * unobserved. `deadlineExceeded` is what keeps that safe — the commit re-reads
+   * it, so a sink that quiesces late can never erase history against holds that
+   * have already been rolled back.
+   */
+  private withQuiescenceDeadline(
+    retained: RetainedOperation,
+    settle: Promise<ScopedHistoryDeletionResult>
+  ): Promise<ScopedHistoryDeletionResult> {
+    const deadlineMs = this.deps.quiescenceDeadlineMs ?? DEFAULT_QUIESCENCE_DEADLINE_MS
+    if (!Number.isFinite(deadlineMs) || deadlineMs <= 0) return settle
+    return new Promise<ScopedHistoryDeletionResult>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        retained.deadlineExceeded = true
+        const pending = retained.preparation.quiescenceTargets
+          .filter(
+            (target) => !retained.preparation.completedQuiescenceTargetIds.includes(target.id)
+          )
+          .map((target) => target.id)
+        reject(
+          new Error(
+            `Scoped history deletion did not quiesce within ${deadlineMs}ms; ` +
+              `still waiting on: ${pending.join(', ') || '(none recorded)'}`
+          )
+        )
+      }, deadlineMs)
+      // Never hold the process open for the backstop itself.
+      ;(timer as unknown as { unref?: () => void }).unref?.()
+      settle.then(
+        (value) => {
+          clearTimeout(timer)
+          resolve(value)
+        },
+        (error) => {
+          clearTimeout(timer)
+          reject(error)
+        }
+      )
+    })
   }
 
   private async settleAndCommit(
@@ -516,6 +597,17 @@ export class ScopedHistoryDeletionCoordinator {
       throw new AggregateError(
         [error],
         'Scoped history deletion could not quiesce every external sink.'
+      )
+    }
+
+    // The deadline rejects the caller but cannot cancel the awaits above, so a
+    // late-quiescing sink can still arrive here — after the caller has already
+    // rolled back every hold, including the admission gate. Committing then
+    // would erase history with no holds standing. Re-check rather than trust
+    // that reaching this line means the operation is still authorised.
+    if (retained.deadlineExceeded) {
+      throw new Error(
+        'Scoped history deletion quiesced after its deadline; refusing to commit against rolled-back holds.'
       )
     }
 
