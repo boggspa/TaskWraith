@@ -15,6 +15,8 @@ import type {
   TaskWraithMcpProfileId
 } from './store/types'
 import { truncateOpaqueMarkdown, wrapOpaqueMarkdownBlock } from './MarkdownFenceSerializer'
+import { buildPendingThreadMessageContextBlock } from './ThreadMessageContext'
+import type { ThreadMessageEvent } from '../shared/threadMessage'
 import { nativeSubAgentPromptInstruction } from './NativeSubAgentPolicy'
 import { isHumanCollaboratorComment } from './collaboration/HumanCollaboratorMessages'
 import { isRetiredExternalChannelInboundMessage } from './LegacyExternalChannelHistory'
@@ -838,6 +840,13 @@ export interface ComposeRunPromptInput {
   taskWraithMcpProfileId?: TaskWraithMcpProfileId
   /** False when the current Grok transport intentionally has no TaskWraith MCP. */
   taskWraithMcpAdvertised?: boolean
+  /**
+   * Undelivered peer thread messages for this chat, oldest first. Rendered as
+   * untrusted relayed content; the ids that actually made it into the prompt come
+   * back as `threadMessageIdsApplied` and are the ONLY ids the caller may
+   * acknowledge (see ThreadMessageContext).
+   */
+  pendingThreadMessages?: readonly ThreadMessageEvent[]
 }
 
 export interface ComposeRunPromptResult {
@@ -861,6 +870,13 @@ export interface ComposeRunPromptResult {
   /** Set when this run injected the runtime preamble and the caller should persist it. */
   runtimePreambleVersion?: string
   runtimePreambleProvider?: ProviderId
+  /**
+   * Peer thread-message ids this prompt actually carried. The caller acknowledges
+   * exactly these after dispatch. Absent/empty means nothing was delivered, so the
+   * messages must stay pending — a composition that skipped the block (verbatim
+   * slash dispatch) must never look like a delivery.
+   */
+  threadMessageIdsApplied?: string[]
 }
 
 /** Compose the final prompt for an outgoing run according to provider rules.
@@ -868,6 +884,19 @@ export interface ComposeRunPromptResult {
  * Pure function — no IO, no state mutation. All decisions are derivable from
  * the input shape, and side-effecting bookkeeping is returned as data. */
 export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPromptResult {
+  const result = composeRunPromptCore(input)
+  // Peer thread messages are acknowledged on the strength of `threadMessageIdsApplied`,
+  // so that field must mean "these bodies are in the prompt being returned" — not
+  // "we intended to inject them". The block is rebuilt here and matched against the
+  // composed prompt precisely so this does not rely on every return path inside the
+  // core remembering to inject it: the verbatim slash dispatch returns early, and a
+  // future branch could too. Rebuilding is what makes the check independent.
+  const pending = buildPendingThreadMessageContextBlock(input.pendingThreadMessages || [])
+  if (!pending.block || !result.contextualPrompt.includes(pending.block)) return result
+  return { ...result, threadMessageIdsApplied: pending.includedIds }
+}
+
+function composeRunPromptCore(input: ComposeRunPromptInput): ComposeRunPromptResult {
   const {
     provider,
     finalPrompt,
@@ -916,7 +945,12 @@ export function composeRunPrompt(input: ComposeRunPromptInput): ComposeRunPrompt
     messages,
     finalPrompt
   )
-  const additionalPeerContext = [pendingSubThreadResultContext].filter(Boolean).join('\n\n')
+  const pendingThreadMessages = buildPendingThreadMessageContextBlock(
+    input.pendingThreadMessages || []
+  )
+  const additionalPeerContext = [pendingSubThreadResultContext, pendingThreadMessages.block]
+    .filter(Boolean)
+    .join('\n\n')
   const injectAdditionalPeerContext = (prompt: string): string => {
     if (!additionalPeerContext) return prompt
     const currentRequestMarker = `Current user request:\n${finalPrompt}`
