@@ -307,6 +307,12 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
     case 'canvas_eval':
     case 'canvas_close':
       return 'canvas'
+    // Appearance, not a canvas surface — these change the user's own theme
+    // tokens. 'window-context' is the closest existing family (it is about the
+    // app's own chrome rather than a workspace artifact); no new glyph needed.
+    case 'theme_tokens_get':
+    case 'theme_tokens_set':
+      return 'window-context'
     case 'image_edit':
     case 'svg_rasterize':
     case 'image_generate':

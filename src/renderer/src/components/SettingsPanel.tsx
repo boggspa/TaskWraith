@@ -2429,7 +2429,12 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'cancel_active_run',
     'test_result_summary',
     'run_timeline',
-    'raw_provider_events'
+    'raw_provider_events',
+    // Appearance of TaskWraith itself — an agent-accessed capability rather
+    // than a workspace or canvas one, so it groups with the other tools that
+    // act on the running app.
+    'theme_tokens_get',
+    'theme_tokens_set'
   ],
   web: [
     'web_search',
