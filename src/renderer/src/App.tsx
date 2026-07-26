@@ -298,6 +298,7 @@ import {
   type ActiveRunContext
 } from './lib/runRequestTypes'
 import { resolveRunDiscordContextSelection } from './lib/runDiscordContextSelection'
+import { buildCodexNativeReviewInvocationParams } from './lib/codexNativeReview'
 import {
   appendLocalQueuedRunEntries,
   collectRunQueueJobIds,
@@ -14429,15 +14430,16 @@ function App(): React.JSX.Element {
               "Native review can't allocate an isolated worktree. Select a worktree in the composer, or run a normal turn first."
             )
           }
-          await window.api.startAgentReview('codex', resumeSessionId, {
-            model: modelToPass,
-            target: { type: 'uncommittedChanges' },
-            delivery: 'inline',
-            cwd: runDiffWorkspacePath || runWorkspace!.path,
-            appRunId: currentRunId,
-            appChatId: runChatId,
-            usagePromptText
-          })
+          await window.api.startAgentReview(
+            'codex',
+            resumeSessionId,
+            buildCodexNativeReviewInvocationParams({
+              composedPayload,
+              model: modelToPass,
+              cwd: runDiffWorkspacePath || runWorkspace!.path,
+              usagePromptText
+            })
+          )
           dispatchAccepted = true
           settleProjectReferenceContextForRequest(request, 'rejected')
         } else {

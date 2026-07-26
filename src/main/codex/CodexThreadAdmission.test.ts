@@ -2,7 +2,8 @@ import { describe, expect, it } from 'vitest'
 import {
   codexProviderOperationId,
   codexTerminalMethodMatchesAdmission,
-  CodexThreadAdmissionRegistry
+  CodexThreadAdmissionRegistry,
+  waitForCodexThreadAdmission
 } from './CodexThreadAdmission'
 
 describe('CodexThreadAdmissionRegistry', () => {
@@ -111,6 +112,59 @@ describe('CodexThreadAdmissionRegistry', () => {
     expect(await next.waitUntilAcquired()).toBe(true)
     expect(next.bindExactOperationId('review-1')).toBe(true)
     expect(next.releaseAfterExactTerminal('review-1')).toBe(true)
+  })
+
+  it('removes an aborted queued admission without releasing the current owner', async () => {
+    const registry = new CodexThreadAdmissionRegistry()
+    const owner = registry.reserve({ threadId: 'thread-a', kind: 'turn', scope })
+    const cancelled = registry.reserve({ threadId: 'thread-a', kind: 'review', scope })
+    const next = registry.reserve({ threadId: 'thread-a', kind: 'turn', scope })
+    const controller = new AbortController()
+
+    const waiting = waitForCodexThreadAdmission(cancelled, { signal: controller.signal })
+    controller.abort()
+
+    expect(await waiting).toBe(false)
+    expect(owner.isAdmissionOwner()).toBe(true)
+    expect(owner.bindExactOperationId('turn-1')).toBe(true)
+    expect(owner.releaseAfterExactTerminal('turn-1')).toBe(true)
+    expect(await next.waitUntilAcquired()).toBe(true)
+    next.releaseBeforeAdmission()
+  })
+
+  it('releases a promoted reservation when abort wins before its await continuation', async () => {
+    const registry = new CodexThreadAdmissionRegistry()
+    const owner = registry.reserve({ threadId: 'thread-a', kind: 'turn', scope })
+    const promoted = registry.reserve({ threadId: 'thread-a', kind: 'review', scope })
+    const next = registry.reserve({ threadId: 'thread-a', kind: 'turn', scope })
+    const controller = new AbortController()
+    const waiting = waitForCodexThreadAdmission(promoted, { signal: controller.signal })
+
+    owner.releaseBeforeAdmission()
+    controller.abort()
+
+    expect(await waiting).toBe(false)
+    expect(await next.waitUntilAcquired()).toBe(true)
+    next.releaseBeforeAdmission()
+  })
+
+  it('short-circuits a terminal claim and settles a history-revoked waiter', async () => {
+    const registry = new CodexThreadAdmissionRegistry()
+    const terminal = registry.reserve({ threadId: 'thread-terminal', kind: 'review', scope })
+    expect(
+      await waitForCodexThreadAdmission(terminal, {
+        isTerminalClaimed: () => true
+      })
+    ).toBe(false)
+    expect(registry.activeLaneReservationCount).toBe(0)
+
+    const owner = registry.reserve({ threadId: 'thread-history', kind: 'turn', scope })
+    const revoked = registry.reserve({ threadId: 'thread-history', kind: 'review', scope })
+    const hold = registry.beginHistoryClear({ kind: 'chat', chatIds: ['chat-a'] })
+    expect(await waitForCodexThreadAdmission(revoked)).toBe(false)
+    owner.releaseBeforeAdmission()
+    await hold.completion
+    expect(registry.endHistoryClear(hold)).toBe(true)
   })
 
   it('does not let a terminal frame become the first binder or release a successor', async () => {

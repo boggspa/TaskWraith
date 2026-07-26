@@ -20,8 +20,12 @@ describe('Codex app-server thread admission integration', () => {
     const reserved = provider.indexOf('codexThreadAdmissionRegistry.reserve({')
     const acquired = provider.indexOf('await admissionReservation.waitUntilAcquired()', reserved)
     const started = provider.indexOf('await client.ensureStarted', acquired)
-    const resumed = provider.indexOf("'thread/resume'", started)
-    const stateBound = provider.indexOf("codexState.admissionKind = 'turn'", resumed)
+    const launchPlan = provider.indexOf('buildCodexAppServerThreadLaunchPlan({', started)
+    const requestedThread = provider.indexOf(
+      'threadResponse = await client.request(\n      threadLaunchPlan.request.method',
+      launchPlan
+    )
+    const stateBound = provider.indexOf("codexState.admissionKind = 'turn'", requestedThread)
     const registered = provider.indexOf('registerRunSession(', stateBound)
     const requested = provider.indexOf("const turnStartResult = await client.request(\n      'turn/start'", registered)
     const exactBound = provider.indexOf('bindCodexRunExactOperationId(codexState', requested)
@@ -29,8 +33,9 @@ describe('Codex app-server thread admission integration', () => {
     expect(reserved).toBeGreaterThanOrEqual(0)
     expect(reserved).toBeLessThan(acquired)
     expect(acquired).toBeLessThan(started)
-    expect(started).toBeLessThan(resumed)
-    expect(resumed).toBeLessThan(stateBound)
+    expect(started).toBeLessThan(launchPlan)
+    expect(launchPlan).toBeLessThan(requestedThread)
+    expect(requestedThread).toBeLessThan(stateBound)
     expect(stateBound).toBeLessThan(registered)
     expect(registered).toBeLessThan(requested)
     expect(requested).toBeLessThan(exactBound)
@@ -82,13 +87,20 @@ describe('Codex app-server thread admission integration', () => {
 
   it('uses the same lane and exact response id for inline native review', () => {
     const review = between("'start-agent-review'", '// Single source for per-provider model catalogs')
+    const verified = review.indexOf('const reviewDispatchPayload = normalizeAgentRunPayload(')
+    const lifecycle = review.indexOf('acquireProviderRunLifecycleOwnership(', verified)
     const reserved = review.indexOf('codexThreadAdmissionRegistry.reserve({')
-    const acquired = review.indexOf('await reviewAdmissionReservation.waitUntilAcquired()', reserved)
+    const acquired = review.indexOf('await waitForCodexThreadAdmission(', reserved)
     const started = review.indexOf('await client.ensureStarted', acquired)
     const stateBound = review.indexOf("reviewState.admissionKind = 'review'", started)
     const requested = review.indexOf("'review/start'", stateBound)
     const exactBound = review.indexOf('bindCodexRunExactOperationId(reviewState', requested)
 
+    expect(verified).toBeGreaterThanOrEqual(0)
+    expect(review).toContain('Native review permission posture failed main verification.')
+    expect(review).toContain('reviewDispatchPayload.effectivePermissionsSignature !== claimedSignature')
+    expect(verified).toBeLessThan(lifecycle)
+    expect(lifecycle).toBeLessThan(reserved)
     expect(reserved).toBeGreaterThanOrEqual(0)
     expect(reserved).toBeLessThan(acquired)
     expect(acquired).toBeLessThan(started)
@@ -97,6 +109,8 @@ describe('Codex app-server thread admission integration', () => {
     expect(requested).toBeLessThan(exactBound)
     expect(review).toContain("delivery: 'inline'")
     expect(review).toContain('result.reviewThreadId !== threadId')
+    expect(review).toContain('signal: lifecycleOwnership.setupAbortSignal')
+    expect(review).toContain('runManager.canAdmitTransport(lifecycleOwnership.runId, true)')
   })
 
   it('fences terminal notifications and approval requests with the exact operation id', () => {

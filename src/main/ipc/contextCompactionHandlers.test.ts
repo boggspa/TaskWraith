@@ -94,6 +94,28 @@ describe('registerContextCompactionHandlers', () => {
     })
   })
 
+  it('forwards manual AntiGravity ensemble compaction instead of rejecting the provider', async () => {
+    const deps = createDeps()
+    registerContextCompactionHandlers(deps)
+
+    await expect(
+      handlerFor('compact-provider-context')(
+        {},
+        {
+          chatId: 'chat-ag',
+          provider: 'antigravity',
+          participantId: 'seat-ag'
+        }
+      )
+    ).resolves.toEqual({ ok: true })
+    expect(deps.compactProviderContext).toHaveBeenCalledWith({
+      chatId: 'chat-ag',
+      provider: 'antigravity',
+      providerSessionId: undefined,
+      participantId: 'seat-ag'
+    })
+  })
+
   it('trims and forwards providerSessionId/participantId when present, omitting blank values', async () => {
     const deps = createDeps()
     registerContextCompactionHandlers(deps)

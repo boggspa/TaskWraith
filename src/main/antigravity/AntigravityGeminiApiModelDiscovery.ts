@@ -17,10 +17,20 @@ const GENERATE_CAPABLE_ACTIONS = new Set(['generateContent', 'generateContentStr
  * picker offers a model that cannot run.
  *
  * EVIDENCE-BASED, NOT A FAMILY RULE. Each id here was observed returning 404
- * against a real key (2026-07-26). Notably `gemini-2.5-pro` is NOT listed: it
- * answered 429 (quota), i.e. it is alive — so "the 2.5 family is retired" would
- * have been wrong. Only add an id after seeing its 404; a 429 proves nothing
- * about the model, only about the key's quota. If Google revives one, delete it.
+ * against a real key (2026-07-26), so "the 2.5 family is retired" would be
+ * wrong — `gemini-2.5-pro` is deliberately absent from this set.
+ *
+ * ONLY A 404 BELONGS HERE. A 429 is never grounds for removal, and its detail
+ * says which of two very different things is happening:
+ *   - `quotaValue > 0` (e.g. gemini-3.5-flash, limit 5,
+ *     GenerateRequestsPerMinutePerProjectPerModel-FreeTier) — an ordinary
+ *     per-minute throttle that clears in under a minute; Google even returns a
+ *     `retryDelay`. Says nothing about the model.
+ *   - `quotaValue == 0` (gemini-2.5-pro, the -tts and -image variants) — the
+ *     model has NO free-tier allowance. It is not throttled and not retired; it
+ *     works on a billing-enabled project. Pruning these would hide models a paid
+ *     key can use, which is why they stay.
+ * If Google revives a listed id, delete the entry.
  */
 const RETIRED_MODEL_IDS: ReadonlySet<string> = new Set([
   'gemini-2.5-flash',

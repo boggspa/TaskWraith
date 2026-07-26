@@ -18,6 +18,20 @@ export interface CodexThreadAdmissionHistoryHold {
   readonly completion: Promise<void>
 }
 
+export interface CodexThreadAdmissionWaitAuthority {
+  /**
+   * Main-owned setup cancellation for the exact run. Aborting while queued
+   * removes this reservation without disturbing the current lane owner.
+   */
+  readonly signal?: AbortSignal
+  /**
+   * Synchronous final fence for terminal claims that may precede the setup
+   * abort notification. It is checked before waiting and again immediately
+   * after admission is acquired.
+   */
+  readonly isTerminalClaimed?: () => boolean
+}
+
 export function codexProviderOperationId(message: any): string | undefined {
   const params = message?.params || {}
   const operationIds = [
@@ -327,5 +341,61 @@ export class CodexThreadAdmissionRegistry {
     // Wake the caller, but retain its settlement join until the caller observes
     // revocation and explicitly releases its pre-admission work.
     reservation.markHistoryCancelledBeforeAcquired()
+  }
+}
+
+/**
+ * Wait for one thread-lane reservation without leaving an aborted/terminal
+ * request queued behind another operation.
+ *
+ * A queued cancellation uses `cancelBeforeAcquired()`, so it cannot release
+ * the current owner. If cancellation races with promotion, the post-acquire
+ * fence uses `releaseBeforeAdmission()` while no exact provider operation can
+ * exist yet. Once this helper returns `true`, it removes its abort listener and
+ * lifecycle ownership passes to the caller's exact-operation binding.
+ */
+export async function waitForCodexThreadAdmission(
+  reservation: CodexThreadAdmissionReservation,
+  authority: CodexThreadAdmissionWaitAuthority = {}
+): Promise<boolean> {
+  const authorityRevoked = (): boolean =>
+    authority.signal?.aborted === true || authority.isTerminalClaimed?.() === true
+  const releaseUnadmittedReservation = (): void => {
+    if (reservation.isAdmissionOwner()) reservation.releaseBeforeAdmission()
+    else reservation.cancelBeforeAcquired()
+  }
+
+  try {
+    if (authorityRevoked()) {
+      releaseUnadmittedReservation()
+      return false
+    }
+
+    const onAbort = (): void => {
+      // This is intentionally queued-only. If promotion won the race, the
+      // post-await authority fence below owns the pre-admission release.
+      reservation.cancelBeforeAcquired()
+    }
+    authority.signal?.addEventListener('abort', onAbort, { once: true })
+    try {
+      const acquired = await reservation.waitUntilAcquired()
+      if (!acquired) {
+        // History revocation wakes a queued waiter without settling it so the
+        // caller can first stop any setup work. At this helper boundary there
+        // is no setup work yet, so settle the reservation exactly once.
+        reservation.releaseBeforeAdmission()
+        return false
+      }
+      if (authorityRevoked()) {
+        reservation.releaseBeforeAdmission()
+        return false
+      }
+      return true
+    } finally {
+      authority.signal?.removeEventListener('abort', onAbort)
+    }
+  } catch (error) {
+    releaseUnadmittedReservation()
+    throw error
   }
 }
