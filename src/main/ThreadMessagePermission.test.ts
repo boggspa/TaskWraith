@@ -79,6 +79,23 @@ describe('evaluateThreadMessageGate — waking another thread', () => {
     })
   })
 
+  // Any ONE signal is enough — they are three independent ways the user has said
+  // yes to automation here, not three conditions to satisfy at once.
+  it.each([
+    ['fullAccess', { fullAccess: true, trustedSession: false, bossAutoApproval: false }],
+    ['trustedSession', { fullAccess: false, trustedSession: true, bossAutoApproval: false }],
+    ['bossAutoApproval', { fullAccess: false, trustedSession: false, bossAutoApproval: true }]
+  ])('allows a same-workspace wake on %s alone', (ground, elevation) => {
+    expect(gate({ requestedDelivery: 'wake', elevation })).toEqual({
+      verdict: 'allow',
+      reason: 'elevated',
+      ledgerRequired: true,
+      // Only the signal that actually held: the ledger row is read to find out
+      // what happened, so recording all three would make it wrong.
+      elevationGrounds: [ground]
+    })
+  })
+
   // These two are refusals rather than prompts: there is no posture under which
   // the answer becomes yes, so offering the user a button would be misleading.
   it('denies a wake from a read-only seat', () => {
@@ -135,27 +152,37 @@ describe('evaluateThreadMessageGate — crossing a workspace boundary', () => {
   })
 })
 
-describe('evaluateThreadMessageGate — elevation is a conjunction', () => {
-  it.each([
-    ['fullAccess missing', { ...FULL_ELEVATION, fullAccess: false }],
-    ['trustedSession missing', { ...FULL_ELEVATION, trustedSession: false }],
-    ['bossAutoApproval missing', { ...FULL_ELEVATION, bossAutoApproval: false }]
-  ])('prompts for a wake with %s', (_label, elevation) => {
-    expect(gate({ requestedDelivery: 'wake', elevation })).toMatchObject({
+describe('evaluateThreadMessageGate — elevation needs at least one signal', () => {
+  it('prompts for a wake with no signal at all', () => {
+    expect(gate({ requestedDelivery: 'wake' })).toMatchObject({
       verdict: 'prompt',
       reason: 'wake-requested'
     })
   })
 
-  // Guards against a truthy-but-not-true value slipping through a boundary.
-  it('requires each ground to be exactly true', () => {
+  it.each([
+    ['two of three', { fullAccess: true, trustedSession: true, bossAutoApproval: false }],
+    ['a different two', { fullAccess: false, trustedSession: true, bossAutoApproval: true }]
+  ])('records exactly the signals that held with %s', (_label, elevation) => {
+    const decision = gate({ requestedDelivery: 'wake', elevation })
+    expect(decision.verdict).toBe('allow')
+    expect(decision.elevationGrounds).toEqual(
+      (['fullAccess', 'trustedSession', 'bossAutoApproval'] as const).filter(
+        (ground) => elevation[ground]
+      )
+    )
+  })
+
+  // Guards against a truthy-but-not-boolean value crossing a boundary and counting
+  // as consent — now more load-bearing, since one signal is enough.
+  it('counts only exactly-true as a signal', () => {
     expect(
       gate({
         requestedDelivery: 'wake',
         // @ts-expect-error exercising an untrusted boundary value
-        elevation: { fullAccess: 1, trustedSession: 'yes', bossAutoApproval: true }
+        elevation: { fullAccess: 1, trustedSession: 'yes', bossAutoApproval: 0 }
       })
-    ).toMatchObject({ verdict: 'prompt' })
+    ).toMatchObject({ verdict: 'prompt', reason: 'wake-requested' })
   })
 })
 

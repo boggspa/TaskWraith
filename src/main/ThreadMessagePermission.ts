@@ -29,9 +29,18 @@ import type { AgenticServicePolicy } from './store/types'
 import type { ThreadMessageDelivery, ThreadMessageOrigin } from '../shared/threadMessage'
 
 /**
- * Grounds that together permit an unattended cross-workspace or wake send. Each
- * is resolved by the caller from an existing authority — this module deliberately
- * does not know how to derive any of them.
+ * Consent signals that permit an unattended same-workspace wake. ANY ONE is
+ * enough — they are three independent ways the user has said yes to automation
+ * here, not three conditions to satisfy at once. Each is resolved by the caller
+ * from an existing authority; this module deliberately does not know how to derive
+ * any of them.
+ *
+ * What one signal buys is deliberately narrow. A same-workspace QUEUED send is
+ * already auto-allowed by the service grant, so the delta is the WAKE — and the
+ * refusals that sit AHEAD of elevation still apply: a policy deny wins first, and
+ * a read-only or phone-issued sender is refused a wake outright, whatever it holds.
+ * Elevation also still requires the same workspace, so no single signal can carry a
+ * send across a boundary the user drew.
  */
 export interface ThreadMessageElevationGrounds {
   /** Genuine Full Access posture — `isFullShellAccessGranted` on the post-clamp
@@ -94,7 +103,10 @@ export interface ThreadMessageGateDecision {
    * applies AT the gate and never bypasses the audit trail.
    */
   ledgerRequired: boolean
-  /** Which grounds carried an elevated allow, for the ledger row. */
+  /**
+   * The signals that actually carried an elevated allow — not the full set. The
+   * ledger row is read to find out what happened, so it must name the real one.
+   */
   elevationGrounds?: readonly (keyof ThreadMessageElevationGrounds)[]
 }
 
@@ -105,12 +117,18 @@ const ELEVATION_GROUNDS: readonly (keyof ThreadMessageElevationGrounds)[] = [
 ]
 
 /**
- * Every ground must hold. This is a conjunction on purpose: it is the only path
- * to an unattended cross-workspace or wake send, so it should be reachable only
- * when the user has said yes three separate ways.
+ * Which signals actually hold. Returned rather than reduced to a boolean because
+ * the approval-ledger row must name the signal that carried a send: recording all
+ * three when one was present would make the audit trail wrong in exactly the case
+ * someone would later be reading it to find out what happened.
+ *
+ * Compared with `=== true` so a truthy-but-not-boolean value crossing a boundary
+ * cannot count as consent.
  */
-function elevationSatisfied(grounds: ThreadMessageElevationGrounds): boolean {
-  return ELEVATION_GROUNDS.every((ground) => grounds[ground] === true)
+function satisfiedElevationGrounds(
+  grounds: ThreadMessageElevationGrounds
+): (keyof ThreadMessageElevationGrounds)[] {
+  return ELEVATION_GROUNDS.filter((ground) => grounds[ground] === true)
 }
 
 /**
@@ -124,8 +142,8 @@ function elevationSatisfied(grounds: ThreadMessageElevationGrounds): boolean {
  *  - a remote-issued run can never cause another thread to run;
  *  - a wake request is never granted by a service grant alone;
  *  - a cross-workspace send is never granted by a service grant alone;
- *  - elevation requires ALL grounds AND the same workspace, so the elevation
- *    stack cannot carry a send across a workspace boundary; and
+ *  - elevation needs at least one consent signal AND the same workspace, so no
+ *    signal can carry a send across a workspace boundary; and
  *  - every allow that no human saw is flagged for the approval ledger.
  */
 export function evaluateThreadMessageGate(
@@ -158,8 +176,9 @@ export function evaluateThreadMessageGate(
   }
 
   // Elevation can carry an unattended send, but never across a workspace
-  // boundary: the boundary is the user's own line and no grant stack redraws it.
-  const elevated = !input.crossWorkspace && !input.readOnly && elevationSatisfied(input.elevation)
+  // boundary: the boundary is the user's own line and no signal redraws it.
+  const grounds = satisfiedElevationGrounds(input.elevation)
+  const elevated = !input.crossWorkspace && !input.readOnly && grounds.length > 0
 
   if (wake) {
     return elevated
@@ -167,7 +186,8 @@ export function evaluateThreadMessageGate(
           verdict: 'allow',
           reason: 'elevated',
           ledgerRequired: true,
-          elevationGrounds: ELEVATION_GROUNDS
+          // Only the signals that actually held, so the ledger row is accurate.
+          elevationGrounds: grounds
         }
       : { verdict: 'prompt', reason: 'wake-requested', ledgerRequired: false }
   }
@@ -236,7 +256,7 @@ export function threadMessageApprovalLedgerMetadata(
     ...(decision.elevationGrounds ? { elevationGrounds: [...decision.elevationGrounds] } : {}),
     rationale:
       decision.reason === 'elevated'
-        ? 'Auto-allowed by Full Access + Trusted Session + Boss/Captain Auto Approvals, same workspace; recorded because no human saw this send.'
+        ? `Auto-allowed by ${(decision.elevationGrounds ?? []).join(' + ') || 'elevation'}, same workspace; recorded because no human saw this send.`
         : 'Auto-allowed by the threadMessage service grant, same workspace, queued delivery; recorded because no human saw this send.'
   }
 }

@@ -69,6 +69,22 @@ describe('createThreadMessageAccessResolver — audit trail', () => {
     })
   })
 
+  // One signal is enough, and the row must name that one rather than the full set.
+  it('records the single signal that carried an elevated wake', async () => {
+    const { resolve, ledgerRows, requestApproval } = harness({
+      resolveElevation: () => ({
+        fullAccess: false,
+        trustedSession: true,
+        bossAutoApproval: false
+      })
+    })
+    const decision = await resolve({ ...REQUEST, requestedDelivery: 'wake' })
+    expect(decision.reason).toBe('elevated')
+    expect(requestApproval).not.toHaveBeenCalled()
+    expect(ledgerRows[0]).toMatchObject({ elevationGrounds: ['trustedSession'] })
+    expect(String(ledgerRows[0].rationale)).toContain('trustedSession')
+  })
+
   // The human approval flow writes its own row; a second one here would
   // double-record the same decision.
   it('does not add a row for a human-approved send', async () => {
