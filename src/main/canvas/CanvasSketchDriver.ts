@@ -1,4 +1,5 @@
 import { createHash } from 'crypto'
+import type { WebContents } from 'electron'
 import {
   createBrowserWindowSurface,
   type CanvasHostSurface,
@@ -363,6 +364,21 @@ svg text { user-select: none; white-space: pre; }
   window.__twSketch = {
     getDocument: () => clone(doc),
     applyUpdate: (update) => {
+      // A stroke in flight lives in doc.elements but is ALSO held by the local
+      // "draft" reference that pointermove keeps mutating. Any update that
+      // rewrites or removes elements drops it from the document while the drag
+      // continues against an orphan: render() rebuilds only from doc.elements and
+      // finish() cannot put it back, so the human's in-progress stroke is
+      // silently destroyed. Refuse for every mode — even append truncates at 400
+      // and could evict the draft — and let the caller retry in a moment.
+      if (draft) return { __twRefused: 'user_drawing' };
+      // Optimistic concurrency: doc.updatedAt was maintained but never used as a
+      // precondition, so a caller acting on a stale read overwrote newer human
+      // edits last-writer-wins.
+      if (update && typeof update.expectedUpdatedAt === 'string' &&
+          update.expectedUpdatedAt !== doc.updatedAt) {
+        return { __twRefused: 'stale_document', updatedAt: doc.updatedAt };
+      }
       const rawMode = update && typeof update.mode === 'string' ? update.mode : 'append';
       const mode = ['replace', 'append', 'clear', 'delete'].includes(rawMode) ? rawMode : 'append';
       if (update && typeof update.title === 'string' && update.title.trim()) {
@@ -494,6 +510,24 @@ function sanitizeSketchElement(raw: unknown): CanvasSketchElement | null {
   return element
 }
 
+/**
+ * What the page returns instead of a document when it declines an update. Kept
+ * distinct from a thrown page error so a refusal is an ordinary, retryable
+ * outcome rather than an injected-script failure.
+ */
+interface SketchUpdateRefusal {
+  __twRefused: 'user_drawing' | 'stale_document'
+  updatedAt?: string
+}
+
+function sketchRefusalOf(
+  applied: CanvasSketchDocument | SketchUpdateRefusal | null | undefined
+): SketchUpdateRefusal['__twRefused'] | null {
+  if (!applied || typeof applied !== 'object') return null
+  const reason = (applied as SketchUpdateRefusal).__twRefused
+  return reason === 'user_drawing' || reason === 'stale_document' ? reason : null
+}
+
 function sanitizeSketchUpdate(update: CanvasSketchUpdateInput): CanvasSketchUpdateInput {
   const mode = update.mode === 'replace' || update.mode === 'clear' || update.mode === 'delete'
     ? update.mode
@@ -501,6 +535,9 @@ function sanitizeSketchUpdate(update: CanvasSketchUpdateInput): CanvasSketchUpda
   const out: CanvasSketchUpdateInput = { mode }
   if (typeof update.title === 'string' && update.title.trim()) {
     out.title = update.title.trim().slice(0, 120)
+  }
+  if (typeof update.expectedUpdatedAt === 'string' && update.expectedUpdatedAt) {
+    out.expectedUpdatedAt = update.expectedUpdatedAt.slice(0, 64)
   }
   if (mode === 'delete') {
     out.elementIds = Array.isArray(update.elementIds)
@@ -633,7 +670,7 @@ export class CanvasSketchDriver implements CanvasDriver {
     })
     this.surface = surface
     surface.webContents.setWindowOpenHandler(() => ({ action: 'deny' }))
-    surface.webContents.session.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    this.hardenSession(surface.webContents)
     surface.webContents.on('console-message', (details) => {
       const message = String((details as { message?: unknown }).message ?? '')
       if (message === '__TW_SKETCH_CHANGED__') {
@@ -772,11 +809,48 @@ export class CanvasSketchDriver implements CanvasDriver {
     return document
   }
 
+  /**
+   * Parity with CanvasWebDriver.hardenSession. The sketch surface is built by the
+   * same embed-view factory as the web surface but only ever set the window-open
+   * deny and the permission REQUEST handler, leaving three gaps the web driver
+   * closes: a permission CHECK (which some APIs consult without prompting), a
+   * download guard, and the WebRTC policy. The page is host-authored rather than
+   * remote, so this is defence-in-depth, not a live exploit — but the asymmetry
+   * was accidental and the surfaces should not drift.
+   */
+  private hardenSession(wc: WebContents): void {
+    try {
+      wc.setWebRTCIPHandlingPolicy('disable_non_proxied_udp')
+    } catch {
+      // Older Electron / unavailable — best effort.
+    }
+    const ses = wc.session
+    ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false))
+    try {
+      ses.setPermissionCheckHandler(() => false)
+    } catch {
+      // Best effort — older Electron.
+    }
+    ses.on('will-download', (event) => event.preventDefault())
+  }
+
   async sketchUpdate(update: CanvasSketchUpdateInput): Promise<CanvasSketchDocument> {
     const safeUpdate = sanitizeSketchUpdate(update)
-    const document = await this.runInSketch<CanvasSketchDocument>(
+    const applied = await this.runInSketch<CanvasSketchDocument | SketchUpdateRefusal>(
       `window.__twSketch.applyUpdate(${JSON.stringify(safeUpdate)})`
     )
+    const refusal = sketchRefusalOf(applied)
+    if (refusal === 'user_drawing') {
+      throw new Error(
+        'Canvas sketch update refused while the user is drawing a stroke; retry in a moment.'
+      )
+    }
+    if (refusal === 'stale_document') {
+      throw new Error(
+        'Canvas sketch update refused because the document moved on since your last read (stale expectedUpdatedAt); re-read canvas_sketch_get first.'
+      )
+    }
+    const document = applied as CanvasSketchDocument
     this.lastDocument = document
     this.onDocumentChange?.(document)
     return document

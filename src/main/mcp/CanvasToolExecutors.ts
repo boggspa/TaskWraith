@@ -155,6 +155,10 @@ function parseSketchUpdate(args: Record<string, unknown>): CanvasSketchUpdateInp
   const update: CanvasSketchUpdateInput = { mode }
   const title = asOptString(args.title)
   if (title) update.title = title
+  // Optimistic-concurrency guard from canvas_sketch_get. Optional: omitting it
+  // forces the write, which is the pre-existing behaviour.
+  const expectedUpdatedAt = asOptString(args.expectedUpdatedAt)
+  if (expectedUpdatedAt) update.expectedUpdatedAt = expectedUpdatedAt
   if (mode === 'delete') {
     update.elementIds = asStringArray(args.elementIds)
   } else if (mode !== 'clear') {
@@ -180,7 +184,14 @@ function fail(toolName: CanvasMcpToolName, message: string): McpToolExecutionRes
 function canvasToolErrorForProvider(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error)
   const lower = raw.toLowerCase()
-  const code = lower.includes('timed out')
+  // Retryable refusals are surfaced with their own codes: collapsing them into
+  // operation_failed leaves the caller unable to tell "wait and retry" from
+  // "this will never work", which is exactly when agents escalate destructively.
+  const code = lower.includes('user is drawing')
+    ? 'user_busy'
+    : lower.includes('stale expectedupdatedat')
+      ? 'stale_document'
+      : lower.includes('timed out')
     ? 'timeout'
     : lower.includes('cancel') || lower.includes('history')
       ? 'authority_changed'

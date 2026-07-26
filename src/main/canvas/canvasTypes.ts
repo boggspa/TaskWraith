@@ -282,6 +282,12 @@ export interface CanvasSketchUpdateInput {
   title?: string
   elements?: CanvasSketchElement[]
   elementIds?: string[]
+  /**
+   * Optimistic-concurrency guard: the `updatedAt` the caller last read from
+   * canvas_sketch_get. When present and no longer current, the update is refused
+   * rather than clobbering edits the caller never saw. Omit to force.
+   */
+  expectedUpdatedAt?: string
 }
 
 export interface CanvasAnnotation {
