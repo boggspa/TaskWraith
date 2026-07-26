@@ -8,20 +8,22 @@ Confirmed vulnerabilities should still follow the private reporting process in
 
 The original evidence was assessed on **2026-07-19** at commit
 `87c8c0645a4d9d8a6a2c3c8e0f3646cfac05b0da`. Dated remediation updates below
-also inspect the source-ahead working tree on 2026-07-19. Unless an entry is
-`Verified`, that newer code may be uncommitted, unshipped, and absent from the
-v1.8.4 release baseline. **2026-07-21 final ship-prep note:** public baseline is
-now **v1.8.5** (`314c2338a`); the next candidate is **1.8.6** source-ahead
-(`0f7daa515`, **36 commits**). Path-B Cursor (TW-SEC-2026-003) shipped in 1.8.5
-with residual partial-backstop disclosure. **2026-07-21 later update:**
-TW-SEC-2026-014 — the named 1.8.6 attention item — moved from `Open` to
-`Remediated` after the multi-store completeness pass recorded in its section
-(source-ahead, now **63 commits** past v1.8.5); its exact-candidate gates and
-the explicit provider-native/same-UID boundaries remain release-blocking. Other
-remediated entries keep their per-entry verify/`Block` dispositions until
-exact-candidate verification is recorded. References use stable symbols and
-test names rather than line numbers. Do not add secrets, raw scripts, or
-weaponized payloads to this file or its verification artifacts.
+also inspect the source-ahead working tree from that period. The 2026-07-21
+notes below retain the historical v1.8.5/v1.8.6 ship-prep boundary: Path-B
+Cursor (TW-SEC-2026-003) shipped in 1.8.5 with residual partial-backstop
+disclosure, and TW-SEC-2026-014 moved from `Open` to `Remediated` after its
+multi-store completeness pass. Those dated notes are provenance, not the
+current release pointer.
+
+**2026-07-26 v1.9.0 paperwork boundary:** the latest published baseline is
+**v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
+1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
+release-paperwork commits following it. This is a mutable source-ahead snapshot,
+not a freeze: concurrent dirty work is excluded, every per-entry
+verify/`Block` disposition remains in force, and the exact integrated candidate
+must be re-recorded and verified before a release claim. References use stable
+symbols and test names rather than line numbers. Do not add secrets, raw
+scripts, or weaponized payloads to this file or its verification artifacts.
 
 ## Working rules
 
@@ -58,6 +60,39 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); rerun exact-candidate whole-tree gates and keep the provider-native/same-UID boundaries disclosed before any release-level erasure claim |
 | TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Closed | TaskWraith maintainers — Release attestation | Closed by removal 2026-07-21: the hosted attestation apparatus was deleted by user decision (capability governance); fix preserved as provenance |
 | TW-SEC-2026-016 | Usage journals retain content and scope identifiers outside the history-erasure transaction | High | Remediated | TaskWraith maintainers — Usage privacy and data lifecycle | Source candidate accepted; run exact-candidate whole-tree gates before clearing the release block |
+
+## v1.9.0 release-boundary update — 2026-07-26
+
+This release adds security-relevant surface without changing the status of any
+finding above:
+
+- Isolated fan-out worktrees return durable candidates through explicit patch
+  capture, comparison, and promotion contracts rather than silently merging a
+  lane into the shared checkout. The candidate boundary is implemented in
+  `FanoutCandidateService`, `FanoutCandidatePersistence`, and the
+  `fanoutCandidateHandlers` IPC surface.
+- Peer-thread messages cross independent top-level sessions through a
+  permission-gated durable ledger. Delivery is labelled untrusted, enters the
+  next provider turn exactly once, and keeps the optional wake as a separate
+  authority; see `ThreadMessagePermission`, `ThreadMessageLedger`, and
+  `ThreadMessageContext`.
+- Pi's bring-your-own-key upstreams use a dedicated key store, isolated runtime
+  homes, launch authority, model policy, and native-tool posture. This extends
+  the provider surface, so secret-boundary and exact-launch evidence still
+  belong in the final candidate verification.
+- Office codecs operate on bounded document formats, while Outlook device-code
+  access is limited to reading mail/calendar context, saving drafts, and
+  creating personal time blocks. Release prose must not imply send-mail or
+  invite authority; external message and event text remains untrusted.
+- Provider run management now records additive lifecycle assurance across all
+  nine stable provider identities: immutable launch plans, isolated homes,
+  launch evidence, cancellation/settlement, and signed-posture checks improve
+  receipts without being used as a provider-admission gate.
+
+No release gate was run or cleared by this documentation pass. Reconcile these
+claims against the final clean tip, run each finding's recorded verification,
+and preserve the provider-native and same-UID residual boundaries before
+clearing any release disposition.
 
 ## TW-SEC-2026-001 — Main was not authoritative for desktop mention routing
 
