@@ -8611,10 +8611,22 @@ button.composer-run-timecode.is-open {
   font-family: var(--font-mono);
 }
 
+/* The 8px gaps in this rule and the next are DELIBERATE LITERALS — do not
+ * "tidy" them into `var(--space-sm)`. These two rows separate the consent
+ * controls (Accept / Reject, and the broader-scope grants beside them), and
+ * `--space-*` is agent-writable through the `theme_tokens_set` MCP tool
+ * (`shared/agentThemeTokens.ts`, floor 0). A token here would let an agent set
+ * the gap to 0 and leave Accept and Reject edge-to-edge, so a click landing a
+ * pixel wide of Reject grants instead of denies. Flex `gap` cannot go negative
+ * and the rows wrap, so no control can ever be overlapped or pushed out of
+ * reach — adjacency was the whole exposure, and a literal removes it by
+ * construction rather than by trusting a range bound.
+ * The card's own padding/margin below stay tokenised on purpose: they only
+ * resize the card, which is cosmetic and worth keeping user-restyleable. */
 .composer-permission-actions {
   display: flex;
   align-items: flex-start;
-  gap: var(--space-sm);
+  gap: 8px;
   flex-wrap: wrap;
 }
 
@@ -8624,10 +8636,10 @@ button.composer-run-timecode.is-open {
 .composer-permission-scope-actions {
   display: flex;
   align-items: center;
-  gap: var(--space-sm);
+  gap: 8px;
   flex-wrap: wrap;
   margin-left: 2px;
-  padding-left: var(--space-sm);
+  padding-left: 8px;
   border-left: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
 }
 
@@ -8635,11 +8647,15 @@ button.composer-run-timecode.is-open {
   border-color: color-mix(in srgb, var(--accent) 38%, var(--panel-border));
 }
 
+/* Narrow panes stack the scope controls under the accept/reject pair instead of
+ * beside them. The 6px is a literal for the same reason as the gaps above: this
+ * is the separation between a consent decision and a BROADER consent decision,
+ * and `--space-xs` is agent-writable with a floor of 0. */
 @media (max-width: 620px) {
   .composer-permission-scope-actions {
     width: 100%;
     margin-left: 0;
-    padding: var(--space-xs) 0 0;
+    padding: 6px 0 0;
     border-top: 1px solid color-mix(in srgb, var(--panel-border) 72%, transparent);
     border-left: 0;
   }
