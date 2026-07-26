@@ -2781,16 +2781,26 @@
   border: 1px solid var(--border-color);
   border-radius: 999px;
   background: transparent;
-  color: var(--text-muted);
+  /* Reads at the same weight as its neighbours in the orchestration row
+   * (`Turn` / `Continuous`, which that row pins to --text-primary). It was on
+   * --text-muted, which made "Shared" look disabled rather than simply
+   * un-toggled — a state the user can act on should not be styled like one
+   * they can't. The ACTIVE state still takes the accent below, so the toggle
+   * keeps its on/off signal; only the resting floor moved. */
+  color: var(--text-primary);
   font-size: var(--font-size-xs);
   font-weight: 700;
   letter-spacing: 0;
   cursor: pointer;
 }
 
+/* Border only. This used to also set `color: var(--text-color)` — a token that
+ * is defined nowhere in the app, so the declaration was dropped as invalid and
+ * hover never lifted the text at all. With the resting state now at full
+ * strength there is nothing left for it to lift, so the rule is gone rather
+ * than repaired to a real token. */
 .composer-fanout-isolation-toggle:hover {
   border-color: color-mix(in srgb, var(--accent-color) 42%, var(--border-color));
-  color: var(--text-color);
 }
 
 .composer-fanout-isolation-toggle[data-active='true'] {
