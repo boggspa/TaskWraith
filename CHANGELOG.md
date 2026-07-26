@@ -11,9 +11,9 @@ to answer.
 If 1.8.9 gave every agent **room to work**, 1.9.0 connects those rooms into a
 workshop. Parallel lanes can return work you choose to keep, top-level threads
 can leave one another durable notes, and the dock can hold the documents,
-canvases, mail, and calendar context around the code. A new Pi seat opens a
-broader model bench, while the same local authority still decides what each
-seat may touch.
+canvases, mail, and calendar context around the code. Pi opens a broad BYOK
+model bench, Mistral Vibe adds a plan-backed door, and the same local authority
+still decides what each seat may touch—or which colours it may change.
 
 ### Branches come back as candidates
 
@@ -64,6 +64,11 @@ third-party content. Canvas work also joins the right dock with sketch embeds
 and chat-scoped list/close controls, so visual and document context can stay
 beside the thread that owns it.
 
+Agent-driven Canvas actions now fail closed when a target or human-input
+snapshot is stale, serialize per surface, and stand down while a human is driving.
+Credential fields remain human-only, in-progress sketch strokes survive agent
+updates, and the audit receipt is persisted before a liveness check can fail.
+
 ### Pi opens the model bench
 
 **Pi** joins as a first-class coding-agent seat with isolated runtime homes and
@@ -79,15 +84,44 @@ thought signatures survive tool replay, and schema unions stay real unions.
 Denied services remain denied, cache reads are disclosed, and throttling is
 distinguished from a genuinely empty allowance.
 
+### Mistral gets its own door
+
+**Mistral Vibe** joins as a first-class ACP seat for the user's Mistral plan,
+separate from Pi's metered `mistral/*` API-key upstream. Devstral Small is the
+fast, frugal default beside Mistral Medium 3.5; both carry their 262K context
+map onto iOS, and a clearly heuristic plan-burn meter gives the otherwise
+unmetered subscription a cautious early warning.
+
+The distinction is authority, not just branding. Read-only and write-capable
+seats select Vibe's gated `plan` and `default` session modes over ACP; its
+auto-approve modes are unreachable, and inherited Mistral API credentials are
+scrubbed so a plan-backed run cannot silently cross into Pi's pay-as-you-go
+bill. Fresh sessions receive explicit host-composed context instead of
+pretending provider history was retained.
+
+### The workshop can wear your colours
+
+Agents on write-capable seats can read and set a small allowlist of typed
+**theme tokens** through `theme_tokens_get` and `theme_tokens_set`. This is a
+data channel, not arbitrary CSS: selectors, rules, URLs, calculations, provider
+identity colours, focus rings, and approval-card geometry stay outside the
+writable set, with validation repeated when the renderer applies persisted
+values. Read-only review seats can inspect the palette but cannot restyle it.
+
 ### Every provider leaves a clearer receipt
 
-Run management now measures lifecycle assurance across all nine stable provider
+Run management now measures lifecycle assurance across all ten stable provider
 identities without turning maturity into provider admission. Immutable launch
 plans, per-run homes, exact transport close/kill joins, cancellation
 settlement, launch evidence, signed posture validation, and honest capability
 reports land provider by provider. Missing assurance produces a receipt or
 warning and the safest compatible mode; it does not silently hide a seat the
 user chose.
+
+The production adapter registry is checked against that full roster before a
+new identity can become a mysterious startup crash. Its test follows the
+actual registration graph, and a mismatch now names both the missing adapter
+and the construction site that needs repair.
 
 That same discipline reaches smaller authority edges: peer-thread wakes,
 fan-out candidates, provider capability projection, grant expiry, and review
@@ -98,12 +132,13 @@ behind a silent deny.
 ### The phone keeps the same map
 
 iOS gains the full-colour Ensemble identity, anchored participant editors,
-Pi's provider/model branding, and a compact single-row Ensemble composer that
-adapts to landscape and short viewports. Above-composer pills stay reachable
-while typing; fan-out lane results and provider-run failures get native cards;
-the workspace/branch pill opens a Git surface for branch, checkout, and PR-watch
-actions; and the Peers inspector carries cross-thread messages. Pairing
-reconnects no longer flap the app back to the setup screen.
+Pi's provider/model branding, Mistral Vibe's context map, and a compact
+single-row Ensemble composer that adapts to landscape and short viewports.
+Above-composer pills stay reachable while typing; fan-out lane results and
+provider-run failures get native cards; the workspace/branch pill opens a Git
+surface for branch, checkout, and PR-watch actions; and the Peers inspector
+carries cross-thread messages. Pairing reconnects no longer flap the app back
+to the setup screen.
 
 Across both apps, provider rows use cleaner labels, pickers stop calling an
 empty model list “loading,” compact tool foldouts retain their diff accents,
