@@ -51,9 +51,17 @@ targets:
         # visible alert pushes arrive (TestFlight blocker).
         UIBackgroundModes:
           - remote-notification
-        # iPhone stays portrait-first; iPad rotates freely (split-view shell).
+        # iPhone leads portrait but rotates (ba93d11ec adapts the composer to
+        # short viewports); iPad rotates freely (split-view shell). Portrait is
+        # FIRST on purpose — iOS treats the first entry as preferred.
+        #
+        # ba93d11ec set this in Generated/Info.plist only. That file is XcodeGen
+        # OUTPUT, so the feature was one `xcodegen generate` away from silently
+        # reverting; the spec is the source of truth and has to carry it.
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
+          - UIInterfaceOrientationLandscapeLeft
+          - UIInterfaceOrientationLandscapeRight
         UISupportedInterfaceOrientations~ipad:
           - UIInterfaceOrientationPortrait
           - UIInterfaceOrientationPortraitUpsideDown

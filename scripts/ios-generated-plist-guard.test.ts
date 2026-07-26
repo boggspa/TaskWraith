@@ -122,15 +122,17 @@ describe('the real repo files', () => {
     expect(evaluatePlistDrift(spec, plist)).toEqual([])
   })
 
-  it('still reads the iPhone target as portrait-only', () => {
-    // Pin the DECISION, not just the agreement between the two files: if both
-    // are edited to add landscape, that should be a deliberate act that also
-    // updates this test.
+  it('keeps portrait as the iPhone target’s PREFERRED orientation', () => {
+    // Pin the DECISION, not just the agreement between the two files. The
+    // decision changed in ba93d11ec — the iPhone now rotates — so this no
+    // longer pins portrait-only. What survives is the ordering: iOS treats the
+    // first entry as preferred, so a reordering that demoted portrait would be
+    // a real behaviour change and should have to edit this test to land.
     const { readFileSync } = require('node:fs')
     const { join } = require('node:path')
     const spec = readFileSync(join(process.cwd(), 'ios/TaskWraithApp/project.yml'), 'utf8')
-    expect(specStringList(spec, 'UISupportedInterfaceOrientations')).toEqual([
-      'UIInterfaceOrientationPortrait'
-    ])
+    const iphone = specStringList(spec, 'UISupportedInterfaceOrientations')
+    expect(iphone?.[0]).toBe('UIInterfaceOrientationPortrait')
+    expect(iphone).not.toContain('UIInterfaceOrientationPortraitUpsideDown')
   })
 })
