@@ -157,7 +157,9 @@ plans, per-run homes, exact transport close/kill joins, cancellation
 settlement, launch evidence, signed posture validation, and honest capability
 reports land provider by provider. Missing assurance produces a receipt or
 warning and the safest compatible mode; it does not silently hide a seat the
-user chose.
+user chose. An ensemble seat that cannot start now carries the reason with it —
+a missing sign-in reads as a missing sign-in instead of “dispatch failed” — while
+a seat stopped by cancellation stays quiet rather than blaming its provider.
 
 The production adapter registry is checked against that full roster before a
 new identity can become a mysterious startup crash. Its test follows the
@@ -183,9 +185,12 @@ to the setup screen.
 
 Across both apps, provider rows use cleaner labels, pickers stop calling an
 empty model list “loading,” compact tool foldouts retain their diff accents,
-and Codex authentication reports revoked credentials honestly, leases the
-credential TaskWraith actually uses, and upgrades that installed runtime
-instead of a different copy. New doctrine-integrity and formatting-ratchet
+and Codex authentication reports revoked credentials honestly and upgrades
+that installed runtime instead of a different copy. Codex also stops looking
+broken to anyone signed in elsewhere: TaskWraith keeps its own Codex home, so a
+terminal `codex login` authenticates `~/.codex` and leaves this one untouched,
+and the sign-in notice now says exactly that — the home it uses, the one it does
+not, and the in-app route that works. New doctrine-integrity and formatting-ratchet
 gates keep future agent work from turning documentation or unrelated source
 into collateral churn.
 
