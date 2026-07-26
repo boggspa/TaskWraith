@@ -23,16 +23,36 @@ func resolveComposerProviderAdmission(
         ? selected
         : ((stored?.isEmpty == false ? stored : nil) ?? selected)
     let provider = resolved.lowercased()
+    let isDynamicallyOffered =
+        provider == "antigravity"
+        && dynamicallySelectableProviderIds.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == provider
+        }
     guard TWTheme.isLiveSelectableProvider(provider)
-        || dynamicallySelectableProviderIds.contains(provider)
+        || isDynamicallyOffered
     else {
-        let nextStep = (canChangeProvider || isNewTask)
-            ? "Choose a live provider to continue."
-            : "Open a new chat with a live provider to continue."
+        let canChooseProvider = canChangeProvider || isNewTask
+        let unavailableReason: String
+        if TWTheme.isRetiredProvider(provider) {
+            let nextStep = canChooseProvider
+                ? "Choose a provider currently offered by the connected Mac."
+                : "Existing history remains available; open a new chat with an offered provider to continue."
+            unavailableReason =
+                "\(TWTheme.providerLabel(provider)) is retired for new runs. \(nextStep)"
+        } else if provider == "antigravity" {
+            unavailableReason =
+                "AntiGravity is not currently offered by the connected Mac. Complete its consent and credential setup on the Mac, then refresh provider models."
+        } else {
+            let nextStep = canChooseProvider
+                ? "Choose a provider currently offered by the connected Mac."
+                : "Open a new chat with a provider offered by the connected Mac to continue."
+            unavailableReason =
+                "\(TWTheme.providerLabel(provider)) is not offered for new runs by the connected Mac. \(nextStep)"
+        }
         return ComposerProviderAdmission(
             provider: provider,
             isLive: false,
-            unavailableReason: "\(TWTheme.providerLabel(provider)) managed runs are unavailable. \(nextStep)")
+            unavailableReason: unavailableReason)
     }
 
     return ComposerProviderAdmission(provider: provider, isLive: true, unavailableReason: nil)

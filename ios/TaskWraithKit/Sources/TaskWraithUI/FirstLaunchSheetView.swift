@@ -5,6 +5,8 @@ import TaskWraithKit
     import UIKit
 #endif
 
+let firstLaunchFallbackProviderIds = ["codex", "claude", "kimi", "cursor", "grok", "ollama", "pi"]
+
 struct FirstLaunchSheetView: View {
     @ObservedObject var model: RemoteSessionModel
     @ObservedObject private var themes = TWThemeStore.shared
@@ -27,11 +29,11 @@ struct FirstLaunchSheetView: View {
         }
         let usageByProvider = Dictionary(
             uniqueKeysWithValues: (model.modelUsage?.providers ?? []).map { ($0.provider, $0) })
-        return ["codex", "claude", "kimi", "cursor", "grok", "ollama"].map { provider in
+        return firstLaunchFallbackProviderIds.map { provider in
             return ProviderDisplay(
                 id: provider,
                 label: TWTheme.providerLabel(provider),
-                optional: ["kimi", "cursor", "grok", "ollama"].contains(provider),
+                optional: ["kimi", "cursor", "grok", "ollama", "pi"].contains(provider),
                 statusKind: model.providerModels[provider]?.isEmpty == false
                     ? "notObservable" : "notLoaded",
                 statusText: model.providerModels[provider]?.isEmpty == false

@@ -260,13 +260,15 @@ public enum TWTheme {
         return retiredProviderIds.contains(provider.lowercased())
     }
 
-    /// Canonical providers that may be offered for a new remote run. Cursor is
-    /// live again: the Mac contains its runs via the native `--sandbox` argv,
-    /// so no iOS-side exclusion applies. Hand-mirrored copy of the Mac's
+    /// The seven providers approved for static new-run offer by product intent.
+    /// Offer membership is independent of run-management maturity: Cursor's
+    /// Path-B containment/evidence can strengthen or visibly degrade without
+    /// changing whether Cursor is offered, and the same rule applies to Pi and
+    /// every other provider. Hand-mirrored copy of the Mac's
     /// LIVE_SELECTABLE_PROVIDER_IDS in src/shared/retiredProviders.ts — there
-    /// is no shared source of truth, so every desktop live-set change must be
-    /// mirrored here or iOS ships with a stale roster (build 81 shipped a
-    /// Cursor lockout exactly this way).
+    /// is no shared source of truth, so every user-approved desktop live-set
+    /// change must be mirrored here or iOS ships with a stale roster (build 81
+    /// shipped a Cursor lockout exactly this way).
     public static let liveSelectableProviderIds: Set<String> = [
         "codex", "claude", "kimi", "cursor", "grok", "ollama", "pi",
     ]

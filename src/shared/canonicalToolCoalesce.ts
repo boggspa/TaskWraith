@@ -247,6 +247,7 @@ export function resolveCatalogToolName(rawToolName: string): TaskWraithMcpToolNa
  *  - canvas click/fill/sketch mutate → `canvasInteraction`
  *  - canvas eval (RCE) → `canvasEval` (signed-elevated, never auto-allowed)
  *  - cross-thread recall reads → `crossThreadRead`
+ *  - peer thread messages → `threadMessage`
  *  - everything else → `mcpTools`
  */
 export function catalogToolAgenticService(toolName: string): AgenticServiceId {
@@ -294,6 +295,9 @@ export function catalogToolAgenticService(toolName: string): AgenticServiceId {
   ) {
     return 'crossThreadRead'
   }
+  // Its own bucket, never mcpTools: a generic tool grant must not authorise
+  // pushing content into another thread's context.
+  if (toolName === 'thread_message') return 'threadMessage'
   return 'mcpTools'
 }
 

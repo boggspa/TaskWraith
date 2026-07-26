@@ -2479,6 +2479,7 @@ const MCP_TOOL_GROUPED_NAMES: Record<McpToolGroup, readonly TaskWraithMcpToolNam
     'ensemble_fanout_all',
     'ensemble_await',
     'ensemble_lane_result',
+    'thread_message',
     'ensemble_bossman_control',
     'ensemble_poll_response',
     'ensemble_propose_goal_complete',

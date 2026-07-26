@@ -739,6 +739,7 @@ export type TaskWraithMcpProfileId =
   | 'taskwraith-gateway-v2'
   | 'taskwraith-gateway-v3'
   | 'taskwraith-gateway-v4'
+  | 'taskwraith-gateway-v5'
 
 /**
  * Main-owned proof of the TaskWraith MCP catalog a provider session was born

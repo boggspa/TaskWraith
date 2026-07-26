@@ -1167,6 +1167,12 @@ import {
   type IntrospectionToolContext
 } from './mcp/IntrospectionToolExecutors'
 import { isRemoteOriginRun, markRemoteOriginRun } from './RemoteOriginRuns'
+import { createThreadMessageAccessResolver } from './ThreadMessageAccessResolver'
+import {
+  createThreadMessageToolExecutors,
+  isThreadMessageMcpToolName
+} from './mcp/ThreadMessageToolExecutors'
+import { createThreadMessageId } from './ThreadMessageLedger'
 import {
   annotateRecallCitations,
   formatRecallCitation,
@@ -4261,6 +4267,113 @@ function listExternalPublishReceipts(): ExternalPublishReceipt[] {
   if (!ledger || typeof (ledger as { list?: unknown }).list !== 'function') return []
   return ledger.list()
 }
+
+/**
+ * `thread_message` — peer thread-to-thread send. Self-gating like the recall
+ * family: the decision logic is the pure `evaluateThreadMessageGate`, resolved by
+ * `createThreadMessageAccessResolver`, which owns the approval-ledger row for
+ * every allow no human saw. This block is wiring only.
+ */
+const threadMessageAccessResolver = createThreadMessageAccessResolver({
+  resolveServicePolicy: ({ context }) => {
+    const ctx = context as { effectivePermissions?: EffectiveRunPermissions }
+    // `?? 'ask'` because the field is optional for settings persisted before this
+    // service existed. Absent must fail to a PROMPT, never to an allow.
+    return (
+      effectiveAgenticSettings(AppStore.getSettings(), ctx.effectivePermissions).agenticServices
+        .threadMessage ?? 'ask'
+    )
+  },
+  isReadOnlyRun: ({ context }) =>
+    (context as { effectivePermissions?: EffectiveRunPermissions }).effectivePermissions
+      ?.readOnly === true,
+  isRemoteOriginRun: ({ context }) => isRemoteOriginRun(context.appRunId),
+  resolveElevation: ({ context, parentProvider }) => {
+    const ctx = context as { effectivePermissions?: EffectiveRunPermissions }
+    const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    const consent = chat?.ensemble?.bossmanAutoApprovals
+    return {
+      fullAccess: isFullShellAccessGranted(ctx.effectivePermissions),
+      // Task-scoped Trusted Session for THIS chat/provider/workspace, not a
+      // merely write-capable posture.
+      trustedSession: Boolean(
+        context.appChatId &&
+          context.workspacePath &&
+          trustedSessionGrants.isGranted({
+            chatId: context.appChatId,
+            provider: parentProvider as ProviderId,
+            workspacePath: context.workspacePath
+          })
+      ),
+      // The recorded user consent is the signal here. Which participant holds the
+      // approval authority is `evaluateBossmanAutoApproval`'s question, and that
+      // gate deliberately never covers non-shell/file services — see
+      // ThreadMessagePermission for why elevation lives in our own gate.
+      bossAutoApproval: consent?.enabled === true && consent.mode === 'permission_preset_once'
+    }
+  },
+  requestApproval: async ({ context, parentProvider, crossWorkspace, requestedDelivery }) => {
+    const ctx = context as { sender?: Electron.WebContents }
+    return await requestAgenticServiceApproval(
+      ctx.sender ?? null,
+      parentProvider as ProviderId,
+      'threadMessage',
+      context.workspacePath,
+      {
+        method: `${parentProvider}-mcp/thread_message`,
+        title: `Approve ${providerLabel(parentProvider as ProviderId)} thread message`,
+        body: crossWorkspace
+          ? 'send a message to a thread in another workspace'
+          : requestedDelivery === 'wake'
+            ? 'send a message and start a turn in another thread'
+            : 'send a message to another thread',
+        preview: { kind: 'tool', toolName: 'thread_message', params: {} },
+        runId: context.appRunId
+      }
+    )
+  },
+  recordAutoAllowLedgerRow: ({ context, parentProvider }, metadata) => {
+    const approvalId = `thread-message-${String(metadata.toChatId)}-${String(
+      metadata.decisionReason
+    )}-${Date.now()}`
+    recordApprovalLedgerRequest(
+      parentProvider as ProviderId,
+      { appRunId: context.appRunId, appChatId: context.appChatId },
+      {
+        approvalId,
+        method: `${parentProvider}-mcp/thread_message`,
+        title: 'Thread message auto-allowed',
+        body: String(metadata.rationale || 'Thread message auto-allowed.')
+      },
+      { service: 'threadMessage', workspacePath: context.workspacePath, metadata }
+    )
+  }
+})
+
+const threadMessageToolExecutors = createThreadMessageToolExecutors({
+  listTargetChats: () =>
+    AppStore.getChats().map((chat) => ({
+      chatId: chat.appChatId,
+      title: chat.title || '',
+      workspaceId: chat.workspaceId || null,
+      archived: chat.archived === true
+    })),
+  resolveCallerChat: (context) => {
+    const chat = context.appChatId ? AppStore.getChat(context.appChatId) : null
+    if (!chat) return null
+    return {
+      chatId: chat.appChatId,
+      title: chat.title || '',
+      workspaceId: chat.workspaceId || null,
+      archived: chat.archived === true
+    }
+  },
+  resolveThreadMessageAccess: (input) => threadMessageAccessResolver(input),
+  enqueueThreadMessage: (event) => AppStore.enqueueThreadMessage(event),
+  mintThreadMessageId: (fromChatId, toChatId, nonce) =>
+    createThreadMessageId(fromChatId, toChatId, nonce),
+  now: () => Date.now()
+})
 
 const recallToolExecutors = createRecallToolExecutors({
   listRunQueueJobs: (filter) => AppStore.getRunQueueJobs(filter),
@@ -28798,6 +28911,9 @@ async function executeGeminiMcpTool(
   const skipGenericApproval =
     toolName === 'delegate_to_subthread' ||
     isRecallMcpToolName(toolName) ||
+    // Self-gates through the dedicated `threadMessage` service; the generic
+    // mcpTools gate would both double-prompt and imply the wrong authority.
+    isThreadMessageMcpToolName(toolName) ||
     explicitUserRequestedRosterImport.allowed ||
     isMcpAutoAllowedForRun(toolName, context.effectivePermissions, args)
   // 1.0.72 — read-only hard-deny for side-effecting fall-through tools. The host
@@ -29195,6 +29311,15 @@ async function executeGeminiMcpTool(
     } else if (isRecallMcpToolName(toolName)) {
       applyRichResult(
         await recallToolExecutors.executeRecallTool(toolName, args, context, parentProvider)
+      )
+    } else if (isThreadMessageMcpToolName(toolName)) {
+      applyRichResult(
+        await threadMessageToolExecutors.executeThreadMessageTool(
+          toolName,
+          args,
+          context,
+          parentProvider
+        )
       )
     } else if (isIntrospectionMcpToolName(toolName)) {
       applyRichResult(

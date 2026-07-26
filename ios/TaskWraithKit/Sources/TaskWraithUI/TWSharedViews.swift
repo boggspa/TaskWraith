@@ -1771,18 +1771,26 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
     private func modelRows(for catalog: ProviderModelCatalog) -> some View {
         let isCurrentProvider = catalog.provider.lowercased() == provider.lowercased()
         let accent = TWTheme.providerAccent(catalog.provider)
-        // No synthetic "Default" row — a nil modelId marks the provider's
-        // concrete isDefault model as selected so the checkmark still lands.
-        ForEach(catalog.models) { option in
+        if catalog.models.isEmpty {
             pickerRow(
-                title: option.label ?? option.id,
-                selected: isCurrentProvider
-                    && (modelId == option.id || (modelId == nil && option.isDefault == true)),
-                accent: accent,
-                disabled: option.disabled == true,
-                fast: modelSupportsFast(provider: catalog.provider, modelId: option.id)
+                title: "Default",
+                selected: isCurrentProvider && modelId == nil,
+                accent: accent
             ) {
-                selectModel(option, in: catalog)
+                selectProviderDefault(in: catalog)
+            }
+        } else {
+            ForEach(catalog.models) { option in
+                pickerRow(
+                    title: option.label ?? option.id,
+                    selected: isCurrentProvider
+                        && (modelId == option.id || (modelId == nil && option.isDefault == true)),
+                    accent: accent,
+                    disabled: option.disabled == true,
+                    fast: modelSupportsFast(provider: catalog.provider, modelId: option.id)
+                ) {
+                    selectModel(option, in: catalog)
+                }
             }
         }
     }
@@ -2014,6 +2022,16 @@ struct ProviderModelPickerPanel<TopContent: View>: View {
         twNormalizeFastModeSelection(
             catalog: catalog, modelId: option.id, fastModeEnabled: &fastModeEnabled)
     }
+
+    private func selectProviderDefault(in catalog: ProviderModelCatalog) {
+        if allowsProviderChange {
+            provider = catalog.provider
+        }
+        modelId = nil
+        reasoningEffort = nil
+        fastModeEnabled = false
+        if catalog.provider.lowercased() == "kimi" { kimiThinkingEnabled = true }
+    }
 }
 
 // MARK: - Reasoning ladder (sidecar slider)
@@ -2054,9 +2072,9 @@ func twModelUsesFastToggle(_ modelId: String?) -> Bool {
 }
 
 /// Picker-wide provider ordering: alphabetical by display label, EXCEPT the
-/// non-CLI lanes pin to the tail — AntiGravity (the API-key lane) just above
-/// local Ollama. Mirrors the desktop `resolveProviderRows` order rule; shared
-/// by every catalog sort site so the surfaces can't drift.
+/// non-CLI lanes pin to the tail — host-admitted conditional AntiGravity just
+/// above local Ollama. Mirrors the desktop `resolveProviderRows` order rule;
+/// shared by every catalog sort site so the surfaces can't drift.
 @MainActor
 func twProviderPickerOrder(_ lhs: ProviderModelCatalog, _ rhs: ProviderModelCatalog) -> Bool {
     func rank(_ provider: String) -> Int {
@@ -2070,6 +2088,40 @@ func twProviderPickerOrder(_ lhs: ProviderModelCatalog, _ rhs: ProviderModelCata
     let rhsRank = rank(rhs.provider)
     if lhsRank != rhsRank { return lhsRank < rhsRank }
     return TWTheme.providerLabel(lhs.provider) < TWTheme.providerLabel(rhs.provider)
+}
+
+/// Builds provider pickers from product offer intent first, then overlays the
+/// paired Mac's model catalogs. Empty/transient catalogs must not hide one of
+/// the seven static providers; conditional AntiGravity remains catalog-backed.
+@MainActor
+func twOfferedProviderCatalogs(
+    _ providerModels: [String: [ModelOption]],
+    including referencedProviderIds: [String] = []
+) -> [ProviderModelCatalog] {
+    let modelsByProvider = providerModels.reduce(
+        into: [String: [ModelOption]]()
+    ) { result, entry in
+        let provider = entry.key.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !provider.isEmpty else { return }
+        result[provider] = entry.value
+    }
+    let referenced = referencedProviderIds.map {
+        $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    }
+    let providerIds = TWTheme.liveSelectableProviderIds
+        .union(modelsByProvider.keys)
+        .union(referenced)
+
+    return providerIds
+        .filter { provider in
+            !provider.isEmpty
+                && TWTheme.isProviderOfferedByModelCatalog(
+                    provider, models: modelsByProvider[provider] ?? [])
+        }
+        .map {
+            ProviderModelCatalog(provider: $0, models: modelsByProvider[$0] ?? [])
+        }
+        .sorted(by: twProviderPickerOrder)
 }
 
 private let twReasoningStops: [TWReasoningStop] = [
@@ -6273,10 +6325,7 @@ public struct EditableRosterStrip: View {
     private var state: RemoteEnsembleState? { model.ensembleStates[threadId] }
 
     private var catalogs: [ProviderModelCatalog] {
-        model.providerModels
-            .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { TWTheme.isProviderOfferedByModelCatalog($0.provider, models: $0.models) }
-            .sorted(by: twProviderPickerOrder)
+        twOfferedProviderCatalogs(model.providerModels)
     }
 
     private func isProviderAvailable(_ provider: String) -> Bool {
@@ -8210,8 +8259,6 @@ private struct SettingsSelectionButton: View {
 }
 
 struct SettingsProviderSnapshot: Identifiable, Equatable {
-    static let providerOrder = ["codex", "claude", "kimi", "cursor", "grok", "ollama"]
-
     let id: String
     let label: String
     let optional: Bool
@@ -10020,10 +10067,7 @@ struct SideChatsPanel: View {
     }
 
     private var catalogs: [ProviderModelCatalog] {
-        model.providerModels
-            .map { ProviderModelCatalog(provider: $0.key, models: $0.value) }
-            .filter { TWTheme.isLiveSelectableProvider($0.provider) }
-            .sorted(by: twProviderPickerOrder)
+        twOfferedProviderCatalogs(model.providerModels)
     }
     private var createCatalog: ProviderModelCatalog? {
         catalogs.first { $0.provider.lowercased() == createProvider.lowercased() }
@@ -10555,7 +10599,9 @@ struct UsagePanel: View {
     let threadId: String?
     @State private var selectedView: UsagePanelView = .plan
 
-    private static let providerOrder = ["gemini", "codex", "claude", "kimi", "cursor", "grok"]
+    private static let providerOrder = [
+        "gemini", "codex", "claude", "kimi", "cursor", "grok", "pi", "antigravity", "ollama",
+    ]
 
     private enum UsagePanelView: String, CaseIterable, Identifiable {
         case plan
@@ -10573,8 +10619,7 @@ struct UsagePanel: View {
     }
 
     private var providers: [ModelUsageMessage.ProviderUsage] {
-        let entries = (model.modelUsage?.providers ?? [])
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
+        let entries = model.modelUsage?.providers ?? []
         return entries.sorted {
             (Self.providerOrder.firstIndex(of: $0.provider) ?? 99)
                 < (Self.providerOrder.firstIndex(of: $1.provider) ?? 99)
@@ -10583,7 +10628,6 @@ struct UsagePanel: View {
 
     private var spendProviders: [ModelUsageMessage.SpendProvider] {
         (model.modelUsage?.spend?.providers ?? [])
-            .filter { !TWTheme.isRetiredProvider($0.provider) }
             .sorted {
                 (Self.providerOrder.firstIndex(of: $0.provider) ?? 99)
                     < (Self.providerOrder.firstIndex(of: $1.provider) ?? 99)

@@ -153,8 +153,11 @@ export function toolNameToFamily(name: string | undefined | null): ToolFamily | 
       return 'delegate'
     case 'ensemble_yield':
       return 'yield'
+    // thread_message shares this family: handing a message to a peer thread is the
+    // same act as an ensemble peer handoff, so it needs no glyph of its own.
     case 'ensemble_send':
     case 'ensemble_fanout':
+    case 'thread_message':
       return 'fanout'
     case 'ensemble_bossman_control':
     case 'ensemble_poll_response':

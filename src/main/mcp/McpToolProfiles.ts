@@ -417,6 +417,24 @@ export const GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
   ...GATEWAY_V4_ADDED_TOOL_NAMES
 ] as const satisfies readonly string[])
 
+/**
+ * Gateway-v5 addition: the peer thread-to-thread message. Hidden rather than
+ * direct, like every other specialist capability, and minted as a NEW profile
+ * rather than added to v4 so receipted sessions keep the exact surface they were
+ * born with.
+ *
+ * Note this tool is deliberately NOT in MCP_AUTO_ALLOWED_TOOLS: it writes into
+ * another thread's context and self-gates through the `threadMessage` service.
+ */
+export const GATEWAY_V5_ADDED_TOOL_NAMES = Object.freeze([
+  'thread_message'
+] as const satisfies readonly TaskWraithMcpToolName[])
+
+export const GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES = Object.freeze([
+  ...GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES,
+  ...GATEWAY_V5_ADDED_TOOL_NAMES
+] as const satisfies readonly string[])
+
 export function isGatewayMcpAdvertisedTool(name: string): boolean {
   return GATEWAY_MCP_TOOL_SET.has(name)
 }
@@ -429,6 +447,7 @@ export function isGatewayMcpAdvertisedTool(name: string): boolean {
 export function taskWraithGatewayHiddenToolNamesForProfile(
   profileId: TaskWraithMcpProfileId | null | undefined
 ): readonly string[] {
+  if (profileId === 'taskwraith-gateway-v5') return GATEWAY_V5_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v4') return GATEWAY_V4_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v3') return GATEWAY_V3_MCP_HIDDEN_TOOL_NAMES
   if (profileId === 'taskwraith-gateway-v2') return GATEWAY_V2_MCP_HIDDEN_TOOL_NAMES
@@ -445,7 +464,9 @@ const MCP_ADVERTISE_TOOLS_BY_PROFILE = {
   'taskwraith-gateway-v3': GATEWAY_MCP_ADVERTISE_TOOLS,
   // v4 likewise: direct surface unchanged; hidden universe adds the
   // await/lane-result graph primitives.
-  'taskwraith-gateway-v4': GATEWAY_MCP_ADVERTISE_TOOLS
+  'taskwraith-gateway-v4': GATEWAY_MCP_ADVERTISE_TOOLS,
+  // v5 likewise: direct surface unchanged; hidden universe adds thread_message.
+  'taskwraith-gateway-v5': GATEWAY_MCP_ADVERTISE_TOOLS
 } as const satisfies Record<
   TaskWraithMcpProfileId,
   readonly TaskWraithMcpAdvertisedToolName[]

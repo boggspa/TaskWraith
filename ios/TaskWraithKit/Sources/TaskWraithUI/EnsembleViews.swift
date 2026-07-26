@@ -19,6 +19,19 @@ import TaskWraithKit
 struct EnsembleRosterStrip: View {
     let state: RemoteEnsembleState
     let participants: [RemoteEnsembleState.Participant]
+    /// Conditional providers are unlocked only when the paired Mac has
+    /// projected a catalog-backed admission for this surface.
+    let dynamicallySelectableProviderIds: Set<String>
+
+    init(
+        state: RemoteEnsembleState,
+        participants: [RemoteEnsembleState.Participant],
+        dynamicallySelectableProviderIds: Set<String> = []
+    ) {
+        self.state = state
+        self.participants = participants
+        self.dynamicallySelectableProviderIds = dynamicallySelectableProviderIds
+    }
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -40,7 +53,9 @@ struct EnsembleRosterStrip: View {
 
     @ViewBuilder
     private func chip(_ participant: RemoteEnsembleState.Participant) -> some View {
-        let unavailable = !TWTheme.isLiveSelectableProvider(participant.provider)
+        let unavailable = !isEnsembleParticipantProviderOffered(
+            participant.provider,
+            dynamicallySelectableProviderIds: dynamicallySelectableProviderIds)
         let modelId = modelForParticipant(participant)
         let accent =
             unavailable
@@ -82,6 +97,19 @@ struct EnsembleRosterStrip: View {
         default: return TWTheme.textTertiary
         }
     }
+}
+
+func isEnsembleParticipantProviderOffered(
+    _ provider: String?,
+    dynamicallySelectableProviderIds: Set<String> = []
+) -> Bool {
+    guard let provider else { return false }
+    let normalized = provider.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+    return TWTheme.isLiveSelectableProvider(normalized)
+        || (normalized == "antigravity"
+            && dynamicallySelectableProviderIds.contains {
+                $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+            })
 }
 
 /// Empty-thread welcome — mirrors the desktop welcome greeting block.

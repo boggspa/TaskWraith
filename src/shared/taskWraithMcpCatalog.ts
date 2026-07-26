@@ -140,6 +140,11 @@ export const TASKWRAITH_MCP_TOOLS = [
   // entirely in tool calls; the transcript is the receipt, not a graph editor.
   'ensemble_await',
   'ensemble_lane_result',
+  // Peer thread-to-thread message. The missing direction: SubThreadMailbox is
+  // child -> parent and cross-thread recall is read-only, so this is the only way
+  // one top-level chat hands a message to another. Gated by its OWN agentic
+  // service (`threadMessage`), never by the generic mcpTools grant.
+  'thread_message',
   'ensemble_bossman_control',
   'ensemble_poll_response',
   // 1.0.4-AN — peer-openable BINDING goal-complete poll. Any eligible-at-open
