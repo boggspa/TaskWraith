@@ -57,7 +57,8 @@ const PROVIDERS = new Set([
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ])
 const APPROVAL_ACTIONS = new Set([
   'accept',
@@ -473,6 +474,7 @@ export const IPC_ARGUMENT_SCHEMAS: Record<string, ArgSpec[]> = {
   'get-external-usage': ['optionalObject'],
   'get-workspace-activity': ['workspacePath', 'optionalNumber'],
   'grok-usage:probe': [],
+  'mistral-quota:get': [],
   'get-claude-auth-status': [],
   'get-kimi-auth-status': [],
   'get-gemini-auth-status': [],

@@ -60,6 +60,7 @@ import {
   useGrokCreditsMeterState,
   type GrokCreditsMeterViewProps
 } from './GrokCreditsMeter'
+import { MistralQuotaMeterView, useMistralQuotaMeterState } from './MistralQuotaMeter'
 import { ProviderLogoTile } from './ProviderLogoTile'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { UsageHeatmap } from './UsageHeatmap'
@@ -978,6 +979,13 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
     }
   }, [])
   const grokUsage = useGrokCreditsMeterState(apiSpend?.refreshKey, grokAvailable)
+  // Mistral's band is gated on a PERSISTED CYCLE, not on adapter registration:
+  // the seat publishes no quota, so the only evidence worth metering is spend we
+  // actually observed. A user who has never run Mistral gets a null snapshot and
+  // no row. (This also means the meter does not depend on the adapter-descriptor
+  // probe above, which is a separate lane with its own timing.)
+  const mistralQuota = useMistralQuotaMeterState(apiSpend?.refreshKey)
+  const mistralQuotaAvailable = mistralQuota.snapshot !== null
   const quotaEntries = sortByProvider(usageSummary).filter(
     (entry) =>
       entry.model === 'usage limits' &&
@@ -985,9 +993,10 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
   )
   // The API-spend view is offered whenever the caller wired it (sidebar).
   const apiSpendEnabled = Boolean(apiSpend)
-  // A plan-side meter exists when there are quota entries or the gated Grok
-  // credit meter. Only then is the Plan ⇄ Spend choice meaningful.
-  const planViewAvailable = quotaEntries.length > 0 || grokAvailable
+  // A plan-side meter exists when there are quota entries, the gated Grok
+  // credit meter, or Mistral's estimated band. Only then is the Plan ⇄ Spend
+  // choice meaningful.
+  const planViewAvailable = quotaEntries.length > 0 || grokAvailable || mistralQuotaAvailable
   const isSidebarVariant = variant === 'sidebar'
   // Render when there's a plan-side meter OR the API-spend view is available (so
   // a user on API keys with no plan meters can still reach their spend).
@@ -1233,6 +1242,11 @@ export function ModelUsageCard({ usageSummary, variant = 'card', apiSpend }: Mod
                  * inside the list so the `.model-usage-item + .model-usage-item`
                  * divider lands between Kimi and Grok. */}
                 {grokAvailable ? <GrokCreditsMeterView {...grokUsage} /> : null}
+                {/* Mistral's ESTIMATED monthly band. Spliced in for the same
+                 * reason Grok is: `ProviderUsageBlock` renders only
+                 * `entry.windows`, and this seat has no vendor-reported window
+                 * to put there. The view self-hides when no cycle is persisted. */}
+                <MistralQuotaMeterView {...mistralQuota} />
               </div>
             )}
           </div>

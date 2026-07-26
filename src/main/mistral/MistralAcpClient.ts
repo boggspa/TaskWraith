@@ -1,0 +1,189 @@
+// Mistral Vibe adapter over the provider-neutral ACP turn client (src/main/acp).
+//
+// The bidirectional JSON-RPC state machine (initialize → session/new →
+// session/prompt, session/update streaming, client-mediated
+// session/request_permission, default-deny safety, transport keep-alive,
+// cancellation) lives in AcpTurnClient. This file supplies the Vibe-shaped
+// hooks — and one hook that is load-bearing in a way no other seat's is.
+//
+// ── THE clientInfo TRAP ────────────────────────────────────────────────────
+// `vibe-acp` forwards the ACP `clientInfo` straight into the metadata of every
+// upstream API request. Mistral's API rejects that request outright when
+// `client_name` or `client_version` is empty:
+//
+//   "Value error, metadata value cannot be empty" … {"client_name":"",
+//    "client_version":"", "agent_entrypoint":"acp", …}
+//
+// The rejection surfaces to us as an opaque JSON-RPC `-32603` naming the model,
+// not the field — it reads exactly like an auth or quota failure. Every prompt
+// fails; the handshake and session/new both succeed first, so the lane looks
+// healthy right up until the first turn.
+//
+// The core declares `initializeParams` as an opaque, UNVALIDATED
+// `Record<string, unknown>` and supplies no clientInfo of its own — and the
+// core's own test fixture (AcpTurnClient.test.ts) omits clientInfo entirely.
+// A wrapper written to the type signature, or copied from that fixture, ships
+// broken. So this module never exposes a raw params object: the only way to
+// build one is `buildMistralInitializeParams`, which throws rather than emit an
+// empty name. Do not inline an object literal at the call site.
+//
+// Note also that Grok hardcodes `version: '1.0.6'` and Kimi defaults to the same
+// stale literal while the app ships 1.8.x. Harmless for them; here the version
+// travels to Mistral on every request, so it is a required argument.
+// ───────────────────────────────────────────────────────────────────────────
+
+import {
+  createAcpTurnAbortController,
+  runAcpTurn,
+  type AcpChildProcess,
+  type AcpTurnHandle
+} from '../acp/AcpTurnClient'
+import type { AcpPermissionRequest, AcpPermissionDecision } from '../grok/GrokAcpProtocol'
+import type { NormalizedGrokRunEvent } from '../grok/GrokAcpProtocol'
+
+export type { AcpChildProcess } from '../acp/AcpTurnClient'
+
+/** The client name Mistral sees in request metadata. Must be non-empty. */
+const MISTRAL_CLIENT_NAME = 'taskwraith'
+
+/**
+ * Build the `initialize` params for a Vibe session.
+ *
+ * THROWS on an empty/blank version rather than letting an empty `client_version`
+ * reach Mistral, because the resulting 422 is indistinguishable from an auth
+ * failure at the call site. Callers pass `app.getVersion()`.
+ */
+export function buildMistralInitializeParams(appVersion: string): Record<string, unknown> {
+  const version = typeof appVersion === 'string' ? appVersion.trim() : ''
+  if (!version) {
+    throw new Error(
+      'Mistral ACP initialize requires a non-empty app version: vibe-acp forwards clientInfo into Mistral API request metadata, and an empty client_version is rejected as an opaque -32603.'
+    )
+  }
+  return {
+    protocolVersion: 1,
+    // We do not service fs/* — `onInboundRequest` is never wired in production,
+    // so any fs request would be answered -32601. Never advertise a capability
+    // we will not honour.
+    clientCapabilities: { fs: { readTextFile: false, writeTextFile: false } },
+    clientInfo: { name: MISTRAL_CLIENT_NAME, version }
+  }
+}
+
+/** ENOENT / spawn-failure copy naming the real binary, so a PATH problem does
+ *  not read as a Mistral outage. The binary is `vibe-acp`, NOT `mistral` and
+ *  NOT `vibe` — `vibe` is the interactive TUI and will hang a run. */
+export function formatMistralProcessError(err: Error): string {
+  const message = typeof err?.message === 'string' ? err.message : String(err)
+  if (message.includes('ENOENT')) {
+    return 'Mistral Vibe could not start: the `vibe-acp` binary was not found on PATH. Install the Mistral Vibe CLI (it installs `vibe` and `vibe-acp` side by side) and sign in with `vibe --setup`, then retry.'
+  }
+  return `Mistral Vibe process error: ${message}`
+}
+
+export interface MistralAcpRunOptions {
+  prompt: string
+  cwd: string
+  /** TaskWraith's version string, forwarded to Mistral as `client_version`. */
+  appVersion: string
+  /** Spawns `vibe-acp` (injected for testability). */
+  spawnProcess: () => AcpChildProcess
+  /**
+   * MCP servers advertised to session/new. vibe-acp accepts stdio servers
+   * directly — its session/new signature takes
+   * `list[HttpMcpServer | SseMcpServer | McpServerStdio | AcpMcpServer]` — so
+   * this seat uses the Grok-style direct path and needs no loopback HTTP bridge.
+   * The ACP McpServer enum is UNTAGGED: do not add a `type: 'stdio'` discriminator,
+   * which matches no variant and produces a -32602 that hangs the turn.
+   */
+  mcpServers?: unknown[]
+  /**
+   * Config selections applied to the fresh session after `session/new` and
+   * before the prompt.
+   *
+   * THE ONLY PLACE THIS SEAT CAN BE CONFIGURED AT ALL. `vibe-acp` has no CLI
+   * surface (`[-h] [-v] [--setup]`) and `buildMistralAcpCliArgs()` returns an
+   * empty argv, so BOTH the permission mode and the model travel here or not at
+   * all. Omit the `mode` option and a read-only seat runs write-capable; omit
+   * the `model` option and the turn silently uses whatever `active_model` sits
+   * in the user's global `~/.vibe/config.toml`. Neither failure announces
+   * itself — the session opens, the prompt succeeds, and the wrong thing runs.
+   *
+   * Build the `mode` value with `mistralSessionModeForSeat` (MistralCliArgs),
+   * never a literal: the ungated `accept-edits` / `auto-approve` modes are
+   * unreachable through that helper by design.
+   */
+  sessionConfigOptions?: ReadonlyArray<{ configId: string; value: string }>
+  onEvent: (event: NormalizedGrokRunEvent) => void
+  onProcess?: (child: AcpChildProcess) => void
+  /**
+   * Client-mediated tool approval. Omitted = DENY, enforced by the core. A
+   * missing handler is NOT neutral: it also emits a per-tool provider_warning,
+   * so the seat presents as silently toolless with transcript noise.
+   */
+  onPermissionRequest?: (
+    request: AcpPermissionRequest
+  ) => AcpPermissionDecision | Promise<AcpPermissionDecision>
+  onClose?: (code: number | null, turnComplete: boolean, terminalStatus?: string) => void
+  onRawFrame?: (direction: 'in' | 'out', message: unknown) => void
+}
+
+export interface MistralAcpRunHandle extends AcpTurnHandle {
+  closed: Promise<void>
+}
+
+/**
+ * Route RunManager cancellation through the ACP handle so the turn is cancelled
+ * at the protocol level before RunManager's raw process-kill fallback runs.
+ *
+ * Worth having even though Vibe terminates cleanly on every signal we measured:
+ * `handle.cancel()` sends `session/cancel`, which lets the agent stop a
+ * mid-flight tool and close the turn tidily, whereas the kill fallback severs
+ * the pipe and leaves the last streamed frame unaccounted for.
+ */
+export function createMistralTurnAbortController(handle: { cancel: () => void }): AbortController {
+  return createAcpTurnAbortController(handle)
+}
+
+export function runMistralAcpTurn(options: MistralAcpRunOptions): MistralAcpRunHandle {
+  let resolveClosed!: () => void
+  const closed = new Promise<void>((resolve) => {
+    resolveClosed = resolve
+  })
+  const handle = runAcpTurn({
+    prompt: options.prompt,
+    cwd: options.cwd,
+    spawnProcess: options.spawnProcess,
+    initializeParams: buildMistralInitializeParams(options.appVersion),
+    mcpServers: options.mcpServers,
+    // Fresh-session lane only. `resumeConfigOptions` is deliberately NOT set:
+    // this seat opens a new session every turn (mistralSeatSessionsEnabled() is
+    // hard-disabled), so there is never a persisted provider-side selection to
+    // re-assert.
+    sessionConfigOptions: options.sessionConfigOptions,
+    onEvent: options.onEvent,
+    onProcess: options.onProcess,
+    onPermissionRequest: options.onPermissionRequest,
+    // Vibe has no denied-tool cancellation idiom of its own; the core's
+    // default-deny outcome is answered directly and the agent continues.
+    deniedToolRecovery: null,
+    formatProcessError: formatMistralProcessError,
+    // MEASURED, not assumed (2026-07-26, vibe-acp 2.22.0): all three terminators
+    // produce a clean `close` with exit code 0 in ~165ms — SIGTERM 165ms,
+    // SIGINT 164ms, stdin EOF 167ms. So unlike `kimi acp`, which ignores both
+    // signals and exits only on stdin EOF, Vibe cannot strand a turn behind the
+    // core's 4s SIGKILL backstop whichever we pick. SIGTERM is explicit here
+    // rather than falling through to the core's SIGINT default purely so a
+    // reader sees the choice was verified.
+    endProcess: (child) => child.kill('SIGTERM'),
+    onClose: (code, turnComplete, terminalStatus) => {
+      try {
+        options.onClose?.(code, turnComplete, terminalStatus)
+      } finally {
+        resolveClosed()
+      }
+    },
+    onRawFrame: options.onRawFrame
+  })
+  return { ...handle, closed }
+}

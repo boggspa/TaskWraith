@@ -1,0 +1,82 @@
+/*
+ * MistralQuotaMeter — the small amount of styling the Mistral band needs on top
+ * of the shared Model Usage card markup it reuses.
+ *
+ * Only variables that actually exist in styles/theme.css are referenced
+ * (--text-tertiary, --provider-mistral-color, and the sidebar aliases already
+ * used by ModelUsageCard.css with fallbacks). Nothing here invents a token.
+ */
+
+/* The band phrase is the primary read and carries its own "(estimated)" hedge,
+ * so it WRAPS rather than truncating — an ellipsis here would silently delete
+ * the hedge and leave a confident-looking claim behind. */
+.mistral-quota-meter .mistral-quota-band-label {
+  flex: 1 1 auto;
+  min-width: 0;
+  white-space: normal;
+  line-height: 1.25;
+}
+
+.mistral-quota-meter .model-usage-window-percent {
+  flex: 0 0 auto;
+}
+
+/* Not-yet-calibrated fill: hatched and dimmed. The fill's colour is set inline
+ * by QuotaProgressBar, so the differentiation is carried by mask + opacity,
+ * which cannot be overridden by that inline background. The result reads as a
+ * provisional band rather than a measured level. */
+.mistral-quota-meter .mistral-quota-bar--estimated .quota-progress-fill {
+  opacity: 0.58;
+  -webkit-mask-image: repeating-linear-gradient(115deg, #000 0 3px, rgba(0, 0, 0, 0.25) 3px 6px);
+  mask-image: repeating-linear-gradient(115deg, #000 0 3px, rgba(0, 0, 0, 0.25) 3px 6px);
+}
+
+.mistral-quota-meter .mistral-quota-bar--estimated {
+  border-style: dashed;
+}
+
+/* The card hides `.model-usage-window-meta` in the sidebar, so the qualifying
+ * line uses its own class: "of ~$14.99 est. · resets 26 Aug · not yet
+ * calibrated" is the part that keeps the figure above honest, and it must
+ * survive in the surface the feature was built for. */
+.mistral-quota-meter .mistral-quota-footnote {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 9.5px;
+  line-height: 1.3;
+  color: var(--text-tertiary);
+}
+
+.app-sidebar .model-usage-liquid-card .mistral-quota-meter .mistral-quota-footnote {
+  color: color-mix(in srgb, var(--sidebar-text-secondary, var(--text-secondary)) 70%, transparent);
+}
+
+.app-sidebar .model-usage-liquid-card .mistral-quota-meter {
+  --model-usage-provider-glow: var(--provider-mistral-color);
+}
+
+.mistral-quota-meter .mistral-quota-refreshing {
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: currentColor;
+  opacity: 0.5;
+  animation: mistral-quota-refresh-pulse 1.4s ease-in-out infinite;
+}
+
+@keyframes mistral-quota-refresh-pulse {
+  0%,
+  100% {
+    opacity: 0.18;
+  }
+  50% {
+    opacity: 0.6;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .mistral-quota-meter .mistral-quota-refreshing {
+    animation: none;
+  }
+}

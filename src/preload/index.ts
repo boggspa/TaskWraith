@@ -340,6 +340,11 @@ const api = {
   getExternalUsage: (options?: { force?: boolean }) =>
     ipcRenderer.invoke('get-external-usage', options),
   probeGrokUsage: () => ipcRenderer.invoke('grok-usage:probe'),
+  // Mistral's estimated monthly burn. Not a probe and not a vendor figure:
+  // Mistral publishes no quota and exposes no usage endpoint, so this reads the
+  // locally accumulated cycle. Resolves null until the seat has actually been
+  // run, which is what gates the sidebar meter.
+  getMistralQuotaEstimate: () => ipcRenderer.invoke('mistral-quota:get'),
   gitSnapshot: (payload: { workspacePath?: string; repoPath?: string; chatId?: string }) =>
     ipcRenderer.invoke('git:snapshot', payload) as Promise<GitResult<GitRepositorySnapshot>>,
   gitSubscribeSnapshot: (
