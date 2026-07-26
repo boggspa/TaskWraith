@@ -466,7 +466,18 @@ export const MAIN_RENDERER_ONLY_IPC_CHANNELS = new Set<string>([
   'sticky-appwatch:get',
   'sticky-appwatch:stash',
   'sticky-appwatch:clear',
-  'app:quit'
+  'app:quit',
+
+  // Peer thread-to-thread messages (S8). These were already main-renderer-only
+  // via the fail-closed default below — listing them changes no behaviour, it
+  // records the decision the classification test exists to force. Main-renderer
+  // authority is load-bearing for `thread-message:send` in particular: a send
+  // arriving on this channel is recorded as USER-AUTHORED, and a user-composed
+  // message skips the approval prompt. Widening any of these to a secondary
+  // renderer would widen a path that bypasses approval, so they stay here.
+  'thread-message:targets',
+  'thread-message:inbox',
+  'thread-message:send'
 ])
 
 export function ipcChannelRequiresMainRenderer(channel: string): boolean {
