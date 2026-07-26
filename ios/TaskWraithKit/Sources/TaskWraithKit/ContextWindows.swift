@@ -68,6 +68,15 @@ public enum ContextWindows {
         "minimax/MiniMax-M2.7": 204_800,
         "mistral/devstral-2512": 262_144,
         "mistral/mistral-medium-3.5": 262_144,
+        // Mistral Vibe CLI seat (ProviderId `mistral`) — a DIFFERENT provider
+        // from the Pi upstream directly above, which merely shares the brand
+        // word. Seat model ids are always BARE; the presence of a `/` is what
+        // separates the two identities everywhere they meet. The CLI exposes
+        // `mistral-medium-3.5` as an alias of its own wire id
+        // `mistral-vibe-cli-latest`, so both resolve here.
+        "mistral-medium-3.5": 262_144,
+        "mistral-vibe-cli-latest": 262_144,
+        "devstral-small": 262_144,
         "groq/openai/gpt-oss-120b": 131_072,
         "groq/qwen/qwen3-32b": 131_072,
         "cerebras/zai-glm-4.7": 131_072,
@@ -135,6 +144,10 @@ public enum ContextWindows {
         "ollama": 262_144,
         "antigravity": 1_048_576,
         "pi": 1_000_000,
+        // Both Vibe seat models sit at 262_144; see the bare `mistral-medium-3.5`
+        // / `devstral-small` rows above. NOT the same identity as the
+        // `mistral/<model>` rows, which are Pi's BYOK upstream.
+        "mistral": 262_144,
     ]
 
     /// Resolve the context-window size for a thread, mirroring the desktop's
