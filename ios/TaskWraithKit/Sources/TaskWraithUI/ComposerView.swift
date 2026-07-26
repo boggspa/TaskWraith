@@ -293,28 +293,9 @@ struct Composer: View {
         return nil
     }
     private var catalogs: [ProviderModelCatalog] {
-        let live = model.providerModels.map {
-            ProviderModelCatalog(provider: $0.key, models: $0.value)
-        }
-        let liveByProvider = live.reduce(
-            into: [String: ProviderModelCatalog]()
-        ) { partial, catalog in
-            partial[catalog.provider.lowercased()] = catalog
-        }
-        let keys = Set(
-            Self.fallbackProviderIds
-                + live.map { $0.provider.lowercased() }
-                + [card.provider, selectedProvider]
-                    .compactMap { $0?.lowercased() }
-                    .filter { !$0.isEmpty })
-        return keys
-            .filter {
-                TWTheme.isLiveSelectableProvider($0)
-                    || TWTheme.isProviderOfferedByModelCatalog(
-                        $0, models: liveByProvider[$0]?.models ?? [])
-            }
-            .map { liveByProvider[$0] ?? ProviderModelCatalog(provider: $0, models: []) }
-            .sorted(by: twProviderPickerOrder)
+        twOfferedProviderCatalogs(
+            model.providerModels,
+            including: [card.provider, selectedProvider].compactMap { $0 })
     }
 
     private var dynamicallySelectableProviderIds: Set<String> {
@@ -325,11 +306,6 @@ struct Composer: View {
                     ? provider.lowercased() : nil
             })
     }
-
-    // Pre-catalog picker fallback: the canonical live set from Theme.swift,
-    // not another hand-copied roster (retired/historical providers are still
-    // filtered above via isLiveSelectableProvider).
-    private static let fallbackProviderIds = Array(TWTheme.liveSelectableProviderIds)
 
     /// Phone / compact-width: Claude/Codex-style single shell — model +
     /// approval live inside the input card (trailing action strip) instead of
