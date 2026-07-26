@@ -19,9 +19,10 @@ current release pointer.
 **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
 release-paperwork commits following it. The requested 30-minute refresh reached
-feature tip `db74315dc` (**200 commits** past the tag), after Mistral Vibe,
-agent theme tokens, Canvas actuation hardening, and provider-registry
-completeness diagnostics landed in committed slices.
+concurrent-work cutoff `de6dcd264` (**202 commits** past the tag, with three
+refresh-paperwork commits interleaved), after Mistral Vibe, agent theme tokens,
+Canvas actuation hardening, provider-registry completeness diagnostics, and
+the cross-feature consent-chrome invariant landed in committed slices.
 This is still a mutable source-ahead snapshot, not a freeze: concurrent dirty
 work and three foreign ship holds remain, every per-entry verify/`Block`
 disposition stays in force, and the exact integrated candidate must be
@@ -109,7 +110,11 @@ finding above:
 - Canvas actuation now serializes interactions per surface, refuses stale
   targets and stale human-input epochs, keeps credential fields human-only,
   preserves an in-progress sketch stroke, and refuses to act while recent
-  real input says the user is driving. The exact candidate still needs its
+  real input says the user is driving. AppDrive must never observe or actuate
+  TaskWraith's own renderer or consent chrome: current Canvas tiers satisfy
+  that structurally through isolated `WebContents`, while a future window
+  driver must refuse TaskWraith's process by identity. Human-presence delay is
+  not a substitute for that boundary. The exact candidate still needs its
   recorded Canvas audit/lifecycle verification.
 - Provider run management now records additive lifecycle assurance across all
   ten stable provider identities: immutable launch plans, isolated homes,
