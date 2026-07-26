@@ -2,22 +2,24 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'child_process'
 import { isAbsolute } from 'node:path'
 import { createInterface, type Interface as ReadlineInterface } from 'readline'
 import {
-  createCliEnv,
-  createCliSpawnPlan,
-  resolveCliProviderBinary
+  resolveCliProviderBinary,
+  type ResolvedProviderBinary
 } from './providers/CliProviderRuntime'
-import { withCodexCodeModeHostEnv } from './CodexCodeModeHost'
 import type { RuntimeProfile } from './store/types'
 import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from './UserMcpServers'
 import { CodexAppServerRequestTimeoutError } from './codex/CodexAppServerRequestError'
+import {
+  buildCodexAppServerProcessLaunchPlan,
+  type CodexAppServerProcessLaunchPlan,
+  type CodexAppServerProcessLaunchPlanInput
+} from './codex/CodexAppServerProcessLaunchPlan'
 import {
   type CodexRolloutMigrationResult,
   CodexHomeContinuityError,
   ensureTaskWraithCodexHomeForLaunch,
   legacyCodexHomePath,
   migrateLinkedCodexRollout,
-  requireAbsoluteCodexHome,
-  withTaskWraithCodexHomeEnv
+  requireAbsoluteCodexHome
 } from './codex/CodexHome'
 import { isCodexAppServerThreadId } from './CodexSessionIdentity'
 export { isCodexAppServerThreadId }
@@ -25,6 +27,7 @@ export {
   CodexAppServerRequestTimeoutError,
   isCodexAppServerRequestTimeout
 } from './codex/CodexAppServerRequestError'
+export { buildCodexFastServiceTierCompatibilityArgs } from './codex/CodexAppServerProcessLaunchPlan'
 
 /**
  * Detect the specific failure where the codex CLI refuses to start because
@@ -84,10 +87,6 @@ export function codexConfigParseUserMessage(stderr: string): string {
     `Edit it (for example, service_tier must be "fast" or "flex") or run ` +
     '`brew upgrade codex` to update the CLI, then retry.'
   )
-}
-
-export function buildCodexFastServiceTierCompatibilityArgs(): string[] {
-  return ['-c', 'service_tier="fast"']
 }
 
 /**
@@ -182,8 +181,8 @@ function capabilityValueEnabled(value: unknown): boolean {
   if (value === true) return true
   if (typeof value === 'string') return value.toLowerCase() === 'true'
   if (!isRecord(value)) return false
-  return ['enabled', 'available', 'supported', 'write', 'update', 'control', 'native'].some(
-    (key) => capabilityValueEnabled(value[key])
+  return ['enabled', 'available', 'supported', 'write', 'update', 'control', 'native'].some((key) =>
+    capabilityValueEnabled(value[key])
   )
 }
 
@@ -223,6 +222,87 @@ export function codexInitializeAdvertisesNativeGoalControl(initializeResult: unk
 export interface CodexApprovalResponse {
   requestId: string
   action: 'accept' | 'acceptForSession' | 'decline' | 'cancel'
+}
+
+export type CodexAppServerStartupBoundary =
+  | 'ensure-started-entry'
+  | 'after-home-ready'
+  | 'after-binary-resolution'
+  | 'after-launch-plan'
+  | 'before-spawn'
+  | 'before-compatibility-retry'
+  | 'after-compatibility-retry'
+  | 'after-startup'
+  | 'after-shared-startup'
+
+type CodexAppServerStartupAuthorityAssertion = (boundary: CodexAppServerStartupBoundary) => void
+
+/**
+ * Per-caller authority for starting the shared Codex daemon. At least one
+ * independently-derived authority source is required whenever this argument
+ * is supplied. Existing non-run maintenance callers may omit the argument;
+ * provider-run dispatch must pass its exact RunManager signal/assertion.
+ */
+export type CodexAppServerStartupAuthority =
+  | {
+      readonly signal: AbortSignal
+      readonly assertCanStart?: CodexAppServerStartupAuthorityAssertion
+    }
+  | {
+      readonly signal?: AbortSignal
+      readonly assertCanStart: CodexAppServerStartupAuthorityAssertion
+    }
+
+export class CodexAppServerStartupAbortedError extends Error {
+  readonly boundary: CodexAppServerStartupBoundary
+
+  constructor(boundary: CodexAppServerStartupBoundary, reason?: unknown) {
+    const detail =
+      reason instanceof Error
+        ? reason.message
+        : typeof reason === 'string' && reason.trim()
+          ? reason.trim()
+          : ''
+    super(
+      `Codex app-server startup authority was revoked at ${boundary}.${detail ? ` ${detail}` : ''}`
+    )
+    this.name = 'AbortError'
+    this.boundary = boundary
+  }
+}
+
+function assertCodexAppServerStartupAuthority(
+  authority: CodexAppServerStartupAuthority | undefined,
+  boundary: CodexAppServerStartupBoundary
+): void {
+  if (authority?.signal?.aborted) {
+    throw new CodexAppServerStartupAbortedError(boundary, authority.signal.reason)
+  }
+  authority?.assertCanStart?.(boundary)
+  // The synchronous assertion may itself revoke the RunManager signal. Check
+  // it again before returning so the next statement cannot cross that fence.
+  if (authority?.signal?.aborted) {
+    throw new CodexAppServerStartupAbortedError(boundary, authority.signal.reason)
+  }
+}
+
+export interface CodexAppServerStartupDependencies {
+  readonly ensureHomeForLaunch: (codexHome: string) => Promise<unknown>
+  readonly resolveBinary: (
+    provider: 'codex',
+    runtimeProfile: RuntimeProfile | null
+  ) => Promise<ResolvedProviderBinary>
+  readonly buildProcessLaunchPlan: (
+    input: CodexAppServerProcessLaunchPlanInput
+  ) => Promise<CodexAppServerProcessLaunchPlan>
+  readonly spawnProcess: typeof spawn
+}
+
+const defaultCodexAppServerStartupDependencies: CodexAppServerStartupDependencies = {
+  ensureHomeForLaunch: ensureTaskWraithCodexHomeForLaunch,
+  resolveBinary: resolveCliProviderBinary,
+  buildProcessLaunchPlan: buildCodexAppServerProcessLaunchPlan,
+  spawnProcess: spawn
 }
 
 /**
@@ -331,7 +411,10 @@ export function buildCodexTaskWraithMcpArgs(config: CodexMcpTaskWraithConfig): s
   for (const server of config.userMcpServers ?? []) {
     if (!isTomlBareKeyComponent(server.serverName)) continue
     if (server.transport === 'http') {
-      configArgs.push('-c', `mcp_servers.${server.serverName}.url="${tomlEscapeString(server.url)}"`)
+      configArgs.push(
+        '-c',
+        `mcp_servers.${server.serverName}.url="${tomlEscapeString(server.url)}"`
+      )
       if (server.bearerTokenEnvVar) {
         configArgs.push(
           '-c',
@@ -392,11 +475,28 @@ export class CodexAppServerClient {
   private recentStderr = ''
   private readonly codexHome: string
   private readonly legacyCodexHomes: () => readonly string[]
+  private readonly startupDependencies: CodexAppServerStartupDependencies
   private readonly privateHomeThreadIds = new Set<string>()
 
-  constructor(codexHome: string, legacyCodexHomes: () => readonly string[] = () => []) {
+  constructor(
+    codexHome: string,
+    legacyCodexHomes: () => readonly string[] = () => [],
+    startupDependencies: Partial<CodexAppServerStartupDependencies> = {}
+  ) {
     this.codexHome = requireAbsoluteCodexHome(codexHome)
     this.legacyCodexHomes = legacyCodexHomes
+    this.startupDependencies = {
+      ensureHomeForLaunch:
+        startupDependencies.ensureHomeForLaunch ??
+        defaultCodexAppServerStartupDependencies.ensureHomeForLaunch,
+      resolveBinary:
+        startupDependencies.resolveBinary ?? defaultCodexAppServerStartupDependencies.resolveBinary,
+      buildProcessLaunchPlan:
+        startupDependencies.buildProcessLaunchPlan ??
+        defaultCodexAppServerStartupDependencies.buildProcessLaunchPlan,
+      spawnProcess:
+        startupDependencies.spawnProcess ?? defaultCodexAppServerStartupDependencies.spawnProcess
+    }
   }
 
   /**
@@ -435,10 +535,7 @@ export class CodexAppServerClient {
    */
   setMcpConfig(config: CodexMcpTaskWraithConfig | null): void {
     this.mcpConfig = config
-    if (
-      this.isRunning() &&
-      this.startedMcpConfigFingerprint
-    ) {
+    if (this.isRunning() && this.startedMcpConfigFingerprint) {
       this.mcpConfigStale = this.startedMcpConfigFingerprint !== codexMcpConfigFingerprint(config)
     }
   }
@@ -463,18 +560,33 @@ export class CodexAppServerClient {
     return this.isRunning() && this.mcpConfigStale
   }
 
-  async ensureStarted(appVersion: string): Promise<void> {
+  async ensureStarted(
+    appVersion: string,
+    startupAuthority?: CodexAppServerStartupAuthority
+  ): Promise<void> {
+    assertCodexAppServerStartupAuthority(startupAuthority, 'ensure-started-entry')
     if (this.proc && !this.proc.killed) {
       return
     }
-    if (this.startPromise) {
-      return this.startPromise
+    const sharedStartup = this.startPromise
+    if (sharedStartup) {
+      await sharedStartup
+      assertCodexAppServerStartupAuthority(startupAuthority, 'after-shared-startup')
+      return
     }
 
-    this.startPromise = this.start(appVersion).finally(() => {
-      this.startPromise = null
-    })
-    return this.startPromise
+    const ownedStartup = this.start(appVersion, {}, startupAuthority)
+    this.startPromise = ownedStartup
+    try {
+      await ownedStartup
+      assertCodexAppServerStartupAuthority(startupAuthority, 'after-startup')
+    } finally {
+      // dispose/profile switches can clear this field while startup is still
+      // unwinding. Never let an old completion erase a newer startup promise.
+      if (this.startPromise === ownedStartup) {
+        this.startPromise = null
+      }
+    }
   }
 
   async request<T = any>(method: string, params: any = {}, timeoutMs = 30_000): Promise<T> {
@@ -587,9 +699,12 @@ export class CodexAppServerClient {
 
   private async start(
     appVersion: string,
-    options: { forceFastServiceTier?: boolean } = {}
+    options: { forceFastServiceTier?: boolean } = {},
+    startupAuthority?: CodexAppServerStartupAuthority
   ): Promise<void> {
-    await ensureTaskWraithCodexHomeForLaunch(this.codexHome)
+    assertCodexAppServerStartupAuthority(startupAuthority, 'ensure-started-entry')
+    await this.startupDependencies.ensureHomeForLaunch(this.codexHome)
+    assertCodexAppServerStartupAuthority(startupAuthority, 'after-home-ready')
     // Phase I2: prepend `-c mcp_servers.TaskWraith.*` config flags so
     // the Codex CLI registers the TaskWraith MCP bridge as an MCP server
     // for the whole app-server lifetime. The bridge subprocess
@@ -601,42 +716,31 @@ export class CodexAppServerClient {
     this.startedMcpConfigFingerprint = codexMcpConfigFingerprint(this.mcpConfig)
     this.mcpConfigStale = false
     const mcpArgs = buildCodexTaskWraithMcpArgs(effectiveMcpConfig)
-    const codexArgs = [
-      ...(options.forceFastServiceTier ? buildCodexFastServiceTierCompatibilityArgs() : []),
-      ...mcpArgs,
-      'app-server'
-    ]
-    const codexEnv = withTaskWraithCodexHomeEnv(
-      {
-        ...collectUserMcpProviderEnv(effectiveMcpConfig.userMcpServers),
-        FORCE_COLOR: '0',
-        NO_COLOR: '1'
-      },
-      this.codexHome
-    )
-    if (effectiveMcpConfig.enabled) {
-      codexEnv.TASKWRAITH_PARENT_PROVIDER = effectiveMcpConfig.parentProvider
-    }
-    if (this.runtimeProfile?.id) {
-      codexEnv.TASKWRAITH_RUNTIME_PROFILE_ID = this.runtimeProfile.id
-    }
     // Reset the stderr ring buffer for this start attempt so a stale error
     // from a prior failed start can't be misattributed to this one.
     this.recentStderr = ''
     this.initializeResult = null
-    const resolvedCodex = await resolveCliProviderBinary('codex', this.runtimeProfile)
+    const resolvedCodex = await this.startupDependencies.resolveBinary('codex', this.runtimeProfile)
+    assertCodexAppServerStartupAuthority(startupAuthority, 'after-binary-resolution')
     if (!resolvedCodex.binaryPath) {
       throw new Error(resolvedCodex.error || 'Codex CLI was not found.')
     }
-    const spawnPlan = createCliSpawnPlan(resolvedCodex.binaryPath, codexArgs)
-    const spawnEnv = await withCodexCodeModeHostEnv(
-      createCliEnv(codexEnv, resolvedCodex.binaryPath),
-      resolvedCodex.binaryPath
-    )
-    const proc = spawn(spawnPlan.command, spawnPlan.args, {
-      shell: spawnPlan.shell,
+    const launchPlan = await this.startupDependencies.buildProcessLaunchPlan({
+      binaryPath: resolvedCodex.binaryPath,
+      codexHome: this.codexHome,
+      mcpConfigArgs: mcpArgs,
+      mcp: effectiveMcpConfig,
+      runtimeProfile: this.runtimeProfile,
+      forceFastServiceTier: options.forceFastServiceTier
+    })
+    assertCodexAppServerStartupAuthority(startupAuthority, 'after-launch-plan')
+    // This must remain the immediate pre-spawn statement. There is no await or
+    // other user-code boundary between the final authority fence and spawn.
+    assertCodexAppServerStartupAuthority(startupAuthority, 'before-spawn')
+    const proc = this.startupDependencies.spawnProcess(launchPlan.command, [...launchPlan.args], {
+      shell: launchPlan.shell,
       stdio: 'pipe',
-      env: spawnEnv
+      env: launchPlan.env
     })
     this.proc = proc
 
@@ -693,11 +797,13 @@ export class CodexAppServerClient {
       const stderr = this.recentStderr.trim()
       if (stderr) {
         if (!options.forceFastServiceTier && isCodexConfigParseError(stderr)) {
+          assertCodexAppServerStartupAuthority(startupAuthority, 'before-compatibility-retry')
           this.stderrHandler?.(
             'Codex rejected config.toml; retrying app-server with service_tier="fast" compatibility override.\n'
           )
           this.dispose()
-          await this.start(appVersion, { forceFastServiceTier: true })
+          await this.start(appVersion, { forceFastServiceTier: true }, startupAuthority)
+          assertCodexAppServerStartupAuthority(startupAuthority, 'after-compatibility-retry')
           return
         }
         const base = error instanceof Error ? error.message : String(error)
