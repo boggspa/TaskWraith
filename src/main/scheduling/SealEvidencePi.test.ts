@@ -55,7 +55,10 @@ function deps(providerCalls?: string[]): PiSealEvidenceDeps {
     authorityRoot: {
       providerLaunchHmac: (provider, payload) => {
         providerCalls?.push(provider)
-        return createHmac('sha256', key).update(`provider:${provider}`).update(payload).digest('hex')
+        return createHmac('sha256', key)
+          .update(`provider:${provider}`)
+          .update(payload)
+          .digest('hex')
       }
     }
   }

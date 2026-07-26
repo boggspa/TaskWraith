@@ -33,8 +33,4 @@ const getProviderOfferUnavailableReason = (provider: ProviderId): string => {
   return `${getProviderLabel(provider)} is not currently offered for new runs.`
 }
 
-export {
-  getProviderLabel,
-  getProviderOfferUnavailableReason,
-  providerModelColorClass
-}
+export { getProviderLabel, getProviderOfferUnavailableReason, providerModelColorClass }

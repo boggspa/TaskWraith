@@ -710,9 +710,9 @@ describe('ProviderLaunchAuthorityDigest', () => {
     } as const satisfies ProviderLaunchAuthorityInputByProvider['antigravity']
     expect(() => buildProviderLaunchAuthority(defaultAgy)).not.toThrow()
 
-    expect(() =>
-      buildProviderLaunchAuthority({ ...pi, provider: 'antigravity' } as never)
-    ).toThrow(/AntiGravity|transport/i)
+    expect(() => buildProviderLaunchAuthority({ ...pi, provider: 'antigravity' } as never)).toThrow(
+      /AntiGravity|transport/i
+    )
     expect(() =>
       buildProviderLaunchAuthority({ ...antigravityAgy, provider: 'pi' } as never)
     ).toThrow(/Pi controls|invalid field set/i)

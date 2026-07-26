@@ -261,11 +261,7 @@ export function antigravityLaunchAuthorityDigest(input: AntigravityLaunchAuthori
 }
 
 function normalizeCommon(value: unknown): ProviderLaunchCommonAuthority {
-  const input = exactRecord(
-    value,
-    Object.keys(COMMON_FIELDS),
-    'AntiGravity common authority'
-  )
+  const input = exactRecord(value, Object.keys(COMMON_FIELDS), 'AntiGravity common authority')
   const sessionMode = oneOf(input.sessionMode, ['fresh', 'resume'], 'session mode')
   const resumeSessionHmac = nullableSha256(input.resumeSessionHmac, 'resume session HMAC')
   const providerSessionGenerationSha256 = nullableSha256(
@@ -322,11 +318,7 @@ function normalizeTools(value: unknown): ProviderToolSurfaceAuthority {
 }
 
 function normalizeCliRuntime(value: unknown): CliRuntimeIdentityAuthority {
-  const input = exactRecord(
-    value,
-    Object.keys(CLI_RUNTIME_FIELDS),
-    'AntiGravity agy runtime'
-  )
+  const input = exactRecord(value, Object.keys(CLI_RUNTIME_FIELDS), 'AntiGravity agy runtime')
   if (input.kind !== 'cli') throw new TypeError('The official agy runtime kind must be cli.')
   return {
     kind: 'cli',

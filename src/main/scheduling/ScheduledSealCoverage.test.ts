@@ -22,9 +22,7 @@ describe('ScheduledSealCoverage', () => {
     ])
     expect(SCHEDULED_SEAL_PRODUCTION_WIRED_PROVIDER_IDS).toEqual(['cursor'])
 
-    const matrix = buildRuntimeProviderRunManagementMatrix(
-      SCHEDULED_SEAL_RUN_MANAGEMENT_COVERAGE
-    )
+    const matrix = buildRuntimeProviderRunManagementMatrix(SCHEDULED_SEAL_RUN_MANAGEMENT_COVERAGE)
     expect(Object.keys(matrix)).toEqual(PROVIDER_RUN_MANAGEMENT_IDS)
     expect(matrix.gemini).toMatchObject({
       offerState: 'retired-history-only',

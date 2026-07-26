@@ -42,9 +42,7 @@ function requiredString(value: unknown, label: string): string {
   return normalized
 }
 
-function cloneEffectivePermissions(
-  permissions: EffectiveRunPermissions
-): EffectiveRunPermissions {
+function cloneEffectivePermissions(permissions: EffectiveRunPermissions): EffectiveRunPermissions {
   return {
     ...permissions,
     agenticServices: { ...permissions.agenticServices },
@@ -97,9 +95,7 @@ export function buildCodexNativeReviewInvocationParams(input: {
     workflowMode: 'normal',
     effectivePermissions: cloneEffectivePermissions(permissions),
     effectivePermissionsSignature: signature,
-    ...(payload.resumeFallbackPrompt
-      ? { resumeFallbackPrompt: payload.resumeFallbackPrompt }
-      : {}),
+    ...(payload.resumeFallbackPrompt ? { resumeFallbackPrompt: payload.resumeFallbackPrompt } : {}),
     ...(payload.externalPathGrants
       ? { externalPathGrants: payload.externalPathGrants.map((grant) => ({ ...grant })) }
       : {}),

@@ -5,14 +5,8 @@ import {
 } from '../mcp/McpSessionProfileFence'
 import { sanitizeTaskWraithMcpPromptClaims } from '../PromptComposition'
 import { normalizeCliProviderModel } from '../providers/StaticProviderModels'
-import {
-  isCursorGrok45ModelId,
-  resolveCursorGrok45CliModelId
-} from '../../shared/grok45Models'
-import {
-  buildContainedCursorReadOnlyArgv,
-  buildContainedCursorWriteArgv
-} from './CursorCliArgs'
+import { isCursorGrok45ModelId, resolveCursorGrok45CliModelId } from '../../shared/grok45Models'
+import { buildContainedCursorReadOnlyArgv, buildContainedCursorWriteArgv } from './CursorCliArgs'
 import {
   CURSOR_BROKER_MCP_ALLOW_RULES,
   CURSOR_BROKER_PLAN_MCP_ALLOW_RULES,
@@ -20,10 +14,7 @@ import {
   CURSOR_MCP_SERVER_NAME
 } from './CursorMcpBridge'
 
-export type CursorPathBBrokerOutcome =
-  | 'not-requested'
-  | 'active'
-  | 'native-only-degraded'
+export type CursorPathBBrokerOutcome = 'not-requested' | 'active' | 'native-only-degraded'
 
 export interface CursorPathBBrokerPolicy {
   readonly bridgeMode: 'safe-subset' | 'plan-subset' | 'full'
@@ -198,8 +189,7 @@ export function buildCursorPathBLaunchPlan(
       planSubset: brokerActive && policy.planSubset,
       coreSubset: brokerActive && policy.coreSubset,
       gatewaySubset: brokerActive && policy.gatewaySubset,
-      workspaceMcpAliasesGlobalRegistry:
-        brokerActive && input.workspaceMcpAliasesGlobalRegistry
+      workspaceMcpAliasesGlobalRegistry: brokerActive && input.workspaceMcpAliasesGlobalRegistry
     })
   })
 }

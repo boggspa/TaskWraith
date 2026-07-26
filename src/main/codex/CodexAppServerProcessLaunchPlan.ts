@@ -6,10 +6,7 @@ import {
   type CliProviderRuntimeDependencies
 } from '../providers/CliProviderRuntime'
 import type { RuntimeProfile } from '../store/types'
-import {
-  collectUserMcpProviderEnv,
-  type UserMcpLaunchServer
-} from '../UserMcpServers'
+import { collectUserMcpProviderEnv, type UserMcpLaunchServer } from '../UserMcpServers'
 
 export interface CodexAppServerMcpLaunchFacts {
   readonly enabled: boolean
@@ -69,9 +66,7 @@ export async function buildCodexAppServerProcessLaunchPlan(
       ...collectUserMcpProviderEnv(input.mcp.userMcpServers),
       FORCE_COLOR: '0',
       NO_COLOR: '1',
-      ...(input.mcp.enabled
-        ? { TASKWRAITH_PARENT_PROVIDER: input.mcp.parentProvider }
-        : {}),
+      ...(input.mcp.enabled ? { TASKWRAITH_PARENT_PROVIDER: input.mcp.parentProvider } : {}),
       ...(input.runtimeProfile?.id
         ? { TASKWRAITH_RUNTIME_PROFILE_ID: input.runtimeProfile.id }
         : {})

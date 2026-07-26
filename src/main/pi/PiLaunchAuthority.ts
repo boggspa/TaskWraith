@@ -3,11 +3,7 @@ import type {
   ProviderLaunchCommonAuthority,
   ProviderToolSurfaceAuthority
 } from '../ProviderLaunchAuthorityDigest'
-import {
-  isPiUpstreamAllowed,
-  piModelPolicyVerdict,
-  type PiUpstreamId
-} from './PiModelPolicy'
+import { isPiUpstreamAllowed, piModelPolicyVerdict, type PiUpstreamId } from './PiModelPolicy'
 import { splitPiWireModelId } from './PiModels'
 
 const MAX_TEXT_LENGTH = 4_096

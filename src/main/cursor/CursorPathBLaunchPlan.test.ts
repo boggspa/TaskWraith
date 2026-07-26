@@ -9,9 +9,7 @@ import {
 const WORKSPACE = '/Users/test/repo'
 const PROMPT = 'Review the workspace.'
 
-function input(
-  overrides: Partial<CursorPathBLaunchPlanInput> = {}
-): CursorPathBLaunchPlanInput {
+function input(overrides: Partial<CursorPathBLaunchPlanInput> = {}): CursorPathBLaunchPlanInput {
   return {
     workspacePath: WORKSPACE,
     prompt: PROMPT,
@@ -149,9 +147,7 @@ describe('CursorPathBLaunchPlan', () => {
     expect(plan.wireModel).toBe('grok-4.5-fast-xhigh')
     expect(plan.reasoningEffort).toBe('high')
     expect(plan.fastMode).toBe(true)
-    expect(plan.argv).toEqual(
-      expect.arrayContaining(['--model', 'grok-4.5-fast-xhigh'])
-    )
+    expect(plan.argv).toEqual(expect.arrayContaining(['--model', 'grok-4.5-fast-xhigh']))
   })
 
   it('rejects contradictory broker outcomes and freezes the final plan', () => {

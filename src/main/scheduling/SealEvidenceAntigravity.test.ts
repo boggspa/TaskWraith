@@ -227,9 +227,7 @@ describe('AntiGravity scheduled evidence route', () => {
   it('internally binds every evidence HMAC to the AntiGravity root domain', async () => {
     const providers: string[] = []
     const fixture = createApiFixture()
-    requireEvidence(
-      await buildAntigravitySealEvidence(evidenceDeps(providers), fixture.facts)
-    )
+    requireEvidence(await buildAntigravitySealEvidence(evidenceDeps(providers), fixture.facts))
     expect(providers.length).toBeGreaterThan(0)
     expect(new Set(providers)).toEqual(new Set(['antigravity']))
   })
