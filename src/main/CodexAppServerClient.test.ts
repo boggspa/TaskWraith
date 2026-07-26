@@ -17,6 +17,8 @@ import {
   compareCodexVersions,
   isCodexAppServerThreadId,
   isCodexConfigParseError,
+  isCodexTokenRevokedError,
+  codexTokenRevokedUserMessage,
   parseCodexVersion,
   type CodexMcpTaskWraithConfig
 } from './CodexAppServerClient'
@@ -487,5 +489,32 @@ describe('compareCodexVersions', () => {
     expect(compareCodexVersions('0.9.0', '0.10.0')).toBe(-1)
     expect(compareCodexVersions('1.0.0', '0.999.0')).toBe(1)
     expect(compareCodexVersions('0.128.1', '0.128.0')).toBe(1)
+  })
+})
+
+describe('isCodexTokenRevokedError', () => {
+  // Verbatim from the upstream 401 that cost a support round-trip.
+  const REVOKED =
+    '{"error":{"message":"Encountered invalidated oauth token for user, failing request","code":"token_revoked"},"status":401}'
+
+  it('detects the revoked-token 401 by code and by phrasing', () => {
+    expect(isCodexTokenRevokedError(REVOKED)).toBe(true)
+    expect(isCodexTokenRevokedError('code: TOKEN_REVOKED')).toBe(true)
+    expect(isCodexTokenRevokedError('Encountered invalidated OAuth token for user')).toBe(true)
+  })
+
+  it('does NOT fire on a bare 401 — an expired token is refreshable', () => {
+    // Different remedy: expired refreshes silently, revoked must be replaced.
+    expect(isCodexTokenRevokedError('HTTP error: 401 Unauthorized')).toBe(false)
+    expect(isCodexTokenRevokedError('401')).toBe(false)
+    expect(isCodexTokenRevokedError('')).toBe(false)
+    expect(isCodexTokenRevokedError(null)).toBe(false)
+  })
+
+  it('tells the user to sign OUT first, which is the non-obvious part', () => {
+    const message = codexTokenRevokedUserMessage()
+    expect(message).toMatch(/revoked/i)
+    expect(message).toMatch(/sign out/i)
+    expect(message).toMatch(/cannot be refreshed/i)
   })
 })

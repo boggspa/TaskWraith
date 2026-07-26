@@ -90,6 +90,36 @@ export function codexConfigParseUserMessage(stderr: string): string {
 }
 
 /**
+ * A REVOKED OAuth token, as distinct from an absent one.
+ *
+ * The upstream 401 body says exactly what happened —
+ * `{"code":"token_revoked","message":"Encountered invalidated oauth token for
+ * user, failing request"}` — and TaskWraith replaced it with the generic
+ * "sign-in is required", which reads as "you are not signed in" to someone who
+ * demonstrably is. The distinction is the whole remedy: a revoked token cannot
+ * be refreshed, and re-running sign-in on top of the stale credential looks
+ * like it silently fails. It has to be cleared first.
+ *
+ * Deliberately narrow: the explicit `token_revoked` code, or the upstream's
+ * exact "invalidated oauth token" phrasing. A bare 401 is NOT enough — an
+ * expired-but-refreshable token is also a 401 and has a different remedy.
+ */
+export function isCodexTokenRevokedError(text: string | null | undefined): boolean {
+  if (typeof text !== 'string' || !text.trim()) return false
+  const lowered = text.toLowerCase()
+  return lowered.includes('token_revoked') || lowered.includes('invalidated oauth token')
+}
+
+/** Actionable message for a revoked Codex OAuth token. Pinned by unit test. */
+export function codexTokenRevokedUserMessage(): string {
+  return (
+    'Your Codex sign-in was revoked upstream, so it cannot be refreshed — signing in again ' +
+    'on top of it will appear to do nothing. Use Settings → Providers → Codex → Sign out, ' +
+    'then Sign in, to replace the stored credential in TaskWraith’s private Codex home.'
+  )
+}
+
+/**
  * Parse a codex `--version` line (e.g. `codex-cli 0.128.0` or
  * `codex-cli 0.136.0-alpha.2`) into comparable numeric parts plus a
  * prerelease tag. Returns null when no semver-looking token is present so the

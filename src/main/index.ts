@@ -222,7 +222,9 @@ import {
   compareCodexVersions,
   isCodexAppServerThreadId,
   isCodexAppServerRequestTimeout,
-  isCodexConfigParseError
+  isCodexConfigParseError,
+  isCodexTokenRevokedError,
+  codexTokenRevokedUserMessage
 } from './CodexAppServerClient'
 import {
   codexCompactionFailureProvesNoLiveTurn,
@@ -20353,7 +20355,14 @@ async function probeCodexParticipant(
       // Surface a config.toml parse failure as the actionable message so the
       // ensemble unreachable reason isn't a cryptic serde dump.
       const stderr = (err as { codexStderr?: string } | null)?.codexStderr || message
-      const reason = isCodexConfigParseError(stderr) ? codexConfigParseUserMessage(stderr) : message
+      // A revoked token is checked FIRST: it is also surfaced as a generic
+      // failure, and its remedy (sign out, then in) differs from every other
+      // 401 — re-signing in over a revoked credential appears to do nothing.
+      const reason = isCodexTokenRevokedError(stderr)
+        ? codexTokenRevokedUserMessage()
+        : isCodexConfigParseError(stderr)
+          ? codexConfigParseUserMessage(stderr)
+          : message
       return { reachable: false, reason, underlyingCode: code }
     })
   const timeout = new Promise<ParticipantProbeResult>((resolve) =>
@@ -43754,7 +43763,8 @@ if (isGeminiMcpBridgeProcess) {
       lstatSync: (path) => fsSync.lstatSync(path),
       writeFileSync: (path, data, options) => fsSync.writeFileSync(path, data, options),
       chmodSync: (path, mode) => fsSync.chmodSync(path, mode),
-      getPlatform: () => process.platform
+      getPlatform: () => process.platform,
+      realpathSync: (path) => fsSync.realpathSync(path)
     })
 
     const resolveSenderAgentThreadScope = (event: IpcMainInvokeEvent): AgentThreadSenderScope => {
