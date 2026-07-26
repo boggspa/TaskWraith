@@ -288,7 +288,7 @@ export interface McpBridgeRuntimeDeps {
     scope?: ChatScope,
     sessionTrust?: boolean,
     options?: InstallGeminiToolContextOptions
-  ) => McpBridgeAgentRunRoute
+  ) => McpBridgeAgentRunRoute | Promise<McpBridgeAgentRunRoute>
   sendAgentCompatLine: (
     sender: WebContents,
     provider: ProviderId,
@@ -300,6 +300,41 @@ export interface McpBridgeRuntimeDeps {
 export interface GeminiMcpBridgePrepareOptions {
   requireWriteTools?: boolean
   runPayload?: McpBridgeAgentRunPayload
+  /** Run-scoped setup cancellation; shared broker state itself remains reusable. */
+  setupSignal?: AbortSignal
+  /** Revalidates exact run/history authority after every awaited setup boundary. */
+  isRunAuthorized?: () => boolean
+  /**
+   * Compensates only the exact run-context install when authority is revoked
+   * while that final install is in flight. Shared broker/registration repair is
+   * deliberately retained because another live run may be using it.
+   */
+  cleanupInstalledRunContextOnRevocation?: (route: McpBridgeAgentRunRoute) => void
+}
+
+export type GeminiMcpBridgePreparationBoundary =
+  | 'initial'
+  | 'bridge-enable-warning'
+  | 'bridge-enable-setting'
+  | 'broker-start'
+  | 'bridge-repair'
+  | 'bridge-status'
+  | 'bridge-self-test'
+  | 'run-context-install'
+
+export interface GeminiMcpBridgePreparationRevocationReceipt {
+  kind: 'run-authority-revoked'
+  boundary: GeminiMcpBridgePreparationBoundary
+  sharedBridgeState: 'retained-for-other-runs'
+  runContextCleanup: 'not-required' | 'completed' | 'unavailable' | 'failed'
+  cleanupError?: string
+}
+
+export class GeminiMcpBridgePreparationAbortedError extends Error {
+  constructor(readonly receipt: GeminiMcpBridgePreparationRevocationReceipt) {
+    super(`Gemini MCP bridge preparation lost run lifecycle authority at ${receipt.boundary}.`)
+    this.name = 'GeminiMcpBridgePreparationAbortedError'
+  }
 }
 
 export interface GeminiMcpBridgeProcessDeps {
@@ -2648,7 +2683,41 @@ export class McpBridgeRuntime {
     const settings = this.deps.getSettings()
     const resolvedCwd = resolve(cwd)
     const requireWriteTools = Boolean(options.requireWriteTools && scope !== 'global')
+    let runContextInstallAttempted = false
+    let cleanupAttempted = false
+    const assertRunAuthorized = (
+      boundary: GeminiMcpBridgePreparationBoundary
+    ): void => {
+      if (options.setupSignal?.aborted || options.isRunAuthorized?.() === false) {
+        let runContextCleanup: GeminiMcpBridgePreparationRevocationReceipt['runContextCleanup'] =
+          runContextInstallAttempted ? 'unavailable' : 'not-required'
+        let cleanupError: string | undefined
+        if (
+          runContextInstallAttempted &&
+          !cleanupAttempted &&
+          options.cleanupInstalledRunContextOnRevocation
+        ) {
+          cleanupAttempted = true
+          try {
+            options.cleanupInstalledRunContextOnRevocation(routed)
+            runContextCleanup = 'completed'
+          } catch (error) {
+            runContextCleanup = 'failed'
+            cleanupError = error instanceof Error ? error.message : String(error)
+          }
+        }
+        throw new GeminiMcpBridgePreparationAbortedError({
+          kind: 'run-authority-revoked',
+          boundary,
+          sharedBridgeState: 'retained-for-other-runs',
+          runContextCleanup,
+          ...(cleanupError ? { cleanupError } : {})
+        })
+      }
+    }
+    assertRunAuthorized('initial')
     if (settings.geminiMcpBridgeEnabled || requireWriteTools) {
+      assertRunAuthorized('initial')
       if (requireWriteTools && !settings.geminiMcpBridgeEnabled) {
         this.deps.sendAgentCompatLine(
           sender,
@@ -2663,17 +2732,22 @@ export class McpBridgeRuntime {
           },
           routed
         )
+        assertRunAuthorized('bridge-enable-warning')
         this.deps.updateSettings({ geminiMcpBridgeEnabled: true })
+        assertRunAuthorized('bridge-enable-setting')
       }
       await this.startGeminiMcpBroker()
+      assertRunAuthorized('broker-start')
       if (!this.geminiMcpBridgeInstalledForCurrentToken) {
         await this.repairGeminiMcpBridge(resolvedCwd)
+        assertRunAuthorized('bridge-repair')
       }
       const status = await this.getGeminiMcpBridgeStatus({
         autoRepairIfEnabled: true,
         cwd: resolvedCwd,
         allowSessionTrustBypass: sessionTrust
       })
+      assertRunAuthorized('bridge-status')
       if (!status.available) {
         throw new Error(
           `TaskWraith MCP bridge repair failed: ${status.message || status.error || 'unknown status'}. Gemini write-capable mode was not launched because it would start without file-edit tools.`
@@ -2683,6 +2757,7 @@ export class McpBridgeRuntime {
         const toolSelfTest = await this.selfTestGeminiMcpBridgeProcess(
           this.deps.getGeminiMcpSocketPath()
         )
+        assertRunAuthorized('bridge-self-test')
         if (!toolSelfTest.ok) {
           throw new Error(
             `TaskWraith MCP bridge repair failed: ${toolSelfTest.error || 'write tools were not advertised by the bridge'}. Gemini write-capable mode was not launched because it would start without file-edit tools.`
@@ -2691,14 +2766,24 @@ export class McpBridgeRuntime {
       }
     }
 
-    return this.deps.installGeminiToolContextForRun(
-      sender,
-      resolvedCwd,
-      routed,
-      scope,
-      sessionTrust,
-      options
-    )
+    assertRunAuthorized('run-context-install')
+    runContextInstallAttempted = true
+    let installedRoute: McpBridgeAgentRunRoute
+    try {
+      installedRoute = await this.deps.installGeminiToolContextForRun(
+        sender,
+        resolvedCwd,
+        routed,
+        scope,
+        sessionTrust,
+        options
+      )
+    } catch (error) {
+      assertRunAuthorized('run-context-install')
+      throw error
+    }
+    assertRunAuthorized('run-context-install')
+    return installedRoute
   }
 
   async addKimiMcpBridgeRegistration(
