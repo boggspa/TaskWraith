@@ -1842,7 +1842,17 @@ struct ThreadDetailView: View {
                     // pill appear ONLY after an iOS-initiated run — never for the
                     // workspace's own uncommitted changes (which arrive as a git
                     // snapshot). That's why it only showed in demo (both seeded).
-                    if !composerFocused {
+                    // Normally the compact pill row is the UNFOCUSED face of the
+                    // above-rows: focus swaps the pills out for the fuller
+                    // changes/roster rows.
+                    //
+                    // In a short viewport that swap has nowhere to land — the
+                    // above-rows are gated off below to buy transcript height —
+                    // so focusing used to leave NO git or roster context at all
+                    // while typing, which is precisely when you want it. Keep
+                    // the pills up through focus there instead: same
+                    // information, ~30pt instead of ~80pt.
+                    if !composerFocused || compactHeight {
                         // Diff pill (when active) + tools pill for Ensemble/Goal/Plan/
                         // Blackboard — the focused telemetry-rail icons hide when the
                         // composer collapses, so this row restores them.
