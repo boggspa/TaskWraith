@@ -122,6 +122,33 @@ export function FanoutCandidatesSymbolIcon() {
   )
 }
 
+/**
+ * Peer thread messaging: two threads with traffic in both directions. Two arrows
+ * rather than one because the surface both receives and sends — a single arrow
+ * would read as an inbox and hide half of what the panel does.
+ */
+export function PeerThreadMessageSymbolIcon() {
+  return (
+    <span className="chat-corner-symbol">
+      <svg
+        viewBox="0 0 16 16"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="1.3"
+        strokeLinecap="round"
+        strokeLinejoin="round"
+      >
+        <rect x="1.5" y="2.6" width="3.4" height="10.8" rx="1.2" />
+        <rect x="11.1" y="2.6" width="3.4" height="10.8" rx="1.2" />
+        <path d="M6.3 6.2h3.4" />
+        <path d="M8.5 5.1l1.2 1.1-1.2 1.1" />
+        <path d="M9.7 9.8H6.3" />
+        <path d="M7.5 8.7L6.3 9.8l1.2 1.1" />
+      </svg>
+    </span>
+  )
+}
+
 export function OfficeSuiteSymbolIcon() {
   return (
     <span className="chat-corner-symbol">

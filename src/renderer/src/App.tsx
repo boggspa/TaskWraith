@@ -357,6 +357,7 @@ import { useChangelog } from './hooks/useChangelog'
 import { useLaunchAttempts } from './hooks/useLaunchAttempts'
 import { useWorkspaceLaunchTargets } from './hooks/useWorkspaceLaunchTargets'
 import { useScopedIpc } from './hooks/useScopedIpc'
+import { useThreadMessageInbox } from './hooks/useThreadMessageInbox'
 import { useChatMutations } from './state/useChatMutations'
 import {
   filterDispatchExternalPathGrants,
@@ -425,6 +426,7 @@ import {
   CanvasSurfaceSymbolIcon,
   FanoutCandidatesSymbolIcon,
   OfficeSuiteSymbolIcon,
+  PeerThreadMessageSymbolIcon,
   PinnedMessagesIcon,
   PreviewSymbolIcon,
   QuestionCircleIcon,
@@ -2270,6 +2272,7 @@ function App(): React.JSX.Element {
   const [geminiTerminalInputByChatId, setGeminiTerminalInputForChat] = usePerChatState('')
   const [isChatMediaPanelOpen, setIsChatMediaPanelOpen] = useState(false)
   const [isPinnedMessagesPanelOpen, setIsPinnedMessagesPanelOpen] = useState(false)
+  const [isThreadMessagePanelOpen, setIsThreadMessagePanelOpen] = useState(false)
   const [isProjectReferencesPanelOpen, setIsProjectReferencesPanelOpen] = useState(false)
   const [transcriptJumpRequest, setTranscriptJumpRequest] = useState<{
     chatId: string
@@ -3436,6 +3439,8 @@ function App(): React.JSX.Element {
         return isCanvasDockPanelOpen
       case 'candidates':
         return isFanoutCandidatesPanelOpen
+      case 'peers':
+        return isThreadMessagePanelOpen
       case 'inspector':
         return appearance.showInspector
       case 'terminal':
@@ -3945,6 +3950,13 @@ function App(): React.JSX.Element {
     () => collectChatMediaRefs(currentChat, imageAttachments, externalPathGrants),
     [currentChat, imageAttachments, externalPathGrants]
   )
+  // Peer thread-message inbox. Held here rather than inside the dock panel because
+  // the dock TAB carries the pending count, so the count must exist whether or not
+  // the panel is mounted; the panel receives this snapshot so there is exactly one
+  // fetch per chat. The inbox is not part of ChatRecord — it has its own main-side
+  // ledger — which is why this is a fetch and not a field read.
+  const { snapshot: threadMessageInbox, refresh: refreshThreadMessageInbox } =
+    useThreadMessageInbox(currentChat?.appChatId)
   // "Add to <project> library" on Media rows: offered only when the focused
   // chat belongs to exactly ONE project (ambiguous membership would be a
   // guess) and the row is path-backed. Promotion catalogues a locator through
@@ -23976,6 +23988,7 @@ function App(): React.JSX.Element {
     isChatMediaPanelOpen,
     isProjectReferencesPanelOpen: isWorkRouteReferencesPinned,
     isPinnedMessagesPanelOpen,
+    isThreadMessagePanelOpen,
     isTerminalDockAvailable
   })
   const rightDockVisible = shouldShowRightDock({
@@ -24069,6 +24082,15 @@ function App(): React.JSX.Element {
       hint: 'Pinned messages & board'
     },
     {
+      id: 'peers',
+      label: 'Peers',
+      icon: <PeerThreadMessageSymbolIcon />,
+      enabled: Boolean(currentChat),
+      badge: threadMessageInbox.summary.pendingCount,
+      group: 'session',
+      hint: 'Messages to & from other threads'
+    },
+    {
       id: 'files',
       label: 'Files',
       icon: <FileMenuSelectionIcon />,
@@ -24150,6 +24172,9 @@ function App(): React.JSX.Element {
       case 'candidates':
         setIsFanoutCandidatesPanelOpen(false)
         break
+      case 'peers':
+        setIsThreadMessagePanelOpen(false)
+        break
       case 'inspector':
         appearance.update({ showInspector: false })
         break
@@ -24192,6 +24217,14 @@ function App(): React.JSX.Element {
         break
       case 'candidates':
         if (currentChat && hasWorkspaceContext) setIsFanoutCandidatesPanelOpen(true)
+        break
+      case 'peers':
+        // No workspace requirement: a global chat can still message peers, and
+        // sending has to work from an empty inbox.
+        if (currentChat) {
+          setIsThreadMessagePanelOpen(true)
+          refreshThreadMessageInbox()
+        }
         break
       case 'inspector':
         appearance.update({ showInspector: true })
@@ -29581,6 +29614,9 @@ function App(): React.JSX.Element {
     showOfficeSuite,
     isCanvasDockPanelOpen,
     isFanoutCandidatesPanelOpen,
+    isThreadMessagePanelOpen,
+    threadMessageInbox,
+    onThreadMessageSent: refreshThreadMessageInbox,
     officeOpenRequest,
     onOpenOfficeDocument: handleOpenOfficeDocument,
     onRequestOfficeExternalAccess: handleRequestOfficeExternalAccess,

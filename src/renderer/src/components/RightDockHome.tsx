@@ -6,6 +6,7 @@ import {
   FanoutCandidatesSymbolIcon,
   FileMenuSelectionIcon,
   OfficeSuiteSymbolIcon,
+  PeerThreadMessageSymbolIcon,
   PinnedMessagesIcon,
   RunRailSymbolIcon,
   SplitChatIcon
@@ -23,7 +24,7 @@ export type RightDockHomeInspectorDestination =
 
 export type RightDockHomeSurface = Extract<
   RightDockTab,
-  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas' | 'candidates'
+  'run' | 'chat' | 'media' | 'pins' | 'files' | 'office' | 'canvas' | 'candidates' | 'peers'
 >
 
 type RightDockHomeTarget =
@@ -93,6 +94,14 @@ export const RIGHT_DOCK_HOME_DESTINATIONS: readonly RightDockHomeDestination[] =
     description: 'Live web preview & sketch board',
     group: 'session',
     target: { surface: 'canvas' },
+    requires: 'chat'
+  },
+  {
+    id: 'peers',
+    label: 'Thread Messages',
+    description: 'Messages to & from other threads',
+    group: 'session',
+    target: { surface: 'peers' },
     requires: 'chat'
   },
   {
@@ -166,6 +175,8 @@ const RIGHT_DOCK_HOME_GROUPS = [
 interface RightDockHomeProps {
   mediaCount: number
   pinnedCount: number
+  /** Optional so an embedder that has no inbox in scope simply shows no count. */
+  threadMessageCount?: number
   hasCurrentChat: boolean
   hasWorkspaceContext: boolean
   onOpenSurface: (surface: RightDockHomeSurface) => void
@@ -221,6 +232,7 @@ function destinationIcon(id: string): ReactNode {
   if (id === 'office') return <OfficeSuiteSymbolIcon />
   if (id === 'canvas') return <CanvasSurfaceSymbolIcon />
   if (id === 'candidates') return <FanoutCandidatesSymbolIcon />
+  if (id === 'peers') return <PeerThreadMessageSymbolIcon />
   return (
     <HomeGlyph
       kind={id as 'diff' | 'raw' | 'invocations' | 'timeline' | 'live' | 'safety' | 'capabilities'}
@@ -270,6 +282,7 @@ function HomeCard({
 export function RightDockHome({
   mediaCount,
   pinnedCount,
+  threadMessageCount,
   hasCurrentChat,
   hasWorkspaceContext,
   onOpenSurface,
@@ -315,7 +328,9 @@ export function RightDockHome({
                       ? mediaCount
                       : destination.id === 'pins'
                         ? pinnedCount
-                        : undefined
+                        : destination.id === 'peers'
+                          ? threadMessageCount
+                          : undefined
                   }
                   disabled={
                     (destination.requires === 'chat' && !hasCurrentChat) ||

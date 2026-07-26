@@ -4,6 +4,7 @@ import type { AppearanceState } from '../../hooks/useAppearance'
 import type { PanelPresence } from '../../hooks/usePanelPresence'
 import type { SettingsPanelUpdate } from '../../lib/settingsPanelUpdate'
 import type { RightDockSurfaceDef } from '../../components/RightDockSurfaceSwitcher'
+import type { ThreadMessageInboxSnapshot } from '../../hooks/useThreadMessageInbox'
 import type { ExecutionGraphProjection } from '../../lib/executionGraphProjection'
 
 type SidebarProps = ComponentProps<typeof import('../../components/Sidebar').Sidebar>
@@ -557,6 +558,9 @@ export type MainAppLayoutProps = MainAppLayoutSidebarProps & {
   showOfficeSuite: any
   isCanvasDockPanelOpen: any
   isFanoutCandidatesPanelOpen: any
+  isThreadMessagePanelOpen: boolean
+  threadMessageInbox: ThreadMessageInboxSnapshot
+  onThreadMessageSent: () => void
   officeOpenRequest: any
   onOpenOfficeDocument: any
   onRequestOfficeExternalAccess: any

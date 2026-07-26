@@ -63,6 +63,7 @@ import {
 import { FileEditorPanel } from '../../components/FileEditorPanel'
 import { CanvasDockPanel } from '../../components/CanvasDockPanel'
 import { FanoutCandidatesPanel } from '../../components/FanoutCandidatesPanel'
+import { ThreadMessageDockPanel } from '../../components/ThreadMessageDockPanel'
 import { OfficeSuitePanel } from '../../components/office/OfficeSuitePanel'
 import {
   isOfficeDocumentPath,
@@ -469,6 +470,9 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
   showOfficeSuite,
   isCanvasDockPanelOpen,
   isFanoutCandidatesPanelOpen,
+  isThreadMessagePanelOpen,
+  threadMessageInbox,
+  onThreadMessageSent,
   officeOpenRequest,
   onOpenOfficeDocument,
   onRequestOfficeExternalAccess,
@@ -2301,6 +2305,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                   <RightDockHome
                     mediaCount={currentChatMediaRefs.length}
                     pinnedCount={currentPinnedMessages.length}
+                    threadMessageCount={threadMessageInbox.summary.pendingCount}
                     hasCurrentChat={Boolean(currentChat)}
                     hasWorkspaceContext={hasWorkspaceContext}
                     onOpenSurface={(surface) => {
@@ -2579,6 +2584,15 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
                       workspacePath={currentWorkspace?.path}
                     />
                   )}
+
+                {activeRightDockTab === 'peers' && isThreadMessagePanelOpen && currentChat && (
+                  <ThreadMessageDockPanel
+                    key={currentChat.appChatId}
+                    chatId={currentChat.appChatId}
+                    snapshot={threadMessageInbox}
+                    onSent={onThreadMessageSent}
+                  />
+                )}
 
                 {activeRightDockTab === 'media' && isChatMediaPanelOpen && (
                   <ChatMediaDockPanel

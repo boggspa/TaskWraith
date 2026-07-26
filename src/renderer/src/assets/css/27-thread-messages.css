@@ -6,6 +6,15 @@
  * "someone else produced this". Deliberately NOT styled like a system or app
  * notice — the attribution is load-bearing, not decorative, so there is no rule
  * here that could make a relayed message look app-authored.
+ *
+ * TOKENS: this surface lives in the right dock, so it uses the `--rightdock-*`
+ * family (theme.css) plus the real `--warning` / `--success` / `--danger` accents.
+ * An earlier revision of this file referenced `--text-dim`, `--surface-raised`,
+ * `--accent-warn`, `--accent-ok` and `--accent-danger`, none of which are defined
+ * anywhere — every one silently resolved to its hardcoded dark-theme fallback, so
+ * the panel ignored the theme and rendered near-invisible text on light themes.
+ * Same failure mode as the `--accent-color` note in theme.css. Do not reintroduce
+ * a token here without grepping theme.css for its definition first.
  */
 
 .thread-message-panel {
@@ -18,13 +27,13 @@
 .thread-message-empty {
   font-size: 12px;
   line-height: 1.45;
-  color: var(--text-dim, #8b8b8b);
+  color: var(--rightdock-text-muted);
 }
 
 .thread-message-card {
-  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.28));
-  border-radius: 10px;
-  background: var(--surface-raised, rgba(128, 128, 128, 0.06));
+  border: 1px solid var(--rightdock-border);
+  border-radius: var(--rightdock-radius-card);
+  background: var(--rightdock-surface-raised);
   padding: 10px 12px;
   display: flex;
   flex-direction: column;
@@ -33,7 +42,7 @@
 
 /* A wake request is the one state worth pulling the eye: something will run. */
 .thread-message-card[data-wake='true'] {
-  border-color: var(--accent-warn, rgba(224, 158, 62, 0.55));
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
 }
 
 .thread-message-card-header {
@@ -41,7 +50,7 @@
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--text-dim, #8b8b8b);
+  color: var(--rightdock-text-muted);
 }
 
 .thread-message-card-glyph {
@@ -50,7 +59,7 @@
 
 .thread-message-card-heading {
   font-weight: 600;
-  color: var(--text-default, #d8d8d8);
+  color: var(--rightdock-text);
 }
 
 .thread-message-card-badge {
@@ -58,8 +67,8 @@
   font-size: 11px;
   padding: 1px 7px;
   border-radius: 999px;
-  border: 1px solid var(--accent-warn, rgba(224, 158, 62, 0.55));
-  color: var(--accent-warn, #e09e3e);
+  border: 1px solid color-mix(in srgb, var(--warning) 55%, transparent);
+  color: var(--warning);
   white-space: nowrap;
 }
 
@@ -75,6 +84,7 @@
   overflow-wrap: break-word;
   font-size: 13px;
   line-height: 1.5;
+  color: var(--rightdock-text);
   max-height: 331px;
   overflow-y: auto;
 }
@@ -82,7 +92,7 @@
 .thread-message-card-note {
   font-size: 11px;
   font-style: italic;
-  color: var(--text-dim, #8b8b8b);
+  color: var(--rightdock-text-muted);
 }
 
 .thread-message-indicator {
@@ -93,17 +103,17 @@
   height: 18px;
   padding: 0 5px;
   border-radius: 999px;
-  border: 1px solid var(--border-subtle, rgba(128, 128, 128, 0.28));
-  background: var(--surface-raised, rgba(128, 128, 128, 0.12));
-  color: var(--text-default, #d8d8d8);
+  border: 1px solid var(--rightdock-border);
+  background: var(--rightdock-badge-bg);
+  color: var(--rightdock-text);
   font-size: 11px;
   line-height: 1;
   cursor: pointer;
 }
 
 .thread-message-indicator[data-urgent='true'] {
-  border-color: var(--accent-warn, rgba(224, 158, 62, 0.55));
-  color: var(--accent-warn, #e09e3e);
+  border-color: color-mix(in srgb, var(--warning) 55%, transparent);
+  color: var(--warning);
 }
 
 /* Send affordance. Warnings sit ABOVE the button on purpose: a caution the user
@@ -123,7 +133,7 @@
 
 .thread-message-send-label {
   font-size: 12px;
-  color: var(--text-dim, #8b8b8b);
+  color: var(--rightdock-text-muted);
 }
 
 .thread-message-send-select {
@@ -140,12 +150,12 @@
 
 .thread-message-send-counter {
   font-size: 11px;
-  color: var(--text-dim, #8b8b8b);
+  color: var(--rightdock-text-muted);
   text-align: right;
 }
 
 .thread-message-send-counter[data-over='true'] {
-  color: var(--accent-danger, #d9584f);
+  color: var(--danger);
 }
 
 .thread-message-send-wake {
@@ -153,15 +163,16 @@
   align-items: center;
   gap: 6px;
   font-size: 12px;
+  color: var(--rightdock-text);
 }
 
 .thread-message-send-warning {
   font-size: 11px;
   line-height: 1.45;
   padding: 6px 8px;
-  border-radius: 8px;
-  border: 1px solid var(--accent-warn, rgba(224, 158, 62, 0.45));
-  color: var(--accent-warn, #e09e3e);
+  border-radius: var(--rightdock-radius-row);
+  border: 1px solid color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--warning);
 }
 
 .thread-message-send-outcome {
@@ -169,13 +180,62 @@
 }
 
 .thread-message-send-outcome[data-tone='ok'] {
-  color: var(--accent-ok, #6bbf74);
+  color: var(--success);
 }
 
 .thread-message-send-outcome[data-tone='warn'] {
-  color: var(--accent-warn, #e09e3e);
+  color: var(--warning);
 }
 
 .thread-message-send-outcome[data-tone='error'] {
-  color: var(--accent-danger, #d9584f);
+  color: var(--danger);
+}
+
+/* Dock surface. Scrolls as one column: the inbox can be long and the send form
+ * must stay reachable, so nothing here is independently scrollable except a single
+ * over-long message body (capped above). */
+
+.thread-message-dock {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  min-height: 0;
+  min-width: 0;
+  height: 100%;
+  flex: 1 1 auto;
+  padding: 12px;
+  overflow-y: auto;
+  color: var(--rightdock-text);
+  background: transparent;
+}
+
+.thread-message-dock-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.thread-message-dock-title {
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.thread-message-dock-section {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.thread-message-dock-subtitle {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--rightdock-text-muted);
+  padding-top: 4px;
+  border-top: 1px solid var(--rightdock-border);
+}
+
+.thread-message-dock-note {
+  font-size: 11px;
+  line-height: 1.45;
+  color: var(--rightdock-text-faint);
 }

@@ -10,6 +10,7 @@ export type RightDockTab =
   | 'media'
   | 'references'
   | 'pins'
+  | 'peers'
   | 'terminal'
 
 export interface RightDockTabAvailabilityInput {
@@ -26,6 +27,7 @@ export interface RightDockTabAvailabilityInput {
   isChatMediaPanelOpen: boolean
   isProjectReferencesPanelOpen: boolean
   isPinnedMessagesPanelOpen: boolean
+  isThreadMessagePanelOpen: boolean
   isTerminalDockAvailable: boolean
 }
 
@@ -45,6 +47,7 @@ export const RIGHT_DOCK_PANEL_IDS: readonly RightDockTab[] = [
   'office',
   'canvas',
   'candidates',
+  'peers',
   'inspector',
   'terminal'
 ]
@@ -82,6 +85,7 @@ export function buildRightDockTabs(input: RightDockTabAvailabilityInput): RightD
       available: input.isProjectReferencesPanelOpen
     },
     { id: 'pins' as const, label: 'Notes', available: input.isPinnedMessagesPanelOpen },
+    { id: 'peers' as const, label: 'Peers', available: input.isThreadMessagePanelOpen },
     { id: 'terminal' as const, label: 'Term', available: input.isTerminalDockAvailable }
   ]
     .filter((tab) => tab.available)

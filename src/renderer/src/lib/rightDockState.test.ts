@@ -23,6 +23,7 @@ const allClosed: RightDockTabAvailabilityInput = {
   isChatMediaPanelOpen: false,
   isProjectReferencesPanelOpen: false,
   isPinnedMessagesPanelOpen: false,
+  isThreadMessagePanelOpen: false,
   isTerminalDockAvailable: false
 }
 
@@ -44,6 +45,7 @@ describe('rightDockState', () => {
           isChatMediaPanelOpen: true,
           isProjectReferencesPanelOpen: true,
           isPinnedMessagesPanelOpen: true,
+          isThreadMessagePanelOpen: true,
           isTerminalDockAvailable: true
         })
       ).toEqual([
@@ -58,6 +60,7 @@ describe('rightDockState', () => {
         { id: 'media', label: 'Media' },
         { id: 'references', label: 'Refs' },
         { id: 'pins', label: 'Notes' },
+        { id: 'peers', label: 'Peers' },
         { id: 'terminal', label: 'Term' }
       ])
     })
@@ -183,9 +186,22 @@ describe('rightDockState', () => {
         'office',
         'canvas',
         'candidates',
+        'peers',
         'inspector',
         'terminal'
       ])
+    })
+  })
+
+  describe('peers surface availability', () => {
+    // Deliberately NOT gated on a workspace or on having mail: sending to another
+    // thread is a first-class action, so the surface has to be reachable from an
+    // empty inbox. Only the open flag decides.
+    it('shows Peers on the open flag alone', () => {
+      expect(buildRightDockTabs({ ...allClosed, isThreadMessagePanelOpen: true })).toEqual([
+        { id: 'peers', label: 'Peers' }
+      ])
+      expect(buildRightDockTabs({ ...allClosed, hasWorkspaceContext: true })).toEqual([])
     })
   })
 
