@@ -72,14 +72,32 @@ Canvas drivers remain bound to their isolated surfaces and must never target
 TaskWraith's own consent chrome; pausing for recent human input is courtesy,
 not a substitute for that structural boundary.
 
+### Canvas consent follows the surface
+
+Permission to let an agent interact with a preview now applies **only to the
+surface you approved**, not to every preview opened afterwards in the same run
+— an agent can enumerate a chat's canvases, so an unscoped grant reached
+windows you never saw a prompt for. Because a workspace-wide "interact with any
+preview, in any chat, until revoked" grant is not a scope anyone can
+meaningfully consent to, that tier is gone; a grant persisted by an older build
+is inert rather than honoured.
+
+Relatedly, and worth stating plainly: when an agent asked to type into a field,
+the approval record kept the text it was about to type, and that record reached
+TaskWraith's durable history — even though the tool contract told agents the
+typed value was never recorded. New runs no longer store it. **Existing history
+is not rewritten**, so if a previously typed value was sensitive, clear that
+chat's history.
+
 ### Pi opens the model bench
 
 **Pi** joins as a first-class coding-agent seat with isolated runtime homes and
 bring-your-own-key access to DeepSeek, Z.ai/GLM, Qwen, MiniMax, Mistral, Groq,
 and Cerebras models. Each upstream has its own key boundary, model names,
 pricing row, spend attribution, and brand hue; pickers show only configured
-upstreams, and desktop plus iOS carry the same provider/model map. The New
-Additions card now leads with that upstream lineup.
+upstreams, transcript attribution keeps the actual upstream's hue, and desktop
+plus iOS carry the same provider/model map. The New Additions card now leads
+with that upstream lineup.
 
 AntiGravity becomes steadier at the same time: conversations resume, successful
 model discovery is cached, unservable catalogue rows are filtered, Gemini 3.x
@@ -104,6 +122,14 @@ pretending provider history was retained. Provably read-only shell commands
 remain useful in Plan, while short Vibe throttles surface as retryable warnings
 instead of masquerading as a subscription quota wall.
 
+The composer model picker and iOS first-launch sheet now carry that same
+Mistral roster, and New Additions no longer promises an image-input capability
+the seat does not expose. An opt-in live exercise against `vibe-acp 2.22.0`
+also proves the normal lane can select Plan plus Devstral Small, use plan
+credentials without inheriting an API key, return an answer, and close cleanly.
+That source exercise is evidence for the ordinary ACP lane, not a substitute
+for the scheduled-seat release seal.
+
 ### The workshop can wear your colours
 
 Agents on write-capable seats can read and set a small allowlist of typed
@@ -115,29 +141,13 @@ values. Successful writes are pushed narrowly to every open window and applied
 through the same validated appearance path, so the change appears without a
 reload. Read-only review seats can inspect the palette but cannot restyle it.
 
-Two changes tighten what a Canvas approval actually covers. Permission to let
-an agent interact with a preview now applies **only to the surface you
-approved**, not to every preview opened afterwards in the same run — an agent
-can enumerate a chat's canvases, so an unscoped grant reached windows you never
-saw a prompt for. Because a workspace-wide "interact with any preview, in any
-chat, until revoked" grant is not a scope anyone can meaningfully consent to,
-that tier is gone; a grant persisted by an older build is inert rather than
-honoured.
-
-Relatedly, and worth stating plainly: when an agent asked to type into a field,
-the approval record kept the text it was about to type, and that record reached
-TaskWraith's durable history — even though the tool contract told agents the
-typed value was never recorded. New runs no longer store it. **Existing history
-is not rewritten**, so if a previously typed value was sensitive, clear that
-chat's history.
-
-Two properties of the appearance channel are deliberately not negotiable. A restyle
-always asks: `theme_tokens_set` prompts on every call, and no standing grant,
-trusted session, or session-wide auto-approve can quiet it — previously a
-single "allow for this session" on any unrelated tool silenced every later
-restyle. And the approval card's own controls no longer take their spacing from
-values an agent can write, so a restyle cannot crowd Accept and Reject together
-and turn a near-miss click into a grant.
+Two properties of the appearance channel are deliberately not negotiable. A
+restyle always asks: `theme_tokens_set` prompts on every call, and no standing
+grant, trusted session, or session-wide auto-approve can quiet it — previously
+a single "allow for this session" on any unrelated tool silenced every later
+restyle. And the approval card's own controls no longer take their spacing
+from values an agent can write, so a restyle cannot crowd Accept and Reject
+together and turn a near-miss click into a grant.
 
 ### Every provider leaves a clearer receipt
 
@@ -159,6 +169,15 @@ fan-out candidates, provider capability projection, grant expiry, and review
 or compaction runs all re-check the scope they are about to use. `canvas_eval`
 is available as an approval-visible instrument in Plan rather than disappearing
 behind a silent deny.
+
+### A stalled cleanup no longer parks the workshop
+
+History deletion still waits for every owned provider, Canvas, graph, media,
+and journal sink to go quiet before it commits. That wait now has a generous
+two-minute deadline: if a sink stalls, TaskWraith rolls back the deletion holds
+and admits new runs again instead of leaving the durable intent parked until
+restart. A sink that settles after the deadline cannot commit the deletion
+behind those released holds.
 
 ### The phone keeps the same map
 
