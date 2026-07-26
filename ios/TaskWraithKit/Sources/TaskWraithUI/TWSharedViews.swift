@@ -4051,9 +4051,9 @@ enum ProviderLogoAssetResolver {
         else { return nil }
 
         switch provider {
-        case "gemini", "codex", "claude", "kimi", "antigravity":
+        case "gemini", "codex", "claude", "kimi", "antigravity", "mistral":
             return "provider-logo-\(provider)"
-        case "cursor", "grok", "ollama":
+        case "cursor", "grok", "ollama", "pi":
             return "provider-logo-\(provider)-on-\(darkBackground ? "dark" : "light")"
         default:
             return nil
@@ -4062,6 +4062,14 @@ enum ProviderLogoAssetResolver {
 
     static func resourceURL(for assetName: String) -> URL? {
         Bundle.module.url(forResource: assetName, withExtension: "png")
+    }
+
+    static func opticalScale(for provider: String?) -> CGFloat {
+        switch provider?.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+        case "pi": return 1.32
+        case "mistral": return 1.08
+        default: return 1
+        }
     }
 }
 
@@ -4114,6 +4122,7 @@ public struct ProviderLogoIcon: View {
                     .renderingMode(.original)
                     .resizable()
                     .scaledToFit()
+                    .scaleEffect(ProviderLogoAssetResolver.opticalScale(for: provider))
                     .accessibilityHidden(true)
             } else {
                 ProviderGlyphIcon(

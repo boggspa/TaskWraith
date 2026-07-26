@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react'
+import type { CSSProperties, ReactElement } from 'react'
 import {
   providerBrandLogoKey,
   resolveProviderBrandLogoSource,
@@ -37,6 +37,9 @@ export function ProviderBrandLogo({
   }
 
   const hasThemePair = Boolean(source.dark)
+  const opticalStyle = source.scale
+    ? ({ '--provider-brand-logo-scale': source.scale } as CSSProperties)
+    : undefined
   return (
     <span
       className={[
@@ -49,6 +52,7 @@ export function ProviderBrandLogo({
         .join(' ')}
       data-provider-logo={providerKey}
       aria-hidden="true"
+      style={opticalStyle}
     >
       <img
         className="provider-brand-logo-image provider-brand-logo-image-light"

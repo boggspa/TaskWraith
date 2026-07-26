@@ -1,6 +1,6 @@
 {
-  "catalogVersion": 1,
-  "retrievedAt": "2026-07-23",
+  "catalogVersion": 2,
+  "retrievedAt": "2026-07-27",
   "purpose": "provider-identity-reference-and-runtime-source",
   "runtimeIntegrated": true,
   "catalogueFilesLoadedAtRuntime": false,
@@ -14,10 +14,8 @@
     "firstPartyOnly": true,
     "requiresTransparentPixels": true,
     "appIconTilesExcludedByDefault": true,
-    "selectionExceptions": [
-      "kimi: requested first-party icon-only rounded-corner tile"
-    ],
-    "conversion": "none for sourced assets; Ollama dark variant is an exact RGB inversion with alpha copied unchanged"
+    "selectionExceptions": ["kimi: requested first-party icon-only rounded-corner tile"],
+    "conversion": "none for sourced PNG assets; Pi on-dark is rasterized from the preserved official SVG and Pi on-light is its exact RGB inverse with alpha unchanged; Ollama dark is an exact RGB inverse with alpha unchanged"
   },
   "providers": [
     {
@@ -310,6 +308,93 @@
             "transparentPixels": 32986,
             "partialAlphaPixels": 2285,
             "opaquePixels": 11065
+          }
+        }
+      ]
+    },
+    {
+      "id": "pi",
+      "label": "Pi",
+      "owner": "Earendil Inc. and contributors",
+      "status": "live",
+      "artwork": "Pi P+i primary mark",
+      "sourcePage": "https://pi.dev/press-kit",
+      "brandGuidance": "https://pi.dev/press-kit",
+      "rightsNote": "The first-party press kit explicitly supplies the primary logo for light/dark and editorial use and labels the project MIT licensed. Preserve the mark geometry for factual provider identification; no affiliation or endorsement is implied.",
+      "sourceAsset": {
+        "file": "svg/provider-logo-pi.svg",
+        "originalFilename": "logo.svg",
+        "downloadUrl": "https://pi.dev/logo.svg",
+        "viewBox": "0 0 800 800",
+        "bytes": 473,
+        "sha256": "2d43cb4f6a239ac70416214ac05842be34175339f761001fab3e8d01459bec69"
+      },
+      "assets": [
+        {
+          "role": "on-dark-derived",
+          "file": "png/provider-logo-pi-on-dark.png",
+          "derivedFrom": "svg/provider-logo-pi.svg",
+          "transformation": "rasterize the unmodified official SVG at its native 800 x 800 view box on a transparent canvas",
+          "transformationTool": "macOS sips-316 SVG-to-PNG",
+          "dimensions": { "width": 800, "height": 800 },
+          "bytes": 13367,
+          "sha256": "6b9b7456e6069fcffa782034f4fd870109e32851f034d620b7885ff6a3db7375",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 501468,
+            "partialAlphaPixels": 2228,
+            "opaquePixels": 136304
+          }
+        },
+        {
+          "role": "on-light-derived",
+          "file": "png/provider-logo-pi-on-light.png",
+          "derivedFrom": "png/provider-logo-pi-on-dark.png",
+          "transformation": "invert RGB channels exactly (value = 255 - value); retain alpha unchanged",
+          "transformationTool": "FFmpeg 8.1 negate=components=r+g+b",
+          "dimensions": { "width": 800, "height": 800 },
+          "bytes": 4666,
+          "sha256": "e829199449aaced842fd1386e969e1740dbc8ea75a767f8f456fbdf553455ce6",
+          "verification": {
+            "alphaByteIdenticalToSource": true,
+            "rgbExactInverseOfSource": true
+          },
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 501468,
+            "partialAlphaPixels": 2228,
+            "opaquePixels": 136304
+          }
+        }
+      ]
+    },
+    {
+      "id": "mistral",
+      "label": "Mistral",
+      "owner": "Mistral AI",
+      "status": "live",
+      "artwork": "Mistral gradient pixel-cat icon",
+      "sourcePage": "https://mistral.ai/brand/",
+      "brandGuidance": "https://mistral.ai/brand/",
+      "rightsNote": "Mistral's first-party brand page welcomes responsible partner and collaborator use, identifies the pixel cat as its emblem, prefers the gradient version, and prohibits modification or framing. Preserve the PNG unmodified for factual provider identification; no affiliation or endorsement is implied.",
+      "assets": [
+        {
+          "role": "full-colour",
+          "file": "png/provider-logo-mistral.png",
+          "originalFilename": "Mistral-Icon-Gradient-RGB.png",
+          "downloadUrl": "https://cms.globalaegis.net/api/documents/file/Mistral-Icon-Gradient-RGB.png",
+          "retrievedVia": "https://mistral.ai/cms-media/api/documents/file/Mistral-Icon-Gradient-RGB.png",
+          "dimensions": { "width": 648, "height": 648 },
+          "bytes": 2659,
+          "sha256": "e3426d84d7b2665ea6842aa39c62d25c11c046ce0a1ebd5faabf4683df5199ba",
+          "alpha": {
+            "minimum": 0,
+            "maximum": 255,
+            "transparentPixels": 291904,
+            "partialAlphaPixels": 0,
+            "opaquePixels": 128000
           }
         }
       ]

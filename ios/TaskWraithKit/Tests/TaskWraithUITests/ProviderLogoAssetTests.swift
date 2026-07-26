@@ -76,7 +76,7 @@ struct ProviderLogoAssetTests {
     }
 
     @Test func fullColourProvidersUseOneAssetAcrossAppearances() {
-        for provider in ["gemini", "codex", "claude", "kimi", "antigravity"] {
+        for provider in ["gemini", "codex", "claude", "kimi", "antigravity", "mistral"] {
             let expected = "provider-logo-\(provider)"
             #expect(
                 ProviderLogoAssetResolver.assetName(
@@ -88,7 +88,7 @@ struct ProviderLogoAssetTests {
     }
 
     @Test func monochromeProvidersChooseTheSurfaceSpecificAsset() {
-        for provider in ["cursor", "grok", "ollama"] {
+        for provider in ["cursor", "grok", "ollama", "pi"] {
             #expect(
                 ProviderLogoAssetResolver.assetName(
                     for: provider, darkBackground: false)
@@ -115,6 +115,12 @@ struct ProviderLogoAssetTests {
                 for: nil, darkBackground: false) == nil)
     }
 
+    @Test func newMarksUseTheSameOpticalBalanceAsDesktop() {
+        #expect(ProviderLogoAssetResolver.opticalScale(for: " pi ") == 1.32)
+        #expect(ProviderLogoAssetResolver.opticalScale(for: "MISTRAL") == 1.08)
+        #expect(ProviderLogoAssetResolver.opticalScale(for: "codex") == 1)
+    }
+
     @Test func everyResolvedAssetIsABundledPNG() throws {
         let names = [
             "provider-logo-gemini",
@@ -128,6 +134,9 @@ struct ProviderLogoAssetTests {
             "provider-logo-grok-on-dark",
             "provider-logo-ollama-on-light",
             "provider-logo-ollama-on-dark",
+            "provider-logo-pi-on-light",
+            "provider-logo-pi-on-dark",
+            "provider-logo-mistral",
         ]
         let pngSignature = Data([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
 

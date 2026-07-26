@@ -204,16 +204,9 @@ describe('ComposerProviderPickerRows (popover body)', () => {
     expect(html).toContain('composer-plus-picker-row-icon')
     expect(html).toContain('sidebar-provider-icon')
     for (const provider of LIVE_SELECTABLE_PROVIDER_IDS) {
-      // Mistral has no first-party brand asset yet (see the file-level note in
-      // providerBrandLogoAssets.ts) — it deliberately falls back to the
-      // ProviderGlyph mnemonic instead of a logo image, so it is checked
-      // separately below rather than folded into this loop.
-      if (provider === 'mistral') continue
       expect(html).toContain(`data-provider-logo="${provider}"`)
       expect(html).not.toContain(`provider-glyph-${provider}`)
     }
-    expect(html).not.toContain('data-provider-logo="mistral"')
-    expect(html).toContain('provider-glyph-mistral')
     expect(html).toContain('<img class="provider-brand-logo-image')
     expect(html).toContain('Claude')
   })

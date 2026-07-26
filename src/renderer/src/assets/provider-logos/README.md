@@ -1,6 +1,6 @@
 # Runtime provider logos
 
-Byte-identical runtime copies of the sourced PNGs documented in
+Byte-identical runtime copies of the sourced or recorded derivative PNGs documented in
 [`design-assets/provider-logos`](../../../../../design-assets/provider-logos/).
 They are used only as provider identity marks beside provider or model names.
 

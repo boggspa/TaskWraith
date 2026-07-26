@@ -8,30 +8,25 @@ import geminiLogo from '../../assets/provider-logos/provider-logo-gemini.png'
 import grokLogoOnDark from '../../assets/provider-logos/provider-logo-grok-on-dark.png'
 import grokLogoOnLight from '../../assets/provider-logos/provider-logo-grok-on-light.png'
 import kimiLogo from '../../assets/provider-logos/provider-logo-kimi.png'
+import mistralLogo from '../../assets/provider-logos/provider-logo-mistral.png'
 import ollamaLogoOnDark from '../../assets/provider-logos/provider-logo-ollama-on-dark.png'
-import piLogo from '../../assets/provider-logos/provider-logo-pi.svg'
 import ollamaLogoOnLight from '../../assets/provider-logos/provider-logo-ollama.png'
+import piLogoOnDark from '../../assets/provider-logos/provider-logo-pi-on-dark.png'
+import piLogoOnLight from '../../assets/provider-logos/provider-logo-pi-on-light.png'
 
 export type ProviderBrandLogoId = ProviderId | string | undefined
 
 export interface ProviderBrandLogoSource {
   light: string
   dark?: string
+  /** Optical balance inside a fixed 1em slot; source pixels stay untouched. */
+  scale?: number
 }
 
-// NOTE: intentionally `Partial` — unlike every other Record<ProviderId, ...> in
-// this codebase, this one must NOT be widened to force a `mistral` entry with
-// a fabricated import. No first-party Mistral brand asset has been sourced
-// yet (checked both this runtime folder and the source catalogue at
-// design-assets/provider-logos/, which still documents only nine tracked
-// provider identities). Until one is sourced through that same pipeline —
-// official brand pack, transparent PNG, entry in
-// design-assets/provider-logos/provider-logos.manifest.json, byte-identical
-// copy vendored here as `provider-logo-mistral.png` (or `.svg`, matching
-// Pi's treatment) — omitting the `mistral` key is correct: consumers
-// (`resolveProviderBrandLogoSource`, `ProviderBrandLogo`) already treat a
-// missing entry as "fall back to the generic `ProviderGlyph` mnemonic," which
-// already tints correctly via the existing `--provider-mistral-color` token.
+// Intentionally `Partial`: Ensemble and future/unknown provider ids retain the
+// TaskWraith mnemonic fallback. Every current ProviderId with sourced artwork
+// is mapped below; provenance and byte-integrity live in
+// design-assets/provider-logos/provider-logos.manifest.json.
 export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<
   Partial<Record<ProviderId, ProviderBrandLogoSource>>
 > = {
@@ -45,8 +40,8 @@ export const PROVIDER_BRAND_LOGO_SOURCES: Readonly<
   // An official runtime copy; this remains unreachable until the user's opt-in
   // and successful connection expose the provider.
   antigravity: { light: antigravityLogo },
-  pi: { light: piLogo }
-  // mistral: intentionally absent — see the file-level note above.
+  pi: { light: piLogoOnLight, dark: piLogoOnDark, scale: 1.32 },
+  mistral: { light: mistralLogo, scale: 1.08 }
 }
 
 export function providerBrandLogoKey(provider?: ProviderBrandLogoId): string {

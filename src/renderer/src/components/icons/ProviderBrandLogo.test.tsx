@@ -8,20 +8,18 @@ import {
   resolveProviderBrandLogoSource
 } from './providerBrandLogoAssets'
 
-const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity'] as const
-const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama'] as const
+const STATIC_PROVIDERS = ['gemini', 'codex', 'claude', 'kimi', 'antigravity', 'mistral'] as const
+const THEMED_PROVIDERS = ['cursor', 'grok', 'ollama', 'pi'] as const
 const KNOWN_PROVIDERS = [...STATIC_PROVIDERS, ...THEMED_PROVIDERS] as const
 
 describe('ProviderBrandLogo', () => {
-  it('renders official raster artwork for all eight known providers', () => {
+  it('renders official raster artwork for all ten tracked providers', () => {
     for (const provider of KNOWN_PROVIDERS) {
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
-      // PROVIDER_BRAND_LOGO_SOURCES is a Partial map: providers without a
-      // sourced first-party asset (currently Mistral, awaiting artwork) are
-      // absent by design and fall back to ProviderGlyph. KNOWN_PROVIDERS lists
-      // only the ones that DO have artwork, so a missing entry here is a real
-      // regression — asserted rather than silently non-null-asserted away.
+      // The source map stays Partial so Ensemble and future providers can use
+      // ProviderGlyph. Every current provider with sourced artwork belongs in
+      // this list, so a missing entry here is a real regression.
       const bundled = PROVIDER_BRAND_LOGO_SOURCES[provider]
       expect(bundled, `${provider} is listed as known but has no bundled logo`).toBeDefined()
 
@@ -38,7 +36,8 @@ describe('ProviderBrandLogo', () => {
       const source = resolveProviderBrandLogoSource(provider)
       const html = renderToStaticMarkup(<ProviderBrandLogo provider={provider} />)
 
-      expect(source).toEqual({ light: PROVIDER_BRAND_LOGO_SOURCES[provider]?.light })
+      expect(source?.light).toBe(PROVIDER_BRAND_LOGO_SOURCES[provider]?.light)
+      expect(source?.dark).toBeUndefined()
       expect(html).toContain('is-static')
       expect(html).not.toContain('has-theme-pair')
       expect(html.match(/<img/g)).toHaveLength(1)
@@ -72,17 +71,74 @@ describe('ProviderBrandLogo', () => {
     expect(html.match(/draggable="false"/g)).toHaveLength(2)
   })
 
-  it('keeps the desktop and iOS Antigravity copies byte-identical to the design asset', () => {
-    const designAsset = readFileSync(
-      resolve('design-assets/provider-logos/png/provider-logo-antigravity.png')
-    )
-    const runtimeCopies = [
-      'src/renderer/src/assets/provider-logos/provider-logo-antigravity.png',
-      'ios/TaskWraithKit/Sources/TaskWraithUI/Resources/provider-logo-antigravity.png'
-    ]
+  it('balances new source canvases optically without changing their pixels', () => {
+    const piHtml = renderToStaticMarkup(<ProviderBrandLogo provider="pi" />)
+    const mistralHtml = renderToStaticMarkup(<ProviderBrandLogo provider="mistral" />)
 
-    for (const runtimeCopy of runtimeCopies) {
-      expect(readFileSync(resolve(runtimeCopy))).toEqual(designAsset)
+    expect(piHtml).toContain('--provider-brand-logo-scale:1.32')
+    expect(mistralHtml).toContain('--provider-brand-logo-scale:1.08')
+  })
+
+  it('keeps every desktop and iOS PNG byte-identical to its design asset', () => {
+    const copies = [
+      ['provider-logo-gemini.png', 'provider-logo-gemini.png', 'provider-logo-gemini.png'],
+      ['provider-logo-codex-cloud.png', 'provider-logo-codex-cloud.png', 'provider-logo-codex.png'],
+      ['provider-logo-claude.png', 'provider-logo-claude.png', 'provider-logo-claude.png'],
+      ['provider-logo-kimi.png', 'provider-logo-kimi.png', 'provider-logo-kimi.png'],
+      [
+        'provider-logo-antigravity.png',
+        'provider-logo-antigravity.png',
+        'provider-logo-antigravity.png'
+      ],
+      [
+        'provider-logo-cursor-on-light.png',
+        'provider-logo-cursor-on-light.png',
+        'provider-logo-cursor-on-light.png'
+      ],
+      [
+        'provider-logo-cursor-on-dark.png',
+        'provider-logo-cursor-on-dark.png',
+        'provider-logo-cursor-on-dark.png'
+      ],
+      [
+        'provider-logo-grok-on-light.png',
+        'provider-logo-grok-on-light.png',
+        'provider-logo-grok-on-light.png'
+      ],
+      [
+        'provider-logo-grok-on-dark.png',
+        'provider-logo-grok-on-dark.png',
+        'provider-logo-grok-on-dark.png'
+      ],
+      ['provider-logo-ollama.png', 'provider-logo-ollama.png', 'provider-logo-ollama-on-light.png'],
+      [
+        'provider-logo-ollama-on-dark.png',
+        'provider-logo-ollama-on-dark.png',
+        'provider-logo-ollama-on-dark.png'
+      ],
+      [
+        'provider-logo-pi-on-light.png',
+        'provider-logo-pi-on-light.png',
+        'provider-logo-pi-on-light.png'
+      ],
+      [
+        'provider-logo-pi-on-dark.png',
+        'provider-logo-pi-on-dark.png',
+        'provider-logo-pi-on-dark.png'
+      ],
+      ['provider-logo-mistral.png', 'provider-logo-mistral.png', 'provider-logo-mistral.png']
+    ] as const
+
+    for (const [designName, desktopName, iosName] of copies) {
+      const designAsset = readFileSync(resolve('design-assets/provider-logos/png', designName))
+      const runtimeCopies = [
+        resolve('src/renderer/src/assets/provider-logos', desktopName),
+        resolve('ios/TaskWraithKit/Sources/TaskWraithUI/Resources', iosName)
+      ]
+
+      for (const runtimeCopy of runtimeCopies) {
+        expect(readFileSync(runtimeCopy), runtimeCopy).toEqual(designAsset)
+      }
     }
   })
 
