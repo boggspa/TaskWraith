@@ -140,6 +140,37 @@ describe('ProviderAdapters', () => {
     ).toThrow(`missing: ${expectedMissing.join(', ')}`)
   })
 
+  it('names the repair in the incompleteness message', () => {
+    // This assertion runs at module scope in production, so it surfaces as
+    // Electron's generic main-process crash dialog with a stack into a bundled
+    // file. Whatever the message does not say, the developer does not get.
+    let message = ''
+    try {
+      createProviderAdapterRegistry([adapter('codex')], { requireCompleteProviderSet: true })
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error)
+    }
+
+    expect(message).toContain('Provider adapter registry is incomplete (')
+    expect(message).toContain('createProviderAdapterRegistry([...]) call in src/main/index.ts')
+    expect(message).toContain('PROVIDER_RUN_MANAGEMENT_IDS')
+    expect(message).toContain('stops the app from starting')
+  })
+
+  it('rejects an adapter outside the registration baseline', () => {
+    // The same throw covers the opposite mistake: registering an identity the
+    // baseline does not account for is equally fatal at startup, and the
+    // wording has to distinguish the two.
+    const stray = { ...adapter('codex'), provider: 'not-a-provider' as ProviderId }
+
+    expect(() =>
+      createProviderAdapterRegistry(
+        [...PROVIDER_ADAPTER_REGISTRATION_IDS.map((provider) => adapter(provider)), stray],
+        { requireCompleteProviderSet: true }
+      )
+    ).toThrow('unaccounted: not-a-provider')
+  })
+
   it('returns serializable descriptors without runtime functions', () => {
     const descriptor = providerAdapterDescriptor(adapter('codex'))
 

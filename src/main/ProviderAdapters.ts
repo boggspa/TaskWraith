@@ -97,7 +97,19 @@ export class ProviderAdapterRegistry<TPayload = unknown, TEvent = unknown> {
     ]
       .filter(Boolean)
       .join('; ')
-    throw new Error(`Provider adapter registry is incomplete (${detail}).`)
+    // Production builds this registry at module scope, so this throw reaches a
+    // developer as Electron's bare "A JavaScript error occurred in the main
+    // process" dialog with a stack into bundled out/main/index.js — no window,
+    // no logger, no context. Carry the repair in the message itself; the
+    // sentence above stays byte-stable for anything matching on the prefix.
+    throw new Error(
+      `Provider adapter registry is incomplete (${detail}). ` +
+        'Every identity in PROVIDER_ADAPTER_REGISTRATION_IDS needs exactly one adapter in the ' +
+        'createProviderAdapterRegistry([...]) call in src/main/index.ts. The baseline is ' +
+        'PROVIDER_RUN_MANAGEMENT_IDS (src/main/run/ProviderRunManagementMatrix.ts), so adding an ' +
+        'identity there without its adapter stops the app from starting at all. ' +
+        'ProviderAdapterRegistrationSite.test.ts checks this without launching.'
+    )
   }
 }
 
