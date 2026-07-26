@@ -231,7 +231,17 @@ describe('GATEWAY_MCP_ADVERTISE_TOOLS', () => {
     // because the capability-gateway definitions enumerate the discoverable set.
     // Headroom 594 chars under the 40k transport cap, ratio 0.29843 -> 0.29449
     // (the ratio IMPROVES: the hidden surface grew while direct barely moved).
-    expect(fullChars).toBe(133_810)
+    // Re-measured 2026-07-26: +2,496 full, gateway UNCHANGED at 39_406 — the
+    // canvas actuation tools are not gateway-direct, so the 594-char headroom
+    // above is untouched and the ratio improves again to 0.28911.
+    // The spend is agent guidance for canvas_click/canvas_fill/canvas_sketch_update
+    // /canvas_snapshot/canvas_screenshot: the new `executed` / `verified` /
+    // `refusalReason` contract, the credential refusal, and the optimistic-
+    // concurrency args. It is deliberately not trimmable — a model that receives
+    // `{executed: false, refusalReason: 'stale_target'}` with no description
+    // retries the same action, which is the exact destructive loop the underlying
+    // change exists to stop, so buying the bytes back here would re-open it.
+    expect(fullChars).toBe(136_306)
     expect(gatewayChars).toBe(39_406)
     expect(gatewayChars).toBeLessThan(40_000)
     expect(gatewayChars / fullChars).toBeLessThan(0.301)

@@ -11,7 +11,7 @@ Local Ollama models call a directly advertised tool by emitting exactly one JSON
 {"taskwraith_tool":{"name":"<tool>","arguments":{ ... }}}
 ```
 
-The 168 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
+The 170 tools below are the full TaskWraith surface. 38 common tools are callable directly; every other example uses capability_invoke so the top-level tool surface stays compact. Every mutating target (file edits, shell, publishing) is gated by your run's permission role, and paths must stay inside the active workspace.
 
 ## run_shell_command
 
@@ -1141,11 +1141,11 @@ Return the current Sketch Canvas document: title, viewport, and structured shape
 
 ## canvas_sketch_update
 
-Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only.
+Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.
 
 - Access: governed by your run permission role
 - Required args: canvasId
-- Optional args: mode, title, elementIds, elements
+- Optional args: mode, title, expectedUpdatedAt, elementIds, elements
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_sketch_update","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_list
@@ -1166,7 +1166,7 @@ Return metadata for one Canvas session (status, url, viewport). Read-only; carri
 
 ## canvas_snapshot
 
-Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect.
+Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked.
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
@@ -1174,7 +1174,7 @@ Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"),
 
 ## canvas_screenshot
 
-Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress).
+Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress). Credential fields are painted over before capture, so a password or one-time code is never in the returned pixels; `secretsRedacted` reports how many were covered.
 
 - Access: read-only (no approval needed)
 - Required args: canvasId
@@ -1218,20 +1218,20 @@ Resize the Canvas viewport to test responsive layouts. Use `preset` (mobile 375x
 
 ## canvas_click
 
-Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CSS `selector`, or `x`/`y` coordinates. Dispatches a realistic mouse interaction. Gated; denied under read-only. Re-run canvas_snapshot afterwards to observe the result.
+Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CSS `selector`, or `x`/`y` coordinates. Dispatches a realistic mouse interaction. Gated; denied under read-only. CHECK `executed` BEFORE ASSUMING ANYTHING HAPPENED: the click is refused without being dispatched if the target has detached or changed since the snapshot that produced its ref (`refusalReason: "stale_target"`), is covered by another element ("occluded"), resolves to nothing ("not_found"), or a human is currently using the canvas ("user_active"). Re-run canvas_snapshot and re-plan — do NOT retry the same action, which is how one misfire becomes a destructive loop. `verified` reports whether the page changed synchronously: "unchanged" means UNCONFIRMED, not failed, because async re-renders and navigations settle after the call returns, so re-snapshot to confirm.
 
 - Access: governed by your run permission role
 - Required args: canvasId
-- Optional args: ref, selector, x, y
+- Optional args: ref, selector, x, y, expectedInputEpoch
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_click","arguments":{"canvasId":"text"}}}}`
 
 ## canvas_fill
 
-Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selector`, firing input+change events (React-compatible). Gated; denied under read-only. The typed value is never recorded in the audit log.
+Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selector`, firing input+change events (React-compatible). Gated; denied under read-only. The typed value is never recorded in the audit log. CREDENTIAL FIELDS ARE ALWAYS REFUSED (`refusalReason: "secret_field"`) — password, one-time-code and any field whose autocomplete marks it a secret, whatever its input type. That is not a transient failure and must NOT be worked around with canvas_eval or coordinates: ask the user to type it themselves. Otherwise behaves like canvas_click — check `executed`, and treat "stale_target"/"occluded"/"user_active" as re-snapshot-and-re-plan rather than retry.
 
 - Access: governed by your run permission role
 - Required args: canvasId, value
-- Optional args: ref, selector
+- Optional args: ref, selector, expectedInputEpoch
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_fill","arguments":{"canvasId":"text","value":"text"}}}}`
 
 ## canvas_annotate
@@ -1257,6 +1257,23 @@ Close a Canvas session and free its preview window. Gated.
 - Access: mutating — governed by your run permission role (denied under Read-Only/Plan; prompts under Default unless granted)
 - Required args: canvasId
 - Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"canvas_close","arguments":{"canvasId":"text"}}}}`
+
+## theme_tokens_get
+
+Read the user's current TaskWraith appearance overrides plus the full list of tokens you are allowed to change, with each token's type and bounds. Call this before theme_tokens_set so adjustments are relative to what is actually set rather than guessed. Read-only.
+
+- Access: read-only (no approval needed)
+- Required args: none
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"theme_tokens_get","arguments":{}}}}`
+
+## theme_tokens_set
+
+Change the user's TaskWraith appearance by setting allowlisted theme tokens. Supply a map of token name to value, e.g. {"radius-md": 14, "scrollbar-thumb": "#4D6BFE"}. Values are TYPED, not CSS: pixel tokens take a number (a plain 12 or "12px"), colour tokens take #RGB or #RRGGBB. calc(), var(), url(), named colours, percentages and any other CSS text are rejected — this is a data channel, not a stylesheet. Only the tokens listed by theme_tokens_get can be set; provider identity colours, focus rings and approval-chrome geometry are deliberately not writable. Invalid or out-of-range entries are reported back individually and the rest still apply. Persisted for the user across restarts, and applied live. Approval-gated, and denied outright under read-only postures.
+
+- Access: governed by your run permission role
+- Required args: none
+- Optional args: tokens, reset
+- Example: `{"taskwraith_tool":{"name":"capability_invoke","arguments":{"name":"theme_tokens_set","arguments":{"tokens":{}}}}}`
 
 ## tw_recall_find
 

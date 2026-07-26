@@ -3687,7 +3687,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_sketch_update',
       description:
-        'Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only.',
+        'Edit a Sketch Canvas using structured primitives, not arbitrary JavaScript. Modes: append (default) adds elements, replace swaps the whole element list, clear removes all elements, delete removes ids. Element kinds: rect/ellipse with x,y,width,height; line/arrow with x1,y1,x2,y2; path with points or SVG path `d`; text with x,y,text,fontSize. Supports fill, stroke, strokeWidth, opacity. Gated via canvasInteraction and denied under read-only. Refused with error code `user_busy` while the human is mid-stroke — that is transient and safe to retry in a moment; it exists because replacing the element list mid-drag would destroy the stroke they are drawing. Pass the `updatedAt` you last read from canvas_sketch_get as `expectedUpdatedAt` to be refused (`stale_document`) rather than overwrite edits you have not seen.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3700,6 +3700,11 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           canvasId: { type: 'string' },
           mode: { type: 'string', enum: ['append', 'replace', 'clear', 'delete'] },
           title: { type: 'string' },
+          expectedUpdatedAt: {
+            type: 'string',
+            description:
+              'Optional optimistic-concurrency guard: the `updatedAt` last read from canvas_sketch_get. Omit to force the write.'
+          },
           elementIds: { type: 'array', items: { type: 'string' } },
           elements: {
             type: 'array',
@@ -3773,7 +3778,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_snapshot',
       description:
-        'Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect.',
+        'Return the Canvas as a structured element tree with stable refs (e.g. ref "e7"), roles, accessible names, text and bounding boxes. PREFER this over a screenshot for reading structure/text — it is cheaper and deterministic, and its refs are how you target canvas_inspect. Also returns `inputEpoch`, a counter of human interactions with this canvas; pass it back as `expectedInputEpoch` on canvas_click/canvas_fill to have those refused rather than act on a page the user has changed since you looked.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3789,7 +3794,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_screenshot',
       description:
-        'Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress).',
+        'Capture the Canvas as a PNG (image content block) plus dimensions. Use as a VISUAL SUPPLEMENT to canvas_snapshot — e.g. to check layout/spacing/colour you cannot read from the tree. Gated (pixel egress). Credential fields are painted over before capture, so a password or one-time code is never in the returned pixels; `secretsRedacted` reports how many were covered.',
       annotations: {
         readOnlyHint: true,
         destructiveHint: false,
@@ -3887,7 +3892,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_click',
       description:
-        'Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CSS `selector`, or `x`/`y` coordinates. Dispatches a realistic mouse interaction. Gated; denied under read-only. Re-run canvas_snapshot afterwards to observe the result.',
+        'Click an element in the Canvas by `ref` (from canvas_snapshot — preferred), CSS `selector`, or `x`/`y` coordinates. Dispatches a realistic mouse interaction. Gated; denied under read-only. CHECK `executed` BEFORE ASSUMING ANYTHING HAPPENED: the click is refused without being dispatched if the target has detached or changed since the snapshot that produced its ref (`refusalReason: "stale_target"`), is covered by another element ("occluded"), resolves to nothing ("not_found"), or a human is currently using the canvas ("user_active"). Re-run canvas_snapshot and re-plan — do NOT retry the same action, which is how one misfire becomes a destructive loop. `verified` reports whether the page changed synchronously: "unchanged" means UNCONFIRMED, not failed, because async re-renders and navigations settle after the call returns, so re-snapshot to confirm.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3901,7 +3906,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           ref: { type: 'string' },
           selector: { type: 'string' },
           x: { type: 'number' },
-          y: { type: 'number' }
+          y: { type: 'number' },
+          expectedInputEpoch: {
+            type: 'number',
+            description:
+              'Optional. The `inputEpoch` from the canvas_snapshot this action was planned against. If the user has interacted since, the click is refused ("stale_input_epoch") instead of acting on a page you have not seen.'
+          }
         },
         required: ['canvasId']
       }
@@ -3909,7 +3919,7 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
     {
       name: 'canvas_fill',
       description:
-        'Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selector`, firing input+change events (React-compatible). Gated; denied under read-only. The typed value is never recorded in the audit log.',
+        'Set the value of an input/textarea/select in the Canvas by `ref` or CSS `selector`, firing input+change events (React-compatible). Gated; denied under read-only. The typed value is never recorded in the audit log. CREDENTIAL FIELDS ARE ALWAYS REFUSED (`refusalReason: "secret_field"`) — password, one-time-code and any field whose autocomplete marks it a secret, whatever its input type. That is not a transient failure and must NOT be worked around with canvas_eval or coordinates: ask the user to type it themselves. Otherwise behaves like canvas_click — check `executed`, and treat "stale_target"/"occluded"/"user_active" as re-snapshot-and-re-plan rather than retry.',
       annotations: {
         readOnlyHint: false,
         destructiveHint: false,
@@ -3922,7 +3932,12 @@ export function createTaskWraithMcpToolDefinitions(): TaskWraithMcpToolDefinitio
           canvasId: { type: 'string' },
           ref: { type: 'string' },
           selector: { type: 'string' },
-          value: { type: 'string' }
+          value: { type: 'string' },
+          expectedInputEpoch: {
+            type: 'number',
+            description:
+              'Optional. The `inputEpoch` from the canvas_snapshot this action was planned against; refused ("stale_input_epoch") if the user has interacted since.'
+          }
         },
         required: ['canvasId', 'value']
       }
