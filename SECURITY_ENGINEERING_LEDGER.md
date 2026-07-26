@@ -19,7 +19,7 @@ current release pointer.
 **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
 release-paperwork commits following it. The requested 30-minute refresh reached
-feature tip `8ff7bdbdf` (**196 commits** past the tag), after Mistral Vibe,
+feature tip `db74315dc` (**200 commits** past the tag), after Mistral Vibe,
 agent theme tokens, Canvas actuation hardening, and provider-registry
 completeness diagnostics landed in committed slices.
 This is still a mutable source-ahead snapshot, not a freeze: concurrent dirty
@@ -86,12 +86,14 @@ finding above:
   belong in the final candidate verification.
 - Mistral Vibe is now a tenth stable provider identity and a live ACP seat
   backed by the user's Mistral plan, distinct from Pi's metered `mistral/*`
-  upstream. The seat selects only Vibe's gated `plan`/`default` modes, scrubs
-  inherited Mistral API credentials, and injects host-composed context into
-  each fresh session. Scheduled launch evidence still reports blocked
-  production wiring until session-mode acknowledgement and the final
-  provider-visible steered prompt are bound; do not translate that receipt
-  into provider removal.
+  upstream. The approved live-set intent and hand-mirrored iOS membership land
+  with the production adapter/dispatch route. The seat selects only Vibe's
+  gated `plan`/`default` modes, scrubs inherited Mistral API credentials,
+  re-checks launch authority across asynchronous pre-spawn boundaries, and
+  injects host-composed context into each fresh session. Scheduled launch
+  evidence still reports blocked production wiring until session-mode
+  acknowledgement and the final provider-visible steered prompt are bound; do
+  not translate that receipt into provider removal.
 - Office codecs operate on bounded document formats, while Outlook device-code
   access is limited to reading mail/calendar context, saving drafts, and
   creating personal time blocks. Release prose must not imply send-mail or
@@ -99,7 +101,11 @@ finding above:
 - Agent-accessed appearance customisation is a typed token-data channel, not a
   CSS/code channel. `theme_tokens_set` remains write-classified; selectors,
   URLs, calculations, provider identity, focus rings, and approval geometry are
-  excluded and renderer-side validation re-checks persisted values.
+  excluded and renderer-side validation re-checks persisted values. The narrow
+  main-to-renderer update is revalidated before applying live; its authoring
+  commit records the broadcast hop as code-reviewed but not yet proven through
+  a real provider tool turn, so retain that check in exact-candidate
+  verification.
 - Canvas actuation now serializes interactions per surface, refuses stale
   targets and stale human-input epochs, keeps credential fields human-only,
   preserves an in-progress sketch stroke, and refuses to act while recent
