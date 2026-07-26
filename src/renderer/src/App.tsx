@@ -56,7 +56,8 @@ import {
   DEFAULT_PROVIDER,
   isEnsembleSeatProvider,
   isLiveSelectableProvider,
-  isRetiredProvider
+  isRetiredProvider,
+  LIVE_SELECTABLE_PROVIDER_IDS
 } from '../../shared/retiredProviders'
 import { sanitizeRawProviderMediaRefs } from '../../shared/transcriptMediaRefSanitize'
 import { normalizeThreadTitle } from '../../shared/threadTitles'
@@ -6550,7 +6551,18 @@ function App(): React.JSX.Element {
     const initialProvider =
       s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
     void refreshProviderMetadata(initialProvider)
-    for (const provider of ['codex', 'claude', 'kimi', 'ollama'] as ProviderId[]) {
+    // Warm EVERY live seat's catalog, not a hand-listed subset. This was
+    // ['codex','claude','kimi','ollama'], so a seat added later was only ever
+    // fetched if the user switched the active provider to it — while the
+    // GROUPED picker lists every provider at once and therefore rendered the
+    // missing ones as empty. That is precisely how Pi appeared to have no
+    // models despite three stored upstream keys.
+    //
+    // `refreshProviderModelCatalog` already no-ops for anything outside the
+    // live set, so deriving the list here cannot outrun that gate, and seats
+    // whose picker rows come from static constants simply cache a value nobody
+    // reads. Cheap insurance against the next seat repeating this.
+    for (const provider of LIVE_SELECTABLE_PROVIDER_IDS as readonly ProviderId[]) {
       if (provider !== initialProvider) void refreshProviderModelCatalog(provider)
     }
     // 1.0.6-G3d — derive Grok availability from the registered adapters (the
