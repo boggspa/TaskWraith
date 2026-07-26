@@ -111,7 +111,8 @@ verification steps, and known limits. Optional features that require outside
 accounts, local services, or macOS permissions are covered in
 [ADVANCED_OPTIONAL_SETUP.md](ADVANCED_OPTIONAL_SETUP.md). [SAFETY.md](SAFETY.md)
 and [SECURITY.md](SECURITY.md) contain the engineering guardrails and release
-baseline.
+baseline. [PRIVACY.md](PRIVACY.md) explains platform aggregates, optional
+privacy-minimised activity reporting, and the exact no-content data boundary.
 
 <table>
   <tr>
@@ -379,4 +380,4 @@ validation, SBOM generation, or platform-specific artifact signing.
 See `CHANGELOG.md` for release history, and `TRUST_AND_SAFETY.md`,
 `ADVANCED_OPTIONAL_SETUP.md`, `SESSION_AND_WORKSPACE.md`, `THREAD_INTROSPECTION.md`,
 `COMPOSER_VARIANTS.md`, `ARCHITECTURE.md`, `SAFETY.md`, `SECURITY.md`, and
-`TERMS_NOTES.md` for more detail.
+`PRIVACY.md`, and `TERMS_NOTES.md` for more detail.

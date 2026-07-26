@@ -23,6 +23,18 @@
   such as pair, device, thread/run, reason, timestamps, and aggregate
   added/deleted line counts, but not plaintext prompts, commands, diff contents
   or hunks, file contents, or model output.
+- TaskWraith may use platform-provided aggregate GitHub and App Store statistics
+  for product observation. Builds with a configured first-party activity
+  endpoint may also offer a disabled-by-default, explicit-consent daily
+  check-in containing only UTC day, app version, operating-system family,
+  processor family, and release channel. It carries no stable installation
+  identifier or work content, is not a unique-user measure, and is used only
+  for adoption, platform planning, and release/update health. The effective
+  disclosure and retention terms are in `PRIVACY.md`. The same preference may
+  renew a random per-process live-presence lease. That lease exists only in app
+  and receiver memory, expires after 150 seconds, and is exposed to the private
+  dashboard only as a current aggregate count—not as values, events, durations,
+  or session history.
 - Files, images, Discord context, prompts, and tool output sent to a selected
   provider runtime are governed by that provider, account, model, and CLI/API
   terms.
@@ -37,6 +49,7 @@
 - The sky/weather data path is a third-party collection feature and should be
   included in the privacy, security, and App Store disclosure review for any
   release that enables it.
-- Any future hosted sync, plaintext backend, project-operated push gateway, or
-  third-party collection feature should receive a fresh privacy, security, and
-  App Store disclosure review before release.
+- Any future hosted sync, plaintext backend, project-operated push gateway, new
+  analytics event or identifier, or third-party collection feature should
+  receive a fresh privacy, security, and App Store disclosure review before
+  release.

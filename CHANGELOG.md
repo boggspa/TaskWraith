@@ -204,6 +204,31 @@ lease back on exit, removing the borrowed credential and nothing else. A second
 TaskWraith window, or a machine with nothing to borrow, quietly runs the way it
 always did rather than failing a launch that would otherwise have worked.
 
+### Product observation says exactly what it counts
+
+TaskWraith now has a public privacy notice and an explicit, off-by-default
+activity-reporting control under **Settings → Safety & Privacy**. When a build
+has a first-party endpoint configured and the user opts in, it sends at most
+one no-ID check-in per UTC day: schema, event, day, app version, operating-system
+family, processor family, and release channel. The control shows that complete
+contract in the app. Prompts, workspaces, provider choices, usage, and stable
+installation identifiers are outside it; builds without an endpoint send
+nothing.
+
+The same opt-in can now power an approximate **apps online now** gauge without
+creating a session history. Each running app renews a random, process-only
+lease; the receiver holds it in RAM for 150 seconds, returns only the aggregate
+unexpired count, and never writes lease values, renewals, start/end times, or
+durations to its analytics database. Opting out stops renewals and retracts the
+lease when reachable; a crashed or disconnected app simply ages out.
+
+That boundary also changes how adoption is described. GitHub release requests,
+update-manifest checks, repository traffic, App Store aggregates, and optional
+desktop activity check-ins are separate measures with separate caveats—none is
+silently promoted into a unique-user count. They are used only to understand
+adoption, prioritise supported platforms, and verify release/update health,
+never for advertising or individual profiling.
+
 New doctrine-integrity and formatting-ratchet
 gates keep future agent work from turning documentation or unrelated source
 into collateral churn.
