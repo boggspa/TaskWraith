@@ -2620,6 +2620,42 @@ public enum BridgeAction {
         ])
     }
 
+    /// Create a local branch without checking it out. Gated `fileWrite`.
+    /// The Mac refuses the `taskwraith/` namespace (its automatic worktree
+    /// allocators own it).
+    public static func gitCreateBranch(
+        workspaceId: String, branch: String, from: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "gitCreateBranch", "actionId": actionId,
+            "workspaceId": workspaceId, "branch": branch,
+        ]
+        if let from, !from.isEmpty { payload["from"] = from }
+        return encode(payload)
+    }
+
+    /// Create a linked worktree.
+    ///
+    /// THE DESTINATION-PATH CONTRACT: this sends a NAME, never a path. The Mac
+    /// resolves the destination into its own worktree root
+    /// (`<parent-of-repo>/.taskwraith-worktrees/<repo>/<name>`) and REFUSES a
+    /// payload that carries a `path` at all. Do not add one here — a phone
+    /// choosing a filesystem write target is precisely what the workspace
+    /// allowlist exists to prevent, and the refusal is by shape, so a field
+    /// added on this side would simply make every request fail.
+    public static func gitCreateWorktree(
+        workspaceId: String, name: String, branch: String? = nil,
+        actionId: String = UUID().uuidString
+    ) -> [String: Any] {
+        var payload: [String: Any] = [
+            "kind": "gitCreateWorktree", "actionId": actionId,
+            "workspaceId": workspaceId, "name": name,
+        ]
+        if let branch, !branch.isEmpty { payload["branch"] = branch }
+        return encode(payload)
+    }
+
     /// Start/stop watching this chat's pull request. The DESCRIPTOR is resolved
     /// Mac-side from the chat's own workspace — the phone sends only the intent,
     /// never a repo/PR it picked.

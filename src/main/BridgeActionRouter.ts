@@ -708,6 +708,10 @@ export class BridgeActionRouter {
         return this.executor.executeGitBranches(payload)
       case 'gitCheckout':
         return this.executor.executeGitCheckout(payload)
+      case 'gitCreateBranch':
+        return this.executor.executeGitCreateBranch(payload)
+      case 'gitCreateWorktree':
+        return this.executor.executeGitCreateWorktree(payload)
       case 'githubWatchPr':
         return this.executor.executeGithubWatchPr(payload)
       case 'githubPrStatus':
@@ -1348,6 +1352,8 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'gitUnstagePaths':
     case 'gitCommit':
     case 'gitCheckout':
+    case 'gitCreateBranch':
+    case 'gitCreateWorktree':
       return 'fileWrite'
     case 'gitPush':
     case 'githubCreatePr':

@@ -914,6 +914,128 @@ describe('decodeBridgeActionPayload', () => {
       }
     })
 
+    // ── The destination-path contract ────────────────────────────────────
+    //
+    // A remote client must not be able to choose where on disk a worktree
+    // lands. The rule is enforced by the SHAPE (no `path` field) rather than
+    // by sanitising one, so these pin that the shape holds.
+    describe('gitCreateWorktree destination-path contract', () => {
+      const worktree = (extra: Record<string, unknown> = {}) =>
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'gitCreateWorktree',
+            actionId: 'wt-1',
+            workspaceId: 'ws-1',
+            name: 'review',
+            ...extra
+          })
+        ).payload
+
+      it('decodes a name-only request and classifies it as mutating', () => {
+        const created = worktree()
+        expect(created.kind).toBe('gitCreateWorktree')
+        expect(created).toMatchObject({ name: 'review' })
+        expect(payloadIsMutating(created)).toBe(true)
+        // The decoded action carries no destination of any kind.
+        expect(created).not.toHaveProperty('path')
+      })
+
+      it('REFUSES a payload carrying a path rather than ignoring it', () => {
+        // Silently dropping it would redirect the client somewhere it did not
+        // ask for; refusing tells it the field is not part of the contract.
+        for (const path of [
+          '/etc',
+          '/Users/someone/.ssh',
+          '../../elsewhere',
+          '',
+          null
+        ]) {
+          expect(worktree({ path })).toMatchObject({
+            kind: 'unknown',
+            rawKind: 'gitCreateWorktree'
+          })
+        }
+      })
+
+      it('accepts only a single safe path segment as the name', () => {
+        for (const name of [
+          '../escape',
+          'nested/name',
+          'back\\slash',
+          '..',
+          '.',
+          '',
+          '  padded  ',
+          'x'.repeat(81),
+          'has space',
+          42
+        ]) {
+          expect(worktree({ name })).toMatchObject({
+            kind: 'unknown',
+            rawKind: 'gitCreateWorktree'
+          })
+        }
+        for (const name of ['review', 'fix_thing', 'v1.2-rc', 'A-B_c.1']) {
+          expect(worktree({ name }).kind).toBe('gitCreateWorktree')
+        }
+      })
+
+      it('refuses the namespaces the automatic allocators own', () => {
+        // thread-* / fanout-* worktrees are RE-ADOPTED by matching Git, so a
+        // hand-made one in that namespace would be handed to an agent.
+        for (const name of ['thread-x', 'fanout-x', 'Fanout-X', 'THREAD-abc']) {
+          expect(worktree({ name })).toMatchObject({
+            kind: 'unknown',
+            rawKind: 'gitCreateWorktree'
+          })
+        }
+        expect(worktree({ name: 'threading' }).kind).toBe('gitCreateWorktree')
+      })
+
+      it('refuses a reserved branch on the new worktree', () => {
+        expect(worktree({ branch: 'taskwraith/thread-x' })).toMatchObject({
+          kind: 'unknown',
+          rawKind: 'gitCreateWorktree'
+        })
+        expect(worktree({ branch: 'feature/x' }).kind).toBe('gitCreateWorktree')
+      })
+    })
+
+    it('decodes gitCreateBranch and keeps the taskwraith namespace reserved', () => {
+      const made = decodeBridgeActionPayload(
+        encode({
+          kind: 'gitCreateBranch',
+          actionId: 'cb-1',
+          workspaceId: 'ws-1',
+          branch: 'feature/x',
+          from: 'master'
+        })
+      ).payload
+      expect(made.kind).toBe('gitCreateBranch')
+      expect(made).toMatchObject({ branch: 'feature/x', from: 'master' })
+      expect(payloadIsMutating(made)).toBe(true)
+
+      for (const branch of ['taskwraith/thread-x', 'TaskWraith/fanout-y', '--force', 'a..b']) {
+        expect(
+          decodeBridgeActionPayload(
+            encode({ kind: 'gitCreateBranch', actionId: 'cb-2', workspaceId: 'ws-1', branch })
+          ).payload
+        ).toMatchObject({ kind: 'unknown', rawKind: 'gitCreateBranch' })
+      }
+      // A malformed start point is refused too — it also reaches git as a ref.
+      expect(
+        decodeBridgeActionPayload(
+          encode({
+            kind: 'gitCreateBranch',
+            actionId: 'cb-3',
+            workspaceId: 'ws-1',
+            branch: 'ok',
+            from: '--upload-pack=evil'
+          })
+        ).payload
+      ).toMatchObject({ kind: 'unknown', rawKind: 'gitCreateBranch' })
+    })
+
     it('decodes githubWatchPr and requires both the workspace and the chat', () => {
       const watch = decodeBridgeActionPayload(
         encode({

@@ -251,6 +251,59 @@ struct GitModelsTests {
         #expect(unwatch["watch"] as? Bool == false)
     }
 
+    /// The destination-path contract, from the phone's side: the worktree
+    /// helper must never put a path on the wire. The Mac refuses such a payload
+    /// outright, so a field added here would break every request — this pins
+    /// that nobody adds one.
+    @Test("gitCreateWorktree sends a name and never a destination path")
+    func createWorktreeSendsNoPath() throws {
+        func decode(_ params: [String: Any]) throws -> [String: Any] {
+            let base64 = try #require(params["payloadBase64"] as? String)
+            let data = try #require(Data(base64Encoded: base64))
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        let plain = try decode(
+            BridgeAction.gitCreateWorktree(workspaceId: "ws-1", name: "review"))
+        #expect(plain["kind"] as? String == "gitCreateWorktree")
+        #expect(plain["name"] as? String == "review")
+        #expect(plain["path"] == nil)
+        // No branch key at all when none was asked for — the Mac distinguishes
+        // "detached HEAD" from "branch named empty string".
+        #expect(plain["branch"] == nil)
+
+        let branched = try decode(
+            BridgeAction.gitCreateWorktree(
+                workspaceId: "ws-1", name: "review", branch: "feature/x"))
+        #expect(branched["branch"] as? String == "feature/x")
+        #expect(branched["path"] == nil)
+
+        // An empty branch is omitted rather than sent blank.
+        let blank = try decode(
+            BridgeAction.gitCreateWorktree(workspaceId: "ws-1", name: "review", branch: ""))
+        #expect(blank["branch"] == nil)
+    }
+
+    @Test("gitCreateBranch encodes branch and optional start point")
+    func createBranchEncodes() throws {
+        func decode(_ params: [String: Any]) throws -> [String: Any] {
+            let base64 = try #require(params["payloadBase64"] as? String)
+            let data = try #require(Data(base64Encoded: base64))
+            return try #require(try JSONSerialization.jsonObject(with: data) as? [String: Any])
+        }
+
+        let plain = try decode(
+            BridgeAction.gitCreateBranch(workspaceId: "ws-1", branch: "feature/x"))
+        #expect(plain["kind"] as? String == "gitCreateBranch")
+        #expect(plain["branch"] as? String == "feature/x")
+        #expect(plain["from"] == nil)
+
+        let from = try decode(
+            BridgeAction.gitCreateBranch(
+                workspaceId: "ws-1", branch: "feature/x", from: "master"))
+        #expect(from["from"] as? String == "master")
+    }
+
     @Test("gitBranches ack decodes branches and worktrees")
     func branchAckDecodes() throws {
         let json = """

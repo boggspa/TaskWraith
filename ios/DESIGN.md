@@ -1158,9 +1158,11 @@ every time.
 6. Real-device QA for the v0.46 git surface — in particular a genuine dirty-tree
    checkout refusal and a PR watch against a live open PR. The wire, capability
    gating and decode are unit-covered; the round trip against a real repo is not.
-7. Worktree CREATION and branch creation stay desktop-only. The surface lists
-   worktrees read-only; adding them from the phone needs a destination-path
-   contract that does not yet exist.
+7. Worktree REMOVAL and branch deletion stay desktop-only — both are
+   path-addressed and destructive, and have no contract yet. Creation landed
+   with the destination-path contract in `ios/GIT-WRITE-ACTIONS.md`: the phone
+   sends a NAME, the Mac derives the destination, and a payload carrying a
+   `path` is refused rather than sanitised.
 
 ## Non-goals
 

@@ -215,6 +215,14 @@ function makeStubExecutor(
       executed: true,
       message: 'gitCheckout done'
     }),
+    executeGitCreateBranch: make('executeGitCreateBranch', {
+      executed: true,
+      message: 'gitCreateBranch done'
+    }),
+    executeGitCreateWorktree: make('executeGitCreateWorktree', {
+      executed: true,
+      message: 'gitCreateWorktree done'
+    }),
     executeGithubWatchPr: make('executeGithubWatchPr', {
       executed: true,
       message: 'githubWatchPr done'
@@ -2761,6 +2769,57 @@ describe('BridgeActionRouter', () => {
       expect(allowedResult.accepted).toBe(true)
       expect(allowedResult.reasonCode).toBe('accepted')
       expect(allowed.calls).toHaveLength(1)
+    })
+
+    it('denies branch and worktree creation without fileWrite', async () => {
+      // Both write to disk — a branch ref in the repo, a worktree beside it.
+      const readOnly = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(readOnly, ['monitor', 'diffReview', 'fileBrowse', 'fileRead'])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: readOnly, executor })
+
+      for (const payload of [
+        { kind: 'gitCreateBranch', branch: 'feature/x' },
+        { kind: 'gitCreateWorktree', name: 'review' }
+      ]) {
+        const result = (await router.route('bridge.requestActionAck', {
+          pairID: `pair-create-deny-${payload.kind}`,
+          payloadBase64: encodeGitAction(payload)
+        })) as { accepted: boolean; reasonCode?: string; message?: string }
+        expect(result.accepted).toBe(false)
+        expect(result.reasonCode).toBe('capabilityDenied')
+        expect(result.message).toMatch(/capability "fileWrite"/i)
+      }
+      expect(calls).toHaveLength(0)
+    })
+
+    it('never routes a worktree payload that carries a destination path', async () => {
+      // The router should never even see it as a create — the decoder refuses
+      // the shape, so it arrives as `unknown` and is denied outright.
+      const writable = new RemoteWorkspaceAllowlist()
+      upsertGitWorkspace(writable, ['monitor', 'diffReview', 'fileBrowse', 'fileRead', 'fileWrite'])
+      const { executor, calls } = makeStubExecutor()
+      const router = new BridgeActionRouter({ allowlist: writable, executor })
+
+      const result = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-worktree-path',
+        payloadBase64: encodeGitAction({
+          kind: 'gitCreateWorktree',
+          name: 'review',
+          path: '/Users/someone/.ssh'
+        })
+      })) as { accepted: boolean }
+      expect(result.accepted).toBe(false)
+      expect(calls).toHaveLength(0)
+
+      // The same request WITHOUT the path is accepted, so the denial above is
+      // the path and nothing else.
+      const clean = (await router.route('bridge.requestActionAck', {
+        pairID: 'pair-worktree-clean',
+        payloadBase64: encodeGitAction({ kind: 'gitCreateWorktree', name: 'review' })
+      })) as { accepted: boolean }
+      expect(clean.accepted).toBe(true)
+      expect(calls).toHaveLength(1)
     })
 
     it('denies git actions for a non-allowlisted workspace', async () => {

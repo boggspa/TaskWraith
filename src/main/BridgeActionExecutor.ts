@@ -24,6 +24,8 @@ import type {
   BridgeGithubPrReadinessAction,
   BridgeGitBranchesAction,
   BridgeGitCheckoutAction,
+  BridgeGitCreateBranchAction,
+  BridgeGitCreateWorktreeAction,
   BridgeGithubCreatePrAction,
   BridgeGithubWatchPrAction,
   BridgeWorkflowRunNowAction,
@@ -166,6 +168,12 @@ export interface BridgeActionExecutor {
   executeGitPush(action: BridgeGitPushAction): Promise<BridgeActionExecutionResult>
   executeGitBranches(action: BridgeGitBranchesAction): Promise<BridgeActionExecutionResult>
   executeGitCheckout(action: BridgeGitCheckoutAction): Promise<BridgeActionExecutionResult>
+  executeGitCreateBranch(
+    action: BridgeGitCreateBranchAction
+  ): Promise<BridgeActionExecutionResult>
+  executeGitCreateWorktree(
+    action: BridgeGitCreateWorktreeAction
+  ): Promise<BridgeActionExecutionResult>
   executeGithubWatchPr(action: BridgeGithubWatchPrAction): Promise<BridgeActionExecutionResult>
   executeGithubPrStatus(action: BridgeGithubPrStatusAction): Promise<BridgeActionExecutionResult>
   executeGithubPrReadiness(
@@ -369,6 +377,16 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeGitCheckoutAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('gitCheckout', action.workspaceId)
+  }
+  async executeGitCreateBranch(
+    action: BridgeGitCreateBranchAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitCreateBranch', action.workspaceId)
+  }
+  async executeGitCreateWorktree(
+    action: BridgeGitCreateWorktreeAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('gitCreateWorktree', action.workspaceId)
   }
   async executeGithubWatchPr(
     action: BridgeGithubWatchPrAction
@@ -758,6 +776,18 @@ export interface MainProcessActionExecutorDependencies {
     ok: boolean
     snapshot?: Record<string, unknown>
     dirtyReason?: string
+    reason?: string
+  }>
+  gitCreateBranchFn?: (action: BridgeGitCreateBranchAction) => Promise<{
+    ok: boolean
+    snapshot?: Record<string, unknown>
+    reason?: string
+  }>
+  /** Creates the worktree. The destination is derived Mac-side FROM THE NAME —
+   *  the action carries no path, so there is nothing here to honour. */
+  gitCreateWorktreeFn?: (action: BridgeGitCreateWorktreeAction) => Promise<{
+    ok: boolean
+    path?: string
     reason?: string
   }>
   githubWatchPrFn?: (action: BridgeGithubWatchPrAction) => Promise<{
@@ -1503,6 +1533,61 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
       const message = err instanceof Error ? err.message : String(err)
       this.log(`[BridgeActionExecutor] gitCheckout failed: ${message}`)
       return { executed: false, message: `Switch branch failed: ${message}` }
+    }
+  }
+
+  async executeGitCreateBranch(
+    action: BridgeGitCreateBranchAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitCreateBranchFn) {
+      return notWired('gitCreateBranch', action.workspaceId)
+    }
+    this.log(
+      `[BridgeActionExecutor] gitCreateBranch ws=${action.workspaceId} branch=${action.branch}`
+    )
+    try {
+      const result = await this.deps.gitCreateBranchFn(action)
+      if (result.ok) {
+        return {
+          executed: true,
+          message: `Created ${action.branch}.`,
+          data: result.snapshot ? { snapshot: result.snapshot } : undefined
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Could not create the branch.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitCreateBranch failed: ${message}`)
+      return { executed: false, message: `Create branch failed: ${message}` }
+    }
+  }
+
+  async executeGitCreateWorktree(
+    action: BridgeGitCreateWorktreeAction
+  ): Promise<BridgeActionExecutionResult> {
+    if (!this.deps.gitCreateWorktreeFn) {
+      return notWired('gitCreateWorktree', action.workspaceId)
+    }
+    this.log(
+      `[BridgeActionExecutor] gitCreateWorktree ws=${action.workspaceId} name=${action.name}`
+    )
+    try {
+      const result = await this.deps.gitCreateWorktreeFn(action)
+      if (result.ok) {
+        // Report where it landed. The device did not choose it, so it has no
+        // way to know otherwise — and an unexplained new checkout is worse
+        // than a slightly long ack.
+        return {
+          executed: true,
+          message: result.path ? `Worktree created at ${result.path}.` : 'Worktree created.',
+          data: result.path ? { path: result.path } : undefined
+        }
+      }
+      return { executed: false, message: result.reason ?? 'Could not create the worktree.' }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err)
+      this.log(`[BridgeActionExecutor] gitCreateWorktree failed: ${message}`)
+      return { executed: false, message: `Create worktree failed: ${message}` }
     }
   }
 

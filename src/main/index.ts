@@ -37021,6 +37021,38 @@ if (isGeminiMcpBridgeProcess) {
           publishRemoteGitSnapshotCache(action.workspaceId)
           return { ok: true, snapshot: git as unknown as Record<string, unknown> }
         },
+        gitCreateBranchFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          const result = await bridgeGitService.createBranch({
+            repoPath: path,
+            branch: action.branch,
+            from: action.from
+          })
+          if (!result.ok) return { ok: false, reason: result.error }
+          const git = cacheRemoteGitSnapshot(action.workspaceId, path, result.data)
+          publishRemoteGitSnapshotCache(action.workspaceId)
+          return { ok: true, snapshot: git as unknown as Record<string, unknown> }
+        },
+        gitCreateWorktreeFn: async (action) => {
+          const path = bridgeGitWorkspacePath(action.workspaceId)
+          if (!path) {
+            return { ok: false, reason: `Workspace id "${action.workspaceId}" is not registered` }
+          }
+          // NAME ONLY. `GitService.createWorktree` also accepts an absolute
+          // `path`, and that leg is deliberately not reachable from here: the
+          // action type carries no path, and none is synthesized. The Mac
+          // resolves the destination into its own worktree root.
+          const result = await bridgeGitService.createWorktree({
+            repoPath: path,
+            name: action.name,
+            branch: action.branch
+          })
+          if (!result.ok) return { ok: false, reason: result.error }
+          return { ok: true, path: result.data.repoRoot }
+        },
         githubWatchPrFn: async (action) => {
           const chat = AppStore.getChats().find((entry) => entry.appChatId === action.chatId)
           if (!chat) {

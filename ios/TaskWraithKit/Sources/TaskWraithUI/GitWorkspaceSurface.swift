@@ -113,6 +113,8 @@ struct GitBranchWorktreeSection: View {
     @State private var checkingOut: String?
     @State private var feedback: String?
     @State private var feedbackIsError = false
+    @State private var newName = ""
+    @State private var creating = false
 
     private var snapshot: GitWorkspaceSnapshot? { model.gitSnapshots[workspaceId] }
     private var canCheckout: Bool { model.workspaceCanRunGitMutations(workspaceId) }
@@ -184,6 +186,10 @@ struct GitBranchWorktreeSection: View {
                 }
             }
 
+            if canCheckout {
+                createControls
+            }
+
             if let feedback {
                 noticeRow(
                     feedback,
@@ -192,6 +198,93 @@ struct GitBranchWorktreeSection: View {
             }
         }
         .task { await load() }
+    }
+
+    /// Create a branch, or a worktree.
+    ///
+    /// Note what is NOT here: any way to say where a worktree goes. The phone
+    /// sends a name and the Mac resolves the destination into its own worktree
+    /// root — a remote device choosing a filesystem write target is exactly
+    /// what the workspace allowlist exists to prevent. The ack reports where it
+    /// landed, which is the only way the user finds out.
+    @ViewBuilder
+    private var createControls: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 6) {
+                TextField("New branch or worktree name", text: $newName)
+                    .textFieldStyle(.plain)
+                    .font(.caption)
+                    .autocorrectionDisabled()
+                    #if canImport(UIKit)
+                        .textInputAutocapitalization(.never)
+                    #endif
+                    .padding(.horizontal, 8)
+                    .padding(.vertical, 6)
+                    .background(TWTheme.surface2.opacity(0.6), in: RoundedRectangle(cornerRadius: 8))
+            }
+            HStack(spacing: 6) {
+                Button {
+                    Task { await createBranch() }
+                } label: {
+                    Label("Branch", systemImage: "arrow.triangle.branch")
+                        .font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .disabled(trimmedNewName.isEmpty || creating)
+
+                Button {
+                    Task { await createWorktree() }
+                } label: {
+                    Label("Worktree", systemImage: "square.stack.3d.up")
+                        .font(.caption2.weight(.semibold))
+                }
+                .buttonStyle(.bordered)
+                .disabled(trimmedNewName.isEmpty || creating)
+
+                if creating { ProgressView().controlSize(.mini) }
+                Spacer(minLength: 0)
+            }
+        }
+        .padding(.top, 2)
+    }
+
+    private var trimmedNewName: String {
+        newName.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func createBranch() async {
+        guard !creating else { return }
+        creating = true
+        defer { creating = false }
+        do {
+            _ = try await model.createBranch(workspaceId: workspaceId, branch: trimmedNewName)
+            feedbackIsError = false
+            feedback = "Created \(trimmedNewName)."
+            newName = ""
+            await load()
+        } catch {
+            feedbackIsError = true
+            feedback = (error as? LocalizedError)?.errorDescription ?? "Couldn't create the branch."
+        }
+    }
+
+    private func createWorktree() async {
+        guard !creating else { return }
+        creating = true
+        defer { creating = false }
+        do {
+            let path = try await model.createWorktree(
+                workspaceId: workspaceId, name: trimmedNewName)
+            feedbackIsError = false
+            // Say WHERE. The user didn't choose it and can't browse the Mac.
+            feedback = path.map { "Worktree created at \($0)." } ?? "Worktree created."
+            newName = ""
+            await load()
+        } catch {
+            feedbackIsError = true
+            feedback =
+                (error as? LocalizedError)?.errorDescription ?? "Couldn't create the worktree."
+        }
     }
 
     private func branchRow(_ branch: GitBranchEntry) -> some View {

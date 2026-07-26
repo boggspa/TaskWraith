@@ -4759,6 +4759,41 @@ public final class RemoteSessionModel: ObservableObject {
         return try? await fetchGitSnapshot(workspaceId: workspaceId)
     }
 
+    /// Create a local branch (not checked out). The Mac refuses the
+    /// `taskwraith/` namespace; that refusal arrives as a thrown error whose
+    /// message is the Mac's own wording.
+    @discardableResult
+    public func createBranch(
+        workspaceId: String, branch: String, from: String? = nil
+    ) async throws -> GitWorkspaceSnapshot? {
+        let ack = try await requestFileAction(
+            BridgeAction.gitCreateBranch(workspaceId: workspaceId, branch: branch, from: from),
+            timeoutMs: 30_000)
+        if let git = ack.data?.git {
+            cacheGitSnapshot(git, workspaceId: workspaceId)
+            return git
+        }
+        return nil
+    }
+
+    /// Create a linked worktree by NAME.
+    ///
+    /// The phone never picks the destination — see
+    /// ``BridgeAction/gitCreateWorktree(workspaceId:name:branch:actionId:)``.
+    /// Returns where the Mac put it, so the surface can say; the device has no
+    /// other way to know, and an unexplained new checkout is worse than a long
+    /// confirmation.
+    @discardableResult
+    public func createWorktree(
+        workspaceId: String, name: String, branch: String? = nil
+    ) async throws -> String? {
+        let ack = try await requestFileAction(
+            BridgeAction.gitCreateWorktree(
+                workspaceId: workspaceId, name: name, branch: branch),
+            timeoutMs: 60_000)
+        return ack.data?.path
+    }
+
     /// Start/stop watching this chat's pull request. Returns the MAC's final
     /// state, which may differ from what was asked (it refuses when the branch
     /// has no open PR).

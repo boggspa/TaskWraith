@@ -42,6 +42,10 @@
  */
 
 import { THREAD_TITLE_MAX_CHARS } from '../shared/threadTitles'
+import {
+  isReservedBranchName,
+  isReservedWorktreeName
+} from '../shared/worktreeNamespace'
 
 export type BridgeApprovalDecision =
   | 'accept'
@@ -378,6 +382,58 @@ export interface BridgeGitCheckoutAction extends BridgeActionMetadata {
   kind: 'gitCheckout'
   workspaceId: string
   branch: string
+}
+
+/** Create a local branch (optionally from a start point) without checking it
+ * out. Mutating — gated by `fileWrite`.
+ *
+ * Refuses the `taskwraith/` namespace: those branches belong to the automatic
+ * thread/fan-out worktree allocators, which re-adopt by matching Git. */
+export interface BridgeGitCreateBranchAction extends BridgeActionMetadata {
+  kind: 'gitCreateBranch'
+  workspaceId: string
+  branch: string
+  /** Existing ref to branch from. Omitted → current HEAD. */
+  from?: string
+}
+
+/**
+ * Create a linked worktree. Mutating — gated by `fileWrite`.
+ *
+ * THE DESTINATION-PATH CONTRACT. This action deliberately has NO `path` field.
+ *
+ * `GitService.createWorktree` accepts either a caller-supplied absolute `path`
+ * or a `name` it resolves itself into
+ * `<parent-of-repo>/.taskwraith-worktrees/<repo>/<safe-name>`. The path leg is
+ * for the DESKTOP, where a human picked a folder in a file dialog and can see
+ * what is already there. A phone can do neither, and an absolute path from a
+ * remote device is a filesystem write target chosen by the client — the exact
+ * shape the workspace allowlist exists to prevent.
+ *
+ * So the field is ABSENT from the type rather than present-and-ignored: there
+ * is nothing to smuggle, nothing for a future edit to start honouring by
+ * accident, and the type itself documents the rule. The Mac derives the
+ * destination from `name` alone, and `safePathSegment` reduces it to a single
+ * `[A-Za-z0-9._-]` segment, so traversal collapses to a harmless directory name
+ * before it reaches git.
+ *
+ * Note the destination is a SIBLING of the repository, not a child — it is
+ * outside the workspace root the `fileWrite` grant nominally covers. That is
+ * deliberate (git refuses a worktree nested inside its own repo) and is judged
+ * within the grant because the location is Mac-chosen and bounded to the
+ * worktree root, and the content is a checkout of a repo the device already
+ * holds `fileWrite` on. It is not general filesystem access.
+ *
+ * Worktree REMOVAL is not offered remotely at all: it is path-addressed and
+ * deletes a checkout, so it stays desktop-only.
+ */
+export interface BridgeGitCreateWorktreeAction extends BridgeActionMetadata {
+  kind: 'gitCreateWorktree'
+  workspaceId: string
+  /** Single path segment the Mac resolves into the worktree root. */
+  name: string
+  /** Branch to create/check out in the new worktree. Omitted → detached HEAD. */
+  branch?: string
 }
 
 /** Start or stop watching a chat's pull request.
@@ -884,6 +940,8 @@ export type BridgeActionPayload =
   | BridgeGitPushAction
   | BridgeGitBranchesAction
   | BridgeGitCheckoutAction
+  | BridgeGitCreateBranchAction
+  | BridgeGitCreateWorktreeAction
   | BridgeGithubWatchPrAction
   | BridgeGithubPrStatusAction
   | BridgeGithubPrReadinessAction
@@ -1025,6 +1083,8 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'gitPush':
     case 'gitBranches':
     case 'gitCheckout':
+    case 'gitCreateBranch':
+    case 'gitCreateWorktree':
     case 'githubWatchPr':
     case 'githubPrStatus':
     case 'githubPrReadiness':
@@ -1107,6 +1167,8 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'gitPush':
     case 'gitBranches':
     case 'gitCheckout':
+    case 'gitCreateBranch':
+    case 'gitCreateWorktree':
     case 'githubWatchPr':
     case 'githubPrStatus':
     case 'githubPrReadiness':
@@ -1232,6 +1294,8 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'gitCommit':
     case 'gitPush':
     case 'gitCheckout':
+    case 'gitCreateBranch':
+    case 'gitCreateWorktree':
     case 'githubWatchPr':
     case 'githubCreatePr':
     case 'registerApnsToken':
@@ -1366,6 +1430,14 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isGitCheckout(parsed)
         ? (parsed as unknown as BridgeGitCheckoutAction)
         : { kind: 'unknown', rawKind: 'gitCheckout', raw: parsed }
+    case 'gitCreateBranch':
+      return isGitCreateBranch(parsed)
+        ? (parsed as unknown as BridgeGitCreateBranchAction)
+        : { kind: 'unknown', rawKind: 'gitCreateBranch', raw: parsed }
+    case 'gitCreateWorktree':
+      return isGitCreateWorktree(parsed)
+        ? (parsed as unknown as BridgeGitCreateWorktreeAction)
+        : { kind: 'unknown', rawKind: 'gitCreateWorktree', raw: parsed }
     case 'githubWatchPr':
       return isGithubWatchPr(parsed)
         ? (parsed as unknown as BridgeGithubWatchPrAction)
@@ -1868,6 +1940,47 @@ function isGitCheckout(v: Record<string, unknown>): boolean {
     hasValidActionMetadata(v) &&
     typeof v.workspaceId === 'string' &&
     isSafeGitBranchName(v.branch)
+  )
+}
+
+/** Worktree NAME rules. Looser than a refname (it is a directory segment, and
+ *  `safePathSegment` normalises it Mac-side) but still bounded and non-empty,
+ *  and never in an allocator-owned namespace. */
+const MAX_WORKTREE_NAME_LENGTH = 80
+
+function isSafeWorktreeName(value: unknown): value is string {
+  if (typeof value !== 'string') return false
+  const name = value.trim()
+  if (!name || name !== value) return false
+  if (name.length > MAX_WORKTREE_NAME_LENGTH) return false
+  if (name === '.' || name === '..') return false
+  if (isReservedWorktreeName(name)) return false
+  // Single segment only. Separators would be flattened by safePathSegment
+  // anyway, but accepting them here would make the wire lie about the shape.
+  return /^[A-Za-z0-9._-]+$/.test(name)
+}
+
+function isGitCreateBranch(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isSafeGitBranchName(v.branch) &&
+    !isReservedBranchName(v.branch) &&
+    (v.from === undefined || isSafeGitBranchName(v.from))
+  )
+}
+
+function isGitCreateWorktree(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    isSafeWorktreeName(v.name) &&
+    // No `path` — see BridgeGitCreateWorktreeAction. Reject rather than ignore
+    // a payload carrying one, so a client that tries is told, not silently
+    // redirected somewhere it did not ask for.
+    v.path === undefined &&
+    (v.branch === undefined ||
+      (isSafeGitBranchName(v.branch) && !isReservedBranchName(v.branch)))
   )
 }
 
