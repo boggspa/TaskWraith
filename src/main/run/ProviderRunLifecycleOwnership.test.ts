@@ -63,9 +63,9 @@ function harness(provider: AgentRunPayload['provider']) {
 }
 
 describe('provider run lifecycle ownership', () => {
-  it('covers the exact nine stable provider identities', () => {
-    expect(PROVIDERS).toHaveLength(9)
-    expect(new Set(PROVIDERS).size).toBe(9)
+  it('covers the exact ten stable provider identities', () => {
+    expect(PROVIDERS).toHaveLength(10)
+    expect(new Set(PROVIDERS).size).toBe(10)
     expect(SIGNED_POSTURE_RETENTION_PROVIDER_IDS).toEqual(PROVIDERS)
   })
 

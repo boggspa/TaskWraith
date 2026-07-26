@@ -388,11 +388,16 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
 
     it('uses the live provider order and omits retired providers and synthetic custom models', () => {
+      // Every statically live provider shows regardless of which ids the
+      // discovery snapshot lists (resolveProviderRows never hides a live
+      // provider) — only the retired/gemini id and the ungranted antigravity
+      // id are ever absent. The snapshot's providerIds below are intentionally
+      // narrower than the full live set to prove that.
       expect(
         buildEnsembleAddProviderGroups(false, false, {
           snapshot: { ready: true, providerIds: ['codex', 'claude', 'kimi', 'ollama'] }
         }).map((group) => group.provider)
-      ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
+      ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
       const expanded = buildEnsembleAddProviderGroups(true, true, {
         snapshot: {
           ready: true,
@@ -403,9 +408,11 @@ describe('EnsembleParticipantsAboveRow', () => {
         'codex',
         'claude',
         'kimi',
-        'grok',
         'cursor',
-        'ollama'
+        'grok',
+        'ollama',
+        'pi',
+        'mistral'
       ])
       expect(
         expanded.every((group) => group.modelOptions.every((model) => model.id !== 'custom'))

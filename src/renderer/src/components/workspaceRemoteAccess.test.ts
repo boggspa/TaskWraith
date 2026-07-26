@@ -92,7 +92,7 @@ describe('buildAllowlistUpsertForSegment', () => {
       path: '/repo/nine',
       mode: 'read-only',
       capabilities: ['monitor', 'approve'],
-      allowedProviders: ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi'],
+      allowedProviders: ['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'],
       allowedApprovalModes: ['default', 'plan']
     })
     expect(read.expiresAt).toBeUndefined()
@@ -137,7 +137,16 @@ describe('buildAllowlistUpsertForSegment', () => {
     // copy the dead timestamp forward or keep the narrowed providers.
     const out = buildAllowlistUpsertForSegment({ id: 'ws-9', path: '/repo/nine' }, 'read', expired, 100)
     expect(out.expiresAt).toBeUndefined()
-    expect(out.allowedProviders).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi'])
+    expect(out.allowedProviders).toEqual([
+      'codex',
+      'claude',
+      'kimi',
+      'cursor',
+      'grok',
+      'ollama',
+      'pi',
+      'mistral'
+    ])
     expect(out.mode).toBe('read-only')
   })
 

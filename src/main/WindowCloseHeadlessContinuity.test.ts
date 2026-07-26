@@ -15,7 +15,8 @@ const ALL_PROVIDER_IDENTITIES = [
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ] as const satisfies readonly ProviderId[]
 
 /**
@@ -84,7 +85,7 @@ describe('window-all-closed headless continuity', () => {
     expect(handler.slice(quitIdx)).toContain('app.quit()')
   })
 
-  it('keeps the RunManager lifecycle inventory exact across all nine provider identities', () => {
+  it('keeps the RunManager lifecycle inventory exact across all ten provider identities', () => {
     // This is a lifecycle/cleanup invariant only. It does not make retired
     // Gemini selectable or bypass AntiGravity's consent and credential wall.
     expect(RUN_MANAGER_PROVIDERS).toEqual(ALL_PROVIDER_IDENTITIES)

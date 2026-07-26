@@ -48,7 +48,7 @@ describe('WelcomeUsageDashboard model comparisons', () => {
     expect(nextWelcomeUsageTab('providers', [...visible])).toBe('overview')
   })
 
-  it('renders all nine stable provider identities in reporting cards and mix segments', () => {
+  it('renders all ten stable provider identities in reporting cards and mix segments', () => {
     const now = Date.parse('2026-07-11T03:30:00.000Z')
     const record = (provider: ProviderId, index: number): UsageRecord => ({
       id: `usage-${provider}`,
@@ -83,9 +83,10 @@ describe('WelcomeUsageDashboard model comparisons', () => {
       )
       expect(providersHtml).toContain(`welcome-usage-provider-card provider-${provider}`)
     }
-    expect(providersHtml.match(/role="listitem"/g)).toHaveLength(9)
+    expect(providersHtml.match(/role="listitem"/g)).toHaveLength(10)
     expect(providersHtml).toContain('AntiGravity')
     expect(providersHtml).toContain('Pi')
+    expect(providersHtml).toContain('Mistral')
     expect(providersHtml).toContain('Gemini')
   })
 })

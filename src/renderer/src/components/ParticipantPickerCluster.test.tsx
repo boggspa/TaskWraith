@@ -125,7 +125,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['claude', 'cursor'] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
   })
 
   it('uses authenticated AntiGravity models only from the configured snapshot', () => {
@@ -148,11 +148,15 @@ describe('ParticipantPickerCluster', () => {
       { provider: 'codex' },
       { provider: 'claude' },
       { provider: 'kimi' },
+      { provider: 'cursor' },
+      { provider: 'grok' },
       {
         provider: 'antigravity',
         modelOptions: [{ id: 'gemini-3.5-pro', label: 'Gemini 3.5 Pro' }]
       },
-      { provider: 'ollama' }
+      { provider: 'ollama' },
+      { provider: 'pi' },
+      { provider: 'mistral' }
     ])
   })
 
@@ -164,12 +168,15 @@ describe('ParticipantPickerCluster', () => {
         { ready: false, providerIds: [] },
         'kimi'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
   })
 
   it('never leaks retired or flag-gated providers through the configured snapshot', () => {
-    // gemini (retired) and grok (flag off) cannot be smuggled in via the snapshot;
-    // only the always-offered live rows remain.
+    // gemini (retired) cannot be smuggled in via the snapshot. Grok and Cursor
+    // are no longer flag-gated — every statically live provider (including Pi
+    // and Mistral) shows regardless of what the snapshot lists; only
+    // antigravity stays conditional on the snapshot admitting it, and this
+    // snapshot never does.
     expect(
       buildParticipantPickerProviderGroups(
         false,
@@ -177,7 +184,7 @@ describe('ParticipantPickerCluster', () => {
         { ready: true, providerIds: ['gemini', 'grok', 'codex'] },
         'claude'
       ).map((group) => group.provider)
-    ).toEqual(['codex', 'claude', 'kimi', 'ollama'])
+    ).toEqual(['codex', 'claude', 'kimi', 'cursor', 'grok', 'ollama', 'pi', 'mistral'])
   })
 
   it('keeps an existing disconnected participant visible and editable', () => {

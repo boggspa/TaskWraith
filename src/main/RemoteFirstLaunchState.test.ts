@@ -112,7 +112,8 @@ describe('buildRemoteFirstLaunchState', () => {
       'cursor',
       'grok',
       'ollama',
-      'pi'
+      'pi',
+      'mistral'
     ])
     expect(state.providerCards.find((card) => card.id === 'codex')?.statusKind).toBe('outOfUsage')
     expect(state.providerCards.find((card) => card.id === 'claude')?.statusKind).toBe('needsSignIn')
@@ -336,6 +337,7 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
       'pi',
+      'mistral',
       'claude',
       'antigravity',
       'kimi'

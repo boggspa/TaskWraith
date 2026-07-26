@@ -22,7 +22,8 @@ describe('remoteWorkspaceDefaults', () => {
       'cursor',
       'grok',
       'ollama',
-      'pi'
+      'pi',
+      'mistral'
     ])
     expect([...APPROVAL_MODE_OPTIONS]).toEqual(['default', 'plan'])
   })
