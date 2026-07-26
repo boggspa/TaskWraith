@@ -995,6 +995,36 @@ describe('MainSanitizers settings patches', () => {
     expect(sanitizeSettingsPatch({ userBubbleColor: 'green' }).userBubbleColor).toBe('green')
   })
 
+  it('persists diffStatColors (regression: dropped by the allowlist, so it never survived a restart)', () => {
+    // Same class as toolIconAccent/userBubbleColor above. `useAppearance` sent
+    // diffStatColors in every appearance patch and `rendererAppearanceSettings`
+    // read it back, but the key was absent from SETTINGS_PATCH_KEYS — so the
+    // sanitizer dropped it silently and the chosen colours were live-only.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    const result = sanitizeSettingsPatch({
+      diffStatColors: { additions: '#123456', deletions: '#abcdef' }
+    })
+    expect(result.diffStatColors).toEqual({ additions: '#123456', deletions: '#ABCDEF' })
+  })
+
+  it('normalizes diffStatColors on WRITE so junk never reaches disk', () => {
+    // The allowlist alone would let an arbitrary object through; the store only
+    // normalized on read. Shorthand expands, case is canonicalised, and invalid
+    // or missing channels fall back rather than persisting garbage — which also
+    // makes this seam safe for an agent-driven token write later.
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+    expect(
+      sanitizeSettingsPatch({ diffStatColors: { additions: 'f00', deletions: 'nonsense' } })
+        .diffStatColors
+    ).toEqual({ additions: '#FF0000', deletions: '#EC3D35' })
+    expect(sanitizeSettingsPatch({ diffStatColors: 'not-an-object' }).diffStatColors).toEqual({
+      additions: '#2DB777',
+      deletions: '#EC3D35'
+    })
+  })
+
   it('persists+coerces the AntiGravity opt-in fields (SETTINGS_PATCH_KEYS guard)', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

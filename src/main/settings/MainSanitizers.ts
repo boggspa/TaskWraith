@@ -1,6 +1,7 @@
 import type { WebContentsConsoleMessageEventParams } from 'electron'
 import type { AppearanceMode } from '../store/types'
 import { normalizeSystemThemeAppearance } from '../../shared/systemThemeAppearance'
+import { normalizeDiffStatColors } from '../../shared/diffStatColors'
 import type {
   AgenticServiceId,
   AgenticWorkspaceGrant,
@@ -74,7 +75,8 @@ const PROVIDER_IDS = new Set<ProviderId>([
   // Known/decode id. Offer/run eligibility is gated separately (opt-in); being
   // here only lets persisted records with provider 'antigravity' decode.
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ])
 const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   shellCommands: 'workspace',
@@ -131,6 +133,11 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'themeAccentStyle',
   'toolIconAccent',
   'userBubbleColor',
+  // Was MISSING while `useAppearance` sent it in every appearance patch and
+  // `rendererAppearanceSettings` read it back — so chosen diff colours applied
+  // live and were silently dropped on persist, never surviving a restart. Same
+  // class as the toolIconAccent/userBubbleColor omission above it.
+  'diffStatColors',
   'promptSurfaceStyle',
   'composerStyle',
   'transcriptFontFamily',
@@ -232,7 +239,7 @@ export function assertProviderId(value: unknown): ProviderId {
 }
 
 export function availableProviderIds(): ProviderId[] {
-  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity', 'pi']
+  return ['gemini', 'codex', 'claude', 'kimi', 'grok', 'cursor', 'ollama', 'antigravity', 'pi', 'mistral']
 }
 
 /**
@@ -597,7 +604,8 @@ const AUDIT_PROVIDER_IDS = new Set<ProviderId>([
   'cursor',
   'ollama',
   'antigravity',
-  'pi'
+  'pi',
+  'mistral'
 ])
 
 /** Sanitize the audit orchestration policy: drop unknown providers, clamp the
@@ -1516,6 +1524,13 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     }
     if ('themeAppearance' in sanitized && typeof sanitized.themeAppearance === 'string') {
       sanitized.themeAppearance = normalizeSystemThemeAppearance(sanitized.themeAppearance)
+    }
+    // Normalize on WRITE, not only on read. The store already normalizes when
+    // loading, but the allowlist alone would let an arbitrary object reach disk;
+    // coercing here keeps what is persisted a valid `#RRGGBB` pair regardless of
+    // what a renderer (or, later, an agent-driven token write) sends.
+    if ('diffStatColors' in sanitized) {
+      sanitized.diffStatColors = normalizeDiffStatColors(sanitized.diffStatColors)
     }
     if ('auditRetention' in sanitized) {
       sanitized.auditRetention = sanitizeAuditRetentionSettings(
