@@ -46,6 +46,7 @@ export const SCHEDULED_OCCURRENCE_POSTURE_AGENTIC_SERVICE_IDS = [
   'canvasInteraction',
   'canvasEval',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing',
   'mediaRecording'
 ] as const satisfies readonly AgenticServiceId[]

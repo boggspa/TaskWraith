@@ -1299,6 +1299,7 @@ describe('composeRun frozen execution-graph permission posture', () => {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -1446,6 +1447,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -1727,6 +1729,7 @@ describe('composeRun ↔ normalize posture clamp contract', () => {
             subThreadDelegation: 'allow',
             canvasInteraction: 'ask',
             crossThreadRead: 'ask',
+            threadMessage: 'ask',
             mediaEditing: 'allow',
             mediaRecording: 'deny',
             canvasEval: 'ask'

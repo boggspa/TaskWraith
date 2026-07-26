@@ -174,9 +174,9 @@ export type ComposerStyle =
   | 'alabaster'
 // ProviderId is a stable persistence/decode identity, not a promise that a
 // provider is currently selectable or runnable. Historical records keep every
-// id; `shared/retiredProviders.ts` owns the canonical offer/run set. Source-ahead
-// Cursor is deliberately excluded there and fails before process launch pending
-// exact-build startup-containment qualification.
+// id; `shared/retiredProviders.ts` owns the canonical offer/run set. Cursor is
+// live-selectable; its contained managed launch is governed at runtime rather
+// than by a static executable-fingerprint gate.
 // `antigravity` is a DISTINCT opt-in provider id (never a Gemini revival). It is
 // always a known/decode id, but offer/run eligibility is gated by
 // isAntigravityOptInEnabled(settings) — it is deliberately NOT in
@@ -413,6 +413,14 @@ export type AgenticServiceId =
   // auto-allow reading another thread/workspace's run history, and so the
   // read_only preset can deny it outright.
   | 'crossThreadRead'
+  // Peer thread-to-thread messages (one chat pushing a message into another). Its
+  // OWN grant bucket rather than riding `mcpTools`, because it is a WRITE into
+  // another thread's context: a generic mcpTools grant must not silently authorise
+  // cross-thread injection, and the read_only preset must be able to deny it
+  // outright. Grantable like crossThreadRead, not signed-elevated like canvasEval —
+  // but the WAKE variant (asking the target to run a turn immediately) is never
+  // auto-allowed by a bare grant. See ThreadMessagePermission.
+  | 'threadMessage'
   // Media editing (transcode/encode/probe/decode/mix of workspace audio &
   // video). A DEDICATED grant bucket — grantable like canvasInteraction, NOT
   // signed-elevated like canvasEval — so the media tools are gated + audited at
@@ -575,6 +583,10 @@ export interface AgenticServicesSettings {
   // Optional for back-compat with settings persisted before cross-thread recall;
   // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
   crossThreadRead?: AgenticServicePolicy
+  // Optional for back-compat with settings persisted before peer thread messages;
+  // defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable for the
+  // queued send; the wake variant is never grant-allowed (ThreadMessagePermission).
+  threadMessage?: AgenticServicePolicy
   // Optional for back-compat with settings persisted before the media-editing
   // service; defaults to 'ask' via servicesFromSettings + the sanitizer. Grantable.
   mediaEditing?: AgenticServicePolicy
@@ -1751,16 +1763,19 @@ export type ProviderCapabilityState =
   | 'unavailable'
 export type ProviderCapabilityWarningSeverity = 'info' | 'warning' | 'error'
 export type ProviderToolingCapabilityId =
-  // canvasInteraction / canvasEval / crossThreadRead / mediaEditing /
-  // mediaRecording are approval-grant buckets, not provider-capability contract
-  // rows — excluded like subThreadDelegation. (The media tools are already
-  // advertised under the MCP/tool surface; they don't get their own contract row.)
+  // canvasInteraction / canvasEval / crossThreadRead / threadMessage /
+  // mediaEditing / mediaRecording are approval-grant buckets, not
+  // provider-capability contract rows — excluded like subThreadDelegation. (The
+  // media tools are already advertised under the MCP/tool surface; they don't get
+  // their own contract row. Thread messaging is harness-owned and identical on
+  // every provider, so it is not a per-provider capability either.)
   | Exclude<
       AgenticServiceId,
       | 'subThreadDelegation'
       | 'canvasInteraction'
       | 'canvasEval'
       | 'crossThreadRead'
+      | 'threadMessage'
       | 'mediaEditing'
       | 'mediaRecording'
     >

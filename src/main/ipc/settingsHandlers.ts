@@ -246,6 +246,7 @@ function rendererChatSettings(
       canvasInteraction: services.canvasInteraction,
       canvasEval: services.canvasEval,
       ...(services.crossThreadRead ? { crossThreadRead: services.crossThreadRead } : {}),
+      ...(services.threadMessage ? { threadMessage: services.threadMessage } : {}),
       ...(services.mediaEditing ? { mediaEditing: services.mediaEditing } : {}),
       ...(services.mediaRecording ? { mediaRecording: services.mediaRecording } : {}),
       networkAccess: services.networkAccess

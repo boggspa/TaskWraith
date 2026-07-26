@@ -16,6 +16,7 @@ export type TaskWraithPluginAgenticServiceId =
   | 'canvasInteraction'
   | 'canvasEval'
   | 'crossThreadRead'
+  | 'threadMessage'
   | 'mediaEditing'
   | 'mediaRecording'
 export type TaskWraithPluginAgenticServicePolicy = 'ask' | 'workspace' | 'allow' | 'deny'

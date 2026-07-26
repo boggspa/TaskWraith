@@ -17,6 +17,7 @@ const readOnlyPermissions: EffectiveRunPermissions = {
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
     crossThreadRead: 'deny',
+    threadMessage: 'deny',
     mediaEditing: 'deny',
     mediaRecording: 'deny',
     canvasEval: 'deny'

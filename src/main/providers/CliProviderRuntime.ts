@@ -9,6 +9,7 @@ import { providerLabel } from '../ProviderAdapters'
 import { AppStore } from '../store'
 import { scrubCliEnv } from '../CliEnvSecurity'
 import { approvalModeRank, coerceApprovalMode } from '../RunPermissionPosture'
+import { resolveEffectiveRunPermissions } from '../EffectiveRunPermissions'
 import { buildUserMcpLaunchServers } from '../UserMcpServers'
 import type { ExtensionSecretRef, ExtensionSecretResolution } from '../ExtensionSecretStore'
 import type {
@@ -17,6 +18,7 @@ import type {
   ChatScope,
   GeminiAuthStatus,
   GeminiMcpBridgeStatus,
+  EffectiveRunPermissions,
   ProviderCapabilityContract,
   ProviderId,
   RuntimeProfile
@@ -75,6 +77,8 @@ export interface RuntimeProfilePayload {
   runtimeProfile?: RuntimeProfile
   runtimeWorktree?: RuntimeWorktreeIntent
   approvalMode?: string
+  model?: string | null
+  effectivePermissions?: EffectiveRunPermissions
 }
 
 function runtimeSettingsFromDeps(deps?: CliProviderRuntimeDependencies): AppSettings {
@@ -97,8 +101,7 @@ export function providerDisplayName(provider: ProviderId): string {
 export function providerBinaryName(provider: ProviderId): string {
   if (provider === 'kimi') return 'kimi'
   if (provider === 'claude') return 'claude'
-  // Historical/qualification identity only. Production Cursor status and run
-  // paths return before binary resolution or process launch.
+  // Managed Path-B launches resolve and spawn the official Cursor CLI.
   if (provider === 'cursor') return 'cursor-agent'
   return provider
 }
@@ -311,6 +314,10 @@ export function runtimeSettings(base: AppSettings, profile?: RuntimeProfile | nu
         base.agenticServices?.crossThreadRead,
         profile.agenticServices.crossThreadRead
       ),
+      threadMessage: stricterServicePolicy(
+        base.agenticServices?.threadMessage,
+        profile.agenticServices.threadMessage
+      ),
       mediaEditing: stricterServicePolicy(
         base.agenticServices?.mediaEditing,
         profile.agenticServices.mediaEditing
@@ -391,6 +398,7 @@ export function applyRuntimeProfileToPayload(
 ): RuntimeProfilePayload {
   const profile = resolveRuntimeProfileForPayload(payload, deps)
   if (!profile) return payload
+  const incomingMode = coerceApprovalMode(payload.approvalMode) ?? 'default'
   payload.runtimeProfile = profile
   if (profile.workspaceMode === 'worktree' && payload.scope === 'workspace') {
     const existing = payload.runtimeWorktree
@@ -413,11 +421,28 @@ export function applyRuntimeProfileToPayload(
     // (observed live: a read-only Grok run went write-capable via
     // builtin:grok:global, so the deny rules + host read-only gate never engaged).
     // A profile MAY still tighten a non-read-only seat (including to 'plan').
-    const incomingMode = coerceApprovalMode(payload.approvalMode) ?? 'default'
     const profileMode = coerceApprovalMode(profile.approvalMode) ?? 'default'
     if (approvalModeRank(profileMode) <= approvalModeRank(incomingMode)) {
       payload.approvalMode = profileMode
     }
+  }
+  const effectiveMode = coerceApprovalMode(payload.approvalMode) ?? 'default'
+  if (
+    payload.effectivePermissions &&
+    approvalModeRank(effectiveMode) < approvalModeRank(incomingMode)
+  ) {
+    // A profile-imposed mode cap changes more than the provider argv. The signed
+    // service map must describe that same lower-authority posture before the
+    // main dispatch wrapper re-signs it; retaining a full-access/workspace-write
+    // map under `default` or `plan` would make the signature internally
+    // contradictory and could restore auto-allow at the action-time gate.
+    payload.effectivePermissions = resolveEffectiveRunPermissions({
+      provider: payload.provider,
+      workspacePath: payload.scope === 'global' ? undefined : payload.workspace,
+      model: payload.model,
+      settings: runtimeSettings(runtimeSettingsFromDeps(deps), profile),
+      presetId: effectiveMode === 'plan' ? 'read_only' : 'default'
+    })
   }
   return payload
 }
@@ -691,7 +716,7 @@ export function getCliProviderMcpStatus(
       tools: [],
       sections: [],
       message:
-        'Cursor MCP is provider-managed. Path-B runs use native Cursor tools under the OS sandbox; TaskWraith host tools are not injected.'
+        'Cursor exposes no safe static MCP status probe. Path-B runs keep provider-managed native tools inside the OS sandbox; when setup succeeds, TaskWraith also attaches its governed broker. This status cannot report a particular run’s attachment.'
     }
   }
   const settings = runtimeSettingsFromDeps(deps)
@@ -734,11 +759,7 @@ export async function getAgentStatusSnapshotDirect(
     }
     return deps.getCodexStatusSnapshot()
   }
-  if (
-    provider === 'claude' ||
-    provider === 'kimi' ||
-    provider === 'grok'
-  ) {
+  if (provider === 'claude' || provider === 'kimi' || provider === 'grok' || provider === 'pi') {
     // Route live local CLIs to generic status instead of the Gemini-shaped
     // snapshot below.
     return getCliProviderStatus(provider, deps)

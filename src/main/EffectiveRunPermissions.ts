@@ -23,6 +23,7 @@ const AGENTIC_SERVICE_IDS: AgenticServiceId[] = [
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing',
   'mediaRecording',
   'canvasEval'
@@ -70,6 +71,10 @@ const READ_ONLY_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   // threads'/workspaces' run history from a read-only seat. (Not an instrument;
   // stays DENY under `plan` too.)
   crossThreadRead: 'deny',
+  // Pushing a message into another thread is a cross-boundary WRITE, strictly more
+  // powerful than a cross-thread read — denied under read_only, and (unlike the
+  // instruments) it stays DENY under `plan` for the same reason crossThreadRead does.
+  threadMessage: 'deny',
   // Media editing (transcode/encode/probe/mix etc.) is mutating/compute — denied
   // under read_only; approval-queued under `plan`.
   mediaEditing: 'deny',
@@ -96,6 +101,8 @@ const PLAN_AGENTIC_SERVICES: PermissionPreset['agenticServices'] = {
   canvasInteraction: 'ask',
   // Not an instrument — cross-thread history reads stay denied under plan.
   crossThreadRead: 'deny',
+  // Not an instrument either, and a write rather than a read — stays denied.
+  threadMessage: 'deny',
   // Instrument: media compute permitted under plan via human approval.
   mediaEditing: 'ask',
   // Capture is non-grantable — denied under plan too.
@@ -175,6 +182,10 @@ export const DEFAULT_PERMISSION_PRESETS: Record<PermissionPresetId, PermissionPr
       canvasInteraction: 'allow',
       // Cross-thread reads are grantable; Full access auto-allows them.
       crossThreadRead: 'allow',
+      // Queued thread messages are grantable; Full access auto-allows them. A WAKE
+      // request is NOT covered by this — ThreadMessagePermission keeps waking off
+      // the grant path entirely.
+      threadMessage: 'allow',
       // Media editing is grantable; Full access auto-allows it (parity with
       // shell/file). DELIBERATELY no mediaRecording here — modelled on canvasEval:
       // even Full access must NOT auto-allow capture; it stays at its default-deny
@@ -208,6 +219,7 @@ const PREVIEW_RISK_PROMPT_SERVICES: AgenticServiceId[] = [
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing'
 ]
 
@@ -381,6 +393,8 @@ function servicesFromSettings(
     subThreadDelegation: normalizePolicy(settings?.subThreadDelegation, 'ask'),
     canvasInteraction: normalizePolicy(settings?.canvasInteraction, 'ask'),
     crossThreadRead: normalizePolicy(settings?.crossThreadRead, 'ask'),
+    // Thread messages default to 'ask' (grantable, like crossThreadRead).
+    threadMessage: normalizePolicy(settings?.threadMessage, 'ask'),
     // Media editing defaults to 'ask' (grantable, like crossThreadRead).
     mediaEditing: normalizePolicy(settings?.mediaEditing, 'ask'),
     // Media recording is the default-deny, non-grantable capture scaffold. Default

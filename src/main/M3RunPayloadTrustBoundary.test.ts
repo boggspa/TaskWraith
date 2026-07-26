@@ -23,6 +23,7 @@ function readOnlyPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -48,6 +49,7 @@ function fullAccessPerms(
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
       canvasEval: 'ask'

@@ -71,6 +71,7 @@ function makeEffectivePermissions(
       subThreadDelegation: 'deny',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'ask'

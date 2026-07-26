@@ -168,6 +168,7 @@ function createDeps(): ExecutionGraphHandlersDeps {
           subThreadDelegation: 'ask',
           canvasInteraction: 'ask',
           crossThreadRead: 'ask',
+          threadMessage: 'ask',
           mediaEditing: 'workspace',
           mediaRecording: 'deny',
           canvasEval: 'ask'

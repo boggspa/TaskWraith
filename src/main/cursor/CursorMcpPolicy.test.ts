@@ -23,6 +23,7 @@ function permissions(mcpTools: 'deny' | 'ask'): EffectiveRunPermissions {
       subThreadDelegation: 'deny',
       canvasInteraction: 'deny',
       crossThreadRead: 'deny',
+      threadMessage: 'deny',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'deny'
@@ -63,9 +64,9 @@ describe('Cursor MCP effective-posture guard', () => {
     expect(buildUserMcpCursorAllowRules(servers)).toEqual(['Mcp(user_filesystem:*)'])
   })
 
-  it('rejects write mode instead of degrading when its required broker is posture-denied', () => {
+  it('rejects a legacy broker-dependent qualification posture when MCP is denied', () => {
     expect(() => assertCursorWriteMcpPosture(true, permissions('deny'))).toThrow(
-      /write mode requires the contained TaskWraith MCP broker/i
+      /broker-dependent Cursor qualification posture cannot run/i
     )
     expect(() => assertCursorWriteMcpPosture(false, permissions('deny'))).not.toThrow()
     expect(() => assertCursorWriteMcpPosture(true, permissions('ask'))).not.toThrow()

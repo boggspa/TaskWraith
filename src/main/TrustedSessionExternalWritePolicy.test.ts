@@ -14,6 +14,7 @@ function fullAccessPermissions(): EffectiveRunPermissions {
       subThreadDelegation: 'allow',
       canvasInteraction: 'allow',
       crossThreadRead: 'allow',
+      threadMessage: 'allow',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
       canvasEval: 'ask'

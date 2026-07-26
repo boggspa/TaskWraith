@@ -146,6 +146,7 @@ const agenticServiceKeys = [
   'canvasInteraction',
   'canvasEval',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing',
   'mediaRecording',
   'networkAccess'

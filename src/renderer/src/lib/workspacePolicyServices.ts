@@ -31,6 +31,10 @@ export const WORKSPACE_POLICY_SERVICE_LABELS: Record<AgenticServiceId, string> =
   // per-workspace WORKSPACE_POLICY_SERVICES list below, so — like canvasEval —
   // it is absent from that array; the label is kept for audit/ledger rendering.
   crossThreadRead: 'Cross-thread read',
+  // threadMessage follows crossThreadRead exactly: granted via the (expiring)
+  // approval prompt rather than a standing per-workspace row, so it is absent from
+  // WORKSPACE_POLICY_SERVICES below; the label is kept for audit/ledger rendering.
+  threadMessage: 'Thread message',
   // Media editing IS grantable per-workspace (parity with shell/file) and has a
   // row in WORKSPACE_POLICY_SERVICES below.
   mediaEditing: 'Media editing',
@@ -52,6 +56,8 @@ export const WORKSPACE_POLICY_SERVICE_HELP: Record<AgenticServiceId, string> = {
   canvasEval: 'Arbitrary eval in a Canvas preview always asks (cannot be pre-authorised).',
   crossThreadRead:
     'Read how far past runs on other threads got. Same-workspace reads are automatic; cross-workspace reads always ask.',
+  threadMessage:
+    'Send a message into another thread. Same-workspace sends are automatic; cross-workspace sends and wake requests always ask.',
   mediaEditing:
     'Transcode, encode, probe, and mix workspace audio/video without asking again.',
   // Non-grantable: shown for completeness only; capture always re-prompts / is denied.
@@ -99,7 +105,7 @@ export const WORKSPACE_POLICY_SERVICES: WorkspacePolicyService[] = [
     label: WORKSPACE_POLICY_SERVICE_LABELS.mediaEditing,
     help: WORKSPACE_POLICY_SERVICE_HELP.mediaEditing
   }
-  // mediaRecording, canvasEval, and crossThreadRead are
+  // mediaRecording, canvasEval, crossThreadRead, and threadMessage are
   // deliberately absent: they are not pre-authorised from the workspace policy
   // list. Their label/help exist above for audit/ledger rendering.
 ]

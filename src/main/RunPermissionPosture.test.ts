@@ -10,9 +10,23 @@ import {
   type ClampRunPostureDeps,
   type RunPostureScope
 } from './RunPermissionPosture'
-import type { EffectiveRunPermissions } from './store/types'
+import type { AgenticServiceId, EffectiveRunPermissions } from './store/types'
 
 const SECRET = Buffer.from('a'.repeat(64), 'hex')
+
+const CURRENT_AGENTIC_SERVICE_IDS = [
+  'shellCommands',
+  'fileChanges',
+  'externalPublish',
+  'mcpTools',
+  'subThreadDelegation',
+  'canvasInteraction',
+  'canvasEval',
+  'crossThreadRead',
+  'threadMessage',
+  'mediaEditing',
+  'mediaRecording'
+] as const satisfies readonly AgenticServiceId[]
 
 function readOnlyPerms(): EffectiveRunPermissions {
   return {
@@ -26,6 +40,7 @@ function readOnlyPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'deny',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -49,6 +64,7 @@ function fullAccessPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'allow',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -72,6 +88,7 @@ function defaultPerms(): EffectiveRunPermissions {
       subThreadDelegation: 'ask',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'ask',
       mediaRecording: 'deny',
       canvasEval: 'ask'
@@ -138,6 +155,7 @@ describe('canonical posture + sign/verify', () => {
         subThreadDelegation: 'allow',
         canvasInteraction: 'ask',
         crossThreadRead: 'ask',
+        threadMessage: 'ask',
         mediaEditing: 'allow',
         mediaRecording: 'deny',
         canvasEval: 'ask',
@@ -438,6 +456,37 @@ describe('clampUntrustedRunPosture — trusted (signed) postures pass byte-for-b
     expect(result.approvalMode).toBe('plan')
     expect(result.effectivePermissions).toEqual(readOnlyPerms())
   })
+
+  it.each(CURRENT_AGENTIC_SERVICE_IDS)(
+    'rejects a valid signature when the %s service axis is missing',
+    (service) => {
+      const valid = defaultPerms()
+      const agenticServices: Partial<EffectiveRunPermissions['agenticServices']> = {
+        ...valid.agenticServices
+      }
+      delete agenticServices[service]
+      const malformed = {
+        ...valid,
+        agenticServices
+      } as EffectiveRunPermissions
+      const signature = signRunPermissionPosture(SECRET, 'default', malformed)
+
+      const result = clampUntrustedRunPosture(
+        {
+          scope: 'workspace',
+          approvalMode: 'default',
+          effectivePermissions: malformed,
+          signature
+        },
+        deps()
+      )
+
+      expect(result.downgraded).toBe(true)
+      expect(result.reason).toBe('invalid-effective-permissions-shape')
+      expect(result.approvalMode).toBe('plan')
+      expect(result.effectivePermissions).toEqual(readOnlyPerms())
+    }
+  )
 })
 
 describe('clampUntrustedRunPosture — over-permissive payloads are downgraded', () => {

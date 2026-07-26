@@ -34,6 +34,7 @@ const effectivePermissions = (
     subThreadDelegation: 'ask',
     canvasInteraction: 'deny',
     crossThreadRead: 'deny',
+    threadMessage: 'deny',
     mediaEditing: 'deny',
     mediaRecording: 'deny',
     canvasEval: 'deny'
@@ -332,6 +333,7 @@ describe('effectiveAgenticSettings', () => {
       subThreadDelegation: 'allow',
       canvasInteraction: 'ask',
       crossThreadRead: 'ask',
+      threadMessage: 'ask',
       mediaEditing: 'ask',
       mediaRecording: 'deny',
       canvasEval: 'ask'

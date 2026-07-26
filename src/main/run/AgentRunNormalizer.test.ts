@@ -58,6 +58,7 @@ const VALID_PERMS: EffectiveRunPermissions = {
     subThreadDelegation: 'allow',
     canvasInteraction: 'ask',
     crossThreadRead: 'ask',
+    threadMessage: 'ask',
     mediaEditing: 'allow',
     mediaRecording: 'deny',
     canvasEval: 'ask'

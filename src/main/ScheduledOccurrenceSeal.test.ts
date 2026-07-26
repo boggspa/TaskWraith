@@ -565,6 +565,7 @@ function effectivePermissions(
       canvasInteraction: 'deny',
       canvasEval: 'deny',
       crossThreadRead: 'deny',
+      threadMessage: 'deny',
       mediaEditing: 'deny',
       mediaRecording: 'deny'
     },

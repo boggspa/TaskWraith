@@ -84,6 +84,7 @@ const DEFAULT_AGENTIC_SERVICES_FOR_PROFILE: AppSettings['agenticServices'] = {
   subThreadDelegation: 'ask',
   canvasInteraction: 'ask',
   crossThreadRead: 'ask',
+  threadMessage: 'ask',
   mediaEditing: 'ask',
   mediaRecording: 'deny',
   canvasEval: 'ask',
@@ -100,6 +101,7 @@ const GRANTABLE_AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing'
 ])
 const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
@@ -1315,6 +1317,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
               input.agenticServices.crossThreadRead,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.crossThreadRead ?? 'ask'
             ),
+            threadMessage: sanitizeAgenticServicePolicy(
+              input.agenticServices.threadMessage,
+              DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.threadMessage ?? 'ask'
+            ),
             mediaEditing: sanitizeAgenticServicePolicy(
               input.agenticServices.mediaEditing,
               DEFAULT_AGENTIC_SERVICES_FOR_PROFILE.mediaEditing ?? 'ask'
@@ -1547,6 +1553,10 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
         crossThreadRead: sanitizeAgenticServicePolicy(
           services.crossThreadRead,
           current.crossThreadRead ?? 'ask'
+        ),
+        threadMessage: sanitizeAgenticServicePolicy(
+          services.threadMessage,
+          current.threadMessage ?? 'ask'
         ),
         mediaEditing: sanitizeAgenticServicePolicy(
           services.mediaEditing,

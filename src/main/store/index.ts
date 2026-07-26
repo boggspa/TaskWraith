@@ -688,8 +688,9 @@ const AUDIT_RUN_HISTORY_LIMIT = 100
 const INTROSPECTION_RUN_HISTORY_LIMIT = 100
 const MEMORY_PROPOSAL_PACK_HISTORY_LIMIT = 200
 // Structural provider ids seed default-profile records for persistence and
-// historical configuration compatibility. A stored Cursor profile is not run
-// admission; the no-spawn gate remains unconditional.
+// historical configuration compatibility. Persistence alone never confers
+// offer/run eligibility; the canonical live/conditional provider policy does.
+// Cursor is live through its managed Path-B launch.
 const providerIds: ProviderId[] = [
   'gemini',
   'codex',
@@ -1945,6 +1946,7 @@ const defaultSettings: AppSettings = {
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
     crossThreadRead: 'ask',
+    threadMessage: 'ask',
     mediaEditing: 'ask',
     mediaRecording: 'deny',
     canvasEval: 'ask',

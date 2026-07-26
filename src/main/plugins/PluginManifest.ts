@@ -106,6 +106,7 @@ const AGENTIC_SERVICE_IDS = new Set([
   'canvasInteraction',
   'canvasEval',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing',
   'mediaRecording'
 ])

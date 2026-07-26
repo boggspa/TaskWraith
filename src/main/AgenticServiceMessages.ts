@@ -7,6 +7,7 @@ export const AGENTIC_SERVICE_LABELS: Record<AgenticServiceId, string> = {
   subThreadDelegation: 'Sub-thread delegation',
   canvasInteraction: 'Canvas interaction',
   crossThreadRead: 'Cross-thread read',
+  threadMessage: 'Thread message',
   mediaEditing: 'Media editing',
   mediaRecording: 'Media recording',
   canvasEval: 'Canvas eval'
@@ -22,6 +23,7 @@ export function agenticServiceDisabledMessage(service: AgenticServiceId): string
     service === 'externalPublish' ||
     service === 'canvasInteraction' ||
     service === 'crossThreadRead' ||
+    service === 'threadMessage' ||
     service === 'mediaEditing' ||
     service === 'mediaRecording' ||
     service === 'canvasEval'
@@ -39,6 +41,7 @@ export const AGENTIC_SERVICE_IDS = new Set<AgenticServiceId>([
   'subThreadDelegation',
   'canvasInteraction',
   'crossThreadRead',
+  'threadMessage',
   'mediaEditing',
   'mediaRecording',
   'canvasEval'

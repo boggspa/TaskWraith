@@ -75,6 +75,10 @@ export function effectiveAgenticSettings(
       // Cross-thread reads: the read_only preset's crossThreadRead:'deny' must
       // survive this key-by-key rebuild (same deny-survival as canvasInteraction).
       crossThreadRead: preserveCurrentDeny(current.crossThreadRead, effective.crossThreadRead),
+      // Thread messages: same deny-survival. A read_only/plan seat's
+      // threadMessage:'deny' must not be softened to a prompt by this rebuild, or a
+      // read-only seat could push content into another thread with one approval.
+      threadMessage: preserveCurrentDeny(current.threadMessage, effective.threadMessage),
       // SECURITY-LOAD-BEARING: media now maps to mediaEditing, NOT mcpTools, so the
       // gate's mcpTools->shellCommands read-only reroute no longer fires for it. The
       // read_only preset's mediaEditing:'deny' MUST survive this rebuild or the

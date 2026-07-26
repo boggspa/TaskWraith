@@ -72,6 +72,7 @@ const AGENTIC_SERVICE_AUTHORITY_FIELDS = {
   canvasInteraction: true,
   canvasEval: true,
   crossThreadRead: true,
+  threadMessage: true,
   mediaEditing: true,
   mediaRecording: true,
   networkAccess: true

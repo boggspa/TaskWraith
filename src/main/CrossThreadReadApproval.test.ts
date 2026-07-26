@@ -43,6 +43,7 @@ function effectiveServices(
     subThreadDelegation: 'ask',
     canvasInteraction: 'ask',
     crossThreadRead: 'ask',
+    threadMessage: 'ask',
     mediaEditing: 'ask',
     mediaRecording: 'deny',
     canvasEval: 'ask',

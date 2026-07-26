@@ -32,6 +32,7 @@ function permissions(
       canvasInteraction: 'ask',
       canvasEval: 'deny',
       crossThreadRead: 'deny',
+      threadMessage: 'deny',
       mediaEditing: 'ask',
       mediaRecording: 'deny'
     },
