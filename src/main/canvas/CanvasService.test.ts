@@ -441,6 +441,54 @@ describe('CanvasService', () => {
     expect(JSON.stringify(events)).not.toContain('SECRET-VALUE')
   })
 
+  it('serializes concurrent interactions so nothing runs between check and dispatch', async () => {
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const order: string[] = []
+    const firstGate = deferred<void>()
+    let calls = 0
+    vi.spyOn(fake, 'act').mockImplementation(async (action) => {
+      calls += 1
+      const tag = String(action.ref)
+      order.push(`enter:${tag}`)
+      if (calls === 1) await firstGate.promise
+      order.push(`exit:${tag}`)
+      return {
+        ok: true,
+        action: action.kind,
+        found: true,
+        executed: true,
+        verified: 'changed' as const
+      }
+    })
+
+    const first = service.click(c.canvasId, { kind: 'click', ref: 'a' }, {})
+    const second = service.click(c.canvasId, { kind: 'click', ref: 'b' }, {})
+    await Promise.resolve()
+    await Promise.resolve()
+    // The second interaction must not have touched the page yet.
+    expect(order).toEqual(['enter:a'])
+
+    firstGate.resolve(undefined)
+    await Promise.all([first, second])
+    expect(order).toEqual(['enter:a', 'exit:a', 'enter:b', 'exit:b'])
+  })
+
+  it('refuses to touch the page once a history clear is in flight', async () => {
+    // The pre-flight half of the audit reorder: an interaction that arrives
+    // while a clear is in progress must never reach the driver at all.
+    const c = await service.open({ url: 'http://localhost:3000' }, {})
+    const actSpy = vi.spyOn(fake, 'act')
+    const clearing = service.beginHistoryClear()
+
+    await expect(service.click(c.canvasId, { kind: 'click', ref: 'e1' }, {})).rejects.toThrow(
+      /history (is being|was) cleared/
+    )
+    expect(actSpy).not.toHaveBeenCalled()
+
+    await clearing
+    service.endHistoryClear()
+  })
+
   it('caps interactions per session (click/fill/annotate share the budget)', async () => {
     const c = await service.open({ url: 'http://localhost:3000' }, {})
     for (let i = 0; i < 3; i++) {
@@ -615,10 +663,18 @@ describe('CanvasService', () => {
     expect(store.listSessions()).toEqual([])
     expect(store.listEvents()).toEqual([])
     const broadcastCountAfterPurge = events.length
+    // annotate and sketchUpdate now enter through the per-canvas interaction
+    // lock, which costs them a microtask — long enough for purgeHistory's
+    // synchronous prefix to raise the clear flag. They are therefore fenced
+    // EARLIER than before, by their own `require` on the way in, instead of by
+    // the post-await liveness assert once the driver had already run. Both
+    // messages are fences and neither write reaches the store, so accept either:
+    // the invariant under test is that deferred writes are discarded, not which
+    // fence caught them. resize is not serialized and still takes the old path.
     const discarded = [
       expect(resizing).rejects.toThrow(/history was cleared/),
-      expect(annotating).rejects.toThrow(/history was cleared/),
-      expect(sketching).rejects.toThrow(/history was cleared/)
+      expect(annotating).rejects.toThrow(/history (was cleared|is being cleared)/),
+      expect(sketching).rejects.toThrow(/history (was cleared|is being cleared)/)
     ]
 
     resizeGate.resolve({ width: 900, height: 600 })

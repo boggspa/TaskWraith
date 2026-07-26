@@ -53,11 +53,15 @@ Failure path: a React re-render between `canvas_snapshot` and `canvas_click` lea
 
 This is the worst possible bug in an actuation layer: the model then re-observes, sees no change, and **tries harder**. It is also the same shape as the known missing-terminal-else class — silent empty success.
 
-### D2 — An executed action can have its audit event suppressed
+### D2 — Audit ordering is inverted (defence-in-depth, NOT a reachable bug)
 
-`assertLiveAfterAwait` runs **after** the driver call ([CanvasService.ts:773](../src/main/canvas/CanvasService.ts:773) click, `:790` fill, `:843` sketch). On a history-clear race it throws and suppresses the audit `emit` — but the action already executed. Result: an actuation with no durable record. For a product whose pitch is auditability, that is the wrong failure direction.
+**Corrected 2026-07-26 after attempting to reproduce it.** `assertLiveAfterAwait` runs **after** the driver call ([CanvasService.ts:773](../src/main/canvas/CanvasService.ts:773) click, `:790` fill, `:843` sketch), so on a liveness race it throws and skips the audit `emit` for an action that already executed. The ordering is genuinely backwards.
 
-Contrast `evaluate` ([CanvasService.ts:867](../src/main/canvas/CanvasService.ts:867)), which does it correctly: `emitStrict('eval.started')` **before** execution, fail-closed if it cannot persist.
+But it is **not reachable**. `emit` independently refuses to write once the history generation has moved ([CanvasService.ts:310](../src/main/canvas/CanvasService.ts:310)), and every path that makes `assertLiveAfterAwait` throw also either bumps the generation synchronously (`beginHistoryClear` does it before its first await, [CanvasService.ts:1254](../src/main/canvas/CanvasService.ts:1254)) or tears the canvas down and deletes its generation entry. Three vectors were tried — global clear, scoped authority clear, canvas close during await — and in all three the event would have been purged anyway. The only theoretical gap is a session *replaced* under the same `canvasId`, which cannot happen because ids are per-open UUIDs.
+
+So: reorder it, because relying on a subtle invariant in a *different* function for a correctness property is fragile and the reorder is free — but do not bill it as a bug fix. The reachable wins in this area are the **pre-flight** assert (never touch a canvas whose clear is in flight) and **serialization** (below).
+
+Contrast `evaluate` ([CanvasService.ts:867](../src/main/canvas/CanvasService.ts:867)), which does it correctly and for a real reason: `emitStrict('eval.started')` **before** execution, fail-closed if it cannot persist.
 
 ### D3 — No user-takeover concept exists, and the agent fights the user
 

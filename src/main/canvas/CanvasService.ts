@@ -762,26 +762,89 @@ export class CanvasService implements CanvasController {
     session.evals += 1
   }
 
+  /** Tail of the in-flight interaction chain per canvas. See serializeInteraction. */
+  private readonly interactionQueues = new Map<string, Promise<unknown>>()
+
+  /**
+   * Serializes the mutating page interactions for one canvas.
+   *
+   * `chargeInteraction` is a spend counter, not a lock, so concurrent
+   * click/fill/annotate calls previously interleaved freely inside the page: two
+   * lanes (or one lane and a retry) could dispatch overlapping events at the
+   * same element and leave a state neither of them observed. A precondition is
+   * only meaningful if nothing can run between the check and the dispatch, so
+   * the whole check-then-act sequence has to hold the canvas.
+   *
+   * Deliberately does NOT cover `evaluate`. The signed-elevated path has a
+   * delicate receipt -> ledger-claim -> execute ordering and its own tighter
+   * budget; queueing it behind arbitrary interaction latency would change when a
+   * single-use approval is burned relative to when the human approved it.
+   */
+  private serializeInteraction<T>(canvasId: string, run: () => Promise<T>): Promise<T> {
+    const prior = this.interactionQueues.get(canvasId) ?? Promise.resolve()
+    // Run whether or not the previous entry settled cleanly — one failed
+    // interaction must never wedge the canvas for the rest of the session.
+    const next = prior.then(run, run)
+    this.interactionQueues.set(
+      canvasId,
+      next.then(
+        () => undefined,
+        () => undefined
+      )
+    )
+    return next
+  }
+
+  /**
+   * Runs one page interaction under the canvas's serialization lock, auditing
+   * the OUTCOME before the post-await liveness assert.
+   *
+   * The ordering matters and used to be wrong. `assertLiveAfterAwait` threw and
+   * skipped the audit whenever a history-clear hold was taken, the generation
+   * moved, or the session was swapped while we awaited the driver — but the
+   * interaction had ALREADY executed by then, so the result was an actuation
+   * with no durable record. `emit` independently refuses to write once the
+   * generation has moved on, so the assert was never what protected cleared
+   * history; it was only dropping records for actions that really happened.
+   * Auditing first closes that hole and changes nothing about the clear
+   * semantics, and the pre-flight assert means a canvas mid-clear is never
+   * touched in the first place.
+   */
+  private interact(
+    canvasId: string,
+    kind: 'click' | 'fill',
+    args: CanvasActionInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasActResult> {
+    return this.serializeInteraction(canvasId, async () => {
+      // Resolved inside the lock: the canvas may have closed while we queued.
+      const session = this.require(canvasId, ctx)
+      this.chargeInteraction(session)
+      this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+      const result = await session.driver.act({ ...args, kind })
+      // Audit records the target, NEVER the value typed.
+      this.emit(canvasId, 'interaction', ctx, {
+        action: kind,
+        ...canvasTargetAudit(args),
+        found: result.found,
+        // Whether the interaction actually landed is the audit-relevant fact —
+        // `found` alone cannot distinguish a dispatch from a refused
+        // precondition.
+        executed: result.executed,
+        verified: result.verified,
+        ...(result.staleReason ? { staleReason: result.staleReason } : {})
+      })
+      this.assertLiveAfterAwait(canvasId, session, ctx, kind)
+      return result
+    })
+  }
+
   async click(
     canvasId: string,
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    const session = this.require(canvasId, ctx)
-    this.chargeInteraction(session)
-    const result = await session.driver.act({ ...args, kind: 'click' })
-    this.assertLiveAfterAwait(canvasId, session, ctx, 'click')
-    this.emit(canvasId, 'interaction', ctx, {
-      action: 'click',
-      ...canvasTargetAudit(args),
-      found: result.found,
-      // Whether the interaction actually landed is the audit-relevant fact —
-      // `found` alone cannot distinguish a click from a refused precondition.
-      executed: result.executed,
-      verified: result.verified,
-      ...(result.staleReason ? { staleReason: result.staleReason } : {})
-    })
-    return result
+    return this.interact(canvasId, 'click', args, ctx)
   }
 
   async fill(
@@ -789,23 +852,28 @@ export class CanvasService implements CanvasController {
     args: CanvasActionInput,
     ctx: CanvasCallContext
   ): Promise<CanvasActResult> {
-    const session = this.require(canvasId, ctx)
-    this.chargeInteraction(session)
-    const result = await session.driver.act({ ...args, kind: 'fill' })
-    this.assertLiveAfterAwait(canvasId, session, ctx, 'fill')
-    // Audit records the field targeted, NEVER the value typed.
-    this.emit(canvasId, 'interaction', ctx, {
-      action: 'fill',
-      ...canvasTargetAudit(args),
-      found: result.found,
-      executed: result.executed,
-      verified: result.verified,
-      ...(result.staleReason ? { staleReason: result.staleReason } : {})
-    })
-    return result
+    return this.interact(canvasId, 'fill', args, ctx)
   }
 
   async annotate(
+    canvasId: string,
+    marks: CanvasMark[],
+    ctx: CanvasCallContext
+  ): Promise<CanvasAnnotation> {
+    return this.serializeInteraction(canvasId, () => this.annotateLocked(canvasId, marks, ctx))
+  }
+
+  /**
+   * NB the audit ordering here is deliberately NOT the one `interact` uses. The
+   * artifact annotate produces is persisted CONTENT (the annotation record), not
+   * just telemetry, and `appendAnnotation` has no generation self-guard of its
+   * own — so writing it after a clear would resurrect erased content. The
+   * post-await assert therefore stays in front of the persist, and the overlay
+   * (cosmetic, pointer-events:none) is the only thing that can outlive its
+   * record. The pre-flight assert below is what stops a canvas mid-clear being
+   * drawn on at all.
+   */
+  private async annotateLocked(
     canvasId: string,
     marks: CanvasMark[],
     ctx: CanvasCallContext
@@ -814,6 +882,7 @@ export class CanvasService implements CanvasController {
     // Annotate shares the per-session interaction budget so overlay-spam can't
     // flush the capped canvas audit-event history.
     this.chargeInteraction(session)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'annotation')
     await session.driver.annotate(marks)
     this.assertLiveAfterAwait(canvasId, session, ctx, 'annotation')
     const annotation: CanvasAnnotation = {
@@ -845,8 +914,23 @@ export class CanvasService implements CanvasController {
     update: CanvasSketchUpdateInput,
     ctx: CanvasCallContext
   ): Promise<CanvasSketchDocument> {
+    return this.serializeInteraction(canvasId, () =>
+      this.sketchUpdateLocked(canvasId, update, ctx)
+    )
+  }
+
+  /**
+   * Same reasoning as `annotateLocked`: the sketch document is persisted content,
+   * so its post-await assert stays in front of `persistSketchDocument`.
+   */
+  private async sketchUpdateLocked(
+    canvasId: string,
+    update: CanvasSketchUpdateInput,
+    ctx: CanvasCallContext
+  ): Promise<CanvasSketchDocument> {
     const session = this.require(canvasId, ctx)
     this.chargeInteraction(session)
+    this.assertLiveAfterAwait(canvasId, session, ctx, 'sketch update')
     const document = await session.driver.sketchUpdate(update)
     this.assertLiveAfterAwait(canvasId, session, ctx, 'sketch update')
     this.persistSketchDocument(this.sketchScope(ctx), document)
@@ -952,6 +1036,9 @@ export class CanvasService implements CanvasController {
     ctx: CanvasCallContext
   ): Promise<void> {
     this.sessions.delete(canvasId)
+    // Drop the interaction chain with the session so the map cannot grow across
+    // a long-lived app run. Anything still queued will fail its own `require`.
+    this.interactionQueues.delete(canvasId)
     const historyRevision = this.captureHistoryRevision(ctx)
     const closePromise = session.driver.close()
     const closing: ClosingSession = { session, ctx, closePromise }
