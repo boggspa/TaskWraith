@@ -42,12 +42,12 @@ describe('AppStore settings defaults', () => {
     expect(AppStore.getSettings().autoUpdateEnabled).toBe(false)
   })
 
-  it('defaults product observation to enabled but preserves an explicit opt-out', () => {
-    expect(AppStore.getSettings().activityReportingEnabled).toBe(true)
-
-    AppStore.updateSettings({ activityReportingEnabled: false })
-
+  it('defaults product observation to off but preserves an explicit opt-in', () => {
     expect(AppStore.getSettings().activityReportingEnabled).toBe(false)
+
+    AppStore.updateSettings({ activityReportingEnabled: true })
+
+    expect(AppStore.getSettings().activityReportingEnabled).toBe(true)
   })
 
   it('writes settings with restrictive owner-only permissions', () => {

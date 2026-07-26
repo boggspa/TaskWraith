@@ -26,6 +26,7 @@ import type { ModelUsageAggregate } from '../lib/usageAggregateTypes'
 import { formatResetShort } from '../lib/UsageFormat'
 import { QuotaProgressBar } from './QuotaProgressBar'
 import { ProviderInstallCommands } from './ProviderInstallCommands'
+import { FirstLaunchProductObservation } from './FirstLaunchProductObservation'
 
 type OnboardingProviderId = ProviderId
 
@@ -645,6 +646,8 @@ export function FirstLaunchSheet({
             <ProviderInstallCommands />
           </details>
         </section>
+
+        <FirstLaunchProductObservation />
 
         <section className="first-launch-sheet-section">
           <h3 className="first-launch-sheet-section-title">2. Add your first workspace</h3>
