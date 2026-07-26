@@ -86,6 +86,133 @@ const settings: AppSettings = {
   }
 }
 
+describe('PermissionService — surface-scoped canvas grants', () => {
+  /**
+   * The escalation this closes: `canvasInteraction` grants were keyed
+   * provider:service:workspace with no surface, so one "allow for session"
+   * covered every canvas in the run AND every canvas opened afterwards — and an
+   * agent can enumerate the chat's canvases with canvas_list, including a
+   * renderer-created one the user logged into themselves. "The user chose this
+   * window" was a property of the prompt, never of the grant.
+   */
+  function harness(): { service: PermissionService; runManager: RunManager } {
+    const runManager = new RunManager()
+    runManager.create({ runId: 'run-1', provider: 'gemini', workspacePath: '/repo' })
+    return {
+      service: new PermissionService({ runManager, sessionGrants: new Set() }),
+      runManager
+    }
+  }
+
+  it('a grant on one canvas does NOT auto-allow a different canvas', () => {
+    const { service } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-approved')
+
+    const sameSurface = service.resolvePermission(
+      'gemini',
+      'canvasInteraction',
+      '/repo',
+      'run-1',
+      settings,
+      'canvas-approved'
+    )
+    const otherSurface = service.resolvePermission(
+      'gemini',
+      'canvasInteraction',
+      '/repo',
+      'run-1',
+      settings,
+      'canvas-the-user-logged-into'
+    )
+
+    expect(sameSurface.sessionGrantAllowed).toBe(true)
+    expect(sameSurface.decision).toBe('allow')
+    // The whole point: same run, same provider, same workspace, same service.
+    expect(otherSurface.sessionGrantAllowed).toBe(false)
+    expect(otherSurface.decision).toBe('ask')
+  })
+
+  it('fails closed when a request carries no surface at all', () => {
+    // A call that simply omits its canvasId must not fall back to the unscoped
+    // key — that would reopen the hole by omission rather than intent.
+    const { service } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-approved')
+
+    const unscoped = service.resolvePermission(
+      'gemini',
+      'canvasInteraction',
+      '/repo',
+      'run-1',
+      settings
+    )
+
+    expect(unscoped.sessionGrantAllowed).toBe(false)
+    expect(unscoped.decision).toBe('ask')
+  })
+
+  it('refuses to mint an unscoped canvas grant rather than storing a dead one', () => {
+    // A stored grant that can never match is worse than none: the UI would
+    // report it as given while every call still prompts.
+    const { service } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1')
+
+    expect(
+      service.hasSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'any-canvas')
+    ).toBe(false)
+  })
+
+  it('scopes the RUN-attached grant, which is the path that actually fires', () => {
+    // addSessionGrant delegates to RunManager and returns whenever a run is
+    // live, so scoping only the process-global Set would have left the common
+    // case wide open.
+    const { service, runManager } = harness()
+    service.addSessionGrant('gemini', '/repo', 'canvasInteraction', 'run-1', 'canvas-a')
+
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-a')).toBe(true)
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction', 'canvas-b')).toBe(false)
+    expect(runManager.hasSessionGrant('run-1', 'canvasInteraction')).toBe(false)
+  })
+
+  it('has no workspace tier for canvas interaction, even from a stored grant', () => {
+    // Defence against a grant persisted by an older build or hand-edited in.
+    const { service } = harness()
+    const withWorkspaceGrant = service.resolvePermission(
+      'gemini',
+      'canvasInteraction',
+      '/repo',
+      undefined,
+      {
+        ...settings,
+        agenticWorkspaceGrants: [
+          {
+            id: 'grant-legacy-canvas',
+            provider: 'gemini',
+            service: 'canvasInteraction',
+            workspacePath: '/repo',
+            createdAt: '2026-05-08T00:00:00.000Z',
+            updatedAt: '2026-05-08T00:00:00.000Z'
+          }
+        ]
+      },
+      'canvas-a'
+    )
+
+    expect(withWorkspaceGrant.workspaceGrantAllowed).toBe(false)
+    expect(withWorkspaceGrant.decision).toBe('ask')
+  })
+
+  it('leaves non-surface services untouched by the scoping', () => {
+    // Proves the change is targeted rather than a global de-grant — shellCommands
+    // still auto-allows from a plain session grant with no surface in sight.
+    const { service } = harness()
+    service.addSessionGrant('gemini', '/repo', 'shellCommands', 'run-1')
+
+    expect(
+      service.resolvePermission('gemini', 'shellCommands', '/repo', 'run-1', settings).decision
+    ).toBe('allow')
+  })
+})
+
 describe('PermissionService', () => {
   it('resolves workspace and session grants through one authority', () => {
     const runManager = new RunManager()

@@ -107,6 +107,14 @@ export interface PendingGeminiToolApproval {
    */
   remoteBody?: string
   remoteIncomplete?: boolean
+  /**
+   * The exact surface this request targeted (for canvas tools, the canvasId).
+   * Carried from request to response so an "allow for session" can be bound to
+   * the window the user was actually shown. Before this the id was lost across
+   * that boundary, which is why a canvas grant could only ever be minted
+   * unscoped — and therefore meant every canvas, including ones opened later.
+   */
+  surfaceId?: string
   externalPathDetection?: PendingExternalPathDetection
   requestOnly?: boolean
   allowedActions?: AgentApprovalAction[]
@@ -904,7 +912,8 @@ export class ApprovalService {
         workspacePath: pendingGeminiTool.workspacePath,
         service: pendingGeminiTool.service,
         runId: pendingGeminiTool.runId,
-        action: resolvedAction
+        action: resolvedAction,
+        ...(pendingGeminiTool.surfaceId ? { surfaceId: pendingGeminiTool.surfaceId } : {})
       })
       pendingGeminiTool.resolve(allowed)
       return true

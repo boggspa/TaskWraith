@@ -33,6 +33,12 @@ export interface ApprovalDecisionInput {
   service?: AgenticServiceId
   runId?: string
   action: AgentApprovalAction
+  /**
+   * The surface the user was actually shown when they approved (for canvas
+   * tools, the canvasId). A surface-scoped grant is bound to this and to nothing
+   * else. Absent for services that have no surface.
+   */
+  surfaceId?: string
 }
 
 function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
@@ -40,6 +46,26 @@ function isNonGrantableService(service: AgenticServiceId | undefined): boolean {
     service === 'canvasEval' ||
     service === 'mediaRecording'
   )
+}
+
+/**
+ * Services whose grants must name the exact surface they were given for.
+ *
+ * `canvasInteraction` was grantable with a key of provider:service:workspace and
+ * NO surface component, so one "allow for session" covered every canvas in the
+ * run AND every canvas opened afterwards — including a renderer-created one the
+ * user had logged into themselves, which an agent can enumerate with
+ * canvas_list. "The user chose this window" was a property of the prompt, not of
+ * the grant.
+ *
+ * Scoping the grant rather than making the service non-grantable is deliberate.
+ * A drive session performs hundreds of actions, so a modal per click is not a
+ * stronger gate, it is an unusable one — and an unusable gate gets routed around
+ * or answered with something broader. "Yes, drive this window" is a legitimate
+ * thing for a user to say once; it just has to mean that and only that.
+ */
+function isSurfaceScopedService(service: AgenticServiceId | undefined): boolean {
+  return service === 'canvasInteraction'
 }
 
 export class PermissionService {
@@ -70,6 +96,13 @@ export class PermissionService {
     workspacePath: string | undefined,
     service: AgenticServiceId
   ): boolean {
+    // A surface-scoped service has no workspace tier: "click anything, in any
+    // chat, in this workspace, until revoked" is not a scope a user can
+    // meaningfully consent to, and it would outlive every surface it was given
+    // for. Refusing here (rather than only filtering at the posture layer) means
+    // a grant persisted by an older build, or hand-edited into settings, still
+    // cannot promote a canvas interaction.
+    if (isSurfaceScopedService(service)) return false
     if (!workspacePath) return false
     const normalizedWorkspace = resolve(workspacePath)
     return (settings.agenticWorkspaceGrants || []).some((grant) => {
@@ -144,23 +177,38 @@ export class PermissionService {
     provider: ProviderId,
     workspacePath: string | undefined,
     service: AgenticServiceId,
-    runId?: string
+    runId?: string,
+    surfaceId?: string
   ): boolean {
-    if (runId && this.options.runManager.hasSessionGrant(runId, service)) return true
-    return this.options.sessionGrants.has(this.sessionGrantKey(provider, workspacePath, service))
+    // Fail closed: a surface-scoped service with no surface in hand cannot match
+    // any grant. Without this, a call that simply failed to carry its canvasId
+    // would fall back to the unscoped key and be auto-allowed — the exact hole
+    // this change exists to close, reachable by omission rather than intent.
+    if (isSurfaceScopedService(service) && !surfaceId) return false
+    if (runId && this.options.runManager.hasSessionGrant(runId, service, surfaceId)) return true
+    return this.options.sessionGrants.has(
+      this.sessionGrantKey(provider, workspacePath, service, surfaceId)
+    )
   }
 
   addSessionGrant(
     provider: ProviderId,
     workspacePath: string | undefined,
     service: AgenticServiceId,
-    runId?: string
+    runId?: string,
+    surfaceId?: string
   ): void {
+    // Refuse to mint an unscoped grant for a surface-scoped service rather than
+    // storing one that can never match: a stored grant that silently does
+    // nothing is worse than none, because the UI would report it as given.
+    if (isSurfaceScopedService(service) && !surfaceId) return
     if (runId && this.options.runManager.get(runId)) {
-      this.options.runManager.addSessionGrant(runId, service)
+      this.options.runManager.addSessionGrant(runId, service, surfaceId)
       return
     }
-    this.options.sessionGrants.add(this.sessionGrantKey(provider, workspacePath, service))
+    this.options.sessionGrants.add(
+      this.sessionGrantKey(provider, workspacePath, service, surfaceId)
+    )
   }
 
   resolvePermission(
@@ -168,7 +216,13 @@ export class PermissionService {
     service: AgenticServiceId,
     workspacePath: string | undefined,
     runId?: string,
-    settings: AppSettings = AppStore.getSettings()
+    settings: AppSettings = AppStore.getSettings(),
+    /**
+     * The exact surface this request targets (for canvas tools, the canvasId).
+     * Required for a surface-scoped service to match any grant; absent, no grant
+     * applies and the call falls through to the policy.
+     */
+    surfaceId?: string
   ): AgenticPermissionResolution {
     const policy = this.getServicePolicy(service, settings)
     // canvasEval (arbitrary eval = RCE) is SIGNED-ELEVATED: non-grantable, so no
@@ -185,7 +239,7 @@ export class PermissionService {
       policy !== 'deny' &&
       this.hasWorkspaceGrant(settings, provider, workspacePath, service)
     const sessionGrantAllowed =
-      grantable && this.hasSessionGrant(provider, workspacePath, service, runId)
+      grantable && this.hasSessionGrant(provider, workspacePath, service, runId, surfaceId)
     const decision =
       policy === 'deny'
         ? 'deny'
@@ -219,7 +273,13 @@ export class PermissionService {
       this.upsertWorkspaceGrant(input.provider, input.workspacePath, input.service)
     }
     if (grantable && input.action === 'acceptForSession' && input.service) {
-      this.addSessionGrant(input.provider, input.workspacePath, input.service, input.runId)
+      this.addSessionGrant(
+        input.provider,
+        input.workspacePath,
+        input.service,
+        input.runId,
+        input.surfaceId
+      )
     }
     return this.isApprovedAction(input.action)
   }
@@ -263,8 +323,10 @@ export class PermissionService {
   private sessionGrantKey(
     provider: ProviderId,
     workspacePath: string | undefined,
-    service: AgenticServiceId
+    service: AgenticServiceId,
+    surfaceId?: string
   ): string {
-    return `${provider}:${service}:${workspacePath ? resolve(workspacePath) : 'global'}`
+    const base = `${provider}:${service}:${workspacePath ? resolve(workspacePath) : 'global'}`
+    return surfaceId ? `${base}:${surfaceId}` : base
   }
 }

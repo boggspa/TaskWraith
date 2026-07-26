@@ -216,20 +216,25 @@ describe('resolveEffectiveRunPermissions', () => {
     expect(plan.agenticServices.canvasEval).toBe('ask')
 
     // The SAME grant auto-allows in-workspace under default — proving the grant
-    // is real and the immunity is plan-specific, not a global de-grant.
+    // is real and the plan immunity is plan-specific, not a global de-grant.
+    // mediaEditing carries that control on its own now.
     const def = resolveEffectiveRunPermissions({
       provider: 'claude',
       workspacePath: '/repo',
       settings: settings({ agenticWorkspaceGrants: grants }),
       presetId: 'default'
     })
-    expect(def.agenticServices.canvasInteraction).toBe('workspace')
     expect(def.agenticServices.mediaEditing).toBe('workspace')
-    // …but canvasEval does NOT, under any preset. The other two promote to
-    // 'workspace' on the same grant, which is what makes this a real control
-    // rather than a vacuous assertion: the grant is live, canvasEval is simply
-    // immune to it. That immunity is the whole reason ASK under plan is safe.
+    // canvasEval does NOT promote under any preset — it is non-grantable, and
+    // that immunity is the whole reason ASK under plan is safe for it.
     expect(def.agenticServices.canvasEval).toBe('ask')
+    // canvasInteraction now behaves the same way here, but for a DIFFERENT
+    // reason, and the distinction matters if anyone revisits this: it is still
+    // grantable, it simply has no workspace tier. A canvas grant names one
+    // surface; "click anything, in any chat, in this workspace, until revoked"
+    // is not a scope a user can meaningfully consent to and would outlive every
+    // surface it was given for. Session grants still work — bound to a canvasId.
+    expect(def.agenticServices.canvasInteraction).toBe('ask')
   })
 
   it('denies canvasInteraction under read_only and allows it under full_access', () => {

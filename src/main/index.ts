@@ -11779,6 +11779,11 @@ function resolveNativeApprovalPreflight(args: {
   toolName?: string
   /** Raw shell command (string or argv) for shellCommands requests, when known. */
   shellCommand?: unknown
+  /**
+   * The exact surface this request targets (canvasId for canvas tools). A
+   * surface-scoped grant matches only when this is present and equal.
+   */
+  surfaceId?: string
 }): NativeApprovalPreflight {
   if (!args.service) return { kind: 'none' }
   const settings = AppStore.getSettings()
@@ -11795,7 +11800,11 @@ function resolveNativeApprovalPreflight(args: {
     args.service,
     args.workspacePath,
     args.runId,
-    effectiveSettings
+    effectiveSettings,
+    // Codex-native parity. Without the surface here, a canvasInteraction grant
+    // simply never matches on this path — which fails closed (an extra prompt),
+    // but the two provider paths should agree on what a grant means.
+    args.surfaceId
   )
   return resolveNativeApprovalPreflightDecision({
     resolution,
@@ -25817,7 +25826,10 @@ function handleCodexServerRequest(message: any) {
     // The RAW exec command (argv or string) — same lookup chain the approval
     // formatter uses — so a pure `git status` is allowed under every posture.
     shellCommand:
-      params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command
+      params?.command ?? params?.commandLine ?? params?.exec?.command ?? params?.item?.command,
+    // Canvas tools carry their target surface in the args; a surface-scoped
+    // grant is only allowed to match the window the user actually approved.
+    surfaceId: typeof params?.canvasId === 'string' ? params.canvasId.trim() || undefined : undefined
   })
   const policy = nativePreflight.kind === 'none' ? 'ask' : nativePreflight.policy
   const postureApprovalOnly = isPostureApprovalOnlyService(

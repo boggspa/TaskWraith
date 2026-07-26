@@ -459,9 +459,18 @@ function workspaceGrantServiceIdsFor(
     // Non-grantable services: stale/forged workspace grants must never promote
     // these above a per-action prompt. PermissionService enforces the same for
     // session grants.
+    //
+    // canvasInteraction is here for a different reason: it IS grantable, but
+    // only ever bound to one surface. There is no workspace tier for it —
+    // "click anything, in any chat, in this workspace, until revoked" is not a
+    // scope a user can meaningfully consent to, and it would outlive every
+    // surface it was given for. PermissionService.hasWorkspaceGrant refuses it
+    // too, so a grant persisted by an older build cannot promote a canvas
+    // interaction from either direction.
     if (
       grant.service === 'canvasEval' ||
-      grant.service === 'mediaRecording'
+      grant.service === 'mediaRecording' ||
+      grant.service === 'canvasInteraction'
     )
       continue
     serviceIds.add(grant.service)

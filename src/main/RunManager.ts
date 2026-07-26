@@ -72,9 +72,17 @@ function providerSessionKey(provider: ProviderId, providerSessionId: string): st
 function sessionGrantKey(
   provider: ProviderId,
   workspacePath: string | undefined,
-  service: AgenticServiceId
+  service: AgenticServiceId,
+  surfaceId?: string
 ): string {
-  return `${provider}:${service}:${workspacePath || 'global'}`
+  const base = `${provider}:${service}:${workspacePath || 'global'}`
+  // Surface-scoped services (canvasInteraction) bind the grant to the exact
+  // surface the user approved. PermissionService decides which services those
+  // are and refuses to mint an unscoped one; this only has to key it. NB the
+  // run-attached grant is the path that actually fires while a run is live —
+  // PermissionService.addSessionGrant delegates here and returns, so scoping the
+  // process-global key alone would have left the common case wide open.
+  return surfaceId ? `${base}:${surfaceId}` : base
 }
 
 export function isTerminalRunSessionStatus(
@@ -318,18 +326,28 @@ export class RunManager<TState = unknown> {
     this.approvalIdToRunId.delete(approvalId)
   }
 
-  addSessionGrant(runId: string | undefined, service: AgenticServiceId): void {
+  addSessionGrant(
+    runId: string | undefined,
+    service: AgenticServiceId,
+    surfaceId?: string
+  ): void {
     if (!runId) return
     const session = this.sessionsByRunId.get(runId)
     if (!session || isTerminalRunSessionStatus(session.status)) return
-    session.sessionGrants.add(sessionGrantKey(session.provider, session.workspacePath, service))
+    session.sessionGrants.add(
+      sessionGrantKey(session.provider, session.workspacePath, service, surfaceId)
+    )
   }
 
-  hasSessionGrant(runId: string | undefined, service: AgenticServiceId): boolean {
+  hasSessionGrant(
+    runId: string | undefined,
+    service: AgenticServiceId,
+    surfaceId?: string
+  ): boolean {
     const session = this.get(runId)
     if (!session) return false
     return session.sessionGrants.has(
-      sessionGrantKey(session.provider, session.workspacePath, service)
+      sessionGrantKey(session.provider, session.workspacePath, service, surfaceId)
     )
   }
 
