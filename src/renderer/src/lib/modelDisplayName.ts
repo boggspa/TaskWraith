@@ -126,6 +126,13 @@ const KNOWN_MODEL_LABELS: Record<string, string> = {
   'grok-4.5-xhigh': 'Grok 4.5',
   'grok-4.5-fast-xhigh': 'Grok 4.5 Fast',
 
+  // ── Mistral (Vibe CLI seat) ───────────────────────────────
+  // Bare ids — Pi's BYOK `mistral/<model>` upstream rows are a DIFFERENT
+  // identity and resolve through `resolvePiModelLabel`, not this table.
+  'mistral-medium-3.5': 'Mistral Medium 3.5',
+  'mistral-vibe-cli-latest': 'Mistral Medium 3.5',
+  'devstral-small': 'Devstral Small',
+
   // ── Ollama ────────────────────────────────────────────────
   'qwen3:4b-instruct': 'Qwen 3 (4B Param)',
   'qwen3.5:9b': 'Qwen 3.5 (9B Param)',
@@ -189,6 +196,21 @@ export function canonicalModelIdForProvider(
     if (provider === 'grok') return 'grok-4.5'
     if (provider === 'cursor') return 'composer-2.5-fast'
     if (provider === 'ollama') return 'qwen3:4b-instruct'
+    // The three newest seats had no branch here, so a run recorded with the
+    // sentinel id surfaced a model row literally labelled "default". Each maps
+    // to that seat's own default — devstral-small for Mistral, NOT the
+    // flagship (see MISTRAL_DEFAULT_MODEL).
+    if (provider === 'antigravity') return 'gemini-api:gemini-2.5-flash'
+    if (provider === 'pi') return 'deepseek/deepseek-v4-flash'
+    if (provider === 'mistral') return 'devstral-small'
+  }
+  if (provider === 'mistral') {
+    // Vibe speaks aliases on the ACP surface but its own config stores the
+    // canonical names; `normalizeMistralModel` collapses each pair on the
+    // dispatch side, so collapse them here too rather than splitting one model
+    // across two usage rows.
+    if (key === 'mistral-vibe-cli-latest') return 'mistral-medium-3.5'
+    if (key === 'devstral-small-latest') return 'devstral-small'
   }
   if (provider === 'grok') {
     if (STALE_GEMINI_PLACEHOLDER_MODEL_IDS.has(key)) return 'grok-4.5'
@@ -332,7 +354,10 @@ const PROVIDER_MODEL_LABEL_PREFIX: Partial<Record<ProviderId, RegExp>> = {
   gemini: /^Gemini\s+/i,
   claude: /^Claude\s+/i,
   kimi: /^Kimi\s+/i,
-  grok: /^Grok\s+/i
+  grok: /^Grok\s+/i,
+  // 'Mistral Medium 3.5' → 'Medium 3.5'. Devstral keeps its full name: it does
+  // not repeat the provider, so the strip is a no-op there.
+  mistral: /^Mistral\s+/i
 }
 
 /**

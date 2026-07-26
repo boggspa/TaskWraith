@@ -509,14 +509,53 @@ export function buildModelUsageTable(
 }
 
 /**
+ * Providers the external activity scanner can actually emit records for
+ * (`ExternalProviderActivity` walks each of these CLIs' session/history homes).
+ * Every OTHER provider is invisible to that scan by construction — no amount
+ * of usage will ever produce an external row for it.
+ *
+ * This set is what makes the External-Usage merge safe to widen: a provider
+ * absent here can never be double-counted, because there is nothing on the
+ * external side to double it against.
+ *
+ * Mirrored by hand rather than imported: `ExternalProviderActivity` is a main-
+ * process module and the architecture guard admits no new renderer→main
+ * runtime edges. **Adding a scanner lane means adding the provider here too** —
+ * leaving it out would supplement internal records on top of external ones and
+ * double-count that provider.
+ */
+const EXTERNALLY_SCANNED_PROVIDERS: ReadonlySet<ProviderId> = new Set<ProviderId>([
+  'codex',
+  'claude',
+  'gemini',
+  'cursor',
+  'kimi',
+  'grok'
+])
+
+/**
  * Providers whose TaskWraith-internal records are always folded into the table
  * when External Usage is ON. Codex's TaskWraith-owned sessions live outside
  * the shared home scanned for external activity; Grok is never scanned
  * externally. Cursor is additive for reporting: IDE-native Composer activity
  * comes from the external scanner while historical TaskWraith Cursor records
  * stay visible.
+ *
+ * The tail is DERIVED, not hand-listed: every roster provider the scanner
+ * cannot see must fall back to its internal records or it vanishes from the
+ * whole tab the moment the toggle flips on. Pre-fix this was the literal trio
+ * above, so antigravity / pi / mistral — the three newest seats, none of which
+ * has an external scanner lane — had all of their usage silently dropped while
+ * External Usage was ON (the persisted default for this tab). They were not
+ * missing from the roster; they were being filtered out after aggregation.
+ * Deriving the tail means a future seat is covered the day it is added.
  */
-const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = ['codex', 'grok', 'cursor']
+const ALWAYS_SUPPLEMENT_WHEN_EXTERNAL: ProviderId[] = [
+  'codex',
+  'grok',
+  'cursor',
+  ...MODEL_USAGE_PROVIDER_ORDER.filter((provider) => !EXTERNALLY_SCANNED_PROVIDERS.has(provider))
+]
 
 /** Cursor's IDE activity scanner exposes input + output but no cache split. Match
  * historical internal Cursor rows on that same fresh-input + output basis; display
@@ -682,7 +721,8 @@ export function buildModelUsageTableForSettings(
     }
   }
 
-  // Providers only in internal (shouldn't happen for priced roster) — ignore.
+  // Internal-only providers are no longer dropped here: the loop above admits
+  // every provider the scanner cannot see, so `byProvider` is already complete.
   void externalByProvider
 
   return MODEL_USAGE_PROVIDER_ORDER.map((provider) => byProvider.get(provider)).filter(
@@ -697,16 +737,24 @@ function modelUsageRecordsForSettingsMatrix(
 ): UsageRecord[] {
   if (options.includeExternal !== true) return internalRecords
   const filteredExternal = dedupeCursorExternalAgainstInternal(internalRecords, externalRecords)
-  const supplemental = internalRecords.filter(
-    (record) =>
-      record?.provider === 'codex' ||
-      record?.provider === 'grok' ||
-      (record?.provider === 'cursor' &&
-        !filteredExternal.some((external) => {
-          if (external?.provider !== 'cursor') return false
-          return cursorRecordsLikelyOverlap(record, external)
-        }))
-  )
+  // Mirrors ALWAYS_SUPPLEMENT_WHEN_EXTERNAL — the workspace matrix has to keep
+  // the same provider coverage as the table above it, or a provider shows in
+  // one and not the other. Cursor is the only case needing dedup work: it is
+  // the sole provider that can appear on BOTH sides for the same run.
+  const supplemental = internalRecords.filter((record) => {
+    const provider = record?.provider
+    if (!provider) return false
+    if (provider === 'cursor') {
+      return !filteredExternal.some((external) => {
+        if (external?.provider !== 'cursor') return false
+        return cursorRecordsLikelyOverlap(record, external)
+      })
+    }
+    if (provider === 'codex' || provider === 'grok') return true
+    // Anything the scanner cannot see (antigravity, pi, mistral, …) is
+    // internal-only and cannot double-count.
+    return !EXTERNALLY_SCANNED_PROVIDERS.has(provider)
+  })
   return [...filteredExternal, ...supplemental]
 }
 

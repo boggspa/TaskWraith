@@ -120,6 +120,49 @@ describe('humaniseModelId', () => {
     })
   })
 
+  describe('Mistral', () => {
+    it('maps Vibe seat ids to human-readable names instead of surfacing raw ids', () => {
+      expect(humaniseModelId('mistral', 'mistral-medium-3.5')).toBe('Mistral Medium 3.5')
+      expect(humaniseModelId('mistral', 'devstral-small')).toBe('Devstral Small')
+    })
+
+    it('collapses the Vibe wire aliases onto the seat ids so one model is one row', () => {
+      expect(canonicalModelIdForProvider('mistral', 'mistral-vibe-cli-latest')).toBe(
+        'mistral-medium-3.5'
+      )
+      expect(canonicalModelIdForProvider('mistral', 'devstral-small-latest')).toBe('devstral-small')
+      expect(humaniseModelId('mistral', 'mistral-vibe-cli-latest')).toBe('Mistral Medium 3.5')
+    })
+
+    it('resolves the default sentinel to the seat default (devstral-small, not the flagship)', () => {
+      expect(canonicalModelIdForProvider('mistral', 'default')).toBe('devstral-small')
+      expect(canonicalModelIdForProvider('mistral', 'cli-default')).toBe('devstral-small')
+    })
+
+    it('drops the redundant brand prefix under the provider header', () => {
+      expect(humaniseModelIdCompact('mistral', 'mistral-medium-3.5')).toBe('Medium 3.5')
+      // Devstral does not repeat the provider, so the strip is a no-op.
+      expect(humaniseModelIdCompact('mistral', 'devstral-small')).toBe('Devstral Small')
+    })
+
+    it('leaves the Pi BYOK mistral/* upstream ids to the Pi resolver', () => {
+      // Same brand string, DIFFERENT provider identity — must not be rewritten
+      // by the Mistral seat's table.
+      expect(canonicalModelIdForProvider('pi', 'mistral/devstral-2512')).toBe(
+        'mistral/devstral-2512'
+      )
+    })
+  })
+
+  describe('Newest seats — default sentinel', () => {
+    it('resolves the default sentinel per seat rather than showing a "default" row', () => {
+      expect(canonicalModelIdForProvider('antigravity', 'default')).toBe(
+        'gemini-api:gemini-2.5-flash'
+      )
+      expect(canonicalModelIdForProvider('pi', 'default')).toBe('deepseek/deepseek-v4-flash')
+    })
+  })
+
   describe('Cursor', () => {
     it('maps Composer CLI ids to human-readable names', () => {
       expect(humaniseModelId('cursor', 'composer-2.5')).toBe('Composer 2.5')

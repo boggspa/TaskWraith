@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import { buildProviderApiRateGroups } from './providerApiRatesTable'
+import { BAKED_IN_RATES, RATE_TABLE_VERSION } from '../../../main/services/ProviderRateService'
+import type { ProviderId } from '../../../main/store/types'
+import { isRetiredProvider } from '../../../shared/retiredProviders'
+import { getEnsembleModelDefaults } from './ensembleProviderDefaults'
+import { MODEL_USAGE_PROVIDER_ORDER } from './modelUsageTable'
+import { normalizeProviderRates, resolveModelRate } from './providerRateEstimate'
 
 describe('buildProviderApiRateGroups', () => {
   it('preserves provider/model rate provenance from the raw snapshot', () => {
@@ -205,4 +211,43 @@ describe('buildProviderApiRateGroups', () => {
 
     expect(groups[0].provider).toBe('gemini')
   })
+})
+
+/**
+ * Catalogue-vs-rate-table coverage guard.
+ *
+ * The Settings → Model Usage tables are only as complete as the tables behind
+ * them. A model the picker OFFERS but the rate table omits is invisible in
+ * Provider/Model API Rates, and — worse — `resolveModelRate` silently prices it
+ * off `models[0]`, so its projected cost is another model's. That is exactly
+ * how `gemini-api:gemini-2.0-flash` shipped priced at 2.5 Flash rates.
+ *
+ * Retired providers are excluded: Gemini's catalogue holds selection aliases
+ * (`pro`, `flash`) rather than wire ids, and nothing new can be dispatched to
+ * it anyway.
+ */
+describe('offered-model rate coverage', () => {
+  const PRICED_PROVIDERS: ProviderId[] = MODEL_USAGE_PROVIDER_ORDER.filter(
+    (provider) => !isRetiredProvider(provider)
+  ).concat('ollama')
+
+  const rates = normalizeProviderRates({
+    rateTableVersion: RATE_TABLE_VERSION,
+    baseline: BAKED_IN_RATES
+  })
+
+  for (const provider of PRICED_PROVIDERS) {
+    it(`prices every model the ${provider} picker offers with that model's own rate row`, () => {
+      const offered = getEnsembleModelDefaults(provider)
+        .modelOptions.map((option) => option.id)
+        .filter((id) => id !== 'auto')
+      expect(offered.length).toBeGreaterThan(0)
+
+      const unpriced = offered.filter((modelId) => {
+        const resolved = resolveModelRate(rates, provider, modelId)
+        return resolved?.modelId.toLowerCase() !== modelId.toLowerCase()
+      })
+      expect(unpriced).toEqual([])
+    })
+  }
 })

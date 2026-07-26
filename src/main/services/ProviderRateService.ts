@@ -708,6 +708,19 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         confidence: 'baked-in'
       },
       {
+        // Offered by OLLAMA_MODELS but had no row, so it was missing from the
+        // Provider/Model API Rates table. Local inference is free, so the
+        // absent row cost nothing — it just made the table look incomplete.
+        modelId: 'lfm2.5:8b',
+        inputUsdPerMillion: 0,
+        outputUsdPerMillion: 0,
+        sourceUrl: 'local://ollama',
+        lastVerified: RATE_TABLE_VERSION,
+        notes:
+          'Liquid LFM 2.5 8B-A1B running through local Ollama. TaskWraith does not charge per token for local inference.',
+        confidence: 'baked-in'
+      },
+      {
         modelId: 'openai/gpt-oss-20b',
         inputUsdPerMillion: 0,
         outputUsdPerMillion: 0,
@@ -942,6 +955,21 @@ export const BAKED_IN_RATES: Record<ProviderId, ProviderRateTable> = {
         modelId: 'gemini-api:gemini-3.1-flash-lite',
         inputUsdPerMillion: 0.25,
         outputUsdPerMillion: 1.5,
+        cachedInputUsdPerMillion: 0.025,
+        sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
+        lastVerified: RATE_TABLE_VERSION,
+        notes: 'Gemini API paid tier via the AntiGravity BYO-key lane.'
+      },
+      {
+        // ANTIGRAVITY_MODELS offers this id, but it had no row: neither the
+        // exact nor the prefix match in `resolveModelRate` can bridge
+        // `gemini-2.0-flash` to `gemini-2.5-flash`, so it fell through to
+        // `models[0]` and every 2.0 Flash run was projected at 2.5 Flash rates
+        // (3x input, 6.25x output) — and the model was absent from the
+        // Provider/Model API Rates table entirely.
+        modelId: 'gemini-api:gemini-2.0-flash',
+        inputUsdPerMillion: 0.1,
+        outputUsdPerMillion: 0.4,
         cachedInputUsdPerMillion: 0.025,
         sourceUrl: 'https://ai.google.dev/gemini-api/docs/pricing',
         lastVerified: RATE_TABLE_VERSION,

@@ -749,6 +749,101 @@ describe('buildModelUsageTableForSettings — private-home supplements when exte
     expect(codex.totals.h24.runs).toBe(2)
   })
 
+  // The external activity scanner only walks the codex / claude / gemini /
+  // cursor / kimi / grok CLI homes. A seat with no scanner lane can NEVER
+  // produce an external row, so before the fix its internal usage was dropped
+  // the moment External Usage was on — and that toggle is the persisted
+  // default for this tab, so the three newest seats read as "no usage ever".
+  const UNSCANNED_SEATS = [
+    { provider: 'mistral' as const, model: 'devstral-small' },
+    { provider: 'pi' as const, model: 'deepseek/deepseek-v4-flash' },
+    { provider: 'antigravity' as const, model: 'gemini-api:gemini-2.5-flash' }
+  ]
+
+  for (const seat of UNSCANNED_SEATS) {
+    it(`keeps internal ${seat.provider} usage when external is on (no scanner lane to merge with)`, () => {
+      const internal = [
+        makeRecord({
+          provider: seat.provider,
+          model: seat.model,
+          timestamp: NOW - HOURS(1),
+          inputTokens: 400_000,
+          outputTokens: 100_000
+        })
+      ]
+      const result = buildModelUsageTableForSettings(
+        internal,
+        [externalCodex],
+        RATES,
+        { currency: 'USD', includeExternal: true },
+        NOW
+      )
+      const group = result.find((g) => g.provider === seat.provider)
+      expect(group).toBeDefined()
+      expect(group!.totals.h24.totalTokens).toBe(500_000)
+      expect(group!.totals.h24.runs).toBe(1)
+      expect(group!.models.map((m) => m.model)).toEqual([seat.model])
+      // The external codex section is untouched — supplementing never doubles.
+      expect(result.find((g) => g.provider === 'codex')!.totals.h24.tokensIn).toBe(2_000_000)
+    })
+
+    it(`keeps ${seat.provider} in the workspace matrix when external is on`, () => {
+      const internal = [
+        makeRecord({
+          provider: seat.provider,
+          model: seat.model,
+          timestamp: NOW - HOURS(1),
+          inputTokens: 400_000,
+          outputTokens: 100_000
+        })
+      ]
+      const matrix = buildModelUsageWorkspaceMatrix(
+        internal,
+        [externalCodex],
+        [],
+        RATES,
+        { currency: 'USD', includeExternal: true },
+        NOW
+      )
+      const group = matrix.groups.find((g) => g.provider === seat.provider)
+      expect(group).toBeDefined()
+      expect(group!.models.map((m) => m.model)).toEqual([seat.model])
+    })
+  }
+
+  it('never double-counts a supplemented seat that also appears externally', () => {
+    // Guards the widened supplement rule: claude IS scanned externally, so its
+    // internal rows must stay excluded rather than being added on top.
+    const internal = [
+      makeRecord({
+        provider: 'claude',
+        model: 'opus',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 1_000_000
+      })
+    ]
+    const external = [
+      externalCodex,
+      makeRecord({
+        id: 'external-claude',
+        provider: 'claude',
+        model: 'opus',
+        timestamp: NOW - HOURS(1),
+        inputTokens: 3_000_000
+      })
+    ]
+    const result = buildModelUsageTableForSettings(
+      internal,
+      external,
+      RATES,
+      { currency: 'USD', includeExternal: true },
+      NOW
+    )
+    const claude = result.find((g) => g.provider === 'claude')!
+    expect(claude.totals.h24.tokensIn).toBe(3_000_000)
+    expect(claude.totals.h24.runs).toBe(1)
+  })
+
   it('folds internal grok runs into the external-only table', () => {
     const internal = [
       makeRecord({
