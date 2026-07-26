@@ -27,9 +27,47 @@ import { AGENT_THEME_TOKENS } from '../../../shared/agentThemeTokens'
  * later is covered here automatically and cannot silently re-open the hole.
  */
 
-/** Selectors that carry a consent decision the user is being asked to make. */
-const CONSENT_ACTION_SELECTOR_PATTERN =
-  /\.composer-permission-actions|\.composer-permission-scope-actions/
+/**
+ * Selectors that carry a consent decision the user is being asked to make.
+ *
+ * Matched STRUCTURALLY rather than by naming the two rules that prompted this,
+ * because the two halves of the guard have to age at the same rate: the token
+ * set below is derived from AGENT_THEME_TOKENS and so covers allowlist
+ * additions automatically, and a hand-listed selector set would quietly fail to
+ * cover the next consent surface someone adds. A decision row is a selector
+ * that is consent-ish AND is a row of controls — which today also reaches
+ * `.creative-approval-modal-actions`, `.approval-grant-bulk-actions` (a
+ * confirm/forget pair with the same shape as Accept/Reject),
+ * `.approval-ledger-actions` and `.sidebar-footer-approval-actions`, none of
+ * which existed in the original finding.
+ *
+ * Deliberately NOT matched: containers and text (`.composer-permission-card`
+ * padding, `.composer-permission-title`, `.agent-approval-preview`). Those only
+ * resize a card or a read-only preview, which is cosmetic and worth keeping
+ * user-restyleable — the hazard is specifically two consequential controls
+ * ending up adjacent.
+ */
+const CONSENT_SELECTOR_PATTERN = /permission|approval|consent|elevation|grant/i
+const CONTROL_ROW_PATTERN = /actions|buttons|controls/i
+
+/**
+ * A comment sitting above a rule is captured with it by the crude splitter
+ * below. Stripping it serves two purposes: comment prose can neither make a
+ * rule match nor hide one, and the failure message names the selector instead
+ * of quoting a paragraph of unrelated commentary at whoever has to fix it.
+ */
+function selectorOf(rawSelector: string): string {
+  return rawSelector
+    .replace(/\/\*[\s\S]*?\*\//g, '')
+    .replace(/\s+/g, ' ')
+    .trim()
+}
+
+function isConsentDecisionRow(rawSelector: string): boolean {
+  const selector = selectorOf(rawSelector)
+  if (!selector) return false
+  return CONSENT_SELECTOR_PATTERN.test(selector) && CONTROL_ROW_PATTERN.test(selector)
+}
 
 function collectCssFiles(dir: string, out: string[] = []): string[] {
   for (const entry of readdirSync(dir)) {
@@ -51,12 +89,19 @@ describe('consent surfaces vs agent-writable tokens', () => {
     expect(writableTokens).toContain('space-sm')
   })
 
-  it('finds the consent action rows at all (guards against a silent rename)', () => {
-    const files = collectCssFiles(rendererRoot)
-    const matching = files.filter((f) =>
-      CONSENT_ACTION_SELECTOR_PATTERN.test(readFileSync(f, 'utf8'))
-    )
-    expect(matching.length).toBeGreaterThan(0)
+  it('finds the consent decision rows at all (guards against a silent rename)', () => {
+    const found: string[] = []
+    for (const file of collectCssFiles(rendererRoot)) {
+      const css = readFileSync(file, 'utf8')
+      for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
+        if (isConsentDecisionRow(match[1])) found.push(selectorOf(match[1]))
+      }
+    }
+    // If a rename ever drops this to zero the offence check below would pass
+    // vacuously, which is the failure mode this whole file exists to avoid.
+    expect(found.length).toBeGreaterThan(0)
+    // The row that prompted the guard must still be among them.
+    expect(found.some((s) => s.includes('composer-permission-actions'))).toBe(true)
   })
 
   it('never lays consent controls out against an agent-writable token', () => {
@@ -65,16 +110,14 @@ describe('consent surfaces vs agent-writable tokens', () => {
     for (const file of collectCssFiles(rendererRoot)) {
       const css = readFileSync(file, 'utf8')
       for (const match of css.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
-        const selector = match[1].trim()
+        const selector = selectorOf(match[1])
         const body = match[2]
-        if (!CONSENT_ACTION_SELECTOR_PATTERN.test(selector)) continue
+        if (!isConsentDecisionRow(match[1])) continue
 
         for (const token of writableTokens) {
           if (!body.includes(`var(--${token})`) && !body.includes(`var(--${token},`)) continue
           const line = css.slice(0, match.index).split('\n').length
-          offences.push(
-            `${file.split('/').pop()}:${line} — "${selector.replace(/\s+/g, ' ')}" uses var(--${token})`
-          )
+          offences.push(`${file.split('/').pop()}:${line} — "${selector}" uses var(--${token})`)
         }
       }
     }
