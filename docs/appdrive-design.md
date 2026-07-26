@@ -144,7 +144,19 @@ interface AppDriveLease {
 
 **Migration:** when the renderer opens an embedded canvas (`canvas:open-embedded`, [CanvasEmbedIpc.ts:163](../src/main/canvas/CanvasEmbedIpc.ts:163)), auto-mint a lease scoped to that canvas + origin for the chat's own run. Existing human-initiated flows keep working with no new prompt. Agent-opened floating canvases get **no** lease — the agent must be handed one.
 
-### 3.2 Grant surface-binding (D5)
+### 3.2 Grant surface-binding (D5) — **SHIPPED 2026-07-26** (`bbfa9ec7c`)
+
+**What shipped differs from what this section originally proposed, in one important way: no new `AgenticServiceId` was added.** The design assumed `appDrive` would be a new permission class that happened to be surface-scoped. Implementing it made clear the defect lives in the *existing* capability — `canvasInteraction` is fine, its grant just names no surface — so scoping the existing service closes the hole with none of the ~30-file union sweep, and none of its risk.
+
+Three things had to change together or the fix would have been cosmetic:
+
+1. **The run-attached grant is the path that actually fires.** `PermissionService.addSessionGrant` delegates to `RunManager` and returns whenever a run is live, so scoping only the process-global key would have left the common case wide open. Both key functions are scoped (they are duplicated, not shared — `RunManager.ts:72` and `PermissionService.ts:263`).
+2. **The canvasId was lost between request and response.** `PendingGeminiToolApproval` kept provider/service/workspace/runId only, so a grant could only ever be minted unscoped. It now carries `surfaceId`, read out of the preview the human was shown.
+3. **Fail closed on omission.** A surface-scoped service with no surface in hand matches nothing, and minting an unscoped grant is *refused* rather than stored — a stored grant that can never match is worse than none, because the UI reports it as given.
+
+Also dropped: no persistence, sanitizer or migration work is needed, because no surface-scoped grant is ever written to settings (see the workspace-tier removal below).
+
+### 3.2.1 The original proposal, for reference
 
 Additive change to the grant record: an optional `surfaceId`. `resolvePermission` only matches a grant whose `surfaceId` equals the request's; services with no surface leave it `undefined` and behave exactly as today.
 
@@ -428,7 +440,7 @@ Each slice is independently shippable with gates green. Stage by explicit path a
 | **S2** | D2 + serialization — audit-before-execute reordering, per-canvas mutex | Best-effort emit, not strict. |
 | **S3** | D3 — user takeover: `inputEpoch`, `userActiveUntil`, drop the click focus steal, conditional `scrollIntoView` | Main-side `before-input-event` is the authority. |
 | **S4** | D4 — sketch `expectedUpdatedAt` + in-flight-stroke refusal | |
-| **S5** | D5 — grant `surfaceId` binding; drop `canvasInteraction` workspace grants | **Behaviour change. Own commit, own adversarial review.** |
+| ~~**S5**~~ | **DONE `bbfa9ec7c`** — grant `surfaceId` binding; `canvasInteraction` workspace grants dropped | Shipped without a new service id — see §3.2. |
 | **S6** | Credential protection — secret-field refusal, screenshot redaction, sketch session hardening | |
 | **S7** | `instanceEpoch` primitive | Boot-time UUID beside the broker token; verified by the executor. |
 | **S8** | Normalise the authority-role union; route Boss-unavailability through one existing implementation | Prerequisite for S10. |
@@ -493,6 +505,18 @@ This codebase punishes incomplete seam sweeps — `canvasInteraction` and `canva
 - `CanvasDriverKind` includes `'window'` with no implementing class anywhere.
 
 ---
+
+## 12a. Found while implementing §3.2 — and fixed
+
+Mapping the grant lifecycle turned up a disclosure the design had not anticipated, fixed in `520415ce5`.
+
+The canvas approval preview passes the tool's raw args through as `preview.params` so the human can see what is about to be typed. That same payload is written to the durable run-event store **and** the approval ledger, and the durable redaction path special-cased `canvasEval` only — so **`canvas_fill`'s typed value was retained indefinitely in two places**, while the tool catalogue told models *"the typed value is never recorded in the audit log."*
+
+The claim was true of the canvas audit log (which deliberately records only the target) and false of the approval path. **A security claim that holds for one store and not another is worse than no claim, because it is the one people quote.** Fixed with the same live-vs-durable split `canvas_eval` uses: the human still sees the real value transiently, the permanent record keeps only its shape, and targeting metadata is untouched so the audit trail is not gutted.
+
+Narrower than it first sounds now that credential fields are refused outright (§6) — the values reaching this path are ordinary form data, not passwords. Ordinary form data is still the user's.
+
+**Generalisable lesson:** the preview object is the one place a tool's raw arguments travel this far into the permission machinery, and it feeds a transient sink and two durable ones. Any tool whose args contain something you would not keep forever needs a durable-path redaction, not just a careful audit-log call.
 
 ## 13. Open questions for the next session
 
