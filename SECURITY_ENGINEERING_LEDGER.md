@@ -18,17 +18,20 @@ current release pointer.
 **2026-07-26 v1.9.0 paperwork boundary:** the latest published baseline is
 **v1.8.9** (`0867c80c2ec50a9429ccfb6885462bff5c4149bb`). The first reconciled
 1.9.0 feature tip was `ce8c0c76d` (**178 commits** past that tag), with
-release-paperwork commits following it. The requested 30-minute refresh reached
+release-paperwork commits following it. The requested first refresh reached
 concurrent-work cutoff `de6dcd264` (**202 commits** past the tag, with three
-refresh-paperwork commits interleaved), after Mistral Vibe, agent theme tokens,
-Canvas actuation hardening, provider-registry completeness diagnostics, and
-the cross-feature consent-chrome invariant landed in committed slices.
-This is still a mutable source-ahead snapshot, not a freeze: concurrent dirty
-work and three foreign ship holds remain, every per-entry verify/`Block`
-disposition stays in force, and the exact integrated candidate must be
-re-recorded and verified before a release claim. References use stable symbols
-and test names rather than line numbers. Do not add secrets, raw scripts, or
-weaponized payloads to this file or its verification artifacts.
+refresh-paperwork commits interleaved). This second paperwork pass opened at
+`3bf7bbca3` (**236 commits** past the tag, 31 committed changes after the prior
+paperwork tip `d46229e8a`), after surface-scoped Canvas grants, durable
+`canvas_fill` value redaction, per-call theme consent, Mistral UI/live-lane
+evidence, Pi attribution, and a scoped history-deletion deadline attempt
+landed. No foreign ship-hold marker was present at that opening snapshot; two
+unrelated working-tree paths and this pass's own marker kept the tree dirty.
+This is still a mutable source-ahead snapshot, not a freeze: every per-entry
+verify/`Block` disposition stays in force, and the exact integrated candidate
+must be re-recorded and verified before a release claim. References use stable
+symbols and test names rather than line numbers. Do not add secrets, raw
+scripts, or weaponized payloads to this file or its verification artifacts.
 
 ## Working rules
 
@@ -62,14 +65,18 @@ weaponized payloads to this file or its verification artifacts.
 | TW-SEC-2026-011 | Provider diagnostics exposed live broker bearer tokens and local prompt/path data | High | Remediated | TaskWraith maintainers — MCP bridge and Kimi ACP diagnostics | Source candidate and focused bridge suite accepted; whole-tree and exact packaged verification remain pending |
 | TW-SEC-2026-012 | Durable Kimi seat homes preserved unknown provider-created top-level artifacts | High | Remediated | TaskWraith maintainers — Kimi isolated-home lifecycle | Verify the strict continuity allowlist on the exact candidate; unknown builds now admit as labelled unattested-development rather than being fenced (2026-07-21 update) |
 | TW-SEC-2026-013 | A provider dispatch can outlive the chat/history authority observed before asynchronous preflight | High | Remediated | TaskWraith maintainers — Run admission and history mutation | Source candidate accepted; verify the exact integrated lifecycle matrix before release |
-| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); rerun exact-candidate whole-tree gates and keep the provider-native/same-UID boundaries disclosed before any release-level erasure claim |
+| TW-SEC-2026-014 | Multi-store history deletion was best-effort and an internal orphan reaper bypassed lifecycle fencing | High | Remediated | TaskWraith maintainers — Data lifecycle and history erasure | Source candidate accepted 2026-07-21 (host-command, cancel/delete, Codex app-server joins closed; reaper fenced; checkpoint/collaboration stores joined); rerun exact-candidate whole-tree gates, preserve the provider-native/same-UID boundaries, and clear the related TW-SEC-2026-020 timeout regression before any release-level erasure claim |
 | TW-SEC-2026-015 | A partial workflow rerun could refresh stale provider-attestation freshness without rerunning the live canary | High | Closed | TaskWraith maintainers — Release attestation | Closed by removal 2026-07-21: the hosted attestation apparatus was deleted by user decision (capability governance); fix preserved as provenance |
 | TW-SEC-2026-016 | Usage journals retain content and scope identifiers outside the history-erasure transaction | High | Remediated | TaskWraith maintainers — Usage privacy and data lifecycle | Source candidate accepted; run exact-candidate whole-tree gates before clearing the release block |
+| TW-SEC-2026-017 | `canvas_fill` typed values entered durable approval and run-event history despite the tool's non-retention contract | Medium | Remediated | TaskWraith maintainers — Canvas approval privacy | Forward-only source fix accepted; verify every approval ingress/durable sink and keep the existing-history disclosure before clearing the block |
+| TW-SEC-2026-018 | A Canvas interaction grant applied beyond the exact surface the user approved | High | Remediated | TaskWraith maintainers — Canvas and approval authority | Verify surface identity on request, response, run-attached, fallback, and legacy-grant paths before clearing the block |
+| TW-SEC-2026-019 | Theme writes could inherit an unrelated MCP grant, while writable spacing influenced consent-control adjacency | High | Remediated | TaskWraith maintainers — Appearance and consent surfaces | Verify every-call human prompting and the structural consent-row guard on the exact candidate before clearing the block |
+| TW-SEC-2026-020 | The scoped history-deletion deadline rejects without retiring the durable intent or releasing retained holds | High | Open | TaskWraith maintainers — Data lifecycle and history erasure | **Block 1.9.0:** prove a stalled scoped deletion converges to a safe resumable/aborted state, restores intended run admission, and still refuses every late commit |
 
 ## v1.9.0 release-boundary update — 2026-07-26
 
-This release adds security-relevant surface without changing the status of any
-finding above:
+This release adds security-relevant surface and records three newly remediated
+consent/retention findings plus one open history-lifecycle blocker:
 
 - Isolated fan-out worktrees return durable candidates through explicit patch
   capture, comparison, and promotion contracts rather than silently merging a
@@ -80,7 +87,10 @@ finding above:
   permission-gated durable ledger. Delivery is labelled untrusted, enters the
   next provider turn exactly once, and keeps the optional wake as a separate
   authority; see `ThreadMessagePermission`, `ThreadMessageLedger`, and
-  `ThreadMessageContext`.
+  `ThreadMessageContext`. The three `thread-message:*` IPC channels are now
+  listed explicitly as main-renderer-only in `RendererIpcPolicy`; this records
+  the already-enforced boundary that renderer-originated sends are treated as
+  user-authored and therefore do not take the agent-approval path.
 - Pi's bring-your-own-key upstreams use a dedicated key store, isolated runtime
   homes, launch authority, model policy, and native-tool posture. This extends
   the provider surface, so secret-boundary and exact-launch evidence still
@@ -91,10 +101,14 @@ finding above:
   with the production adapter/dispatch route. The seat selects only Vibe's
   gated `plan`/`default` modes, scrubs inherited Mistral API credentials,
   re-checks launch authority across asynchronous pre-spawn boundaries, and
-  injects host-composed context into each fresh session. Scheduled launch
-  evidence still reports blocked production wiring until session-mode
-  acknowledgement and the final provider-visible steered prompt are bound; do
-  not translate that receipt into provider removal.
+  injects host-composed context into each fresh session. An opt-in live
+  `vibe-acp 2.22.0` exercise now proves the ordinary lane can carry non-empty
+  client identity, accept Plan plus Devstral Small over the protocol, use the
+  scrubbed plan-credential lane, answer, and close cleanly. It does not clear
+  scheduled launch evidence: `SealEvidenceMistral` still reports blocked
+  production wiring until session-mode acknowledgement and the final
+  provider-visible steered prompt are bound. Do not translate that receipt
+  into provider removal.
 - Office codecs operate on bounded document formats, while Outlook device-code
   access is limited to reading mail/calendar context, saving drafts, and
   creating personal time blocks. Release prose must not imply send-mail or
@@ -106,7 +120,10 @@ finding above:
   main-to-renderer update is revalidated before applying live; its authoring
   commit records the broadcast hop as code-reviewed but not yet proven through
   a real provider tool turn, so retain that check in exact-candidate
-  verification.
+  verification. The write tool now forces a human prompt on every call ahead of
+  grants, Trusted Session, and Boss/YOLO auto-approval. Consent decision rows
+  use literal layout values rather than agent-writable spacing, with a
+  structural all-renderer CSS guard to catch future rows and allowlist changes.
 - Canvas actuation now serializes interactions per surface, refuses stale
   targets and stale human-input epochs, keeps credential fields human-only,
   preserves an in-progress sketch stroke, and refuses to act while recent
@@ -115,7 +132,20 @@ finding above:
   that structurally through isolated `WebContents`, while a future window
   driver must refuse TaskWraith's process by identity. Human-presence delay is
   not a substitute for that boundary. The exact candidate still needs its
-  recorded Canvas audit/lifecycle verification.
+  recorded Canvas audit/lifecycle verification. Session grants now bind to the
+  exact `canvasId`, omission fails closed, no workspace-wide Canvas interaction
+  grant can authorize an interaction, and stored grants from older builds are
+  inert. Durable
+  approval/run-event projections now redact `canvas_fill` values while the
+  transient human prompt still shows the exact proposed text; this fix is
+  forward-only, so existing history is not rewritten.
+- The new scoped history-deletion deadline prevents a late sink from reaching
+  `commitDelete`/`commitTruncate` after the deadline fires, but it does not
+  perform the rollback its commit message and source comments cite. The scoped
+  coordinator's failure contract retains the durable intent and process-local
+  holds, and its production callers simply await the rejection. TW-SEC-2026-020
+  therefore remains an explicit 1.9.0 block; no release note claims the stalled
+  run gate is fixed.
 - Provider run management now records additive lifecycle assurance across all
   ten stable provider identities: immutable launch plans, isolated homes,
   launch evidence, cancellation/settlement, and signed-posture checks improve
@@ -1446,6 +1476,20 @@ clearing any release disposition.
     npm lane that the TW-SEC-2026-015 apparatus removal deliberately
     deleted — red at this pass's baseline, unrelated to this entry, and
     tracked for its own fix.
+- **2026-07-26 scoped-deadline audit update:** Commit `3bf7bbca3` adds a
+  two-minute bound around `ScopedHistoryDeletionCoordinator` quiescence and
+  correctly refuses `commitDelete`/`commitTruncate` if a sink settles after the
+  deadline. It does not, however, implement the claimed rollback. This
+  coordinator deliberately retains its durable intent and every process-local
+  hold after failure; its release callbacks run only after a successful commit.
+  `deleteChatWithLifecycle`, `truncateChatWithLifecycle`, and their IPC handlers
+  simply await the rejected promise. The rollback catch cited by the commit
+  belongs to the separate broad history-deletion acquisition path, not to
+  scoped deletion. The new tests prove timeout and no late commit, but do not
+  assert durable-intent retirement, hold release, fresh-run admission, or a
+  same-process retry. TW-SEC-2026-020 records that open regression; this update
+  does not weaken the 2026-07-21 transaction invariants or count the deadline
+  attempt as a completed remediation.
 - **Explicit provider-native session boundary:** TaskWraith's erasure claim
   covers TaskWraith-owned state: `userData` stores, the external sinks above,
   and Kimi's TaskWraith-owned isolated seat homes (erased by the
@@ -1667,6 +1711,191 @@ clearing any release disposition.
 - **Release disposition:** Keep `Remediated`, not `Verified`, until those final
   candidate gates are green. The source-ahead usage residual itself is closed;
   unqualified claims about released v1.8.4 behavior remain out of bounds.
+
+## TW-SEC-2026-017 — `canvas_fill` approval history retained typed values
+
+- **Date:** 2026-07-26
+- **Severity/status:** Medium / `Remediated` (source-ahead, forward-only fix;
+  exact-candidate verification pending)
+- **Owner:** TaskWraith maintainers — Canvas approval privacy and durable audit
+- **Original evidence:**
+  - A `canvas_fill` approval carries the exact proposed text in
+    `preview.params.value` so the human can review what the agent will type.
+    [`ApprovalOrchestration.ts`](src/main/run/ApprovalOrchestration.ts) projected
+    that same payload into both the durable run-event store and Approval Ledger.
+  - The Canvas audit log itself retained only target metadata, and the tool
+    catalogue told agents that the typed value was never recorded. The durable
+    approval path therefore contradicted the advertised retention contract.
+  - Text entered into a login, form, document, or other Canvas field can contain
+    credentials, personal data, or unpublished content. This is first-party
+    local retention, not evidence of cross-user access or off-box disclosure.
+- **2026-07-26 remediation update:**
+  - `redactCanvasFillValueForDurableStorage` now creates a separate durable
+    projection: the value becomes `[redacted]` with `valueRedacted: true`, while
+    `canvasId`, target ref, and other non-secret audit metadata remain intact.
+    The transient approval card still receives the exact value the human is
+    being asked to approve.
+  - [`ApprovalOrchestration.test.ts`](src/main/run/ApprovalOrchestration.test.ts)
+    asserts that neither durable sink contains the sentinel value, the redaction
+    marker remains inspectable, target metadata survives, and the live prompt
+    still shows the exact proposal.
+- **Retained boundary:** The change is forward-only. Existing Approval Ledger
+  and run-event history is not rewritten; users who may have approved sensitive
+  Canvas fills on an earlier source-ahead build should clear the affected chat's
+  history. Release notes must preserve that disclosure.
+- **Verification still required:** Exercise every provider/native approval
+  ingress on the exact candidate and inspect all first-party durable
+  projections, exports, and paired-device payloads. Do not broaden “never
+  recorded” beyond the tested value field and TaskWraith-owned sinks.
+- **Release disposition:** Keep `Remediated`, not `Verified`, until that matrix
+  is green and the forward-only residual remains visible.
+
+## TW-SEC-2026-018 — Canvas grants were not bound to the approved surface
+
+- **Date:** 2026-07-26
+- **Severity/status:** High / `Remediated` (source-ahead candidate;
+  exact-candidate verification pending)
+- **Owner:** TaskWraith maintainers — Canvas and approval authority
+- **Original evidence:**
+  - Session grants for `canvasInteraction` were keyed by provider, service, and
+    workspace/run, without the `canvasId` shown in the approval prompt. One
+    “allow for session” response therefore covered every Canvas already open
+    and every Canvas opened later in that run.
+  - `canvas_list` lets an agent enumerate a chat's surfaces. The unscoped grant
+    could consequently reach a renderer-created preview the user had never
+    approved, including a surface carrying an authenticated web session.
+  - A workspace grant was broader still: “interact with any preview, in any
+    chat, until revoked” outlived the surface and was not a bounded consent
+    scope. Persisted grants from older builds could also continue promoting the
+    service.
+- **2026-07-26 remediation update:**
+  - [`PermissionService.ts`](src/main/PermissionService.ts),
+    [`RunManager.ts`](src/main/RunManager.ts), the native approval route, and
+    [`ApprovalService.ts`](src/main/services/ApprovalService.ts) now thread the
+    exact `surfaceId` through grant lookup and response-time grant creation.
+    Both run-attached and fallback session keys include that identity.
+  - Omitting the surface fails closed for `canvasInteraction`: it neither
+    matches nor mints a session grant. Workspace grants for this service are
+    refused at lookup and filtered from effective posture, so a legacy stored
+    grant is inert rather than honoured.
+  - [`PermissionService.test.ts`](src/main/PermissionService.test.ts),
+    [`EffectiveRunPermissions.test.ts`](src/main/EffectiveRunPermissions.test.ts),
+    and [`ApprovalOrchestration.test.ts`](src/main/run/ApprovalOrchestration.test.ts)
+    cover cross-surface refusal, omission, run-scoped storage, legacy workspace
+    state, and request/response identity propagation.
+- **Boundary of the fix:** A user may still grant repeated actions on one exact
+  Canvas for the session; the remediation intentionally avoids a modal for
+  every click. It does not replace the stronger structural rule that Canvas
+  drivers cannot target TaskWraith's renderer or consent chrome. Under a stored
+  `workspace` policy, the generic action builder can still offer
+  `acceptForWorkspace` and persist an inert row; it cannot authorize any Canvas
+  interaction, but the false-scope UI/audit affordance should be removed or
+  down-clamped before the boundary is described as “no workspace tier.”
+- **Verification still required:** On the exact candidate, exercise
+  Gemini/Claude/native and run-attached/fallback approval paths with two
+  canvases, renderer-created post-grant surfaces, missing ids, stale ids, and
+  imported legacy settings. Assert no cross-surface auto-allow and no
+  workspace-tier promotion, and pin the effective action shown/recorded for a
+  stored `workspace` policy.
+- **Release disposition:** Keep `Remediated`, not `Verified`, until the
+  integrated surface-identity matrix is green.
+
+## TW-SEC-2026-019 — Theme writes inherited grants and shaped consent spacing
+
+- **Date:** 2026-07-26
+- **Severity/status:** High / `Remediated` (source-ahead candidate;
+  live-tool-turn and exact-candidate verification pending)
+- **Owner:** TaskWraith maintainers — Appearance authority and consent surfaces
+- **Original evidence:**
+  - `theme_tokens_set` rides the generic `mcpTools` service. A session grant
+    accepted for any unrelated MCP tool could therefore silence every later
+    appearance write, despite the intended “never auto-allow, never elevate”
+    contract for a capability that changes the surface used for later trust
+    decisions.
+  - The appearance allowlist correctly excluded consent colours, text,
+    backgrounds, focus rings, provider identity, and approval-sheet geometry.
+    It still allowed `space-sm` down to zero, while consent decision rows used
+    that token for their flex gap. An agent could place Accept and Reject
+    edge-to-edge, turning a near-miss on Reject into an acceptance.
+  - Flex wrapping and non-negative gap meant controls could not overlap, hide,
+    or be pushed out of reach. The bounded exposure was consequential-control
+    adjacency, not arbitrary CSS execution or invisible consent.
+- **2026-07-26 remediation update:**
+  - [`McpRouteGuards.ts`](src/main/mcp/McpRouteGuards.ts) now classifies
+    `theme_tokens_set` as an every-call human prompt. Its `forcePrompt` path is
+    evaluated ahead of standing grants, Trusted Session, and Boss/YOLO
+    auto-approval. `theme_tokens_get` remains a read and does not inherit this
+    mutation-only rule.
+  - Consent decision rows now use literal spacing that the appearance channel
+    cannot alter. [`consentSurfaceTokens.test.ts`](src/renderer/src/styles/consentSurfaceTokens.test.ts)
+    derives forbidden tokens from the actual agent-writable allowlist and finds
+    consent control rows structurally across renderer CSS, so future token or
+    surface additions cannot pass through a hand-maintained two-rule list.
+  - [`McpRouteGuards.test.ts`](src/main/mcp/McpRouteGuards.test.ts) pins the
+    every-call classification and its distinction from ordinary grantable MCP
+    tools.
+- **Verification still required:** Run a real provider tool turn that first
+  acquires an unrelated MCP session/workspace grant, then calls
+  `theme_tokens_set`; the second call must still show the exact human modal.
+  Re-run the structural CSS guard on the final candidate and inspect every
+  consequential consent row. The separate live multi-window broadcast check
+  also remains pending.
+- **Release disposition:** Keep `Remediated`, not `Verified`, until those
+  exact-candidate and live-tool-turn checks are green.
+
+## TW-SEC-2026-020 — Scoped deletion timeout retains its blocking authority
+
+- **Date:** 2026-07-26
+- **Severity/status:** High / `Open`
+- **Owner:** TaskWraith maintainers — Data lifecycle, history erasure, and run
+  admission
+- **Evidence:**
+  - [`ScopedHistoryDeletionCoordinator.ts`](src/main/ScopedHistoryDeletionCoordinator.ts)
+    explicitly defines failed attempts as retaining their durable intent,
+    Canvas/admission holds, and external-store holds for a resumable retry. Its
+    release callbacks and `retainedByOperation.delete` run only after
+    `commitDelete` or `commitTruncate` succeeds.
+  - Commit `3bf7bbca3` wraps `settleAndCommit` in a two-minute deadline. The
+    timer sets `deadlineExceeded` and rejects the caller, but it neither retires
+    the pending `HistoryDeletionIntent` nor calls any retained hold's `end`
+    method. When the underlying sink settles later, the new pre-commit check
+    correctly refuses the destructive commit, leaving those authorities
+    retained.
+  - The production `deleteChatWithLifecycle` and `truncateChatWithLifecycle`
+    wrappers simply await `coordinator.run`; their IPC handlers do the same.
+    The rollback catch cited by the commit is inside the separate broad
+    history-deletion acquisition callback and cannot unwind the scoped
+    coordinator's private retained state.
+  - `deadlineExceeded` is not reset on same-process retry. Even after the
+    original slow sink settles, a retry reuses the retained operation and
+    refuses to commit. Restart reconstructs process-local state and can replay
+    the durable intent, which is the same restart dependency the change was
+    meant to remove.
+  - The new tests assert that the promise rejects and no late commit occurs.
+    They do not assert `endCanvasClear`/other releases, pending-intent state,
+    intended run admission, or a successful/explicitly aborted retry.
+- **Impact:** A stalled abandoned-chat reap, delete, or truncate can continue
+  blocking new work in its frozen history scope after the visible timeout. The
+  exact breadth to unrelated chats remains unverified. The late-commit guard
+  prevents an erasure from committing after authority should have ended, so
+  this is an availability and transaction-convergence defect, not evidence of
+  unauthorized data deletion.
+- **Required remediation and evidence:**
+  1. Define one durable timeout state that safely converges partial external
+     purges, the deletion intent, every process-local hold, and future write
+     admission. Do not merely delete the intent after some sinks may already
+     have purged, and do not release holds while a late continuation can still
+     commit.
+  2. Make retry or explicit abort deterministic in the same process. A retry
+     must not inherit a permanently true deadline flag, duplicate holds, or
+     reuse authority that has already been released.
+  3. Add production-composition tests that stall each sink in turn, cross the
+     deadline, settle late, and assert: zero late commit, exact once-only hold
+     reconciliation, honest durable-intent state, intended run admission, and
+     safe retry/restart behavior.
+- **Release disposition:** `Block` 1.9.0 until the exact candidate contains
+  that convergence path and the focused plus whole-tree lifecycle gates are
+  green, or the informed user explicitly accepts this residual for the release.
 
 ## Combined AntiGravity/Gemini API certification contract
 
