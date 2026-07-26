@@ -855,6 +855,35 @@ describe('MainSanitizers workspace boards', () => {
 })
 
 describe('MainSanitizers settings patches', () => {
+  afterEach(() => {
+    resetAntigravityGeminiApiKeyConfiguredProbeForTests()
+  })
+
+  it('preserves active AntiGravity through either admitted settings lane', () => {
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings({ activeProvider: 'claude' }))
+
+    expect(
+      sanitizeSettingsPatch({
+        activeProvider: 'antigravity',
+        antigravityEnabled: true,
+        antigravityOptInAcceptedAt: 1_700_000_000_000
+      }).activeProvider
+    ).toBe('antigravity')
+
+    setAntigravityGeminiApiKeyConfiguredProbe(() => true)
+    expect(sanitizeSettingsPatch({ activeProvider: 'antigravity' }).activeProvider).toBe(
+      'antigravity'
+    )
+  })
+
+  it('fails closed for walled AntiGravity and historical Gemini active selections', () => {
+    setAntigravityGeminiApiKeyConfiguredProbe(() => false)
+    const { sanitizeSettingsPatch } = makeSanitizers(makeSettings({ activeProvider: 'claude' }))
+
+    expect(sanitizeSettingsPatch({ activeProvider: 'antigravity' }).activeProvider).toBe('claude')
+    expect(sanitizeSettingsPatch({ activeProvider: 'gemini' }).activeProvider).toBe('claude')
+  })
+
   it('preserves General dashboard, heatmap, and approval timeout preferences', () => {
     const settings = makeSettings({
       dashboardStatPrefs: {

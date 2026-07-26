@@ -6489,7 +6489,9 @@ function App(): React.JSX.Element {
     ])
     setSettings(s)
     setManagedPolicyStatus(policyStatus)
-    setActiveProvider(coerceLiveProvider(s.activeProvider))
+    setActiveProvider(
+      s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
+    )
     setClaudeBinaryPath(s.claudeBinaryPath || '')
     setKimiBinaryPath(s.kimiBinaryPath || '')
     setOllamaBaseUrl(s.ollamaBaseUrl || 'http://127.0.0.1:11434')
@@ -6516,7 +6518,8 @@ function App(): React.JSX.Element {
     }
     setChatContextTurns(clampContextTurns(s.chatContextTurns))
     setGeminiCheckpointingEnabled(Boolean(s.geminiCheckpointingEnabled))
-    const initialProvider = coerceLiveProvider(s.activeProvider)
+    const initialProvider =
+      s.activeProvider === 'antigravity' ? s.activeProvider : coerceLiveProvider(s.activeProvider)
     void refreshProviderMetadata(initialProvider)
     for (const provider of ['codex', 'claude', 'kimi', 'ollama'] as ProviderId[]) {
       if (provider !== initialProvider) void refreshProviderModelCatalog(provider)

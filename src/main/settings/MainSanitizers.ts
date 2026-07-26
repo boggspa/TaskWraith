@@ -1505,7 +1505,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
       // assertProviderId still rejects genuinely unknown ids, but a RETIRED
       // provider (e.g. gemini) must never become the active provider — coerce it
       // to a live default so legacy/stale patches migrate instead of sticking.
-      sanitized.activeProvider = coerceLiveProvider(assertProviderId(sanitized.activeProvider))
+      const provider = assertProviderId(sanitized.activeProvider)
+      const effectiveSettings = { ...deps.getSettings(), ...sanitized }
+      sanitized.activeProvider = selectableProviderIds(effectiveSettings).includes(provider)
+        ? provider
+        : coerceLiveProvider(provider)
     }
     if ('providerRunPauses' in sanitized) {
       sanitized.providerRunPauses = sanitizeProviderRunPauses(sanitized.providerRunPauses)

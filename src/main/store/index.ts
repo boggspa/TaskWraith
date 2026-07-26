@@ -3,7 +3,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { createInterface } from 'readline'
 import { isDeepStrictEqual } from 'util'
-import { coerceLiveProvider, DEFAULT_PROVIDER } from '../../shared/retiredProviders'
+import { DEFAULT_PROVIDER } from '../../shared/retiredProviders'
 import { redactSecrets } from '../../shared/secretRedaction'
 import { DEFAULT_DIFF_STAT_COLORS, normalizeDiffStatColors } from '../../shared/diffStatColors'
 import {
@@ -24,6 +24,7 @@ import {
   type UsageHistoryMutationInput,
   type UsageHistoryPurgeReport
 } from './UsageJournalStore'
+import { coerceProviderForPersistence } from './ProviderOfferPersistence'
 export type {
   UsageHistoryMutationHold,
   UsageHistoryMutationInput,
@@ -690,7 +691,8 @@ const MEMORY_PROPOSAL_PACK_HISTORY_LIMIT = 200
 // Structural provider ids seed default-profile records for persistence and
 // historical configuration compatibility. Persistence alone never confers
 // offer/run eligibility; the canonical live/conditional provider policy does.
-// Cursor is live through its managed Path-B launch.
+// Cursor's user-approved live membership is independent of its current managed
+// Path-B launch assurance.
 const providerIds: ProviderId[] = [
   'gemini',
   'codex',
@@ -5453,7 +5455,7 @@ export class AppStore {
       appChatId: randomUUID(),
       scope: 'workspace',
       chatKind: 'single',
-      provider: coerceLiveProvider(settings.activeProvider),
+      provider: coerceProviderForPersistence(settings.activeProvider, settings),
       title: 'New Chat',
       workspaceId,
       workspacePath,
@@ -5477,7 +5479,7 @@ export class AppStore {
       appChatId: randomUUID(),
       scope: 'global',
       chatKind: 'single',
-      provider: coerceLiveProvider(settings.activeProvider),
+      provider: coerceProviderForPersistence(settings.activeProvider, settings),
       title: 'New Chat',
       createdAt: Date.now(),
       updatedAt: Date.now(),
@@ -5501,7 +5503,7 @@ export class AppStore {
       workspaceIds: [args.workspaceId]
     })
     const settings = this.getSettings()
-    const activeProvider = coerceLiveProvider(settings.activeProvider)
+    const activeProvider = coerceProviderForPersistence(settings.activeProvider, settings)
     const scope: ChatRecord['scope'] =
       args.workspaceId && args.workspacePath ? 'workspace' : 'global'
     const chat: ChatRecord = {
@@ -5708,11 +5710,12 @@ export class AppStore {
     const bossDefault = opts.canonicalProvider
       ? undefined
       : pickBossDefaultParticipant(chat.ensemble)
+    const settings = this.getSettings()
     const canonicalProvider =
       opts.canonicalProvider ||
       bossDefault?.provider ||
       chat.provider ||
-      coerceLiveProvider(this.getSettings().activeProvider)
+      coerceProviderForPersistence(settings.activeProvider, settings)
     const nowIso = new Date(now).toISOString()
     const {
       ensemble: priorEnsemble,
@@ -5809,7 +5812,10 @@ export class AppStore {
       args.chatKind === 'ensemble' || sideChatMode === 'ensembleClone' || sideChatMode === 'fanOut'
         ? 'ensemble'
         : 'single'
-    const provider = coerceLiveProvider(args.provider || parent.provider || settings.activeProvider)
+    const provider = coerceProviderForPersistence(
+      args.provider || parent.provider || settings.activeProvider,
+      settings
+    )
     const scope = parent.scope ?? 'workspace'
     const title =
       args.title?.trim() ||
@@ -5953,7 +5959,10 @@ export class AppStore {
       parentChatRelation: 'subThread',
       delegationContext: {
         createdAt: Date.now(),
-        parentProvider: coerceLiveProvider(parent.provider ?? settings.activeProvider),
+        parentProvider: coerceProviderForPersistence(
+          parent.provider ?? settings.activeProvider,
+          settings
+        ),
         delegationPrompt: args.delegationPrompt,
         returnResultToParent: args.returnResultToParent,
         ...(args.joinPolicy ? { joinPolicy: { ...args.joinPolicy } } : {})
