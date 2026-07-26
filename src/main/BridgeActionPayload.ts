@@ -63,6 +63,9 @@ export interface BridgeActionMetadata {
 const BRIDGE_QUESTION_ANSWER_MAX_CHARS = 8000
 const BRIDGE_QUESTION_REJECT_MESSAGE_MAX_CHARS = 1000
 const BRIDGE_THREAD_ROW_ID_MAX_CHARS = 4096
+/** Matches MAX_THREAD_MESSAGE_CHARS so the phone cannot post a body the desktop
+ *  would only truncate anyway — a rejection is clearer than a silent clamp. */
+const BRIDGE_THREAD_MESSAGE_MAX_CHARS = 12_000
 const BRIDGE_WORKSPACE_FILE_PATH_MAX_CHARS = 4096
 const BRIDGE_WORKSPACE_FILE_WRITE_MAX_CHARS = 1_600_000
 const BRIDGE_GOAL_OBJECTIVE_MAX_CHARS = 4000
@@ -195,6 +198,30 @@ export interface BridgeImageAttachment {
  * this when opening a chat outside the recent-N snapshot window (the
  * periodic snapshot only ships threadSnapshots for the most-recent few —
  * relay frame budget). Gated by the `monitor` capability. */
+/**
+ * Send a peer thread-to-thread message from the phone.
+ *
+ * DELIBERATELY has no `wake` field. A phone-issued wake is refused by
+ * `ThreadMessagePermission` ('remote-wake') because a remote prompt must not be
+ * able to start an unattended turn in another thread — so the payload cannot even
+ * express the request, rather than carrying one that always fails.
+ *
+ * `toThreadId` is an exact id, never a title: title resolution belongs to the
+ * desktop, where the chat list is authoritative, and an untrusted client must not
+ * get to say "the thread called X".
+ */
+export interface BridgeThreadMessageSendAction extends BridgeActionMetadata {
+  kind: 'threadMessage'
+  workspaceId: string
+  /** The thread the phone is sending FROM. */
+  threadId: string
+  /** Exact target chat id, resolved on the phone from the projection. */
+  toThreadId: string
+  message: string
+  /** Optional. Reuse to make a retried tap idempotent rather than a second send. */
+  idempotencyKey?: string
+}
+
 export interface BridgeThreadSnapshotRequestAction extends BridgeActionMetadata {
   kind: 'threadSnapshotRequest'
   workspaceId: string
@@ -799,6 +826,7 @@ export type BridgeActionPayload =
   | BridgeThreadRowExpandAction
   | BridgeThreadMediaFetchAction
   | BridgeThreadSnapshotRequestAction
+  | BridgeThreadMessageSendAction
   | BridgeWorkspaceFileListAction
   | BridgeWorkspaceFileReadAction
   | BridgeWorkspaceFileWriteAction
@@ -936,6 +964,7 @@ export function workspaceIdFromPayload(payload: BridgeActionPayload): string | n
     case 'threadRowExpand':
     case 'threadMediaFetch':
     case 'threadSnapshotRequest':
+    case 'threadMessage':
     case 'workspaceFileList':
     case 'workspaceFileRead':
     case 'workspaceFileWrite':
@@ -1014,6 +1043,7 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
     case 'threadRowExpand':
     case 'threadMediaFetch':
     case 'threadSnapshotRequest':
+    case 'threadMessage':
     case 'workspaceFileList':
     case 'workspaceFileRead':
     case 'workspaceFileWrite':
@@ -1102,6 +1132,11 @@ export function payloadRequiresWorkspaceGating(payload: BridgeActionPayload): bo
  *   - `unknown`: classify defensively as mutating so a forward-compat
  *     unknown action can't sneak past read-only gating.
  */
+/**
+ * Note on `threadMessage`: it writes into ANOTHER thread's durable inbox, so it
+ * belongs in this list. Omitting it would classify a cross-thread write as
+ * read-only — exactly what the list exists to prevent.
+ */
 export function payloadIsMutating(payload: BridgeActionPayload): boolean {
   switch (payload.kind) {
     case 'composerPrompt':
@@ -1109,6 +1144,7 @@ export function payloadIsMutating(payload: BridgeActionPayload): boolean {
     case 'composerSchedulePrompt':
     case 'composerQueueItem':
     case 'createThread':
+    case 'threadMessage':
     case 'cancelRun':
     case 'workflowSetEnabled':
     case 'workflowRunNow':
@@ -1218,6 +1254,10 @@ function coerceToPayload(parsed: unknown): BridgeActionPayload {
       return isThreadSnapshotRequest(parsed)
         ? (parsed as unknown as BridgeThreadSnapshotRequestAction)
         : { kind: 'unknown', rawKind: 'threadSnapshotRequest', raw: parsed }
+    case 'threadMessage':
+      return isThreadMessageSend(parsed)
+        ? (parsed as unknown as BridgeThreadMessageSendAction)
+        : { kind: 'unknown', rawKind: 'threadMessage', raw: parsed }
     case 'workspaceFileList':
       return isWorkspaceFileList(parsed)
         ? (parsed as unknown as BridgeWorkspaceFileListAction)
@@ -1624,6 +1664,27 @@ function isThreadMediaRangeFields(v: Record<string, unknown>): boolean {
     typeof v.length === 'number' &&
     Number.isInteger(v.length) &&
     v.length >= 1
+  )
+}
+
+function isThreadMessageSend(v: Record<string, unknown>): boolean {
+  return (
+    hasValidActionMetadata(v) &&
+    typeof v.workspaceId === 'string' &&
+    typeof v.threadId === 'string' &&
+    typeof v.toThreadId === 'string' &&
+    Boolean(v.toThreadId) &&
+    // A self-addressed message is refused here as well as in the shared model, so
+    // a malformed client never reaches the store with one.
+    v.toThreadId !== v.threadId &&
+    typeof v.message === 'string' &&
+    v.message.trim().length > 0 &&
+    v.message.length <= BRIDGE_THREAD_MESSAGE_MAX_CHARS &&
+    (v.idempotencyKey === undefined ||
+      (typeof v.idempotencyKey === 'string' && v.idempotencyKey.length <= 256)) &&
+    // No `wake` from a remote client: the gate refuses it, so accepting the field
+    // would advertise a capability that can never succeed.
+    v.wake === undefined
   )
 }
 

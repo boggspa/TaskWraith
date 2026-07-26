@@ -680,6 +680,8 @@ export class BridgeActionRouter {
         return this.executor.executeThreadMediaFetch(payload)
       case 'threadSnapshotRequest':
         return this.executor.executeThreadSnapshotRequest(payload)
+      case 'threadMessage':
+        return this.executor.executeThreadMessageSend(payload)
       case 'workspaceFileList':
         return this.executor.executeWorkspaceFileList(payload)
       case 'workspaceFileRead':
@@ -1285,6 +1287,11 @@ function chatIdFromPayload(payload: BridgeActionPayload): string | undefined {
   return undefined
 }
 
+/**
+ * Note on `threadMessage`: it maps to `startTurn`, not the read-only `monitor`
+ * tier the neighbouring thread fetches use — a peer message puts content into
+ * another thread and can lead to a turn there.
+ */
 function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapability | null {
   switch (payload.kind) {
     case 'approvalReply':
@@ -1296,6 +1303,7 @@ function capabilityForPayload(payload: BridgeActionPayload): RemoteWorkspaceCapa
     case 'composerQueuePrompt':
     case 'composerSchedulePrompt':
     case 'createThread':
+    case 'threadMessage':
       return 'startTurn'
     // Full-markdown transcript is a read of already-visible thread content
     // (built by the same scrubbing desktop builder) — monitor tier, like

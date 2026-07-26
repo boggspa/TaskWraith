@@ -578,6 +578,57 @@ describe('decodeBridgeActionPayload', () => {
       expect(bad.payload.kind).toBe('unknown')
     })
 
+    it('decodes a threadMessage and classifies it as a workspace-gated mutation', () => {
+      const wire = encode({
+        kind: 'threadMessage',
+        actionId: 'a-tm-1',
+        workspaceId: 'ws-1',
+        threadId: 't-1',
+        toThreadId: 't-2',
+        message: 'The byte pin is red on master.',
+        idempotencyKey: 'k1'
+      })
+      const { payload } = decodeBridgeActionPayload(wire)
+      expect(payload.kind).toBe('threadMessage')
+      if (payload.kind === 'threadMessage') {
+        expect(payload.toThreadId).toBe('t-2')
+        expect(payload.message).toContain('byte pin')
+        expect(payload.idempotencyKey).toBe('k1')
+      }
+      expect(workspaceIdFromPayload(payload)).toBe('ws-1')
+      expect(payloadRequiresWorkspaceGating(payload)).toBe(true)
+      // Writing into ANOTHER thread's durable inbox is a mutation. Classifying it
+      // read-only would route a cross-thread write through the monitor tier.
+      expect(payloadIsMutating(payload)).toBe(true)
+    })
+
+    it.each([
+      ['no target', { toThreadId: undefined }],
+      ['an empty target', { toThreadId: '' }],
+      ['a self-addressed target', { toThreadId: 't-1' }],
+      ['no message', { message: undefined }],
+      ['a blank message', { message: '   ' }],
+      ['an over-long message', { message: 'y'.repeat(12_001) }],
+      ['an over-long idempotency key', { idempotencyKey: 'k'.repeat(257) }],
+      // A remote client must not be able to REQUEST a wake: the gate refuses it
+      // ('remote-wake'), so the payload does not accept the field at all.
+      ['a wake request', { wake: true }],
+      ['a falsy wake request', { wake: false }]
+    ])('rejects a threadMessage with %s', (_label, overrides) => {
+      const { payload } = decodeBridgeActionPayload(
+        encode({
+          kind: 'threadMessage',
+          actionId: 'a-tm-2',
+          workspaceId: 'ws-1',
+          threadId: 't-1',
+          toThreadId: 't-2',
+          message: 'hello',
+          ...overrides
+        })
+      )
+      expect(payload).toMatchObject({ kind: 'unknown', rawKind: 'threadMessage' })
+    })
+
     it('decodes workspace file actions with correct mutability', () => {
       const list = decodeBridgeActionPayload(
         encode({

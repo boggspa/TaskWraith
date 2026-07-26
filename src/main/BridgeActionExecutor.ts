@@ -7,6 +7,7 @@ import type {
   BridgeCreateThreadAction,
   BridgeThreadRowExpandAction,
   BridgeThreadMediaFetchAction,
+  BridgeThreadMessageSendAction,
   BridgeThreadSnapshotRequestAction,
   BridgeWorkspaceFileListAction,
   BridgeWorkspaceFileReadAction,
@@ -135,6 +136,9 @@ export interface BridgeActionExecutor {
   ): Promise<BridgeActionExecutionResult>
   executeThreadSnapshotRequest(
     action: BridgeThreadSnapshotRequestAction
+  ): Promise<BridgeActionExecutionResult>
+  executeThreadMessageSend(
+    action: BridgeThreadMessageSendAction
   ): Promise<BridgeActionExecutionResult>
   executeWorkspaceFileList(
     action: BridgeWorkspaceFileListAction
@@ -293,6 +297,15 @@ export class NoopActionExecutor implements BridgeActionExecutor {
     action: BridgeThreadSnapshotRequestAction
   ): Promise<BridgeActionExecutionResult> {
     return notWired('threadSnapshotRequest', action.threadId)
+  }
+  // The phone-side contract (payload validation, capability tier, mutating
+  // classification, routing) is complete; the desktop execution lands with the
+  // thread_message registration. `notWired` is the honest interim: the phone gets
+  // an explicit refusal rather than an ack for a message that was never queued.
+  async executeThreadMessageSend(
+    action: BridgeThreadMessageSendAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('threadMessage', action.toThreadId)
   }
   async executeWorkspaceFileList(
     action: BridgeWorkspaceFileListAction
@@ -934,6 +947,16 @@ export class MainProcessActionExecutor implements BridgeActionExecutor {
         message: `Question reject dispatch failed: ${errMessage}`
       }
     }
+  }
+
+  // Phone-side contract is complete (payload validation, capability tier, mutating
+  // classification, routing); desktop execution lands with the thread_message
+  // registration. `notWired` is the honest interim — the phone gets an explicit
+  // refusal rather than an ack for a message that was never queued.
+  async executeThreadMessageSend(
+    action: BridgeThreadMessageSendAction
+  ): Promise<BridgeActionExecutionResult> {
+    return notWired('threadMessage', action.toThreadId)
   }
 
   async executeThreadSnapshotRequest(

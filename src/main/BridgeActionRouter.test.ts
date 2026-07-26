@@ -165,6 +165,10 @@ function makeStubExecutor(
       executed: true,
       message: 'threadSnapshotRequest done'
     }),
+    executeThreadMessageSend: make('executeThreadMessageSend', {
+      executed: true,
+      message: 'threadMessage done'
+    }),
     executeWorkspaceFileList: make('executeWorkspaceFileList', {
       executed: true,
       message: 'workspaceFileList done'
