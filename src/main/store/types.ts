@@ -2476,6 +2476,22 @@ export interface AppSettings {
    * quits. Off by default. */
   localServersStopOnQuit?: boolean
   codexSandboxFallback: CodexSandboxFallbackMode
+  /**
+   * Settings → Providers → Codex, "Use my existing Codex sign-in". Off by
+   * default, and deliberately so: it trades containment for a working seat.
+   *
+   * TaskWraith runs Codex against its own private CODEX_HOME, which keeps its
+   * own auth.json — so a terminal `codex login` signs in ~/.codex and leaves
+   * TaskWraith's home untouched. When this is on, TaskWraith BORROWS the
+   * ~/.codex credential for one app-server lifetime under a durable lease and
+   * writes any rotation straight back, rather than holding a second ChatGPT
+   * grant that would revoke-ping-pong with the user's own CLI and app.
+   *
+   * The cost is honest: TaskWraith then reads and writes a credential file it
+   * otherwise never touches. That is the user's call to make, so it is a
+   * consent toggle and not a default.
+   */
+  codexReuseExistingLogin?: boolean
   /** Settings -> General "Enable Auto-Update". Defaults on; when false,
    * the updater service stays disabled even on stable/nightly channels. */
   autoUpdateEnabled?: boolean

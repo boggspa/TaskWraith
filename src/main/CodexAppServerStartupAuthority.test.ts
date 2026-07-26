@@ -76,6 +76,7 @@ function harness(overrides: Partial<CodexAppServerStartupDependencies> = {}) {
     resolveBinary,
     buildProcessLaunchPlan,
     spawnProcess,
+    acquireCredentialLease: async () => null,
     ...overrides
   }
   const client = new CodexAppServerClient('/tmp/taskwraith-codex-home', () => [], dependencies)

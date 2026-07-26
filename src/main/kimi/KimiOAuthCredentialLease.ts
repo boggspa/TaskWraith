@@ -42,13 +42,35 @@ export interface OAuthCredentialLayout {
    * rejected. Return 0 only when genuinely unknown.
    */
   freshness: (raw: Buffer) => number
+  /**
+   * What release removes from the isolated home once the credential has been
+   * written back. The two providers differ in KIND, not in degree:
+   *
+   *  - `all-but-preserved` — Kimi allocates a per-seat home beneath a shared
+   *    boundary. That home is the authority's own scratch space, so anything
+   *    not named here is credential-adjacent residue and goes.
+   *
+   *  - `artefacts-only` — Codex has ONE app-server home per TaskWraith
+   *    session, and it is not scratch: it holds `config.toml`, the rollout
+   *    tree, and the state database that native resume reads (see
+   *    TASKWRAITH_CODEX_PROTECTED_STATE_ENTRIES). Sweeping it would delete
+   *    TaskWraith's own durable Codex state on every daemon shutdown. Only the
+   *    borrowed artefacts are removed, which is the whole security intent —
+   *    the credential is what was borrowed, so the credential is what leaves.
+   *
+   * This is the third and last provider-specific value. Getting it wrong is
+   * not a lease bug that shows up as a failed sign-in; it is silent data loss
+   * in a directory the user never sees.
+   */
+  scrub: { mode: 'all-but-preserved'; preserve: readonly string[] } | { mode: 'artefacts-only' }
 }
 
 export const KIMI_CREDENTIAL_LAYOUT: OAuthCredentialLayout = {
   label: 'Kimi',
   primaryCredential: PRIMARY_CREDENTIAL,
   artefacts: CREDENTIAL_ARTEFACTS,
-  freshness: credentialExpiry
+  freshness: credentialExpiry,
+  scrub: { mode: 'all-but-preserved', preserve: ['sessions', 'session_index.jsonl'] }
 }
 
 /**
@@ -67,7 +89,8 @@ export const CODEX_CREDENTIAL_LAYOUT: OAuthCredentialLayout = {
   label: 'Codex',
   primaryCredential: 'auth.json',
   artefacts: ['auth.json'],
-  freshness: codexLastRefresh
+  freshness: codexLastRefresh,
+  scrub: { mode: 'artefacts-only' }
 }
 
 interface TransitionOwner {
@@ -447,6 +470,7 @@ export class KimiOAuthCredentialAuthority {
   private readonly artefacts: readonly string[]
   private readonly credentialLabel: string
   private readonly freshness: (raw: Buffer) => number
+  private readonly scrub: OAuthCredentialLayout['scrub']
 
   constructor(options: KimiOAuthCredentialAuthorityOptions = {}) {
     this.pid = options.pid ?? process.pid
@@ -462,6 +486,7 @@ export class KimiOAuthCredentialAuthority {
     this.artefacts = layout.artefacts
     this.credentialLabel = layout.label
     this.freshness = layout.freshness
+    this.scrub = layout.scrub
     if (!this.artefacts.includes(this.primaryCredential)) {
       // A layout whose artefact list omits its own primary would seed an
       // isolated home with no credential and then "commit" a rotation of a file
@@ -771,20 +796,45 @@ export class KimiOAuthCredentialAuthority {
     if (!pathIsWithin(boundaryRoot, isolatedHome)) {
       throw new Error('Recovered Kimi OAuth home escaped its private boundary.')
     }
-    const entries = await nodeFs.readdir(isolatedHome)
-    for (const entry of entries) {
-      if (entry === 'sessions' || entry === 'session_index.jsonl') continue
-      const path = join(isolatedHome, entry)
-      const stat = await nodeFs.lstat(path)
+    const remove = async (relativePath: string): Promise<void> => {
+      const path = join(isolatedHome, relativePath)
+      const stat = await nodeFs.lstat(path).catch((error) => {
+        if (isErrno(error, 'ENOENT')) return null
+        throw error
+      })
+      if (!stat) return
       if (stat.isSymbolicLink()) {
         await nodeFs.unlink(path)
       } else {
         await nodeFs.rm(path, { recursive: stat.isDirectory(), force: true })
       }
     }
+
+    if (this.scrub.mode === 'artefacts-only') {
+      // The isolated home is the provider's DURABLE home; only what was
+      // borrowed may be removed. Anything else here belongs to TaskWraith.
+      for (const rel of this.artefacts) await remove(rel)
+      await fsyncDirectory(isolatedHome)
+      for (const rel of this.artefacts) {
+        const survivor = await nodeFs.lstat(join(isolatedHome, rel)).catch(() => null)
+        if (survivor) {
+          throw new Error(
+            `Released ${this.credentialLabel} OAuth home still holds the borrowed credential: ${rel}`
+          )
+        }
+      }
+      return
+    }
+
+    const preserved = new Set(this.scrub.preserve)
+    const entries = await nodeFs.readdir(isolatedHome)
+    for (const entry of entries) {
+      if (preserved.has(entry)) continue
+      await remove(entry)
+    }
     await fsyncDirectory(isolatedHome)
     const survivors = await nodeFs.readdir(isolatedHome)
-    if (survivors.some((entry) => entry !== 'sessions' && entry !== 'session_index.jsonl')) {
+    if (survivors.some((entry) => !preserved.has(entry))) {
       throw new Error('Recovered Kimi OAuth home still contains runtime credential material.')
     }
   }

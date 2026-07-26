@@ -187,6 +187,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'localServersDetachSpawns',
   'localServersStopOnQuit',
   'codexSandboxFallback',
+  'codexReuseExistingLogin',
   'autoUpdateEnabled',
   'updateChannel',
   'lastSeenChangelogVersion',

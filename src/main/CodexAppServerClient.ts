@@ -316,6 +316,19 @@ function assertCodexAppServerStartupAuthority(
   }
 }
 
+/**
+ * The borrowed-credential lease that may span one app-server lifetime.
+ *
+ * Structurally the subset of the OAuth authority's lease this client drives,
+ * declared here rather than imported so the daemon does not depend on the
+ * credential machinery it merely brackets.
+ */
+export interface CodexAppServerCredentialLease {
+  seedIntoIsolatedHome: () => Promise<void>
+  noteProviderProcess: (pid: number) => Promise<void>
+  commitAndRelease: () => Promise<unknown>
+}
+
 export interface CodexAppServerStartupDependencies {
   readonly ensureHomeForLaunch: (codexHome: string) => Promise<unknown>
   readonly resolveBinary: (
@@ -326,13 +339,28 @@ export interface CodexAppServerStartupDependencies {
     input: CodexAppServerProcessLaunchPlanInput
   ) => Promise<CodexAppServerProcessLaunchPlan>
   readonly spawnProcess: typeof spawn
+  /**
+   * Borrow the user's real `~/.codex` credential for this app-server's
+   * lifetime, or return null to run on whatever the private home already has.
+   *
+   * Null is the DEFAULT and the fallback for every non-fatal condition —
+   * consent withheld, no source credential, another instance holding the
+   * lease. That is deliberate: wiring the lease must never be able to make
+   * Codex less startable than it was without it, so an unavailable lease
+   * degrades to exactly today's behaviour instead of failing the launch.
+   */
+  readonly acquireCredentialLease: (
+    codexHome: string
+  ) => Promise<CodexAppServerCredentialLease | null>
 }
 
 const defaultCodexAppServerStartupDependencies: CodexAppServerStartupDependencies = {
   ensureHomeForLaunch: ensureTaskWraithCodexHomeForLaunch,
   resolveBinary: resolveCliProviderBinary,
   buildProcessLaunchPlan: buildCodexAppServerProcessLaunchPlan,
-  spawnProcess: spawn
+  spawnProcess: spawn,
+  // Opt-in at the wiring site; the bare client borrows nothing.
+  acquireCredentialLease: async () => null
 }
 
 /**
@@ -507,6 +535,16 @@ export class CodexAppServerClient {
   private readonly legacyCodexHomes: () => readonly string[]
   private readonly startupDependencies: CodexAppServerStartupDependencies
   private readonly privateHomeThreadIds = new Set<string>()
+  // The credential borrowed for the CURRENT app-server, if any. Held so exactly
+  // one release runs per lease no matter which teardown path fires first.
+  private credentialLease: CodexAppServerCredentialLease | null = null
+  private credentialLeaseRelease: Promise<unknown> | null = null
+  // Consent as it stands now, versus the value the RUNNING app-server started
+  // under. The daemon is long-lived, so without this a user who enables the
+  // borrow and immediately runs Codex hits the same "sign-in required" and
+  // reasonably concludes the setting does nothing.
+  private credentialLeaseConsent = false
+  private startedCredentialLeaseConsent: boolean | null = null
 
   constructor(
     codexHome: string,
@@ -525,7 +563,10 @@ export class CodexAppServerClient {
         startupDependencies.buildProcessLaunchPlan ??
         defaultCodexAppServerStartupDependencies.buildProcessLaunchPlan,
       spawnProcess:
-        startupDependencies.spawnProcess ?? defaultCodexAppServerStartupDependencies.spawnProcess
+        startupDependencies.spawnProcess ?? defaultCodexAppServerStartupDependencies.spawnProcess,
+      acquireCredentialLease:
+        startupDependencies.acquireCredentialLease ??
+        defaultCodexAppServerStartupDependencies.acquireCredentialLease
     }
   }
 
@@ -590,6 +631,31 @@ export class CodexAppServerClient {
     return this.isRunning() && this.mcpConfigStale
   }
 
+  /**
+   * Record whether the user currently consents to borrowing `~/.codex`. Like
+   * `setMcpConfig`, this takes effect on the NEXT app-server start; the
+   * accessor restarts an idle daemon so the change is not silently deferred.
+   */
+  setCredentialLeaseConsent(enabled: boolean): void {
+    this.credentialLeaseConsent = enabled
+  }
+
+  /**
+   * True when consent changed since the running app-server started.
+   *
+   * Deliberately compares the SETTING, not whether a lease was obtained.
+   * Comparing the outcome would report "stale" forever whenever consent is on
+   * but no credential exists to borrow — restarting the daemon on every
+   * accessor call.
+   */
+  hasStaleCredentialLeaseConsent(): boolean {
+    return (
+      this.isRunning() &&
+      this.startedCredentialLeaseConsent !== null &&
+      this.startedCredentialLeaseConsent !== this.credentialLeaseConsent
+    )
+  }
+
   async ensureStarted(
     appVersion: string,
     startupAuthority?: CodexAppServerStartupAuthority
@@ -610,6 +676,15 @@ export class CodexAppServerClient {
     try {
       await ownedStartup
       assertCodexAppServerStartupAuthority(startupAuthority, 'after-startup')
+    } catch (error) {
+      // Startup failed with a credential possibly already seeded — a spawn that
+      // threw, a refused authority, an initialize that never answered. If no
+      // app-server survived to consume it, hand it straight back; leaving the
+      // authority claimed would block every later start as "another seat owns
+      // the credential". A live process keeps its lease: its own close handler
+      // is what releases it.
+      if (!this.isRunning()) await this.releaseCredentialLease()
+      throw error
     } finally {
       // dispose/profile switches can clear this field while startup is still
       // unwinding. Never let an old completion erase a newer startup promise.
@@ -709,15 +784,41 @@ export class CodexAppServerClient {
     this.write({ id, error: { code: -32000, message } })
   }
 
+  /**
+   * Write back any credential rotation and hand the lease back.
+   *
+   * Idempotent and never throws: this runs on teardown paths (process close,
+   * spawn error, dispose) where nothing can act on a failure, and a rejection
+   * escaping a `close` handler would be an unhandled rejection in main. The
+   * authority's own state machine is what makes a failed writeback recoverable
+   * — the durable record is replayed by the next acquire.
+   */
+  releaseCredentialLease(): Promise<unknown> {
+    const lease = this.credentialLease
+    if (!lease) return this.credentialLeaseRelease ?? Promise.resolve()
+    this.credentialLease = null
+    const release = lease.commitAndRelease().catch((error) => {
+      this.stderrHandler?.(
+        `Codex credential lease release failed: ${
+          error instanceof Error ? error.message : String(error)
+        }\n`
+      )
+    })
+    this.credentialLeaseRelease = release
+    return release
+  }
+
   dispose() {
     this.startPromise = null
     this.initializeResult = null
+    void this.releaseCredentialLease()
     // This is only a daemon-lifetime cache. A restart must revalidate disk
     // continuity so a deleted/corrupt rollout takes the full-context recovery
     // path instead of being trusted from stale in-memory evidence.
     this.privateHomeThreadIds.clear()
     this.startedMcpConfigFingerprint = null
     this.mcpConfigStale = false
+    this.startedCredentialLeaseConsent = null
     this.stdoutReader?.close()
     this.stdoutReader = null
     if (this.proc && !this.proc.killed) {
@@ -764,6 +865,19 @@ export class CodexAppServerClient {
       forceFastServiceTier: options.forceFastServiceTier
     })
     assertCodexAppServerStartupAuthority(startupAuthority, 'after-launch-plan')
+    // Borrow the user's real credential for this app-server's lifetime, seeded
+    // into the private home the launch plan already points CODEX_HOME at. This
+    // sits after the plan (so a failed launch never claims the credential) and
+    // before the pre-spawn fence (so no await separates that fence from spawn).
+    // A stale lease from a previous crash is replayed by acquire, not here.
+    await this.releaseCredentialLease()
+    this.startedCredentialLeaseConsent = this.credentialLeaseConsent
+    const lease = await this.startupDependencies.acquireCredentialLease(this.codexHome)
+    if (lease) {
+      await lease.seedIntoIsolatedHome()
+      this.credentialLease = lease
+    }
+
     // This must remain the immediate pre-spawn statement. There is no await or
     // other user-code boundary between the final authority fence and spawn.
     assertCodexAppServerStartupAuthority(startupAuthority, 'before-spawn')
@@ -773,6 +887,13 @@ export class CodexAppServerClient {
       env: launchPlan.env
     })
     this.proc = proc
+    if (lease && typeof proc.pid === 'number') {
+      // Durably records the child's birth identity so a crashed owner's lease
+      // is not reclaimed while this app-server is still alive. Must land before
+      // the first request. A throw here unwinds through ensureStarted, which
+      // hands the credential back.
+      await lease.noteProviderProcess(proc.pid)
+    }
 
     const stdoutReader = createInterface({ input: proc.stdout })
     this.stdoutReader = stdoutReader
@@ -796,12 +917,17 @@ export class CodexAppServerClient {
         this.stdoutReader.close()
         this.stdoutReader = null
       }
+      // The borrower is gone, so any rotation it performed must go home now.
+      // Guarded on identity: a superseded process must not release the lease a
+      // newer app-server is already holding.
+      if (isCurrentProcess) void this.releaseCredentialLease()
       if (isCurrentProcess) this.rejectPending(new Error('Codex app-server exited.'))
     })
 
     proc.on('error', (error) => {
       const isCurrentProcess = this.proc === proc
       if (isCurrentProcess) this.proc = null
+      if (isCurrentProcess) void this.releaseCredentialLease()
       if (isCurrentProcess) this.rejectPending(error)
     })
 

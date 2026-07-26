@@ -3951,6 +3951,7 @@ export function SettingsPanel({
   const [keyCommandQuery, setKeyCommandQuery] = useState('')
   const [recordingKeyCommandId, setRecordingKeyCommandId] = useState<KeyCommandId | null>(null)
   const [keyCommandRecordError, setKeyCommandRecordError] = useState('')
+  const [codexReuseExistingLogin, setCodexReuseExistingLogin] = useState(false)
   const [kimiClassifierEnabled, setKimiClassifierEnabled] = useState(false)
   const [kimiClassifierStatus, setKimiClassifierStatus] = useState('disabled')
   const [fxSnapshot, setFxSnapshot] = useState<FxRateSnapshot | null>(null)
@@ -4113,6 +4114,7 @@ export function SettingsPanel({
         const enabled = Boolean(settings.kimiClassifierEnabled)
         setKimiClassifierEnabled(enabled)
         setKimiClassifierStatus(enabled ? 'enabled' : 'disabled')
+        setCodexReuseExistingLogin(Boolean(settings.codexReuseExistingLogin))
       })
       .catch(() => {
         if (!cancelled) setKimiClassifierStatus('unavailable')
@@ -4143,6 +4145,17 @@ export function SettingsPanel({
 
   const sidebarOpacityValue = clampPaneOpacity(sidebarOpacity)
   const mainPaneOpacityValue = clampPaneOpacity(mainPaneOpacity)
+
+  const updateCodexReuseExistingLogin = (enabled: boolean): void => {
+    setCodexReuseExistingLogin(enabled)
+    if (typeof window === 'undefined' || typeof window.api?.updateSettings !== 'function') {
+      setCodexReuseExistingLogin(!enabled)
+      return
+    }
+    void window.api.updateSettings({ codexReuseExistingLogin: enabled }).catch(() => {
+      setCodexReuseExistingLogin(!enabled)
+    })
+  }
 
   const updateKimiClassifierEnabled = (enabled: boolean): void => {
     setKimiClassifierEnabled(enabled)
@@ -7474,6 +7487,23 @@ export function SettingsPanel({
                     Codex sandbox fallback is managed by organization policy.
                   </p>
                 )}
+
+                <label className="settings-service-row">
+                  <span>Use my existing Codex sign-in</span>
+                  <input
+                    type="checkbox"
+                    checked={codexReuseExistingLogin}
+                    onChange={(e) => updateCodexReuseExistingLogin(e.target.checked)}
+                  />
+                </label>
+                <p className="settings-hint">
+                  TaskWraith keeps its own Codex home, so signing in with <code>codex login</code>{' '}
+                  in a terminal does not sign you in here. Turn this on to borrow the credential
+                  from <code>~/.codex</code> for as long as Codex is running, instead of holding a
+                  second sign-in that can log you out of the ChatGPT app. TaskWraith then reads and
+                  writes that file, and any refresh is written straight back so your own CLI keeps
+                  working. Off by default.
+                </p>
 
                 <div className="settings-service-row" style={{ alignItems: 'flex-start' }}>
                   <span>

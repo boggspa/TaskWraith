@@ -190,7 +190,21 @@ that installed runtime instead of a different copy. Codex also stops looking
 broken to anyone signed in elsewhere: TaskWraith keeps its own Codex home, so a
 terminal `codex login` authenticates `~/.codex` and leaves this one untouched,
 and the sign-in notice now says exactly that — the home it uses, the one it does
-not, and the in-app route that works. New doctrine-integrity and formatting-ratchet
+not, and the in-app route that works.
+
+For anyone who would rather not sign in twice, **Settings → Providers → Codex →
+“Use my existing Codex sign-in”** borrows the `~/.codex` credential instead.
+It is off by default and asks plainly, because it trades containment for a
+working seat: TaskWraith then reads and writes a file it otherwise never
+touches. Borrowed, not copied — ChatGPT rotates its refresh token on use, so
+two homes holding one token revoke each other. TaskWraith takes a lease for the
+lifetime of the Codex process, commits any rotation straight back to `~/.codex`,
+refuses a writeback that would move the credential backwards, and hands the
+lease back on exit, removing the borrowed credential and nothing else. A second
+TaskWraith window, or a machine with nothing to borrow, quietly runs the way it
+always did rather than failing a launch that would otherwise have worked.
+
+New doctrine-integrity and formatting-ratchet
 gates keep future agent work from turning documentation or unrelated source
 into collateral churn.
 

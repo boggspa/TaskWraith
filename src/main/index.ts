@@ -228,8 +228,10 @@ import {
   isCodexAppServerRequestTimeout,
   isCodexConfigParseError,
   isCodexTokenRevokedError,
-  codexTokenRevokedUserMessage
+  codexTokenRevokedUserMessage,
+  type CodexAppServerCredentialLease
 } from './CodexAppServerClient'
+import { acquireCodexOAuthCredentialLease } from './codex/CodexOAuthCredentialLease'
 import {
   codexCompactionFailureProvesNoLiveTurn,
   updateCodexCompactionLaunchEvidence
@@ -21194,15 +21196,55 @@ async function runKimiProvider(event: Electron.IpcMainInvokeEvent, payload: Agen
   return
 }
 
+/**
+ * Consent-gated borrow of the user's real `~/.codex` credential for one Codex
+ * app-server lifetime.
+ *
+ * Returns null — meaning "run on whatever the private home already has", i.e.
+ * exactly the behaviour before this existed — for every non-fatal outcome:
+ *
+ *  - consent withheld (the default)
+ *  - the user has no `~/.codex` credential to borrow
+ *  - another TaskWraith instance holds the lease
+ *
+ * That last one is not hypothetical: a dev build and the release build have
+ * separate userData, so both can be open at once. Failing the launch there
+ * would break the second window over a feature meant to unbreak the first, so
+ * it degrades instead. Only the consenting instance borrows; the other behaves
+ * as it does today.
+ */
+async function acquireCodexCredentialLeaseIfConsented(
+  codexHome: string
+): Promise<CodexAppServerCredentialLease | null> {
+  if (!AppStore.getSettings().codexReuseExistingLogin) return null
+  try {
+    const result = await acquireCodexOAuthCredentialLease({
+      userDataPath: app.getPath('userData')
+    })
+    if (result.ok) return result.lease
+    console.warn(
+      `[codex] not borrowing the existing sign-in (${result.reason}): ${result.message}`
+    )
+  } catch (error) {
+    console.warn('[codex] credential lease acquisition failed', error)
+  }
+  void codexHome
+  return null
+}
+
 function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerClient {
   if (!codexClient) {
-    codexClient = new CodexAppServerClient(taskWraithCodexHome(), () => [
-      ...(process.env.CODEX_HOME ? [process.env.CODEX_HOME] : []),
-      ...AppStore.getRuntimeProfiles()
-        .filter((profile) => profile.provider === 'codex')
-        .map((profile) => profile.env.CODEX_HOME)
-        .filter((candidate): candidate is string => Boolean(candidate?.trim()))
-    ])
+    codexClient = new CodexAppServerClient(
+      taskWraithCodexHome(),
+      () => [
+        ...(process.env.CODEX_HOME ? [process.env.CODEX_HOME] : []),
+        ...AppStore.getRuntimeProfiles()
+          .filter((profile) => profile.provider === 'codex')
+          .map((profile) => profile.env.CODEX_HOME)
+          .filter((candidate): candidate is string => Boolean(candidate?.trim()))
+      ],
+      { acquireCredentialLease: acquireCodexCredentialLeaseIfConsented }
+    )
   }
   if (arguments.length > 0) {
     codexClient.setRuntimeProfile(runtimeProfile ?? null)
@@ -21238,8 +21280,13 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
   } else {
     codexClient.setMcpConfig(null)
   }
+  // Same deferral rule as the MCP config: consent to borrow ~/.codex applies to
+  // the NEXT app-server start, so an idle daemon is restarted to pick it up.
+  // Without this the toggle looks inert — the daemon that started before it was
+  // enabled keeps serving, and Codex keeps asking for a sign-in.
+  codexClient.setCredentialLeaseConsent(Boolean(settings.codexReuseExistingLogin))
   const shouldRestart = shouldRestartCodexAppServerForMcpConfig({
-    stale: codexClient.hasStaleMcpConfig(),
+    stale: codexClient.hasStaleMcpConfig() || codexClient.hasStaleCredentialLeaseConsent(),
     startupLeaseCount: codexAppServerStartupLeaseCount,
     activeStates: runManager
       .getActiveByProvider('codex')
@@ -21249,7 +21296,7 @@ function getCodexClient(runtimeProfile?: RuntimeProfile | null): CodexAppServerC
     admissionReservationCount: codexThreadAdmissionRegistry.activeLaneReservationCount
   })
   if (shouldRestart) {
-    console.log('[codex] restarting idle app-server to apply MCP configuration changes')
+    console.log('[codex] restarting idle app-server to apply configuration changes')
     codexClient.dispose()
   }
   return codexClient

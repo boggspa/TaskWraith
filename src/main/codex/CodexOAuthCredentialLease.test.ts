@@ -143,4 +143,39 @@ describe('acquireCodexOAuthCredentialLease', () => {
     expect(seeded).not.toContain('sessions')
     await result.lease.commitAndRelease()
   })
+
+  it('releases by removing the borrowed credential and NOTHING else', async () => {
+    // Kimi's isolated home is per-seat scratch, so its release sweeps every
+    // entry it does not explicitly preserve. Codex's isolated home is the
+    // opposite: ONE durable app-server home holding config.toml, the rollout
+    // tree, and the state database native resume reads. Sweeping it would
+    // delete TaskWraith's own Codex state every time the daemon stops —
+    // silent data loss in a directory the user never opens, and invisible to
+    // a fixture whose private home contains only the credential.
+    const { userDataPath, sourceHome } = await fixture()
+    const privateHome = taskWraithCodexHomePath(userDataPath)
+    await fs.writeFile(join(privateHome, 'config.toml'), 'model = "gpt-5.6"', { mode: 0o600 })
+    await fs.writeFile(join(privateHome, 'history.jsonl'), '{"k":1}\n', { mode: 0o600 })
+    await fs.writeFile(join(privateHome, 'state_5.sqlite'), 'db', { mode: 0o600 })
+    await fs.mkdir(join(privateHome, 'sessions', '2026'), { recursive: true, mode: 0o700 })
+    await fs.writeFile(join(privateHome, 'sessions', '2026', 'rollout.jsonl'), '{}\n', {
+      mode: 0o600
+    })
+
+    const result = await acquireCodexOAuthCredentialLease({ userDataPath, sourceHome })
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    await result.lease.seedIntoIsolatedHome()
+    expect(await result.lease.commitAndRelease()).toBe('unchanged')
+
+    // The borrowed credential leaves — that is the entire security intent.
+    await expect(fs.access(join(privateHome, 'auth.json'))).rejects.toThrow()
+    // Everything TaskWraith owns survives.
+    expect(await fs.readFile(join(privateHome, 'config.toml'), 'utf8')).toBe('model = "gpt-5.6"')
+    expect(await fs.readFile(join(privateHome, 'history.jsonl'), 'utf8')).toBe('{"k":1}\n')
+    expect(await fs.readFile(join(privateHome, 'state_5.sqlite'), 'utf8')).toBe('db')
+    expect(await fs.readFile(join(privateHome, 'sessions', '2026', 'rollout.jsonl'), 'utf8')).toBe(
+      '{}\n'
+    )
+  })
 })
