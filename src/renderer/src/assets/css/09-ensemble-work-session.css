@@ -84,7 +84,13 @@
   font-weight: 700;
 }
 .composer-ensemble-context-slider {
-  width: clamp(76px, 11vw, 130px);
+  /* Narrowed when the Shared/Worktrees isolation toggle joined this row and
+   * squeezed the Turns cell into wrapping. The slider is the only cell here
+   * that can give up width without losing information — its exact value is
+   * printed beside it, so a shorter track costs precision on drag, not
+   * legibility. Still wide enough for the ~10 discrete 5K steps to be
+   * individually targetable. */
+  width: clamp(56px, 7vw, 96px);
   --ensemble-context-slider-fill: 0%;
   --ensemble-context-slider-track: color-mix(
     in srgb,
@@ -221,6 +227,14 @@
 }
 .composer-ensemble-orchestration-row .composer-ensemble-hop-meter {
   margin-left: 0;
+}
+/* `0 / 6` is three separate children (odometer, slash, odometer) and had no
+ * rule of its own, so it wrapped mid-fraction the moment the row got tight —
+ * which is how the Turns count came to render as 0 stacked over 6. The sibling
+ * `.composer-orchestration-cell-label` already carries this; the count needs it
+ * more, since a wrapped fraction reads as a different number entirely. */
+.composer-ensemble-hop-meter-count {
+  white-space: nowrap;
 }
 
 @container (max-width: 620px) {
