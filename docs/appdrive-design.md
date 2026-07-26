@@ -518,6 +518,16 @@ Narrower than it first sounds now that credential fields are refused outright (�
 
 **Generalisable lesson:** the preview object is the one place a tool's raw arguments travel this far into the permission machinery, and it feeds a transient sink and two durable ones. Any tool whose args contain something you would not keep forever needs a durable-path redaction, not just a careful audit-log call.
 
+**The fix is forward-only, and deliberately so.** Records already written still hold those values, and 1.9.0 does not rewrite them — which is why the release notes disclose it rather than fixing it quietly: a user who knows can clear that chat's history, a user who doesn't cannot.
+
+A retro-scrub was considered and rejected on grounds worth recording, because it will be proposed again:
+
+- **The approval ledger is hashed into a signed audit bundle** — `ProductOperations.ts:148`, `approvalLedger: diagnosticsSha256(...)`, with a record count at `:128`. Rewriting historical records to redact them would silently invalidate the hash of any bundle already issued, and the resulting mismatch is indistinguishable from tampering. **Scrubbing an audit log is itself an audit-integrity event.**
+- **The ledger self-caps.** Writes go through `capApprovalLedgerRecords` ([store/index.ts:483](../src/main/store/index.ts:483)), which bounds retained non-live history — live records are always kept, the rest age out through ordinary use. The residue is transient by design.
+- **There is no precedent for mutating durable run events.** The only paths that touch them are the scoped and global history clears, which are user-initiated and already the right tool. Inventing a mutation path for this would be a new capability with a wider blast radius than the thing it cleans up.
+
+So disclosure plus the existing history-clear is the correct remediation, not merely the cheap one.
+
 ## 13. Open questions for the next session
 
 1. Does `grokToolKindToService` sit on the live path for canvas tools, or do Grok canvas calls always route through the MCP-bridge preview? Needs runtime tracing.
