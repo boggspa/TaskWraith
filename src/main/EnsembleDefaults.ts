@@ -124,6 +124,64 @@ function selectSmallPanelRoles(
   return selectedProviders.map((provider) => roles.find((entry) => entry.provider === provider)!)
 }
 
+/**
+ * A live Ensemble is a PANEL — two or more seats that can disagree. One seat
+ * is just a solo chat wearing ensemble chrome (roster strip, round cards,
+ * orchestration row) for no benefit, so `AppStore.setChatKind` tops a
+ * solo→Ensemble conversion up to this floor and the renderer's chip strip
+ * collapses the thread back to solo rather than persisting a one-seat roster.
+ *
+ * Deliberately NOT enforced on the rosters an Agent states explicitly — the
+ * MCP roster edit (`EnsembleRosterMutation`, which allows removal down to 1)
+ * and roster-preset import (`MIN_ROSTER_PRESET_PARTICIPANTS` is 1). Neither
+ * routes through `setChatKind`, so this floor cannot reach them.
+ */
+export const MIN_LIVE_ENSEMBLE_PARTICIPANTS = 2
+
+/**
+ * Top a seeded roster up to `MIN_LIVE_ENSEMBLE_PARTICIPANTS`. The companion
+ * seat prefers a provider the seed does NOT already use (a panel of two
+ * different agents is the point); when the curated registry offers nothing
+ * else it falls back to a second seat on the same provider in a different
+ * role, which is a supported shape (e.g. two Claudes, one reviewing).
+ *
+ * Returns the input array unchanged when it already meets the floor, so
+ * callers can apply it unconditionally.
+ */
+export function withMinimumEnsembleRoster(
+  participants: EnsembleParticipant[]
+): EnsembleParticipant[] {
+  if (participants.length >= MIN_LIVE_ENSEMBLE_PARTICIPANTS) return participants
+  const seated = new Set(participants.map((participant) => participant.provider))
+  const takenIds = new Set(participants.map((participant) => participant.id))
+  const next = [...participants]
+  while (next.length < MIN_LIVE_ENSEMBLE_PARTICIPANTS) {
+    const entry =
+      DEFAULT_ENSEMBLE_ROLES.find((candidate) => !seated.has(candidate.provider)) ||
+      DEFAULT_ENSEMBLE_ROLES.find(
+        (candidate) => candidate.provider === next[next.length - 1]?.provider
+      ) ||
+      DEFAULT_ENSEMBLE_ROLES[0]
+    seated.add(entry.provider)
+    let id = `ensemble-companion-${entry.provider}`
+    for (let suffix = 2; takenIds.has(id); suffix += 1) {
+      id = `ensemble-companion-${entry.provider}-${suffix}`
+    }
+    takenIds.add(id)
+    next.push({
+      id,
+      provider: entry.provider,
+      enabled: true,
+      role: entry.role,
+      instructions: entry.instructions,
+      order: next.length + 1,
+      model: getDefaultEnsembleModel(entry.provider),
+      permissionPresetId: entry.permissionPresetId
+    })
+  }
+  return next
+}
+
 export function createDefaultEnsembleConfig(
   activeProvider?: ProviderId,
   configuredProviders?: Set<ProviderId>

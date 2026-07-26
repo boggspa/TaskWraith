@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest'
-import { createDefaultEnsembleConfig } from './EnsembleDefaults'
+import {
+  MIN_LIVE_ENSEMBLE_PARTICIPANTS,
+  createDefaultEnsembleConfig,
+  withMinimumEnsembleRoster
+} from './EnsembleDefaults'
 import { MAX_ENSEMBLE_PARTICIPANTS } from './EnsemblePrompt'
-import type { ProviderId } from './store/types'
+import type { EnsembleParticipant, ProviderId } from './store/types'
 import { getDefaultEnsembleParticipantConfig } from '../renderer/src/lib/ensembleProviderDefaults'
 
 // Gemini is retired. Fresh panels choose a small role-shaped subset of these
@@ -162,5 +166,49 @@ describe('createDefaultEnsembleConfig — configured-provider seeding (E)', () =
       (p) => p.provider
     )
     expect(providers).toEqual(DEFAULT_PANEL)
+  })
+})
+
+describe('withMinimumEnsembleRoster (live roster floor)', () => {
+  function seat(overrides: Partial<EnsembleParticipant> = {}): EnsembleParticipant {
+    return {
+      id: 'seed-1',
+      provider: 'codex',
+      enabled: true,
+      role: 'Primary',
+      instructions: '',
+      order: 1,
+      ...overrides
+    }
+  }
+
+  it('is the identity for a roster that already meets the floor', () => {
+    const roster = [seat({ id: 'a' }), seat({ id: 'b', provider: 'claude', order: 2 })]
+    expect(withMinimumEnsembleRoster(roster)).toBe(roster)
+  })
+
+  it('appends a companion on a DIFFERENT provider behind a lone seat', () => {
+    const [seed, companion] = withMinimumEnsembleRoster([seat()])
+    expect(seed.id).toBe('seed-1')
+    expect(companion.provider).not.toBe('codex')
+    expect(companion.enabled).toBe(true)
+    expect(companion.order).toBe(2)
+    // A real seat, not a placeholder: it must be dispatchable as-is.
+    expect(companion.model).toBeTruthy()
+    expect(companion.permissionPresetId).toBeTruthy()
+    expect(companion.instructions).toBeTruthy()
+  })
+
+  it('mints a companion id that cannot collide with the seat it joins', () => {
+    const [, companion] = withMinimumEnsembleRoster([
+      seat({ id: 'ensemble-companion-claude', provider: 'codex' })
+    ])
+    expect(companion.id).not.toBe('ensemble-companion-claude')
+  })
+
+  it('fills an empty roster all the way to the floor', () => {
+    const filled = withMinimumEnsembleRoster([])
+    expect(filled).toHaveLength(MIN_LIVE_ENSEMBLE_PARTICIPANTS)
+    expect(new Set(filled.map((participant) => participant.id)).size).toBe(filled.length)
   })
 })

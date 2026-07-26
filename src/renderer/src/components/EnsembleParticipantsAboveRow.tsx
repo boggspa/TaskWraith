@@ -59,6 +59,10 @@ import {
 import { buildParticipantTokenChipTooltipLine } from '../lib/participantTokenChip'
 import { resolveProviderBrandLabel, resolveProviderHueClass } from '../lib/ollamaDisplayBrand'
 import { withSessionActivityLedger } from '../lib/sessionActivityLedger'
+import {
+  MIN_LIVE_ENSEMBLE_PARTICIPANTS,
+  resolveEnsembleCollapseTarget
+} from '../lib/ensembleRosterFloor'
 import { isEnsembleActiveRoundDispatchLive } from '../lib/chatBusyState'
 import {
   claudeReasoningDisplayLabel,
@@ -86,8 +90,7 @@ import { SegmentedControl } from './SegmentedControl'
 // 1.0.4-AR2 — global ceiling raised from 6 → 8 so the panel can host
 // the broader four-provider roster plus alternates (e.g. two Claudes
 // in different roles). The hard minimum is enforced in
-// `removeParticipant` below at `<= 1` so a panel is never reduced to
-// zero participants.
+// `removeParticipant` below.
 //
 // 1.0.5-EW1 — Ceiling raised again 8 → 12. The chip strip now wraps
 // at 7+ participants instead of overflowing horizontally.
@@ -101,7 +104,12 @@ import { SegmentedControl } from './SegmentedControl'
 // main-process copies (EnsembleRosterMutation.ts, EnsemblePrompt.ts)
 // and MAX_ROSTER_PRESET_PARTICIPANTS in ensembleRosterPresets.ts.
 const MAX_ENSEMBLE_PARTICIPANTS = 20
-const MIN_ENSEMBLE_PARTICIPANTS = 1
+// A one-seat roster is a solo chat wearing ensemble chrome, so the live floor
+// is TWO — see `ensembleRosterFloor.ts` for the rule and its exemptions.
+// Removal does not stop AT the floor: dropping below it switches Ensemble off
+// and hands the thread to the surviving seat (`onCollapseToSolo`), which is why
+// the trash button stays live all the way down.
+const MIN_ENSEMBLE_PARTICIPANTS = MIN_LIVE_ENSEMBLE_PARTICIPANTS
 // Threshold at which the chip strip switches from the centered
 // content-width flex layout to the balanced-rows grid. 6 is the first
 // count that no longer fits the 5-per-row ceiling on a single row.
@@ -821,6 +829,20 @@ interface EnsembleParticipantsAboveRowProps {
   onSelectParticipant: (id: string) => void
   onChatChange: (next: ChatRecord) => void
   /**
+   * Switch Ensemble off for this thread because the roster can no longer
+   * sustain a panel, handing it to the seat passed in as the solo provider.
+   * Fired INSTEAD of `onChatChange` when a removal would drop the roster below
+   * `MIN_ENSEMBLE_PARTICIPANTS`; `chatWithSeatRemoved` is the record the caller
+   * must save BEFORE the mode change so the stashed roster reflects the
+   * removal (null when the removal empties the roster). Omitted in harness
+   * tests that don't model the mode change; the trash button goes inert at the
+   * floor when it isn't wired.
+   */
+  onCollapseToSolo?: (
+    survivingParticipant: EnsembleParticipant,
+    chatWithSeatRemoved: ChatRecord | null
+  ) => void
+  /**
    * "Skip" the currently-speaking participant. Cancels the active
    * provider run and lets the orchestrator's round-loop advance to
    * the next participant without restarting the round. The composer's
@@ -955,6 +977,7 @@ export function EnsembleParticipantsAboveRow({
   selectedParticipantId,
   onSelectParticipant,
   onChatChange,
+  onCollapseToSolo,
   onSkipActive,
   onSkipReadFanout,
   onRetryParticipant,
@@ -1086,10 +1109,10 @@ export function EnsembleParticipantsAboveRow({
     })
   }
 
-  const persist = (
+  const buildPersistedChat = (
     nextParticipants: EnsembleParticipant[],
     authorityOverride?: EnsembleAuthorityPatch
-  ): void => {
+  ): ChatRecord => {
     // 1.0.4-AR2 — preserve any existing per-chat `maxParticipants`
     // override that's already in range [MIN, MAX]. Pre-AR2 every
     // persist clobbered the cap to the global ceiling, silently
@@ -1111,10 +1134,15 @@ export function EnsembleParticipantsAboveRow({
     // probe. Ratchet the stored cap up here so the two stay in
     // sync; we only ever GROW, never shrink, so a user's
     // deliberately-tightened panel still survives normal toggles.
+    //
+    // The lower bound here is the smallest cap a STORED value may express (1),
+    // deliberately not MIN_ENSEMBLE_PARTICIPANTS: an Agent-MCP or imported
+    // one-seat roster is exempt from the live floor, and widening its cap to
+    // the global ceiling behind its back would undo that exemption.
     const existingMax = chat.ensemble?.maxParticipants
     const preservedMax =
       Number.isFinite(existingMax) &&
-      (existingMax as number) >= MIN_ENSEMBLE_PARTICIPANTS &&
+      (existingMax as number) >= 1 &&
       (existingMax as number) <= MAX_ENSEMBLE_PARTICIPANTS
         ? (existingMax as number)
         : MAX_ENSEMBLE_PARTICIPANTS
@@ -1173,7 +1201,14 @@ export function EnsembleParticipantsAboveRow({
         updatedAt: new Date().toISOString()
       }
     }
-    onChatChange(withSessionActivityLedger(chat, nextChat))
+    return withSessionActivityLedger(chat, nextChat)
+  }
+
+  const persist = (
+    nextParticipants: EnsembleParticipant[],
+    authorityOverride?: EnsembleAuthorityPatch
+  ): void => {
+    onChatChange(buildPersistedChat(nextParticipants, authorityOverride))
   }
 
   const addParticipant = (configuration: EnsembleParticipantAddDraft): void => {
@@ -1216,10 +1251,22 @@ export function EnsembleParticipantsAboveRow({
   }
 
   const removeParticipant = (id: string): void => {
-    // Keep a live ensemble roster non-empty. The chip strip already
-    // renders the trash button disabled at the floor; this guard is
-    // the defense-in-depth for IPC-driven roster edits.
-    if (isRoundRunning || participants.length <= MIN_ENSEMBLE_PARTICIPANTS) return
+    if (isRoundRunning) return
+    // At (or below) the floor the roster cannot shrink any further and stay an
+    // Ensemble, so the removal becomes a mode change instead: hand the thread
+    // to the seat that survives and switch Ensemble off. Same transcript, same
+    // thread — see `handleCollapseEnsembleToSolo` in App.tsx.
+    const collapseTarget = resolveEnsembleCollapseTarget(participants, id)
+    if (collapseTarget) {
+      // Hand over the post-removal roster too. Ensemble-off stashes whatever
+      // roster it finds so a later Ensemble-on can restore it, so collapsing
+      // without recording the removal first would resurrect the seat the user
+      // just deleted. Null when nothing survives the removal — an empty roster
+      // would trip normalizeChatRecord's default-panel auto-fill on save.
+      const remaining = participants.filter((participant) => participant.id !== id)
+      onCollapseToSolo?.(collapseTarget, remaining.length > 0 ? buildPersistedChat(remaining) : null)
+      return
+    }
     const nextSelectedParticipantId = resolveParticipantSelectionAfterRemoval(
       participants,
       id,
@@ -1500,7 +1547,7 @@ export function EnsembleParticipantsAboveRow({
             disabled={
               isRoundRunning ||
               !selectedParticipantId ||
-              participants.length <= MIN_ENSEMBLE_PARTICIPANTS
+              (participants.length <= MIN_ENSEMBLE_PARTICIPANTS && !onCollapseToSolo)
             }
             title={
               isRoundRunning
@@ -1508,7 +1555,7 @@ export function EnsembleParticipantsAboveRow({
                 : !selectedParticipantId
                   ? 'Select a participant chip first.'
                   : participants.length <= MIN_ENSEMBLE_PARTICIPANTS
-                    ? 'Ensembles need at least one participant.'
+                    ? 'Removing this leaves no panel — the thread switches Ensemble off and continues with the remaining agent.'
                     : 'Remove the selected participant'
             }
             aria-label="Remove selected Ensemble participant"

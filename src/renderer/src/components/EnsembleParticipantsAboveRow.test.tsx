@@ -272,6 +272,43 @@ describe('EnsembleParticipantsAboveRow', () => {
     })
   })
 
+  describe('roster floor', () => {
+    const twoSeats = [
+      makeParticipant({ id: 'ensemble-claude', provider: 'claude', role: 'Planner', order: 1 }),
+      makeParticipant({ id: 'ensemble-codex', provider: 'codex', role: 'Builder', order: 2 })
+    ]
+
+    it('keeps remove live at the floor and explains that it ends Ensemble mode', () => {
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantsAboveRow
+          chat={makeChat(twoSeats)}
+          selectedParticipantId="ensemble-codex"
+          onSelectParticipant={() => undefined}
+          onChatChange={() => undefined}
+          onCollapseToSolo={() => undefined}
+        />
+      )
+      const removeButton = html.slice(html.indexOf('ensemble-above-remove-participant'))
+      expect(removeButton.slice(0, removeButton.indexOf('>'))).not.toContain('disabled')
+      expect(html).toContain('the thread switches Ensemble off')
+    })
+
+    it('disables remove at the floor when the mode change is not wired', () => {
+      // Harness/side-chat mounts pass no `onCollapseToSolo`; without it the only
+      // honest outcome would be a one-seat roster, so the button must not act.
+      const html = renderToStaticMarkup(
+        <EnsembleParticipantsAboveRow
+          chat={makeChat(twoSeats)}
+          selectedParticipantId="ensemble-codex"
+          onSelectParticipant={() => undefined}
+          onChatChange={() => undefined}
+        />
+      )
+      const removeButton = html.slice(html.indexOf('ensemble-above-remove-participant'))
+      expect(removeButton.slice(0, removeButton.indexOf('>'))).toContain('disabled')
+    })
+  })
+
   describe('unified add-participant draft', () => {
     it('creates unique participant details without losing existing Auto consent', () => {
       const participants = [

@@ -1084,6 +1084,7 @@ export function MainAppLayout(props: MainAppLayoutProps): ReactNode {
         openInspectorTab: undefined,
         isEnsembleModeEnabled: false,
         handleToggleWelcomeEnsemble: noSideComposerAction,
+        handleCollapseEnsembleToSolo: noSideComposerAction,
         handleSelectMultiviewLayout: noSideComposerAction,
         handlePaletteCommand: () => false,
         openSideChatFromSlashCommand: () => {

@@ -797,6 +797,7 @@ import {
 import { removedCanvasIds, useMultiviewState } from './hooks/useMultiviewState'
 import { deriveChatIsRunning, deriveChatRunCompleteNotice } from './lib/chatRunDisplay'
 import { resolveEnsembleParticipantSeatMutationState } from './lib/ensembleParticipantSeatLock'
+import { resolveSoleEnsembleSoloCandidate } from './lib/ensembleRosterFloor'
 import { isCurrentWorkspaceTrustOwner } from './lib/workspaceTrustOwnership'
 import {
   buildMultiviewEnsembleSelectionPruneSnapshot,
@@ -16303,6 +16304,84 @@ function App(): React.JSX.Element {
     })
   }
 
+  /**
+   * Switch Ensemble off and continue the thread solo on `survivingParticipant`.
+   * No provider modal: the seat passed in IS the answer, and its model /
+   * reasoning / permissions ride across so the composer reopens exactly where
+   * it left off. `setChatKind` stashes the outgoing roster, so flipping
+   * Ensemble back on restores it.
+   *
+   * Two callers, both cases where the panel has stopped being a panel: the chip
+   * strip removing a seat that would leave the roster below its floor, and the
+   * Ensemble-off toggle on a roster that only ever had one provider to pick.
+   *
+   * `chatWithSeatRemoved` (chip strip only) lands BEFORE the mode change, so
+   * the roster `setChatKind` stashes is the post-removal one — otherwise
+   * flipping Ensemble back on would restore the seat the user just deleted.
+   */
+  const handleCollapseEnsembleToSoloForChat = async (
+    targetChat: ChatRecord,
+    survivingParticipant: EnsembleParticipant,
+    targetIsRunning: boolean,
+    chatWithSeatRemoved?: ChatRecord | null
+  ): Promise<void> => {
+    if (!targetChat.appChatId || targetChat.parentChatId) return
+    if (targetChat.chatKind !== 'ensemble') return
+    if (chatKindTogglingRef.current) return
+    if (targetIsRunning) {
+      appendThreadRawLog(targetChat.appChatId, {
+        type: 'info',
+        content: 'Finish the current turn first to change chat mode.'
+      })
+      return
+    }
+    chatKindTogglingRef.current = true
+    setChatKindMutationBusy(true)
+    try {
+      if (chatWithSeatRemoved) {
+        await window.api.saveChat(chatWithSeatRemoved)
+      }
+      const updatedChat = applyHydratedChat(
+        await window.api.setChatKind({
+          chatId: targetChat.appChatId,
+          targetKind: 'single',
+          canonicalProvider: survivingParticipant.provider,
+          canonicalProviderMetadata:
+            buildProviderMetadataFromEnsembleParticipant(survivingParticipant)
+        })
+      )
+      if (currentChatIdRef.current === updatedChat.appChatId) {
+        applyChatComposerSelection(updatedChat, getChatProvider(updatedChat))
+      }
+      setSelectedParticipantForChat(updatedChat.appChatId, null)
+      setWorkflowDraft((draft) =>
+        draft?.chatId === updatedChat.appChatId ? { ...draft, ensembleEnabled: false } : draft
+      )
+      setPendingEnsembleToSoloChatId(null)
+      void refreshChatList()
+    } catch (error) {
+      appendThreadRawLog(targetChat.appChatId, {
+        type: 'stderr',
+        content: redactLog(error instanceof Error ? error.message : String(error))
+      })
+    } finally {
+      chatKindTogglingRef.current = false
+      setChatKindMutationBusy(false)
+    }
+  }
+  const handleCollapseEnsembleToSolo = async (
+    survivingParticipant: EnsembleParticipant,
+    chatWithSeatRemoved: ChatRecord | null
+  ) => {
+    if (!currentChat) return
+    await handleCollapseEnsembleToSoloForChat(
+      currentChat,
+      survivingParticipant,
+      isCurrentChatRunning,
+      chatWithSeatRemoved
+    )
+  }
+
   // Slice C — in-place mid-thread ensemble toggle. The backend `setChatKind`
   // mutation preserves the SAME appChatId + transcript/runs/history; renderer
   // builds the seed participant (solo→ensemble) and the canonical-provider
@@ -16328,6 +16407,15 @@ function App(): React.JSX.Element {
         isChatSummaryRecord(targetChat)
           ? (await refreshSingleChat(targetChat.appChatId)) || targetChat
           : targetChat
+      // The modal exists to ask WHICH agent keeps the thread. A roster the
+      // floor exempts (Agent-MCP / imported one-seat panels, and legacy chats
+      // that predate the floor) offers exactly one answer, so asking is pure
+      // friction — collapse straight onto that seat.
+      const soleParticipant = resolveSoleEnsembleSoloCandidate(modalChat)
+      if (soleParticipant) {
+        await handleCollapseEnsembleToSoloForChat(modalChat, soleParticipant, targetIsRunning)
+        return
+      }
       setPendingEnsembleToSoloChatId(modalChat.appChatId)
       return
     }
@@ -27632,6 +27720,16 @@ function App(): React.JSX.Element {
       },
       handleToggleWelcomeEnsemble: (enabled: boolean) =>
         handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
+      handleCollapseEnsembleToSolo: (
+        survivingParticipant: EnsembleParticipant,
+        chatWithSeatRemoved: ChatRecord | null
+      ) =>
+        handleCollapseEnsembleToSoloForChat(
+          viewerChat,
+          survivingParticipant,
+          viewerIsRunning,
+          chatWithSeatRemoved
+        ),
       handleAttachWindow: () => handleAttachWindow(viewerChatId),
       handleDetachWindow: () => handleDetachWindow(viewerChatId),
       handleClearDiscordContext: () => clearDiscordContextForChat(viewerChatId),
@@ -27877,6 +27975,7 @@ function App(): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
+    handleCollapseEnsembleToSolo,
     handleCreateGithubPr,
     handleDetachWindow,
     handleGroundImportedPlanFiles,
@@ -27957,6 +28056,7 @@ function App(): React.JSX.Element {
     handleReviewDiffForChat,
     handleSteerToQueuedMessage,
     handleToggleEnsembleForChat,
+    handleCollapseEnsembleToSoloForChat,
     openDiscordContextPickerForPane,
     paneGhostEnabled,
     patchEnsembleParticipantForChat,
@@ -28832,6 +28932,16 @@ function App(): React.JSX.Element {
         },
         handleToggleWelcomeEnsemble: (enabled: boolean) =>
           paneCtxHelpers.handleToggleEnsembleForChat(viewerChat, enabled, viewerIsRunning),
+        handleCollapseEnsembleToSolo: (
+          survivingParticipant: EnsembleParticipant,
+          chatWithSeatRemoved: ChatRecord | null
+        ) =>
+          paneCtxHelpers.handleCollapseEnsembleToSoloForChat(
+            viewerChat,
+            survivingParticipant,
+            viewerIsRunning,
+            chatWithSeatRemoved
+          ),
         handleAttachWindow: () => paneCtxHelpers.handleAttachWindow(viewerChatId),
         handleDetachWindow: () => paneCtxHelpers.handleDetachWindow(viewerChatId),
         handleClearDiscordContext: () =>

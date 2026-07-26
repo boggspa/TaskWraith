@@ -37,7 +37,7 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     fs.mkdirSync(join(userDataPath, 'chats'), { recursive: true })
   })
 
-  it('converts solo→ensemble in place, seeding EXACTLY one participant and preserving history', () => {
+  it('converts solo→ensemble in place, seeding the renderer seat + the floor companion and preserving history', () => {
     const solo = AppStore.createGlobalChat()
     AppStore.saveChat({
       ...solo,
@@ -68,10 +68,16 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     // In place: same record id.
     expect(converted.appChatId).toBe(solo.appChatId)
     expect(converted.chatKind).toBe('ensemble')
+    // Exactly the floor: the renderer's seat first, one companion behind it.
     // The normalizeChatRecord 6-provider auto-fill landmine must NOT fire.
-    expect(converted.ensemble?.participants).toHaveLength(1)
+    expect(converted.ensemble?.participants).toHaveLength(2)
     expect(converted.ensemble?.participants[0]?.id).toBe('seed-1')
     expect(converted.ensemble?.participants[0]?.provider).toBe('codex')
+    // The companion is a DIFFERENT agent — a panel of one provider twice would
+    // not be much of a panel when the seed already covers it.
+    expect(converted.ensemble?.participants[1]?.provider).not.toBe('codex')
+    expect(converted.ensemble?.participants[1]?.enabled).toBe(true)
+    expect(converted.ensemble?.participants[1]?.order).toBe(2)
     // History preserved.
     expect(converted.messages).toHaveLength(1)
     expect(converted.runs).toHaveLength(1)
@@ -79,7 +85,7 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     // Persisted, not just returned.
     const reloaded = AppStore.getChat(solo.appChatId)
     expect(reloaded?.chatKind).toBe('ensemble')
-    expect(reloaded?.ensemble?.participants).toHaveLength(1)
+    expect(reloaded?.ensemble?.participants).toHaveLength(2)
     expect(reloaded?.messages).toHaveLength(1)
   })
 
@@ -347,7 +353,7 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     expect(reloaded?.providerMetadata?.stashedEnsemble).toBeUndefined()
   })
 
-  it('E3 — a provider change while solo invalidates the stash, so toggle-back re-seeds a single participant', () => {
+  it('E3 — a provider change while solo invalidates the stash, so toggle-back re-seeds from scratch', () => {
     const ensemble = AppStore.createEnsembleChat()
     AppStore.saveChat({
       ...ensemble,
@@ -372,12 +378,40 @@ describe('AppStore.setChatKind (Slice C — mid-thread ensemble toggle)', () => 
     const restored = AppStore.setChatKind(ensemble.appChatId, 'ensemble', {
       seedParticipant: seedParticipant({ id: 'fresh-seed', provider: 'codex' })
     })
-    // Stale stash (claude !== codex) → fresh single-participant seed.
-    expect(restored.ensemble?.participants).toHaveLength(1)
+    // Stale stash (claude !== codex) → fresh seed, topped up to the floor.
+    expect(restored.ensemble?.participants).toHaveLength(2)
     expect(restored.ensemble?.participants[0]?.id).toBe('fresh-seed')
     expect(restored.ensemble?.participants[0]?.provider).toBe('codex')
+    expect(restored.ensemble?.participants[1]?.provider).not.toBe('codex')
     // Stash consumed either way.
     expect(restored.providerMetadata?.stashedEnsemble).toBeUndefined()
+  })
+
+  it('tops a restored one-seat stash back up to the roster floor', () => {
+    // A one-seat roster is legal while it lives (an Agent-MCP roster edit or a
+    // one-participant preset import can produce one). Collapsing it stashes it
+    // verbatim — but switching Ensemble back ON is a fresh request for a panel,
+    // so the restore must not hand back the degenerate roster.
+    const ensemble = AppStore.createEnsembleChat()
+    AppStore.saveChat({
+      ...ensemble,
+      provider: 'claude',
+      ensemble: {
+        ...ensemble.ensemble!,
+        participants: [seedParticipant({ id: 'p1', provider: 'claude', role: 'Boss', order: 1 })],
+        bossmanParticipantId: 'p1'
+      }
+    } as ChatRecord)
+
+    AppStore.setChatKind(ensemble.appChatId, 'single', { canonicalProvider: 'claude' })
+    const restored = AppStore.setChatKind(ensemble.appChatId, 'ensemble', {
+      seedParticipant: seedParticipant({ id: 'ignored-seed', provider: 'claude' })
+    })
+
+    expect(restored.ensemble?.participants).toHaveLength(2)
+    // The stashed seat still leads; the floor only appends behind it.
+    expect(restored.ensemble?.participants[0]?.id).toBe('p1')
+    expect(restored.ensemble?.participants[1]?.provider).not.toBe('claude')
   })
 
   it('E2 — ensemble→solo with no canonicalProvider derives the Boss participant provider + model/reasoning', () => {

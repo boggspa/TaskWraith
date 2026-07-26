@@ -69,6 +69,7 @@ export function buildSideChatComposerProps<T extends Record<string, unknown>>(
     handleAgentApprovalAction: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handleSelectMultiviewLayout: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     handleToggleWelcomeEnsemble: NOOP_SIDE_CHAT_COMPOSER_ACTION,
+    handleCollapseEnsembleToSolo: NOOP_SIDE_CHAT_COMPOSER_ACTION,
     imageAttachments: [],
     isAttachingWindow: false,
     pendingAgentApproval: null,

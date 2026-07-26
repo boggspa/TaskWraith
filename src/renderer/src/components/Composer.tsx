@@ -315,6 +315,7 @@ export interface ComposerProps {
   handleBridgeCommand: any
   handleCancel: any
   handleClearDiscordContext: any
+  handleCollapseEnsembleToSolo: any
   handleCopyCurrentTranscript: any
   handleCreateGithubPr: any
   handleDeleteQueuedMessage: any
@@ -660,6 +661,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
     handleBridgeCommand,
     handleCancel,
     handleClearDiscordContext,
+    handleCollapseEnsembleToSolo,
     handleCopyCurrentTranscript,
     handleCreateGithubPr,
     handleDeleteQueuedMessage,
@@ -2393,6 +2395,7 @@ function ComposerInner(props: ComposerProps): React.JSX.Element {
                       )
                       void window.api.saveChat(updatedChat)
                     }}
+                    onCollapseToSolo={handleCollapseEnsembleToSolo}
                     onSkipActive={() => {
                       // Skip only the currently-speaking participant.
                       // The composer's existing Stop button (wired to

@@ -135,7 +135,7 @@ import type {
   ProjectReferenceOp,
   ProjectWorkProfile
 } from '../../shared/projects'
-import { createDefaultEnsembleConfig } from '../EnsembleDefaults'
+import { createDefaultEnsembleConfig, withMinimumEnsembleRoster } from '../EnsembleDefaults'
 import { isEnsembleRoundDispatchLive } from '../../shared/ensembleRoundLifecycle'
 import { isCursorGrok45ModelId, isGrok45ReasoningModelId } from '../../shared/grok45Models'
 import { createHash, randomUUID } from 'crypto'
@@ -5546,12 +5546,14 @@ export class AppStore {
    * reject is defense in depth. Guard reads record-derivable signals only; it
    * does NOT reach into EnsembleOrchestrator runtime.
    *
-   * Solo→Ensemble: writes the ensemble block seeded with EXACTLY ONE participant.
-   * The seed is passed in by the renderer (built from the chat's current provider
-   * + providerMetadata via `getDefaultEnsembleParticipantConfig`, which is
-   * renderer-only — same pattern as Slice B's renderer-baked provider metadata).
-   * The single-participant array MUST be written before save, or
-   * `normalizeChatRecord` auto-fills the full default multi-provider roster.
+   * Solo→Ensemble: writes the ensemble block seeded with the ONE participant the
+   * renderer passes in (built from the chat's current provider + providerMetadata
+   * via `getDefaultEnsembleParticipantConfig`, which is renderer-only — same
+   * pattern as Slice B's renderer-baked provider metadata), topped up to
+   * `MIN_LIVE_ENSEMBLE_PARTICIPANTS` so switching the mode ON yields an actual
+   * panel rather than a one-seat roster. An explicit roster MUST be written
+   * before save, or `normalizeChatRecord` auto-fills the full default
+   * multi-provider roster.
    *
    * Ensemble→Solo: strips the ensemble block, sets `chat.provider` to the
    * renderer-chosen canonical provider (never leave it stale), `chatKind:'single'`.
@@ -5611,14 +5613,14 @@ export class AppStore {
       if (restorable) {
         ensemble = {
           ...(stashedConfig as EnsembleConfig),
-          participants: (stashedConfig as EnsembleConfig).participants.map(
-            resetEnsembleParticipantSession
+          participants: withMinimumEnsembleRoster(
+            (stashedConfig as EnsembleConfig).participants.map(resetEnsembleParticipantSession)
           ),
           updatedAt: nowIso
         }
       } else {
         // Reuse the default config scaffolding (maxParticipants / orchestration /
-        // hops) but replace the roster with the SINGLE seed participant, so
+        // hops) but replace the roster with the seed participant, so
         // normalizeChatRecord keeps it (participants.length > 0) instead of
         // auto-filling the multi-provider default roster.
         const seed = opts.seedParticipant
@@ -5632,7 +5634,12 @@ export class AppStore {
         const base = createDefaultEnsembleConfig(chat.provider)
         ensemble = {
           ...base,
-          participants: [trustedSeed],
+          // Turning Ensemble ON means asking for a panel. Both callers (the
+          // desktop composer toggle and the phone's) send ONE seat built from
+          // the chat's current provider; the floor supplies the second so the
+          // user never lands in a one-seat Ensemble they have to populate
+          // before the mode does anything.
+          participants: withMinimumEnsembleRoster([trustedSeed]),
           updatedAt: nowIso
         }
       }

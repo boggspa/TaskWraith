@@ -95,6 +95,7 @@ describe('Multiview pane Composer context parity', () => {
       'handleBlackboardQueuedMessage',
       'handleAttachWindow',
       'handleClearDiscordContext',
+      'handleCollapseEnsembleToSolo',
       'handleDeleteQueuedMessage',
       'handleDetachWindow',
       'handleEditQueuedMessage',
