@@ -108,6 +108,7 @@ import { RosterSettingsPanel } from './RosterSettingsPanel'
 import { AgentPoolContainer } from './AgentPoolContainer'
 import { PinnedMessagesSettingsPage } from './PinnedMessagesSettingsPage'
 import { UpdateStatusPane } from './UpdateStatusPane'
+import { ActivityReportingSettings } from './ActivityReportingSettings'
 import { ModelUsageCard } from './ModelUsageCard'
 import { ModelUsageSettingsTable, ProviderApiRatesSettingsTable, ModelContextLengthsSettingsTable } from './ModelUsageSettingsTable'
 import { SettingsModelComparisonsTable } from './SettingsModelComparisonsTable'
@@ -10159,6 +10160,8 @@ export function SettingsPanel({
                 )}
               </div>
             </div>
+
+            <ActivityReportingSettings />
 
             <div className="settings-group span-all">
               <div className="settings-safety-section-title">

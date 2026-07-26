@@ -478,6 +478,10 @@ import {
   UpdateService,
   type UpdateStateSnapshot
 } from './UpdateService'
+import {
+  ActivityReportingService,
+  bundledActivityReportingEndpoint
+} from './activity/ActivityReportingService'
 import { UpdateRestartCoordinator } from './UpdateRestartCoordinator'
 import { LocalServersService } from './LocalServersService'
 import { PluginHost } from './plugins/PluginHost'
@@ -3024,6 +3028,7 @@ let ensembleOrchestratorRef: EnsembleOrchestrator | null = null
 let wakeupTimerServiceRef: WakeupTimerService | null = null
 let sessionCheckpointStoreRef: SessionCheckpointStore | null = null
 let updateServiceRef: UpdateService | null = null
+let activityReportingServiceRef: ActivityReportingService | null = null
 let managedPolicySnapshotForDiagnostics: (() => Record<string, unknown> | undefined) | null = null
 let managedUserMcpLaunchAllowlistPolicy: (() => UserMcpLaunchAllowlistPolicy | undefined) | null =
   null
@@ -41678,6 +41683,8 @@ if (isGeminiMcpBridgeProcess) {
       // The estimate is advisory, so this is tidiness rather than correctness.
       void flushMistralQuotaStore()
       stopBridgeDaemon()
+      activityReportingServiceRef?.stop()
+      activityReportingServiceRef = null
       releaseRemotePowerAssertion()
       if (stallReconcilerInterval) {
         clearInterval(stallReconcilerInterval)
@@ -42126,6 +42133,13 @@ if (isGeminiMcpBridgeProcess) {
       channel: initialSettings.updateChannel,
       enabled: resolveAutoUpdateEnabled(initialSettings)
     })
+    activityReportingServiceRef = new ActivityReportingService({
+      endpoint: bundledActivityReportingEndpoint(),
+      statePath: join(app.getPath('userData'), 'activity-reporting-state.json'),
+      isEnabled: () => AppStore.getSettings().activityReportingEnabled === true,
+      appVersion: app.getVersion()
+    })
+    activityReportingServiceRef.start()
     const updateRestartCoordinator = new UpdateRestartCoordinator({
       updateService,
       hasActiveWork: () => {
@@ -42364,6 +42378,10 @@ if (isGeminiMcpBridgeProcess) {
           }
           if (sanitizedPatch.bridgeDaemonEnabled !== undefined) {
             reconcileBridgeDaemonFromSettings()
+          }
+          if (sanitizedPatch.activityReportingEnabled !== undefined) {
+            void activityReportingServiceRef?.checkNow()
+            void activityReportingServiceRef?.refreshPresence()
           }
           if (
             sanitizedPatch.appIconVariant !== undefined ||

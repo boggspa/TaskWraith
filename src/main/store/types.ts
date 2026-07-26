@@ -2495,6 +2495,9 @@ export interface AppSettings {
   /** Settings -> General "Enable Auto-Update". Defaults on; when false,
    * the updater service stays disabled even on stable/nightly channels. */
   autoUpdateEnabled?: boolean
+  /** Privacy-minimised, no-ID product activity check-in. Explicit opt-in and
+   * off by default; a build without a configured endpoint sends nothing. */
+  activityReportingEnabled?: boolean
   updateChannel: ProductUpdateChannel
   lastSeenChangelogVersion?: string
   pendingUpdateChangelog?: ProductUpdateChangelog

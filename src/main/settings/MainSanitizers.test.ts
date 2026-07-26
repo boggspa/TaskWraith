@@ -1149,6 +1149,24 @@ describe('MainSanitizers settings patches', () => {
     }
   })
 
+  it('accepts only an explicit boolean activity-reporting preference', () => {
+    const settings = makeSettings()
+    const { sanitizeSettingsPatch } = makeSanitizers(settings)
+
+    expect(
+      sanitizeSettingsPatch({ activityReportingEnabled: false }).activityReportingEnabled
+    ).toBe(false)
+    expect(
+      sanitizeSettingsPatch({ activityReportingEnabled: true }).activityReportingEnabled
+    ).toBe(true)
+    for (const value of [undefined, null, 'true', 1, {}]) {
+      expect(
+        'activityReportingEnabled' in
+          sanitizeSettingsPatch({ activityReportingEnabled: value })
+      ).toBe(false)
+    }
+  })
+
   it('sanitizes the local-servers lifecycle toggles', () => {
     const settings = makeSettings()
     const { sanitizeSettingsPatch } = makeSanitizers(settings)

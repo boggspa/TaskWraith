@@ -1968,6 +1968,7 @@ const defaultSettings: AppSettings = {
   iosRemoteManualRelayUrl: '',
   codexSandboxFallback: 'ask_rerun',
   autoUpdateEnabled: true,
+  activityReportingEnabled: false,
   updateChannel: 'stable',
   approvalTimeouts: {
     enabled: true,
@@ -4297,6 +4298,10 @@ export class AppStore {
         typeof stored.autoUpdateEnabled === 'boolean'
           ? stored.autoUpdateEnabled
           : defaultSettings.autoUpdateEnabled,
+      activityReportingEnabled:
+        typeof stored.activityReportingEnabled === 'boolean'
+          ? stored.activityReportingEnabled
+          : defaultSettings.activityReportingEnabled,
       autoFailoverEnabled:
         typeof stored.autoFailoverEnabled === 'boolean'
           ? stored.autoFailoverEnabled

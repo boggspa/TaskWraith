@@ -189,6 +189,7 @@ const SETTINGS_PATCH_KEYS = new Set<keyof AppSettings>([
   'codexSandboxFallback',
   'codexReuseExistingLogin',
   'autoUpdateEnabled',
+  'activityReportingEnabled',
   'updateChannel',
   'lastSeenChangelogVersion',
   'pendingUpdateChangelog',
@@ -1549,6 +1550,11 @@ export function createMainSanitizers(deps: MainSanitizerDeps) {
     if ('autoUpdateEnabled' in sanitized) {
       if (typeof sanitized.autoUpdateEnabled !== 'boolean') {
         delete sanitized.autoUpdateEnabled
+      }
+    }
+    if ('activityReportingEnabled' in sanitized) {
+      if (typeof sanitized.activityReportingEnabled !== 'boolean') {
+        delete sanitized.activityReportingEnabled
       }
     }
     if ('userMcpServers' in sanitized) {
