@@ -1977,7 +1977,16 @@ public final class RemoteSessionModel: ObservableObject {
         let firstLaunchJSON = """
         {"schemaVersion":1,"generatedAt":"2026-06-19T10:45:00Z",
          "notifications":[
-          {"id":"new-additions-2026-07-24-v3","kind":"addition","title":"New Additions","body":"Claude Opus 5 lands today — near-Fable 5 intelligence at half the price, with Fast mode. AntiGravity now offers Gemini 3.6 Flash, Gemini 3.5 Flash, and Gemini 3.5 Flash-Lite through your own Gemini API key (opt-in, separately billed, spend meter included). Kimi K3 and K2.7 Coding Highspeed are also available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+          {"id":"new-additions-2026-07-26","kind":"addition","title":"New Additions","body":"The Pi seat arrives — one bring-your-own-key provider fronting DeepSeek, Z.ai, Qwen, MiniMax, Mistral, Groq, and Cerebras, each model wearing its own upstream brand. Claude Opus 5 brings near-Fable 5 intelligence at half the price with Fast mode, AntiGravity offers Gemini 3.6 Flash, 3.5 Flash, and 3.5 Flash-Lite through your own Gemini API key, and Kimi K3 is available now.","tone":"default","accent":"default","dismissible":true,"groups":[
+            {"provider":"pi","label":"Pi","models":[
+              {"name":"DeepSeek V4 Pro + Flash","blurb":"1M-context reasoning coders, billed on your own DeepSeek key.","accentProvider":"deepseek"},
+              {"name":"Z.ai GLM-5.2","blurb":"The GLM coding-plan flagship — 1M context with thinking, plus 5.1 and 4.7.","accentProvider":"zai"},
+              {"name":"Qwen3.7 Max","blurb":"Alibaba's 1M-context flagship, alongside 3.7 Plus and the 3.8 Max preview.","accentProvider":"qwen"},
+              {"name":"MiniMax M3","blurb":"1M context with image input for long multimodal runs; M2.7 also available.","accentProvider":"minimax"},
+              {"name":"Devstral 2512","blurb":"Mistral's 262K coding model, alongside Mistral Medium 3.5.","accentProvider":"mistral"},
+              {"name":"GPT-OSS 120B (Groq)","blurb":"Open weights on Groq silicon for very fast passes; Qwen3 32B too.","accentProvider":"groq"},
+              {"name":"GLM-4.7 (Cerebras)","blurb":"Open weights at Cerebras speed, with GPT-OSS 120B on the same key.","accentProvider":"cerebras"}
+            ]},
             {"provider":"claude","label":"Claude","models":[
               {"name":"Opus 5","blurb":"Near-Fable 5 intelligence at half the price: 1M context, the full ladder to Ultracode, and optional 2.5× Fast mode."}
             ]},
@@ -1987,8 +1996,7 @@ public final class RemoteSessionModel: ObservableObject {
               {"name":"Gemini 3.5 Flash-Lite","blurb":"The fastest, lowest-cost 3.5 model for high-throughput subagents and structured extraction."}
             ]},
             {"provider":"kimi","label":"Kimi","models":[
-              {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."},
-              {"name":"K2.7 Coding Highspeed","blurb":"The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on."}
+              {"name":"K3","blurb":"Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."}
             ]}
           ]}
          ],

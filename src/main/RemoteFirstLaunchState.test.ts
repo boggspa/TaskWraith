@@ -335,9 +335,22 @@ describe('buildRemoteFirstLaunchState', () => {
     expect(newAdditions?.kind).toBe('addition')
     expect(newAdditions?.title).toBe('New Additions')
     expect(newAdditions?.groups?.map((group) => group.provider)).toEqual([
+      'pi',
       'claude',
       'antigravity',
       'kimi'
+    ])
+    // Pi's per-upstream spoof accents must survive the bridge projection —
+    // without them every Pi row renders in one seat colour on the phone.
+    const piGroup = newAdditions?.groups?.find((group) => group.provider === 'pi')
+    expect(piGroup?.models.map((model) => model.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'qwen',
+      'minimax',
+      'mistral',
+      'groq',
+      'cerebras'
     ])
     const claudeGroup = newAdditions?.groups?.find((group) => group.provider === 'claude')
     expect(claudeGroup?.models.map((model) => model.name)).toEqual(['Opus 5'])
@@ -356,10 +369,6 @@ describe('buildRemoteFirstLaunchState', () => {
       expect.objectContaining({
         name: 'K3',
         blurb: expect.stringMatching(/256K on Moderato.*up to 1M on Allegretto\+.*Low, High, or Max thinking/)
-      }),
-      expect.objectContaining({
-        name: 'K2.7 Coding Highspeed',
-        blurb: expect.stringMatching(/5–6×.*Fast mode/)
       })
     ])
   })

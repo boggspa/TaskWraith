@@ -148,8 +148,25 @@ describe('notification registry', () => {
       (n) => n.id === NEW_ADDITIONS_NOTIFICATION_ID
     )
     const groups = newAdditions?.groups ?? []
-    expect(groups.map((g) => g.provider)).toEqual(['claude', 'antigravity', 'kimi'])
-    expect(groups.map((g) => g.label)).toEqual(['Claude', 'AntiGravity', 'Kimi'])
+    expect(groups.map((g) => g.provider)).toEqual(['pi', 'claude', 'antigravity', 'kimi'])
+    expect(groups.map((g) => g.label)).toEqual(['Pi', 'Claude', 'AntiGravity', 'Kimi'])
+
+    const pi = groups.find((g) => g.provider === 'pi')
+    // One row per BYOK upstream, each spoofing its own brand hue — the classes
+    // must stay in lockstep with PI_UPSTREAM_BRANDS.
+    expect(pi?.models.map((m) => m.accentProvider)).toEqual([
+      'deepseek',
+      'zai',
+      'qwen',
+      'minimax',
+      'mistral',
+      'groq',
+      'cerebras'
+    ])
+    for (const model of pi?.models ?? []) {
+      expect(model.accentProvider).toBeTruthy()
+    }
+    expect(newAdditions?.body).toContain('The Pi seat arrives')
 
     const claude = groups.find((g) => g.provider === 'claude')
     expect(claude?.models).toEqual([
@@ -170,23 +187,21 @@ describe('notification registry', () => {
       'Gemini 3.5 Flash-Lite'
     ])
     expect(antigravity?.models[0]?.blurb).toContain('bring your own Gemini API key')
-    expect(newAdditions?.body).toContain('spend meter')
+    // The body leads with Pi from 1.9.0, so it summarises the AntiGravity lane
+    // by its BYOK requirement rather than repeating the 1.8.8 spend-meter line.
+    expect(newAdditions?.body).toContain('your own Gemini API key')
     expect(newAdditions?.body).not.toContain('2.5 family')
     for (const model of antigravity?.models ?? []) {
       expect(model.blurb).not.toMatch(/agy|ban|OAuth/i)
     }
 
     const kimi = groups.find((g) => g.provider === 'kimi')
+    // K2.7 Coding Highspeed retired from the card at 1.9.0 — no longer new.
     expect(kimi?.models).toEqual([
       {
         name: 'K3',
         blurb:
           "Moonshot's flagship: 256K on Moderato, up to 1M on Allegretto+, with always-on Low, High, or Max thinking."
-      },
-      {
-        name: 'K2.7 Coding Highspeed',
-        blurb:
-          'The same K2.7 Coding intelligence at roughly 5–6× output speed — enable Fast mode. Thinking is always on.'
       }
     ])
 
