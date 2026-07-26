@@ -47,11 +47,27 @@ public struct RootView: View {
     /// Transient drops after a successful session must NOT eject the user
     /// to the pairing screen — trusted reconnect runs underneath while the
     /// shell stays put with a status strip.
+    ///
+    /// EVERY non-connected phase counts, not just `.connecting`/`.error`. A
+    /// trusted reconnect walks the full handshake, so it passes through
+    /// `.awaitingMacConfirm` on its way back (RemoteSessionModel sets it for any
+    /// attempt that reaches the confirm-code stage, re-pair or not) and can rest
+    /// briefly at `.idle` between attempts. With those two missing, each
+    /// reconnect cycle swapped the root from ConnectedShell to PairingView and
+    /// back — the app visibly flapping between the thread and the welcome screen
+    /// several times a second, with every view in the tree torn down and rebuilt
+    /// each time.
+    ///
+    /// The guard is what keeps this safe: `wasEverConnected && hasStoredPairing`
+    /// means a FIRST pairing still gets the real PairingView and its confirm
+    /// code. Only an already-trusted host holds the shell — and the banner below
+    /// surfaces the code anyway, so nothing is hidden even if the Mac does ask
+    /// again.
     private var showShellDuringDrop: Bool {
         guard model.wasEverConnected, model.hasStoredPairing else { return false }
         switch model.phase {
-        case .connecting, .error: return true
-        default: return false
+        case .connecting, .error, .idle, .awaitingMacConfirm: return true
+        case .connected: return false
         }
     }
 
@@ -80,6 +96,11 @@ public struct RootView: View {
             ConnectionBanner(state: .offline(detail: twFriendlyMessage(message))) {
                 model.requestReconnect(.user)
             }
+        // Held-shell reconnects can pass through the confirm stage. Surface the
+        // code in the strip so a Mac that DOES re-ask is still answerable
+        // without the user being thrown back to the pairing screen to find it.
+        case .awaitingMacConfirm(let code):
+            ConnectionBanner(state: .reconnecting(detail: "Confirm \(code) on your Mac")) {}
         default:
             EmptyView()
         }
@@ -108,7 +129,9 @@ public struct RootView: View {
                 // `where` binds per-pattern in Swift — both arms need the guard
                 // or a fresh pairing's .connecting would show the shell.
                 case .connecting where showShellDuringDrop,
-                    .error where showShellDuringDrop:
+                    .error where showShellDuringDrop,
+                    .idle where showShellDuringDrop,
+                    .awaitingMacConfirm where showShellDuringDrop:
                     ConnectedShell(model: model)
                         .overlay(alignment: .top) {
                             connectionBanner
