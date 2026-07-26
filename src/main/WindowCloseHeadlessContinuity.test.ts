@@ -2,9 +2,21 @@ import { readFileSync } from 'fs'
 import { describe, expect, it } from 'vitest'
 import { RUN_MANAGER_PROVIDERS } from './index.constants'
 import { isActiveRunSessionStatus, RunManager } from './RunManager'
+import type { ProviderId } from './store/types'
 import { LIVE_SELECTABLE_PROVIDER_IDS } from '../shared/retiredProviders'
 
 const HEADLESS_LIVE_PROVIDERS = [...LIVE_SELECTABLE_PROVIDER_IDS, 'antigravity'] as const
+const ALL_PROVIDER_IDENTITIES = [
+  'gemini',
+  'codex',
+  'claude',
+  'kimi',
+  'grok',
+  'cursor',
+  'ollama',
+  'antigravity',
+  'pi'
+] as const satisfies readonly ProviderId[]
 
 /**
  * Source contract for user-note-20260723001127: when the last window closes,
@@ -70,6 +82,13 @@ describe('window-all-closed headless continuity', () => {
     const quitIdx = handler.indexOf("process.platform !== 'darwin'")
     expect(quitIdx).toBeGreaterThan(keepBranchEnd)
     expect(handler.slice(quitIdx)).toContain('app.quit()')
+  })
+
+  it('keeps the RunManager lifecycle inventory exact across all nine provider identities', () => {
+    // This is a lifecycle/cleanup invariant only. It does not make retired
+    // Gemini selectable or bypass AntiGravity's consent and credential wall.
+    expect(RUN_MANAGER_PROVIDERS).toEqual(ALL_PROVIDER_IDENTITIES)
+    expect(new Set(RUN_MANAGER_PROVIDERS).size).toBe(ALL_PROVIDER_IDENTITIES.length)
   })
 
   it('tracks every live provider, including opted-in AntiGravity, in the run owner inventory', () => {

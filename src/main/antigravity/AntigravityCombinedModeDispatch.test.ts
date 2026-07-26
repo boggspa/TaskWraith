@@ -132,12 +132,10 @@ describe('dispatchAntigravityCombinedMode', () => {
     expect(capture.finishes).toEqual([])
   })
 
-  it('registers the RunManager session before the agent turn starts', async () => {
-    // The regression this pins: this lane has no child process, so nothing
-    // else registers its session — and without one the abort attach throws,
-    // every terminal projection is dropped by the session-keyed authority
-    // gate, finish is a no-op, and cancel returns false. The user-visible
-    // shape was an unkillable "Working" run with zero events.
+  it('registers the RunManager session before either transport starts', async () => {
+    // The API lane has no child process, while agy intentionally requires an
+    // existing session before the shared CLI launcher will spawn. Both must
+    // therefore claim the exact run before entering their transport.
     const order: string[] = []
     const { deps, capture } = createDeps({
       runGeminiApiAgentTurn: async () => {
@@ -156,6 +154,25 @@ describe('dispatchAntigravityCombinedMode', () => {
 
     expect(order).toEqual(['register', 'turn'])
     expect(capture.sessionRegistrations).toEqual([{ appRunId: RUN_ID, appChatId: CHAT_ID }])
+
+    const agyOrder: string[] = []
+    const { deps: agyDeps, capture: agyCapture } = createDeps({
+      registerRunSession: (route) => {
+        agyOrder.push('register')
+        agyCapture.sessionRegistrations.push({ ...route })
+        return { provider: 'antigravity', status: 'starting' }
+      },
+      runAgyProvider: async () => {
+        agyOrder.push('agy')
+      }
+    })
+    await dispatchAntigravityCombinedMode(
+      mockEvent(),
+      basePayload({ model: 'claude-sonnet-4' }),
+      agyDeps
+    )
+    expect(agyOrder).toEqual(['register', 'agy'])
+    expect(agyCapture.sessionRegistrations).toEqual([{ appRunId: RUN_ID, appChatId: CHAT_ID }])
   })
 
   it('rejects the dispatch visibly when session registration is refused', async () => {
@@ -222,7 +239,7 @@ describe('dispatchAntigravityCombinedMode', () => {
     await dispatchAntigravityCombinedMode(mockEvent(), payload, deps)
 
     expect(capture.agentTurnCalls).toEqual([])
-    expect(capture.sessionRegistrations).toEqual([])
+    expect(capture.sessionRegistrations).toEqual([{ appRunId: RUN_ID, appChatId: CHAT_ID }])
     expect(capture.agyCalls).toHaveLength(1)
     expect(capture.agyCalls[0]).toBe(payload)
   })

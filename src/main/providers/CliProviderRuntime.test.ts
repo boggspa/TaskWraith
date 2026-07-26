@@ -6,12 +6,13 @@ import {
   getCliProviderStatus,
   getCliProviderMcpStatus,
   getAgentMcpStatusSnapshotDirect,
+  getAgentStatusSnapshotDirect,
   readResolvedCliVersion,
   runtimeSettings,
   type CliProviderRuntimeDependencies,
   type RuntimeProfilePayload
 } from './CliProviderRuntime'
-import type { AppSettings, RuntimeProfile } from '../store/types'
+import type { AppSettings, EffectiveRunPermissions, RuntimeProfile } from '../store/types'
 
 // CliProviderRuntime imports AppStore from '../store', which touches Electron/fs
 // at module load. We exercise applyRuntimeProfileToPayload with INJECTED deps, so
@@ -54,6 +55,37 @@ const payload = (overrides: Partial<RuntimeProfilePayload>): RuntimeProfilePaylo
   ...overrides
 })
 
+function fullAccessPermissions(): EffectiveRunPermissions {
+  return {
+    presetId: 'full_access',
+    approvalMode: 'auto_edit',
+    agenticServices: {
+      shellCommands: 'allow',
+      fileChanges: 'allow',
+      externalPublish: 'allow',
+      mcpTools: 'allow',
+      subThreadDelegation: 'allow',
+      canvasInteraction: 'allow',
+      canvasEval: 'ask',
+      crossThreadRead: 'allow',
+      threadMessage: 'allow',
+      mediaEditing: 'allow',
+      mediaRecording: 'deny'
+    },
+    networkAccess: 'allow',
+    externalPathGrants: [],
+    workspaceGrantServiceIds: [],
+    readOnly: false
+  }
+}
+
+function settingsWithServices(agenticServices: AppSettings['agenticServices']): AppSettings {
+  return {
+    agenticServices,
+    agenticWorkspaceGrants: []
+  } as unknown as AppSettings
+}
+
 describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
   it('does NOT loosen an explicit read-only (plan) seat to a write-capable profile default', () => {
     // The live regression: builtin:grok:global (approvalMode 'default') clobbered
@@ -79,6 +111,92 @@ describe('applyRuntimeProfileToPayload — read-only is a safety floor', () => {
       depsWith(makeProfile({ approvalMode: 'plan' }))
     )
     expect(out.approvalMode).toBe('plan')
+  })
+
+  it('re-derives the signed service map when a profile tightens auto_edit to default', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({
+        workspace: '/repo',
+        approvalMode: 'auto_edit',
+        effectivePermissions: fullAccessPermissions()
+      }),
+      {
+        ...depsWith(
+          makeProfile({
+            approvalMode: 'default',
+            agenticServices: { fileChanges: 'deny' }
+          })
+        ),
+        getSettings: () =>
+          settingsWithServices({
+            shellCommands: 'ask',
+            fileChanges: 'ask',
+            externalPublish: 'ask',
+            mcpTools: 'ask',
+            subThreadDelegation: 'ask',
+            canvasInteraction: 'ask',
+            canvasEval: 'ask',
+            crossThreadRead: 'ask',
+            threadMessage: 'ask',
+            mediaEditing: 'ask',
+            mediaRecording: 'deny',
+            networkAccess: 'allow'
+          })
+      }
+    )
+
+    expect(out.approvalMode).toBe('default')
+    expect(out.effectivePermissions).toMatchObject({
+      presetId: 'default',
+      approvalMode: 'default',
+      readOnly: false,
+      agenticServices: {
+        shellCommands: 'ask',
+        fileChanges: 'deny'
+      }
+    })
+  })
+
+  it('re-derives the read-only service map when a profile tightens auto_edit to plan', () => {
+    const out = applyRuntimeProfileToPayload(
+      payload({
+        workspace: '/repo',
+        approvalMode: 'auto_edit',
+        effectivePermissions: fullAccessPermissions()
+      }),
+      {
+        ...depsWith(makeProfile({ approvalMode: 'plan' })),
+        getSettings: () =>
+          settingsWithServices({
+            shellCommands: 'allow',
+            fileChanges: 'allow',
+            externalPublish: 'allow',
+            mcpTools: 'allow',
+            subThreadDelegation: 'allow',
+            canvasInteraction: 'allow',
+            canvasEval: 'ask',
+            crossThreadRead: 'allow',
+            threadMessage: 'allow',
+            mediaEditing: 'allow',
+            mediaRecording: 'deny',
+            networkAccess: 'allow'
+          })
+      }
+    )
+
+    expect(out.approvalMode).toBe('plan')
+    expect(out.effectivePermissions).toMatchObject({
+      presetId: 'read_only',
+      approvalMode: 'plan',
+      readOnly: true,
+      agenticServices: {
+        shellCommands: 'deny',
+        fileChanges: 'deny',
+        subThreadDelegation: 'deny',
+        crossThreadRead: 'deny',
+        threadMessage: 'deny'
+      }
+    })
   })
 
   it('does NOT raise a verified default seat to auto_edit via runtime profile', () => {
@@ -394,6 +512,18 @@ describe('Cursor CLI status/version (un-gated: normal provider)', () => {
       source: 'settings'
     })
     expect(version).not.toBe('security-unavailable')
+  })
+})
+
+describe('Pi CLI status', () => {
+  it('keeps Pi on its own generic CLI status path instead of the Gemini fallback', async () => {
+    await expect(
+      getAgentStatusSnapshotDirect('pi', {
+        env: { PATH: '' },
+        getRuntimeProfiles: () => [],
+        getSettings: () => ({}) as AppSettings
+      })
+    ).resolves.toMatchObject({ provider: 'pi' })
   })
 })
 

@@ -91,26 +91,26 @@ export async function dispatchAntigravityCombinedMode(
   payload: AgentRunPayload,
   deps: AntigravityCombinedModeDispatchDependencies
 ): Promise<void> {
+  const route = exactIncomingRoute(payload)
+
+  // Both AntiGravity transports need the same host-owned lifecycle before
+  // either lane can await setup or emit terminal state. The in-process Gemini
+  // API lane has no child process to register it, while the official agy lane
+  // deliberately enters runCliProviderProcess with requireExistingRun=true so
+  // cancellation/history authority is fixed before launch preparation.
+  registerCombinedModeRunSession(route, deps)
+
   if (isAntigravityGeminiApiModelCandidate(payload.model)) {
-    await runAntigravityGeminiApiDispatchLane(event, payload, deps)
+    await runAntigravityGeminiApiDispatchLane(event, payload, route, deps)
     return
   }
   await deps.runAgyProvider(event, payload)
 }
 
-async function runAntigravityGeminiApiDispatchLane(
-  event: Electron.IpcMainInvokeEvent,
-  payload: AgentRunPayload,
+function registerCombinedModeRunSession(
+  route: AgentRunRoute,
   deps: AntigravityCombinedModeDispatchDependencies
-): Promise<void> {
-  const route = exactIncomingRoute(payload)
-
-  // Register BEFORE any terminal projection can fire: the projections
-  // themselves are dropped without an active session, so a failure emitted
-  // earlier than this point would be invisible and the run unkillable.
-  // A refusal is thrown so the run-agent invoke rejects and the renderer
-  // paints an honest "Failed to start" instead of an eternal Working row —
-  // the same visibility the CLI transports get from their registration throw.
+): void {
   let registeredSession: unknown
   try {
     registeredSession = deps.registerRunSession(route)
@@ -122,7 +122,14 @@ async function runAntigravityGeminiApiDispatchLane(
       'AntiGravity run session could not be registered; the run cannot start right now.'
     )
   }
+}
 
+async function runAntigravityGeminiApiDispatchLane(
+  event: Electron.IpcMainInvokeEvent,
+  payload: AgentRunPayload,
+  route: AgentRunRoute,
+  deps: AntigravityCombinedModeDispatchDependencies
+): Promise<void> {
   try {
     await deps.runGeminiApiAgentTurn(event, payload, route)
   } catch {

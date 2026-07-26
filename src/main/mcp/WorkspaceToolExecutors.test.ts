@@ -805,6 +805,40 @@ describe('active run workspace tools', () => {
     })
     expect(cancelled).toEqual([{ provider: 'codex', runId: 'run-b' }])
   })
+
+  it('accepts AntiGravity as an exact managed run-control target', async () => {
+    const deps = makeDeps(async () => commandResult(''))
+    deps.runs.getActiveByProvider = (provider) =>
+      provider === 'antigravity'
+        ? [
+            {
+              provider,
+              runId: 'agy-run',
+              appChatId: 'chat-agy',
+              status: 'running'
+            } as any
+          ]
+        : []
+    deps.runs.cancelProviderRun = async (provider, runId) =>
+      provider === 'antigravity' && runId === 'agy-run'
+
+    await expect(
+      executeCancelActiveRun(
+        deps,
+        {
+          provider: 'antigravity',
+          runId: 'agy-run',
+          intent: 'Stop the managed AntiGravity run'
+        },
+        { scope: 'workspace', cwd: '/tmp/ws', workspacePath: '/tmp/ws' }
+      )
+    ).resolves.toMatchObject({
+      ok: true,
+      provider: 'antigravity',
+      runId: 'agy-run',
+      message: 'Cancellation requested.'
+    })
+  })
 })
 
 describe('background process workspace tools', () => {

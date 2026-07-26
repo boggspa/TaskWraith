@@ -506,6 +506,7 @@ const RUN_CONTROL_PROVIDER_IDS: readonly ProviderId[] = [
   'grok',
   'cursor',
   'ollama',
+  'antigravity',
   'pi'
 ]
 

@@ -1,7 +1,12 @@
 import { readFileSync } from 'node:fs'
 import { describe, expect, it } from 'vitest'
+import { RUN_MANAGER_PROVIDERS } from './index.constants'
 
 const indexSource = readFileSync(new URL('./index.ts', import.meta.url), 'utf8')
+const coordinatorSource = readFileSync(
+  new URL('./services/RunCoordinator.ts', import.meta.url),
+  'utf8'
+)
 
 function sourceBetween(startMarker: string, endMarker: string): string {
   const start = indexSource.indexOf(startMarker)
@@ -12,6 +17,22 @@ function sourceBetween(startMarker: string, endMarker: string): string {
 }
 
 describe('provider dispatch integration', () => {
+  it('registers one adapter descriptor for every provider lifecycle identity', () => {
+    const registration = sourceBetween(
+      '// Grok is a first-class provider',
+      'async function readCliVersion('
+    )
+
+    for (const provider of RUN_MANAGER_PROVIDERS) {
+      const marker = `defaultProviderDescriptor('${provider}')`
+      expect(registration.split(marker)).toHaveLength(2)
+    }
+    expect(registration).toContain('...antigravityAdapters')
+    expect(registration).toContain('...grokAdapters')
+    expect(registration).toContain('...cursorAdapters')
+    expect(registration).toContain('...piAdapters')
+  })
+
   it('routes the legacy Gemini IPC surface through the shared dispatch facade', () => {
     const handler = sourceBetween(
       "ipcMain.handle(\n      'run-gemini'",
@@ -103,7 +124,7 @@ describe('provider dispatch integration', () => {
     expect(kimiAcpProvider).toContain('mcpServers: production.mcpServers')
     expect(kimiAcpProvider).not.toContain('cwd: payload.workspace')
     expect(kimiAcpProvider).not.toContain('fsRoots')
-    expect(kimiAcpProvider).not.toContain('continuing with Kimi\'s built-in tools only')
+    expect(kimiAcpProvider).not.toContain("continuing with Kimi's built-in tools only")
   })
 
   it('keeps host-summary subprocess compaction structurally Grok-only', () => {
@@ -136,6 +157,45 @@ describe('provider dispatch integration', () => {
     expect(preflight.indexOf('admitKimiRuntime({')).toBeLessThan(
       preflight.indexOf('? { reachable: true }')
     )
+  })
+
+  it('retains coordinator-owned signed posture until a provider supplies state', () => {
+    const registration = sourceBetween(
+      'function registerRunSession(',
+      'function getRuntimeSession('
+    )
+
+    expect(registration).toContain('const providerOwnsLifecycle = state !== undefined')
+    expect(registration).toContain(
+      "...(providerOwnsLifecycle ? { state, status: 'running' as const } : {})"
+    )
+    expect(registration).not.toContain(
+      'providerSessionId || existing.providerSessionId,\\n      state'
+    )
+  })
+
+  it('acquires one exact lifecycle owner after runtime-profile normalization and before preflight', () => {
+    const coordinatorDispatch = coordinatorSource.slice(
+      coordinatorSource.indexOf('  async dispatch(')
+    )
+    const lifecycleWiring = sourceBetween(
+      'const providerRunLifecycleOwnershipDeps =',
+      'runCoordinatorRef = runCoordinator'
+    )
+
+    expect(coordinatorDispatch.indexOf('this.deps.applyRuntimeProfileToPayload(')).toBeLessThan(
+      coordinatorDispatch.indexOf('return this.deps.runWithLifecycleOwnership')
+    )
+    expect(coordinatorDispatch).toContain(
+      'dispatchReservation,\n            dispatchWithLifecycleOwnership'
+    )
+    expect(
+      lifecycleWiring.indexOf('authorizeProviderLifecycleStart(payload, reservation)')
+    ).toBeLessThan(lifecycleWiring.indexOf('acquireProviderRunLifecycleOwnership('))
+    expect(lifecycleWiring.indexOf('acquireProviderRunLifecycleOwnership(')).toBeLessThan(
+      lifecycleWiring.indexOf('return await run()')
+    )
+    expect(lifecycleWiring).not.toContain('runWithProviderRunLifecycleOwnership(')
   })
 
   it('uses admitted runtime and OAuth-aware status when selecting Kimi for audit roles', () => {

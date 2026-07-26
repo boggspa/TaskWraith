@@ -160,6 +160,8 @@ export interface CliProviderStreamState extends CliProviderThinkingSegmentsState
    * Close-out must preserve the protocol outcome as authoritative.
    */
   terminalResultFailed?: boolean
+  /** Normalized provider-native terminal evidence when the stream reports it. */
+  terminalResultStatus?: 'completed' | 'failed' | 'cancelled'
   /** Wire transports may report a provisional result before process close. */
   deferTerminalResult?: boolean
   /** Typed provisional status retained until the Wire process actually closes. */
