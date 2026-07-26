@@ -223,6 +223,20 @@ struct ThreadDetailView: View {
     /// Shared morph identity for the two floating above-composer chips (diff +
     /// tools) so their Liquid Glass blends and separates as one system.
     @Namespace private var composerPillGlass
+    @Environment(\.verticalSizeClass) private var verticalSizeClass
+
+    /// Short-viewport mode: iPhone in landscape, and ONLY there. iPad reports a
+    /// regular vertical class in both orientations, so this can never fire on
+    /// pad — which is the requirement, because the pad layout is already good.
+    ///
+    /// Measured on iPhone 17 landscape: ~342pt of safe height, of which the
+    /// focused composer stack takes ~167pt — about half — before the keyboard
+    /// is up at all. The landscape keyboard is a further ~180pt, so the
+    /// transcript is left with nothing. The rows gated on this are the ones
+    /// whose information is either duplicated elsewhere or secondary while
+    /// typing.
+    private var compactHeight: Bool { verticalSizeClass == .compact }
+
     @State private var followUp = ""
     /// Mirrors the Composer's expanded state (focused / drafting / queued /
     /// ensemble) so the host hides the secondary rows + telemetry rail when the
@@ -1878,7 +1892,15 @@ struct ThreadDetailView: View {
                         // must be full-width (else the inner VStack's .center re-centers).
                         // The whole above-rows group collapses with the keyboard
                         // (gated on focus); see hasAboveContent.
-                        if composerFocused {
+                        // Short viewport drops this whole above-rows group, not
+                        // just the changes rows — the roster strip is rendered
+                        // by a helper called further down inside it, so gating
+                        // here takes both. That is intended, and each has a
+                        // route that survives: the diff is on the unfocused
+                        // pill (same numbers, same sheet on tap), and the
+                        // roster is on the toolbar's Roster button. Nothing
+                        // here is the only way to reach anything.
+                        if composerFocused && !compactHeight {
                         VStack(spacing: detached ? 6 : 0) {
                         if hasWorkspaceBreakdown {
                             // One attached row per granted workspace
@@ -2018,7 +2040,11 @@ struct ThreadDetailView: View {
                                 // follow focus, not draft/queue presence.
                                 forcesExpanded: false,
                                 text: $followUp)
-                            if composerFocused {
+                            // Telemetry is reference data, not something you act
+                            // on mid-sentence; in a short viewport its ~35pt is
+                            // better spent on transcript. It returns the moment
+                            // the keyboard drops or the phone goes upright.
+                            if composerFocused && !compactHeight {
                                 Group {
                                     if !bareTelemetry {
                                         Rectangle().fill(TWTheme.border).frame(height: 1)
