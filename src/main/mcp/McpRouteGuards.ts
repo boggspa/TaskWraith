@@ -22,13 +22,28 @@ export function isMutatingTaskWraithMcpTool(toolName: TaskWraithMcpToolName): bo
  * Tools whose approval prompt must reach a human on EVERY call, regardless of
  * standing grants, trusted-session state or session-YOLO.
  *
- * The shared property is a channel between the agent and a third party that no
- * amount of prior trust in the workspace covers:
+ * Most are a channel between the agent and a third party that no amount of prior
+ * trust in the workspace covers:
  *  - `image_generate` ships agent-chosen text off-box to a third-party API.
  *  - `canvas_eval` executes agent-authored JavaScript.
  *  - Outlook reads pull a stranger's words into the model's context; Outlook
  *    writes put agent-chosen text and recipients into a real mailbox. Both
  *    halves of that channel are prompt-injection surface, so both prompt.
+ *
+ * `theme_tokens_set` is here for a DIFFERENT reason, and the distinction matters:
+ * it sends nothing anywhere. It mutates the window the human reads every later
+ * approval in. A standing grant would therefore buy the agent silent, repeatable
+ * edits to the presentation surface that every subsequent trust decision is made
+ * on — so the user's rule for this capability was "never auto-allow, never
+ * elevate". `forcePrompt` is the only mechanism that actually spells that, since
+ * it is checked ahead of Bossman auto-approval and trusted-session auto-allow.
+ * The `shared/agentThemeTokens` allowlist is the other half and the stronger one:
+ * no text colour, background, approval-sheet geometry or focus ring is writable
+ * at all, so a granted restyle could never have hidden or falsified consent UI.
+ * This closes the residual gap that both halves left — that appearance writes
+ * ride the generic `mcpTools` service, so ONE session grant on any unrelated MCP
+ * tool would silence them. `theme_tokens_get` is a pure read and stays off this
+ * list.
  *
  * Global-scope chats prompt for everything, which is why scope is a parameter
  * rather than a caller-side `||`.
@@ -38,6 +53,7 @@ export function mcpToolAlwaysPrompts(toolName: string, scope?: string): boolean 
   return (
     toolName === 'image_generate' ||
     toolName === 'canvas_eval' ||
+    toolName === 'theme_tokens_set' ||
     OUTLOOK_ALWAYS_PROMPT_TOOLS.has(toolName)
   )
 }

@@ -72,9 +72,21 @@ describe('mcpToolAlwaysPrompts', () => {
     }
   })
 
-  it('leaves ordinary workspace tools to the normal grant path', () => {
+  it('forces a human on every appearance WRITE, so no grant can silence a restyle', () => {
+    // Not a third-party channel — this one mutates the window the human reads
+    // later approvals in. Appearance writes ride the generic `mcpTools` service,
+    // so without this ONE session grant on any unrelated MCP tool would let an
+    // agent restyle silently and repeatedly. The user's rule for the capability
+    // was "never auto-allow, never elevate"; forcePrompt is what spells it.
+    expect(mcpToolAlwaysPrompts('theme_tokens_set')).toBe(true)
+  })
+
+  it('leaves reads — including the appearance read — on the normal grant path', () => {
     expect(mcpToolAlwaysPrompts('write_file')).toBe(false)
     expect(mcpToolAlwaysPrompts('read_file')).toBe(false)
+    // Reading the current tokens reveals nothing the window is not already
+    // showing the user, so it must NOT inherit the write's every-call prompt.
+    expect(mcpToolAlwaysPrompts('theme_tokens_get')).toBe(false)
     // Global chats have no workspace to have granted anything, so they prompt.
     expect(mcpToolAlwaysPrompts('read_file', 'global')).toBe(true)
   })
